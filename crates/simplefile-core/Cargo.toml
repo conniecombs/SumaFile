@@ -28,7 +28,7 @@ tar = "0.4"
 unrar = "0.5"
 exif = { package = "kamadak-exif", version = "0.6" }
 lopdf = { version = "0.44", default-features = false }
-lofty = "0.24"
+lofty = "0.25"
 zip = { version = "8", default-features = false, features = ["bzip2", "deflate64", "deflate", "lzma", "ppmd", "time", "zstd", "xz"] }
 ureq = "3"
 
