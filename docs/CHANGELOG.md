@@ -9,6 +9,11 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 ## [Unreleased]
 
 ### Changed
+- Version identity is now **BETA**. About, Settings, handshake `appVersion`,
+  README badge, installer DisplayVersion/branding, and artifact names use BETA.
+  Technical fields that require x.y.z (Cargo package version, MSBuild
+  `<Version>`, assembly identity, WiX Product Version, NSIS VIProductVersion)
+  use `0.1.0`.
 - Product branding and runtime identity changed from SimpleFile to SumaFile:
   visible app chrome/About/Settings text, installer display names, shortcuts,
   release artifact names, packaged host executable, and startup log path now

@@ -28,10 +28,10 @@ const signature = named.signature ?? '';
 const notes = named.notes ?? 'SumaFile WinUI 3 host + Rust IPC service.';
 
 if (!version) {
-  fail('Pass --version=1.1.0');
+  fail('Pass --version=BETA');
 }
 if (!setupName) {
-  fail('Pass --setup=SumaFile_1.1.0_x64-winui-setup.exe');
+  fail('Pass --setup=SumaFile_BETA_x64-winui-setup.exe');
 }
 
 const payload = {

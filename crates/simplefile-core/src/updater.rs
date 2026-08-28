@@ -27,7 +27,7 @@ struct ManifestPlatform {
 pub fn get_app_about_info() -> AppAboutInfo {
     AppAboutInfo {
         name: APP_NAME.to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::APP_DISPLAY_VERSION.to_string(),
         identifier: APP_IDENTIFIER.to_string(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
@@ -40,7 +40,7 @@ pub fn get_app_about_info() -> AppAboutInfo {
 
 pub fn check_for_update() -> Result<Option<UpdateInfo>, String> {
     let manifest = load_manifest()?;
-    if !is_newer_version(&manifest.version, env!("CARGO_PKG_VERSION")) {
+    if !is_newer_version(&manifest.version, crate::APP_DISPLAY_VERSION) {
         return Ok(None);
     }
 

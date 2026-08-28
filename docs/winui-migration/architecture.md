@@ -8,7 +8,7 @@
 | **Status** | Historical design (Svelte/Tauri UI retired 2026-08-15) |
 | **Source tree** | `R:\Repos\SimpleFile-Windows` |
 | **Contract source** | [`docs/winui-migration/inventory.md`](inventory.md) |
-| **Current product** | SumaFile 1.1.0 (`com.simplefile.desktop`) |
+| **Current product** | SumaFile BETA (`com.simplefile.desktop`) |
 
 This is a historical design document from before the Svelte/Tauri UI was retired. The 74-command / 5-event inventory remains the behavioral contract.
 
@@ -496,7 +496,7 @@ Result:
 ```json
 {
   "protocolVersion": 1,
-  "appVersion": "1.1.0",
+  "appVersion": "BETA",
   "identifier": "com.simplefile.desktop",
   "methodCount": 76
 }

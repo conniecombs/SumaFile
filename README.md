@@ -3,7 +3,7 @@
 [![CI](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/ci.yml)
 [![Release](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/release.yml)
 [![Installer Smoke](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/installer-smoke.yml)
-![Version](https://img.shields.io/badge/version-1.1.0-2563eb)
+![Version](https://img.shields.io/badge/version-BETA-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010+-0078D4?logo=windows)
 ![License](https://img.shields.io/badge/license-proprietary-444444)
 
@@ -52,7 +52,7 @@ If Windows File Explorer feels limited for power workflows — dual panes, tabs 
 | Stay Windows-native | Drive list, mapped network shares, Recycle Bin, Open With, terminal launch |
 | Ship with confidence | NSIS + MSI installers, in-app update check, CI and installer smoke tests |
 
-**Current release:** `1.1.0` (see [docs/RELEASE_1.1.0.md](docs/RELEASE_1.1.0.md) and [docs/CHANGELOG.md](docs/CHANGELOG.md)).
+**Current release:** `BETA` (see [docs/CHANGELOG.md](docs/CHANGELOG.md); historical notes for the last numbered release: [docs/RELEASE_1.1.0.md](docs/RELEASE_1.1.0.md)).
 
 ---
 
@@ -191,9 +191,9 @@ Download the latest Windows installer or portable package from **[GitHub Release
 
 | Artifact | Best for |
 | --- | --- |
-| `SumaFile_1.1.0_x64-winui-setup.exe` | **Recommended** — NSIS per-user install |
-| `SumaFile_1.1.0_x64-winui.msi` | Enterprise / GPO-style MSI deployment |
-| `SumaFile_1.1.0_x64-winui-portable.zip` | Portable use without running an installer |
+| `SumaFile_BETA_x64-winui-setup.exe` | **Recommended** — NSIS per-user install |
+| `SumaFile_BETA_x64-winui.msi` | Enterprise / GPO-style MSI deployment |
+| `SumaFile_BETA_x64-winui-portable.zip` | Portable use without running an installer |
 
 **Requirements:** Windows 10 or later, x64.
 
@@ -511,10 +511,11 @@ Operational details: [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md).
 
 ### Versioning
 
-Keep these in sync when bumping a release:
+User-facing version is **BETA** (About, Settings, README badge, installer DisplayVersion, artifact names). Keep these in sync:
 
-- `src-winui/Directory.Build.props` → `<Version>`
-- `crates/simplefile-service/Cargo.toml` → package `version` (and committed `Cargo.lock`)
+- `src-winui/Directory.Build.props` `<InformationalVersion>` (display) and `<Version>` (numeric packaging identity, currently `0.1.0`)
+- `crates/simplefile-core/src/lib.rs` `APP_DISPLAY_VERSION` (must match InformationalVersion)
+- `crates/simplefile-service/Cargo.toml` package `version` (must match `<Version>`; committed `Cargo.lock`)
 - README version badge
 - `docs/CHANGELOG.md` (and release notes as needed)
 
@@ -527,7 +528,7 @@ Checklist: [.github/RELEASE.md](.github/RELEASE.md).
 | Document | Description |
 | --- | --- |
 | [Changelog](docs/CHANGELOG.md) | Version history |
-| [v1.1.0 Release Notes](docs/RELEASE_1.1.0.md) | Current public release notes |
+| [v1.1.0 Release Notes](docs/RELEASE_1.1.0.md) | Historical notes for the last numbered public release |
 | [Roadmap](docs/ROADMAP.md) | Near-term priorities and non-goals |
 | [Contributing](docs/CONTRIBUTING.md) | How to work on this repo |
 | [Code of Conduct](docs/CODE_OF_CONDUCT.md) | Community standards |

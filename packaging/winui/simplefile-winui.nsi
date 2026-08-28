@@ -9,6 +9,9 @@ Unicode True
 !ifndef VERSION
   !error "VERSION must be defined."
 !endif
+!ifndef NUMERIC_VERSION
+  !define NUMERIC_VERSION "0.1.0"
+!endif
 !ifndef OUTFILE
   !error "OUTFILE must be defined."
 !endif
@@ -35,7 +38,7 @@ BrandingText "SumaFile ${VERSION}"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
-VIProductVersion "${VERSION}.0"
+VIProductVersion "${NUMERIC_VERSION}.0"
 VIAddVersionKey /LANG=1033 "ProductName" "SumaFile"
 VIAddVersionKey /LANG=1033 "FileDescription" "SumaFile WinUI host"
 VIAddVersionKey /LANG=1033 "FileVersion" "${VERSION}"

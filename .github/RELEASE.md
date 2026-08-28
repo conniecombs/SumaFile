@@ -16,10 +16,11 @@ runners provide the Windows SDK.
 
 ### 1. Update Version Numbers
 
-Update the version in these files and keep them identical:
+The user-facing version is BETA. Keep display and numeric identities in sync:
 
-- `src-winui/Directory.Build.props` — `<Version>`
-- `crates/simplefile-service/Cargo.toml` — package `version` field
+- `src-winui/Directory.Build.props` — `<InformationalVersion>` (BETA) and `<Version>` (numeric `0.1.0` for AssemblyVersion / WiX)
+- `crates/simplefile-core/src/lib.rs` — `APP_DISPLAY_VERSION` (must match InformationalVersion)
+- `crates/simplefile-service/Cargo.toml` — package `version` field (must match `<Version>`)
 - [`README.md`](../README.md) — version badge
 - [`docs/CHANGELOG.md`](../docs/CHANGELOG.md) — release notes and compare links
 
@@ -85,9 +86,9 @@ Windows build succeeds.
 
 | Platform | Installer Type | Example File |
 |----------|----------------|--------------|
-| Windows x64 | NSIS setup executable | `SumaFile_x.x.x_x64-winui-setup.exe` |
-| Windows x64 | MSI installer | `SumaFile_x.x.x_x64-winui.msi` |
-| Windows x64 | Portable zip | `SumaFile_x.x.x_x64-winui-portable.zip` |
+| Windows x64 | NSIS setup executable | `SumaFile_BETA_x64-winui-setup.exe` |
+| Windows x64 | MSI installer | `SumaFile_BETA_x64-winui.msi` |
+| Windows x64 | Portable zip | `SumaFile_BETA_x64-winui-portable.zip` |
 | Windows updater | Static JSON / signatures | `latest-winui.json` and optional `.sig` files |
 
 ## Auto-Update
@@ -128,7 +129,7 @@ Add these secrets for Windows code signing when ready:
 
 ## Versioning
 
-SumaFile follows Semantic Versioning:
+The current user-facing version is **BETA**. Technical packaging fields that require x.y.z use `0.1.0`. Future numbered releases can follow Semantic Versioning:
 
 - **MAJOR**: breaking changes
 - **MINOR**: backward-compatible features

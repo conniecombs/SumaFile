@@ -3,7 +3,7 @@
   "id": 1,
   "result": {
     "protocolVersion": 1,
-    "appVersion": "1.1.0",
+    "appVersion": "BETA",
     "identifier": "com.simplefile.desktop",
     "methodCount": 76,
     "binaryHotFrames": true,

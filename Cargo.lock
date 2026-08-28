@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "simplefile-ipc"
-version = "1.1.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1289,7 +1289,7 @@ dependencies = [
 
 [[package]]
 name = "simplefile-service"
-version = "1.1.0"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "glob",

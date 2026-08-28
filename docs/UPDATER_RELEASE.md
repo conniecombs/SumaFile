@@ -25,7 +25,7 @@ after the user-facing product name changed to SumaFile.
 1. Update the version in `src-winui/Directory.Build.props` and
    `crates/simplefile-service/Cargo.toml`.
 2. Commit the version bump and release notes.
-3. Create a tag such as `v1.1.0`, or run the `Release` GitHub Actions workflow
+3. Create a tag matching `Directory.Build.props` `<Version>` (currently `v0.1.0`; user-facing identity is BETA), or run the `Release` GitHub Actions workflow
    manually with that version.
 4. The release workflow runs quality gates, builds the WinUI host and Rust IPC
    service, uploads NSIS/MSI/portable artifacts, and uploads `latest-winui.json`.

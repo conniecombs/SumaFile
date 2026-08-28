@@ -12,7 +12,7 @@ use simplefile_ipc::{
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const APP_VERSION: &str = simplefile_core::APP_DISPLAY_VERSION;
 
 #[derive(Debug, Default)]
 pub struct SessionState {

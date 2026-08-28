@@ -44,21 +44,28 @@ function Invoke-Native {
     }
 }
 
-function Get-ReleaseVersion {
+function Get-ReleaseMetadata {
     $props = Get-Content -LiteralPath (Join-Path $root "src-winui\Directory.Build.props") -Raw
     if ($props -notmatch '<Version>([^<]+)</Version>') {
         throw "Could not read Version from src-winui\Directory.Build.props."
     }
-    $winuiVersion = $Matches[1]
+    $numericVersion = $Matches[1]
+    $displayVersion = $numericVersion
+    if ($props -match '<InformationalVersion>([^<]+)</InformationalVersion>') {
+        $displayVersion = $Matches[1]
+    }
     $cargo = Get-Content -LiteralPath (Join-Path $root "crates\simplefile-service\Cargo.toml") -Raw
     if ($cargo -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
         throw "Could not read version from crates\simplefile-service\Cargo.toml."
     }
     $serviceVersion = $Matches[1]
-    if ($serviceVersion -ne $winuiVersion) {
-        throw "Version mismatch: simplefile-service=$serviceVersion Directory.Build.props=$winuiVersion"
+    if ($serviceVersion -ne $numericVersion) {
+        throw "Version mismatch: simplefile-service=$serviceVersion Directory.Build.props=$numericVersion"
     }
-    return $winuiVersion
+    return [pscustomobject]@{
+        Numeric = $numericVersion
+        Display = $displayVersion
+    }
 }
 
 function Find-ServiceExecutable {
@@ -169,8 +176,10 @@ function New-WinUIPayload {
     Assert-Payload $Destination
 }
 
-$version = Get-ReleaseVersion
-Write-Host "WinUI release version: $version"
+$release = Get-ReleaseMetadata
+$version = $release.Display
+$numericVersion = $release.Numeric
+Write-Host "WinUI release version: $version (numeric $numericVersion)"
 
 if ($Clean -and (Test-Path -LiteralPath $distRoot)) {
     Write-Step "Cleaning $distRoot"
@@ -234,6 +243,7 @@ if (-not $SkipInstaller) {
         $iconNsis = $iconPath.Replace('\', '/')
         Invoke-Native $makensis @(
             "/DVERSION=$version",
+            "/DNUMERIC_VERSION=$numericVersion",
             "/DPAYLOAD=$payloadNsis",
             "/DOUTFILE=$setupNsis",
             "/DICON=$iconNsis",
@@ -280,7 +290,7 @@ if (-not $SkipInstaller) {
         )
         Invoke-Native $candle @(
             "-nologo",
-            "-dProductVersion=$version",
+            "-dProductVersion=$numericVersion",
             "-dPayloadDir=$payloadDir",
             "-dIconFile=$iconPath",
             "-out", (Join-Path $wixOut "\"),
