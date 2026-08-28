@@ -10,7 +10,7 @@ public class ViewModelCutoverTests
     public async Task SearchViewModel_StartAsyncOwnsResultsAndStatus()
     {
         var backend = FakeExplorerBackend.Typical();
-        var ipc = new WorkspaceSettingsIpc();
+        var ipc = new ConfigurableIpc();
         var workspace = new ExplorerWorkspace(backend, new FileOperationService(ipc));
         await workspace.InitializeAsync();
 
@@ -70,7 +70,7 @@ public class ViewModelCutoverTests
     public async Task SearchViewModel_CancelActiveAsyncCancelsBackendSearch()
     {
         var backend = FakeExplorerBackend.Typical();
-        var ipc = new WorkspaceSettingsIpc();
+        var ipc = new ConfigurableIpc();
         var workspace = new ExplorerWorkspace(backend, new FileOperationService(ipc));
         await workspace.InitializeAsync();
 
@@ -101,7 +101,7 @@ public class ViewModelCutoverTests
     public async Task TransferViewModel_OwnsProgressFilteringAndCancellation()
     {
         var backend = FakeExplorerBackend.Typical();
-        var ipc = new WorkspaceSettingsIpc();
+        var ipc = new ConfigurableIpc();
         var workspace = new ExplorerWorkspace(backend, new FileOperationService(ipc));
         var viewModel = new TransferViewModel(workspace);
         var seen = new List<ProgressUpdate>();

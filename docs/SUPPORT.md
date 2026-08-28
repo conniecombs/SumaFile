@@ -24,5 +24,5 @@ Use this file when collecting information for SumaFile Windows support issues.
 - Drive names and mapped network shares: check `crates/simplefile-core/src/drives.rs`.
 - Folder navigation: check `src-winui/SimpleFile.Core/ExplorerWorkspace.cs` and `crates/simplefile-core/src/preview.rs`.
 - Settings startup behavior: check `src-winui/SimpleFile.Core` settings/workspace persistence.
-- Archive behavior: check `crates/simplefile-core/src/archive.rs`.
+- Archive behavior: check `crates/simplefile-core/src/archive/`.
 - Release and updater behavior: check `.github/RELEASE.md`, `docs/UPDATER_RELEASE.md`, and `scripts/check-updater-config.mjs`.

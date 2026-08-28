@@ -1,57 +1,17 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
 using Xunit;
+using DriveInfo = SimpleFile.Ipc.DriveInfo;
 
 namespace SimpleFile.Tests;
 
-public class ParityFeaturesTests
+public class AdvancedRenameTests
 {
-    [Fact]
-    public void PlacesStore_AddsRemovesAndCapsRecents()
-    {
-        var bookmarks = PlacesStore.AddBookmark([], @"C:\Work");
-        bookmarks = PlacesStore.AddBookmark(bookmarks, @"C:\Temp");
-        Assert.Equal(@"C:\Temp", bookmarks[0].Path);
-        bookmarks = PlacesStore.RemoveBookmark(bookmarks, @"C:\Temp");
-        Assert.Equal(@"C:\Work", bookmarks.Single().Path);
-
-        var recents = new List<string>();
-        for (var index = 0; index < 20; index++)
-        {
-            recents = PlacesStore.RecordRecent(recents, $@"C:\item{index}");
-        }
-
-        Assert.Equal(PlacesStore.RecentLimit, recents.Count);
-        Assert.Equal(@"C:\item19", recents[0]);
-    }
-
-    [Fact]
-    public void TypeAhead_MatchesPrefixAndResetsAfterIdleWindow()
-    {
-        var entries = new[]
-        {
-            new FileEntry { Name = "Alpha.txt" },
-            new FileEntry { Name = "Bravo.txt" },
-        };
-        Assert.Equal(1, TypeAhead.MatchIndex(entries, "br"));
-        var buffer = new TypeAheadBuffer();
-        buffer.Append('A', TimeSpan.FromSeconds(1));
-        Assert.Equal("A", buffer.Text);
-    }
-
-    [Fact]
-    public void PhotoFolder_DetectsImageHeavyDirectory()
-    {
-        var photos = new[]
-        {
-            new FileEntry { Name = "a.png", Extension = "png" },
-            new FileEntry { Name = "b.jpg", Extension = "jpg" },
-            new FileEntry { Name = "c.txt", Extension = "txt" },
-        };
-        Assert.True(PhotoFolder.IsPhotoFolder(photos, 60));
-        Assert.False(PhotoFolder.IsPhotoFolder(photos, 80));
-    }
-
     [Fact]
     public void AdvancedRename_FindReplacePrefixNumber()
     {
@@ -62,7 +22,6 @@ public class ParityFeaturesTests
             plan);
         Assert.Equal("x-shot1.png", requests[0].NewName);
     }
-
     [Fact]
     public void AdvancedRename_TemplateTokensKeepExtensionAndUseNumberSettings()
     {
@@ -85,7 +44,6 @@ public class ParityFeaturesTests
 
         Assert.Equal("Photos_IMG_0001_07_2026-08-20_131415.JPG", next);
     }
-
     [Fact]
     public void AdvancedRename_AppliesLegacyOperationOrder()
     {
@@ -124,7 +82,6 @@ public class ParityFeaturesTests
 
         Assert.Equal("Final_Summary-03.TXT", next);
     }
-
     [Theory]
     [InlineData("words", "UPDATER_RELEASE.md", "Updater_Release.md")]
     [InlineData("title", "CODE_OF_CONDUCT.md", "Code_Of_Conduct.md")]
@@ -147,7 +104,6 @@ public class ParityFeaturesTests
 
         Assert.Equal(expectedName, next);
     }
-
     [Fact]
     public void AdvancedRename_CapitalizationCanStillTargetExtensionExplicitly()
     {
@@ -165,7 +121,6 @@ public class ParityFeaturesTests
 
         Assert.Equal("release_notes.Md", next);
     }
-
     [Fact]
     public void AdvancedRename_SentenceCaseKeepsFirstLetterModeDistinct()
     {
@@ -192,7 +147,6 @@ public class ParityFeaturesTests
         Assert.Equal("Updater release.md", sentence);
         Assert.Equal("UPDATER RELEASE.md", firstLetter);
     }
-
     [Fact]
     public void AdvancedRename_FilterPreviewValidatesDuplicateAndInvalidNames()
     {
@@ -233,7 +187,6 @@ public class ParityFeaturesTests
         Assert.Equal(2, preview.InvalidCount);
         Assert.All(preview.AllRows, row => Assert.Equal("Duplicate target name", row.Error));
     }
-
     [Fact]
     public void AdvancedRename_SanitizeAndValidateWindowsFileNames()
     {
@@ -243,7 +196,6 @@ public class ParityFeaturesTests
         Assert.False(AdvancedRename.IsValidFileName("CON.txt"));
         Assert.False(AdvancedRename.IsValidFileName("trailing-space .txt "));
     }
-
     [Fact]
     public async Task AdvancedRename_CollectTargetsRecursesAndSkipsDotfiles()
     {
@@ -274,40 +226,5 @@ public class ParityFeaturesTests
 
         Assert.Equal(["Folder", "child.txt"], targets.Select(target => target.Entry.Name));
         Assert.Equal([0, 1], targets.Select(target => target.Index));
-    }
-
-    [Fact]
-    public void Marquee_IntersectsVerticalRange()
-    {
-        Assert.True(MarqueeSelection.Intersects(0, 10, 100, 30, 20, 40));
-        Assert.False(MarqueeSelection.Intersects(0, 10, 100, 5, 40, 50));
-    }
-
-    [Fact]
-    public void FolderTree_FlattensExpandedChildren()
-    {
-        var roots = new[]
-        {
-            new TreeNode
-            {
-                Name = "Users",
-                Path = @"C:\Users",
-                HasChildren = true,
-                Children = [new TreeNode { Name = "test", Path = @"C:\Users\test" }],
-            },
-        };
-        var flat = FolderTree.Flatten(roots, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { @"C:\Users" });
-        Assert.Equal(2, flat.Count);
-        Assert.Equal(1, flat[1].Depth);
-    }
-
-    [Fact]
-    public void ClipboardHistory_KeepsLatestFirst()
-    {
-        var history = new ClipboardHistory();
-        history.Push(ClipboardOperation.Copy, [@"C:\a"]);
-        history.Push(ClipboardOperation.Cut, [@"C:\b"]);
-        Assert.Equal(ClipboardOperation.Cut, history.Items[0].Operation);
-        Assert.Equal(@"C:\b", history.Items[0].Paths[0]);
     }
 }

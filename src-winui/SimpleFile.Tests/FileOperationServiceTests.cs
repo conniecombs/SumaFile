@@ -13,224 +13,10 @@ namespace SimpleFile.Tests;
 
 public class FileOperationServiceTests
 {
-    private class StubIpc : ISimpleFileIpc
-    {
-        public Func<string, string, CancellationToken, Task<string>>? CreateDirectoryHandler;
-        public Func<string, string, CancellationToken, Task<string>>? CreateFileHandler;
-        public Func<string, string, CancellationToken, Task<string>>? RenameEntryHandler;
-        public Func<string, CancellationToken, Task<string?>>? GetDbSettingHandler { get; set; }
-        public Func<string, string, CancellationToken, Task>? SetDbSettingHandler { get; set; }
-        public Func<string[], CancellationToken, Task>? MoveToTrashHandler;
-        public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? CopyWithProgressHandler;
-        public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? MoveWithProgressHandler;
-        public Func<string, CancellationToken, Task>? CancelOperationHandler { get; set; }
-        public Func<SearchOptions, Action<SearchResult[]>?, Action<int>?, CancellationToken, Task<SearchResult[]>>? SearchFilesHandler { get; set; }
-        public Func<string, CancellationToken, Task>? CancelSearchHandler { get; set; }
-        public Func<string, CancellationToken, Task>? WatchDirectoryHandler { get; set; }
-        public Func<CancellationToken, Task>? UnwatchDirectoryHandler { get; set; }
-        public Func<string, ulong?, CancellationToken, Task<FilePreview>>? ReadFilePreviewHandler { get; set; }
-        public Func<string, CancellationToken, Task<Checksums>>? ComputeChecksumHandler { get; set; }
-        public Func<string, CancellationToken, Task<FileMetadata>>? GetFileMetadataHandler { get; set; }
-        public Func<string, string, CancellationToken, Task<FileComparison>>? CompareFilesHandler { get; set; }
-        public Func<string, CancellationToken, Task<ArchiveInfo>>? ListArchiveHandler { get; set; }
-        public Func<string, string, CancellationToken, Task>? ExtractArchiveHandler { get; set; }
-        public Func<string[], string, string, CancellationToken, Task>? CreateArchiveHandler { get; set; }
-        public Func<string, ulong?, string?, CancellationToken, Task<CleanupResult>>? DiskCleanupHandler { get; set; }
-        public Func<string, ulong?, ulong?, string?, CancellationToken, Task<DuplicateCheckResult>>? DuplicateCheckHandler { get; set; }
-        public Func<CancellationToken, Task>? InstallUpdateHandler { get; set; }
-        private readonly Dictionary<string, List<object>> _handlers = new();
-
-        public Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default)
-            => CreateDirectoryHandler?.Invoke(path, name, ct) ?? throw new NotImplementedException();
-
-        public Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default)
-            => CreateFileHandler?.Invoke(path, name, ct) ?? throw new NotImplementedException();
-
-        public Task<string> RenameEntryAsync(string path, string newName, CancellationToken ct = default)
-            => RenameEntryHandler?.Invoke(path, newName, ct) ?? throw new NotImplementedException();
-
-        public Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default)
-            => GetDbSettingHandler?.Invoke(key, ct) ?? throw new NotImplementedException();
-
-        public Task SetDbSettingAsync(string key, string value, CancellationToken ct = default)
-            => SetDbSettingHandler?.Invoke(key, value, ct) ?? throw new NotImplementedException();
-
-        public Task MoveToTrashAsync(string[] paths, CancellationToken ct = default)
-        {
-            if (MoveToTrashHandler != null)
-                return MoveToTrashHandler(paths, ct);
-            throw new NotImplementedException();
-        }
-
-        public Task<TransferResult[]> CopyWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default)
-            => CopyWithProgressHandler?.Invoke(sources, destination, operationId, conflictAction, ct) ?? throw new NotImplementedException();
-
-        public Task CancelOperationAsync(string operationId, CancellationToken ct = default)
-            => CancelOperationHandler?.Invoke(operationId, ct) ?? throw new NotImplementedException();
-
-        public Task<SearchResult[]> SearchFilesAsync(SearchOptions options, Action<SearchResult[]>? onBatch = null, Action<int>? onComplete = null, CancellationToken ct = default)
-            => SearchFilesHandler?.Invoke(options, onBatch, onComplete, ct) ?? throw new NotImplementedException();
-
-        public Task CancelSearchAsync(string searchId, CancellationToken ct = default)
-            => CancelSearchHandler?.Invoke(searchId, ct) ?? throw new NotImplementedException();
-
-        public Task WatchDirectoryAsync(string path, CancellationToken ct = default)
-            => WatchDirectoryHandler?.Invoke(path, ct) ?? throw new NotImplementedException();
-
-        public Task UnwatchDirectoryAsync(CancellationToken ct = default)
-            => UnwatchDirectoryHandler?.Invoke(ct) ?? throw new NotImplementedException();
-
-        public Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default)
-            => ReadFilePreviewHandler?.Invoke(path, maxSize, ct) ?? throw new NotImplementedException();
-
-        public Task<Checksums> ComputeChecksumAsync(string path, CancellationToken ct = default)
-            => ComputeChecksumHandler?.Invoke(path, ct) ?? throw new NotImplementedException();
-
-        public Task<FileMetadata> GetFileMetadataAsync(string path, CancellationToken ct = default)
-            => GetFileMetadataHandler?.Invoke(path, ct) ?? throw new NotImplementedException();
-
-        public Task<FileComparison> CompareFilesAsync(string pathA, string pathB, CancellationToken ct = default)
-            => CompareFilesHandler?.Invoke(pathA, pathB, ct) ?? throw new NotImplementedException();
-
-        public Task<ArchiveInfo> ListArchiveAsync(string path, CancellationToken ct = default)
-            => ListArchiveHandler?.Invoke(path, ct) ?? throw new NotImplementedException();
-
-        public Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
-            => ExtractArchiveHandler?.Invoke(archivePath, destination, ct) ?? throw new NotImplementedException();
-
-        public Task CreateArchiveAsync(string[] paths, string archivePath, string format, CancellationToken ct = default)
-            => CreateArchiveHandler?.Invoke(paths, archivePath, format, ct) ?? throw new NotImplementedException();
-
-        public Task<CleanupResult> DiskCleanupAsync(string path, ulong? minSize, string? opId, CancellationToken ct = default)
-            => DiskCleanupHandler?.Invoke(path, minSize, opId, ct) ?? throw new NotImplementedException();
-
-        public Task<DuplicateCheckResult> DuplicateCheckAsync(string path, ulong? minSize, ulong? hashBytes, string? opId, CancellationToken ct = default)
-            => DuplicateCheckHandler?.Invoke(path, minSize, hashBytes, opId, ct) ?? throw new NotImplementedException();
-
-        public int SubscriptionCount(string eventName)
-            => _handlers.TryGetValue(eventName, out var handlers) ? handlers.Count : 0;
-
-        public void Emit<T>(string eventName, T payload)
-        {
-            if (!_handlers.TryGetValue(eventName, out var handlers)) return;
-            foreach (var handler in handlers.OfType<Action<T>>().ToArray())
-            {
-                handler(payload);
-            }
-        }
-
-        // Dummy implementations for the rest
-        public bool IsConnected => throw new NotImplementedException();
-#pragma warning disable CS0067
-        public event EventHandler<Exception?>? Disconnected;
-#pragma warning restore CS0067
-        public Task<HandshakeResult> HandshakeAsync(string authToken, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public Task<TResult> InvokeAsync<TResult>(string method, object? args, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public Task InvokeAsync(string method, object? args, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public IDisposable On<T>(string eventName, Action<T> handler)
-        {
-            if (!_handlers.TryGetValue(eventName, out var handlers))
-            {
-                handlers = new List<object>();
-                _handlers[eventName] = handlers;
-            }
-            handlers.Add(handler);
-            return new TestSubscription(() => handlers.Remove(handler));
-        }
-        public Task<DirectoryListing> ListDirectoryAsync(string path, Action<DirectoryListingChunk>? onChunk = null, CancellationToken cancellationToken = default, ListDirectoryOptions? options = null) => throw new NotImplementedException();
-        public Task<HealthResult> HealthAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public Task<string> GetAppVersionAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public Task<string> GetHomeDirAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public Task<IReadOnlyList<DriveInfo>> ListDrivesAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public Task ShowMainWindowAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public Task ShutdownAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
-        public Task DeleteEntryAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<string[]> BatchRenameAsync(RenameRequest[] entries, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<string> CopyEntryAsync(string source, string destination, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<string> MoveEntryAsync(string source, string destination, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<string> CopyEntryResolvedAsync(string source, string destination, string conflictAction, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<string> MoveEntryResolvedAsync(string source, string destination, string conflictAction, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<FileEntry> GetEntryInfoAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task OpenFileAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task RevealInFolderAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task OpenExternalUrlAsync(string url, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<string> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task OpenFileWithAsync(string path, string application, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<ImageMetadata> GetImageMetadataAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<TransferResult[]> MoveWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default)
-            => MoveWithProgressHandler?.Invoke(sources, destination, operationId, conflictAction, ct) ?? throw new NotImplementedException();
-        public Task OpenTerminalAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task OpenPowershellAdminAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task GitPullAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task GitPushAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<SmartFolder[]> LoadSmartFoldersAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<SmartFolder[]> SaveSmartFolderAsync(SmartFolder folder, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<SmartFolder[]> DeleteSmartFolderAsync(string id, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<AppAboutInfo> GetAppAboutInfoAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<UpdateInfo?> CheckForUpdateAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task InstallUpdateAsync(CancellationToken ct = default)
-            => InstallUpdateHandler?.Invoke(ct) ?? throw new NotImplementedException();
-        public Task CancelFolderSizeAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task CancelFolderItemCountAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task CancelCountItemsAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<bool> CheckRarInstalledAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task CancelDiskCleanupAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task CancelDuplicateCheckAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<Tag[]> GetAllTagsAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<Tag> CreateTagAsync(string name, string color, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<Tag> UpdateTagAsync(long id, string name, string color, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task DeleteTagAsync(long id, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<Tag[]> GetTagsForPathAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task SetTagsForPathAsync(string path, long[] tags, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<Dictionary<string, Tag>> GetAllFileTagsAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<string[]> GetFilesWithTagAsync(long id, CancellationToken ct = default) => throw new NotImplementedException();
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
-
-    private sealed class TestSubscription : IDisposable
-    {
-        private readonly Action _dispose;
-        private bool _disposed;
-
-        public TestSubscription(Action dispose)
-        {
-            _dispose = dispose;
-        }
-
-        public void Dispose()
-        {
-            if (_disposed) return;
-            _disposed = true;
-            _dispose();
-        }
-    }
-
-    private sealed class InlineProgress<T> : IProgress<T>
-    {
-        private readonly Action<T> _report;
-
-        public InlineProgress(Action<T> report)
-        {
-            _report = report;
-        }
-
-        public void Report(T value) => _report(value);
-    }
-
     [Fact]
     public async Task CreateFolderAsync_ReturnsPathFromIpc()
     {
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             CreateDirectoryHandler = (path, name, ct) => Task.FromResult($@"{path}\{name}")
         };
@@ -244,7 +30,7 @@ public class FileOperationServiceTests
     [Fact]
     public async Task CreateFileAsync_ReturnsPathFromIpc()
     {
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             CreateFileHandler = (path, name, ct) => Task.FromResult($@"{path}\{name}")
         };
@@ -258,11 +44,11 @@ public class FileOperationServiceTests
     [Fact]
     public async Task ReplaceIpc_UsesNewClientForFutureCalls()
     {
-        var first = new StubIpc
+        var first = new ConfigurableIpc
         {
             CreateDirectoryHandler = (path, name, ct) => Task.FromResult($@"{path}\old-{name}"),
         };
-        var second = new StubIpc
+        var second = new ConfigurableIpc
         {
             CreateDirectoryHandler = (path, name, ct) => Task.FromResult($@"{path}\new-{name}"),
         };
@@ -279,7 +65,7 @@ public class FileOperationServiceTests
     [Fact]
     public async Task RenameAsync_ReturnsNewPathFromIpc()
     {
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             RenameEntryHandler = (path, newName, ct) => Task.FromResult($@"C:\test\{newName}")
         };
@@ -294,7 +80,7 @@ public class FileOperationServiceTests
     public async Task TrashAsync_CallsIpcWithCorrectPaths()
     {
         string[]? receivedPaths = null;
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             MoveToTrashHandler = (paths, ct) =>
             {
@@ -352,7 +138,7 @@ public class FileOperationServiceTests
     public async Task GenerateOperationId_FormatCheck()
     {
         string? capturedOpId = null;
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             CopyWithProgressHandler = (sources, dest, opId, conflictAction, ct) =>
             {
@@ -372,7 +158,7 @@ public class FileOperationServiceTests
     public async Task CopyAsync_ReportsProgressAndDisposesSubscription()
     {
         var seen = new List<ProgressUpdate>();
-        var stub = new StubIpc();
+        var stub = new ConfigurableIpc();
         stub.CopyWithProgressHandler = (sources, dest, opId, conflictAction, ct) =>
         {
             stub.Emit(
@@ -407,8 +193,8 @@ public class FileOperationServiceTests
     [Fact]
     public async Task CopyAsync_KeepsOriginalClientWhenIpcIsReplaced()
     {
-        var first = new StubIpc();
-        var second = new StubIpc();
+        var first = new ConfigurableIpc();
+        var second = new ConfigurableIpc();
         var started = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var finish = new TaskCompletionSource<TransferResult[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         first.CopyWithProgressHandler = (sources, dest, opId, conflictAction, ct) =>
@@ -442,7 +228,7 @@ public class FileOperationServiceTests
     {
         var seen = new List<ProgressUpdate>();
         using var cts = new CancellationTokenSource();
-        var stub = new StubIpc();
+        var stub = new ConfigurableIpc();
         stub.CopyWithProgressHandler = (sources, dest, opId, conflictAction, ct) =>
         {
             stub.Emit(
@@ -480,7 +266,7 @@ public class FileOperationServiceTests
     public async Task CancelOperationAsync_CallsNamedIpcCancel()
     {
         string? cancelled = null;
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             CancelOperationHandler = (operationId, ct) =>
             {
@@ -501,7 +287,7 @@ public class FileOperationServiceTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelRequested = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         string? copyOperationId = null;
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             CopyWithProgressHandler = async (sources, destination, operationId, conflictAction, ct) =>
             {
@@ -539,7 +325,7 @@ public class FileOperationServiceTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelRequested = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         string? moveOperationId = null;
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             MoveWithProgressHandler = async (sources, destination, operationId, conflictAction, ct) =>
             {
@@ -576,7 +362,7 @@ public class FileOperationServiceTests
     {
         var batches = new List<SearchResult[]>();
         var completes = new List<int>();
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             SearchFilesHandler = (options, onBatch, onComplete, ct) =>
             {
@@ -602,7 +388,7 @@ public class FileOperationServiceTests
     {
         var seen = new List<ProgressUpdate>();
         using var cts = new CancellationTokenSource();
-        var stub = new StubIpc();
+        var stub = new ConfigurableIpc();
         stub.DiskCleanupHandler = (path, minSize, opId, ct) =>
         {
             stub.Emit(
@@ -640,7 +426,7 @@ public class FileOperationServiceTests
     {
         var seen = new List<ProgressUpdate>();
         using var cts = new CancellationTokenSource();
-        var stub = new StubIpc();
+        var stub = new ConfigurableIpc();
         stub.DuplicateCheckHandler = (path, minSize, hashBytes, opId, ct) =>
         {
             stub.Emit(
@@ -678,7 +464,7 @@ public class FileOperationServiceTests
     public async Task InstallUpdateAsync_ReportsProgressAndDisposesSubscription()
     {
         var seen = new List<long[]>();
-        var stub = new StubIpc();
+        var stub = new ConfigurableIpc();
         stub.InstallUpdateHandler = ct =>
         {
             stub.Emit(Protocol.UpdateChunkEvent, new long[] { 42, 100 });
@@ -700,7 +486,7 @@ public class FileOperationServiceTests
     public async Task OperationJournal_RecordsTransferLifecycle()
     {
         var journal = TempJournal();
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             CopyWithProgressHandler = (sources, destination, operationId, conflictAction, ct) =>
             {
@@ -728,7 +514,7 @@ public class FileOperationServiceTests
     {
         var journal = TempJournal();
         using var cts = new CancellationTokenSource();
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             CopyWithProgressHandler = (sources, destination, operationId, conflictAction, ct) =>
             {
@@ -757,7 +543,7 @@ public class FileOperationServiceTests
         ulong? previewSize = null;
         string? checksumPath = null;
         (string A, string B)? compared = null;
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             ReadFilePreviewHandler = (path, maxSize, ct) =>
             {
@@ -804,7 +590,7 @@ public class FileOperationServiceTests
         string? listed = null;
         (string Archive, string Destination)? extracted = null;
         (string[] Paths, string Archive, string Format)? created = null;
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             ListArchiveHandler = (path, ct) =>
             {
@@ -852,7 +638,7 @@ public class FileOperationServiceTests
     {
         string? requestedKey = null;
         (string Key, string Value)? saved = null;
-        var stub = new StubIpc
+        var stub = new ConfigurableIpc
         {
             GetDbSettingHandler = (key, ct) =>
             {

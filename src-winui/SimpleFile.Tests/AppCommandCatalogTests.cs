@@ -1,0 +1,40 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using SimpleFile.Core;
+using SimpleFile.Ipc;
+using Xunit;
+using DriveInfo = SimpleFile.Ipc.DriveInfo;
+
+namespace SimpleFile.Tests;
+
+public class AppCommandCatalogTests
+{
+    [Fact]
+    public void CommandPalette_ContainsWinUiIdsAndFilters()
+    {
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-home");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-pull");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "keyboard-help");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "view-tiles");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "icon-size-extra-large");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "icon-size-maximum");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "clear-recent-history");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-side-menu");
+        Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
+        Assert.Equal("Disk cleanup", AppCommandCatalog.Find("disk-cleanup")?.Label);
+        Assert.Equal("Open or close second pane", AppCommandCatalog.Find("dual-pane")?.Label);
+        Assert.Equal("Move to Recycle Bin", AppCommandCatalog.Find("delete")?.Label);
+        Assert.Equal("Delete Permanently", AppCommandCatalog.Find("delete-permanent")?.Label);
+        Assert.Equal(AppCommandCatalog.All.Count, AppCommandCatalog.Filter("").Count);
+        var git = AppCommandCatalog.Filter("git");
+        Assert.Equal(2, git.Count);
+        Assert.All(git, command => Assert.StartsWith("git-", command.Id, StringComparison.Ordinal));
+        Assert.Equal(7, AppCommandCatalog.Filter("icon size").Count);
+        Assert.Equal("toggle-side-menu", Assert.Single(AppCommandCatalog.Filter("side menu")).Id);
+        Assert.Equal("settings", AppCommandCatalog.Find("settings")?.Id);
+        Assert.Null(AppCommandCatalog.Find("missing"));
+    }
+}

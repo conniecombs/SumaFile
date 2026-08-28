@@ -13,8 +13,8 @@ Line counts are approximate (non-blank vs total lines differ). Generated IPC fil
 1. **Finding 8** — delete unused `state.rs` / helpers / `src-tauri` lookup (smallest, no UX).
 2. **Finding 2** — kill unused ViewModels **or** finish the cutover; do not keep both.
 3. **Finding 1A** — split `MainWindow` into concern partials (biggest readability win, still one class).
-4. **Findings 4B + 5A + 7B** — split `dispatch` / `archive` / `session` modules.
-5. **Finding 9A + 12A** — shared IPC test stub; move fakes out of test class files.
+4. **Findings 4B + 5A + 7B** — completed: split `dispatch` / `archive` / `session` modules.
+5. **Finding 9A + 12A** — completed: shared IPC test stub; moved fakes out of test class files.
 6. **Finding 6** last — conflict-path unification needs a behavior comparison.
 
 For each finding, pick **A / B / C** before implementing.
@@ -102,7 +102,8 @@ One type owns navigation streaming, dual-pane/tabs, settings persistence, bookma
 
 ## 5. `archive.rs` mixes five archive jobs
 
-**File:** `crates/simplefile-core/src/archive.rs` (~1,700–1,900 lines)
+**Original file:** `crates/simplefile-core/src/archive.rs` (~1,700–1,900 lines)
+**Split target:** `crates/simplefile-core/src/archive/`
 
 One file owns:
 
@@ -128,7 +129,7 @@ RAR installer already lives in `rar.rs`. Two unique-name loops in the same file 
 
 - `crates/simplefile-core/src/file_ops.rs`
 - `crates/simplefile-service/src/progress.rs`
-- `crates/simplefile-core/src/archive.rs`
+- `crates/simplefile-core/src/archive/`
 
 Same private helpers exist in all three: `unique_destination_path`, `is_keep_both_action`, `resolve_destination`, `path_exists_no_follow`, `path_collision_key`, `create_dir_exclusive`.
 
@@ -142,9 +143,9 @@ They are **not** identical. Progress also tracks `planned_destinations`. `file_o
 
 ---
 
-## 7. `session.rs` is connection I/O plus a job farm
+## 7. `session` is connection I/O plus a job farm
 
-**File:** `crates/simplefile-service/src/session.rs` (~1,200 lines)
+**Original file:** `crates/simplefile-service/src/session.rs` (~1,200 lines); split target is `crates/simplefile-service/src/session/`.
 
 `serve_connection` re-matches the entire `Dispatch` enum. Eight near-identical spawners (`spawn_install_update`, `spawn_folder_size`, `spawn_folder_item_count`, `spawn_folder_metrics`, `spawn_copy_move_with_progress`, `spawn_search_files`, `spawn_duplicate_check`, `spawn_disk_cleanup`) each do `scheduler.run_*` then write JSON. Framing (`read_frame`, writer loop) sits in the same file.
 
@@ -185,14 +186,14 @@ They are **not** identical. Progress also tracks `planned_destinations`. `file_o
 - `src-winui/SimpleFile.Tests/ExplorerWorkspaceTests.cs`
 - `src-winui/SimpleFile.Tests/FileOperationServiceTests.cs`
 
-`ISimpleFileIpc` is one interface for files, search, git, tags, RAR, updates, and archives. Tests still implement the full IPC surface.
+`ISimpleFileIpc` is one interface for files, search, git, tags, RAR, updates, and archives. Tests used to implement the full IPC surface directly.
 
-Three independent full stubs:
+Previous independent full stubs:
 
-- `FakeExplorerBackend` + `WorkspaceSettingsIpc` in `ExplorerWorkspaceTests.cs` (fake starts after the test class)
+- `FakeExplorerBackend` + `WorkspaceSettingsIpc` in `ExplorerWorkspaceTests.cs` (fake started after the test class)
 - `StubIpc` in `FileOperationServiceTests.cs`
 
-Most members are `throw new NotImplementedException()`.
+Current test double shape: `NullIpc` provides strict default throws, `ConfigurableIpc` centralizes the few handlers/dictionaries tests need, and `FakeExplorerBackend` lives in its own file.
 
 **Options**
 
@@ -394,13 +395,15 @@ The same actions are mapped three times (`rename` / `ctx-rename` / F2; `delete` 
 
 ## 12. Tests and dialogs as dump files
 
-**Test files**
+**Original test files**
 
 - `src-winui/SimpleFile.Tests/ExplorerWorkspaceTests.cs` — tests + `FakeExplorerBackend` + `WorkspaceSettingsIpc`
 - `src-winui/SimpleFile.Tests/DesktopPolishTests.cs` — catalog, context menus, toolbar overflow, Open With prefs, transfer formatter
 - `src-winui/SimpleFile.Tests/ParityFeaturesTests.cs` — Places, TypeAhead, PhotoFolder, AdvancedRename, Marquee, FolderTree, clipboard
 - `src-winui/SimpleFile.Tests/NamedPipeJsonClientTests.cs`
 - `src-winui/SimpleFile.Tests/FileOperationServiceTests.cs` — nested `StubIpc`
+
+Current split keeps `ExplorerWorkspaceTests.cs`, `FileOperationServiceTests.cs`, and `NamedPipeJsonClientTests.cs` type-focused, moves `FakeExplorerBackend` / `NullIpc` / `ConfigurableIpc` / `InlineProgress` to shared helper files, and replaces `DesktopPolishTests.cs` plus `ParityFeaturesTests.cs` with Core-type test files such as `ContextMenuBuilderTests.cs`, `ToolbarOverflowPlannerTests.cs`, `AdvancedRenameTests.cs`, and `FolderTreeTests.cs`.
 
 **Dialog / host duplication**
 
@@ -461,13 +464,13 @@ Record chosen options here when a cleanup pass starts.
 | 2 Unused ViewModels | B | Completed: finished the ViewModel cutover so `SearchViewModel` owns live search state/results/cancellation, `TransferViewModel` owns transfer operation identity/progress/cancellation, and `ToolbarViewModel` owns toolbar/status snapshots; removed the app-side `SearchHost` duplicate. |
 | 3 ExplorerWorkspace | | |
 | 4 dispatch.rs | B | Completed: split the service dispatcher into `dispatch/{mod,params,handlers,async_ops,tests}.rs`, moved async arm construction behind `async_ops`, kept `dispatch()` re-exported from the module, replaced domain match arms with generated `METHOD_*` constants, and updated schema/parity checks for the split module. |
-| 5 archive.rs | | |
+| 5 archive.rs | A | Completed: split archive handling into `archive/{mod,path,list,extract,mutate,create,tests}.rs` with public functions re-exported from `archive/mod.rs`; kept `resolve_rar_binary` on the archive API and did not move RAR installer behavior in this pass. |
 | 6 Copy/conflict engines | | |
-| 7 session.rs | | |
+| 7 session.rs | B | Completed: split the session runtime into `session/{mod,jobs,io,tests}.rs`; `serve_connection` now stays in `mod.rs`, pipe framing/outbound batching lives in `io.rs`, spawned service jobs live in `jobs.rs`, session tests moved to `tests.rs`, and shared spawned-job response helpers reduce repeated scheduler/result handling. |
 | 8 Dead AppState | A | Completed: removed dead core `state.rs`, unused helpers/deps, stale `src-tauri` service lookup, and live-code Tauri-era comments. |
-| 9 ISimpleFileIpc / tests | | |
+| 9 ISimpleFileIpc / tests | A | Completed: added shared `NullIpc` / `ConfigurableIpc` test doubles, removed the per-file `WorkspaceSettingsIpc` and `StubIpc` full-interface stubs, and moved `FakeExplorerBackend` into its own helper file. |
 | 10 Command routers | | |
 | 11 Other splits | | |
-| 12 Tests / dialogs | | |
+| 12 Tests / dialogs | A | Completed the test-file part: split `DesktopPolishTests.cs` and `ParityFeaturesTests.cs` into type-focused test classes, reused the shared IPC fake from Finding 9, and left dialog/host duplication for options B/C because 12A is the test split. |
 | 13 Small copy-pastes | | |
 | 14 IPC generated mix | | |
