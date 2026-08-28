@@ -38,13 +38,25 @@ const ciPath = '.github/workflows/ci.yml';
 const releasePath = '.github/workflows/release.yml';
 const releaseBuildPath = '.github/workflows/release-build.yml';
 const installerSmokePath = '.github/workflows/installer-smoke.yml';
+const dependabotAutoMergePath = '.github/workflows/dependabot-automerge.yml';
 const dependabotPath = '.github/dependabot.yml';
 
 const ciWorkflow = readText(ciPath);
 const releaseWorkflow = readText(releasePath);
 const releaseBuildWorkflow = readText(releaseBuildPath);
 const installerSmokeWorkflow = readText(installerSmokePath);
+const dependabotAutoMergeWorkflow = readText(dependabotAutoMergePath);
 const dependabot = readText(dependabotPath);
+
+// Keep the expected action pins in one place. Dependabot updates must change
+// these values in the same PR as the workflow files, and CI must pass before
+// the update can be merged.
+const actionPins = Object.freeze({
+    checkout: 'uses: actions/checkout@v7',
+    setupNode: 'uses: actions/setup-node@v7',
+    setupDotnet: 'uses: actions/setup-dotnet@v4',
+    uploadArtifact: 'uses: actions/upload-artifact@v4',
+});
 
 const ciSnippets = [
     'pull_request:',
@@ -52,10 +64,10 @@ const ciSnippets = [
     'permissions:',
     'contents: read',
     'pull-requests: read',
-    'uses: actions/checkout@v6',
+    actionPins.checkout,
     'uses: dtolnay/rust-toolchain@stable',
     'components: rustfmt, clippy',
-    'uses: actions/setup-node@v6',
+    actionPins.setupNode,
     'node-version: 24',
     'npm run check',
     'cargo fmt --all -- --check',
@@ -64,7 +76,7 @@ const ciSnippets = [
     'node scripts/cargo-audit-release.mjs',
     'x86_64-pc-windows-msvc',
     'cargo build -p simplefile-service --locked --release --target ${{ matrix.target }}',
-    'uses: actions/setup-dotnet@v4',
+    actionPins.setupDotnet,
     'dotnet-version: 10.0.x',
     'npm run check:winui',
     'cargo build -p simplefile-service --locked --release',
@@ -86,7 +98,9 @@ const releaseSnippets = [
     'Directory.Build.props',
     'crates/simplefile-service/Cargo.toml',
     'components: rustfmt, clippy',
-    'uses: actions/setup-node@v6',
+    actionPins.checkout,
+    actionPins.setupNode,
+    actionPins.setupDotnet,
     'node-version: 24',
     'npm run check',
     'cargo fmt --all -- --check',
@@ -116,16 +130,17 @@ const releaseBuildSnippets = [
     'permissions:',
     'contents: read',
     'runs-on: windows-latest',
-    'uses: actions/checkout@v6',
+    actionPins.checkout,
     'uses: dtolnay/rust-toolchain@stable',
     'targets: x86_64-pc-windows-msvc',
     'components: rustfmt, clippy',
-    'uses: actions/setup-node@v6',
+    actionPins.setupNode,
+    actionPins.setupDotnet,
     'node-version: 24',
     'tool: cargo-audit',
     'dist/winui',
     'build-winui-release.ps1',
-    'uses: actions/upload-artifact@v4',
+    actionPins.uploadArtifact,
     'retention-days: 30',
 ];
 
@@ -140,20 +155,37 @@ const installerSmokeSnippets = [
     'permissions:',
     'contents: read',
     'runs-on: windows-latest',
-    'uses: actions/checkout@v6',
+    actionPins.checkout,
     'uses: dtolnay/rust-toolchain@stable',
-    'uses: actions/setup-node@v6',
+    actionPins.setupNode,
+    actionPins.setupDotnet,
     'node-version: 24',
     'smoke:winui',
     'Install WiX Toolset (MSI)',
     'function Resolve-WixBin',
     'Get-Command candle.exe',
     'choco install wixtoolset -y --no-progress',
-    'uses: actions/upload-artifact@v4',
+    actionPins.uploadArtifact,
 ];
 
 for (const snippet of installerSmokeSnippets) {
     requireSnippet(installerSmokeWorkflow, installerSmokePath, snippet);
+}
+
+const dependabotAutoMergeSnippets = [
+    'workflow_run:',
+    'workflows: [CI]',
+    'types: [completed]',
+    'contents: write',
+    'pull-requests: write',
+    "github.event.workflow_run.conclusion == 'success'",
+    "github.event.workflow_run.event == 'pull_request'",
+    "github.event.workflow_run.actor.login == 'dependabot[bot]'",
+    'gh pr merge --auto --merge "$PR_URL"',
+];
+
+for (const snippet of dependabotAutoMergeSnippets) {
+    requireSnippet(dependabotAutoMergeWorkflow, dependabotAutoMergePath, snippet);
 }
 
 requireRegex(
