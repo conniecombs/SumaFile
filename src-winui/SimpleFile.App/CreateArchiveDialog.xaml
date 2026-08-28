@@ -1,0 +1,44 @@
+<ContentDialog
+    x:Class="SimpleFile.App.CreateArchiveDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Create Archive"
+    PrimaryButtonText="Create"
+    SecondaryButtonText="Cancel"
+    DefaultButton="Primary">
+
+    <StackPanel Spacing="16" Width="400">
+        
+        <StackPanel Spacing="4">
+            <TextBlock Text="Archive Name" FontWeight="SemiBold" />
+            <TextBox x:Name="NameInput" />
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+            <TextBlock Text="Format" FontWeight="SemiBold" />
+            <ComboBox x:Name="FormatCombo" HorizontalAlignment="Stretch" SelectionChanged="OnFormatChanged">
+                <ComboBoxItem Content="ZIP (.zip)" Tag="zip" />
+                <ComboBoxItem Content="TAR (.tar)" Tag="tar" />
+                <ComboBoxItem Content="TAR.GZ (.tar.gz)" Tag="tar.gz" />
+                <ComboBoxItem Content="RAR (.rar)" Tag="rar" />
+            </ComboBox>
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+            <TextBlock Text="Files to Compress:" FontWeight="SemiBold" />
+            <ScrollViewer MaxHeight="200" BorderBrush="{StaticResource SfBorderBrush}" BorderThickness="1" CornerRadius="4">
+                <ItemsControl x:Name="FilesList" Margin="4">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="4">
+                                <TextBlock Text="📄" />
+                                <TextBlock Text="{x:Bind}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </StackPanel>
+        
+    </StackPanel>
+</ContentDialog>

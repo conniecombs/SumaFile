@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": 13,
+  "method": "batch_rename",
+  "params": {
+    "entries": [
+      {
+        "path": "C:\\Users\\Public\\alpha draft.txt",
+        "new_name": "alpha-final.txt"
+      }
+    ]
+  }
+}

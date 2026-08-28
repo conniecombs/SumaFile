@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/simplefile-core",
+  "crates/simplefile-ipc",
+  "crates/simplefile-service",
+]

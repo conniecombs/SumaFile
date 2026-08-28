@@ -1,0 +1,65 @@
+{
+  "protocolVersion": 1,
+  "emitted": {
+    "file-change": {
+      "params": "FileChangeEvent",
+      "source": "crates/simplefile-service/src/watcher.rs",
+      "binaryFrameTag": 6
+    },
+    "operation-progress": {
+      "params": "ProgressUpdate",
+      "source": ["crates/simplefile-service/src/progress.rs", "crates/simplefile-service/src/session.rs"],
+      "statusValues": ["running", "completed", "error", "cancelled"],
+      "binaryFrameTag": 5
+    },
+    "search-results-batch": {
+      "params": { "type": "array", "items": "SearchResult" },
+      "source": "crates/simplefile-service/src/search.rs",
+      "binaryFrameTag": 3
+    },
+    "search-complete": {
+      "params": { "type": "number", "meaning": "result count" },
+      "source": "crates/simplefile-service/src/search.rs",
+      "notes": "Emitted for WinUI clients subscribed during search_files."
+    },
+    "update-chunk": {
+      "params": { "type": "tuple", "items": ["number", "number|null"] },
+      "source": "crates/simplefile-service/src/session.rs",
+      "notes": "Positional array [bytesDownloaded, totalBytes|null] matching UpdateChunkPayload."
+    },
+    "list_directory.chunk": {
+      "params": "DirectoryListingChunkNotification",
+      "source": "replaces tauri::ipc::Channel on list_directory",
+      "chunkSizes": { "first": 96, "later": 256 },
+      "binaryFrameTag": 1
+    }
+  },
+  "typedNotEmitted": {
+    "operation-complete": {
+      "reason": "Present on TauriEventMap only. Completion is ProgressUpdate.status plus the command result."
+    },
+    "operation-error": {
+      "reason": "Present on TauriEventMap only. Errors are ProgressUpdate.status === error plus Err(String)."
+    }
+  },
+  "hostOnly": {
+    "tauri://drag-enter": {
+      "replacement": "WinUI DragEnter",
+      "params": "NativeFileDropEventPayload"
+    },
+    "tauri://drag-drop": {
+      "replacement": "WinUI Drop",
+      "params": "NativeFileDropEventPayload"
+    },
+    "tauri://drag-leave": {
+      "replacement": "WinUI DragLeave",
+      "params": "NativeFileDropEventPayload"
+    }
+  },
+  "serviceNotifications": {
+    "app.restart-required": {
+      "params": { "type": "object", "fields": [] },
+      "notes": "WinUI-era install_update completion. Not a current Tauri event. UI exits; NSIS relaunches. Do not emit from the Tauri host."
+    }
+  }
+}

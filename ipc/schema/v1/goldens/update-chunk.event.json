@@ -1,0 +1,5 @@
+{
+  "jsonrpc": "2.0",
+  "method": "update-chunk",
+  "params": [1048576, 8388608]
+}

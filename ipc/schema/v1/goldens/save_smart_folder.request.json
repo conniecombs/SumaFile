@@ -1,0 +1,23 @@
+{
+  "jsonrpc": "2.0",
+  "id": 14,
+  "method": "save_smart_folder",
+  "params": {
+    "folder": {
+      "id": "sf-readme",
+      "name": "Readmes",
+      "icon": null,
+      "search_options": {
+        "query": "readme",
+        "search_path": "C:\\Users\\Public",
+        "case_sensitive": false,
+        "include_hidden": false,
+        "file_types": ["md"],
+        "max_results": 200,
+        "max_depth": 6,
+        "search_id": null,
+        "content_search": false
+      }
+    }
+  }
+}

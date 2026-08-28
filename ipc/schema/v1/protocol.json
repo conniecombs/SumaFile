@@ -1,0 +1,105 @@
+{
+  "protocolVersion": 1,
+  "jsonrpc": "2.0",
+  "identifier": "com.simplefile.desktop",
+  "transport": {
+    "kind": "windows-named-pipe",
+    "framing": "uint32-le-length-prefixed-json-or-binary",
+    "jsonFrames": "UTF-8 JSON-RPC 2.0 requests, responses, and fallback notifications",
+    "binaryFrames": {
+      "magic": "SFB1",
+      "version": 1,
+      "negotiatedBy": "ipc.handshake.params.binaryHotFrames",
+      "layout": "magic[4] version:u8 tag:u8 payload",
+      "tags": {
+        "1": "list_directory.chunk notification",
+        "2": "list_directory result response",
+        "3": "search-results-batch notification",
+        "4": "search_files result response",
+        "5": "operation-progress notification",
+        "6": "file-change notification",
+        "7": "generate_thumbnail result response",
+        "8": "generate_thumbnails result response"
+      }
+    },
+    "maxFrameBytes": 83886080,
+    "batchRequests": false,
+    "paramsStyle": "object"
+  },
+  "compatibility": {
+    "rule": "additive-optional-fields-ok",
+    "renamesRequireBump": true,
+    "frozenMethodNames": true,
+    "notes": "protocolVersion 1 is frozen to the 76 WinUI service domain method names plus ipc.handshake. Unknown major versions return an application error and leave the process up."
+  },
+  "handshake": {
+    "method": "ipc.handshake",
+    "mustBeFirst": true,
+    "params": ["protocolVersion", "clientName", "authToken", "binaryHotFrames"],
+    "result": ["protocolVersion", "appVersion", "identifier", "methodCount", "binaryHotFrames", "binaryFrameVersion"]
+  },
+  "controlMethods": ["ipc.health", "ipc.shutdown"],
+  "errors": {
+    "application": {
+      "code": -32000,
+      "mapsFrom": "Err(String)",
+      "preserveMessageExactly": true,
+      "knownPrefixes": ["CONFLICT:", "TRASH_UNAVAILABLE:", "RESULT_TOO_LARGE:", "HOST_OWNED:"]
+    },
+    "hostOwned": {
+      "code": -32001,
+      "messagePrefix": "HOST_OWNED:",
+      "methods": ["select_directory"]
+    },
+    "invalidRequest": { "code": -32600 },
+    "methodNotFound": { "code": -32601 },
+    "invalidParams": { "code": -32602 },
+    "internal": { "code": -32603 }
+  },
+  "inboundOversize": {
+    "action": "disconnect",
+    "log": "%LOCALAPPDATA%\\SimpleFile\\startup.log"
+  },
+  "outboundOversize": {
+    "previewMethods": ["read_file_preview", "generate_thumbnail", "generate_thumbnails"],
+    "unboundedArrayAction": "return -32000 RESULT_TOO_LARGE and keep the pipe"
+  },
+  "hotPathOptions": {
+    "listDirectory": {
+      "mode": ["full", "light"],
+      "finalEntriesFalse": "chunks carry entries; final result carries path, parent, is_network, and entries: []",
+      "lightMode": "entries may omit repeated path text and derived extension text; clients reconstruct them from the listing path and entry name"
+    }
+  },
+  "cancellation": {
+    "jsonrpcCancel": false,
+    "clientCancellationTokenCancelsBackend": false,
+    "commands": [
+      "cancel_operation",
+      "cancel_search",
+      "cancel_folder_size",
+      "cancel_folder_item_count",
+      "cancel_count_items",
+      "cancel_folder_metrics",
+      "cancel_disk_cleanup",
+      "cancel_duplicate_check"
+    ],
+    "tokens": {
+      "operationId": {
+        "type": "string",
+        "generatedBy": "utils::generate_operation_id",
+        "pattern": "op_{unix_secs}_{counter}",
+        "usedBy": ["copy_with_progress", "move_with_progress", "cancel_operation", "operation-progress"]
+      },
+      "searchId": {
+        "type": "string",
+        "optionalOnSearch": true,
+        "usedBy": ["search_files.options.search_id", "cancel_search"]
+      }
+    }
+  },
+  "showMainWindow": {
+    "method": "show_main_window",
+    "serviceBehavior": "Ok(null)"
+  }
+}

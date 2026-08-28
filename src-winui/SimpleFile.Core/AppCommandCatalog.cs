@@ -1,0 +1,92 @@
+namespace SimpleFile.Core;
+
+public sealed class AppCommand
+{
+    public AppCommand(string id, string label, string group, string? shortcut = null)
+    {
+        Id = id;
+        Label = label;
+        Group = group;
+        Shortcut = shortcut;
+    }
+
+    public string Id { get; }
+    public string Label { get; }
+    public string Group { get; }
+    public string? Shortcut { get; }
+}
+
+/// <summary>
+/// Command-palette catalog for the WinUI shell.
+/// </summary>
+public static class AppCommandCatalog
+{
+    public static readonly IReadOnlyList<AppCommand> All =
+    [
+        new("go-home", "Go home", "Navigation", "Alt+Home"),
+        new("refresh", "Refresh", "Navigation", "F5"),
+        new("copy", "Copy", "Clipboard", "Ctrl+C"),
+        new("cut", "Cut", "Clipboard", "Ctrl+X"),
+        new("paste", "Paste", "Clipboard", "Ctrl+V"),
+        new("clipboard-history", "Clipboard history", "Clipboard", "Ctrl+Shift+V"),
+        new("operation-history", "Operation history", "History"),
+        new("clear-recent-history", "Clear recent history", "History"),
+        new("undo", "Undo", "History", "Ctrl+Z"),
+        new("redo", "Redo", "History", "Ctrl+Y"),
+        new("delete", "Move to Recycle Bin", "File", "Delete"),
+        new("delete-permanent", "Delete Permanently", "File", "Shift+Delete"),
+        new("rename", "Rename", "File", "F2"),
+        new("advanced-rename", "Advanced rename", "File"),
+        new("new-folder", "New folder", "File", "Ctrl+Shift+N"),
+        new("new-file", "New file", "File", "Ctrl+N"),
+        new("create-archive", "Create archive", "Archive"),
+        new("terminal", "Open terminal", "Tools", "F4"),
+        new("preview", "Toggle preview pane", "View"),
+        new("toggle-side-menu", "Toggle side menu", "View"),
+        new("dual-pane", "Open or close second pane", "View", "F6"),
+        new("close-left-pane", "Close left pane", "View"),
+        new("view-details", "View: details", "View"),
+        new("view-list", "View: list", "View"),
+        new("view-tiles", "View: tiles", "View"),
+        new("view-content", "View: content", "View"),
+        new("icon-size-small", "Icon size: small", "View"),
+        new("icon-size-medium", "Icon size: medium", "View"),
+        new("icon-size-large", "Icon size: large", "View"),
+        new("icon-size-extra-large", "Icon size: extra large", "View"),
+        new("icon-size-jumbo", "Icon size: jumbo", "View"),
+        new("icon-size-huge", "Icon size: huge", "View"),
+        new("icon-size-maximum", "Icon size: maximum", "View"),
+        new("search", "Focus search", "Search", "Ctrl+F"),
+        new("quick-look", "Quick Look", "Inspection", "Space"),
+        new("properties", "Properties", "Inspection"),
+        new("color-label", "Set color label", "Organization"),
+        new("folder-metrics", "Folder metrics", "Tools"),
+        new("disk-cleanup", "Disk cleanup", "Tools"),
+        new("duplicate-checker", "Duplicate checker", "Tools"),
+        new("settings", "Settings", "App", "Ctrl+Shift+S"),
+        new("keyboard-help", "Keyboard shortcuts", "App", "F1"),
+        new("git-pull", "Git: pull current directory", "Git"),
+        new("git-push", "Git: push current directory", "Git"),
+    ];
+
+    public static IReadOnlyList<AppCommand> Filter(string? query)
+    {
+        var needle = (query ?? "").Trim();
+        if (needle.Length == 0)
+        {
+            return All;
+        }
+
+        return All
+            .Where(command =>
+                command.Label.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                || command.Id.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                || command.Group.Contains(needle, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    public static AppCommand? Find(string id)
+    {
+        return All.FirstOrDefault(command => string.Equals(command.Id, id, StringComparison.Ordinal));
+    }
+}

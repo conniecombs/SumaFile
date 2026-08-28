@@ -1,0 +1,49 @@
+[package]
+name = "simplefile-core"
+version = "0.1.0"
+description = "Reusable SumaFile backend domain types and utilities"
+authors = ["SumaFile Team"]
+license-file = "../../LICENSE"
+repository = "https://github.com/conniecombs/SimpleFile-Windows"
+edition = "2021"
+
+[dependencies]
+chrono = "0.4"
+log = "0.4"
+notify = { version = "8", features = ["serde"] }
+parking_lot = "0.12"
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+trash = "5"
+getrandom = "0.4"
+filetime = "0.2"
+base64 = "0.23"
+flate2 = "1"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+md-5 = "0.11"
+sha1 = "0.11"
+sha2 = "0.11"
+serde_json = "1"
+tar = "0.4"
+unrar = "0.5"
+exif = { package = "kamadak-exif", version = "0.6" }
+lopdf = { version = "0.44", default-features = false }
+lofty = "0.24"
+zip = { version = "8", default-features = false, features = ["bzip2", "deflate64", "deflate", "lzma", "ppmd", "time", "zstd", "xz"] }
+ureq = "3"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = [
+  "accctrl",
+  "aclapi",
+  "errhandlingapi",
+  "fileapi",
+  "handleapi",
+  "minwinbase",
+  "minwindef",
+  "shellapi",
+  "winbase",
+  "winerror",
+  "winnetwk",
+  "winnt",
+] }

@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "method": "list_directory.chunk",
+  "params": {
+    "requestId": 7,
+    "path": "C:\\Users\\Public",
+    "parent": "C:\\Users",
+    "entries": [],
+    "chunk_index": 0,
+    "done": true,
+    "is_network": false
+  }
+}

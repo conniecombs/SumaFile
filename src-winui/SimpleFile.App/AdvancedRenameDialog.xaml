@@ -1,0 +1,609 @@
+<Window
+    x:Class="SimpleFile.App.AdvancedRenameDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:SimpleFile.App"
+    Title="Advanced Rename">
+
+    <Grid
+        x:Name="DialogRoot"
+        MinWidth="760"
+        MinHeight="500"
+        Padding="24"
+        Background="{ThemeResource SfBgPrimaryBrush}"
+        Loaded="OnLoaded"
+        SizeChanged="OnRootSizeChanged">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,14" Spacing="4">
+            <TextBlock
+                FontSize="20"
+                FontWeight="SemiBold"
+                Text="Advanced Rename" />
+            <TextBlock
+                x:Name="SummaryText"
+                Foreground="{ThemeResource SfTextMutedBrush}"
+                Text="Building preview..."
+                TextWrapping="Wrap" />
+        </StackPanel>
+
+        <Grid
+            x:Name="PaneGrid"
+            Grid.Row="1"
+            MinHeight="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="OptionsPaneColumn" Width="470" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition x:Name="PreviewPaneColumn" Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <ScrollViewer
+                Grid.Column="0"
+                Padding="0,0,8,0"
+                VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="8">
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <StackPanel Orientation="Horizontal" Spacing="16">
+                                <CheckBox
+                                    x:Name="ScopeRecursiveCheck"
+                                    Checked="OnPlanChanged"
+                                    Content="Include files inside selected folders"
+                                    Unchecked="OnPlanChanged" />
+                                <CheckBox
+                                    x:Name="ScopeHiddenCheck"
+                                    Checked="OnPlanChanged"
+                                    Content="Include dotfiles"
+                                    Unchecked="OnPlanChanged" />
+                            </StackPanel>
+                            <StackPanel Spacing="4">
+                                <TextBlock
+                                    FontSize="12"
+                                    FontWeight="SemiBold"
+                                    Text="Apply text operations to" />
+                                <ComboBox
+                                    x:Name="ApplyPartCombo"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="OnSelectionChanged">
+                                    <ComboBoxItem Content="Full name" Tag="full" />
+                                    <ComboBoxItem Content="Name without extension" Tag="base" />
+                                    <ComboBoxItem Content="Extension only" Tag="extension" />
+                                </ComboBox>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="FilterEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Filter Targets"
+                                FontWeight="SemiBold"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="FilterBody" Spacing="8">
+                                <TextBox
+                                    x:Name="FilterTextBox"
+                                    Header="Name"
+                                    PlaceholderText="Only names matching"
+                                    TextChanged="OnTextChanged" />
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <CheckBox
+                                        x:Name="FilterRegexCheck"
+                                        Checked="OnPlanChanged"
+                                        Content="Regex"
+                                        Unchecked="OnPlanChanged" />
+                                    <CheckBox
+                                        x:Name="FilterCaseCheck"
+                                        Checked="OnPlanChanged"
+                                        Content="Case sensitive"
+                                        Unchecked="OnPlanChanged" />
+                                    <CheckBox
+                                        x:Name="FilterInvertCheck"
+                                        Checked="OnPlanChanged"
+                                        Content="Invert"
+                                        Unchecked="OnPlanChanged" />
+                                </StackPanel>
+                                <TextBox
+                                    x:Name="FilterExtensionsBox"
+                                    Header="Extensions"
+                                    PlaceholderText="jpg, png, md"
+                                    TextChanged="OnTextChanged" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="TemplateEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Template"
+                                FontWeight="SemiBold"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="TemplateBody" Spacing="8">
+                                <TextBox
+                                    x:Name="TemplatePatternBox"
+                                    Header="Pattern"
+                                    PlaceholderText="{}{base}_{n}"
+                                    TextChanged="OnTextChanged" />
+                                <CheckBox
+                                    x:Name="TemplateKeepExtCheck"
+                                    Checked="OnPlanChanged"
+                                    Content="Keep extension"
+                                    IsChecked="True"
+                                    Unchecked="OnPlanChanged" />
+                                <TextBlock
+                                    FontSize="12"
+                                    Foreground="{ThemeResource SfTextMutedBrush}"
+                                    Text="{}{base} {ext} {name} {parent} {n} {yyyy} {mm} {dd} {hh} {min} {ss} {date} {time}"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="RemoveEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Remove String"
+                                FontWeight="SemiBold"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="RemoveBody" Spacing="8">
+                                <TextBox
+                                    x:Name="RemoveStringBox"
+                                    Header="Remove"
+                                    PlaceholderText="Text to remove"
+                                    TextChanged="OnTextChanged" />
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <CheckBox
+                                        x:Name="RemoveRegexCheck"
+                                        Checked="OnPlanChanged"
+                                        Content="Regex"
+                                        Unchecked="OnPlanChanged" />
+                                    <CheckBox
+                                        x:Name="RemoveCaseCheck"
+                                        Checked="OnPlanChanged"
+                                        Content="Case sensitive"
+                                        Unchecked="OnPlanChanged" />
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="ReplaceEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Replace String"
+                                FontWeight="SemiBold"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="ReplaceBody" Spacing="8">
+                                <TextBox
+                                    x:Name="ReplaceFindBox"
+                                    Header="Find"
+                                    PlaceholderText="Find text"
+                                    TextChanged="OnTextChanged" />
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <CheckBox
+                                        x:Name="ReplaceRegexCheck"
+                                        Checked="OnPlanChanged"
+                                        Content="Regex"
+                                        Unchecked="OnPlanChanged" />
+                                    <CheckBox
+                                        x:Name="ReplaceCaseCheck"
+                                        Checked="OnPlanChanged"
+                                        Content="Case sensitive"
+                                        Unchecked="OnPlanChanged" />
+                                </StackPanel>
+                                <TextBox
+                                    x:Name="ReplaceWithBox"
+                                    Header="Replace"
+                                    PlaceholderText="Replace with"
+                                    TextChanged="OnTextChanged" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="TrimEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Trim Whitespace"
+                                FontWeight="SemiBold"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="TrimBody" Spacing="8">
+                                <ComboBox
+                                    x:Name="TrimModeCombo"
+                                    Header="Mode"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="OnSelectionChanged">
+                                    <ComboBoxItem Content="Start and end" Tag="both" />
+                                    <ComboBoxItem Content="Start only" Tag="start" />
+                                    <ComboBoxItem Content="End only" Tag="end" />
+                                </ComboBox>
+                                <CheckBox
+                                    x:Name="TrimCollapseCheck"
+                                    Checked="OnPlanChanged"
+                                    Content="Collapse spaces"
+                                    Unchecked="OnPlanChanged" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="AddEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Add String"
+                                FontWeight="SemiBold"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="AddBody" Spacing="8">
+                                <TextBox
+                                    x:Name="AddStringBox"
+                                    Header="Insert"
+                                    PlaceholderText="Text to add"
+                                    TextChanged="OnTextChanged" />
+                                <ComboBox
+                                    x:Name="AddPositionCombo"
+                                    Header="Position"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="OnSelectionChanged">
+                                    <ComboBoxItem Content="Before name" Tag="prefix" />
+                                    <ComboBoxItem Content="After name" Tag="suffix" />
+                                    <ComboBoxItem Content="Before extension" Tag="before-ext" />
+                                    <ComboBoxItem Content="At character" Tag="index" />
+                                </ComboBox>
+                                <NumberBox
+                                    x:Name="AddIndexBox"
+                                    Header="Index"
+                                    Minimum="0"
+                                    SpinButtonPlacementMode="Compact"
+                                    Value="1"
+                                    ValueChanged="OnNumberChanged" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="CapitalizeEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Capitalize"
+                                FontWeight="SemiBold"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="CapitalizeBody" Spacing="8">
+                                <ComboBox
+                                    x:Name="CapitalizeModeCombo"
+                                    Header="Mode"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="OnSelectionChanged">
+                                    <ComboBoxItem Content="Capitalize first letter" Tag="first" />
+                                    <ComboBoxItem Content="Capitalize each word" Tag="words" />
+                                    <ComboBoxItem Content="Title Case" Tag="title" />
+                                    <ComboBoxItem Content="Sentence case" Tag="sentence" />
+                                    <ComboBoxItem Content="UPPERCASE" Tag="upper" />
+                                    <ComboBoxItem Content="lowercase" Tag="lower" />
+                                </ComboBox>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="SeparatorEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Separators"
+                                FontWeight="SemiBold"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="SeparatorBody" Spacing="8">
+                                <ComboBox
+                                    x:Name="SeparatorModeCombo"
+                                    Header="Convert"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="OnSelectionChanged">
+                                    <ComboBoxItem Content="Spaces to dashes" Tag="spaces-to-dashes" />
+                                    <ComboBoxItem Content="Spaces to underscores" Tag="spaces-to-underscores" />
+                                    <ComboBoxItem Content="Underscores to spaces" Tag="underscores-to-spaces" />
+                                    <ComboBoxItem Content="Dashes to spaces" Tag="dashes-to-spaces" />
+                                    <ComboBoxItem Content="Dots to spaces" Tag="dots-to-spaces" />
+                                </ComboBox>
+                                <CheckBox
+                                    x:Name="SeparatorCollapseCheck"
+                                    Checked="OnPlanChanged"
+                                    Content="Collapse repeats"
+                                    IsChecked="True"
+                                    Unchecked="OnPlanChanged" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="NumberEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Sequential Numbering"
+                                FontWeight="SemiBold"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="NumberBody" Spacing="8">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <NumberBox
+                                        x:Name="NumberStartBox"
+                                        Header="Start"
+                                        Minimum="0"
+                                        SpinButtonPlacementMode="Compact"
+                                        Value="1"
+                                        ValueChanged="OnNumberChanged" />
+                                    <NumberBox
+                                        x:Name="NumberStepBox"
+                                        Grid.Column="1"
+                                        Header="Step"
+                                        Minimum="1"
+                                        SpinButtonPlacementMode="Compact"
+                                        Value="1"
+                                        ValueChanged="OnNumberChanged" />
+                                    <NumberBox
+                                        x:Name="NumberPadBox"
+                                        Grid.Column="2"
+                                        Header="Digits"
+                                        Maximum="10"
+                                        Minimum="1"
+                                        SpinButtonPlacementMode="Compact"
+                                        Value="3"
+                                        ValueChanged="OnNumberChanged" />
+                                </Grid>
+                                <ComboBox
+                                    x:Name="NumberPositionCombo"
+                                    Header="Position"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="OnSelectionChanged">
+                                    <ComboBoxItem Content="Before name" Tag="prefix" />
+                                    <ComboBoxItem Content="After name" Tag="suffix" />
+                                    <ComboBoxItem Content="Before extension" Tag="before-ext" />
+                                    <ComboBoxItem Content="Replace name" Tag="replace" />
+                                </ComboBox>
+                                <TextBox
+                                    x:Name="NumberSeparatorBox"
+                                    Header="Separator"
+                                    MaxLength="8"
+                                    PlaceholderText="_"
+                                    Text="_"
+                                    TextChanged="OnTextChanged" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="ExtensionEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Extension"
+                                FontWeight="SemiBold"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="ExtensionBody" Spacing="8">
+                                <ComboBox
+                                    x:Name="ExtensionModeCombo"
+                                    Header="Mode"
+                                    HorizontalAlignment="Stretch"
+                                    SelectionChanged="OnSelectionChanged">
+                                    <ComboBoxItem Content="lowercase" Tag="lower" />
+                                    <ComboBoxItem Content="UPPERCASE" Tag="upper" />
+                                    <ComboBoxItem Content="Set to" Tag="set" />
+                                    <ComboBoxItem Content="Remove" Tag="remove" />
+                                </ComboBox>
+                                <TextBox
+                                    x:Name="ExtensionCustomBox"
+                                    Header="Value"
+                                    PlaceholderText="txt"
+                                    TextChanged="OnTextChanged" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        Padding="10"
+                        Background="{ThemeResource SfBgSecondaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                        <StackPanel Spacing="8">
+                            <CheckBox
+                                x:Name="SanitizeEnabledCheck"
+                                Checked="OnPlanChanged"
+                                Content="Sanitize Invalid Characters"
+                                FontWeight="SemiBold"
+                                IsChecked="True"
+                                Unchecked="OnPlanChanged" />
+                            <StackPanel x:Name="SanitizeBody" Spacing="8">
+                                <TextBox
+                                    x:Name="SanitizeReplacementBox"
+                                    Header="Replace with"
+                                    MaxLength="8"
+                                    Text="_"
+                                    TextChanged="OnTextChanged" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <local:PaneResizeGrip
+                x:Name="RenamePaneDivider"
+                Grid.Column="1"
+                AutomationProperties.Name="Resize advanced rename panes"
+                DoubleTapped="OnPaneDividerDoubleTapped"
+                PointerMoved="OnPaneDividerMoved"
+                PointerPressed="OnPaneDividerPressed"
+                PointerReleased="OnPaneDividerReleased">
+                <Rectangle
+                    Width="1"
+                    HorizontalAlignment="Center"
+                    Fill="{ThemeResource SfBorderBrush}" />
+            </local:PaneResizeGrip>
+
+            <Border
+                Grid.Column="2"
+                Margin="8,0,0,0"
+                Background="{ThemeResource SfBgSecondaryBrush}"
+                BorderBrush="{ThemeResource SfBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="6">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Border
+                        Padding="10,8"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="0,0,0,1">
+                        <Grid>
+                            <TextBlock FontWeight="SemiBold" Text="Preview" />
+                            <TextBlock
+                                x:Name="PreviewCountText"
+                                HorizontalAlignment="Right"
+                                Foreground="{ThemeResource SfTextMutedBrush}" />
+                        </Grid>
+                    </Border>
+                    <ListView
+                        x:Name="PreviewList"
+                        Grid.Row="1"
+                        SelectionMode="None">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="10,6" RowSpacing="3">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock
+                                            Foreground="{ThemeResource SfTextMutedBrush}"
+                                            Text="{Binding OldName}"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Grid.Column="1"
+                                            Foreground="{ThemeResource SfTextMutedBrush}"
+                                            Text="-&gt;" />
+                                        <TextBlock
+                                            Grid.Column="2"
+                                            FontWeight="SemiBold"
+                                            Text="{Binding NewName}"
+                                            TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                    <TextBlock
+                                        Grid.Row="1"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                        Text="{Binding DetailText}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid
+            Grid.Row="2"
+            Margin="0,16,0,0"
+            ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Button
+                x:Name="CancelButton"
+                Grid.Column="1"
+                MinWidth="120"
+                Click="OnCancelClicked"
+                Content="Cancel" />
+            <Button
+                x:Name="RenameButton"
+                Grid.Column="2"
+                MinWidth="160"
+                Click="OnRenameClicked"
+                Content="Rename"
+                Style="{StaticResource AccentButtonStyle}" />
+        </Grid>
+    </Grid>
+</Window>

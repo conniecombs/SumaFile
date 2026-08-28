@@ -1,0 +1,96 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <AssemblyName>SumaFile</AssemblyName>
+    <Description>SumaFile WinUI host</Description>
+    <RootNamespace>SimpleFile.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\packaging\winui\icon.ico</ApplicationIcon>
+    <Platforms>x64</Platforms>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <AppxPackage>false</AppxPackage>
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+    <Content Include="..\..\base_icon.png"
+             Link="SumaFile.png"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\packaging\winui\icon.ico"
+             Link="SumaFile.ico"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SimpleFile.Core\SimpleFile.Core.csproj" />
+  </ItemGroup>
+
+  <!-- WASDK self-contained deletes the merged resources.pri after runtime MSIX extract.
+       XamlControlsResources then cannot resolve
+       ms-appx:///Microsoft.UI.Xaml/Themes/themeresources.xaml and the process
+       dies with 0xC000027B before a window appears. Restore that PRI. -->
+  <Target Name="CopyWindowsAppSdkMergedPri"
+          BeforeTargets="CopyFilesToOutputDirectory;PublishUnpackagedXamlPayload"
+          Condition="'$(WindowsAppSDKSelfContained)'=='true'">
+    <PropertyGroup>
+      <_WasdkMsixArch Condition="'$(_WasdkMsixArch)'=='' and ('$(Platform)'=='x64' or '$(RuntimeIdentifier)'=='win-x64')">x64</_WasdkMsixArch>
+      <_WasdkMsixArch Condition="'$(_WasdkMsixArch)'==''">x64</_WasdkMsixArch>
+      <_WasdkPriDir>$([MSBuild]::NormalizeDirectory('$(IntermediateOutputPath)','WasdkMergedPri'))</_WasdkPriDir>
+      <_WasdkRuntimePackageDir>$([MSBuild]::NormalizeDirectory('$(PkgMicrosoft_WindowsAppSDK_Runtime)'))</_WasdkRuntimePackageDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <_WasdkRuntimeMsix Include="$([MSBuild]::NormalizeDirectory('$(_WasdkRuntimePackageDir)','tools\MSIX\win10-$(_WasdkMsixArch)'))Microsoft.WindowsAppRuntime.*.msix"
+                         Exclude="$([MSBuild]::NormalizeDirectory('$(_WasdkRuntimePackageDir)','tools\MSIX\win10-$(_WasdkMsixArch)'))Microsoft.WindowsAppRuntime.Main.*.msix;$([MSBuild]::NormalizeDirectory('$(_WasdkRuntimePackageDir)','tools\MSIX\win10-$(_WasdkMsixArch)'))Microsoft.WindowsAppRuntime.DDLM.*.msix;$([MSBuild]::NormalizeDirectory('$(_WasdkRuntimePackageDir)','tools\MSIX\win10-$(_WasdkMsixArch)'))Microsoft.WindowsAppRuntime.Singleton.*.msix"
+                         Condition="'$(_WasdkRuntimePackageDir)'!=''" />
+    </ItemGroup>
+    <Error Condition="'@(_WasdkRuntimeMsix)'==''"
+           Text="Could not find the Windows App SDK runtime MSIX used to restore resources.pri." />
+    <MakeDir Directories="$(OutDir);$(_WasdkPriDir)" />
+    <Unzip SourceFiles="@(_WasdkRuntimeMsix)"
+           DestinationFolder="$(_WasdkPriDir)"
+           SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(_WasdkPriDir)resources.pri"
+          DestinationFiles="$(OutDir)resources.pri"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(_WasdkPriDir)resources.pri')" />
+    <ItemGroup Condition="Exists('$(_WasdkPriDir)resources.pri')">
+      <Content Include="$(_WasdkPriDir)resources.pri"
+               CopyToPublishDirectory="PreserveNewest"
+               TargetPath="resources.pri"
+               Visible="false" />
+    </ItemGroup>
+  </Target>
+
+  <!-- `dotnet publish` does not copy compiled XBF pages. Without them,
+       MainWindow.InitializeComponent cannot load ms-appx:///MainWindow.xaml. -->
+  <Target Name="PublishUnpackagedXamlPayload" AfterTargets="Publish">
+    <ItemGroup>
+      <_XamlXbf Include="$(OutDir)*.xbf" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_XamlXbf)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(OutDir)resources.pri"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(OutDir)resources.pri')" />
+  </Target>
+</Project>

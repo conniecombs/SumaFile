@@ -1,0 +1,15 @@
+<ContentDialog
+    x:Class="SimpleFile.App.AboutDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    CloseButtonText="Close">
+    
+    <StackPanel Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="24">
+        <TextBlock Text="📁" FontSize="72" HorizontalAlignment="Center" />
+        <TextBlock Text="SumaFile" FontSize="28" FontWeight="Bold" HorizontalAlignment="Center" />
+        <TextBlock x:Name="VersionText" FontSize="14" HorizontalAlignment="Center" Foreground="{StaticResource SfTextMutedBrush}" />
+        <TextBlock x:Name="OsText" FontSize="12" HorizontalAlignment="Center" Foreground="{StaticResource SfTextMutedBrush}" />
+        <HyperlinkButton Content="View on GitHub" Click="OnGitHubClicked" HorizontalAlignment="Center" Margin="0,12,0,0" />
+        <TextBlock x:Name="StatusText" FontSize="12" HorizontalAlignment="Center" Foreground="{StaticResource SfTextMutedBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
+    </StackPanel>
+</ContentDialog>

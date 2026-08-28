@@ -1,0 +1,12 @@
+[package]
+name = "simplefile-ipc"
+version = "1.1.0"
+description = "SumaFile IPC protocol constants and schema tests"
+authors = ["SumaFile Team"]
+license-file = "../../LICENSE"
+repository = "https://github.com/conniecombs/SimpleFile-Windows"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

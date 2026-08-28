@@ -1,0 +1,173 @@
+<UserControl
+    x:Class="SimpleFile.App.ProgressPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Border
+            MinWidth="560"
+            MinHeight="252"
+            Margin="16"
+            Padding="16"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch"
+            Background="{ThemeResource SfBgPrimaryBrush}"
+            BorderBrush="{ThemeResource SfBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+            <Grid RowSpacing="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0">
+                    <StackPanel Spacing="3">
+                        <TextBlock
+                            x:Name="OperationLabel"
+                            FontSize="15"
+                            FontWeight="SemiBold"
+                            Foreground="{ThemeResource SfTextPrimaryBrush}"
+                            TextTrimming="CharacterEllipsis" />
+                        <TextBlock
+                            x:Name="SummaryLabel"
+                            FontSize="12"
+                            Foreground="{ThemeResource SfTextMutedBrush}"
+                            TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Grid>
+
+                <Grid Grid.Row="1">
+                    <ProgressBar
+                        x:Name="ProgressBar"
+                        Height="4"
+                        Margin="0,18,0,0"
+                        Minimum="0"
+                        Maximum="100"
+                        Background="{ThemeResource SfBorderBrush}"
+                        Foreground="{ThemeResource SfAccentBrush}" />
+                    <TextBlock
+                        x:Name="PercentLabel"
+                        HorizontalAlignment="Right"
+                        FontSize="12"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource SfTextPrimaryBrush}" />
+                </Grid>
+
+                <Grid Grid.Row="2">
+                    <ProgressBar
+                        x:Name="FileProgressBar"
+                        Height="3"
+                        Margin="0,18,0,0"
+                        Minimum="0"
+                        Maximum="100"
+                        Background="{ThemeResource SfBorderBrush}"
+                        Foreground="{ThemeResource SfAccentBrush}" />
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            x:Name="FileSummaryLabel"
+                            Grid.Column="0"
+                            FontSize="12"
+                            Foreground="{ThemeResource SfTextMutedBrush}"
+                            TextTrimming="CharacterEllipsis" />
+                        <TextBlock
+                            x:Name="FileRateLabel"
+                            Grid.Column="1"
+                            FontSize="12"
+                            Foreground="{ThemeResource SfTextMutedBrush}" />
+                    </Grid>
+                </Grid>
+
+                <Grid Grid.Row="3" RowSpacing="4">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock
+                        x:Name="CurrentItemLabel"
+                        Grid.Row="0"
+                        FontSize="13"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                        MaxLines="1"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        x:Name="FromLabel"
+                        Grid.Row="1"
+                        FontSize="12"
+                        Foreground="{ThemeResource SfTextMutedBrush}"
+                        MaxLines="1"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        x:Name="ToLabel"
+                        Grid.Row="2"
+                        FontSize="12"
+                        Foreground="{ThemeResource SfTextMutedBrush}"
+                        MaxLines="1"
+                        TextTrimming="CharacterEllipsis" />
+                </Grid>
+
+                <Grid Grid.Row="4" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock
+                        x:Name="SpeedLabel"
+                        Grid.Column="0"
+                        FontSize="12"
+                        Foreground="{ThemeResource SfTextMutedBrush}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock
+                        x:Name="EtaLabel"
+                        Grid.Column="1"
+                        HorizontalAlignment="Right"
+                        FontSize="12"
+                        Foreground="{ThemeResource SfTextMutedBrush}"
+                        TextTrimming="CharacterEllipsis" />
+                </Grid>
+
+                <StackPanel
+                    Grid.Row="5"
+                    HorizontalAlignment="Right"
+                    Orientation="Horizontal"
+                    Spacing="8">
+                    <Button
+                        x:Name="PauseButton"
+                        MinWidth="88"
+                        IsEnabled="False"
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        ToolTipService.ToolTip="Pause is not available for this transfer yet">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon
+                                FontFamily="{StaticResource SfIconFont}"
+                                FontSize="11"
+                                Glyph="&#xE769;" />
+                            <TextBlock Text="Pause" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="CancelButton"
+                        MinWidth="88"
+                        Style="{StaticResource SfGhostButtonStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon
+                                FontFamily="{StaticResource SfIconFont}"
+                                FontSize="11"
+                                Glyph="&#xE711;" />
+                            <TextBlock Text="Cancel" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

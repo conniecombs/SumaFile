@@ -1,0 +1,26 @@
+SumaFile Proprietary License
+
+Copyright (c) 2024-2026 conniecombs.
+All rights reserved.
+
+This software, including its source code, documentation, user interface,
+assets, binaries, and related materials, is proprietary to conniecombs.
+
+No permission is granted to use, copy, modify, merge, publish, distribute,
+sublicense, sell, host, repackage, reverse engineer, or create derivative works
+from this software, in whole or in part, except with prior written permission
+from conniecombs.
+
+Access to this repository or possession of a copy of this software does not
+grant any license or ownership rights.
+
+Third-party libraries and tools included with, linked by, or used to build this
+software remain governed by their own license terms. This license applies only
+to SumaFile code and materials owned by conniecombs.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.

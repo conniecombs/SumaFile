@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": 12,
+  "method": "search_files",
+  "params": {
+    "options": {
+      "query": "readme",
+      "search_path": "C:\\Users\\Public",
+      "case_sensitive": false,
+      "include_hidden": false,
+      "file_types": ["txt", "md"],
+      "max_results": 500,
+      "max_depth": 8,
+      "search_id": "search-1700000000000",
+      "content_search": false,
+      "min_size": null,
+      "max_size": null,
+      "date_after": null,
+      "date_before": null
+    }
+  }
+}

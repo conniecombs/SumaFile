@@ -1,0 +1,26 @@
+//! Host-independent SimpleFile backend types and utilities.
+//!
+//! Shared domain logic lives here so the WinUI 3 named-pipe service can use it
+//! without depending on a UI host.
+
+pub mod archive;
+pub mod checksum;
+pub mod cleanup;
+pub mod compare;
+pub mod dir_list;
+pub mod drives;
+pub mod file_ops;
+pub mod git;
+pub mod metadata;
+pub mod models;
+pub mod native_accel;
+pub mod open_with;
+pub mod preview;
+pub mod rar;
+pub mod settings_store;
+pub mod smart_folders;
+pub mod state;
+pub mod tags;
+pub mod terminal;
+pub mod updater;
+pub mod utils;

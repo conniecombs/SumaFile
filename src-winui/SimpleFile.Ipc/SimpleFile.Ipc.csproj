@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Description>Named-pipe JSON-RPC client for simplefile-service</Description>
+    <RootNamespace>SimpleFile.Ipc</RootNamespace>
+  </PropertyGroup>
+</Project>

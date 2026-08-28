@@ -1,0 +1,15 @@
+{
+  "jsonrpc": "2.0",
+  "method": "operation-progress",
+  "params": {
+    "operation_id": "op_1700000000_1",
+    "operation_type": "copy",
+    "current": 1048576,
+    "total": 4194304,
+    "current_files": 1,
+    "total_files": 4,
+    "current_item": "C:\\src\\a.bin",
+    "status": "running",
+    "error": null
+  }
+}

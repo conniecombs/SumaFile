@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": 21,
+  "error": {
+    "code": -32000,
+    "message": "TRASH_UNAVAILABLE: Recycle Bin is not available"
+  }
+}

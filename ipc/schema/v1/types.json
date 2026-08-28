@@ -1,0 +1,162 @@
+{
+  "protocolVersion": 1,
+  "casing": {
+    "topLevelParams": "camelCase",
+    "nestedAndResults": "snake_case",
+    "doNotCamelCaseNested": true
+  },
+  "enums": {
+    "ConflictAction": ["error", "skip", "replace", "rename", "keep-both", "keep_both"],
+    "ListDirectoryMode": ["full", "light"],
+    "ProgressStatus": ["running", "completed", "error", "cancelled"],
+    "FileChangeKind": ["create", "modify", "remove", "rename"],
+    "ArchiveFormat": ["zip", "tar", "tar.gz", "tgz", "rar"]
+  },
+  "frontendOnlyFields": {
+    "FileEntry": ["itemCount"],
+    "Tag": ["emoji", "label"]
+  },
+  "types": {
+    "FileEntry": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["name", "path", "is_dir", "is_symlink", "size", "modified", "extension", "permissions", "symlink_target", "git_status"],
+      "optional": ["permissions", "symlink_target", "git_status"]
+    },
+    "DirectoryListing": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["path", "parent", "entries", "is_network"],
+      "notes": "entries can be empty on successful streamed requests when list_directory.params.finalEntries is false."
+    },
+    "ListDirectoryOptions": {
+      "source": "crates/simplefile-core/src/dir_list.rs",
+      "fields": ["mode", "finalEntries", "sortBy", "sortAscending", "filter", "includeHidden"],
+      "optional": ["mode", "finalEntries", "sortBy", "sortAscending", "filter", "includeHidden"]
+    },
+    "DirectoryListingChunk": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["path", "parent", "entries", "chunk_index", "done", "is_network"]
+    },
+    "ProgressUpdate": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["operation_id", "operation_type", "current", "total", "current_files", "total_files", "current_item", "status", "error"]
+    },
+    "FileChangeEvent": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["path", "kind"]
+    },
+    "DriveInfo": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["name", "path", "drive_type", "total_space", "free_space", "remote_path", "drive_status", "status_detail"]
+    },
+    "TreeNode": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["name", "path", "has_children", "children"]
+    },
+    "SearchResult": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["name", "path", "is_dir", "size", "modified", "extension", "match_type"]
+    },
+    "SearchOptions": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["query", "search_path", "case_sensitive", "include_hidden", "file_types", "max_results", "max_depth", "search_id", "content_search", "min_size", "max_size", "date_after", "date_before"],
+      "optional": ["file_types", "max_results", "max_depth", "search_id", "min_size", "max_size", "date_after", "date_before"]
+    },
+    "SmartFolder": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["id", "name", "icon", "search_options"]
+    },
+    "Tag": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["id", "name", "color"]
+    },
+    "DuplicateGroup": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["hash", "files"]
+    },
+    "CleanupFile": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["path", "size"]
+    },
+    "CleanupResult": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["large_files", "duplicates", "scanned_files"]
+    },
+    "DuplicateCheckFile": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["path", "name", "size", "modified"]
+    },
+    "DuplicateCheckGroup": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["id", "hash", "size", "wasted_bytes", "files"]
+    },
+    "DuplicateCheckResult": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["groups", "scanned_files", "candidate_files", "hashed_files", "skipped_files", "errors", "total_reclaimable_bytes"]
+    },
+    "GitStatus": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["is_repo", "branch", "modified", "staged", "untracked", "ahead", "behind"]
+    },
+    "FilePreview": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["file_type", "mime_type", "size", "content", "encoding"]
+    },
+    "ThumbnailResult": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["path", "data", "error"]
+    },
+    "ImageMetadata": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["width", "height", "exif"]
+    },
+    "FileMetadata": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["kind", "summary", "fields"]
+    },
+    "ArchiveEntry": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["name", "path", "is_dir", "size", "compressed_size"]
+    },
+    "ArchiveInfo": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["path", "format", "entries", "unsafe_entries", "total_size", "compressed_size"]
+    },
+    "RenameRequest": {
+      "source": "crates/simplefile-core/src/file_ops.rs",
+      "fields": ["path", "new_name"]
+    },
+    "TransferResult": {
+      "source": "crates/simplefile-service/src/progress.rs",
+      "fields": ["source", "destination"]
+    },
+    "Checksums": {
+      "source": "crates/simplefile-core/src/checksum.rs",
+      "fields": ["md5", "sha1", "sha256"]
+    },
+    "RarInstallPlan": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["confirmation_token", "download_url", "file_name", "installer_path", "publisher", "sha256"]
+    },
+    "DiffRow": {
+      "source": "crates/simplefile-core/src/compare.rs",
+      "fields": ["kind", "left_line", "right_line", "left_text", "right_text"]
+    },
+    "FileComparison": {
+      "source": "crates/simplefile-core/src/compare.rs",
+      "fields": ["left_path", "right_path", "left_name", "right_name", "left_size", "right_size", "identical", "added", "removed", "changed", "rows"]
+    },
+    "UpdateInfo": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["version", "date", "body"]
+    },
+    "AppAboutInfo": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["name", "version", "identifier", "os", "arch", "authors", "repository"]
+    },
+    "DirectoryListingChunkNotification": {
+      "source": "architecture list_directory.chunk",
+      "fields": ["requestId", "path", "parent", "entries", "chunk_index", "done", "is_network"],
+      "notes": "requestId is the JSON-RPC id of the in-flight list_directory call. Remaining fields match DirectoryListingChunk."
+    }
+  }
+}

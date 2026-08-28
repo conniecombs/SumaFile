@@ -1,0 +1,293 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, for example v1.0.0'
+        required: true
+        type: string
+      draft:
+        description: 'Create the GitHub release as a draft'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      draft: ${{ steps.version.outputs.draft }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            DRAFT="${{ github.event.inputs.draft }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+            DRAFT="true"
+          fi
+
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Version must look like v1.0.0 or v1.0.0-beta.1" >&2
+            exit 1
+          fi
+
+          SERVICE_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' crates/simplefile-service/Cargo.toml | head -n1)"
+          WINUI_VERSION="$(python3 -c 'import re,sys; t=open("src-winui/Directory.Build.props").read(); print(re.search(r"<Version>([^<]+)</Version>", t).group(1))')"
+          TAG_VERSION="${VERSION#v}"
+
+          if [ "$SERVICE_VERSION" != "$TAG_VERSION" ] || [ "$WINUI_VERSION" != "$TAG_VERSION" ]; then
+            echo "Version mismatch: tag=$TAG_VERSION crates/simplefile-service/Cargo.toml=$SERVICE_VERSION Directory.Build.props=$WINUI_VERSION" >&2
+            exit 1
+          fi
+
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE="true"
+          else
+            PRERELEASE="false"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "draft=$DRAFT" >> "$GITHUB_OUTPUT"
+
+  checks:
+    name: Release quality gates
+    needs: validate
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: release-quality
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Run Rust tests
+        run: cargo test --locked --all-features
+
+      - name: Run repo checks
+        run: npm run check
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit Rust dependencies
+        run: node scripts/cargo-audit-release.mjs
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: [validate, checks]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          key: ${{ matrix.target }}-release
+
+      - name: Install WiX Toolset (MSI)
+        shell: pwsh
+        run: |
+          function Resolve-WixBin {
+            $command = Get-Command candle.exe -ErrorAction SilentlyContinue
+            if ($command) { return $command.Source | Split-Path -Parent }
+
+            $candidates = @(
+              'C:\Program Files (x86)\WiX Toolset v3.14\bin',
+              'C:\Program Files (x86)\WiX Toolset v3.11\bin',
+              'C:\Program Files\WiX Toolset v3.14\bin'
+            )
+            $candidate = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+            if ($candidate) { return $candidate }
+
+            $found = Get-ChildItem -Path 'C:\Program Files (x86)', 'C:\Program Files' -Filter 'candle.exe' -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if ($found) { return $found.DirectoryName }
+
+            return $null
+          }
+
+          $wixBin = Resolve-WixBin
+          if (-not $wixBin) {
+            choco install wixtoolset -y --no-progress
+            $wixBin = Resolve-WixBin
+          }
+          if (-not $wixBin) {
+            throw 'WiX bin directory not found after install.'
+          }
+          echo "$wixBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "WiX on PATH: $wixBin"
+          & (Join-Path $wixBin 'candle.exe') -? | Select-Object -First 1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+          }
+          $nsis = @(
+            'C:\Program Files (x86)\NSIS',
+            'C:\Program Files\NSIS'
+          ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'makensis.exe') } | Select-Object -First 1
+          if ($nsis) {
+            echo $nsis | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          Get-Command makensis.exe | Select-Object -ExpandProperty Source
+
+      - name: Build WinUI host, Rust IPC service, and installers
+        shell: pwsh
+        env:
+          SIMPLEFILE_SIGNING_PRIVATE_KEY: ${{ secrets.SIMPLEFILE_SIGNING_PRIVATE_KEY }}
+          SIMPLEFILE_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.SIMPLEFILE_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1 -SkipChecks -RequireInstaller
+
+      - name: Stage WinUI release assets
+        shell: pwsh
+        run: |
+          $root = (Get-Location).Path
+          $assetsDir = Join-Path $root 'release-assets'
+          $winuiDir = Join-Path $root 'dist\winui'
+          New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
+
+          $required = @(
+            'SumaFile_*_x64-winui-portable.zip',
+            'SumaFile_*_x64-winui-setup.exe',
+            'SumaFile_*_x64-winui.msi',
+            'latest-winui.json'
+          )
+          foreach ($pattern in $required) {
+            $files = Get-ChildItem -Path (Join-Path $winuiDir $pattern) -File -ErrorAction SilentlyContinue
+            if (-not $files) {
+              throw "Missing WinUI artifact $pattern under $winuiDir"
+            }
+            foreach ($file in $files) {
+              Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $assetsDir $file.Name) -Force
+            }
+          }
+
+          Get-ChildItem -Path (Join-Path $winuiDir '*.sig') -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $assetsDir -Force }
+
+          $assets = Get-ChildItem -LiteralPath $assetsDir -File
+          if (-not ($assets | Where-Object { $_.Name -eq 'latest-winui.json' })) {
+            throw 'latest-winui.json was not staged.'
+          }
+
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '## Release assets'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ''
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '| File | Size |'
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value '| --- | ---: |'
+          foreach ($asset in ($assets | Sort-Object Name)) {
+            $sizeMb = [Math]::Round($asset.Length / 1MB, 2)
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "| ``$($asset.Name)`` | $sizeMb MB |"
+          }
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.validate.outputs.version }}
+          name: SumaFile ${{ needs.validate.outputs.version }}
+          body: |
+            ## SumaFile ${{ needs.validate.outputs.version }}
+
+            Windows installer and portable artifacts are attached below:
+            - WinUI NSIS setup executable (`x64-winui-setup.exe`) for standard per-user installation.
+            - WinUI MSI installer (`x64-winui.msi`) for managed deployment.
+            - Portable zip (`x64-winui-portable.zip`) containing `SumaFile.exe` and `simplefile-service.exe`.
+            - Updater metadata (`latest-winui.json`) and optional signatures.
+
+            See [docs/CHANGELOG.md](https://github.com/conniecombs/SimpleFile-Windows/blob/main/docs/CHANGELOG.md) for release notes and upgrade details.
+          draft: true
+          prerelease: ${{ needs.validate.outputs.prerelease }}
+          files: release-assets/*
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish release
+    needs: [validate, build]
+    if: needs.validate.outputs.draft == 'false'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.validate.outputs.version }}
+          draft: false
+          prerelease: ${{ needs.validate.outputs.prerelease }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

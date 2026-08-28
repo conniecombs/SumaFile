@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "ipc.handshake",
+  "params": {
+    "protocolVersion": 1,
+    "clientName": "SumaFile.App",
+    "authToken": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "binaryHotFrames": true
+  }
+}
