@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
 using SimpleFile.Ipc;
 
 namespace SimpleFile.Core;
@@ -48,9 +47,18 @@ public sealed partial class SearchViewModel : ObservableObject
     public event EventHandler? Cleared;
 
     /// <summary>
+    /// Raised when search work needs the host to surface a user-visible message.
+    /// </summary>
+    public event EventHandler<ViewModelMessageEventArgs>? MessageRequested;
+
+    /// <summary>
     /// Current search results. Read-only snapshot for the host to render.
     /// </summary>
     public IReadOnlyList<SearchResult> Results => _results;
+
+    public string? Root => _searchRoot;
+
+    public int ResultCount => _results.Count;
 
     public SearchViewModel(ExplorerWorkspace workspace)
     {
@@ -67,18 +75,21 @@ public sealed partial class SearchViewModel : ObservableObject
     /// Checks whether the search root has drifted from the current pane path,
     /// and clears search state if so. Called during workspace sync.
     /// </summary>
-    public void CheckSearchRootDrift()
+    public bool CheckSearchRootDrift()
     {
         if (!IsActive || _searchRoot is null)
         {
-            return;
+            return false;
         }
 
         var currentPath = _workspace.Pane(Pane).Path;
         if (!string.Equals(currentPath, _searchRoot, StringComparison.OrdinalIgnoreCase))
         {
             ClearState();
+            return true;
         }
+
+        return false;
     }
 
     /// <summary>
@@ -91,37 +102,24 @@ public sealed partial class SearchViewModel : ObservableObject
         PaneId? requestedPane,
         Action<Action> dispatchToUi)
     {
-        if (_workspace.FileOps is null)
+        var workspace = _workspace;
+        if (workspace.FileOps is null)
         {
             return;
         }
 
-        var pane = _workspace.Normalize(requestedPane ?? _workspace.ActivePane);
-        _workspace.ActivatePane(pane);
+        var pane = workspace.Normalize(requestedPane ?? workspace.ActivePane);
+        workspace.ActivatePane(pane);
 
         if (string.IsNullOrWhiteSpace(Query))
         {
             await CancelActiveAsync();
             ClearState();
-            Cleared?.Invoke(this, EventArgs.Empty);
             return;
         }
 
-        await CancelActiveAsync();
-
-        var root = _workspace.Pane(pane).Path;
-        var searchId = $"search_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}_{Interlocked.Increment(ref _searchCounter)}";
-        var cts = new CancellationTokenSource();
-        _searchCts = cts;
-        _activeSearchId = searchId;
-        IsActive = true;
-        Pane = pane;
-        _searchRoot = root;
-        _results.Clear();
-        CanCancel = true;
-        StatusText = $"Searching {root}...";
-        RaiseResultsChanged();
-
+        var root = workspace.Pane(pane).Path;
+        var searchId = NextSearchId("search");
         var options = new SearchOptions
         {
             Query = Query.Trim(),
@@ -134,55 +132,26 @@ public sealed partial class SearchViewModel : ObservableObject
             ContentSearch = false,
         };
 
-        try
-        {
-            var results = await _workspace.FileOps.SearchAsync(
-                options,
-                batch => dispatchToUi(() =>
-                {
-                    if (!string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
-                    {
-                        return;
-                    }
+        await RunAsync(
+            workspace,
+            pane,
+            searchId,
+            root,
+            options,
+            "Search",
+            $"Searching {root}...",
+            dispatchToUi);
+    }
 
-                    _results.AddRange(batch);
-                    StatusText = $"Searching... {_results.Count} result(s)";
-                    RaiseResultsChanged();
-                }),
-                count => dispatchToUi(() =>
-                {
-                    if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
-                    {
-                        StatusText = $"Search complete: {count} result(s)";
-                    }
-                }),
-                cts.Token);
-
-            if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
-            {
-                _results.Clear();
-                _results.AddRange(results);
-                StatusText = $"Search complete: {results.Length} result(s)";
-                RaiseResultsChanged();
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
-            {
-                StatusText = "Search cancelled";
-            }
-        }
-        finally
-        {
-            if (ReferenceEquals(_searchCts, cts))
-            {
-                _searchCts = null;
-            }
-
-            cts.Dispose();
-            FinishRun(searchId);
-        }
+    /// <summary>
+    /// Runs a smart folder search with pre-built options.
+    /// </summary>
+    public Task StartSmartFolderAsync(
+        SmartFolder folder,
+        Action<Action> dispatchToUi)
+    {
+        var pane = _workspace.ActivePane;
+        return StartSmartFolderAsync(folder.SearchOptions, pane, dispatchToUi);
     }
 
     /// <summary>
@@ -193,81 +162,29 @@ public sealed partial class SearchViewModel : ObservableObject
         PaneId pane,
         Action<Action> dispatchToUi)
     {
-        if (_workspace.FileOps is null)
+        var workspace = _workspace;
+        if (workspace.FileOps is null)
         {
             return;
         }
 
-        await CancelActiveAsync();
-
         var root = template?.SearchPath;
         if (string.IsNullOrWhiteSpace(root))
         {
-            root = _workspace.Active.Path;
+            root = workspace.Active.Path;
         }
 
-        var searchId = $"search_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}_{Interlocked.Increment(ref _searchCounter)}";
+        var searchId = NextSearchId("search");
         var options = SearchOptionsFactory.ForRun(template, searchId, root);
-        var cts = new CancellationTokenSource();
-        _searchCts = cts;
-        _activeSearchId = searchId;
-        IsActive = true;
-        Pane = pane;
-        _searchRoot = options.SearchPath;
-        _results.Clear();
-        CanCancel = true;
-        StatusText = "Searching smart folder...";
-        RaiseResultsChanged();
-
-        try
-        {
-            var results = await _workspace.FileOps.SearchAsync(
-                options,
-                batch => dispatchToUi(() =>
-                {
-                    if (!string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
-                    {
-                        return;
-                    }
-
-                    _results.AddRange(batch);
-                    StatusText = $"Searching... {_results.Count} result(s)";
-                    RaiseResultsChanged();
-                }),
-                count => dispatchToUi(() =>
-                {
-                    if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
-                    {
-                        StatusText = $"Search complete: {count} result(s)";
-                    }
-                }),
-                cts.Token);
-
-            if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
-            {
-                _results.Clear();
-                _results.AddRange(results);
-                StatusText = $"Search complete: {results.Length} result(s)";
-                RaiseResultsChanged();
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
-            {
-                StatusText = "Search cancelled";
-            }
-        }
-        finally
-        {
-            if (ReferenceEquals(_searchCts, cts))
-            {
-                _searchCts = null;
-            }
-
-            cts.Dispose();
-            FinishRun(searchId);
-        }
+        await RunAsync(
+            workspace,
+            pane,
+            searchId,
+            options.SearchPath,
+            options,
+            "Smart folder",
+            "Searching smart folder...",
+            dispatchToUi);
     }
 
     /// <summary>
@@ -291,9 +208,9 @@ public sealed partial class SearchViewModel : ObservableObject
         catch (OperationCanceledException)
         {
         }
-        catch
+        catch (Exception exception)
         {
-            // Swallow cancellation failures silently; the search is already being torn down.
+            MessageRequested?.Invoke(this, new ViewModelMessageEventArgs("Cancel search", exception.Message));
         }
         finally
         {
@@ -305,7 +222,7 @@ public sealed partial class SearchViewModel : ObservableObject
     /// <summary>
     /// Resets all search state without notifying the backend.
     /// </summary>
-    public void ClearState()
+    public void ClearState(bool notifyHost = true)
     {
         IsActive = false;
         _searchRoot = null;
@@ -314,7 +231,95 @@ public sealed partial class SearchViewModel : ObservableObject
         _activeSearchId = null;
         _results.Clear();
         CanCancel = false;
-        Cleared?.Invoke(this, EventArgs.Empty);
+        if (notifyHost)
+        {
+            Cleared?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private async Task RunAsync(
+        ExplorerWorkspace workspace,
+        PaneId pane,
+        string searchId,
+        string root,
+        SearchOptions options,
+        string errorTitle,
+        string initialStatus,
+        Action<Action> dispatchToUi)
+    {
+        await CancelActiveAsync();
+        if (!ReferenceEquals(_workspace, workspace) || workspace.FileOps is null)
+        {
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+        _activeSearchId = searchId;
+        IsActive = true;
+        Pane = pane;
+        _searchRoot = root;
+        _results.Clear();
+        CanCancel = true;
+        StatusText = initialStatus;
+        RaiseResultsChanged();
+
+        try
+        {
+            var results = await workspace.FileOps.SearchAsync(
+                options,
+                batch => dispatchToUi(() =>
+                {
+                    if (!string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    _results.AddRange(batch);
+                    StatusText = $"Searching... {_results.Count} result(s)";
+                    RaiseResultsChanged();
+                }),
+                count => dispatchToUi(() =>
+                {
+                    if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
+                    {
+                        StatusText = $"Search complete: {count} result(s)";
+                    }
+                }),
+                cts.Token);
+
+            if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
+            {
+                _results.Clear();
+                _results.AddRange(results);
+                StatusText = $"Search complete: {results.Length} result(s)";
+                RaiseResultsChanged();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
+            {
+                StatusText = "Search cancelled";
+            }
+        }
+        catch (Exception exception)
+        {
+            if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
+            {
+                MessageRequested?.Invoke(this, new ViewModelMessageEventArgs(errorTitle, exception.Message));
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_searchCts, cts))
+            {
+                _searchCts = null;
+            }
+
+            cts.Dispose();
+            FinishRun(searchId);
+        }
     }
 
     private void FinishRun(string searchId)
@@ -325,12 +330,28 @@ public sealed partial class SearchViewModel : ObservableObject
         }
 
         _activeSearchId = null;
-        CanCancel = IsActive && !string.IsNullOrEmpty(_activeSearchId);
+        CanCancel = false;
     }
+
+    private string NextSearchId(string prefix) =>
+        $"{prefix}_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}_{Interlocked.Increment(ref _searchCounter)}";
 
     private void RaiseResultsChanged()
     {
         ResultsChanged?.Invoke(this, new SearchResultsChangedEventArgs(Pane, _results.ToArray()));
+    }
+}
+
+public sealed class ViewModelMessageEventArgs : EventArgs
+{
+    public string Title { get; }
+
+    public string Message { get; }
+
+    public ViewModelMessageEventArgs(string title, string message)
+    {
+        Title = title;
+        Message = message;
     }
 }
 

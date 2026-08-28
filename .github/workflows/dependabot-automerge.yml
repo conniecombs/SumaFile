@@ -1,8 +1,9 @@
-name: Dependabot auto-merge
+name: Dependabot triage
 on: pull_request
 
 permissions:
-  contents: write
+  contents: read
+  issues: write
   pull-requests: write
 
 jobs:
@@ -15,8 +16,47 @@ jobs:
         uses: dependabot/fetch-metadata@v3
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
-      - name: Enable auto-merge for Dependabot PRs
-        run: gh pr merge --auto --merge "$PR_URL"
+      - name: Label and comment for local review
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="${GITHUB_REPOSITORY}"
+          pr_number="${{ github.event.pull_request.number }}"
+
+          ensure_label() {
+            local name="$1"
+            local color="$2"
+            local description="$3"
+            if ! gh api "repos/${repo}/labels/${name}" >/dev/null 2>&1; then
+              gh api "repos/${repo}/labels" \
+                -f "name=${name}" \
+                -f "color=${color}" \
+                -f "description=${description}" >/dev/null
+            fi
+          }
+
+          ensure_label "dependencies" "0366d6" "Dependency update pull requests"
+          ensure_label "needs-local-review" "fbca04" "Dependency PR is ready for a local compatibility pass"
+
+          gh api "repos/${repo}/issues/${pr_number}/labels" \
+            --method POST \
+            -f labels[]="dependencies" \
+            -f labels[]="needs-local-review" >/dev/null
+
+          marker="<!-- sumafile-dependabot-triage -->"
+          if gh api "repos/${repo}/issues/${pr_number}/comments" --paginate --jq '.[].body' | grep -Fq "${marker}"; then
+            exit 0
+          fi
+
+          gh pr comment "$PR_URL" --body "${marker}
+          Dependency update detected:
+          - Dependencies: ${{ steps.metadata.outputs.dependency-names }}
+          - Update type: ${{ steps.metadata.outputs.update-type }}
+          - Previous version: ${{ steps.metadata.outputs.previous-version }}
+          - New version: ${{ steps.metadata.outputs.new-version }}
+
+          Repository auto-merge is disabled, so this PR has been marked for a local compatibility pass instead of attempting auto-merge."
         env:
           PR_URL: ${{github.event.pull_request.html_url}}
           GH_TOKEN: ${{secrets.GITHUB_TOKEN}}

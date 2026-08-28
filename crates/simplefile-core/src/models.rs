@@ -269,6 +269,11 @@ pub struct UpdateInfo {
     pub version: String,
     pub date: Option<String>,
     pub body: Option<String>,
+    pub installable: bool,
+    pub channel: Option<String>,
+    pub url: Option<String>,
+    pub sha256: Option<String>,
+    pub size: Option<u64>,
 }
 
 // ============================================================================

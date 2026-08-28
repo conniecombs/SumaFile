@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using SimpleFile.Ipc;
 
 namespace SimpleFile.Core;
 
@@ -59,14 +60,73 @@ public sealed partial class ToolbarViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Updates the item count text and optional status message.
+    /// Updates status-bar copy from the active pane and selection snapshot.
     /// </summary>
-    public void UpdateCounts(int itemCount, string statusMessage)
+    public void UpdateStatusBar(
+        int visibleCount,
+        IReadOnlyList<FileEntry> selectedEntries,
+        int? searchResultCount,
+        string? searchQuery)
     {
-        CountText = itemCount == 1 ? "1 item" : $"{itemCount} items";
-        if (!string.IsNullOrWhiteSpace(statusMessage))
+        var active = _workspace.Active;
+        var count = searchResultCount ?? visibleCount;
+        var snapshot = StatusBarFormatter.Format(
+            count,
+            selectedEntries,
+            active.Path,
+            _workspace.ActivePaneLabel,
+            listingInProgress: active.ListingInProgress,
+            isEmpty: count == 0 && !active.ListingInProgress && searchResultCount is null);
+
+        CountText = searchResultCount is null
+            ? snapshot.Combined
+            : (count == 1 ? "1 search result" : $"{count} search results");
+        if (searchResultCount is not null && !string.IsNullOrEmpty(_workspace.ActivePaneLabel))
         {
-            StatusText = statusMessage;
+            CountText = $"{_workspace.ActivePaneLabel} · {CountText}";
         }
+
+        StatusText = ResolveStatusText(active, count, searchResultCount, searchQuery);
+    }
+
+    public void SetCountText(string text)
+    {
+        CountText = text;
+    }
+
+    public void SetStatusText(string text)
+    {
+        StatusText = text;
+    }
+
+    private string ResolveStatusText(
+        ExplorerPane active,
+        int count,
+        int? searchResultCount,
+        string? searchQuery)
+    {
+        if (active.ListingInProgress && count == 0)
+        {
+            return "Loading…";
+        }
+
+        if (!string.IsNullOrEmpty(_workspace.ErrorMessage))
+        {
+            return _workspace.ErrorMessage;
+        }
+
+        if (searchResultCount is not null)
+        {
+            return string.IsNullOrWhiteSpace(searchQuery)
+                ? "Search results"
+                : $"Search results for \"{searchQuery.Trim()}\"";
+        }
+
+        if (!string.IsNullOrEmpty(_workspace.StatusMessage))
+        {
+            return _workspace.StatusMessage;
+        }
+
+        return active.Path;
     }
 }

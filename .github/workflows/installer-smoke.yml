@@ -104,6 +104,11 @@ jobs:
       - name: Smoke WinUI NSIS install, launch, and uninstall
         run: npm run smoke:winui-installer
 
+      - name: Smoke WinUI NSIS upgrade from latest published release
+        run: npm run smoke:winui-upgrade
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Upload installer artifacts
         if: always()
         uses: actions/upload-artifact@v4

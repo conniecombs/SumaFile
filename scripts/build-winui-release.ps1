@@ -5,6 +5,7 @@ param(
     [switch]$SkipSmoke,
     [switch]$SkipInstaller,
     [switch]$RequireInstaller,
+    [switch]$RequireUpdaterSignature,
     [switch]$Clean,
     [string]$Configuration = "Release"
 )
@@ -181,6 +182,15 @@ $version = $release.Display
 $numericVersion = $release.Numeric
 Write-Host "WinUI release version: $version (numeric $numericVersion)"
 
+if ($RequireUpdaterSignature) {
+    if (-not $env:SIMPLEFILE_SIGNING_PRIVATE_KEY) {
+        throw "SIMPLEFILE_SIGNING_PRIVATE_KEY is required when -RequireUpdaterSignature is supplied."
+    }
+    if (-not $env:SIMPLEFILE_UPDATER_PUBLIC_KEY) {
+        throw "SIMPLEFILE_UPDATER_PUBLIC_KEY is required when -RequireUpdaterSignature is supplied."
+    }
+}
+
 if ($Clean -and (Test-Path -LiteralPath $distRoot)) {
     Write-Step "Cleaning $distRoot"
     Remove-Item -LiteralPath $distRoot -Recurse -Force
@@ -341,24 +351,36 @@ if (-not $SkipInstaller) {
 }
 
 $signature = ""
+$setupSha256 = ""
+$setupSize = 0
+if ($builtSetup) {
+    $setupItem = Get-Item -LiteralPath $setupPath
+    $setupSize = $setupItem.Length
+    $setupSha256 = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+}
 $signingKey = $env:SIMPLEFILE_SIGNING_PRIVATE_KEY
+$requireUpdaterSignatureValue = if ($RequireUpdaterSignature) { "true" } else { "false" }
 if ($builtSetup -and $signingKey) {
     Write-Step "Sign WinUI setup for latest-winui.json"
     try {
-        # TODO: Replace with minisign or Ed25519 signing when implemented.
-        # For now, the signing step is a placeholder that will warn when
-        # no signing tool is available.
-        Write-Warning "Updater payload signing is not yet implemented; latest-winui.json will ship without a signature."
-        $sigFile = Get-ChildItem -Path "$setupPath*.sig" -File -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($sigFile) {
-            Copy-Item -LiteralPath $sigFile.FullName -Destination $distRoot -Force
-            $signature = (Get-Content -LiteralPath $sigFile.FullName -Raw).Trim()
-        }
+        $sigPath = "$setupPath.sig"
+        $signArgs = @(
+            "scripts/sign-update-payload.mjs",
+            "--file=$setupPath",
+            "--out=$sigPath",
+            "--require-public-key=$requireUpdaterSignatureValue"
+        )
+        Invoke-Native node $signArgs
+        Copy-Item -LiteralPath $sigPath -Destination $distRoot -Force
+        $signature = (Get-Content -LiteralPath $sigPath -Raw).Trim()
     }
     catch {
         Write-Warning "WinUI updater signing failed: $($_.Exception.Message)"
-        if ($RequireInstaller) { throw }
+        if ($RequireInstaller -or $RequireUpdaterSignature) { throw }
     }
+}
+elseif ($RequireUpdaterSignature) {
+    throw "NSIS setup was built but could not be signed because SIMPLEFILE_SIGNING_PRIVATE_KEY is not set."
 }
 
 $latestArgs = @(
@@ -366,7 +388,11 @@ $latestArgs = @(
     "--version=$version",
     "--setup=$setupName",
     "--out=$distRoot",
-    "--signature=$signature"
+    "--signature=$signature",
+    "--sha256=$setupSha256",
+    "--size=$setupSize",
+    "--channel=stable",
+    "--require-installable=$requireUpdaterSignatureValue"
 )
 Invoke-Native node $latestArgs
 

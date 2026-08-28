@@ -201,8 +201,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        using var transferCts = new CancellationTokenSource();
-        _transferCts = transferCts;
+        var transferCts = _transfer?.BeginTransfer() ?? new CancellationTokenSource();
         try
         {
             var progress = new Progress<ProgressUpdate>(OnTransferProgress);
@@ -251,7 +250,7 @@ public sealed partial class MainWindow
                     var retryAction = await ChooseConflictActionFromBackendConflictAsync(exception.Message, destination);
                     if (retryAction is null)
                     {
-                        _currentOperationId = null;
+                        _transfer?.ClearCurrentOperation();
                         CloseTransferProgressWindow();
                         return;
                     }
@@ -269,9 +268,9 @@ public sealed partial class MainWindow
         }
         finally
         {
-            if (ReferenceEquals(_transferCts, transferCts))
+            if (_transfer?.FinishTransfer(transferCts) != true)
             {
-                _transferCts = null;
+                transferCts.Dispose();
             }
         }
     }
@@ -594,9 +593,9 @@ public sealed partial class MainWindow
                 await workspace.RefreshAsync(utilityCts.Token);
             }
 
-            StatusText.Text = requests.Length == 1
+            SetStatusText(requests.Length == 1
                 ? "Renamed 1 item"
-                : $"Renamed {requests.Length} items";
+                : $"Renamed {requests.Length} items");
         }
         catch (OperationCanceledException)
         {
@@ -662,7 +661,7 @@ public sealed partial class MainWindow
         var workspace = _workspace;
         if (workspace is null || !workspace.Undo.CanUndo)
         {
-            StatusText.Text = "Nothing to undo";
+            SetStatusText("Nothing to undo");
             return;
         }
 
@@ -673,7 +672,7 @@ public sealed partial class MainWindow
             if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
             {
                 await workspace.RefreshAsync(utilityCts.Token);
-                StatusText.Text = "Undone";
+                SetStatusText("Undone");
             }
         }
         catch (OperationCanceledException)
@@ -694,7 +693,7 @@ public sealed partial class MainWindow
         var workspace = _workspace;
         if (workspace is null || !workspace.Undo.CanRedo)
         {
-            StatusText.Text = "Nothing to redo";
+            SetStatusText("Nothing to redo");
             return;
         }
 
@@ -705,7 +704,7 @@ public sealed partial class MainWindow
             if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
             {
                 await workspace.RefreshAsync(utilityCts.Token);
-                StatusText.Text = "Redone";
+                SetStatusText("Redone");
             }
         }
         catch (OperationCanceledException)

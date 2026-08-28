@@ -6,7 +6,7 @@ Use this file when collecting information for SumaFile Windows support issues.
 
 1. Confirm you are on the `Windows-Focused` branch or a Windows release built from it.
 2. Run `npm run check` when reporting a development issue.
-3. For installer issues, also run `npm run smoke:winui-msi` and `npm run smoke:winui-installer`.
+3. For installer issues, also run `npm run smoke:winui-msi`, `npm run smoke:winui-installer`, and `npm run smoke:winui-upgrade`.
 4. For startup issues, capture whether the app window appears, whether settings load, and whether the updater check starts.
 
 ## Include In Reports
@@ -17,6 +17,7 @@ Use this file when collecting information for SumaFile Windows support issues.
 - The exact folder path involved, with personal details redacted.
 - Whether the path is local storage, removable media, or a mapped network drive.
 - Any console output, Rust panic output, or installer smoke-test output.
+- Relevant `%LOCALAPPDATA%\SumaFile\startup.log`, `%LOCALAPPDATA%\SumaFile\service.log`, or `%LOCALAPPDATA%\SumaFile\operations.jsonl` entries, with personal paths redacted.
 
 ## Common Areas
 

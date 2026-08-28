@@ -5,10 +5,12 @@ namespace SimpleFile.Core;
 public sealed class FileOperationService
 {
     private ISimpleFileIpc _ipc;
+    private readonly OperationJournal? _journal;
 
-    public FileOperationService(ISimpleFileIpc ipc)
+    public FileOperationService(ISimpleFileIpc ipc, OperationJournal? journal = null)
     {
         _ipc = ipc;
+        _journal = journal;
     }
 
     public void ReplaceIpc(ISimpleFileIpc ipc)
@@ -68,6 +70,9 @@ public sealed class FileOperationService
         CancellationToken ct = default)
     {
         return RunTransferAsync(
+            "copy",
+            sources,
+            destination,
             (ipc, operationId, token) => ipc.CopyWithProgressAsync(
                 sources, destination, operationId, conflictAction, token),
             progress,
@@ -85,6 +90,9 @@ public sealed class FileOperationService
         CancellationToken ct = default)
     {
         return RunTransferAsync(
+            "move",
+            sources,
+            destination,
             (ipc, operationId, token) => ipc.MoveWithProgressAsync(
                 sources, destination, operationId, conflictAction, token),
             progress,
@@ -93,6 +101,9 @@ public sealed class FileOperationService
     }
 
     private async Task<TransferResult[]> RunTransferAsync(
+        string operationType,
+        string[] sources,
+        string destination,
         Func<ISimpleFileIpc, string, CancellationToken, Task<TransferResult[]>> invoke,
         IProgress<ProgressUpdate>? progress,
         Action<string>? operationStarted,
@@ -100,6 +111,7 @@ public sealed class FileOperationService
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
+        _journal?.Started(operationType, operationId, sources, destination);
         operationStarted?.Invoke(operationId);
         IDisposable? subscription = null;
         IDisposable? cancelRegistration = null;
@@ -124,7 +136,19 @@ public sealed class FileOperationService
 
         try
         {
-            return await invoke(ipc, operationId, ct).ConfigureAwait(false);
+            var results = await invoke(ipc, operationId, ct).ConfigureAwait(false);
+            _journal?.Completed(operationType, operationId);
+            return results;
+        }
+        catch (OperationCanceledException)
+        {
+            _journal?.Cancelled(operationType, operationId);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _journal?.Failed(operationType, operationId, exception);
+            throw;
         }
         finally
         {
@@ -322,6 +346,7 @@ public sealed class FileOperationService
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
+        _journal?.Started("cleanup", operationId, [directory]);
         IDisposable? subscription = null;
         if (progress != null)
         {
@@ -333,7 +358,19 @@ public sealed class FileOperationService
         }
         try
         {
-            return await ipc.DiskCleanupAsync(directory, sizeThreshold, operationId, ct).ConfigureAwait(false);
+            var result = await ipc.DiskCleanupAsync(directory, sizeThreshold, operationId, ct).ConfigureAwait(false);
+            _journal?.Completed("cleanup", operationId);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            _journal?.Cancelled("cleanup", operationId);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _journal?.Failed("cleanup", operationId, exception);
+            throw;
         }
         finally
         {
@@ -350,6 +387,7 @@ public sealed class FileOperationService
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
+        _journal?.Started("duplicate-check", operationId, [directory]);
         IDisposable? subscription = null;
         if (progress != null)
         {
@@ -361,7 +399,19 @@ public sealed class FileOperationService
         }
         try
         {
-            return await ipc.DuplicateCheckAsync(directory, minSize, partialHashBytes, operationId, ct).ConfigureAwait(false);
+            var result = await ipc.DuplicateCheckAsync(directory, minSize, partialHashBytes, operationId, ct).ConfigureAwait(false);
+            _journal?.Completed("duplicate-check", operationId);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            _journal?.Cancelled("duplicate-check", operationId);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _journal?.Failed("duplicate-check", operationId, exception);
+            throw;
         }
         finally
         {
@@ -385,6 +435,8 @@ public sealed class FileOperationService
     public async Task InstallUpdateAsync(IProgress<long[]>? progress = null, CancellationToken ct = default)
     {
         var ipc = _ipc;
+        var operationId = GenerateOperationId();
+        _journal?.Started("update", operationId);
         IDisposable? subscription = null;
         if (progress != null)
         {
@@ -396,6 +448,17 @@ public sealed class FileOperationService
         try
         {
             await ipc.InstallUpdateAsync(ct).ConfigureAwait(false);
+            _journal?.Completed("update", operationId);
+        }
+        catch (OperationCanceledException)
+        {
+            _journal?.Cancelled("update", operationId);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _journal?.Failed("update", operationId, exception);
+            throw;
         }
         finally
         {

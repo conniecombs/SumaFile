@@ -7,7 +7,7 @@
 
 This is the **retirement lock**. Required `OPEN` rows are none. `MANUAL` rows stay as human smoke coverage. Retired `src-tauri/` domain now lives solely in `crates/simplefile-core`.
 
-Inspected for this gate: `src-winui/SimpleFile.Ipc/Protocol.cs`, `crates/simplefile-service/src/dispatch.rs`, `src-winui/**`, `ipc/schema/v1/`, `package.json`, `.github/workflows/*`.
+Inspected for this gate: `src-winui/SimpleFile.Ipc/Protocol.cs`, `crates/simplefile-service/src/dispatch/`, `src-winui/**`, `ipc/schema/v1/`, `package.json`, `.github/workflows/*`.
 
 ---
 
@@ -38,6 +38,7 @@ cargo test --locked --all-features
 npm run smoke:winui
 npm run smoke:winui-msi       # needs WiX MSI
 npm run smoke:winui-installer # needs NSIS setup
+npm run smoke:winui-upgrade   # previous NSIS -> new NSIS
 ```
 
 Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
@@ -61,7 +62,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ## 2. IPC commands (76)
 
-Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch.rs`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
+Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
 ### 2.1 Filesystem and listing
 
@@ -160,8 +161,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `set_db_setting` | Persist settings | Settings save | Workspace save | Same | `PASS` |
 | `get_app_version` | Updates tab | Settings | Settings load | Settings → Updates | `MANUAL` |
 | `get_app_about_info` | About | Settings About + dialog | IPC | About panel | `MANUAL` |
-| `check_for_update` | Check updates | Settings Updates | IPC (may stub) | Check for updates | `MANUAL` |
-| `install_update` | Install + restart handshake | Settings install | IPC + `update-chunk` | Only on a signed build | `MANUAL` |
+| `check_for_update` | Check updates | Settings Updates | Rust signed-metadata tests + schema | Check for updates | `PASS` |
+| `install_update` | Install + restart handshake | Settings install | Rust verify path + FileOperationService progress tests | Signed build smoke | `PASS` |
 
 ---
 
@@ -173,7 +174,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `operation-progress` | Copy/move/cleanup/dup | Progress panel | `FileOperationServiceTests` | Watch bar + cancel | `PASS` |
 | `search-results-batch` | Incremental search | Search box batches | Client | Search streams rows | `MANUAL` |
 | `search-complete` | Count notification | Status text | Client complete callback | Search finishes | `PASS` |
-| `update-chunk` | Updater download | Settings install progress | Client `On<long[]>` | Install update | `MANUAL` |
+| `update-chunk` | Updater download | Settings install progress | FileOperationService progress subscription test | Signed update smoke | `PASS` |
 | `list_directory.chunk` | First-chunk paint | Workspace progressive list | `ExplorerWorkspaceTests` | Huge folder | `PASS` |
 | `operation-complete` | Unused typed event | Must **not** invent | Schema `typedNotEmitted` | — | `WAIVED` |
 | `operation-error` | Unused typed event | Must **not** invent | Schema `typedNotEmitted` | — | `WAIVED` |
@@ -358,8 +359,9 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `upd.latest-winui` | `latest-winui.json` | `write-latest-winui.mjs` | `check:updater` / packaging | — | `PASS` |
 | `pkg.tauri` | Retired Tauri NSIS/MSI/`latest.json` | Replaced by WinUI packagers | — | — | `WAIVED` | Tauri packagers removed |
 | `pkg.winui-portable` | `x64-winui-portable.zip` | `build-winui-release.ps1` | Packaging check + `smoke:winui` | Unzip and launch | `PASS` |
-| `pkg.winui-nsis` | `x64-winui-setup.exe` | NSIS script | Packaging check | `smoke:winui-installer` on CI | `MANUAL` |
-| `pkg.winui-msi` | `x64-winui.msi` | WiX `Product.wxs` | Packaging check | `smoke:winui-msi` on CI | `MANUAL` |
+| `pkg.winui-nsis` | `x64-winui-setup.exe` | NSIS script | Packaging check + `smoke:winui-installer` on CI | — | `PASS` |
+| `pkg.winui-msi` | `x64-winui.msi` | WiX `Product.wxs` | Packaging check + `smoke:winui-msi` on CI | — | `PASS` |
+| `pkg.winui-upgrade` | Previous NSIS to new NSIS | `smoke-winui-upgrade.ps1` | `smoke:winui-upgrade` on CI | — | `PASS` |
 | `pkg.legacy-keep` | Retired Svelte/Tauri packagers | Removed after gate close | Retirement lock | — | `WAIVED` | Retirement completed |
 
 ---
@@ -375,7 +377,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |
 | `npm run check:rust` | Core/ipc/service tests + clippy |
 | `npm run smoke:winui` | Payload exe title + service process |
-| `npm run smoke:winui-msi` / `smoke:winui-installer` | Installer extract/install (CI) |
+| `npm run smoke:winui-msi` / `smoke:winui-installer` / `smoke:winui-upgrade` | Installer extract/install/upgrade (CI) |
 
 ---
 

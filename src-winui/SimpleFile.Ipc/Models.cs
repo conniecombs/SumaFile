@@ -539,6 +539,11 @@ public sealed class UpdateInfo
     [JsonPropertyName("version")] public string Version { get; set; } = "";
     [JsonPropertyName("date")] public string? Date { get; set; }
     [JsonPropertyName("body")] public string? Body { get; set; }
+    [JsonPropertyName("installable")] public bool Installable { get; set; }
+    [JsonPropertyName("channel")] public string? Channel { get; set; }
+    [JsonPropertyName("url")] public string? Url { get; set; }
+    [JsonPropertyName("sha256")] public string? Sha256 { get; set; }
+    [JsonPropertyName("size")] public ulong? Size { get; set; }
 }
 
 public sealed class GitStatus

@@ -23,7 +23,6 @@ pub mod preview;
 pub mod rar;
 pub mod settings_store;
 pub mod smart_folders;
-pub mod state;
 pub mod tags;
 pub mod terminal;
 pub mod updater;

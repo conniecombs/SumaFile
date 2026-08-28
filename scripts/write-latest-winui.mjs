@@ -21,10 +21,14 @@ const named = Object.fromEntries(
     }),
 );
 
-const version = named.version;
-const setupName = named.setup;
+const version = named.version?.trim();
+const setupName = named.setup?.trim();
 const outDir = named.out ? path.resolve(named.out) : path.join(repoRoot, 'dist', 'winui');
-const signature = named.signature ?? '';
+const signature = (named.signature ?? '').trim();
+const sha256 = (named.sha256 ?? '').trim().toLowerCase();
+const size = named.size ? Number.parseInt(named.size, 10) : 0;
+const channel = (named.channel ?? 'stable').trim();
+const requireInstallable = named['require-installable'] === 'true';
 const notes = named.notes ?? 'SumaFile WinUI 3 host + Rust IPC service.';
 
 if (!version) {
@@ -33,15 +37,31 @@ if (!version) {
 if (!setupName) {
   fail('Pass --setup=SumaFile_BETA_x64-winui-setup.exe');
 }
+if (!/^SumaFile_[^/\\\s]+_x64-winui-setup\.exe$/u.test(setupName)) {
+  fail('--setup must be a SumaFile x64 WinUI setup executable name.');
+}
+if (sha256 && !/^[a-f0-9]{64}$/iu.test(sha256)) {
+  fail('--sha256 must be a 64-character hex string.');
+}
+if (named.size && (!Number.isSafeInteger(size) || size < 0)) {
+  fail('--size must be a non-negative integer byte count.');
+}
+if (requireInstallable && (!signature || !sha256 || size <= 0)) {
+  fail('Installable updater metadata requires --signature, --sha256, and --size.');
+}
 
 const payload = {
   version,
   notes,
   pub_date: new Date().toISOString(),
+  channel,
+  install_ready: Boolean(signature && sha256 && size > 0),
   platforms: {
     'windows-x86_64': {
       signature,
-      url: `https://github.com/conniecombs/SimpleFile-Windows/releases/latest/download/${setupName}`,
+      sha256,
+      size,
+      url: `https://github.com/conniecombs/SumaFile/releases/latest/download/${setupName}`,
     },
   },
 };

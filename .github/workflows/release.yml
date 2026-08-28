@@ -209,10 +209,19 @@ jobs:
         env:
           SIMPLEFILE_SIGNING_PRIVATE_KEY: ${{ secrets.SIMPLEFILE_SIGNING_PRIVATE_KEY }}
           SIMPLEFILE_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.SIMPLEFILE_SIGNING_PRIVATE_KEY_PASSWORD }}
+          SIMPLEFILE_UPDATER_PUBLIC_KEY: ${{ vars.SIMPLEFILE_UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1 -SkipChecks -RequireInstaller
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1 -SkipChecks -RequireInstaller -RequireUpdaterSignature
+
+      - name: Smoke WinUI NSIS install, launch, and uninstall
+        run: npm run smoke:winui-installer
+
+      - name: Smoke WinUI NSIS upgrade from latest published release
+        run: npm run smoke:winui-upgrade
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Stage WinUI release assets
         shell: pwsh
@@ -267,9 +276,9 @@ jobs:
             - WinUI NSIS setup executable (`x64-winui-setup.exe`) for standard per-user installation.
             - WinUI MSI installer (`x64-winui.msi`) for managed deployment.
             - Portable zip (`x64-winui-portable.zip`) containing `SumaFile.exe` and `simplefile-service.exe`.
-            - Updater metadata (`latest-winui.json`) and optional signatures.
+            - Updater metadata (`latest-winui.json`) and Ed25519 signatures.
 
-            See [docs/CHANGELOG.md](https://github.com/conniecombs/SimpleFile-Windows/blob/main/docs/CHANGELOG.md) for release notes and upgrade details.
+            See [docs/CHANGELOG.md](https://github.com/conniecombs/SumaFile/blob/main/docs/CHANGELOG.md) for release notes and upgrade details.
           draft: true
           prerelease: ${{ needs.validate.outputs.prerelease }}
           files: release-assets/*

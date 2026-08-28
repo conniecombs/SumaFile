@@ -13,8 +13,9 @@ namespace SimpleFile.App;
 
 public sealed partial class SettingsDialog : ContentDialog
 {
-    private const string RepositoryUrl = "https://github.com/conniecombs/SimpleFile-Windows";
+    private const string RepositoryUrl = "https://github.com/conniecombs/SumaFile";
     private FileOperationService? _fileOps;
+    private bool _checkedUpdateIsInstallable;
 
     public SettingsDialog()
     {
@@ -360,6 +361,7 @@ public sealed partial class SettingsDialog : ContentDialog
         if (_fileOps == null) return;
         CheckUpdatesButton.IsEnabled = false;
         InstallUpdateButton.Visibility = Visibility.Collapsed;
+        _checkedUpdateIsInstallable = false;
         UpdateStatusText.Text = "Checking...";
         try
         {
@@ -368,10 +370,14 @@ public sealed partial class SettingsDialog : ContentDialog
             {
                 InstallUpdateButton.Visibility = Visibility.Visible;
                 InstallUpdateButton.IsEnabled = true;
+                _checkedUpdateIsInstallable = update.Installable;
+                InstallUpdateButton.Content = update.Installable ? "Download & Install" : "Open GitHub Releases";
                 var version = string.IsNullOrWhiteSpace(update.Version)
                     ? "an update"
                     : update.Version;
-                UpdateStatusText.Text = $"Update available: {version}. In-app install is disabled until installer signatures exist. Download it from GitHub Releases.";
+                UpdateStatusText.Text = update.Installable
+                    ? $"Update available: {version}. The installer metadata is signed and ready to verify before launch."
+                    : $"Update available: {version}. This build cannot verify the installer metadata, so download it from GitHub Releases.";
             }
             else
             {
@@ -396,15 +402,38 @@ public sealed partial class SettingsDialog : ContentDialog
     {
         if (_fileOps == null) return;
         InstallUpdateButton.IsEnabled = false;
-        UpdateStatusText.Text = "Opening GitHub Releases…";
+        UpdateStatusText.Text = _checkedUpdateIsInstallable
+            ? "Downloading and verifying installer..."
+            : "Opening GitHub Releases...";
         try
         {
-            await _fileOps.OpenExternalUrlAsync(RepositoryUrl + "/releases").ConfigureAwait(true);
-            UpdateStatusText.Text = "Download the latest release from the GitHub page. In-app install stays disabled until installer signatures exist.";
+            if (_checkedUpdateIsInstallable)
+            {
+                var progress = new Progress<long[]>(values =>
+                {
+                    if (values.Length >= 2)
+                    {
+                        var downloaded = values[0];
+                        var total = values[1];
+                        UpdateStatusText.Text = total > 0
+                            ? $"Downloading update: {downloaded:N0} of {total:N0} bytes"
+                            : $"Downloading update: {downloaded:N0} bytes";
+                    }
+                });
+                await _fileOps.InstallUpdateAsync(progress).ConfigureAwait(true);
+                UpdateStatusText.Text = "Verified installer launched. SumaFile may close while the update finishes.";
+            }
+            else
+            {
+                await _fileOps.OpenExternalUrlAsync(RepositoryUrl + "/releases").ConfigureAwait(true);
+                UpdateStatusText.Text = "Download the latest release from the GitHub page.";
+            }
         }
         catch (Exception exception)
         {
-            UpdateStatusText.Text = "Please visit " + RepositoryUrl + "/releases to download the update. " + exception.Message;
+            InstallUpdateButton.Content = "Open GitHub Releases";
+            _checkedUpdateIsInstallable = false;
+            UpdateStatusText.Text = "Could not install in-app. Please visit " + RepositoryUrl + "/releases to download the update. " + exception.Message;
         }
         finally
         {

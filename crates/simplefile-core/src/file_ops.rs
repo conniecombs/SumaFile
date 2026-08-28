@@ -1,8 +1,7 @@
-//! Reusable file operation logic extracted from the Tauri frontend's `fs_ops.rs`.
+//! Reusable file operation logic for the SumaFile backend.
 //!
-//! This module contains file system operations that need no Tauri dependencies,
-//! making them callable from any Rust-based backend (service crate, tests, CLI
-//! tools).
+//! This module contains host-independent file system operations that are callable
+//! from the service crate, tests, and future tools.
 
 use crate::models::{FileEntry, TreeNode};
 use crate::utils::{

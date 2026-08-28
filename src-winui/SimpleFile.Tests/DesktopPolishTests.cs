@@ -355,7 +355,7 @@ public class DesktopPolishTests
             Total = 1500UL * 1024 * 1024,
             CurrentFiles = 7,
             TotalFiles = 12,
-            CurrentItem = @"R:\Repos\SimpleFile-Windows\src-winui\SimpleFile.App\file.bin",
+            CurrentItem = @"R:\Repos\SumaFile\src-winui\SimpleFile.App\file.bin",
             Status = "running",
         };
 

@@ -64,10 +64,11 @@ The release workflow will:
 4. Build the WinUI host and Rust IPC service (`scripts/build-winui-release.ps1`):
    `SumaFile_*_x64-winui-setup.exe`, `SumaFile_*_x64-winui.msi`,
    `SumaFile_*_x64-winui-portable.zip` (inner `SumaFile.exe` +
-   `simplefile-service.exe`), and `latest-winui.json`.
+   `simplefile-service.exe`), signed update metadata, and `latest-winui.json`.
 5. Keep tag-triggered releases as drafts by default so assets can be reviewed
    before publishing.
-6. Publish the release only after the Windows build succeeds when manual
+6. Run NSIS install and previous-version upgrade smoke before asset upload.
+7. Publish the release only after the Windows build succeeds when manual
    `draft=false` is selected.
 
 ### 5. Manual Release
@@ -89,22 +90,25 @@ Windows build succeeds.
 | Windows x64 | NSIS setup executable | `SumaFile_BETA_x64-winui-setup.exe` |
 | Windows x64 | MSI installer | `SumaFile_BETA_x64-winui.msi` |
 | Windows x64 | Portable zip | `SumaFile_BETA_x64-winui-portable.zip` |
-| Windows updater | Static JSON / signatures | `latest-winui.json` and optional `.sig` files |
+| Windows updater | Static JSON / signatures | `latest-winui.json`, SHA-256, size, and `.sig` files |
 
 ## Auto-Update
 
 SumaFile publishes `latest-winui.json` to GitHub Releases. The app checks
-`https://github.com/conniecombs/SimpleFile-Windows/releases/latest/download/latest-winui.json`.
+`https://github.com/conniecombs/SumaFile/releases/latest/download/latest-winui.json`.
 
 ### Setup Requirements
 
-1. **Optional signing key** in GitHub secrets. These keep the existing
+1. **Required production signing key** in GitHub secrets and repository variables. These keep the existing
    `SIMPLEFILE_*` names for release compatibility:
    - `SIMPLEFILE_SIGNING_PRIVATE_KEY` — private signing key content
    - `SIMPLEFILE_SIGNING_PRIVATE_KEY_PASSWORD` — optional private key passphrase
+   - `SIMPLEFILE_UPDATER_PUBLIC_KEY` — base64 Ed25519 public key stored as a GitHub Actions variable and present at build time
 
 2. Keep `scripts/write-latest-winui.mjs` pointed at the GitHub release
-   `latest-winui.json` URL.
+   `latest-winui.json` URL. Production releases run `build-winui-release.ps1`
+   with `-RequireUpdaterSignature`, so unsigned updater metadata cannot be
+   published accidentally.
 
 The first updater-enabled release must be installed manually by existing users.
 After that, future published releases can be installed through Settings -> Updates.

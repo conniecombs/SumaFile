@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "SumaFile IPC protocol constants and schema tests"
 authors = ["SumaFile Team"]
 license-file = "../../LICENSE"
-repository = "https://github.com/conniecombs/SimpleFile-Windows"
+repository = "https://github.com/conniecombs/SumaFile"
 edition = "2021"
 
 [dependencies]

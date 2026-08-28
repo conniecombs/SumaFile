@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,6 +22,7 @@ public class FileOperationServiceTests
         public Func<string, string, CancellationToken, Task>? SetDbSettingHandler { get; set; }
         public Func<string[], CancellationToken, Task>? MoveToTrashHandler;
         public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? CopyWithProgressHandler;
+        public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? MoveWithProgressHandler;
         public Func<string, CancellationToken, Task>? CancelOperationHandler { get; set; }
         public Func<SearchOptions, Action<SearchResult[]>?, Action<int>?, CancellationToken, Task<SearchResult[]>>? SearchFilesHandler { get; set; }
         public Func<string, CancellationToken, Task>? CancelSearchHandler { get; set; }
@@ -35,6 +37,7 @@ public class FileOperationServiceTests
         public Func<string[], string, string, CancellationToken, Task>? CreateArchiveHandler { get; set; }
         public Func<string, ulong?, string?, CancellationToken, Task<CleanupResult>>? DiskCleanupHandler { get; set; }
         public Func<string, ulong?, ulong?, string?, CancellationToken, Task<DuplicateCheckResult>>? DuplicateCheckHandler { get; set; }
+        public Func<CancellationToken, Task>? InstallUpdateHandler { get; set; }
         private readonly Dictionary<string, List<object>> _handlers = new();
 
         public Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default)
@@ -159,7 +162,8 @@ public class FileOperationServiceTests
         public Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<TransferResult[]> MoveWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<TransferResult[]> MoveWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default)
+            => MoveWithProgressHandler?.Invoke(sources, destination, operationId, conflictAction, ct) ?? throw new NotImplementedException();
         public Task OpenTerminalAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
         public Task OpenPowershellAdminAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
@@ -171,7 +175,8 @@ public class FileOperationServiceTests
         public Task<SmartFolder[]> DeleteSmartFolderAsync(string id, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<AppAboutInfo> GetAppAboutInfoAsync(CancellationToken ct = default) => throw new NotImplementedException();
         public Task<UpdateInfo?> CheckForUpdateAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public Task InstallUpdateAsync(CancellationToken ct = default) => throw new NotImplementedException();
+        public Task InstallUpdateAsync(CancellationToken ct = default)
+            => InstallUpdateHandler?.Invoke(ct) ?? throw new NotImplementedException();
         public Task CancelFolderSizeAsync(CancellationToken ct = default) => throw new NotImplementedException();
         public Task CancelFolderItemCountAsync(CancellationToken ct = default) => throw new NotImplementedException();
         public Task CancelCountItemsAsync(CancellationToken ct = default) => throw new NotImplementedException();
@@ -494,8 +499,8 @@ public class FileOperationServiceTests
     public async Task CopyAsync_TokenCancel_CallsBackendCancel()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelRequested = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         string? copyOperationId = null;
-        string? cancelled = null;
         var stub = new StubIpc
         {
             CopyWithProgressHandler = async (sources, destination, operationId, conflictAction, ct) =>
@@ -507,7 +512,7 @@ public class FileOperationServiceTests
             },
             CancelOperationHandler = (operationId, ct) =>
             {
-                cancelled = operationId;
+                cancelRequested.SetResult(operationId);
                 return Task.CompletedTask;
             }
         };
@@ -523,7 +528,46 @@ public class FileOperationServiceTests
         cts.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => copyTask);
+        var cancelled = await cancelRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(copyOperationId, cancelled);
+        Assert.False(string.IsNullOrEmpty(cancelled));
+    }
+
+    [Fact]
+    public async Task MoveAsync_TokenCancel_CallsBackendCancel()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelRequested = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? moveOperationId = null;
+        var stub = new StubIpc
+        {
+            MoveWithProgressHandler = async (sources, destination, operationId, conflictAction, ct) =>
+            {
+                moveOperationId = operationId;
+                started.SetResult();
+                await Task.Delay(Timeout.Infinite, ct);
+                return Array.Empty<TransferResult>();
+            },
+            CancelOperationHandler = (operationId, ct) =>
+            {
+                cancelRequested.SetResult(operationId);
+                return Task.CompletedTask;
+            }
+        };
+        var service = new FileOperationService(stub);
+        using var cts = new CancellationTokenSource();
+
+        var moveTask = service.MoveAsync(
+            [@"C:\a.txt"],
+            @"C:\dest",
+            "skip",
+            ct: cts.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => moveTask);
+        var cancelled = await cancelRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(moveOperationId, cancelled);
         Assert.False(string.IsNullOrEmpty(cancelled));
     }
 
@@ -628,6 +672,82 @@ public class FileOperationServiceTests
             Protocol.OperationProgressEvent,
             new ProgressUpdate { OperationId = seen[0].OperationId, OperationType = "duplicate-check" });
         Assert.Single(seen);
+    }
+
+    [Fact]
+    public async Task InstallUpdateAsync_ReportsProgressAndDisposesSubscription()
+    {
+        var seen = new List<long[]>();
+        var stub = new StubIpc();
+        stub.InstallUpdateHandler = ct =>
+        {
+            stub.Emit(Protocol.UpdateChunkEvent, new long[] { 42, 100 });
+            return Task.CompletedTask;
+        };
+        var service = new FileOperationService(stub);
+
+        await service.InstallUpdateAsync(new InlineProgress<long[]>(seen.Add));
+
+        Assert.Single(seen);
+        Assert.Equal(new long[] { 42, 100 }, seen[0]);
+        Assert.Equal(0, stub.SubscriptionCount(Protocol.UpdateChunkEvent));
+
+        stub.Emit(Protocol.UpdateChunkEvent, new long[] { 100, 100 });
+        Assert.Single(seen);
+    }
+
+    [Fact]
+    public async Task OperationJournal_RecordsTransferLifecycle()
+    {
+        var journal = TempJournal();
+        var stub = new StubIpc
+        {
+            CopyWithProgressHandler = (sources, destination, operationId, conflictAction, ct) =>
+            {
+                Assert.NotNull(operationId);
+                return Task.FromResult(new[]
+                {
+                    new TransferResult { Source = sources[0], Destination = Path.Combine(destination, "a.txt") },
+                });
+            },
+        };
+        var service = new FileOperationService(stub, journal);
+
+        await service.CopyAsync([@"C:\a.txt"], @"C:\dest", "replace");
+
+        var entries = journal.ReadEntries();
+        Assert.Equal(["started", "completed"], entries.Select(entry => entry.State));
+        Assert.All(entries, entry => Assert.Equal("copy", entry.OperationType));
+        Assert.Equal(@"C:\a.txt", entries[0].Sources.Single());
+        Assert.Equal(@"C:\dest", entries[0].Destination);
+        Assert.Equal(entries[0].OperationId, entries[1].OperationId);
+    }
+
+    [Fact]
+    public async Task OperationJournal_RecordsCancellationAndFailure()
+    {
+        var journal = TempJournal();
+        using var cts = new CancellationTokenSource();
+        var stub = new StubIpc
+        {
+            CopyWithProgressHandler = (sources, destination, operationId, conflictAction, ct) =>
+            {
+                cts.Cancel();
+                return Task.FromCanceled<TransferResult[]>(ct);
+            },
+            CancelOperationHandler = (operationId, ct) => Task.CompletedTask,
+            InstallUpdateHandler = ct => throw new InvalidOperationException("signature mismatch"),
+        };
+        var service = new FileOperationService(stub, journal);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.CopyAsync([@"C:\a.txt"], @"C:\dest", "skip", ct: cts.Token));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.InstallUpdateAsync());
+
+        var entries = journal.ReadEntries();
+        Assert.Contains(entries, entry => entry.OperationType == "copy" && entry.State == "cancelled");
+        var failedUpdate = Assert.Single(entries, entry => entry.OperationType == "update" && entry.State == "failed");
+        Assert.Contains("signature mismatch", failedUpdate.Error, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -753,5 +873,13 @@ public class FileOperationServiceTests
         Assert.Equal("winui.workspace.layout.v1", requestedKey);
         Assert.Equal("{\"version\":1}", value);
         Assert.Equal(("winui.workspace.layout.v1", "{\"version\":1}"), saved);
+    }
+
+    private static OperationJournal TempJournal()
+    {
+        var path = Path.Combine(
+            Path.GetTempPath(),
+            $"sumafile-operation-journal-{Guid.NewGuid():N}.jsonl");
+        return new OperationJournal(path);
     }
 }

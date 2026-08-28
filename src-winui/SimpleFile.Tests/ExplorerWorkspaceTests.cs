@@ -852,9 +852,15 @@ internal sealed class WorkspaceSettingsIpc : ISimpleFileIpc
     public Func<string, CancellationToken, Task<ulong>>? CountFolderItemsHandler { get; set; }
     public Func<string, string, CancellationToken, Task<string>>? CreateDirectoryHandler { get; set; }
     public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? MoveWithProgressHandler { get; set; }
+    public Func<string, CancellationToken, Task>? CancelOperationHandler { get; set; }
+    public Func<SearchOptions, Action<SearchResult[]>?, Action<int>?, CancellationToken, Task<SearchResult[]>>? SearchFilesHandler { get; set; }
+    public Func<string, CancellationToken, Task>? CancelSearchHandler { get; set; }
     public Func<CancellationToken, Task<SmartFolder[]>>? LoadSmartFoldersHandler { get; set; }
     public int GitStatusCalls { get; private set; }
     public int MoveWithProgressCalls { get; private set; }
+    public SearchOptions? LastSearchOptions { get; private set; }
+    public string? LastCancelledOperationId { get; private set; }
+    public string? LastCancelledSearchId { get; private set; }
     public bool IsConnected => true;
 
 #pragma warning disable CS0067
@@ -990,9 +996,24 @@ internal sealed class WorkspaceSettingsIpc : ISimpleFileIpc
         return MoveWithProgressHandler?.Invoke(sources, destination, operationId, conflictAction, ct)
             ?? throw new NotImplementedException();
     }
-    public Task CancelOperationAsync(string operationId, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<SearchResult[]> SearchFilesAsync(SearchOptions options, Action<SearchResult[]>? onBatch = null, Action<int>? onComplete = null, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task CancelSearchAsync(string searchId, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task CancelOperationAsync(string operationId, CancellationToken ct = default)
+    {
+        LastCancelledOperationId = operationId;
+        return CancelOperationHandler?.Invoke(operationId, ct) ?? Task.CompletedTask;
+    }
+
+    public Task<SearchResult[]> SearchFilesAsync(SearchOptions options, Action<SearchResult[]>? onBatch = null, Action<int>? onComplete = null, CancellationToken ct = default)
+    {
+        LastSearchOptions = options;
+        return SearchFilesHandler?.Invoke(options, onBatch, onComplete, ct)
+            ?? Task.FromResult(Array.Empty<SearchResult>());
+    }
+
+    public Task CancelSearchAsync(string searchId, CancellationToken ct = default)
+    {
+        LastCancelledSearchId = searchId;
+        return CancelSearchHandler?.Invoke(searchId, ct) ?? Task.CompletedTask;
+    }
     public Task WatchDirectoryAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
     public Task UnwatchDirectoryAsync(CancellationToken ct = default) => throw new NotImplementedException();
 

@@ -156,7 +156,7 @@
                     <TextBlock x:Name="CurrentVersionText" Text="Current Version: " />
                     <Button x:Name="CheckUpdatesButton" Content="Check for Updates" Click="OnCheckUpdatesClicked" />
                     <Button x:Name="InstallUpdateButton" Content="Open GitHub Releases" Visibility="Collapsed" Click="OnInstallUpdateClicked" />
-                    <TextBlock Text="In-app install is disabled until installer signatures can be verified. Check still works; download new versions from GitHub Releases." TextWrapping="Wrap" Foreground="{StaticResource SfTextMutedBrush}" />
+                    <TextBlock Text="Signed SumaFile updates can install in-app. Unsigned or incomplete update metadata falls back to GitHub Releases." TextWrapping="Wrap" Foreground="{StaticResource SfTextMutedBrush}" />
                     <TextBlock x:Name="UpdateStatusText" Foreground="{StaticResource SfTextMutedBrush}" TextWrapping="Wrap" />
                 </StackPanel>
                 

@@ -1,8 +1,8 @@
 # SumaFile
 
-[![CI](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/ci.yml)
-[![Release](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/release.yml)
-[![Installer Smoke](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/installer-smoke.yml)
+[![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
+[![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
+[![Installer Smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
 ![Version](https://img.shields.io/badge/version-BETA-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010+-0078D4?logo=windows)
 ![License](https://img.shields.io/badge/license-proprietary-444444)
@@ -172,7 +172,7 @@ If Windows File Explorer feels limited for power workflows — dual panes, tabs 
 
 - **Duplicate file finder** with progress and cancellation
 - **Disk cleanup** helpers for large/old clutter workflows
-- In-app **update check** against `latest-winui.json`. Install stays on GitHub Releases until Ed25519 verification lands
+- In-app **update check** and signed installer flow against `latest-winui.json`, with GitHub Releases fallback when metadata is unsigned
 
 ### Productivity surfaces
 
@@ -187,7 +187,7 @@ If Windows File Explorer feels limited for power workflows — dual panes, tabs 
 
 ### End users
 
-Download the latest Windows installer or portable package from **[GitHub Releases](https://github.com/conniecombs/SimpleFile-Windows/releases)**.
+Download the latest Windows installer or portable package from **[GitHub Releases](https://github.com/conniecombs/SumaFile/releases)**.
 
 | Artifact | Best for |
 | --- | --- |
@@ -197,7 +197,7 @@ Download the latest Windows installer or portable package from **[GitHub Release
 
 **Requirements:** Windows 10 or later, x64.
 
-After the first manual install, **Settings → Updates** can check for a newer version. In-app install is disabled until installer signatures are verified, so download new releases from GitHub.
+After the first manual install, **Settings → Updates** can check for a newer version. Signed releases can be downloaded, verified, and launched in-app; unsigned or incomplete update metadata falls back to GitHub Releases.
 
 ### What the release ships
 
@@ -328,8 +328,8 @@ Workspace layout (dual pane, active pane, tabs per pane, view mode, and related 
 
 ```powershell
 # 1. Clone
-git clone https://github.com/conniecombs/SimpleFile-Windows.git
-cd SimpleFile-Windows
+git clone https://github.com/conniecombs/SumaFile.git
+cd SumaFile
 
 # 2. Development app (Rust IPC service + WinUI 3 host)
 npm run dev
@@ -351,9 +351,12 @@ Run from the **repository root** with `npm run <script>`.
 | `dev` / `dev:winui` | Build `simplefile-service` and run the WinUI 3 host |
 | `build` / `build:winui:release` | Publish WinUI payload, portable zip, and installers |
 | `build:winui` | `dotnet build src-winui/SimpleFile.sln` |
-| `check` | IPC schema, updater, workflows, packaging, parity gate |
+| `check` | Generated IPC bindings, IPC schema, identity, updater, workflows, packaging, parity gate |
 | `check:winui` | WinUI xUnit tests |
+| `generate:ipc-bindings` | Regenerates schema-derived IPC constants and C# client wrappers |
+| `check:ipc-generated` | Verifies generated IPC bindings are current |
 | `check:ipc-schema` | 76-command schema vs Rust/C# |
+| `check:identity` | Guards current-facing links and repo metadata against stale legacy repository references |
 | `check:updater` | WinUI updater metadata wiring |
 | `check:workflows` | GitHub workflow sanity checks |
 | `check:provider-surface` | Guards out-of-scope provider/mount surfaces |
@@ -373,7 +376,7 @@ Run from the **repository root** with `npm run <script>`.
 ## Project Structure
 
 ```text
-SimpleFile-Windows/
+SumaFile/
 ├── src-winui/                    WinUI 3 unpackaged host
 │   ├── SimpleFile.App/           Explorer window, settings, chrome
 │   ├── SimpleFile.Core/          Workspace, menus, transfers, settings
@@ -441,7 +444,7 @@ SumaFile uses a **WinUI 3 UI process** plus a **Rust IPC service**:
 
 | Command | Covers |
 | --- | --- |
-| `npm run check` | IPC schema, updater, workflows, provider surface, Windows assets, WinUI packaging, parity gate |
+| `npm run check` | Generated IPC bindings, IPC schema, identity, updater, workflows, provider surface, Windows assets, WinUI packaging, parity gate |
 | `npm run check:winui` | WinUI xUnit tests for navigation, transfers, and polish |
 | `npm run check:rust` | Format, unit/integration tests, Clippy with warnings denied |
 | `npm run check:security` | Rust dependency audit |
@@ -455,6 +458,7 @@ SumaFile uses a **WinUI 3 UI process** plus a **Rust IPC service**:
 | `npm run smoke:winui` | Built payload executable launches |
 | `npm run smoke:winui-msi` | MSI artifact extract/launch |
 | `npm run smoke:winui-installer` | Full NSIS install → launch → uninstall |
+| `npm run smoke:winui-upgrade` | Previous NSIS install → new NSIS upgrade → launch → persisted app data check → uninstall |
 
 ### Architectural guards
 
@@ -462,7 +466,8 @@ The `check` pipeline also enforces project invariants:
 
 - Out-of-scope provider/mount management surfaces stay excluded
 - Packaging assets and bundle targets stay Windows-only
-- The 76-command IPC schema stays aligned with C# / leftover Rust command names
+- The generated IPC bindings and 76-command schema stay aligned with C# / leftover Rust command names
+- Current-facing docs, updater metadata, and app links point to the SumaFile repository
 - WinUI parity-gate required rows stay `PASS` or `WAIVED`
 
 > **Note:** Full installer packaging is intentionally slow. PR CI focuses on fast gates; run the **Installer Smoke** workflow (nightly or manual) or `npm run release:build` before cutting a release.
@@ -494,9 +499,9 @@ The `check` pipeline also enforces project invariants:
 
 Production builds publish updater metadata to:
 
-`https://github.com/conniecombs/SimpleFile-Windows/releases/latest/download/latest-winui.json`
+`https://github.com/conniecombs/SumaFile/releases/latest/download/latest-winui.json`
 
-**Settings → Updates** checks that manifest. In-app **Download & Install is disabled** until Ed25519 verification of the downloaded installer exists (`install_update` fail-closes). Users download NSIS/MSI/portable artifacts from GitHub Releases.
+**Settings → Updates** checks that manifest. In-app **Download & Install** is enabled only when the manifest includes a trusted SumaFile setup URL, installer size, SHA-256, and Ed25519 signature that matches the public key embedded at build time. Unsigned or incomplete metadata remains a safe manual download from GitHub Releases.
 
 Operational details: [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md).
 
@@ -560,7 +565,7 @@ This repository targets a **Windows-only local file manager**.
 - Local disks, removable media, and mapped network drives
 - Dual pane, per-pane tabs, search, smart folders, previews, metadata
 - Archives, Git status/actions, cleanup tools
-- NSIS/MSI packaging and `latest-winui.json` updater metadata (check-only until Ed25519 install)
+- NSIS/MSI packaging, `latest-winui.json` updater metadata, signed in-app installer verification, and upgrade smoke coverage
 
 ### Out of scope (for this branch)
 
@@ -579,7 +584,7 @@ Before opening an issue:
 1. Confirm you are on a Windows release or a build from this repo’s Windows-focused `main` branch.
 2. Note SumaFile version from **Settings → About** (or the About dialog).
 3. Capture whether the problem is in dev, an unpacked build, NSIS, or MSI.
-4. For installers, run `npm run smoke:winui-installer` / `npm run smoke:winui-msi` when possible.
+4. For installers, run `npm run smoke:winui-installer`, `npm run smoke:winui-upgrade`, and `npm run smoke:winui-msi` when possible.
 5. Redact personal paths from logs and screenshots.
 
 More detail: [docs/SUPPORT.md](docs/SUPPORT.md).
@@ -587,6 +592,10 @@ More detail: [docs/SUPPORT.md](docs/SUPPORT.md).
 Startup diagnostics on Windows may be written to:
 
 `%LOCALAPPDATA%\SumaFile\startup.log`
+
+Long-running operation lifecycle entries are written best-effort to:
+
+`%LOCALAPPDATA%\SumaFile\operations.jsonl`
 
 ---
 

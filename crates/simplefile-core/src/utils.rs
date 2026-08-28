@@ -182,20 +182,6 @@ pub fn generate_operation_id() -> String {
     format!("op_{secs}_{count}")
 }
 
-/// Validate a path that must exist
-pub fn validate_existing_path(path: &str) -> Result<PathBuf, String> {
-    let path_buf = PathBuf::from(path);
-
-    if !path_buf.exists() {
-        return Err(format!("Path does not exist: {path}"));
-    }
-
-    // Canonicalize to resolve symlinks and ".." components
-    path_buf
-        .canonicalize()
-        .map_err(|e| format!("Failed to resolve path: {e}"))
-}
-
 /// Validate a path that must exist while preserving the exact path supplied.
 ///
 /// Some Windows filesystem targets can be opened and listed normally but fail
@@ -210,7 +196,7 @@ pub fn validate_existing_path_no_resolve(path: &str) -> Result<PathBuf, String> 
 
 /// Validate a path that must exist **without following symlinks** (lstat).
 ///
-/// Use this instead of `validate_existing_path` whenever the operation must
+/// Use this whenever the operation must
 /// act on the symlink itself rather than its target — e.g. delete, rename,
 /// move, or `get_entry_info`.  Canonicalising the path first would silently
 /// redirect all of those operations to the symlink target, which:
@@ -395,35 +381,6 @@ pub fn count_directory_entries(
         }
         if entry.is_ok() {
             count += 1;
-        }
-    }
-    Some(count)
-}
-
-/// Recursively count all entries under `path`, excluding the root directory itself.
-/// Returns `None` if cancelled or superseded by a newer count request.
-pub fn count_items_scoped(
-    path: &Path,
-    cancel: &std::sync::atomic::AtomicBool,
-    generation: Option<(&std::sync::atomic::AtomicU64, u64)>,
-) -> Option<u64> {
-    let mut count = 0u64;
-    let mut stack = vec![path.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        if should_cancel(cancel, generation) {
-            return None;
-        }
-        if let Ok(entries) = fs::read_dir(&current) {
-            for entry in entries.flatten() {
-                if should_cancel(cancel, generation) {
-                    return None;
-                }
-                count += 1;
-                let Ok(ft) = entry.file_type() else { continue };
-                if ft.is_dir() {
-                    stack.push(entry.path());
-                }
-            }
         }
     }
     Some(count)

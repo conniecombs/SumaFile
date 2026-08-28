@@ -23,16 +23,38 @@ function readRepo(relativePath) {
   return readFileSync(join(repoRoot, relativePath), 'utf8');
 }
 
+function readDispatchSource() {
+  return ['mod.rs', 'handlers.rs', 'async_ops.rs', 'params.rs']
+    .map((file) => readRepo(`crates/simplefile-service/src/dispatch/${file}`))
+    .join('\n');
+}
+
 function setDifference(left, right) {
   return [...left].filter((value) => !right.has(value)).sort();
 }
 
-function activeServiceCommands(source) {
+function rustMethodConstants(source) {
+  return new Map(
+    [...source.matchAll(/pub const (METHOD_[A-Z0-9_]+):\s*&str\s*=\s*"([a-z0-9_]+)"/g)].map(
+      (match) => [match[1], match[2]],
+    ),
+  );
+}
+
+function activeServiceCommands(source, rustConstants) {
   const commands = [
     ...source.matchAll(/^\s*"([a-z0-9_]+)"\s*=>/gm),
   ].map((match) => match[1]);
+  const constantArms = [...source.matchAll(/^\s*(METHOD_[A-Z0-9_]+)\s*=>/gm)].map((match) => {
+    const method = rustConstants.get(match[1]);
+    if (!method) {
+      throw new Error(`Unknown generated method constant in service dispatcher: ${match[1]}`);
+    }
+    return method;
+  });
+  commands.push(...constantArms);
   if (commands.length === 0) {
-    throw new Error('Could not find JSON-RPC method arms in crates/simplefile-service/src/dispatch.rs');
+    throw new Error('Could not find JSON-RPC method arms in crates/simplefile-service/src/dispatch');
   }
   return new Set(commands);
 }
@@ -54,11 +76,13 @@ if (!protocol || !types || !commands || !events) {
   process.exit(1);
 }
 
-const serviceDispatch = readRepo('crates/simplefile-service/src/dispatch.rs');
-const protocolCs = readRepo('src-winui/SimpleFile.Ipc/Protocol.cs');
+const serviceDispatch = readDispatchSource();
+const protocolCs = readRepo('src-winui/SimpleFile.Ipc/Protocol.Generated.cs');
+const protocolGeneratedRs = readRepo('crates/simplefile-ipc/src/protocol_generated.rs');
 const models = readRepo('crates/simplefile-core/src/models.rs');
 
-const handlers = activeServiceCommands(serviceDispatch);
+const rustConstants = rustMethodConstants(protocolGeneratedRs);
+const handlers = activeServiceCommands(serviceDispatch, rustConstants);
 const schemaMethods = new Set(
   Object.keys(commands.methods || {}).filter((name) => !name.startsWith('ipc.')),
 );
@@ -85,7 +109,20 @@ const csharpMethods = new Set(
     .filter((name) => schemaMethods.has(name)),
 );
 for (const name of setDifference(schemaMethods, csharpMethods)) {
-  fail(`schema method missing from SimpleFile.Ipc Protocol.cs: ${name}`);
+  fail(`schema method missing from SimpleFile.Ipc Protocol.Generated.cs: ${name}`);
+}
+const rustGeneratedMethods = new Set(rustConstants.values());
+for (const name of setDifference(schemaMethods, rustGeneratedMethods)) {
+  fail(`schema method missing from simplefile-ipc protocol_generated.rs: ${name}`);
+}
+for (const name of setDifference(rustGeneratedMethods, schemaMethods)) {
+  fail(`simplefile-ipc generated method not present in schema: ${name}`);
+}
+if (!protocolGeneratedRs.includes(`pub const DOMAIN_METHOD_COUNT: usize = ${commands.domainMethodCount};`)) {
+  fail('simplefile-ipc generated DOMAIN_METHOD_COUNT is stale');
+}
+if (!serviceDispatch.includes('is_domain_method(&request.method)')) {
+  fail('service dispatcher must use generated domain method metadata for unknown-method routing');
 }
 
 if (!commands.methods['ipc.handshake']) {

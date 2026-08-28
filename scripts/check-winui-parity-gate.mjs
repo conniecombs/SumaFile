@@ -19,10 +19,35 @@ function readRepo(relativePath) {
   return readFileSync(fullPath, 'utf8');
 }
 
-function activeServiceCommands(source) {
-  return [
+function readDispatchSource() {
+  return ['mod.rs', 'handlers.rs', 'async_ops.rs', 'params.rs']
+    .map((file) => readRepo(`crates/simplefile-service/src/dispatch/${file}`))
+    .join('\n');
+}
+
+function rustMethodConstants(source) {
+  return new Map(
+    [...source.matchAll(/pub const (METHOD_[A-Z0-9_]+):\s*&str\s*=\s*"([a-z0-9_]+)"/g)].map(
+      (match) => [match[1], match[2]],
+    ),
+  );
+}
+
+function activeServiceCommands(source, rustConstants) {
+  const commands = [
     ...source.matchAll(/^\s*"([a-z0-9_]+)"\s*=>/gm),
   ].map((match) => match[1]);
+  commands.push(
+    ...[...source.matchAll(/^\s*(METHOD_[A-Z0-9_]+)\s*=>/gm)].map((match) => {
+      const method = rustConstants.get(match[1]);
+      if (!method) {
+        fail(`unknown generated method constant in service dispatcher: ${match[1]}`);
+        return match[1];
+      }
+      return method;
+    }),
+  );
+  return commands;
 }
 
 function extractQuotedIds(source, pattern) {
@@ -30,7 +55,8 @@ function extractQuotedIds(source, pattern) {
 }
 
 const gate = readRepo(gatePath);
-const serviceDispatch = readRepo('crates/simplefile-service/src/dispatch.rs');
+const serviceDispatch = readDispatchSource();
+const protocolGeneratedRs = readRepo('crates/simplefile-ipc/src/protocol_generated.rs');
 const contextMenu = readRepo('src-winui/SimpleFile.Core/ContextMenuBuilder.cs');
 const palette = readRepo('src-winui/SimpleFile.Core/AppCommandCatalog.cs');
 const events = readRepo('ipc/schema/v1/events.json');
@@ -57,7 +83,7 @@ for (const status of statuses) {
   }
 }
 
-const commands = activeServiceCommands(serviceDispatch);
+const commands = activeServiceCommands(serviceDispatch, rustMethodConstants(protocolGeneratedRs));
 if (commands.length !== 76) {
   fail(`expected 76 domain commands, found ${commands.length}.`);
 }

@@ -78,6 +78,12 @@ jobs:
           }
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1 -SkipChecks -RequireInstaller
 
+      - name: Smoke WinUI NSIS upgrade from latest published release
+        if: inputs.full_installer_smoke
+        run: npm run smoke:winui-upgrade
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Summarize artifacts
         if: always()
         shell: pwsh

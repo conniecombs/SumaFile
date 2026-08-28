@@ -172,8 +172,7 @@ public sealed partial class MainWindow
 
     private void UpdateSearchCancelButtons()
     {
-        var searching = _searchMode && !string.IsNullOrEmpty(_activeSearchId);
-        SearchCancelButton.IsEnabled = searching;
+        SetSearchCancelEnabled(_search?.Pane ?? PaneId.Primary, _search?.CanCancel == true);
     }
 
     private void OnSelectAllAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
@@ -199,7 +198,7 @@ public sealed partial class MainWindow
         var package = new DataPackage();
         package.SetText(string.Join(Environment.NewLine, paths));
         Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
-        StatusText.Text = paths.Length == 1 ? "Path copied" : $"{paths.Length} paths copied";
+        SetStatusText(paths.Length == 1 ? "Path copied" : $"{paths.Length} paths copied");
     }
 
     private async void OnUndoAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
@@ -423,9 +422,9 @@ public sealed partial class MainWindow
                 await PasteFromClipboard();
                 break;
             case "clipboard-history":
-                StatusText.Text = _workspace.Clipboard.HasItems
+                SetStatusText(_workspace.Clipboard.HasItems
                     ? $"{_workspace.Clipboard.Operation}: {string.Join(", ", _workspace.Clipboard.SourcePaths.Select(PathRules.Basename))}"
-                    : "Clipboard is empty";
+                    : "Clipboard is empty");
                 break;
             case "operation-history":
                 await ShowOperationHistoryAsync();
@@ -1073,7 +1072,7 @@ public sealed partial class MainWindow
                 return;
             }
 
-            if (_searchMode)
+            if (_search?.IsActive == true)
             {
                 e.Handled = true;
                 await CancelActiveSearchAsync();
@@ -1252,8 +1251,8 @@ public sealed partial class MainWindow
                 }
                 else
                 {
-                    body.Children.Add(CreateFileTypePreviewIcon(row, 96));
-                    body.Children.Add(new TextBlock { Text = IconPreviewMessage(preview), TextWrapping = TextWrapping.Wrap });
+                    body.Children.Add(PreviewPresenter.CreateFileTypePreviewIcon(row, 96));
+                    body.Children.Add(new TextBlock { Text = PreviewPresenter.IconPreviewMessage(preview), TextWrapping = TextWrapping.Wrap });
                     hasVisualPreview = true;
                 }
 
@@ -1330,7 +1329,7 @@ public sealed partial class MainWindow
 
         if (!hasVisualPreview)
         {
-            body.Children.Add(CreateFileTypePreviewIcon(row, 96));
+            body.Children.Add(PreviewPresenter.CreateFileTypePreviewIcon(row, 96));
         }
 
         if (workspace is not null && !ReferenceEquals(_workspace, workspace))
@@ -1397,7 +1396,7 @@ public sealed partial class MainWindow
 
         try
         {
-            var source = await CreatePreviewImageSourceAsync(imageData, row.Path);
+            var source = await PreviewImageSourceFactory.FromBase64Async(imageData, row.Path);
             body.Children.Add(new Image
             {
                 Source = source,
@@ -1501,7 +1500,7 @@ public sealed partial class MainWindow
 
             foreach (var path in paths)
             {
-                StatusText.Text = $"Calculating metrics for {path}...";
+                SetStatusText($"Calculating metrics for {path}...");
                 var size = await fileOps.CalculateFolderSizeAsync(path, utilityCts.Token);
                 var count = await fileOps.CountFolderItemsAsync(path, utilityCts.Token);
                 if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
@@ -1523,7 +1522,7 @@ public sealed partial class MainWindow
                 lines.Add($"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s)");
             }
 
-            StatusText.Text = "";
+            SetStatusText("");
             var dialog = new ContentDialog
             {
                 Title = "Folder metrics",
@@ -1586,7 +1585,7 @@ public sealed partial class MainWindow
         {
             if (pull)
             {
-                StatusText.Text = $"Pulling Git changes in {path}...";
+                SetStatusText($"Pulling Git changes in {path}...");
                 await fileOps.GitPullAsync(path, utilityCts.Token);
                 if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
                 {
@@ -1595,7 +1594,7 @@ public sealed partial class MainWindow
             }
             else
             {
-                StatusText.Text = $"Pushing Git changes from {path}...";
+                SetStatusText($"Pushing Git changes from {path}...");
                 await fileOps.GitPushAsync(path, utilityCts.Token);
                 if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
                 {

@@ -147,7 +147,7 @@
     },
     "UpdateInfo": {
       "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["version", "date", "body"]
+      "fields": ["version", "date", "body", "installable", "channel", "url", "sha256", "size"]
     },
     "AppAboutInfo": {
       "source": "crates/simplefile-core/src/models.rs",
