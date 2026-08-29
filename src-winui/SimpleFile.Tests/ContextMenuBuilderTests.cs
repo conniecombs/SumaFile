@@ -141,6 +141,8 @@ public class ContextMenuBuilderTests
         {
             SelectionCount = 1,
             SelectedIsDirectory = true,
+            SelectedDirectoryPath = @"C:\Users\test\Desktop",
+            HasClipboard = true,
         });
 
         var openTab = Assert.Single(folder, entry => entry.Id == "ctx-open-tab");
@@ -149,6 +151,9 @@ public class ContextMenuBuilderTests
         Assert.Contains(folder, entry => entry.Id == "ctx-open-other-pane");
         Assert.Contains(folder, entry => entry.Id == "ctx-bookmark" && entry.Shortcut == "Ctrl+B");
         Assert.Contains(folder, entry => entry.Id == "ctx-copy-path");
+        var paste = Assert.Single(folder, entry => entry.Id == "ctx-paste");
+        Assert.Equal("Paste into folder", paste.Label);
+        Assert.Equal(@"C:\Users\test\Desktop", paste.CommandParameter);
     }
 
     [Fact]

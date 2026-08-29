@@ -32,6 +32,8 @@ public sealed class OperationRecord
     public string[] Sources { get; set; } = [];
     public string Destination { get; set; } = "";
     public bool Move { get; set; }
+    public string Status { get; set; } = "completed";
+    public DateTimeOffset At { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public static class PlacesStore

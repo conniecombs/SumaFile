@@ -15,6 +15,14 @@ namespace SimpleFile.App;
 public sealed partial class MainWindow
 {
     private const string InternalDragFormat = "simplefile-internal";
+    private enum TransferRunStatus
+    {
+        NoOp,
+        Completed,
+        Cancelled,
+        Failed,
+    }
+
     private string[] _dragPaths = [];
     private bool _sidebarDragging;
     private bool _previewDragging;
@@ -186,28 +194,40 @@ public sealed partial class MainWindow
         return items.Select(item => item.Path).Where(path => !string.IsNullOrWhiteSpace(path)).ToList();
     }
 
-    private async Task TransferWithConflictAsync(string[] sources, string destination, bool move)
+    private async Task<TransferRunStatus> TransferWithConflictAsync(string[] sources, string destination, bool move)
     {
         var workspace = _workspace;
         var fileOps = workspace?.FileOps;
         if (workspace is null || fileOps is null || sources.Length == 0)
         {
-            return;
-        }
-
-        var conflictSession = new TransferConflictSession();
-        var action = await ChooseConflictActionAsync(sources, destination, conflictSession);
-        if (action is null)
-        {
-            return;
+            return TransferRunStatus.NoOp;
         }
 
         var transferCts = _transfer?.BeginTransfer() ?? new CancellationTokenSource();
+        StartPreparingTransfer(move, sources, destination);
+        var conflictSession = new TransferConflictSession();
+        var finalStatus = TransferRunStatus.NoOp;
+
         try
         {
+            var action = await ChooseConflictActionAsync(
+                sources,
+                destination,
+                conflictSession,
+                transferCts.Token);
+            if (action is null)
+            {
+                CloseTransferProgressWindow();
+                finalStatus = transferCts.IsCancellationRequested
+                    ? TransferRunStatus.Cancelled
+                    : TransferRunStatus.NoOp;
+                return finalStatus;
+            }
+
             var progress = new Progress<ProgressUpdate>(OnTransferProgress);
             while (true)
             {
+                transferCts.Token.ThrowIfCancellationRequested();
                 try
                 {
                     if (move)
@@ -256,22 +276,43 @@ public sealed partial class MainWindow
                     {
                         _transfer?.ClearCurrentOperation();
                         CloseTransferProgressWindow();
-                        return;
+                        finalStatus = TransferRunStatus.NoOp;
+                        return finalStatus;
                     }
 
                     action = retryAction;
                 }
             }
+
+            finalStatus = transferCts.IsCancellationRequested
+                ? TransferRunStatus.Cancelled
+                : TransferRunStatus.Completed;
+            return finalStatus;
         }
         catch (OperationCanceledException)
         {
+            finalStatus = TransferRunStatus.Cancelled;
+            return finalStatus;
         }
         catch (Exception exception)
         {
             ShowMessage(move ? "Move" : "Copy", exception.Message, InfoBarSeverity.Error);
+            finalStatus = TransferRunStatus.Failed;
+            return finalStatus;
         }
         finally
         {
+            if (finalStatus != TransferRunStatus.NoOp && ReferenceEquals(_workspace, workspace))
+            {
+                workspace.RememberOperation(
+                    move ? "move" : "copy",
+                    $"{(move ? "Move" : "Copy")} {sources.Length} item(s) to {destination}",
+                    sources,
+                    destination,
+                    move,
+                    finalStatus.ToString().ToLowerInvariant());
+            }
+
             if (_transfer?.FinishTransfer(transferCts) != true)
             {
                 transferCts.Dispose();
@@ -282,20 +323,20 @@ public sealed partial class MainWindow
     private async Task<string?> ChooseConflictActionAsync(
         string[] sources,
         string destination,
-        TransferConflictSession session)
+        TransferConflictSession session,
+        CancellationToken cancellationToken)
     {
         if (_workspace is null)
         {
             return null;
         }
 
-        var names = await LoadDestinationEntryNamesAsync(destination);
-        if (names is null)
+        var conflicts = await ProbeDestinationConflictsAsync(sources, destination, cancellationToken);
+        if (conflicts is null)
         {
             return "error";
         }
 
-        var conflicts = DropDestination.ConflictingTransferNames(sources, names);
         if (conflicts.Count == 0)
         {
             return "error";
@@ -304,13 +345,53 @@ public sealed partial class MainWindow
         return await PromptConflictActionAsync(destination, conflicts, session);
     }
 
-    private async Task<IReadOnlyList<string>?> LoadDestinationEntryNamesAsync(string destination)
+    private void StartPreparingTransfer(bool move, IReadOnlyList<string> sources, string destination)
+    {
+        var window = EnsureTransferProgressWindow();
+        window.Start(new TransferProgressContext(
+            move,
+            sources.Count,
+            TransferViewModel.DescribeSource(sources),
+            destination));
+    }
+
+    private async Task<IReadOnlyList<string>?> ProbeDestinationConflictsAsync(
+        string[] sources,
+        string destination,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await Task.Run(
+                () => DropDestination.ProbeConflictingTransferNames(
+                    sources,
+                    destination,
+                    path => File.Exists(path) || Directory.Exists(path),
+                    cancellationToken),
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            var names = await LoadDestinationEntryNamesAsync(destination, cancellationToken);
+            return names is null
+                ? null
+                : DropDestination.ConflictingTransferNames(sources, names);
+        }
+    }
+
+    private async Task<IReadOnlyList<string>?> LoadDestinationEntryNamesAsync(
+        string destination,
+        CancellationToken cancellationToken)
     {
         if (_backend is not null)
         {
             try
             {
-                var listing = await _backend.ListDirectoryAsync(destination);
+                var listing = await _backend.ListDirectoryAsync(destination, cancellationToken: cancellationToken);
                 return listing.Entries.Select(entry => entry.Name).ToArray();
             }
             catch

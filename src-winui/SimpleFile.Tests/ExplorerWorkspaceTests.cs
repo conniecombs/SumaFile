@@ -23,6 +23,30 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public void RememberOperation_StoresStatusNewestFirstAndCapsHistory()
+    {
+        var workspace = new ExplorerWorkspace(FakeExplorerBackend.Typical());
+
+        for (var index = 0; index < 55; index++)
+        {
+            workspace.RememberOperation(
+                "copy",
+                $"Copy {index}",
+                [$@"C:\src\{index}.txt"],
+                @"C:\dest",
+                move: false,
+                status: index == 54 ? "failed" : "completed");
+        }
+
+        Assert.Equal(50, workspace.OperationLog.Count);
+        Assert.Equal("Copy 54", workspace.OperationLog[0].Description);
+        Assert.Equal("failed", workspace.OperationLog[0].Status);
+        Assert.Equal(@"C:\dest", workspace.OperationLog[0].Destination);
+        Assert.False(workspace.OperationLog[0].Move);
+        Assert.DoesNotContain(workspace.OperationLog, entry => entry.Description == "Copy 0");
+    }
+
+    [Fact]
     public async Task Navigate_PushesHistoryAndBackRestores()
     {
         var backend = FakeExplorerBackend.Typical();
@@ -388,6 +412,79 @@ public class ExplorerWorkspaceTests
         Assert.Equal(2, workspace.VisibleEntries.Count);
         Assert.Equal("light", backend.LastListDirectoryOptions?.Mode);
         Assert.False(backend.LastListDirectoryOptions?.FinalEntries ?? true);
+    }
+
+    [Fact]
+    public async Task NavigateRemoteLikeFixedDrive_UsesImmediateBackendStreaming()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.Drives.Add(new DriveInfo
+        {
+            Name = "Mounted Mirror (S:)",
+            Path = @"S:\",
+            DriveType = "Fixed",
+            FileSystem = "AirLiveDrive-7",
+            DriveStatus = "available",
+        });
+        backend.Listings[@"S:\Movies"] = new DirectoryListing
+        {
+            Path = @"S:\Movies",
+            Entries =
+            [
+                new FileEntry { Name = "Clip.mkv", Path = @"S:\Movies\Clip.mkv", Extension = "mkv" },
+            ],
+        };
+        var workspace = new ExplorerWorkspace(backend);
+        await workspace.InitializeAsync();
+
+        await workspace.NavigateToAsync(@"S:\Movies");
+
+        Assert.True(workspace.PathIsNetwork);
+        Assert.Null(backend.LastListDirectoryOptions);
+    }
+
+    [Fact]
+    public async Task FillFolderMetrics_SkipsRemoteLikeFixedDrive()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.Drives.Add(new DriveInfo
+        {
+            Name = "Mounted Mirror (S:)",
+            Path = @"S:\",
+            DriveType = "Fixed",
+            FileSystem = "AirLiveDrive-7",
+            DriveStatus = "available",
+        });
+        backend.Listings[@"S:\Movies"] = new DirectoryListing
+        {
+            Path = @"S:\Movies",
+            Entries =
+            [
+                new FileEntry { Name = "Season 1", Path = @"S:\Movies\Season 1", IsDir = true },
+            ],
+        };
+        var metricCalls = 0;
+        var settingsIpc = new ConfigurableIpc
+        {
+            CalculateFolderSizeHandler = (_, _) =>
+            {
+                metricCalls += 1;
+                return Task.FromResult(42UL);
+            },
+            CountFolderItemsHandler = (_, _) =>
+            {
+                metricCalls += 1;
+                return Task.FromResult(3UL);
+            },
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+        await workspace.NavigateToAsync(@"S:\Movies");
+
+        await workspace.FillFolderMetricsAsync(PaneId.Primary, includeSizes: true, includeItemCounts: true);
+
+        Assert.True(workspace.PathIsNetwork);
+        Assert.Equal(0, metricCalls);
     }
 
     [Fact]

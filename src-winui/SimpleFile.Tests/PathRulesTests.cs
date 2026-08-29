@@ -75,6 +75,31 @@ public class PathRulesTests
     }
 
     [Fact]
+    public void IsNetworkFsPath_TreatsVirtualFixedDrivesAsRemoteLike()
+    {
+        DriveInfo[] drives =
+        [
+            new()
+            {
+                Name = "Mounted Mirror (S:)",
+                Path = @"S:\",
+                DriveType = "Fixed",
+                FileSystem = "AirLiveDrive-7",
+            },
+            new()
+            {
+                Name = "Windows (C:)",
+                Path = @"C:\",
+                DriveType = "Fixed",
+                FileSystem = "NTFS",
+            },
+        ];
+
+        Assert.True(PathRules.IsNetworkFsPath(@"S:\My Drive [VoX MrZip]\Movies", drives));
+        Assert.False(PathRules.IsNetworkFsPath(@"C:\Users", drives));
+    }
+
+    [Fact]
     public void CreateFallbackDriveForPath_WindowsRoot()
     {
         var drive = PathRules.CreateFallbackDriveForPath(@"D:\Projects\app");

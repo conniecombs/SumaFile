@@ -147,6 +147,12 @@ public sealed class FileOperationService
         try
         {
             var results = await invoke(ipc, operationId, ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested)
+            {
+                _journal?.Cancelled(operationType, operationId);
+                throw new OperationCanceledException(ct);
+            }
+
             _journal?.Completed(operationType, operationId);
             return results;
         }
@@ -236,14 +242,32 @@ public sealed class FileOperationService
         return _ipc.ListSubdirectoriesAsync(path, ct);
     }
 
-    public Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)
+    public async Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)
     {
-        return _ipc.CalculateFolderSizeAsync(path, ct);
+        var ipc = _ipc;
+        try
+        {
+            return await ipc.CalculateFolderSizeAsync(path, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderSizeAsync(cancelCt)).ConfigureAwait(false);
+            throw;
+        }
     }
 
-    public Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default)
+    public async Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default)
     {
-        return _ipc.CountFolderItemsAsync(path, ct);
+        var ipc = _ipc;
+        try
+        {
+            return await ipc.CountFolderItemsAsync(path, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderItemCountAsync(cancelCt)).ConfigureAwait(false);
+            throw;
+        }
     }
 
     public Task GitPullAsync(string path, CancellationToken ct = default) => _ipc.GitPullAsync(path, ct);
@@ -434,6 +458,18 @@ public sealed class FileOperationService
     public Task CancelFolderSizeAsync(CancellationToken ct = default) => _ipc.CancelFolderSizeAsync(ct);
     public Task CancelFolderItemCountAsync(CancellationToken ct = default) => _ipc.CancelFolderItemCountAsync(ct);
 
+    private static async Task TryCancelBestEffortAsync(Func<CancellationToken, Task> cancel)
+    {
+        try
+        {
+            await cancel(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Cancellation is opportunistic; preserve the original canceled operation.
+        }
+    }
+
     public Task<bool> CheckRarInstalledAsync(CancellationToken ct = default) => _ipc.CheckRarInstalledAsync(ct);
     public Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default) => _ipc.PrepareRarInstallAsync(ct);
     public Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default) => _ipc.DiscardRarInstallAsync(confirmationToken, ct);
@@ -495,7 +531,7 @@ public sealed class FileOperationService
             return "Windows could not move the selection to the Recycle Bin. The item may no longer be available, or this location may not support Recycle Bin operations. Refresh the folder and try again, or use Delete Permanently instead.";
         }
 
-        return "The Recycle Bin is not available for this location. This can happen on network, virtual, cloud-backed, or removable drives.";
+        return "The Recycle Bin is not available for this location. This can happen on network, virtual, or removable drives.";
     }
 
     private static string StripPrefix(string message, string prefix)

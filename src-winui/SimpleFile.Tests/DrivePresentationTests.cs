@@ -39,4 +39,19 @@ public class DrivePresentationTests
         Assert.Equal(@"\\nas\media", DrivePresentation.Description(connected));
         Assert.True(DrivePresentation.IsAvailable(connected));
     }
+
+    [Fact]
+    public void DrivePresentation_TreatsVirtualFixedDriveAsNetworkLike()
+    {
+        var drive = new DriveInfo
+        {
+            Name = "Mounted Mirror (S:)",
+            Path = @"S:\",
+            DriveType = "Fixed",
+            FileSystem = "AirLiveDrive-7",
+            DriveStatus = "available",
+        };
+
+        Assert.True(DrivePresentation.IsNetwork(drive));
+    }
 }

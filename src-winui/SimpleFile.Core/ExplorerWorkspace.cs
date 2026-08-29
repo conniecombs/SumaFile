@@ -11,9 +11,6 @@ namespace SimpleFile.Core;
 /// </summary>
 public sealed class ExplorerWorkspace
 {
-    private const string BookmarksSettingsKey = "places.bookmarks";
-    private const string RecentPathsSettingsKey = "places.recents";
-
     public static readonly IReadOnlyList<(string Name, string Icon, string Command)> QuickAccessLocations =
     [
         ("Home", "\uE80F", "navigateHome"),
@@ -152,18 +149,7 @@ public sealed class ExplorerWorkspace
 
     public string ResolveStartPath()
     {
-        var mode = UiSettings.NormalizeStartLocation(Settings.StartLocation);
-        if (mode == "custom" && !string.IsNullOrWhiteSpace(Settings.CustomPath))
-        {
-            return Settings.CustomPath.Trim();
-        }
-
-        if (mode == "last" && !string.IsNullOrWhiteSpace(Settings.LastPath))
-        {
-            return Settings.LastPath.Trim();
-        }
-
-        return string.IsNullOrEmpty(HomePath) ? Primary.Path : HomePath;
+        return WorkspaceNavigation.ResolveStartPath(Settings, HomePath, Primary.Path);
     }
 
     public void ApplyUiSettings(UiSettings settings, bool applyViewDefaultsToPanes = true)
@@ -433,28 +419,13 @@ public sealed class ExplorerWorkspace
 
                             lock (_gate)
                             {
-                                if (chunk.IsNetwork)
-                                {
-                                    state.PathIsNetwork = true;
-                                }
-
-                                if (!string.IsNullOrEmpty(chunk.Path))
-                                {
-                                    state.Path = chunk.Path;
-                                }
-
-                                progressive.AddRange(chunk.Entries);
-                                state.Entries = [.. progressive];
-                                if (progressive.Count > 0)
-                                {
-                                    state.IsNavigating = false;
-                                }
+                                WorkspaceNavigation.ApplyListingChunk(state, chunk, progressive);
                             }
 
                             RaiseChanged();
                         },
                         cancellationToken,
-                        BuildStreamedListingOptions(state))
+                        WorkspaceNavigation.BuildStreamedListingOptions(state))
                     .ConfigureAwait(false);
             }
             catch (IpcException exception) when (exception.IsResultTooLarge && progressive.Count > 0)
@@ -633,7 +604,7 @@ public sealed class ExplorerWorkspace
                         RaiseChanged();
                     },
                     cancellationToken,
-                    BuildStreamedListingOptions(state))
+                    WorkspaceNavigation.BuildStreamedListingOptions(state))
                 .ConfigureAwait(false);
 
             lock (_gate)
@@ -1405,10 +1376,7 @@ public sealed class ExplorerWorkspace
         var target = Normalize(pane);
         var state = Pane(target);
         var keepFoldersOnTop = Settings.KeepFoldersOnTop;
-        var canUsePresorted = state.ListingInProgress
-            && keepFoldersOnTop
-            && string.Equals(state.SortBy, "name", StringComparison.OrdinalIgnoreCase)
-            && state.SortAscending;
+        var canUsePresorted = WorkspaceNavigation.CanUsePresortedEntries(state, keepFoldersOnTop);
         var entries = canUsePresorted
             ? EntryPresentation.VisibleEntriesPreSorted(state.Entries, FilterQueryFor(target), ShowHiddenFiles)
             : state.VisibleEntries(ShowHiddenFiles, FilterQueryFor(target), keepFoldersOnTop);
@@ -1423,18 +1391,6 @@ public sealed class ExplorerWorkspace
         }
 
         return entries;
-    }
-
-    private static ListDirectoryOptions BuildStreamedListingOptions(ExplorerPane pane)
-    {
-        return new ListDirectoryOptions
-        {
-            Mode = "light",
-            FinalEntries = false,
-            SortBy = pane.SortBy,
-            SortAscending = pane.SortAscending,
-            IncludeHidden = true,
-        };
     }
 
     public string FilterQueryFor(PaneId pane)
@@ -1515,6 +1471,11 @@ public sealed class ExplorerWorkspace
 
         var target = Normalize(pane);
         var state = Pane(target);
+        if (state.PathIsNetwork)
+        {
+            return;
+        }
+
         var path = state.Path;
         var navigationToken = state.NavigationToken;
         try
@@ -1561,6 +1522,11 @@ public sealed class ExplorerWorkspace
 
         var target = Normalize(pane);
         var state = Pane(target);
+        if (state.PathIsNetwork)
+        {
+            return;
+        }
+
         var path = state.Path;
         var navigationToken = state.NavigationToken;
         var folders = state.Entries.Where(item => item.IsDir).Take(32).ToList();
@@ -1623,7 +1589,13 @@ public sealed class ExplorerWorkspace
         }
     }
 
-    public void RememberOperation(string kind, string description, string[] sources, string destination, bool move)
+    public void RememberOperation(
+        string kind,
+        string description,
+        string[] sources,
+        string destination,
+        bool move,
+        string status = "completed")
     {
         OperationLog.Insert(0, new OperationRecord
         {
@@ -1632,6 +1604,7 @@ public sealed class ExplorerWorkspace
             Sources = sources,
             Destination = destination,
             Move = move,
+            Status = status,
         });
         if (OperationLog.Count > 50)
         {
@@ -1819,52 +1792,13 @@ public sealed class ExplorerWorkspace
             return;
         }
 
-        Settings.ShowHidden = ShowHiddenFiles;
-        Settings.DefaultView = UiSettings.NormalizeDefaultView(Settings.DefaultView);
-        Settings.DefaultIconSize = UiSettings.NormalizeIconSize(Settings.DefaultIconSize);
-        Settings.SidebarWidth = UiSettings.NormalizeSidebarWidth(Settings.SidebarWidth);
-        Settings.PreviewWidth = UiSettings.NormalizePreviewWidth(Settings.PreviewWidth);
-        Settings.DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(Settings.DualPanePrimaryPercent);
-        Settings.DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(Settings.DualPanePrimaryWidth);
-        Settings.ColumnPreset = UiSettings.NormalizeColumnPreset(Settings.ColumnPreset);
-        Settings.ColumnWidths = Columns.SnapshotWidths();
-        await FileOps.SetSettingAsync("theme", Settings.Theme, cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("defaultView", Settings.DefaultView, cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("defaultIconSize", Settings.DefaultIconSize.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("showHidden", Settings.ShowHidden ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("confirmDelete", Settings.ConfirmDelete ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("keepFoldersOnTop", Settings.KeepFoldersOnTop ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("startLocation", Settings.StartLocation, cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("customPath", Settings.CustomPath, cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("openInNewTab", Settings.OpenInNewTab ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("enableGitIntegration", Settings.EnableGitIntegration ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("showFolderSizes", Settings.ShowFolderSizes ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("previewVisible", Settings.PreviewVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("preview.width", Settings.PreviewWidth.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("dualPane.primaryPercent", Settings.DualPanePrimaryPercent.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("dualPane.primaryWidth", Settings.DualPanePrimaryWidth.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("columnPreset", Settings.ColumnPreset, cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync(
-            "columnWidths",
-            System.Text.Json.JsonSerializer.Serialize(Settings.ColumnWidths),
-            cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("sidebar.showQuickAccess", Settings.ShowQuickAccess ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("sidebar.showFolders", Settings.ShowFolderTree ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("sidebar.showBookmarks", Settings.ShowBookmarks ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("sidebar.showRecent", Settings.ShowRecentLocations ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("sidebar.showSmartFolders", Settings.ShowSmartFolders ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("sidebar.visible", Settings.SidebarVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("sidebar.width", Settings.SidebarWidth.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("sidebar.quickAccessCollapsed", Settings.QuickAccessCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("sidebar.myPcCollapsed", Settings.MyPcCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync("lastPath", Settings.LastPath, cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync(
-            BookmarksSettingsKey,
-            System.Text.Json.JsonSerializer.Serialize(Bookmarks),
-            cancellationToken).ConfigureAwait(false);
-        await FileOps.SetSettingAsync(
-            RecentPathsSettingsKey,
-            System.Text.Json.JsonSerializer.Serialize(RecentPaths),
+        await WorkspaceSettingsStore.SaveAsync(
+            FileOps,
+            Settings,
+            Columns,
+            ShowHiddenFiles,
+            Bookmarks,
+            RecentPaths,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -1949,41 +1883,10 @@ public sealed class ExplorerWorkspace
 
         try
         {
-            Settings.Theme = UiSettings.NormalizeTheme(await FileOps.GetSettingAsync("theme", cancellationToken).ConfigureAwait(false));
-            Settings.DefaultView = UiSettings.NormalizeDefaultView(await FileOps.GetSettingAsync("defaultView", cancellationToken).ConfigureAwait(false));
-            Settings.DefaultIconSize = UiSettings.NormalizeIconSize(await FileOps.GetSettingAsync("defaultIconSize", cancellationToken).ConfigureAwait(false));
-            Settings.ShowHidden = await ReadBoolSettingAsync("showHidden", false, cancellationToken).ConfigureAwait(false);
-            Settings.ConfirmDelete = await ReadBoolSettingAsync("confirmDelete", true, cancellationToken).ConfigureAwait(false);
-            Settings.KeepFoldersOnTop = await ReadBoolSettingAsync("keepFoldersOnTop", true, cancellationToken).ConfigureAwait(false);
-            Settings.StartLocation = UiSettings.NormalizeStartLocation(
-                await FileOps.GetSettingAsync("startLocation", cancellationToken).ConfigureAwait(false));
-            Settings.CustomPath = await FileOps.GetSettingAsync("customPath", cancellationToken).ConfigureAwait(false) ?? "";
-            Settings.LastPath = await FileOps.GetSettingAsync("lastPath", cancellationToken).ConfigureAwait(false) ?? "";
-            Settings.OpenInNewTab = await ReadBoolSettingAsync("openInNewTab", false, cancellationToken).ConfigureAwait(false);
-            Settings.EnableGitIntegration = await ReadBoolSettingAsync("enableGitIntegration", true, cancellationToken).ConfigureAwait(false);
-            Settings.ShowFolderSizes = await ReadBoolSettingAsync("showFolderSizes", false, cancellationToken).ConfigureAwait(false);
-            Settings.PreviewVisible = await ReadBoolSettingAsync("previewVisible", true, cancellationToken).ConfigureAwait(false);
-            Settings.PreviewWidth = UiSettings.NormalizePreviewWidth(
-                await ReadDoubleSettingAsync("preview.width", UiSettings.PreviewDefaultWidth, cancellationToken).ConfigureAwait(false));
-            Settings.DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(
-                await ReadDoubleSettingAsync("dualPane.primaryPercent", UiSettings.DualPaneDefaultPercent, cancellationToken).ConfigureAwait(false));
-            Settings.DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(
-                await ReadDoubleSettingAsync("dualPane.primaryWidth", 0, cancellationToken).ConfigureAwait(false));
-            Settings.ColumnPreset = UiSettings.NormalizeColumnPreset(
-                await FileOps.GetSettingAsync("columnPreset", cancellationToken).ConfigureAwait(false));
-            Settings.ColumnWidths = await ReadColumnWidthsAsync(cancellationToken).ConfigureAwait(false);
-            Settings.ShowQuickAccess = await ReadBoolSettingAsync("sidebar.showQuickAccess", true, cancellationToken).ConfigureAwait(false);
-            Settings.ShowFolderTree = await ReadBoolSettingAsync("sidebar.showFolders", false, cancellationToken).ConfigureAwait(false);
-            Settings.ShowBookmarks = await ReadBoolSettingAsync("sidebar.showBookmarks", true, cancellationToken).ConfigureAwait(false);
-            Settings.ShowRecentLocations = await ReadBoolSettingAsync("sidebar.showRecent", true, cancellationToken).ConfigureAwait(false);
-            Settings.ShowSmartFolders = await ReadBoolSettingAsync("sidebar.showSmartFolders", true, cancellationToken).ConfigureAwait(false);
-            Settings.SidebarVisible = await ReadBoolSettingAsync("sidebar.visible", true, cancellationToken).ConfigureAwait(false);
-            Settings.SidebarWidth = UiSettings.NormalizeSidebarWidth(
-                await ReadDoubleSettingAsync("sidebar.width", UiSettings.SidebarDefaultWidth, cancellationToken).ConfigureAwait(false));
-            Settings.QuickAccessCollapsed = await ReadBoolSettingAsync("sidebar.quickAccessCollapsed", false, cancellationToken).ConfigureAwait(false);
-            Settings.MyPcCollapsed = await ReadBoolSettingAsync("sidebar.myPcCollapsed", false, cancellationToken).ConfigureAwait(false);
-            Bookmarks = await ReadBookmarksAsync(cancellationToken).ConfigureAwait(false);
-            RecentPaths = await ReadRecentPathsAsync(cancellationToken).ConfigureAwait(false);
+            var state = await WorkspaceSettingsStore.LoadAsync(FileOps, cancellationToken).ConfigureAwait(false);
+            Settings = state.Settings;
+            Bookmarks = state.Bookmarks;
+            RecentPaths = state.RecentPaths;
             ShowHiddenFiles = Settings.ShowHidden;
             ApplyDefaultViewOptionsToPanes();
             Columns.ApplyPreset(Settings.ColumnPreset);
@@ -1993,132 +1896,6 @@ public sealed class ExplorerWorkspace
         {
             // Missing keys or a stub IPC keep defaults.
         }
-    }
-
-    private async Task<Dictionary<string, double>> ReadColumnWidthsAsync(CancellationToken cancellationToken)
-    {
-        var raw = await FileOps!.GetSettingAsync("columnWidths", cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return new Dictionary<string, double>(StringComparer.Ordinal);
-        }
-
-        try
-        {
-            return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, double>>(raw)
-                ?? new Dictionary<string, double>(StringComparer.Ordinal);
-        }
-        catch
-        {
-            return new Dictionary<string, double>(StringComparer.Ordinal);
-        }
-    }
-
-    private async Task<List<BookmarkItem>> ReadBookmarksAsync(CancellationToken cancellationToken)
-    {
-        var raw = await FileOps!.GetSettingAsync(BookmarksSettingsKey, cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return [];
-        }
-
-        try
-        {
-            var saved = System.Text.Json.JsonSerializer.Deserialize<List<BookmarkItem>>(raw) ?? [];
-            var result = new List<BookmarkItem>();
-            foreach (var bookmark in saved)
-            {
-                var path = (bookmark.Path ?? "").Trim();
-                if (string.IsNullOrWhiteSpace(path)
-                    || result.Any(item => PathRules.PathsEqual(item.Path, path)))
-                {
-                    continue;
-                }
-
-                var name = (bookmark.Name ?? "").Trim();
-                result.Add(new BookmarkItem
-                {
-                    Name = string.IsNullOrWhiteSpace(name) ? PathRules.Basename(path) : name,
-                    Path = path,
-                });
-            }
-
-            return result;
-        }
-        catch
-        {
-            return [];
-        }
-    }
-
-    private async Task<List<string>> ReadRecentPathsAsync(CancellationToken cancellationToken)
-    {
-        var raw = await FileOps!.GetSettingAsync(RecentPathsSettingsKey, cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return [];
-        }
-
-        try
-        {
-            var saved = System.Text.Json.JsonSerializer.Deserialize<List<string>>(raw) ?? [];
-            var result = new List<string>();
-            foreach (var path in saved)
-            {
-                var trimmed = (path ?? "").Trim();
-                if (string.IsNullOrWhiteSpace(trimmed)
-                    || result.Any(item => PathRules.PathsEqual(item, trimmed)))
-                {
-                    continue;
-                }
-
-                result.Add(trimmed);
-                if (result.Count >= PlacesStore.RecentLimit)
-                {
-                    break;
-                }
-            }
-
-            return result;
-        }
-        catch
-        {
-            return [];
-        }
-    }
-
-    private async Task<bool> ReadBoolSettingAsync(string key, bool fallback, CancellationToken cancellationToken)
-    {
-        var raw = await FileOps!.GetSettingAsync(key, cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return fallback;
-        }
-
-        if (raw.Equals("true", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (raw.Equals("false", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return fallback;
-    }
-
-    private async Task<double> ReadDoubleSettingAsync(string key, double fallback, CancellationToken cancellationToken)
-    {
-        var raw = await FileOps!.GetSettingAsync(key, cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return fallback;
-        }
-
-        return double.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : fallback;
     }
 
     private static WorkspacePaneLayout CapturePane(ExplorerPane pane)

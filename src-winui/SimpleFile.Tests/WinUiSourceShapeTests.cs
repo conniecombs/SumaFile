@@ -83,6 +83,38 @@ public class WinUiSourceShapeTests
         Assert.Contains("HorizontalContentAlignment\" Value=\"Left", app);
         Assert.DoesNotContain("<Setter Property=\"Width\" Value=\"236\" />", app);
     }
+
+    [Fact]
+    public void MainWindow_SplitsLargeShellSectionsIntoUserControls()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var mainWindowCode = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var bridge = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Controls.cs"));
+
+        foreach (var control in new[]
+        {
+            "SidebarView",
+            "PrimaryToolbarView",
+            "PrimaryPaneView",
+            "SecondaryPaneView",
+            "PreviewPaneView",
+        })
+        {
+            Assert.Contains($"<local:{control}", mainWindowXaml);
+            Assert.Contains(
+                $"x:Class=\"SimpleFile.App.{control}\"",
+                File.ReadAllText(Path.Combine(appRoot, $"{control}.xaml")));
+        }
+
+        Assert.Contains("AttachControlEvents();", mainWindowCode);
+        Assert.Contains("private Grid PrimaryPaneRoot => PrimaryPane.Root;", bridge);
+        Assert.Contains("PrimaryToolbarPanel.ToggleSidebar += OnToggleSidebar;", bridge);
+        Assert.DoesNotContain("x:Name=\"QuickAccessList\"", mainWindowXaml);
+        Assert.DoesNotContain("x:Name=\"PreviewTitle\"", mainWindowXaml);
+    }
+
     [Fact]
     public void OpeningFiles_FlushesPendingIconSizePersistence()
     {

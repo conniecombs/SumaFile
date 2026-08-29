@@ -36,5 +36,11 @@ public class DropDestinationTests
             [@"C:\one\notes.txt", @"C:\two\notes.txt", @"C:\src\readme.md"],
             ["readme.md"]);
         Assert.Equal(["notes.txt", "readme.md"], transferConflicts);
+
+        var probed = DropDestination.ProbeConflictingTransferNames(
+            [@"C:\one\notes.txt", @"C:\two\notes.txt", @"C:\src\readme.md"],
+            @"C:\target",
+            path => string.Equals(path, @"C:\target\readme.md", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(["notes.txt", "readme.md"], probed);
     }
 }

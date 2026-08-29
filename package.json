@@ -24,6 +24,7 @@
     "check:winui": "dotnet test src-winui/SimpleFile.Tests/SimpleFile.Tests.csproj -c Debug --nologo",
     "dev:winui": "cargo build -p simplefile-service && dotnet run --project src-winui/SimpleFile.App/SimpleFile.App.csproj -c Debug",
     "smoke:winui": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-startup.ps1",
+    "smoke:winui-file-ops": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-file-ops.ps1",
     "smoke:winui-msi": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-msi.ps1",
     "smoke:winui-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-nsis.ps1",
     "smoke:winui-upgrade": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-upgrade.ps1 -SkipWhenPreviousUnavailable",

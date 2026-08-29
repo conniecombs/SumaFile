@@ -83,6 +83,8 @@ pub struct DriveInfo {
     pub name: String,
     pub path: String,
     pub drive_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_system: Option<String>,
     pub total_space: u64,
     pub free_space: u64,
     pub remote_path: Option<String>,

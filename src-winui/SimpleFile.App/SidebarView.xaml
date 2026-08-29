@@ -1,0 +1,431 @@
+<UserControl
+    x:Class="SimpleFile.App.SidebarView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:SimpleFile.App"
+    xmlns:core="using:SimpleFile.Core"
+    xmlns:ipc="using:SimpleFile.Ipc">
+            <Grid
+                x:Name="SidebarRoot"
+                Grid.Column="0"
+                Background="{ThemeResource SfBgSecondaryBrush}"
+                BorderBrush="{ThemeResource SfBorderBrush}"
+                BorderThickness="0,0,1,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid Margin="8,8,8,0" ColumnSpacing="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border
+                        x:Name="SidebarTargetSwitch"
+                        Padding="2"
+                        Background="{ThemeResource SfBgTertiaryBrush}"
+                        BorderBrush="{ThemeResource SfBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Visibility="Collapsed">
+                        <Grid ColumnSpacing="2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button
+                                x:Name="SidebarLeftButton"
+                                Style="{StaticResource SfGhostButtonStyle}"
+                                HorizontalAlignment="Stretch"
+                                Click="OnSidebarLeft"
+                                Content="Left"
+                                ToolTipService.ToolTip="Navigate left pane" />
+                            <Button
+                                x:Name="SidebarRightButton"
+                                Grid.Column="1"
+                                Style="{StaticResource SfGhostButtonStyle}"
+                                HorizontalAlignment="Stretch"
+                                Click="OnSidebarRight"
+                                Content="Right"
+                                ToolTipService.ToolTip="Navigate right pane" />
+                        </Grid>
+                    </Border>
+                    <Button
+                        x:Name="SidebarCloseButton"
+                        Grid.Column="1"
+                        Style="{StaticResource SfSidebarIconButtonStyle}"
+                        VerticalAlignment="Top"
+                        AutomationProperties.Name="Hide side menu"
+                        Click="OnToggleSidebar"
+                        ToolTipService.ToolTip="Hide side menu">
+                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="11" Glyph="&#xE711;" />
+                    </Button>
+                </Grid>
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Padding="10,8,10,14" Spacing="10">
+                        <StackPanel x:Name="QuickAccessSection" Spacing="2">
+                            <Grid Margin="4,0,0,4">
+                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Quick access" />
+                                <Button
+                                    x:Name="QuickAccessCollapseButton"
+                                    Style="{StaticResource SfSidebarIconButtonStyle}"
+                                    AutomationProperties.Name="Collapse Quick Access"
+                                    Click="OnToggleQuickAccess">
+                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="10" Glyph="&#xE70D;" />
+                                </Button>
+                            </Grid>
+                            <ListView
+                                x:Name="QuickAccessList"
+                                Style="{StaticResource SfSidebarListStyle}"
+                                IsItemClickEnabled="True"
+                                ItemClick="OnQuickAccessClick"
+                                SelectionMode="None">
+                                <ListView.ItemContainerStyle>
+                                    <Style BasedOn="{StaticResource SfNavListItemStyle}" TargetType="ListViewItem" />
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="local:QuickAccessRow">
+                                        <StackPanel Orientation="Horizontal" Padding="2,1" Spacing="10">
+                                            <local:ShellIconImage
+                                                Width="16"
+                                                Height="16"
+                                                VerticalAlignment="Center"
+                                                Path="{x:Bind Path}" />
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                Text="{x:Bind Name}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+
+                        <StackPanel Spacing="2">
+                            <Grid Margin="4,0,0,4">
+                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="This PC" />
+                                <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="2">
+                                    <Button
+                                        x:Name="RefreshDrivesButton"
+                                        Style="{StaticResource SfSidebarIconButtonStyle}"
+                                        AutomationProperties.Name="Refresh drives"
+                                        Click="OnRefreshDrives"
+                                        ToolTipService.ToolTip="Refresh drives and mapped network status">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="11" Glyph="&#xE72C;" />
+                                    </Button>
+                                    <Button
+                                        x:Name="MyPcCollapseButton"
+                                        Style="{StaticResource SfSidebarIconButtonStyle}"
+                                        AutomationProperties.Name="Collapse My PC"
+                                        Click="OnToggleMyPc">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="10" Glyph="&#xE70D;" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                            <ListView
+                                x:Name="DriveList"
+                                Style="{StaticResource SfSidebarListStyle}"
+                                IsItemClickEnabled="True"
+                                ItemClick="OnDriveClick"
+                                SelectionMode="None">
+                                <ListView.ItemContainerStyle>
+                                    <Style BasedOn="{StaticResource SfDriveListItemStyle}" TargetType="ListViewItem" />
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="local:DriveRow">
+                                        <Grid
+                                            Padding="0,1"
+                                            ColumnSpacing="10"
+                                            AutomationProperties.Name="{x:Bind AutomationName}"
+                                            Opacity="{x:Bind RowOpacity}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <local:ShellIconImage
+                                                Width="16"
+                                                Height="16"
+                                                VerticalAlignment="Top"
+                                                Margin="0,2,0,0"
+                                                Path="{x:Bind Path}" />
+                                            <StackPanel Grid.Column="1" Spacing="3">
+                                                <Grid ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock
+                                                        VerticalAlignment="Center"
+                                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                        Text="{x:Bind Name}"
+                                                        TextTrimming="CharacterEllipsis"
+                                                        TextWrapping="NoWrap" />
+                                                    <Border
+                                                        Grid.Column="1"
+                                                        Padding="5,1"
+                                                        VerticalAlignment="Center"
+                                                        Background="{ThemeResource SfAccentSoftBrush}"
+                                                        BorderThickness="0"
+                                                        CornerRadius="4"
+                                                        Visibility="{x:Bind BadgeVisibility}">
+                                                        <TextBlock
+                                                            FontSize="10"
+                                                            Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                            Text="{x:Bind Badge}" />
+                                                    </Border>
+                                                </Grid>
+                                                <TextBlock
+                                                    FontSize="11"
+                                                    Foreground="{ThemeResource SfTextMutedBrush}"
+                                                    Text="{x:Bind Description}"
+                                                    TextTrimming="CharacterEllipsis"
+                                                    TextWrapping="NoWrap"
+                                                    Visibility="{x:Bind DescriptionVisibility}" />
+                                                <ProgressBar
+                                                    Style="{StaticResource SfUsageBarStyle}"
+                                                    Maximum="100"
+                                                    Minimum="0"
+                                                    Value="{x:Bind UsedPercent}"
+                                                    Visibility="{x:Bind UsageVisibility}" />
+                                                <TextBlock
+                                                    FontSize="11"
+                                                    Foreground="{ThemeResource SfTextMutedBrush}"
+                                                    Text="{x:Bind UsageText}"
+                                                    TextTrimming="CharacterEllipsis"
+                                                    TextWrapping="NoWrap"
+                                                    Visibility="{x:Bind UsageVisibility}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+
+                        <StackPanel x:Name="FolderTreeSection" Spacing="2">
+                            <Grid Margin="4,0,0,4">
+                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Folders" />
+                                <Button
+                                    Style="{StaticResource SfSidebarIconButtonStyle}"
+                                    AutomationProperties.Name="Refresh folder tree"
+                                    Click="OnRefreshFolderTree"
+                                    ToolTipService.ToolTip="Refresh folder tree">
+                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="11" Glyph="&#xE72C;" />
+                                </Button>
+                            </Grid>
+                            <TextBlock
+                                x:Name="FolderTreeEmptyText"
+                                Style="{StaticResource SfEmptyHintStyle}"
+                                Text="No folders yet" />
+                            <ListView
+                                x:Name="FolderTreeList"
+                                Style="{StaticResource SfSidebarListStyle}"
+                                IsItemClickEnabled="True"
+                                ItemClick="OnFolderTreeClick"
+                                SelectionMode="None">
+                                <ListView.ItemContainerStyle>
+                                    <Style BasedOn="{StaticResource SfNavListItemStyle}" TargetType="ListViewItem">
+                                        <Setter Property="MinHeight" Value="28" />
+                                        <Setter Property="Padding" Value="2,1" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Padding="0,1" Spacing="4">
+                                            <Button
+                                                Style="{StaticResource SfSidebarIconButtonStyle}"
+                                                Width="20"
+                                                Height="20"
+                                                MinWidth="20"
+                                                MinHeight="20"
+                                                HorizontalAlignment="Center"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                Click="OnFolderTreeToggle"
+                                                Tag="{Binding Path}">
+                                                <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="8" Glyph="&#xE76C;" />
+                                            </Button>
+                                            <local:ShellIconImage
+                                                Width="16"
+                                                Height="16"
+                                                VerticalAlignment="Center"
+                                                Path="{Binding Path=Path}" />
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                Text="{Binding Name}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+
+                        <StackPanel x:Name="BookmarksSection" Spacing="2">
+                            <Grid Margin="4,0,0,4">
+                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Bookmarks" />
+                                <Button
+                                    Style="{StaticResource SfSidebarIconButtonStyle}"
+                                    AutomationProperties.Name="Bookmark current folder"
+                                    Click="OnAddBookmark"
+                                    ToolTipService.ToolTip="Bookmark current folder">
+                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE710;" />
+                                </Button>
+                            </Grid>
+                            <TextBlock
+                                x:Name="BookmarksEmptyText"
+                                Style="{StaticResource SfEmptyHintStyle}"
+                                Text="No bookmarks yet" />
+                            <ListView
+                                x:Name="BookmarksList"
+                                Style="{StaticResource SfSidebarListStyle}"
+                                IsItemClickEnabled="True"
+                                ItemClick="OnBookmarkClick"
+                                SelectionMode="None">
+                                <ListView.ItemContainerStyle>
+                                    <Style BasedOn="{StaticResource SfNavListItemStyle}" TargetType="ListViewItem" />
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Padding="2,1" ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <local:ShellIconImage
+                                                Width="16"
+                                                Height="16"
+                                                VerticalAlignment="Center"
+                                                Path="{Binding Path=Path}" />
+                                            <TextBlock
+                                                Grid.Column="1"
+                                                VerticalAlignment="Center"
+                                                Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                Text="{Binding Name}"
+                                                TextTrimming="CharacterEllipsis" />
+                                            <Button
+                                                Grid.Column="2"
+                                                Style="{StaticResource SfSidebarIconButtonStyle}"
+                                                Width="22"
+                                                Height="22"
+                                                MinWidth="22"
+                                                MinHeight="22"
+                                                Click="OnRemoveBookmark"
+                                                Tag="{Binding Path}"
+                                                ToolTipService.ToolTip="Remove bookmark">
+                                                <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="10" Glyph="&#xE711;" />
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+
+                        <StackPanel x:Name="RecentSection" Spacing="2">
+                            <Grid Margin="4,0,0,4">
+                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Recent" />
+                                <Button
+                                    x:Name="ClearRecentsButton"
+                                    Style="{StaticResource SfSidebarIconButtonStyle}"
+                                    AutomationProperties.Name="Clear recent history"
+                                    Click="OnClearRecentHistory"
+                                    ToolTipService.ToolTip="Clear recent history">
+                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="10" Glyph="&#xE74D;" />
+                                </Button>
+                            </Grid>
+                            <TextBlock
+                                x:Name="RecentsEmptyText"
+                                Style="{StaticResource SfEmptyHintStyle}"
+                                Text="No recent folders" />
+                            <ListView
+                                x:Name="RecentsList"
+                                Style="{StaticResource SfSidebarListStyle}"
+                                IsItemClickEnabled="True"
+                                ItemClick="OnRecentClick"
+                                SelectionMode="None">
+                                <ListView.ItemContainerStyle>
+                                    <Style BasedOn="{StaticResource SfNavListItemStyle}" TargetType="ListViewItem" />
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Padding="2,1" Spacing="10">
+                                            <FontIcon
+                                                VerticalAlignment="Center"
+                                                FontFamily="{StaticResource SfIconFont}"
+                                                FontSize="12"
+                                                Foreground="{ThemeResource SfTextMutedBrush}"
+                                                Glyph="&#xE81C;" />
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                Text="{Binding}"
+                                                TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+
+                        <StackPanel x:Name="SmartFoldersSection" Spacing="2">
+                            <Grid Margin="4,0,0,4">
+                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Smart folders" />
+                                <Button
+                                    Style="{StaticResource SfSidebarIconButtonStyle}"
+                                    AutomationProperties.Name="Save current search as smart folder"
+                                    Click="OnSaveSmartFolder"
+                                    ToolTipService.ToolTip="Save current search">
+                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE710;" />
+                                </Button>
+                            </Grid>
+                            <TextBlock
+                                x:Name="SmartFoldersEmptyText"
+                                Style="{StaticResource SfEmptyHintStyle}"
+                                Text="No smart folders yet" />
+                            <ListView
+                                x:Name="SmartFoldersList"
+                                Style="{StaticResource SfSidebarListStyle}"
+                                IsItemClickEnabled="True"
+                                ItemClick="OnSmartFolderClicked"
+                                SelectionMode="None">
+                                <ListView.ItemContainerStyle>
+                                    <Style BasedOn="{StaticResource SfNavListItemStyle}" TargetType="ListViewItem" />
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Padding="2,1" ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon
+                                                VerticalAlignment="Center"
+                                                FontFamily="{StaticResource SfIconFont}"
+                                                FontSize="13"
+                                                Foreground="{ThemeResource SfTextMutedBrush}"
+                                                Glyph="&#xE721;" />
+                                            <TextBlock
+                                                Grid.Column="1"
+                                                VerticalAlignment="Center"
+                                                Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                Text="{Binding Name}" />
+                                            <Button
+                                                Grid.Column="2"
+                                                Style="{StaticResource SfSidebarIconButtonStyle}"
+                                                Width="22"
+                                                Height="22"
+                                                MinWidth="22"
+                                                MinHeight="22"
+                                                AutomationProperties.Name="Delete smart folder"
+                                                Click="OnDeleteSmartFolderClicked"
+                                                Tag="{Binding Id}">
+                                                <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="10" Glyph="&#xE711;" />
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+</UserControl>

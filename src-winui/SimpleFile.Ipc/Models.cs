@@ -149,6 +149,9 @@ public sealed class DriveInfo
     [JsonPropertyName("drive_type")]
     public string DriveType { get; set; } = "";
 
+    [JsonPropertyName("file_system")]
+    public string? FileSystem { get; set; }
+
     [JsonPropertyName("total_space")]
     public ulong TotalSpace { get; set; }
 

@@ -20,11 +20,12 @@ fn string_from_wide_buffer(buffer: &[u16]) -> Option<String> {
     }
 }
 
-fn windows_volume_label(wide_path: &[u16]) -> Option<String> {
+fn windows_volume_details(wide_path: &[u16]) -> (Option<String>, Option<String>) {
     use std::ptr::null_mut;
 
     let mut volume_name = [0u16; 260];
-    let has_label = unsafe {
+    let mut file_system_name = [0u16; 260];
+    let has_info = unsafe {
         winapi::um::fileapi::GetVolumeInformationW(
             wide_path.as_ptr(),
             volume_name.as_mut_ptr(),
@@ -32,15 +33,19 @@ fn windows_volume_label(wide_path: &[u16]) -> Option<String> {
             null_mut(),
             null_mut(),
             null_mut(),
-            null_mut(),
-            0,
+            file_system_name.as_mut_ptr(),
+            file_system_name.len() as u32,
         ) != 0
-            && volume_name[0] != 0
     };
 
-    has_label
-        .then(|| string_from_wide_buffer(&volume_name))
-        .flatten()
+    if !has_info {
+        return (None, None);
+    }
+
+    (
+        string_from_wide_buffer(&volume_name),
+        string_from_wide_buffer(&file_system_name),
+    )
 }
 
 fn mapped_network_remote_path(drive_path: &str) -> Option<String> {
@@ -185,12 +190,12 @@ fn network_drive_status(wide_path: &[u16], remote_path: Option<&str>) -> (String
 
 fn windows_drive_display_name(
     drive_type: u32,
-    wide_path: &[u16],
+    volume_label: Option<&str>,
     remote_path: Option<&str>,
     fallback_name: &str,
 ) -> String {
     match drive_type {
-        3 => windows_volume_label(wide_path),
+        3 => volume_label.map(str::to_string),
         4 => remote_path.and_then(network_remote_display_name),
         _ => None,
     }
@@ -285,10 +290,15 @@ fn list_drives_blocking() -> Result<Vec<DriveInfo>, String> {
     for (drive, probe) in pending.iter().zip(probe_results) {
         let (drive_status, status_detail) =
             probe.unwrap_or_else(|| ("available".to_string(), None));
+        let (volume_label, file_system) = if drive.dt == 3 {
+            windows_volume_details(&drive.wide_path)
+        } else {
+            (None, None)
+        };
 
         let display_name = windows_drive_display_name(
             drive.dt,
-            &drive.wide_path,
+            volume_label.as_deref(),
             drive.remote_path.as_deref(),
             drive.fallback_name,
         );
@@ -320,6 +330,7 @@ fn list_drives_blocking() -> Result<Vec<DriveInfo>, String> {
             name: format!("{} ({}:)", display_name, drive.letter as char),
             path: drive.drive_path.clone(),
             drive_type: drive.drive_type.clone(),
+            file_system,
             total_space,
             free_space,
             remote_path: drive.remote_path.clone(),

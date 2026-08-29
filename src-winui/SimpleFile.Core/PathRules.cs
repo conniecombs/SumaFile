@@ -177,6 +177,44 @@ public static class PathRules
             return candidateRoot == root || candidateRoot == root[..2];
         });
 
-        return string.Equals(drive?.DriveType, "network", StringComparison.OrdinalIgnoreCase);
+        return IsNetworkOrRemoteLikeDrive(drive);
+    }
+
+    public static bool IsNetworkOrRemoteLikeDrive(DriveInfo? drive)
+    {
+        if (drive is null)
+        {
+            return false;
+        }
+
+        if (string.Equals(drive.DriveType, "network", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(drive.RemotePath))
+        {
+            return true;
+        }
+
+        return ContainsRemoteLikeToken(drive.FileSystem)
+            || ContainsRemoteLikeToken(drive.Name)
+            || ContainsRemoteLikeToken(drive.StatusDetail);
+    }
+
+    private static bool ContainsRemoteLikeToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains("network", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("remote", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("airlivedrive", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("virtual", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("sshfs", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("sftp", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("fuse", StringComparison.OrdinalIgnoreCase);
     }
 }

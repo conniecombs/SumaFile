@@ -215,6 +215,9 @@ jobs:
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1 -SkipChecks -RequireInstaller -RequireUpdaterSignature
 
+      - name: Smoke WinUI packaged file operations
+        run: npm run smoke:winui-file-ops
+
       - name: Smoke WinUI NSIS install, launch, and uninstall
         run: npm run smoke:winui-installer
 

@@ -1,5 +1,9 @@
 //! Progress tracking and cancellation for bulk file transfers.
 
+use crate::transfer_staging::{
+    conflict_for_existing_destination, existing_file_matches_source, promote_staged_path,
+    remove_path, resumable_staging_path_for, staging_path_for,
+};
 use serde::Serialize;
 use simplefile_core::models::ProgressUpdate;
 use simplefile_core::path_conflict::{
@@ -7,21 +11,21 @@ use simplefile_core::path_conflict::{
     paths_refer_to_same_entry,
 };
 use simplefile_core::utils::{
-    generate_operation_id, recreate_symlink, validate_existing_path_no_resolve,
+    generate_operation_id, is_network_path, recreate_symlink, validate_existing_path_no_resolve,
     validate_path_no_follow,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-const NETWORK_BUFFER_SIZE: usize = 1024 * 1024;
-const LOCAL_BUFFER_SIZE: usize = 1024 * 1024;
-const NETWORK_MAX_RETRIES: u32 = 3;
+const NETWORK_BUFFER_SIZE: usize = 512 * 1024;
+const LOCAL_BUFFER_SIZE: usize = 4 * 1024 * 1024;
+const NETWORK_MAX_RETRIES: u32 = 5;
 const PROGRESS_BYTE_STEP: u64 = 4 * 1024 * 1024;
 const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(80);
 
@@ -66,6 +70,7 @@ struct TransferPlan {
     final_dest: PathBuf,
     replace_existing: bool,
     allow_rename: bool,
+    network: bool,
     file_count: u64,
 }
 
@@ -129,13 +134,6 @@ fn unique_destination_path(
         "Could not choose a unique destination for {}",
         original.to_string_lossy()
     ))
-}
-
-fn conflict_for_existing_destination(path: &Path) -> String {
-    format!(
-        "CONFLICT: destination already exists: {}",
-        path.to_string_lossy()
-    )
 }
 
 fn resolve_destination(
@@ -209,36 +207,19 @@ fn prepare_transfer_inputs(
         };
 
         ensure_not_copying_dir_into_itself(&source_path, &final_dest)?;
+        let network = is_network_path(&source_path) || is_network_path(&dest_path);
         planned_destinations.insert(path_collision_key(&final_dest));
         plans.push(TransferPlan {
             source_path,
             final_dest,
             replace_existing,
             allow_rename: !keep_both,
+            network,
             file_count: 0,
         });
     }
 
     Ok((plans, dest_path))
-}
-
-fn remove_path(path: &Path, label: &str) -> Result<(), String> {
-    let meta =
-        fs::symlink_metadata(path).map_err(|error| format!("Failed to stat {label}: {error}"))?;
-    if meta.file_type().is_symlink() {
-        if meta.is_dir() {
-            fs::remove_dir(path)
-                .map_err(|error| format!("Failed to delete {label} symlink: {error}"))
-        } else {
-            fs::remove_file(path)
-                .map_err(|error| format!("Failed to delete {label} symlink: {error}"))
-        }
-    } else if meta.is_dir() {
-        fs::remove_dir_all(path)
-            .map_err(|error| format!("Failed to delete {label} directory: {error}"))
-    } else {
-        fs::remove_file(path).map_err(|error| format!("Failed to delete {label} file: {error}"))
-    }
 }
 
 fn check_cancelled(cancel: &Arc<AtomicBool>) -> Result<(), String> {
@@ -345,7 +326,9 @@ impl ProgressContext<'_> {
 
 struct CopyContext<'a> {
     progress: &'a ProgressContext<'a>,
+    operation_id: &'a str,
     network: bool,
+    resume_existing: bool,
 }
 
 impl CopyContext<'_> {
@@ -402,19 +385,47 @@ fn copy_file_attempt(
     ctx: &CopyContext,
     completed_bytes: u64,
     buffer_size: usize,
+    file_len: u64,
 ) -> Result<u64, String> {
-    let src_file =
+    let mut resume_from = 0u64;
+    if path_exists_no_follow(dst) {
+        let partial_meta = fs::symlink_metadata(dst)
+            .map_err(|error| format!("Failed to stat partial destination: {error}"))?;
+        if partial_meta.file_type().is_file() && partial_meta.len() <= file_len {
+            resume_from = partial_meta.len();
+        } else {
+            remove_path(dst, "partial destination")?;
+        }
+    }
+
+    if resume_from == file_len {
+        return Ok(file_len);
+    }
+
+    let mut src_file =
         fs::File::open(src).map_err(|error| format!("Failed to open source file: {error}"))?;
-    let dst_file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(dst)
-        .map_err(|error| format!("Failed to create destination file: {error}"))?;
+    if resume_from > 0 {
+        src_file
+            .seek(SeekFrom::Start(resume_from))
+            .map_err(|error| format!("Failed to resume source file: {error}"))?;
+    }
+    let dst_file = if resume_from > 0 {
+        fs::OpenOptions::new()
+            .append(true)
+            .open(dst)
+            .map_err(|error| format!("Failed to resume destination file: {error}"))?
+    } else {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dst)
+            .map_err(|error| format!("Failed to create destination file: {error}"))?
+    };
     let mut reader = BufReader::with_capacity(buffer_size, src_file);
     let mut writer = BufWriter::with_capacity(buffer_size, dst_file);
     let mut buffer = vec![0u8; buffer_size];
-    let mut copied_this_attempt = 0u64;
-    let mut next_emit_at = PROGRESS_BYTE_STEP;
+    let mut copied_this_attempt = resume_from;
+    let mut next_emit_at = ((resume_from / PROGRESS_BYTE_STEP) + 1) * PROGRESS_BYTE_STEP;
 
     loop {
         ctx.progress.check_cancelled()?;
@@ -454,6 +465,7 @@ fn copy_file_with_progress(
     dst: &Path,
     ctx: &CopyContext,
     completed_bytes: &mut u64,
+    replace_existing: bool,
 ) -> Result<(), String> {
     if let Some(parent) = dst.parent() {
         fs::create_dir_all(parent)
@@ -469,52 +481,97 @@ fn copy_file_with_progress(
         ctx.progress.total_bytes.store(needed, Ordering::Relaxed);
     }
 
-    if file_len == 0 {
-        fs::OpenOptions::new()
+    if path_exists_no_follow(dst) && ctx.resume_existing {
+        if existing_file_matches_source(src, dst)? {
+            *completed_bytes = completed_bytes.saturating_add(file_len);
+            ctx.progress
+                .complete_file(*completed_bytes, src.to_string_lossy().to_string());
+            return Ok(());
+        }
+
+        remove_path(dst, "resumable destination")?;
+    }
+
+    let staged_path = staging_path_for(dst, ctx.operation_id)?;
+    let copy_result = if file_len == 0 {
+        let result = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(dst)
-            .map_err(|error| format!("Failed to create destination file: {error}"))?;
-        simplefile_core::file_ops::preserve_basic_metadata(src, dst)?;
-        ctx.progress
-            .complete_file(*completed_bytes, src.to_string_lossy().to_string());
-        return Ok(());
-    }
-
-    let attempts = ctx.attempts();
-    let buffer_size = ctx.buffer_size();
-    let mut last_err = String::new();
-
-    for attempt in 0..attempts {
-        ctx.progress.check_cancelled()?;
-        if attempt > 0 {
-            std::thread::sleep(Duration::from_millis(500 * (1u64 << (attempt - 1))));
-            let _ = fs::remove_file(dst);
+            .open(&staged_path)
+            .map_err(|error| format!("Failed to create destination file: {error}"))
+            .map(|_| 0);
+        if result.is_ok() {
+            if let Err(error) =
+                simplefile_core::file_ops::preserve_basic_metadata(src, &staged_path)
+            {
+                let _ = fs::remove_file(&staged_path);
+                return Err(error);
+            }
         }
+        result
+    } else {
+        let attempts = ctx.attempts();
+        let buffer_size = ctx.buffer_size();
+        let mut copied = Err(String::new());
 
-        match copy_file_attempt(src, dst, ctx, *completed_bytes, buffer_size) {
-            Ok(written) => {
-                *completed_bytes += written;
-                if written > file_len {
-                    let known = ctx.progress.total_bytes.load(Ordering::Relaxed);
-                    let needed = (*completed_bytes).max(known);
-                    if needed > known {
-                        ctx.progress.total_bytes.store(needed, Ordering::Relaxed);
-                    }
+        for attempt in 0..attempts {
+            if let Err(error) = ctx.progress.check_cancelled() {
+                let _ = fs::remove_file(&staged_path);
+                return Err(error);
+            }
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_millis(500 * (1u64 << (attempt - 1))));
+            }
+
+            match copy_file_attempt(
+                src,
+                &staged_path,
+                ctx,
+                *completed_bytes,
+                buffer_size,
+                file_len,
+            ) {
+                Ok(written) => {
+                    copied = Ok(written);
+                    break;
                 }
-                ctx.progress
-                    .complete_file(*completed_bytes, src.to_string_lossy().to_string());
-                return Ok(());
-            }
-            Err(error) if error == "Operation cancelled" => return Err(error),
-            Err(error) => {
-                last_err = error;
-                let _ = fs::remove_file(dst);
+                Err(error) if error == "Operation cancelled" => {
+                    let _ = fs::remove_file(&staged_path);
+                    return Err(error);
+                }
+                Err(error) => {
+                    copied = Err(error);
+                }
             }
         }
-    }
 
-    Err(last_err)
+        copied
+    };
+
+    match copy_result {
+        Ok(written) => {
+            if let Err(error) = promote_staged_path(&staged_path, dst, replace_existing) {
+                let _ = fs::remove_file(&staged_path);
+                return Err(error);
+            }
+            simplefile_core::file_ops::preserve_basic_metadata(src, dst)?;
+            *completed_bytes += written;
+            if written > file_len {
+                let known = ctx.progress.total_bytes.load(Ordering::Relaxed);
+                let needed = (*completed_bytes).max(known);
+                if needed > known {
+                    ctx.progress.total_bytes.store(needed, Ordering::Relaxed);
+                }
+            }
+            ctx.progress
+                .complete_file(*completed_bytes, src.to_string_lossy().to_string());
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&staged_path);
+            Err(error)
+        }
+    }
 }
 
 fn copy_item_with_progress(
@@ -527,39 +584,63 @@ fn copy_item_with_progress(
     let mut stack: Vec<(PathBuf, PathBuf)> = vec![(src.to_path_buf(), dst.to_path_buf())];
     let mut copied_dirs: Vec<(PathBuf, PathBuf)> = Vec::new();
 
-    while let Some((src_path, dst_path)) = stack.pop() {
-        ctx.progress.check_cancelled()?;
-        ctx.progress.emit(
-            *completed_bytes,
-            src_path.to_string_lossy().to_string(),
-            "running",
-            None,
-        );
+    let result = (|| -> Result<(), String> {
+        while let Some((src_path, dst_path)) = stack.pop() {
+            ctx.progress.check_cancelled()?;
+            ctx.progress.emit(
+                *completed_bytes,
+                src_path.to_string_lossy().to_string(),
+                "running",
+                None,
+            );
 
-        let lstat = fs::symlink_metadata(&src_path)
-            .map_err(|error| format!("Failed to stat source: {error}"))?;
-        let file_type = lstat.file_type();
-        let merged_existing_directory =
-            prepare_destination_for_copy(file_type.is_dir(), &dst_path, replace_existing)?;
-
-        if file_type.is_dir() {
-            if !merged_existing_directory {
-                create_dir_exclusive(&dst_path)?;
-                copied_dirs.push((src_path.clone(), dst_path.clone()));
+            let lstat = fs::symlink_metadata(&src_path)
+                .map_err(|error| format!("Failed to stat source: {error}"))?;
+            let file_type = lstat.file_type();
+            if file_type.is_dir() {
+                let merged_existing_directory =
+                    if ctx.resume_existing && is_real_directory(&dst_path) {
+                        true
+                    } else {
+                        prepare_destination_for_copy(true, &dst_path, replace_existing)?
+                    };
+                if !merged_existing_directory {
+                    create_dir_exclusive(&dst_path)?;
+                    copied_dirs.push((src_path.clone(), dst_path.clone()));
+                }
+                for entry in fs::read_dir(&src_path)
+                    .map_err(|error| format!("Failed to read directory: {error}"))?
+                {
+                    let entry = entry.map_err(|error| format!("Failed to read entry: {error}"))?;
+                    stack.push((entry.path(), dst_path.join(entry.file_name())));
+                }
+            } else if file_type.is_symlink() {
+                prepare_destination_for_copy(false, &dst_path, replace_existing)?;
+                recreate_symlink(&src_path, &dst_path)?;
+                ctx.progress
+                    .complete_file(*completed_bytes, src_path.to_string_lossy().to_string());
+            } else {
+                if !replace_existing && !ctx.resume_existing && path_exists_no_follow(&dst_path) {
+                    return Err(conflict_for_existing_destination(&dst_path));
+                }
+                copy_file_with_progress(
+                    &src_path,
+                    &dst_path,
+                    ctx,
+                    completed_bytes,
+                    replace_existing,
+                )?;
             }
-            for entry in fs::read_dir(&src_path)
-                .map_err(|error| format!("Failed to read directory: {error}"))?
-            {
-                let entry = entry.map_err(|error| format!("Failed to read entry: {error}"))?;
-                stack.push((entry.path(), dst_path.join(entry.file_name())));
-            }
-        } else if file_type.is_symlink() {
-            recreate_symlink(&src_path, &dst_path)?;
-            ctx.progress
-                .complete_file(*completed_bytes, src_path.to_string_lossy().to_string());
-        } else {
-            copy_file_with_progress(&src_path, &dst_path, ctx, completed_bytes)?;
         }
+
+        Ok(())
+    })();
+
+    if result.is_err() {
+        for (_, dst_dir) in copied_dirs.iter().rev() {
+            let _ = remove_path(dst_dir, "partial destination directory");
+        }
+        return result;
     }
 
     for (src_dir, dst_dir) in copied_dirs.into_iter().rev() {
@@ -585,15 +666,40 @@ fn copy_plan_with_progress(
 
     let copy_ctx = CopyContext {
         progress: ctx,
-        network: false,
+        operation_id: ctx.operation_id,
+        network: plan.network,
+        resume_existing: false,
     };
-    copy_item_with_progress(
-        &plan.source_path,
-        &plan.final_dest,
-        &copy_ctx,
-        completed_bytes,
-        plan.replace_existing,
-    )
+
+    let source_meta = fs::symlink_metadata(&plan.source_path)
+        .map_err(|error| format!("Failed to stat source: {error}"))?;
+    if source_meta.file_type().is_dir() && !plan.replace_existing {
+        let staged_dest = resumable_staging_path_for(&plan.final_dest)?;
+        let resumable_ctx = CopyContext {
+            progress: ctx,
+            operation_id: ctx.operation_id,
+            network: plan.network,
+            resume_existing: true,
+        };
+        let result = copy_item_with_progress(
+            &plan.source_path,
+            &staged_dest,
+            &resumable_ctx,
+            completed_bytes,
+            false,
+        );
+        result?;
+        promote_staged_path(&staged_dest, &plan.final_dest, false)?;
+        Ok(())
+    } else {
+        copy_item_with_progress(
+            &plan.source_path,
+            &plan.final_dest,
+            &copy_ctx,
+            completed_bytes,
+            plan.replace_existing,
+        )
+    }
 }
 
 fn move_plan_with_progress(
@@ -624,15 +730,41 @@ fn move_plan_with_progress(
 
     let copy_ctx = CopyContext {
         progress: ctx,
-        network: false,
+        operation_id: ctx.operation_id,
+        network: plan.network,
+        resume_existing: false,
     };
-    copy_item_with_progress(
-        &plan.source_path,
-        &plan.final_dest,
-        &copy_ctx,
-        completed_bytes,
-        plan.replace_existing,
-    )?;
+
+    let source_meta = fs::symlink_metadata(&plan.source_path)
+        .map_err(|error| format!("Failed to stat source: {error}"))?;
+    if source_meta.file_type().is_dir() && !plan.replace_existing {
+        let staged_dest = resumable_staging_path_for(&plan.final_dest)?;
+        let resumable_ctx = CopyContext {
+            progress: ctx,
+            operation_id: ctx.operation_id,
+            network: plan.network,
+            resume_existing: true,
+        };
+        let result = copy_item_with_progress(
+            &plan.source_path,
+            &staged_dest,
+            &resumable_ctx,
+            completed_bytes,
+            false,
+        );
+        result?;
+        ctx.check_cancelled()?;
+        promote_staged_path(&staged_dest, &plan.final_dest, false)?;
+    } else {
+        copy_item_with_progress(
+            &plan.source_path,
+            &plan.final_dest,
+            &copy_ctx,
+            completed_bytes,
+            plan.replace_existing,
+        )?;
+    }
+
     remove_path(&plan.source_path, "source")
         .map_err(|error| format!("Copied but failed to delete source: {error}"))?;
     Ok(())
@@ -658,10 +790,7 @@ fn choose_next_keep_both_destination(
     Ok(())
 }
 
-fn estimate_path_transfer(
-    path: &Path,
-    cancel: &Arc<AtomicBool>,
-) -> Result<TransferEstimate, String> {
+fn prime_path_transfer(path: &Path, cancel: &Arc<AtomicBool>) -> Result<TransferEstimate, String> {
     check_cancelled(cancel)?;
     let meta = fs::symlink_metadata(path)
         .map_err(|error| format!("Failed to stat {}: {error}", path.display()))?;
@@ -678,49 +807,17 @@ fn estimate_path_transfer(
     if !file_type.is_dir() {
         return Ok(TransferEstimate::default());
     }
-
-    let mut estimate = TransferEstimate::default();
-    let mut stack = vec![path.to_path_buf()];
-    let mut visited = 0u32;
-    while let Some(dir) = stack.pop() {
-        check_cancelled(cancel)?;
-        let entries = fs::read_dir(&dir)
-            .map_err(|error| format!("Failed to read {}: {error}", dir.display()))?;
-        for entry in entries {
-            check_cancelled(cancel)?;
-            let entry = entry.map_err(|error| format!("Failed to read entry: {error}"))?;
-            let entry_path = entry.path();
-            let entry_type = match entry.file_type() {
-                Ok(ft) => ft,
-                Err(_) => continue,
-            };
-            if entry_type.is_symlink() {
-                estimate.files = estimate.files.saturating_add(1);
-            } else if entry_type.is_dir() {
-                stack.push(entry_path);
-            } else if entry_type.is_file() {
-                estimate.files = estimate.files.saturating_add(1);
-                if let Ok(meta) = entry.metadata() {
-                    estimate.bytes = estimate.bytes.saturating_add(meta.len());
-                }
-            }
-            visited = visited.saturating_add(1);
-            if visited.is_multiple_of(256) {
-                check_cancelled(cancel)?;
-            }
-        }
-    }
-    Ok(estimate)
+    Ok(TransferEstimate::default())
 }
 
-fn estimate_transfer(
+fn prime_transfer(
     plans: &mut [TransferPlan],
     cancel: &Arc<AtomicBool>,
 ) -> Result<TransferEstimate, String> {
     let mut total = TransferEstimate::default();
     for plan in plans {
         check_cancelled(cancel)?;
-        let estimate = estimate_path_transfer(&plan.source_path, cancel)?;
+        let estimate = prime_path_transfer(&plan.source_path, cancel)?;
         plan.file_count = estimate.files;
         total.bytes = total.bytes.saturating_add(estimate.bytes);
         total.files = total.files.saturating_add(estimate.files);
@@ -764,8 +861,8 @@ pub fn transfer_with_progress_blocking(
         last_running_emit: StdMutex::new(Instant::now()),
     };
 
-    progress.emit_now(0, 0, "Calculating size...".to_string(), "running", None);
-    let estimated = match estimate_transfer(&mut plans, &cancel) {
+    progress.emit_now(0, 0, "Preparing transfer...".to_string(), "running", None);
+    let estimated = match prime_transfer(&mut plans, &cancel) {
         Ok(value) => value,
         Err(error) if error == "Operation cancelled" => {
             progress.emit_with_total(
@@ -904,7 +1001,11 @@ pub fn transfer_with_progress_blocking(
 
 #[cfg(test)]
 mod tests {
-    use super::{prepare_transfer_inputs, transfer_with_progress_blocking, ProgressContext};
+    use super::{
+        copy_file_attempt, copy_file_with_progress, prepare_transfer_inputs,
+        transfer_with_progress_blocking, CopyContext, ProgressContext,
+    };
+    use crate::transfer_staging::{resumable_staging_path_for, staging_path_for};
     use simplefile_core::models::ProgressUpdate;
     use std::fs;
     use std::path::PathBuf;
@@ -1074,7 +1175,18 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         assert_eq!(fs::read(dst_dir.join("done.txt")).unwrap(), b"done");
+        assert!(!fs::read_dir(&dst_dir).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("sumafile-partial")
+        }));
         let updates = updates.lock().unwrap();
+        assert_eq!(updates[0].current_item, "Preparing transfer...");
+        assert!(!updates
+            .iter()
+            .any(|update| update.current_item == "Calculating size..."));
         let completed = updates
             .iter()
             .find(|update| update.status == "completed")
@@ -1084,6 +1196,189 @@ mod tests {
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[test]
+    fn replace_file_uses_completed_staged_copy() {
+        let src_dir = unique_temp_path("replace_file_src");
+        let dst_dir = unique_temp_path("replace_file_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("same.txt");
+        let destination = dst_dir.join("same.txt");
+        fs::write(&source, b"source").unwrap();
+        fs::write(&destination, b"destination").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let result = transfer_with_progress_blocking(
+            "copy",
+            vec![source.to_string_lossy().to_string()],
+            dst_dir.to_string_lossy().to_string(),
+            "op_replace_file_test".to_string(),
+            "replace".to_string(),
+            cancel,
+            &|_| {},
+        )
+        .expect("replace copy should complete");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(fs::read(destination).unwrap(), b"source");
+        assert!(!fs::read_dir(&dst_dir).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("sumafile-partial")
+        }));
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[test]
+    fn copy_file_cancellation_removes_staged_partial() {
+        let src_dir = unique_temp_path("stage_cancel_src");
+        let dst_dir = unique_temp_path("stage_cancel_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("large.txt");
+        let destination = dst_dir.join("large.txt");
+        fs::write(&source, b"complete content").unwrap();
+
+        let operation_id = "op_stage_cancel_test";
+        let staged = staging_path_for(&destination, operation_id).unwrap();
+        fs::write(&staged, b"partial").unwrap();
+
+        let total_bytes = Arc::new(AtomicU64::new(0));
+        let total_files = Arc::new(AtomicU64::new(0));
+        let completed_files = Arc::new(AtomicU64::new(0));
+        let cancel = Arc::new(AtomicBool::new(true));
+        let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
+        let updates_target = updates.clone();
+        let emit = |update| updates_target.lock().unwrap().push(update);
+        let progress = ProgressContext {
+            emit: &emit,
+            operation_id,
+            operation_type: "copy",
+            cancel: &cancel,
+            total_bytes: &total_bytes,
+            total_files: &total_files,
+            completed_files: &completed_files,
+            last_running_emit: Mutex::new(Instant::now()),
+        };
+        let ctx = CopyContext {
+            progress: &progress,
+            operation_id,
+            network: false,
+            resume_existing: false,
+        };
+        let mut completed_bytes = 0;
+
+        let error =
+            copy_file_with_progress(&source, &destination, &ctx, &mut completed_bytes, false)
+                .expect_err("cancelled copy should fail");
+
+        assert_eq!(error, "Operation cancelled");
+        assert!(!staged.exists());
+        assert!(!destination.exists());
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[test]
+    fn copy_file_attempt_resumes_existing_partial_file() {
+        let src_dir = unique_temp_path("resume_src");
+        let dst_dir = unique_temp_path("resume_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("data.bin");
+        let destination = dst_dir.join("data.bin.partial");
+        fs::write(&source, b"abcdef").unwrap();
+        fs::write(&destination, b"abc").unwrap();
+
+        let operation_id = "op_resume_test";
+        let total_bytes = Arc::new(AtomicU64::new(6));
+        let total_files = Arc::new(AtomicU64::new(1));
+        let completed_files = Arc::new(AtomicU64::new(0));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
+        let updates_target = updates.clone();
+        let emit = |update| updates_target.lock().unwrap().push(update);
+        let progress = ProgressContext {
+            emit: &emit,
+            operation_id,
+            operation_type: "copy",
+            cancel: &cancel,
+            total_bytes: &total_bytes,
+            total_files: &total_files,
+            completed_files: &completed_files,
+            last_running_emit: Mutex::new(Instant::now()),
+        };
+        let ctx = CopyContext {
+            progress: &progress,
+            operation_id,
+            network: true,
+            resume_existing: false,
+        };
+
+        let copied = copy_file_attempt(&source, &destination, &ctx, 0, 2, 6)
+            .expect("partial destination should resume");
+
+        assert_eq!(copied, 6);
+        assert_eq!(fs::read(&destination).unwrap(), b"abcdef");
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[test]
+    fn directory_copy_resumes_completed_files_from_staging_directory() {
+        let src_root = unique_temp_path("resume_dir_src");
+        let dst_root = unique_temp_path("resume_dir_dst");
+        let source = src_root.join("Album");
+        let final_destination = dst_root.join("Album");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&dst_root).unwrap();
+        let existing_source = source.join("one.txt");
+        let missing_source = source.join("two.txt");
+        fs::write(&existing_source, b"one").unwrap();
+        fs::write(&missing_source, b"two").unwrap();
+
+        let staging = resumable_staging_path_for(&final_destination).unwrap();
+        fs::create_dir_all(&staging).unwrap();
+        let staged_existing = staging.join("one.txt");
+        fs::copy(&existing_source, &staged_existing).unwrap();
+        simplefile_core::file_ops::preserve_basic_metadata(&existing_source, &staged_existing)
+            .unwrap();
+        let staged_existing_modified = fs::metadata(&staged_existing).unwrap().modified().unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let result = transfer_with_progress_blocking(
+            "copy",
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            "op_resume_dir_test".to_string(),
+            "error".to_string(),
+            cancel,
+            &|_| {},
+        )
+        .expect("directory copy should resume staged files and complete");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(fs::read(final_destination.join("one.txt")).unwrap(), b"one");
+        assert_eq!(fs::read(final_destination.join("two.txt")).unwrap(), b"two");
+        assert!(!staging.exists());
+        assert_eq!(
+            fs::metadata(final_destination.join("one.txt"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            staged_existing_modified
+        );
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
     }
 
     #[test]

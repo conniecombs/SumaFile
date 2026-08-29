@@ -177,7 +177,8 @@ pub fn get_file_entry_from_dir_entry(entry: &fs::DirEntry) -> Option<FileEntry> 
     )
 }
 
-/// True for UNC paths (`\\server\share`) and mapped network drive letters.
+/// True for UNC paths (`\\server\share`), mapped network drive letters, and
+/// virtual file systems that report themselves as fixed disks.
 pub fn is_network_path(path: &Path) -> bool {
     let raw = path.to_string_lossy();
     let trimmed = raw.trim();
@@ -201,13 +202,60 @@ pub fn is_network_path(path: &Path) -> bool {
                     .chain(std::iter::once(0))
                     .collect();
                 let drive_type = unsafe { GetDriveTypeW(wide.as_ptr()) };
-                return drive_type == DRIVE_REMOTE;
+                return drive_type == DRIVE_REMOTE
+                    || windows_volume_file_system(&wide)
+                        .as_deref()
+                        .is_some_and(is_remote_like_file_system);
             }
         }
     }
 
     let _ = path;
     false
+}
+
+#[cfg(windows)]
+fn windows_volume_file_system(wide_root: &[u16]) -> Option<String> {
+    use std::ptr::null_mut;
+
+    let mut file_system_name = [0u16; 260];
+    let ok = unsafe {
+        winapi::um::fileapi::GetVolumeInformationW(
+            wide_root.as_ptr(),
+            null_mut(),
+            0,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            file_system_name.as_mut_ptr(),
+            file_system_name.len() as u32,
+        ) != 0
+    };
+
+    if !ok {
+        return None;
+    }
+
+    let len = file_system_name
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(file_system_name.len());
+    let value = String::from_utf16_lossy(&file_system_name[..len])
+        .trim()
+        .to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+#[cfg(windows)]
+fn is_remote_like_file_system(file_system: &str) -> bool {
+    let lower = file_system.to_ascii_lowercase();
+    ["airlivedrive", "virtual", "sshfs", "sftp", "fuse"]
+        .iter()
+        .any(|token| lower.contains(token))
 }
 
 pub fn generate_operation_id() -> String {
@@ -428,6 +476,8 @@ pub fn count_directory_entries(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use super::is_remote_like_file_system;
     use super::{
         classify_symlink_target, recreate_symlink, symlink_target_classification_path,
         validate_name, SymlinkTargetKind,
@@ -522,6 +572,15 @@ mod tests {
         ] {
             assert!(validate_name(name).is_ok(), "{name} should be accepted");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn remote_like_file_system_detects_virtual_mounts() {
+        assert!(is_remote_like_file_system("AirLiveDrive-7"));
+        assert!(is_remote_like_file_system("FuseMountFS"));
+        assert!(is_remote_like_file_system("SSHFS"));
+        assert!(!is_remote_like_file_system("NTFS"));
     }
 
     #[test]

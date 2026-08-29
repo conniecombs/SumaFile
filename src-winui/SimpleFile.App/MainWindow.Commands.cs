@@ -26,6 +26,21 @@ internal sealed class ClipboardHistoryRow
     }
 }
 
+internal sealed class OperationHistoryRow
+{
+    public OperationHistoryRow(OperationRecord record)
+    {
+        Record = record;
+    }
+
+    public OperationRecord Record { get; }
+
+    public override string ToString()
+    {
+        return $"{Record.Status} · {Record.Description}";
+    }
+}
+
 public sealed partial class MainWindow
 {
     private bool _commandPaletteOpen;
@@ -628,10 +643,10 @@ public sealed partial class MainWindow
                 await _workspace.RefreshAsync();
                 break;
             case "copy":
-                CopyToClipboard();
+                await CopyToClipboard();
                 break;
             case "cut":
-                CutToClipboard();
+                await CutToClipboard();
                 break;
             case "paste":
                 await PasteFromClipboard();
@@ -1082,11 +1097,12 @@ public sealed partial class MainWindow
         return new ContextMenuRequest
         {
             SelectionCount = selected.Count,
-            HasClipboard = _workspace?.Clipboard.HasItems == true,
+            HasClipboard = _workspace?.Clipboard.HasItems == true || HasWindowsFileClipboardContent(),
             DualPaneEnabled = _workspace?.DualPaneEnabled == true,
             MenuPane = _workspace?.ActivePane ?? PaneId.Primary,
             OtherPaneHasPath = _workspace?.OtherPanePath() is not null,
             SelectedIsDirectory = selected.Count == 1 && selected[0].IsDir,
+            SelectedDirectoryPath = selected.Count == 1 && selected[0].IsDir ? selected[0].Path : null,
             HasFolderSelection = selected.Any(row => row.IsDir),
             AllSelectedAreFiles = selected.Count > 0 && selected.All(row => !row.IsDir),
             SelectedIsArchive = selected.Count == 1 && !selected[0].IsDir && ArchivePaths.IsArchiveFile(selected[0].Path),
@@ -1175,6 +1191,12 @@ public sealed partial class MainWindow
 
     private async Task RunContextCommandAsync(string id, string? commandParameter = null)
     {
+        if (id == "ctx-paste" && !string.IsNullOrWhiteSpace(commandParameter))
+        {
+            await PasteFromClipboard(commandParameter);
+            return;
+        }
+
         if (id.StartsWith("view:", StringComparison.Ordinal)
             || id.StartsWith("icon:", StringComparison.Ordinal)
             || id == "pane:dual")
@@ -1872,10 +1894,11 @@ public sealed partial class MainWindow
 
     private async Task ShowOperationHistoryAsync()
     {
-        var entries = _workspace?.Undo.Entries ?? [];
-        if (entries.Count == 0)
+        var workspace = _workspace;
+        var records = workspace?.OperationLog ?? [];
+        if (workspace is null || records.Count == 0)
         {
-            SetStatusText("No completed operations in this session.");
+            SetStatusText("No operations in this session.");
             return;
         }
 
@@ -1883,23 +1906,39 @@ public sealed partial class MainWindow
         {
             MinWidth = 420,
             MaxHeight = 320,
-            SelectionMode = ListViewSelectionMode.None,
+            SelectionMode = ListViewSelectionMode.Single,
         };
-        foreach (var entry in entries)
+        foreach (var record in records)
         {
-            list.Items.Add(entry.Description);
+            list.Items.Add(new OperationHistoryRow(record));
         }
+
+        list.SelectedIndex = 0;
 
         var dialog = new ContentDialog
         {
             Title = "Operation history",
             Content = list,
-            PrimaryButtonText = _workspace?.Undo.CanUndo == true ? "Undo last" : "Close",
+            PrimaryButtonText = "Retry",
+            SecondaryButtonText = workspace.Undo.CanUndo ? "Undo last" : "",
             CloseButtonText = "Close",
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot,
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary && _workspace?.Undo.CanUndo == true)
+        var result = await dialog.ShowAsync();
+        if (!ReferenceEquals(_workspace, workspace))
+        {
+            return;
+        }
+
+        if (result == ContentDialogResult.Primary && list.SelectedItem is OperationHistoryRow row)
+        {
+            await TransferWithConflictAsync(
+                row.Record.Sources,
+                row.Record.Destination,
+                row.Record.Move);
+        }
+        else if (result == ContentDialogResult.Secondary && workspace.Undo.CanUndo)
         {
             await UndoLastAsync();
         }

@@ -282,6 +282,46 @@ public class FileOperationServiceTests
     }
 
     [Fact]
+    public async Task CalculateFolderSizeAsync_CancellationSendsBackendCancel()
+    {
+        using var cts = new CancellationTokenSource();
+        var stub = new ConfigurableIpc
+        {
+            CalculateFolderSizeHandler = (_, ct) =>
+            {
+                cts.Cancel();
+                return Task.FromCanceled<ulong>(ct);
+            },
+        };
+        var service = new FileOperationService(stub);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.CalculateFolderSizeAsync(@"S:\Movies", cts.Token));
+
+        Assert.Equal(1, stub.CancelFolderSizeCalls);
+    }
+
+    [Fact]
+    public async Task CountFolderItemsAsync_CancellationSendsBackendCancel()
+    {
+        using var cts = new CancellationTokenSource();
+        var stub = new ConfigurableIpc
+        {
+            CountFolderItemsHandler = (_, ct) =>
+            {
+                cts.Cancel();
+                return Task.FromCanceled<ulong>(ct);
+            },
+        };
+        var service = new FileOperationService(stub);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.CountFolderItemsAsync(@"S:\Movies", cts.Token));
+
+        Assert.Equal(1, stub.CancelFolderItemCountCalls);
+    }
+
+    [Fact]
     public async Task CopyAsync_TokenCancel_CallsBackendCancel()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -317,6 +357,32 @@ public class FileOperationServiceTests
         var cancelled = await cancelRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(copyOperationId, cancelled);
         Assert.False(string.IsNullOrEmpty(cancelled));
+    }
+
+    [Fact]
+    public async Task CopyAsync_ReturnedPartialResultAfterTokenCancel_IsCancellation()
+    {
+        var journal = TempJournal();
+        using var cts = new CancellationTokenSource();
+        var stub = new ConfigurableIpc
+        {
+            CopyWithProgressHandler = (sources, destination, operationId, conflictAction, ct) =>
+            {
+                cts.Cancel();
+                return Task.FromResult(new[]
+                {
+                    new TransferResult { Source = sources[0], Destination = Path.Combine(destination, "a.txt") },
+                });
+            },
+        };
+        var service = new FileOperationService(stub, journal);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.CopyAsync([@"C:\a.txt"], @"C:\dest", "skip", ct: cts.Token));
+
+        var entries = journal.ReadEntries();
+        Assert.Contains(entries, entry => entry.OperationType == "copy" && entry.State == "cancelled");
+        Assert.DoesNotContain(entries, entry => entry.OperationType == "copy" && entry.State == "completed");
     }
 
     [Fact]

@@ -7,6 +7,7 @@ mod scheduler;
 pub mod search;
 pub mod session;
 pub mod shell;
+mod transfer_staging;
 pub mod watcher;
 
 pub use dispatch::SessionState;

@@ -42,10 +42,14 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<string, CancellationToken, Task>? OpenFileHandler { get; set; }
     public Func<string, CancellationToken, Task<ulong>>? CalculateFolderSizeHandler { get; set; }
     public Func<string, CancellationToken, Task<ulong>>? CountFolderItemsHandler { get; set; }
+    public Func<CancellationToken, Task>? CancelFolderSizeHandler { get; set; }
+    public Func<CancellationToken, Task>? CancelFolderItemCountHandler { get; set; }
     public Func<CancellationToken, Task<SmartFolder[]>>? LoadSmartFoldersHandler { get; set; }
 
     public int GitStatusCalls { get; private set; }
     public int MoveWithProgressCalls { get; private set; }
+    public int CancelFolderSizeCalls { get; private set; }
+    public int CancelFolderItemCountCalls { get; private set; }
     public SearchOptions? LastSearchOptions { get; private set; }
     public string? LastCancelledOperationId { get; private set; }
     public string? LastCancelledSearchId { get; private set; }
@@ -250,6 +254,18 @@ internal sealed class ConfigurableIpc : NullIpc
     public override Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default)
         => CountFolderItemsHandler?.Invoke(path, ct)
             ?? Task.FromResult(FolderItemCounts.TryGetValue(path, out var count) ? count : 0UL);
+
+    public override Task CancelFolderSizeAsync(CancellationToken ct = default)
+    {
+        CancelFolderSizeCalls += 1;
+        return CancelFolderSizeHandler?.Invoke(ct) ?? Task.CompletedTask;
+    }
+
+    public override Task CancelFolderItemCountAsync(CancellationToken ct = default)
+    {
+        CancelFolderItemCountCalls += 1;
+        return CancelFolderItemCountHandler?.Invoke(ct) ?? Task.CompletedTask;
+    }
 
     public override Task<SmartFolder[]> LoadSmartFoldersAsync(CancellationToken ct = default)
         => LoadSmartFoldersHandler?.Invoke(ct) ?? throw NotConfigured();

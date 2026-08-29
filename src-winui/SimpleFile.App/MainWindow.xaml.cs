@@ -79,6 +79,8 @@ public sealed partial class MainWindow : Window
             throw;
         }
 
+        AttachControlEvents();
+
         _previewPresenter = new PreviewPresenter(
             () => _workspace,
             () => ActiveSelectedRow,
@@ -2754,11 +2756,17 @@ public sealed partial class MainWindow : Window
 
             foreach (var pane in panes)
             {
+                var state = workspace.Pane(pane);
                 if (cancellationToken.IsCancellationRequested
                     || token != _columnEnrichmentToken
-                    || workspace.Pane(pane).ListingInProgress)
+                    || state.ListingInProgress)
                 {
                     return;
+                }
+
+                if (state.PathIsNetwork)
+                {
+                    continue;
                 }
 
                 if (needsGit)
@@ -3043,36 +3051,62 @@ public sealed partial class MainWindow : Window
         await _fileOperationDialogs.DeleteSelectedAsync();
     }
 
-    private void CopyToClipboard()
+    private async Task CopyToClipboard()
     {
         var paths = SelectedPaths;
         if (paths is not null && paths.Length > 0)
         {
             _workspace?.Clipboard.SetCopy(paths);
             _workspace?.RememberClipboard();
-            SetStatusText($"Copied {paths.Length} item(s)");
+            var exported = await TrySetWindowsFileClipboardAsync(paths, ClipboardOperation.Copy);
+            SetStatusText(exported
+                ? $"Copied {paths.Length} item(s)"
+                : $"Copied {paths.Length} item(s) in SumaFile");
         }
     }
 
-    private void CutToClipboard()
+    private async Task CutToClipboard()
     {
         var paths = SelectedPaths;
         if (paths is not null && paths.Length > 0)
         {
             _workspace?.Clipboard.SetCut(paths);
             _workspace?.RememberClipboard();
-            SetStatusText($"Cut {paths.Length} item(s)");
+            var exported = await TrySetWindowsFileClipboardAsync(paths, ClipboardOperation.Cut);
+            SetStatusText(exported
+                ? $"Cut {paths.Length} item(s)"
+                : $"Cut {paths.Length} item(s) in SumaFile");
         }
     }
 
-    private async Task PasteFromClipboard()
+    private async Task PasteFromClipboard(string? destinationOverride = null)
     {
-        if (_workspace is null || !_workspace.Clipboard.HasItems) return;
+        if (_workspace is null) return;
 
         var clipboard = _workspace.Clipboard;
-        var destination = _workspace.Active.Path;
-        await TransferWithConflictAsync(clipboard.SourcePaths, destination, clipboard.Operation == ClipboardOperation.Cut);
-        if (clipboard.Operation == ClipboardOperation.Cut)
+        var payload = clipboard.HasItems
+            ? new ClipboardTransferPayload(clipboard.Operation, clipboard.SourcePaths, IsInternal: true)
+            : await TryReadWindowsFileClipboardAsync();
+        if (payload is null || payload.SourcePaths.Length == 0)
+        {
+            SetStatusText("Clipboard does not contain files");
+            return;
+        }
+
+        var destination = destinationOverride ?? _workspace.Active.Path;
+        if (!DropDestination.IsValidDrop(payload.SourcePaths, destination))
+        {
+            SetStatusText("Cannot paste into that location");
+            return;
+        }
+
+        var outcome = await TransferWithConflictAsync(
+            payload.SourcePaths,
+            destination,
+            payload.Operation == ClipboardOperation.Cut);
+        if (payload.IsInternal
+            && payload.Operation == ClipboardOperation.Cut
+            && outcome == TransferRunStatus.Completed)
         {
             clipboard.Clear();
         }
@@ -3239,22 +3273,37 @@ public sealed partial class MainWindow : Window
         await RunUiActionAsync("Trash", TrashSelected);
     }
 
-    private void OnCopyAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
+    private async void OnCopyAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
     {
+        if (IsEditingPath || IsTextInputFocused())
+        {
+            return;
+        }
+
         e.Handled = true;
-        CopyToClipboard();
+        await RunUiActionAsync("Copy", CopyToClipboard);
     }
 
-    private void OnCutAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
+    private async void OnCutAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
     {
+        if (IsEditingPath || IsTextInputFocused())
+        {
+            return;
+        }
+
         e.Handled = true;
-        CutToClipboard();
+        await RunUiActionAsync("Cut", CutToClipboard);
     }
 
     private async void OnPasteAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
     {
+        if (IsEditingPath || IsTextInputFocused())
+        {
+            return;
+        }
+
         e.Handled = true;
-        await RunUiActionAsync("Paste", PasteFromClipboard);
+        await RunUiActionAsync("Paste", () => PasteFromClipboard());
     }
 
     private FileRow[] GetSelectedEntries() => ActiveSelectedRows.ToArray();

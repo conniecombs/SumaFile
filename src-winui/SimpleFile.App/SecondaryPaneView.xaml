@@ -1,0 +1,208 @@
+<UserControl
+    x:Class="SimpleFile.App.SecondaryPaneView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:SimpleFile.App"
+    xmlns:core="using:SimpleFile.Core"
+    xmlns:ipc="using:SimpleFile.Ipc">
+                        <Grid
+                            x:Name="SecondaryPaneRoot"
+                            Grid.Column="2"
+                            Background="{ThemeResource SfBgPrimaryBrush}"
+                            BorderBrush="{ThemeResource SfBorderBrush}"
+                            BorderThickness="0"
+                            Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Border
+                                x:Name="SecondaryActivePaneRail"
+                                Grid.RowSpan="3"
+                                Width="3"
+                                HorizontalAlignment="Left"
+                                Background="{ThemeResource SfAccentBrush}"
+                                IsHitTestVisible="False"
+                                Visibility="Collapsed" />
+                            <Grid
+                                x:Name="SecondaryPaneHeader"
+                                Padding="10,6,10,0"
+                                Background="{ThemeResource SfBgSecondaryBrush}"
+                                BorderBrush="{ThemeResource SfBorderBrush}"
+                                BorderThickness="0,0,0,1"
+                                ColumnSpacing="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid
+                                    Grid.Row="0"
+                                    ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel
+                                        x:Name="SecondaryPaneCaption"
+                                        VerticalAlignment="Center"
+                                        Orientation="Horizontal"
+                                        Spacing="5"
+                                        Visibility="Collapsed">
+                                        <Rectangle
+                                            x:Name="SecondaryPaneCaptionRail"
+                                            Width="3"
+                                            Height="14"
+                                            Fill="{ThemeResource SfAccentBrush}"
+                                            RadiusX="1"
+                                            RadiusY="1" />
+                                        <TextBlock
+                                            x:Name="SecondaryPaneCaptionText"
+                                            VerticalAlignment="Center"
+                                            FontSize="11"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource SfTextMutedBrush}"
+                                            Text="Right" />
+                                    </StackPanel>
+                                    <ScrollViewer
+                                        Grid.Column="1"
+                                        HorizontalScrollBarVisibility="Auto"
+                                        VerticalScrollBarVisibility="Disabled">
+                                        <StackPanel x:Name="SecondaryTabHost" Orientation="Horizontal" Spacing="2" />
+                                    </ScrollViewer>
+                                </Grid>
+                                <Grid
+                                    Grid.Row="1"
+                                    Margin="0,6,0,6"
+                                    ColumnSpacing="6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid
+                                        x:Name="SecondaryPathBar"
+                                        Grid.Column="0"
+                                        MinHeight="34"
+                                        Padding="6,2"
+                                        Background="{ThemeResource SfBgTertiaryBrush}"
+                                        BorderBrush="{ThemeResource SfBorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="4">
+                                        <ScrollViewer
+                                            x:Name="SecondaryBreadcrumbScroller"
+                                            VerticalAlignment="Center"
+                                            HorizontalScrollBarVisibility="Auto"
+                                            VerticalScrollBarVisibility="Disabled">
+                                            <StackPanel x:Name="SecondaryBreadcrumbHost" VerticalAlignment="Center" Orientation="Horizontal" />
+                                        </ScrollViewer>
+                                        <TextBox
+                                            x:Name="SecondaryPathInput"
+                                            Style="{StaticResource SfTextBoxStyle}"
+                                            BorderThickness="0"
+                                            PlaceholderText="Enter path..."
+                                            Visibility="Collapsed"
+                                            KeyDown="OnSecondaryPathKeyDown"
+                                            LostFocus="OnSecondaryPathLostFocus"
+                                            TextChanged="OnSecondaryPathTextChanged" />
+                                    </Grid>
+                                    <Button
+                                        x:Name="SecondaryEditPathButton"
+                                        Grid.Column="1"
+                                        Style="{StaticResource SfToolbarButtonStyle}"
+                                        Click="OnEditSecondaryPath"
+                                        ToolTipService.ToolTip="Edit path">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="13" Glyph="&#xE70F;" />
+                                    </Button>
+                                </Grid>
+                            </Grid>
+                            <ScrollViewer
+                                x:Name="SecondaryColumnHeaderScroller"
+                                Grid.Row="1"
+                                HorizontalScrollBarVisibility="Hidden"
+                                HorizontalScrollMode="Disabled"
+                                VerticalScrollBarVisibility="Disabled"
+                                VerticalScrollMode="Disabled">
+                                <Grid
+                                    x:Name="SecondaryColumnHeader"
+                                    Padding="10,0,0,0"
+                                    HorizontalAlignment="Left"
+                                    Background="Transparent"
+                                    BorderBrush="{ThemeResource SfBorderBrush}"
+                                    BorderThickness="0,0,0,1" />
+                            </ScrollViewer>
+                            <Grid
+                                Grid.Row="2"
+                                Background="Transparent"
+                                PointerPressed="OnSecondaryMarqueePressed"
+                                PointerMoved="OnMarqueePointerMoved"
+                                PointerReleased="OnMarqueePointerReleased"
+                                PointerCanceled="OnMarqueePointerCanceled">
+                                <ListView
+                                    x:Name="SecondaryFileList"
+                                    Padding="2,4,2,6"
+                                    AllowDrop="True"
+                                    CanDragItems="True"
+                                    AutomationProperties.Name="Right pane files"
+                                    DoubleTapped="OnSecondaryFileDoubleTapped"
+                                    DragItemsStarting="OnFileDragItemsStarting"
+                                    DragItemsCompleted="OnFileDragItemsCompleted"
+                                    DragLeave="OnFileDragLeave"
+                                    DragOver="OnSecondaryFileDragOver"
+                                    Drop="OnSecondaryFileDrop"
+                                    IsItemClickEnabled="False"
+                                    IsMultiSelectCheckBoxEnabled="False"
+                                    KeyDown="OnSecondaryFileKeyDown"
+                                    RightTapped="OnSecondaryFileRightTapped"
+                                    SelectionChanged="OnSecondarySelectionChanged"
+                                    SelectionMode="Extended"
+                                    SingleSelectionFollowsFocus="False">
+                                    <ListView.ItemContainerStyle>
+                                        <Style BasedOn="{StaticResource SfFileListItemStyle}" TargetType="ListViewItem" />
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ContextFlyout>
+                                        <MenuFlyout Opening="OnSecondaryFileListContextOpening" />
+                                    </ListView.ContextFlyout>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate x:DataType="local:FileRow">
+                                            <local:FileRowView Row="{x:Bind}" ContextRequested="OnFileRowContextRequested" />
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                                <Canvas x:Name="SecondaryMarqueeCanvas" IsHitTestVisible="False">
+                                    <Rectangle
+                                        x:Name="SecondaryMarqueeRect"
+                                        Visibility="Collapsed"
+                                        Stroke="{ThemeResource SfAccentBrush}"
+                                        StrokeThickness="1"
+                                        Fill="{ThemeResource SfAccentSoftBrush}"
+                                        RadiusX="2"
+                                        RadiusY="2" />
+                                </Canvas>
+                                <StackPanel
+                                    x:Name="SecondaryEmptyState"
+                                    MaxWidth="360"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    IsHitTestVisible="False"
+                                    Spacing="6"
+                                    Visibility="Collapsed">
+                                    <TextBlock
+                                        x:Name="SecondaryEmptyTitle"
+                                        HorizontalAlignment="Center"
+                                        FontSize="16"
+                                        FontWeight="SemiBold"
+                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                        Text="This folder is empty"
+                                        TextAlignment="Center" />
+                                    <TextBlock
+                                        x:Name="SecondaryEmptyHint"
+                                        HorizontalAlignment="Center"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                        Text="Drop files here, or press Ctrl+Shift+N to create a folder"
+                                        TextAlignment="Center"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+</UserControl>

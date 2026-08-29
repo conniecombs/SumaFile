@@ -120,6 +120,7 @@ public class ModelsTests
               "name": "Windows",
               "path": "C:\\",
               "drive_type": "fixed",
+              "file_system": "NTFS",
               "total_space": 100,
               "free_space": 40,
               "remote_path": null,
@@ -131,6 +132,7 @@ public class ModelsTests
         Assert.NotNull(drive);
         Assert.Equal("Windows", drive.Name);
         Assert.Equal("fixed", drive.DriveType);
+        Assert.Equal("NTFS", drive.FileSystem);
         Assert.Equal(100ul, drive.TotalSpace);
         Assert.Equal("ready", drive.DriveStatus);
         Assert.Null(drive.RemotePath);

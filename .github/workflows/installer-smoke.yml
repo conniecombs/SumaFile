@@ -98,6 +98,9 @@ jobs:
       - name: Smoke WinUI payload startup
         run: npm run smoke:winui
 
+      - name: Smoke WinUI packaged file operations
+        run: npm run smoke:winui-file-ops
+
       - name: Smoke WinUI MSI extract and launch
         run: npm run smoke:winui-msi
 

@@ -329,6 +329,33 @@ pub(super) async fn list_directory_and_reply(
     }
 }
 
+pub(super) fn spawn_list_directory(
+    writer: OutboundSink,
+    scheduler: BlockingScheduler,
+    binary_hot_frames: Arc<AtomicBool>,
+    id: Option<Value>,
+    path: String,
+    options: Option<ListDirectoryOptions>,
+) {
+    tokio::spawn(async move {
+        let response_id = id.clone();
+        let result =
+            list_directory_and_reply(&writer, scheduler, binary_hot_frames, id, path, options)
+                .await;
+
+        if let Err(message) = result {
+            let _ = write_json(
+                &writer,
+                &JsonRpcResponse::application_error(
+                    response_id,
+                    format!("listing task failed: {message}"),
+                ),
+            )
+            .await;
+        }
+    });
+}
+
 pub(super) async fn generate_thumbnail_and_reply(
     writer: &OutboundSink,
     scheduler: BlockingScheduler,

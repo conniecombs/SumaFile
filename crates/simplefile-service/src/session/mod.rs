@@ -7,10 +7,10 @@ use crate::scheduler::BlockingScheduler;
 use crate::watcher::WatcherState;
 use io::{read_frame, spawn_writer, write_json};
 use jobs::{
-    generate_thumbnail_and_reply, generate_thumbnails_and_reply, list_directory_and_reply,
-    spawn_copy_move_with_progress, spawn_disk_cleanup, spawn_duplicate_check,
-    spawn_folder_item_count, spawn_folder_metrics, spawn_folder_size, spawn_install_update,
-    spawn_search_files, DiskCleanupJob, DuplicateCheckJob, EventSink,
+    generate_thumbnail_and_reply, generate_thumbnails_and_reply, spawn_copy_move_with_progress,
+    spawn_disk_cleanup, spawn_duplicate_check, spawn_folder_item_count, spawn_folder_metrics,
+    spawn_folder_size, spawn_install_update, spawn_list_directory, spawn_search_files,
+    DiskCleanupJob, DuplicateCheckJob, EventSink,
 };
 use serde_json::Value;
 use simplefile_ipc::frame::FrameError;
@@ -51,15 +51,14 @@ where
         match dispatch(&mut state, &request) {
             Dispatch::Reply(response) => write_json(&writer, &response).await?,
             Dispatch::ListDirectory { id, path, options } => {
-                list_directory_and_reply(
-                    &writer,
+                spawn_list_directory(
+                    writer.clone(),
                     scheduler.clone(),
                     binary_hot_frames.clone(),
                     id,
                     path,
                     options,
-                )
-                .await?;
+                );
             }
             Dispatch::CopyWithProgress { id, params } => {
                 spawn_copy_move_with_progress(

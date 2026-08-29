@@ -27,6 +27,7 @@ public sealed class ContextMenuRequest
     public PaneId MenuPane { get; init; } = PaneId.Primary;
     public bool OtherPaneHasPath { get; init; }
     public bool SelectedIsDirectory { get; init; }
+    public string? SelectedDirectoryPath { get; init; }
     public bool HasFolderSelection { get; init; }
     public bool AllSelectedAreFiles { get; init; }
     public bool SelectedIsArchive { get; init; }
@@ -87,7 +88,12 @@ public static class ContextMenuBuilder
             Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0),
             Item("ctx-copy", "Copy", request.SelectionCount == 0, "Ctrl+C"),
             Item("ctx-cut", "Cut", request.SelectionCount == 0, "Ctrl+X"),
-            Item("ctx-paste", "Paste", !request.HasClipboard, "Ctrl+V"),
+            Item(
+                "ctx-paste",
+                request.SelectedIsDirectory ? "Paste into folder" : "Paste",
+                !request.HasClipboard,
+                "Ctrl+V",
+                commandParameter: request.SelectedIsDirectory ? request.SelectedDirectoryPath : null),
             Item("ctx-copy-path", "Copy path", request.SelectionCount == 0, "Ctrl+Shift+C"),
             Item("ctx-bookmark", "Bookmark folder", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+B"),
             Item("ctx-copy-to-pane", "Copy to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+C"),

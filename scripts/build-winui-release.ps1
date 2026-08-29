@@ -422,6 +422,7 @@ Invoke-Native node $latestArgs
 
 if (-not $SkipSmoke) {
     Invoke-Native powershell @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\smoke-winui-startup.ps1")
+    Invoke-Native powershell @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\smoke-winui-file-ops.ps1")
     if ($builtMsi) {
         Invoke-Native powershell @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\smoke-winui-msi.ps1")
     }

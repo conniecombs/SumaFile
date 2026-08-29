@@ -36,6 +36,7 @@ cargo test --locked --all-features
 
 # WinUI smokes (after npm run build:winui:release)
 npm run smoke:winui
+npm run smoke:winui-file-ops # packaged copy/move/conflict/drop-target/progress IPC smoke
 npm run smoke:winui-msi       # needs WiX MSI
 npm run smoke:winui-installer # needs NSIS setup
 npm run smoke:winui-upgrade   # previous NSIS -> new NSIS
@@ -254,8 +255,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ops.delete-confirm` | Confirm setting | Settings + dialog | — | Toggle confirm | `MANUAL` |
 | `ops.clipboard` | Copy/cut/paste | `ClipboardState` | `ClipboardStateTests` | Ctrl+C/X/V | `PASS` |
 | `ops.copy-path` | Ctrl+Shift+C | System clipboard | — | Paste path in Notepad | `MANUAL` |
-| `ops.conflict` | Probe + Skip/Replace/Keep Both | `ConflictDialog` + `DropDestination` | `DropDestination` tests | Paste onto existing name | `MANUAL` |
-| `ops.progress` | Modal + cancel | `ProgressPanel` | FileOps progress | Large copy | `MANUAL` |
+| `ops.conflict` | Probe + Skip/Replace/Keep Both | `ConflictDialog` + `DropDestination` | `DropDestination` tests + packaged file-op smoke | Paste onto existing name | `PASS` |
+| `ops.progress` | Modal + cancel | `ProgressPanel` | FileOps progress + packaged file-op smoke | Large copy | `PASS` |
 | `ops.escape-progress` | Escape hides UI, no cancel | Escape stack | — | Escape during copy | `MANUAL` |
 | `ops.copy-to-pane` | Ctrl+Alt+C | `CopyOrMoveToOtherPaneAsync` | Context ID test | Dual-pane copy | `MANUAL` |
 | `ops.move-to-pane` | Ctrl+Alt+M | Same | Context ID test | Dual-pane move | `MANUAL` |
@@ -265,8 +266,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ops.redo` | Ctrl+Y / Ctrl+Shift+Z | `UndoStack` | Same | Redo | `PASS` |
 | `ops.op-history` | Full retry log | `OperationLog` + `RetryOperationAsync` | Workspace methods | Palette → history | `PASS` |
 | `ops.clipboard-history` | Ctrl+Shift+V | `ClipboardHistory` | `ParityFeaturesTests` | Palette → clipboard history | `PASS` |
-| `ops.drop-internal` | Intra-app move/copy | Drag handlers | `DropDestination` | Drag between panes | `MANUAL` |
-| `ops.drop-external` | OS drop copies in | `StorageItems` | `DropDestination` | Drop from Explorer | `MANUAL` |
+| `ops.drop-internal` | Intra-app move/copy | Drag handlers | `DropDestination` + packaged drop-target smoke | Drag between panes | `PASS` |
+| `ops.drop-external` | OS drop copies in | `StorageItems` | `DropDestination` + packaged drop-target smoke | Drop from Explorer | `PASS` |
 | `ops.archive-aware-io` | Copy/move inside archive VFS | Service/core | Core tests via Rust | Copy inside zip | `MANUAL` |
 
 ---
@@ -390,6 +391,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |
 | `npm run check:rust` | Core/ipc/service tests + clippy |
 | `npm run smoke:winui` | Payload exe title + service process |
+| `npm run smoke:winui-file-ops` | Packaged service copy/move/conflict/drop-target/progress |
 | `npm run smoke:winui-msi` / `smoke:winui-installer` / `smoke:winui-upgrade` | Installer extract/install/upgrade (CI) |
 
 ---
@@ -403,7 +405,7 @@ Use a clean folder with mixed files (txt, png, zip), a git repo, and a large fol
 3. Breadcrumb click; path edit Enter/Escape; Up at drive root is a no-op.
 4. F6 dual pane; Alt+2; sidebar Desktop opens on the **right** only.
 5. Ctrl+T / Ctrl+Tab / Ctrl+W / middle-click tab; relaunch restores tabs.
-6. Multi-select, copy, paste, conflict Skip/Replace/Keep Both, Undo/Redo.
+6. Multi-select, copy, paste, conflict Skip/Replace/Keep Both, Undo/Redo. Packaged contract: `npm run smoke:winui-file-ops`.
 7. Delete (trash) and Shift+Delete; confirm setting off/on.
 8. Drag between panes (move) and Ctrl-drag (copy); drop from Explorer (copy).
 9. Search current folder; cancel; Escape clears search.
