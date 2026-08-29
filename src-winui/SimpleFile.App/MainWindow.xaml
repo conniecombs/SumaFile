@@ -27,6 +27,20 @@
             <KeyboardAccelerator Key="N" Modifiers="Control,Shift" Invoked="OnNewFolderAccelerator" />
             <KeyboardAccelerator Key="N" Modifiers="Control" Invoked="OnNewFileAccelerator" />
             <KeyboardAccelerator Key="F2" Invoked="OnRenameAccelerator" />
+            <KeyboardAccelerator Key="Enter" Modifiers="Menu" Invoked="OnPropertiesAccelerator" />
+            <KeyboardAccelerator Key="Enter" Modifiers="Control" Invoked="OnOpenInNewTabAccelerator" />
+            <KeyboardAccelerator Key="H" Modifiers="Control" Invoked="OnToggleHiddenAccelerator" />
+            <KeyboardAccelerator Key="B" Modifiers="Control" Invoked="OnBookmarkAccelerator" />
+            <KeyboardAccelerator Key="F3" Invoked="OnFocusSearchAccelerator" />
+            <KeyboardAccelerator Key="Number1" Modifiers="Control" Invoked="OnTab1Accelerator" />
+            <KeyboardAccelerator Key="Number2" Modifiers="Control" Invoked="OnTab2Accelerator" />
+            <KeyboardAccelerator Key="Number3" Modifiers="Control" Invoked="OnTab3Accelerator" />
+            <KeyboardAccelerator Key="Number4" Modifiers="Control" Invoked="OnTab4Accelerator" />
+            <KeyboardAccelerator Key="Number5" Modifiers="Control" Invoked="OnTab5Accelerator" />
+            <KeyboardAccelerator Key="Number6" Modifiers="Control" Invoked="OnTab6Accelerator" />
+            <KeyboardAccelerator Key="Number7" Modifiers="Control" Invoked="OnTab7Accelerator" />
+            <KeyboardAccelerator Key="Number8" Modifiers="Control" Invoked="OnTab8Accelerator" />
+            <KeyboardAccelerator Key="Number9" Modifiers="Control" Invoked="OnTab9Accelerator" />
             <KeyboardAccelerator Key="Delete" Modifiers="Shift" Invoked="OnDeleteAccelerator" />
             <KeyboardAccelerator Key="Delete" Invoked="OnTrashAccelerator" />
             <KeyboardAccelerator Key="C" Modifiers="Control" Invoked="OnCopyAccelerator" />
@@ -981,13 +995,31 @@
                                         RadiusX="2"
                                         RadiusY="2" />
                                 </Canvas>
-                                <TextBlock
-                                    x:Name="PrimaryEmptyText"
+                                <StackPanel
+                                    x:Name="PrimaryEmptyState"
+                                    MaxWidth="360"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center"
-                                    Foreground="{ThemeResource SfTextMutedBrush}"
-                                    Text="This folder is empty"
-                                    Visibility="Collapsed" />
+                                    IsHitTestVisible="False"
+                                    Spacing="6"
+                                    Visibility="Collapsed">
+                                    <TextBlock
+                                        x:Name="PrimaryEmptyTitle"
+                                        HorizontalAlignment="Center"
+                                        FontSize="16"
+                                        FontWeight="SemiBold"
+                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                        Text="This folder is empty"
+                                        TextAlignment="Center" />
+                                    <TextBlock
+                                        x:Name="PrimaryEmptyHint"
+                                        HorizontalAlignment="Center"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                        Text="Drop files here, or press Ctrl+Shift+N to create a folder"
+                                        TextAlignment="Center"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
                             </Grid>
                         </Grid>
 
@@ -1178,13 +1210,31 @@
                                         RadiusX="2"
                                         RadiusY="2" />
                                 </Canvas>
-                                <TextBlock
-                                    x:Name="SecondaryEmptyText"
+                                <StackPanel
+                                    x:Name="SecondaryEmptyState"
+                                    MaxWidth="360"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center"
-                                    Foreground="{ThemeResource SfTextMutedBrush}"
-                                    Text="This folder is empty"
-                                    Visibility="Collapsed" />
+                                    IsHitTestVisible="False"
+                                    Spacing="6"
+                                    Visibility="Collapsed">
+                                    <TextBlock
+                                        x:Name="SecondaryEmptyTitle"
+                                        HorizontalAlignment="Center"
+                                        FontSize="16"
+                                        FontWeight="SemiBold"
+                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                        Text="This folder is empty"
+                                        TextAlignment="Center" />
+                                    <TextBlock
+                                        x:Name="SecondaryEmptyHint"
+                                        HorizontalAlignment="Center"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                        Text="Drop files here, or press Ctrl+Shift+N to create a folder"
+                                        TextAlignment="Center"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
                             </Grid>
                         </Grid>
                     </Grid>
