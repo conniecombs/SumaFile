@@ -38,6 +38,10 @@ public class ContextMenuBuilderTests
         Assert.False(string.IsNullOrWhiteSpace(open.IconGlyph));
         Assert.Contains(selected, entry => entry.Id == "ctx-open-with");
         Assert.Contains(selected, entry => entry.Id == "ctx-copy-to-pane");
+        Assert.Contains(selected, entry => entry.Id == "ctx-copy-path" && entry.Shortcut == "Ctrl+Shift+C");
+        Assert.DoesNotContain(selected, entry => entry.Id == "ctx-open-tab");
+        Assert.DoesNotContain(selected, entry => entry.Id == "ctx-open-other-pane");
+        Assert.DoesNotContain(selected, entry => entry.Id == "ctx-bookmark");
         var delete = Assert.Single(selected, entry => entry.Id == "ctx-delete-menu");
         Assert.Equal("Delete:", delete.Label);
         Assert.Contains(delete.Children, entry => entry.Id == "ctx-delete-recycle" && entry.Label == "Move to Recycle Bin" && entry.Shortcut == "Delete");
@@ -129,6 +133,22 @@ public class ContextMenuBuilderTests
             AllSelectedAreFiles = true,
         });
         Assert.Contains(twoFiles, entry => entry.Id == "ctx-compare");
+    }
+    [Fact]
+    public void ContextMenu_FolderActionsForSingleDirectory()
+    {
+        var folder = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            SelectionCount = 1,
+            SelectedIsDirectory = true,
+        });
+
+        var openTab = Assert.Single(folder, entry => entry.Id == "ctx-open-tab");
+        Assert.Equal("Ctrl+Enter", openTab.Shortcut);
+        Assert.Equal(ContextMenuIconCatalog.NewTab, openTab.IconGlyph);
+        Assert.Contains(folder, entry => entry.Id == "ctx-open-other-pane");
+        Assert.Contains(folder, entry => entry.Id == "ctx-bookmark" && entry.Shortcut == "Ctrl+B");
+        Assert.Contains(folder, entry => entry.Id == "ctx-copy-path");
     }
     [Fact]
     public void PaneMoreMenu_UsesPolishedLabelsAndSelectionGating()

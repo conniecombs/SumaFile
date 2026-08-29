@@ -353,6 +353,58 @@ public class DualPaneAndTabsTests
     }
 
     [Fact]
+    public async Task SwitchToTabAt_UsesOneBasedIndexAndNineIsLast()
+    {
+        var workspace = await Started();
+        var first = workspace.Primary.ActiveTabId;
+        await workspace.OpenNewTabAsync(PaneId.Primary, @"C:\Users\test\Desktop");
+        await workspace.OpenNewTabAsync(PaneId.Primary, @"C:\");
+        Assert.Equal(3, workspace.Primary.Tabs.Count);
+
+        await workspace.SwitchToTabAtAsync(1);
+        Assert.Equal(first, workspace.Primary.ActiveTabId);
+        Assert.Equal(@"C:\Users\test", workspace.Primary.Path);
+
+        await workspace.SwitchToTabAtAsync(9);
+        Assert.Equal(@"C:\", workspace.Primary.Path);
+    }
+
+    [Fact]
+    public async Task OpenInOtherPane_EnablesDualPaneWithoutStealingFocus()
+    {
+        var workspace = await Started();
+        await workspace.NavigateToAsync(@"C:\Users\test");
+        Assert.False(workspace.DualPaneEnabled);
+
+        await workspace.OpenInOtherPaneAsync(@"C:\Users\test\Desktop", isDirectory: true);
+
+        Assert.True(workspace.DualPaneEnabled);
+        Assert.Equal(PaneId.Primary, workspace.ActivePane);
+        Assert.Equal(@"C:\Users\test", workspace.Primary.Path);
+        Assert.Equal(@"C:\Users\test\Desktop", workspace.Secondary.Path);
+    }
+
+    [Fact]
+    public async Task NudgeIconSize_StepsAndClamps()
+    {
+        var workspace = await Started();
+        Assert.Equal(16, workspace.Primary.IconSize);
+        Assert.Equal(32, workspace.NudgeFileListIconSize(PaneId.Primary, 2));
+        Assert.Equal(256, workspace.NudgeFileListIconSize(PaneId.Primary, 100));
+        Assert.Equal(16, workspace.NudgeFileListIconSize(PaneId.Primary, -100));
+    }
+
+    [Fact]
+    public async Task ToggleShowHidden_FlipsSetting()
+    {
+        var workspace = await Started();
+        Assert.False(workspace.ShowHiddenFiles);
+        Assert.True(workspace.ToggleShowHidden());
+        Assert.True(workspace.Settings.ShowHidden);
+        Assert.False(workspace.ToggleShowHidden());
+    }
+
+    [Fact]
     public async Task SwitchTabBy_Wraps()
     {
         var workspace = await Started();

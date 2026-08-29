@@ -30,6 +30,8 @@ public static class ContextMenuIconCatalog
     public const string BulletedList = "\uE8FD";
     public const string Preview = "\uE8FF";
     public const string Label = "\uE932";
+    public const string Favorite = "\uE734";
+    public const string NewTab = "\uE8BB";
     public const string Info = "\uE946";
     public const string AreaChart = "\uE9D2";
     public const string List = "\uEA37";
@@ -40,6 +42,8 @@ public static class ContextMenuIconCatalog
         return commandId switch
         {
             "ctx-open" => OpenFile,
+            "ctx-open-tab" => NewTab,
+            "ctx-open-other-pane" => OpenPane,
             "ctx-open-with" or "ctx-open-with-choose" => OpenWith,
             "ctx-preview" => Preview,
             "ctx-compare" => Switch,
@@ -51,7 +55,8 @@ public static class ContextMenuIconCatalog
             "ctx-duplicates" => SelectAll,
             "ctx-rename" => Rename,
             "ctx-advanced-rename" => Edit,
-            "ctx-copy" or "ctx-copy-to-pane" => Copy,
+            "ctx-copy" or "ctx-copy-to-pane" or "ctx-copy-path" => Copy,
+            "ctx-bookmark" => Favorite,
             "ctx-cut" => Cut,
             "ctx-paste" => Paste,
             "ctx-move-to-pane" => MoveToFolder,

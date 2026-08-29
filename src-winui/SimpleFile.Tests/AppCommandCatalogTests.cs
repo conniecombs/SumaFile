@@ -23,7 +23,12 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "icon-size-maximum");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "clear-recent-history");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-side-menu");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-hidden");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "copy-path");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "bookmark-folder");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-back");
         Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
+        Assert.Equal("Alt+Enter", AppCommandCatalog.Find("properties")?.Shortcut);
         Assert.Equal("Disk cleanup", AppCommandCatalog.Find("disk-cleanup")?.Label);
         Assert.Equal("Open or close second pane", AppCommandCatalog.Find("dual-pane")?.Label);
         Assert.Equal("Move to Recycle Bin", AppCommandCatalog.Find("delete")?.Label);

@@ -228,6 +228,20 @@ public sealed class ExplorerWorkspace
         RaiseChanged();
     }
 
+    public int NudgeFileListIconSize(PaneId pane, int steps)
+    {
+        var target = Pane(pane);
+        var next = UiSettings.NormalizeIconSize(target.IconSize + (steps * UiSettings.IconSizeStep));
+        SetFileListIconSize(pane, next);
+        return target.IconSize;
+    }
+
+    public bool ToggleShowHidden()
+    {
+        SetShowHidden(!ShowHiddenFiles);
+        return ShowHiddenFiles;
+    }
+
     public void ApplyViewOptionsToBothPanes(PaneId sourcePane)
     {
         var source = Pane(sourcePane);
@@ -1059,6 +1073,43 @@ public sealed class ExplorerWorkspace
         var activeIndex = Math.Max(0, state.Tabs.FindIndex(tab => tab.Id == state.ActiveTabId));
         var next = state.Tabs[(activeIndex + delta % state.Tabs.Count + state.Tabs.Count) % state.Tabs.Count];
         return SwitchToTabAsync(next.Id, ActivePane, cancellationToken);
+    }
+
+    public Task SwitchToTabAtAsync(int oneBasedIndex, CancellationToken cancellationToken = default)
+    {
+        var state = Active;
+        if (state.Tabs.Count == 0 || oneBasedIndex < 1)
+        {
+            return Task.CompletedTask;
+        }
+
+        var index = oneBasedIndex >= 9
+            ? state.Tabs.Count - 1
+            : oneBasedIndex - 1;
+        if (index < 0 || index >= state.Tabs.Count)
+        {
+            return Task.CompletedTask;
+        }
+
+        return SwitchToTabAsync(state.Tabs[index].Id, ActivePane, cancellationToken);
+    }
+
+    public async Task OpenInOtherPaneAsync(string path, bool isDirectory, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        if (!DualPaneEnabled)
+        {
+            await ToggleDualPaneAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var other = ActivePane == PaneId.Primary ? PaneId.Secondary : PaneId.Primary;
+        var destination = isDirectory ? path : PathRules.GetParentPath(path) ?? path;
+        await NavigatePaneAsync(other, destination, HistoryMode.Push, activate: false, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public void SelectPath(string? path)
