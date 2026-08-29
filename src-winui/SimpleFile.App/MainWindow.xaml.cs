@@ -101,6 +101,8 @@ public sealed partial class MainWindow : Window
             PreviewIconImage,
             PreviewIconLabel,
             PreviewImage,
+            PreviewPdfWebView,
+            PreviewMediaPlayer,
             PreviewTextBox,
             PreviewEmptyText,
             PreviewMetadataRows,

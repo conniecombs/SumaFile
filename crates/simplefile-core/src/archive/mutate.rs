@@ -3,7 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::create::{
-    create_rar_archive, create_tar_archive, create_zip_archive, resolve_rar_binary,
+    create_rar_archive, create_seven_zip_archive, create_tar_archive, create_zip_archive,
+    resolve_rar_binary,
 };
 use super::extract::extract_archive_to_directory;
 use super::path::{
@@ -503,6 +504,13 @@ fn rebuild_archive_from_directory(
                 "RAR command not found. Install it from Settings -> RAR Tools.".to_string()
             })?;
             create_rar_archive(&child_paths, &archive_path, &binary)
+        }
+        ArchiveFormat::SevenZip => {
+            if child_paths.is_empty() {
+                return Err("7-Zip archives cannot be rewritten with no entries".to_string());
+            }
+            let binary = super::seven_zip::require_seven_zip_binary()?;
+            create_seven_zip_archive(&child_paths, &archive_path, &binary)
         }
     }
     .map_err(|e| {

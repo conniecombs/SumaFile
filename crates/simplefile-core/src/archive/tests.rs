@@ -1,8 +1,9 @@
 use super::extract::{extract_archive_to_directory, extract_tar, extract_zip};
 use super::path::{
-    archive_entry_relative_path, build_virtual_archive_path,
-    ensure_extract_path_within_destination, zip_entry_relative_path,
+    archive_entry_relative_path, archive_format_for_path, build_virtual_archive_path,
+    ensure_extract_path_within_destination, zip_entry_relative_path, ArchiveFormat,
 };
+use super::seven_zip::{parse_seven_zip_list_output, resolve_seven_zip_binary};
 use super::*;
 use std::fs;
 use std::io::Write;
@@ -50,6 +51,99 @@ fn write_test_tar(tar_path: &Path, entries: &[(&str, &[u8])]) {
     }
 
     archive.finish().expect("finish test tar");
+}
+
+#[test]
+fn archive_format_recognizes_7z_extension() {
+    assert_eq!(
+        archive_format_for_path(Path::new("sample.7z")),
+        Some(ArchiveFormat::SevenZip)
+    );
+}
+
+#[test]
+fn seven_zip_listing_parser_reads_files_and_directories() {
+    let output = r#"
+7-Zip 26.02 (x64)
+
+Listing archive: sample.7z
+
+--
+Path = sample.7z
+Type = 7z
+Physical Size = 194
+
+----------
+Path = folder
+Size = 0
+Packed Size = 0
+Attributes = D
+
+Path = alpha.txt
+Size = 5
+Packed Size = 14
+Attributes = A
+
+Path = folder\beta.txt
+Size = 5
+Packed Size =
+Attributes = A
+"#;
+
+    let entries = parse_seven_zip_list_output(output);
+
+    assert_eq!(entries.len(), 3);
+    assert!(entries[0].is_dir);
+    assert_eq!(entries[1].path, "alpha.txt");
+    assert_eq!(entries[1].size, 5);
+    assert_eq!(entries[1].compressed_size, 14);
+    assert_eq!(entries[2].path, r"folder\beta.txt");
+    assert_eq!(entries[2].compressed_size, 0);
+}
+
+#[test]
+fn seven_zip_create_list_extract_round_trip_when_available() {
+    if resolve_seven_zip_binary().is_none() {
+        return;
+    }
+
+    let root = unique_temp_dir("sevenzip-round-trip");
+    let source = root.join("alpha.txt");
+    fs::write(&source, b"hello").expect("write source file");
+    let folder = root.join("folder");
+    fs::create_dir_all(&folder).expect("create source folder");
+    fs::write(folder.join("beta.txt"), b"world").expect("write nested source file");
+
+    let archive_path = root.join("sample.7z");
+    create_archive(
+        vec![
+            source.to_string_lossy().to_string(),
+            folder.to_string_lossy().to_string(),
+        ],
+        archive_path.to_string_lossy().to_string(),
+        "7z".to_string(),
+    )
+    .expect("create 7z archive");
+
+    let info =
+        list_archive(archive_path.to_string_lossy().to_string()).expect("list 7z archive info");
+    assert_eq!(info.format, "7z");
+    assert!(info.entries.iter().any(|entry| entry.name == "alpha.txt"));
+    assert!(info.entries.iter().any(|entry| entry.name == "beta.txt"));
+
+    let out = root.join("out");
+    fs::create_dir_all(&out).expect("create out dir");
+    extract_archive_to_directory(&archive_path, &out).expect("extract 7z archive");
+    assert_eq!(
+        fs::read(out.join("alpha.txt")).expect("read extracted alpha"),
+        b"hello"
+    );
+    assert_eq!(
+        fs::read(out.join("folder").join("beta.txt")).expect("read extracted beta"),
+        b"world"
+    );
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

@@ -3,6 +3,7 @@ mod extract;
 mod list;
 mod mutate;
 mod path;
+mod seven_zip;
 
 #[cfg(test)]
 mod tests;

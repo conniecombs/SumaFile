@@ -16,9 +16,10 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<string, string, CancellationToken, Task<string>>? CreateDirectoryHandler { get; set; }
     public Func<string, string, CancellationToken, Task<string>>? CreateFileHandler { get; set; }
     public Func<string, string, CancellationToken, Task<string>>? RenameEntryHandler { get; set; }
+    public Func<RenameRequest[], CancellationToken, Task<string[]>>? BatchRenameHandler { get; set; }
     public Func<string, CancellationToken, Task<string?>>? GetDbSettingHandler { get; set; }
     public Func<string, string, CancellationToken, Task>? SetDbSettingHandler { get; set; }
-    public Func<string[], CancellationToken, Task>? MoveToTrashHandler { get; set; }
+    public Func<string[], CancellationToken, Task<string[]>>? MoveToTrashHandler { get; set; }
     public Func<string[], CancellationToken, Task<string[]>>? RestoreRecycleBinHandler { get; set; }
     public Func<CancellationToken, Task>? EmptyRecycleBinHandler { get; set; }
     public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? CopyWithProgressHandler { get; set; }
@@ -112,7 +113,7 @@ internal sealed class ConfigurableIpc : NullIpc
     public override Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default)
         => CreateFileHandler?.Invoke(path, name, ct) ?? throw NotConfigured();
 
-    public override Task MoveToTrashAsync(string[] paths, CancellationToken ct = default)
+    public override Task<string[]> MoveToTrashAsync(string[] paths, CancellationToken ct = default)
         => MoveToTrashHandler?.Invoke(paths, ct) ?? throw NotConfigured();
 
     public override Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default)
@@ -123,6 +124,9 @@ internal sealed class ConfigurableIpc : NullIpc
 
     public override Task<string> RenameEntryAsync(string path, string newName, CancellationToken ct = default)
         => RenameEntryHandler?.Invoke(path, newName, ct) ?? throw NotConfigured();
+
+    public override Task<string[]> BatchRenameAsync(RenameRequest[] entries, CancellationToken ct = default)
+        => BatchRenameHandler?.Invoke(entries, ct) ?? throw NotConfigured();
 
     public override Task<TransferResult[]> CopyWithProgressAsync(
         string[] sources,

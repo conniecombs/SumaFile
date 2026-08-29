@@ -385,6 +385,27 @@ public sealed class DiffRow
     public string? RightText { get; set; }
 }
 
+public sealed class BinaryDiffRow
+{
+    [JsonPropertyName("offset")]
+    public ulong Offset { get; set; }
+
+    [JsonPropertyName("left_hex")]
+    public string LeftHex { get; set; } = "";
+
+    [JsonPropertyName("right_hex")]
+    public string RightHex { get; set; } = "";
+
+    [JsonPropertyName("left_ascii")]
+    public string LeftAscii { get; set; } = "";
+
+    [JsonPropertyName("right_ascii")]
+    public string RightAscii { get; set; } = "";
+
+    [JsonPropertyName("different")]
+    public bool Different { get; set; }
+}
+
 public sealed class FileComparison
 {
     [JsonPropertyName("left_path")]
@@ -417,8 +438,26 @@ public sealed class FileComparison
     [JsonPropertyName("changed")]
     public int Changed { get; set; }
 
+    [JsonPropertyName("comparison_type")]
+    public string ComparisonType { get; set; } = "text";
+
+    [JsonPropertyName("compared_bytes")]
+    public ulong? ComparedBytes { get; set; }
+
+    [JsonPropertyName("different_bytes")]
+    public ulong? DifferentBytes { get; set; }
+
+    [JsonPropertyName("first_difference")]
+    public ulong? FirstDifference { get; set; }
+
+    [JsonPropertyName("binary_rows_truncated")]
+    public bool BinaryRowsTruncated { get; set; }
+
     [JsonPropertyName("rows")]
     public List<DiffRow> Rows { get; set; } = [];
+
+    [JsonPropertyName("binary_rows")]
+    public List<BinaryDiffRow> BinaryRows { get; set; } = [];
 }
 
 public sealed class ArchiveEntry

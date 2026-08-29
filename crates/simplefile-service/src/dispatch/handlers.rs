@@ -119,7 +119,7 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_MOVE_TO_TRASH => match parse_params::<PathsParams>(request) {
             Ok(p) => match simplefile_core::file_ops::move_to_trash(&p.paths) {
-                Ok(()) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null)),
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }

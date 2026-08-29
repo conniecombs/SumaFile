@@ -6,6 +6,7 @@ public static class ArchivePaths
     [
         ".tar.gz",
         ".tgz",
+        ".7z",
         ".zip",
         ".tar",
         ".gz",
@@ -50,6 +51,7 @@ public static class ArchivePaths
         {
             "tar.gz" => ".tar.gz",
             "tgz" => ".tgz",
+            "7z" => ".7z",
             "tar" => ".tar",
             "gz" => ".gz",
             "rar" => ".rar",

@@ -100,6 +100,24 @@ fn handshake_then_home_dir() {
 }
 
 #[test]
+fn move_to_trash_empty_selection_returns_tracked_paths_array() {
+    let mut state = SessionState {
+        handshake_done: true,
+        ..SessionState::default()
+    };
+
+    let outcome = dispatch(
+        &mut state,
+        &request("move_to_trash", 30, json!({ "paths": [] })),
+    );
+
+    let Dispatch::Reply(response) = outcome else {
+        panic!("expected reply");
+    };
+    assert_eq!(response.result.unwrap(), json!([]));
+}
+
+#[test]
 fn handshake_requires_configured_token() {
     let mut state = SessionState::default();
     let handshake = dispatch(
@@ -341,7 +359,30 @@ fn inspection_methods_use_core_logic() {
     };
     let compare_value = compare_response.result.unwrap();
     assert_eq!(compare_value["identical"], false);
+    assert_eq!(compare_value["comparison_type"], "text");
     assert!(compare_value["changed"].as_u64().unwrap() >= 1);
+
+    let binary_left = temp_file("binary-left", &[0, 1, 2, 3]);
+    let binary_right = temp_file("binary-right", &[0, 1, 9, 3]);
+    let binary_compare = dispatch(
+        &mut state,
+        &request(
+            "compare_files",
+            13,
+            json!({
+                "pathA": binary_left.to_string_lossy(),
+                "pathB": binary_right.to_string_lossy(),
+            }),
+        ),
+    );
+    let Dispatch::Reply(binary_compare_response) = binary_compare else {
+        panic!("expected binary compare reply");
+    };
+    let binary_compare_value = binary_compare_response.result.unwrap();
+    assert_eq!(binary_compare_value["comparison_type"], "binary");
+    assert_eq!(binary_compare_value["first_difference"], 2);
+    assert_eq!(binary_compare_value["different_bytes"], 1);
+    assert_eq!(binary_compare_value["binary_rows"][0]["offset"], 0);
 
     let archive_path = left.with_file_name(format!(
         "simplefile-service-dispatch-archive-{}.zip",
@@ -354,7 +395,7 @@ fn inspection_methods_use_core_logic() {
         &mut state,
         &request(
             "create_archive",
-            13,
+            14,
             json!({
                 "paths": [left.to_string_lossy()],
                 "archivePath": archive_path.to_string_lossy(),
@@ -372,7 +413,7 @@ fn inspection_methods_use_core_logic() {
         &mut state,
         &request(
             "list_archive",
-            14,
+            15,
             json!({ "path": archive_path.to_string_lossy() }),
         ),
     );
@@ -397,7 +438,7 @@ fn inspection_methods_use_core_logic() {
         &mut state,
         &request(
             "extract_archive",
-            15,
+            16,
             json!({
                 "archivePath": archive_path.to_string_lossy(),
                 "destination": extract_dir.to_string_lossy(),
@@ -412,6 +453,8 @@ fn inspection_methods_use_core_logic() {
 
     let _ = fs::remove_file(left);
     let _ = fs::remove_file(right);
+    let _ = fs::remove_file(binary_left);
+    let _ = fs::remove_file(binary_right);
     let _ = fs::remove_file(archive_path);
     let _ = fs::remove_dir_all(extract_dir);
 }

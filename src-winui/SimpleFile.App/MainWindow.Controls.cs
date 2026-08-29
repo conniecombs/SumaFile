@@ -114,6 +114,8 @@ public sealed partial class MainWindow
     private Image PreviewIconImage => PreviewPanel.IconImage;
     private TextBlock PreviewIconLabel => PreviewPanel.IconLabel;
     private Image PreviewImage => PreviewPanel.ImagePreview;
+    private WebView2 PreviewPdfWebView => PreviewPanel.PdfPreview;
+    private MediaPlayerElement PreviewMediaPlayer => PreviewPanel.MediaPreview;
     private TextBox PreviewTextBox => PreviewPanel.TextPreview;
     private TextBlock PreviewEmptyText => PreviewPanel.EmptyText;
     private StackPanel PreviewMetadataRows => PreviewPanel.MetadataRows;

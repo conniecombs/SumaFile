@@ -190,6 +190,46 @@ public class ModelsTests
         Assert.False(comparison.Identical);
         Assert.Equal("added", comparison.Rows[0].Kind);
         Assert.Equal(1, comparison.Rows[0].RightLine);
+
+        const string binaryComparisonJson = """
+            {
+              "left_path": "C:\\left.exe",
+              "right_path": "C:\\right.exe",
+              "left_name": "left.exe",
+              "right_name": "right.exe",
+              "left_size": 16,
+              "right_size": 18,
+              "identical": false,
+              "added": 2,
+              "removed": 0,
+              "changed": 1,
+              "comparison_type": "binary",
+              "compared_bytes": 18,
+              "different_bytes": 3,
+              "first_difference": 5,
+              "binary_rows_truncated": false,
+              "rows": [],
+              "binary_rows": [
+                {
+                  "offset": 0,
+                  "left_hex": "00 01",
+                  "right_hex": "00 FF",
+                  "left_ascii": "..",
+                  "right_ascii": "..",
+                  "different": true
+                }
+              ]
+            }
+            """;
+
+        var binaryComparison = JsonSerializer.Deserialize<FileComparison>(binaryComparisonJson, IpcJson.Options);
+        Assert.NotNull(binaryComparison);
+        Assert.Equal("binary", binaryComparison.ComparisonType);
+        Assert.Equal(18ul, binaryComparison.ComparedBytes);
+        Assert.Equal(3ul, binaryComparison.DifferentBytes);
+        Assert.Equal(5ul, binaryComparison.FirstDifference);
+        Assert.Single(binaryComparison.BinaryRows);
+        Assert.True(binaryComparison.BinaryRows[0].Different);
     }
 
     [Fact]

@@ -120,6 +120,18 @@
                                         MaxHeight="220"
                                         Stretch="Uniform"
                                         Visibility="Collapsed" />
+                                    <WebView2
+                                        x:Name="PreviewPdfWebView"
+                                        Height="420"
+                                        HorizontalAlignment="Stretch"
+                                        Visibility="Collapsed" />
+                                    <MediaPlayerElement
+                                        x:Name="PreviewMediaPlayer"
+                                        Height="220"
+                                        AreTransportControlsEnabled="True"
+                                        AutoPlay="False"
+                                        HorizontalAlignment="Stretch"
+                                        Visibility="Collapsed" />
                                     <TextBox
                                         x:Name="PreviewTextBox"
                                         MaxHeight="280"

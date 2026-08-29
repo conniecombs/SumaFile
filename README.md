@@ -149,7 +149,7 @@ If Windows File Explorer feels limited for power workflows — dual panes, tabs 
 - Folder size and recursive item counts (optional, cached for responsiveness)
 - Metadata for PDF, audio, video, and Office package props
 - Checksums — **MD5**, **SHA-1**, **SHA-256**
-- **Compare Files** — side-by-side text diff for two selected UTF-8 files
+- **Compare Files** — side-by-side text diff for UTF-8 files and hex diff for binary files
 
 ### Organization & views
 

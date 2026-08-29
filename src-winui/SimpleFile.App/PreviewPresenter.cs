@@ -5,6 +5,8 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
+using System.Globalization;
+using Windows.Media.Core;
 
 namespace SimpleFile.App;
 
@@ -30,6 +32,8 @@ internal sealed class PreviewPresenter
     private readonly Image _iconImage;
     private readonly TextBlock _iconLabel;
     private readonly Image _image;
+    private readonly WebView2 _pdfView;
+    private readonly MediaPlayerElement _mediaPlayer;
     private readonly TextBox _textBox;
     private readonly TextBlock _emptyText;
     private readonly StackPanel _metadataRows;
@@ -59,6 +63,8 @@ internal sealed class PreviewPresenter
         Image iconImage,
         TextBlock iconLabel,
         Image image,
+        WebView2 pdfView,
+        MediaPlayerElement mediaPlayer,
         TextBox textBox,
         TextBlock emptyText,
         StackPanel metadataRows,
@@ -83,6 +89,8 @@ internal sealed class PreviewPresenter
         _iconImage = iconImage;
         _iconLabel = iconLabel;
         _image = image;
+        _pdfView = pdfView;
+        _mediaPlayer = mediaPlayer;
         _textBox = textBox;
         _emptyText = emptyText;
         _metadataRows = metadataRows;
@@ -129,6 +137,7 @@ internal sealed class PreviewPresenter
         ClearIcon();
         _image.Source = null;
         _image.Visibility = Visibility.Collapsed;
+        ClearPathBackedPreviews();
         _textBox.Text = "";
         _textBox.Visibility = Visibility.Collapsed;
         _emptyText.Text = "No preview loaded.";
@@ -144,6 +153,7 @@ internal sealed class PreviewPresenter
         _previewCts?.Cancel();
         _previewCts = null;
         _ = Interlocked.Increment(ref _previewToken);
+        ClearPathBackedPreviews();
     }
 
     public void UpdateButtons(FileRow? row)
@@ -319,6 +329,7 @@ internal sealed class PreviewPresenter
             ShowIcon(row);
             _image.Source = null;
             _image.Visibility = Visibility.Collapsed;
+            ClearPathBackedPreviews();
             _textBox.Text = "";
             _textBox.Visibility = Visibility.Collapsed;
             _emptyText.Text = row.IsDir ? "Folder selected." : "Loading preview...";
@@ -416,6 +427,17 @@ internal sealed class PreviewPresenter
             }
         }
 
+        if (PreviewPathSupport.IsPdfPreviewType(preview.FileType) && TryRenderPdfPreview(path, token, cancellationToken))
+        {
+            return;
+        }
+
+        if (PreviewPathSupport.IsMediaPreviewType(preview.FileType)
+            && TryRenderMediaPreview(path, preview.FileType, token, cancellationToken))
+        {
+            return;
+        }
+
         if (!IsCurrent(path, token, cancellationToken))
         {
             return;
@@ -511,6 +533,65 @@ internal sealed class PreviewPresenter
         }
     }
 
+    private bool TryRenderPdfPreview(string path, int token, CancellationToken cancellationToken)
+    {
+        if (!PreviewPathSupport.CanUsePathBackedPreview(path, "pdf") || !IsCurrent(path, token, cancellationToken))
+        {
+            return false;
+        }
+
+        try
+        {
+            ClearIcon();
+            _mediaPlayer.Source = null;
+            _mediaPlayer.Visibility = Visibility.Collapsed;
+            _pdfView.Source = new Uri(path);
+            _pdfView.Visibility = Visibility.Visible;
+            _emptyText.Visibility = Visibility.Collapsed;
+            return true;
+        }
+        catch
+        {
+            _pdfView.Source = null;
+            _pdfView.Visibility = Visibility.Collapsed;
+            return false;
+        }
+    }
+
+    private bool TryRenderMediaPreview(string path, string fileType, int token, CancellationToken cancellationToken)
+    {
+        if (!PreviewPathSupport.CanUsePathBackedPreview(path, fileType) || !IsCurrent(path, token, cancellationToken))
+        {
+            return false;
+        }
+
+        try
+        {
+            ClearIcon();
+            _pdfView.Source = null;
+            _pdfView.Visibility = Visibility.Collapsed;
+            _mediaPlayer.Height = string.Equals(fileType, "audio", StringComparison.OrdinalIgnoreCase) ? 96 : 220;
+            _mediaPlayer.Source = MediaSource.CreateFromUri(new Uri(path));
+            _mediaPlayer.Visibility = Visibility.Visible;
+            _emptyText.Visibility = Visibility.Collapsed;
+            return true;
+        }
+        catch
+        {
+            _mediaPlayer.Source = null;
+            _mediaPlayer.Visibility = Visibility.Collapsed;
+            return false;
+        }
+    }
+
+    private void ClearPathBackedPreviews()
+    {
+        _pdfView.Source = null;
+        _pdfView.Visibility = Visibility.Collapsed;
+        _mediaPlayer.Source = null;
+        _mediaPlayer.Visibility = Visibility.Collapsed;
+    }
+
     private bool IsCurrent(string path, int token)
     {
         return token == _previewToken
@@ -587,18 +668,13 @@ internal sealed class PreviewPresenter
 
     private async Task ShowComparisonAsync(FileComparison comparison)
     {
-        var summary = comparison.Identical
-            ? "Files are identical."
-            : $"{comparison.Added} added, {comparison.Removed} removed, {comparison.Changed} changed";
-        var rows = comparison.Rows
-            .Take(80)
-            .Select(row =>
-            {
-                var left = row.LeftLine?.ToString() ?? "";
-                var right = row.RightLine?.ToString() ?? "";
-                var text = row.LeftText ?? row.RightText ?? "";
-                return $"{row.Kind,-8} {left,4} {right,4}  {text}";
-            });
+        var isBinary = string.Equals(comparison.ComparisonType, "binary", StringComparison.OrdinalIgnoreCase);
+        var summary = isBinary
+            ? BinaryComparisonSummary(comparison)
+            : TextComparisonSummary(comparison);
+        var rows = isBinary
+            ? BinaryComparisonRows(comparison)
+            : TextComparisonRows(comparison);
 
         var diffBox = new TextBox
         {
@@ -635,6 +711,61 @@ internal sealed class PreviewPresenter
         await dialog.ShowAsync();
     }
 
+    private static string TextComparisonSummary(FileComparison comparison)
+    {
+        return comparison.Identical
+            ? "Files are identical."
+            : $"{comparison.Added} added, {comparison.Removed} removed, {comparison.Changed} changed";
+    }
+
+    private static IEnumerable<string> TextComparisonRows(FileComparison comparison)
+    {
+        return comparison.Rows
+            .Take(80)
+            .Select(row =>
+            {
+                var left = row.LeftLine?.ToString(CultureInfo.CurrentCulture) ?? "";
+                var right = row.RightLine?.ToString(CultureInfo.CurrentCulture) ?? "";
+                var text = row.LeftText ?? row.RightText ?? "";
+                return $"{row.Kind,-8} {left,4} {right,4}  {text}";
+            });
+    }
+
+    private static string BinaryComparisonSummary(FileComparison comparison)
+    {
+        if (comparison.Identical)
+        {
+            return $"Binary files are identical ({FormatByteCount(comparison.ComparedBytes ?? comparison.LeftSize)} compared).";
+        }
+
+        var first = comparison.FirstDifference is { } offset
+            ? $"first difference at 0x{offset:X}"
+            : "first difference unavailable";
+        var differences = comparison.DifferentBytes is { } differentBytes
+            ? FormatByteCount(differentBytes)
+            : "one or more bytes";
+        var suffix = comparison.BinaryRowsTruncated
+            ? $" Showing first {comparison.BinaryRows.Count.ToString(CultureInfo.CurrentCulture)} differing rows."
+            : "";
+        return $"Binary files differ: {differences} differ, {first}.{suffix}";
+    }
+
+    private static IEnumerable<string> BinaryComparisonRows(FileComparison comparison)
+    {
+        yield return "Offset(h)    Left hex                                           Right hex                                          Left ASCII        Right ASCII";
+        foreach (var row in comparison.BinaryRows.Take(128))
+        {
+            yield return $"{row.Offset,10:X}  {row.LeftHex,-47}  {row.RightHex,-47}  {row.LeftAscii}  {row.RightAscii}";
+        }
+    }
+
+    private static string FormatByteCount(ulong bytes)
+    {
+        return bytes == 1
+            ? "1 byte"
+            : $"{bytes.ToString("N0", CultureInfo.CurrentCulture)} bytes";
+    }
+
     public static Image CreateFileTypePreviewIcon(FileRow row, int iconSize)
     {
         return new Image
@@ -645,6 +776,61 @@ internal sealed class PreviewPresenter
             Stretch = Stretch.Uniform,
             Source = ShellIconLoader.ForEntry(row.Path, row.IsDir, iconSize),
         };
+    }
+
+    public static bool TryCreatePathBackedPreview(
+        FileRow row,
+        FilePreview preview,
+        double height,
+        out FrameworkElement? element,
+        out Action? cleanup)
+    {
+        element = null;
+        cleanup = null;
+        if (!PreviewPathSupport.CanUsePathBackedPreview(row.Path, preview.FileType))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (string.Equals(preview.FileType, "pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                var view = new WebView2
+                {
+                    Source = new Uri(row.Path),
+                    Height = height,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                };
+                element = view;
+                cleanup = () => view.Source = null;
+                return true;
+            }
+
+            if (PreviewPathSupport.IsMediaPreviewType(preview.FileType))
+            {
+                var player = new MediaPlayerElement
+                {
+                    Source = MediaSource.CreateFromUri(new Uri(row.Path)),
+                    Height = string.Equals(preview.FileType, "audio", StringComparison.OrdinalIgnoreCase)
+                        ? 112
+                        : height,
+                    AreTransportControlsEnabled = true,
+                    AutoPlay = false,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                };
+                element = player;
+                cleanup = () => player.Source = null;
+                return true;
+            }
+        }
+        catch
+        {
+            element = null;
+            cleanup = null;
+        }
+
+        return false;
     }
 
     private static string FileTypePreviewLabel(FileRow row, FilePreview preview)

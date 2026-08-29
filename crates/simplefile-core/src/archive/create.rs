@@ -6,7 +6,8 @@ pub fn create_archive(
     archive_path: String,
     format: String,
 ) -> Result<(), String> {
-    match format.as_str() {
+    let normalized_format = format.trim().trim_start_matches('.').to_ascii_lowercase();
+    match normalized_format.as_str() {
         "zip" => create_zip_archive(&paths, &archive_path),
         "tar" => create_tar_archive(&paths, &archive_path, None),
         "tar.gz" | "tgz" => create_tar_archive(&paths, &archive_path, Some("gz")),
@@ -15,6 +16,10 @@ pub fn create_archive(
                 "RAR command not found. Install it from Settings -> RAR Tools.".to_string()
             })?;
             create_rar_archive(&paths, &archive_path, &binary)
+        }
+        "7z" => {
+            let binary = super::seven_zip::require_seven_zip_binary()?;
+            create_seven_zip_archive(&paths, &archive_path, &binary)
         }
         _ => Err(format!("Unsupported format: {format}")),
     }
@@ -168,6 +173,34 @@ pub(super) fn create_rar_archive(
     }
 
     Ok(())
+}
+
+pub(super) fn create_seven_zip_archive(
+    paths: &[String],
+    archive_path: &str,
+    seven_zip_binary: &str,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("No files specified".to_string());
+    }
+
+    let output = std::process::Command::new(seven_zip_binary)
+        .arg("a")
+        .arg("-t7z")
+        .arg("-bd")
+        .arg("-bb0")
+        .arg("-sccUTF-8")
+        .arg("-y")
+        .arg("-sse")
+        .arg("-spd")
+        .arg("--")
+        .arg(archive_path)
+        .args(paths)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("Failed to run 7-Zip command: {e}"))?;
+
+    super::seven_zip::ensure_seven_zip_success(&output, "7-Zip archive creation")
 }
 
 pub(super) fn create_tar_archive(

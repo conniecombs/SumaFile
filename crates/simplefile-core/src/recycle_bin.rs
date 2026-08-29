@@ -1,7 +1,9 @@
 //! Recycle Bin listing, restore, and empty for Windows `$Recycle.Bin`.
 
 use crate::models::{DirectoryListing, FileEntry};
+use crate::path_conflict::path_collision_key;
 use crate::utils::{format_system_time, name_looks_hidden};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -83,6 +85,62 @@ pub fn delete_recycle_item(path: &str) -> Result<(), String> {
         let _ = fs::remove_file(&info);
     }
     Ok(())
+}
+
+pub(crate) fn recycle_bin_data_path_set() -> HashSet<String> {
+    list_recycle_bin()
+        .map(|listing| {
+            listing
+                .entries
+                .into_iter()
+                .map(|entry| path_collision_key(Path::new(&entry.path)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn recycle_bin_paths_for_originals(
+    original_paths: &[String],
+    excluded_data_paths: &HashSet<String>,
+) -> Vec<String> {
+    list_recycle_bin()
+        .map(|listing| {
+            recycle_bin_paths_for_originals_from_entries(
+                original_paths,
+                &listing.entries,
+                excluded_data_paths,
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn recycle_bin_paths_for_originals_from_entries(
+    original_paths: &[String],
+    entries: &[FileEntry],
+    excluded_data_paths: &HashSet<String>,
+) -> Vec<String> {
+    let mut used_data_paths = HashSet::new();
+    let mut matched = Vec::new();
+
+    for original_path in original_paths {
+        let original_key = path_collision_key(Path::new(original_path));
+        if let Some(entry) = entries.iter().find(|entry| {
+            let data_key = path_collision_key(Path::new(&entry.path));
+            if excluded_data_paths.contains(&data_key) || used_data_paths.contains(&data_key) {
+                return false;
+            }
+
+            entry
+                .symlink_target
+                .as_ref()
+                .is_some_and(|target| path_collision_key(Path::new(target)) == original_key)
+        }) {
+            used_data_paths.insert(path_collision_key(Path::new(&entry.path)));
+            matched.push(entry.path.clone());
+        }
+    }
+
+    matched
 }
 
 pub fn paired_info_path(data_path: &Path) -> PathBuf {
@@ -374,6 +432,26 @@ mod tests {
         fs::write(path, bytes).unwrap();
     }
 
+    fn recycle_entry(data_path: &str, original_path: &str) -> FileEntry {
+        FileEntry {
+            name: Path::new(original_path)
+                .file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| original_path.to_string()),
+            path: data_path.to_string(),
+            is_dir: false,
+            is_symlink: false,
+            is_hidden: false,
+            is_system: false,
+            size: 0,
+            modified: "-".to_string(),
+            extension: String::new(),
+            permissions: None,
+            symlink_target: Some(original_path.to_string()),
+            git_status: None,
+        }
+    }
+
     #[test]
     fn parse_version2_original_path() {
         let mut bytes = Vec::new();
@@ -391,6 +469,27 @@ mod tests {
         let parsed = parse_recycle_info(&bytes).unwrap();
         assert_eq!(parsed.size, 12);
         assert_eq!(parsed.original_path, r"C:\Users\a\notes.txt");
+    }
+
+    #[test]
+    fn recycle_bin_path_matching_excludes_existing_duplicates() {
+        let old = r"C:\$Recycle.Bin\S-1-5-21-1\$ROLD.txt";
+        let new = r"C:\$Recycle.Bin\S-1-5-21-1\$RNEW.txt";
+        let other = r"C:\$Recycle.Bin\S-1-5-21-1\$ROTHER.txt";
+        let entries = vec![
+            recycle_entry(old, r"C:\Users\a\notes.txt"),
+            recycle_entry(other, r"C:\Users\a\other.txt"),
+            recycle_entry(new, r"C:\Users\a\notes.txt"),
+        ];
+        let excluded = HashSet::from([path_collision_key(Path::new(old))]);
+
+        let matched = recycle_bin_paths_for_originals_from_entries(
+            &[r"C:\Users\a\notes.txt".to_string()],
+            &entries,
+            &excluded,
+        );
+
+        assert_eq!(matched, vec![new.to_string()]);
     }
 
     #[test]

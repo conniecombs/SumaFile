@@ -1365,6 +1365,7 @@ public sealed partial class MainWindow
         body.Children.Add(new TextBlock { Text = row.Path, TextWrapping = TextWrapping.Wrap, Opacity = 0.8 });
         body.Children.Add(new TextBlock { Text = $"{row.TypeText}  {row.SizeText}  {row.ModifiedText}" });
         var hasVisualPreview = false;
+        Action? cleanup = null;
 
         if (fileOps is not null && row.IsDir)
         {
@@ -1445,6 +1446,18 @@ public sealed partial class MainWindow
                 }
                 else if (preview.FileType == "image" && await TryAddQuickLookImageAsync(body, row, preview, fileOps, utilityCts.Token))
                 {
+                    hasVisualPreview = true;
+                }
+                else if (PreviewPresenter.TryCreatePathBackedPreview(
+                    row,
+                    preview,
+                    520,
+                    out var pathBackedPreview,
+                    out var pathBackedPreviewCleanup)
+                    && pathBackedPreview is not null)
+                {
+                    body.Children.Add(pathBackedPreview);
+                    cleanup = pathBackedPreviewCleanup;
                     hasVisualPreview = true;
                 }
                 else
@@ -1542,6 +1555,10 @@ public sealed partial class MainWindow
             CloseButtonText = "Close",
             XamlRoot = Content.XamlRoot,
         };
+        if (cleanup is not null)
+        {
+            dialog.Closed += (_, _) => cleanup();
+        }
         await dialog.ShowAsync();
     }
 

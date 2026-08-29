@@ -98,16 +98,18 @@ public class ExplorerWorkspaceTests
         Assert.Contains("No file operation service", workspace.StatusMessage, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task OpenArchiveFile_NavigatesIntoArchive()
+    [Theory]
+    [InlineData("pack.zip", "zip")]
+    [InlineData("pack.7z", "7z")]
+    public async Task OpenArchiveFile_NavigatesIntoArchive(string archiveName, string extension)
     {
         var backend = FakeExplorerBackend.Typical();
-        var archivePath = @"C:\Users\test\pack.zip";
+        var archivePath = $@"C:\Users\test\{archiveName}";
         backend.Listings[@"C:\Users\test"].Entries.Add(new FileEntry
         {
-            Name = "pack.zip",
+            Name = archiveName,
             Path = archivePath,
-            Extension = "zip",
+            Extension = extension,
             Size = 100,
         });
         backend.Listings[archivePath] = new DirectoryListing
@@ -122,7 +124,7 @@ public class ExplorerWorkspaceTests
         var workspace = new ExplorerWorkspace(backend);
         await workspace.InitializeAsync();
 
-        var archive = workspace.VisibleEntries.First(entry => entry.Name == "pack.zip");
+        var archive = workspace.VisibleEntries.First(entry => entry.Name == archiveName);
         await workspace.OpenEntryAsync(archive);
 
         Assert.Equal(archivePath, workspace.CurrentPath);
@@ -274,6 +276,74 @@ public class ExplorerWorkspaceTests
 
         Assert.True(createTokenWasUsable);
         Assert.Equal(listCallsAfterInitialize, backend.ListDirectoryCalls);
+    }
+
+    [Fact]
+    public async Task CreateFolder_PushesUndoEntryAfterSuccess()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc
+        {
+            CreateDirectoryHandler = (path, name, ct) => Task.FromResult($@"{path}\{name}"),
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        await workspace.CreateFolderInCurrentPaneAsync("New Folder");
+
+        Assert.True(workspace.Undo.CanUndo);
+        Assert.Equal("Create folder", workspace.Undo.NextUndoDescription);
+    }
+
+    [Fact]
+    public async Task CreateFile_PushesUndoEntryAfterSuccess()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc
+        {
+            CreateFileHandler = (path, name, ct) => Task.FromResult($@"{path}\{name}"),
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        await workspace.CreateFileInCurrentPaneAsync("notes-2.txt");
+
+        Assert.True(workspace.Undo.CanUndo);
+        Assert.Equal("Create file", workspace.Undo.NextUndoDescription);
+    }
+
+    [Fact]
+    public async Task RenameSelected_PushesUndoEntryAfterSuccess()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc
+        {
+            RenameEntryHandler = (path, name, ct) => Task.FromResult($@"C:\Users\test\{name}"),
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        await workspace.RenameSelectedAsync(@"C:\Users\test\notes.txt", "renamed.txt");
+
+        Assert.True(workspace.Undo.CanUndo);
+        Assert.Equal("Rename 1 item(s)", workspace.Undo.NextUndoDescription);
+    }
+
+    [Fact]
+    public async Task TrashSelected_PushesUndoEntryWhenRecyclePathIsReturned()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc
+        {
+            MoveToTrashHandler = (paths, ct) => Task.FromResult(new[] { @"C:\$Recycle.Bin\S-1-5-21-1\$R123" }),
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        await workspace.TrashSelectedAsync([@"C:\Users\test\notes.txt"]);
+
+        Assert.True(workspace.Undo.CanUndo);
+        Assert.Equal("Move to Recycle Bin 1 item(s)", workspace.Undo.NextUndoDescription);
     }
 
     [Fact]

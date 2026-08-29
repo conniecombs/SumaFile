@@ -85,15 +85,16 @@ public class FileOperationServiceTests
             MoveToTrashHandler = (paths, ct) =>
             {
                 receivedPaths = paths;
-                return Task.CompletedTask;
+                return Task.FromResult(new[] { @"C:\$Recycle.Bin\S-1-5-21-1\$R123.txt" });
             }
         };
         var service = new FileOperationService(stub);
         var inputPaths = new[] { @"C:\test\file1.txt", @"C:\test\file2.txt" };
 
-        await service.TrashAsync(inputPaths);
+        var result = await service.TrashAsync(inputPaths);
 
         Assert.Equal(inputPaths, receivedPaths);
+        Assert.Equal([@"C:\$Recycle.Bin\S-1-5-21-1\$R123.txt"], result);
     }
 
     [Fact]

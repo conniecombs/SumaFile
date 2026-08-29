@@ -79,18 +79,6 @@ pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePrev
                 (Some(base64), Some("base64".to_string()))
             }
         }
-        "pdf" => {
-            // Cap PDF previews at 20 MB — large enough for most documents
-            const PDF_MAX: u64 = 20 * 1024 * 1024;
-            if size > PDF_MAX {
-                (None, None)
-            } else {
-                let bytes = fs::read(&path_buf).map_err(|e| format!("Failed to read file: {e}"))?;
-                use base64::{engine::general_purpose, Engine as _};
-                let base64 = general_purpose::STANDARD.encode(&bytes);
-                (Some(base64), Some("base64".to_string()))
-            }
-        }
         _ => (None, None),
     };
 
@@ -363,6 +351,37 @@ mod tests {
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         );
         assert_eq!(preview.content, None);
+    }
+
+    #[test]
+    fn read_file_preview_does_not_inline_pdf_content() {
+        let path = temp_preview_file("sample.pdf", b"%PDF-1.7\nnot a full pdf");
+        let preview = read_file_preview(path.to_string_lossy().to_string(), Some(2_000_000))
+            .expect("preview");
+        fs::remove_file(path).ok();
+
+        assert_eq!(preview.file_type, "pdf");
+        assert_eq!(preview.mime_type, "application/pdf");
+        assert_eq!(preview.content, None);
+        assert_eq!(preview.encoding, None);
+    }
+
+    #[test]
+    fn read_file_preview_reports_media_without_inline_content() {
+        for (name, expected_kind, expected_mime) in [
+            ("sample.mp3", "audio", "audio/mpeg"),
+            ("sample.mp4", "video", "video/mp4"),
+        ] {
+            let path = temp_preview_file(name, b"not real media bytes");
+            let preview = read_file_preview(path.to_string_lossy().to_string(), Some(2_000_000))
+                .expect("preview");
+            fs::remove_file(path).ok();
+
+            assert_eq!(preview.file_type, expected_kind);
+            assert_eq!(preview.mime_type, expected_mime);
+            assert_eq!(preview.content, None);
+            assert_eq!(preview.encoding, None);
+        }
     }
 
     fn temp_preview_file(name: &str, content: &[u8]) -> PathBuf {

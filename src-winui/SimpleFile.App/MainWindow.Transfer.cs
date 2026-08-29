@@ -695,7 +695,9 @@ public sealed partial class MainWindow
         var utilityCts = BeginUtilityOperation();
         try
         {
-            await fileOps.BatchRenameAsync(requests, utilityCts.Token);
+            var renamed = await fileOps.BatchRenameAsync(requests, utilityCts.Token);
+            utilityCts.Token.ThrowIfCancellationRequested();
+            workspace.Undo.PushRename(requests.Select(request => request.Path).ToArray(), renamed, fileOps);
             if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
             {
                 await workspace.RefreshAsync(utilityCts.Token);

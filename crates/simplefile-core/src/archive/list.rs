@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::path::{
-    archive_entry_relative_path, archive_format_for_path, build_virtual_archive_path,
-    normal_components, split_archive_path, zip_entry_relative_path, ArchiveFormat,
+    archive_entry_relative_path, archive_entry_relative_path_from_name, archive_format_for_path,
+    build_virtual_archive_path, normal_components, split_archive_path, zip_entry_relative_path,
+    ArchiveFormat,
 };
 
 pub fn list_archive(path: String) -> Result<ArchiveInfo, String> {
@@ -13,6 +14,7 @@ pub fn list_archive(path: String) -> Result<ArchiveInfo, String> {
         Some(ArchiveFormat::Tar) => list_tar_archive(&path, None),
         Some(ArchiveFormat::TarGz) => list_tar_archive(&path, Some("gz")),
         Some(ArchiveFormat::Rar) => list_rar_archive(&path),
+        Some(ArchiveFormat::SevenZip) => list_seven_zip_archive(&path),
         None => Err(format!(
             "Unsupported archive format: {}",
             Path::new(&path)
@@ -182,6 +184,39 @@ fn list_rar_archive(path: &str) -> Result<ArchiveInfo, String> {
     })
 }
 
+fn list_seven_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
+    let seven_zip_entries = super::seven_zip::list_seven_zip_entries(path)?;
+    let mut entries = Vec::new();
+    let mut unsafe_entries = Vec::new();
+    let mut total_size = 0u64;
+
+    for entry in seven_zip_entries {
+        if listing_entry_relative_path(ArchiveFormat::SevenZip, &entry.path).is_err() {
+            unsafe_entries.push(entry.path);
+            continue;
+        }
+
+        total_size += entry.size;
+        entries.push(ArchiveEntry {
+            name: archive_entry_name(&entry.path),
+            path: entry.path,
+            is_dir: entry.is_dir,
+            size: entry.size,
+            compressed_size: entry.compressed_size,
+        });
+    }
+
+    let compressed_size = std::fs::metadata(path).map_or(0, |m| m.len());
+    Ok(ArchiveInfo {
+        path: path.to_string(),
+        format: "7z".to_string(),
+        entries,
+        unsafe_entries,
+        total_size,
+        compressed_size,
+    })
+}
+
 pub fn list_archive_directory(path: &str) -> Result<Option<DirectoryListing>, String> {
     let Some(parsed) = split_archive_path(path)? else {
         return Ok(None);
@@ -299,5 +334,14 @@ fn listing_entry_relative_path(format: ArchiveFormat, entry_path: &str) -> Resul
             archive_entry_relative_path(Path::new(entry_path), "Tar")
         }
         ArchiveFormat::Rar => archive_entry_relative_path(Path::new(entry_path), "RAR"),
+        ArchiveFormat::SevenZip => archive_entry_relative_path_from_name(entry_path, "7-Zip"),
     }
+}
+
+fn archive_entry_name(entry_path: &str) -> String {
+    entry_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(entry_path)
+        .to_string()
 }

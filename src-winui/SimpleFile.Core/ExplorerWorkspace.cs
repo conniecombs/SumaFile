@@ -100,6 +100,7 @@ public sealed class ExplorerWorkspace
         var name = PathRules.Basename(path).ToLowerInvariant();
         return name.EndsWith(".tar.gz", StringComparison.Ordinal)
             || name.EndsWith(".tgz", StringComparison.Ordinal)
+            || name.EndsWith(".7z", StringComparison.Ordinal)
             || name.EndsWith(".zip", StringComparison.Ordinal)
             || name.EndsWith(".tar", StringComparison.Ordinal)
             || name.EndsWith(".rar", StringComparison.Ordinal);
@@ -1280,6 +1281,7 @@ public sealed class ExplorerWorkspace
         var path = ActivePane == PaneId.Primary ? Primary.Path : Secondary.Path;
         var result = await ops.CreateFolderAsync(path, name, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
+        Undo.PushCreate(path, name, result, isDirectory: true, ops);
         await RefreshAsync(cancellationToken).ConfigureAwait(false);
         return result;
     }
@@ -1290,14 +1292,17 @@ public sealed class ExplorerWorkspace
         var path = ActivePane == PaneId.Primary ? Primary.Path : Secondary.Path;
         var result = await ops.CreateFileAsync(path, name, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
+        Undo.PushCreate(path, name, result, isDirectory: false, ops);
         await RefreshAsync(cancellationToken).ConfigureAwait(false);
         return result;
     }
 
     public async Task TrashSelectedAsync(string[] selectedPaths, CancellationToken cancellationToken = default)
     {
-        await RequireFileOps().TrashAsync(selectedPaths, cancellationToken).ConfigureAwait(false);
+        var ops = RequireFileOps();
+        var recycleBinPaths = await ops.TrashAsync(selectedPaths, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
+        Undo.PushTrash(selectedPaths, recycleBinPaths, ops);
         await RefreshAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -1328,6 +1333,7 @@ public sealed class ExplorerWorkspace
         var ops = RequireFileOps();
         var result = await ops.RenameAsync(path, newName, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
+        Undo.PushRename(path, result, ops);
         await RefreshAsync(cancellationToken).ConfigureAwait(false);
         return result;
     }

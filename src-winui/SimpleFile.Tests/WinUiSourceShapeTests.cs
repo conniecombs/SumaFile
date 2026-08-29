@@ -128,6 +128,48 @@ public class WinUiSourceShapeTests
         Assert.Contains("Volatile.Read(ref _viewIconSizeSaveToken)", commands);
     }
 
+    [Fact]
+    public void PreviewPane_UsesPathBackedPdfAndMediaControls()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var pane = File.ReadAllText(Path.Combine(appRoot, "PreviewPaneView.xaml"));
+        var presenter = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.cs"));
+        var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
+        var backendPreview = File.ReadAllText(Path.Combine(root, "..", "crates", "simplefile-core", "src", "preview.rs"));
+
+        Assert.Contains("<WebView2", pane);
+        Assert.Contains("<MediaPlayerElement", pane);
+        Assert.Contains("TryRenderPdfPreview", presenter);
+        Assert.Contains("TryRenderMediaPreview", presenter);
+        Assert.Contains("TryCreatePathBackedPreview", commands);
+        Assert.DoesNotContain("const PDF_MAX", backendPreview);
+    }
+
+    [Fact]
+    public void AdvancedRename_PushesUndoEntryAfterBatchRename()
+    {
+        var root = FindRepoRoot();
+        var transfer = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Transfer.cs"));
+
+        Assert.Contains("var renamed = await fileOps.BatchRenameAsync(requests, utilityCts.Token);", transfer);
+        Assert.Contains("workspace.Undo.PushRename(requests.Select(request => request.Path).ToArray(), renamed, fileOps);", transfer);
+    }
+
+    [Fact]
+    public void CompareDialog_RendersBinaryComparisonRows()
+    {
+        var root = FindRepoRoot();
+        var presenter = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PreviewPresenter.cs"));
+        var models = File.ReadAllText(Path.Combine(root, "SimpleFile.Ipc", "Models.cs"));
+        var schema = File.ReadAllText(Path.Combine(root, "..", "ipc", "schema", "v1", "types.json"));
+
+        Assert.Contains("comparison.ComparisonType", presenter);
+        Assert.Contains("BinaryComparisonRows", presenter);
+        Assert.Contains("BinaryDiffRow", models);
+        Assert.Contains("\"binary_rows\"", schema);
+    }
+
     private static string FindRepoRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

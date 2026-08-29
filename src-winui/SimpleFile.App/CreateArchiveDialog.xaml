@@ -18,6 +18,7 @@
             <TextBlock Text="Format" FontWeight="SemiBold" />
             <ComboBox x:Name="FormatCombo" HorizontalAlignment="Stretch" SelectionChanged="OnFormatChanged">
                 <ComboBoxItem Content="ZIP (.zip)" Tag="zip" />
+                <ComboBoxItem Content="7-Zip (.7z)" Tag="7z" />
                 <ComboBoxItem Content="TAR (.tar)" Tag="tar" />
                 <ComboBoxItem Content="TAR.GZ (.tar.gz)" Tag="tar.gz" />
                 <ComboBoxItem Content="RAR (.rar)" Tag="rar" />

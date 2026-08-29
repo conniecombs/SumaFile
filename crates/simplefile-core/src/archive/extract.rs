@@ -1,9 +1,11 @@
 use std::path::Path;
+use std::process::Stdio;
 
 use super::path::{
-    archive_entry_relative_path, archive_format_for_path, copy_entry_data, create_dir_all,
-    create_file, ensure_extract_path_within_destination, output_path_for_entry, top_level_remap,
-    unique_file_path_if_needed, zip_entry_relative_path, ArchiveFormat,
+    archive_entry_relative_path, archive_entry_relative_path_from_name, archive_format_for_path,
+    copy_entry_data, create_dir_all, create_file, ensure_extract_path_within_destination,
+    output_path_for_entry, top_level_remap, unique_file_path_if_needed, zip_entry_relative_path,
+    ArchiveFormat,
 };
 
 pub fn extract_archive(archive_path: String, destination: String) -> Result<(), String> {
@@ -20,6 +22,7 @@ pub(super) fn extract_archive_to_directory(archive: &Path, dest: &Path) -> Resul
         Some(ArchiveFormat::Tar) => extract_tar(&archive_path, dest, None),
         Some(ArchiveFormat::TarGz) => extract_tar(&archive_path, dest, Some("gz")),
         Some(ArchiveFormat::Rar) => extract_rar(&archive_path, dest),
+        Some(ArchiveFormat::SevenZip) => extract_seven_zip(&archive_path, dest),
         None => Err(format!(
             "Unsupported archive format: {}",
             archive.extension().and_then(|e| e.to_str()).unwrap_or("")
@@ -119,6 +122,71 @@ pub(super) fn extract_tar(
         }
         _ => return Err("Unsupported compression".to_string()),
     }
+    Ok(())
+}
+
+fn extract_seven_zip(path: &str, dest: &Path) -> Result<(), String> {
+    let binary = super::seven_zip::require_seven_zip_binary()?;
+    let entries = super::seven_zip::list_seven_zip_entries_with_binary(&binary, path)?;
+    let dest_canonical = dest
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve destination: {e}"))?;
+
+    let mut planned = Vec::with_capacity(entries.len());
+    let mut relative_paths = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let relative_path = archive_entry_relative_path_from_name(&entry.path, "7-Zip")?;
+        relative_paths.push(relative_path.clone());
+        planned.push((entry, relative_path));
+    }
+
+    let root_remap = top_level_remap(&dest_canonical, &relative_paths);
+    for (entry, relative_path) in planned {
+        let outpath = output_path_for_entry(&dest_canonical, &relative_path, root_remap.as_ref());
+        ensure_extract_path_within_destination(&dest_canonical, &outpath)?;
+        if entry.is_dir {
+            create_dir_all(&outpath)?;
+        } else {
+            if let Some(parent) = outpath.parent() {
+                create_dir_all(parent)?;
+            }
+            let final_outpath = unique_file_path_if_needed(&outpath);
+            ensure_extract_path_within_destination(&dest_canonical, &final_outpath)?;
+            extract_seven_zip_entry_to_file(&binary, path, &entry.path, &final_outpath)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn extract_seven_zip_entry_to_file(
+    binary: &str,
+    archive_path: &str,
+    entry_path: &str,
+    output_path: &Path,
+) -> Result<(), String> {
+    let outfile = create_file(output_path)?;
+    let output = std::process::Command::new(binary)
+        .arg("e")
+        .arg("-so")
+        .arg("-bd")
+        .arg("-bb0")
+        .arg("-sccUTF-8")
+        .arg("-y")
+        .arg("-spd")
+        .arg("--")
+        .arg(archive_path)
+        .arg(entry_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(outfile))
+        .output()
+        .map_err(|e| format!("Failed to run 7-Zip extract command: {e}"))?;
+
+    if let Err(error) = super::seven_zip::ensure_seven_zip_success(&output, "7-Zip extraction") {
+        let _ = std::fs::remove_file(output_path);
+        return Err(error);
+    }
+
     Ok(())
 }
 

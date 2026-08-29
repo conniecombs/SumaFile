@@ -240,7 +240,10 @@ fn delete_with_shell_permanently(path: &Path) -> io::Result<()> {
     ))
 }
 
-pub fn move_to_trash(paths: &[String]) -> Result<(), String> {
+pub fn move_to_trash(paths: &[String]) -> Result<Vec<String>, String> {
+    let previous_recycle_paths = crate::recycle_bin::recycle_bin_data_path_set();
+    let mut trashed_original_paths = Vec::new();
+
     for path in paths {
         if crate::archive::is_archive_virtual_path(path) {
             crate::archive::delete_archive_entry(path)?;
@@ -249,8 +252,17 @@ pub fn move_to_trash(paths: &[String]) -> Result<(), String> {
 
         let validated = validate_path_no_follow(path)?;
         trash::delete(&validated).map_err(|e| format!("TRASH_UNAVAILABLE: {e}"))?;
+        trashed_original_paths.push(validated.to_string_lossy().to_string());
     }
-    Ok(())
+
+    if trashed_original_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    Ok(crate::recycle_bin::recycle_bin_paths_for_originals(
+        &trashed_original_paths,
+        &previous_recycle_paths,
+    ))
 }
 
 // ============================================================================

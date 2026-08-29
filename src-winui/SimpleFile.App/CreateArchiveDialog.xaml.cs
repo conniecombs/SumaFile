@@ -47,7 +47,7 @@ public sealed partial class CreateArchiveDialog : ContentDialog
         {
             _selectedNames = value;
             FilesList.ItemsSource = _selectedNames;
-            
+
             if (!_isInitialized && _selectedNames.Length > 0)
             {
                 string baseName = _selectedNames.Length == 1 ? _selectedNames[0] : "Archive";
@@ -68,7 +68,7 @@ public sealed partial class CreateArchiveDialog : ContentDialog
     private void OnFormatChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_isInitialized) return;
-        
+
         NameInput.Text = ArchivePaths.WithArchiveExtension(NameInput.Text, ArchiveFormat);
     }
 }

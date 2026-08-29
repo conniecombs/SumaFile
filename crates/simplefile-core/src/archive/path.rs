@@ -9,6 +9,7 @@ pub(super) enum ArchiveFormat {
     Tar,
     TarGz,
     Rar,
+    SevenZip,
 }
 
 impl ArchiveFormat {
@@ -18,6 +19,7 @@ impl ArchiveFormat {
             ArchiveFormat::Tar => "tar",
             ArchiveFormat::TarGz => "tar.gz",
             ArchiveFormat::Rar => "rar",
+            ArchiveFormat::SevenZip => "7z",
         }
     }
 }
@@ -43,6 +45,7 @@ pub(super) fn archive_format_for_path(path: &Path) -> Option<ArchiveFormat> {
         Some("zip") => Some(ArchiveFormat::Zip),
         Some("tar") => Some(ArchiveFormat::Tar),
         Some("rar") => Some(ArchiveFormat::Rar),
+        Some("7z") => Some(ArchiveFormat::SevenZip),
         _ => None,
     }
 }

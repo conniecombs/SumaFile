@@ -41,9 +41,9 @@ public sealed class FileOperationService
 
     // Move files to the system trash. Throws FileOperationException with
     // IsTrashUnavailable = true if the trash service is unavailable.
-    public async Task TrashAsync(string[] paths, CancellationToken ct = default)
+    public async Task<string[]> TrashAsync(string[] paths, CancellationToken ct = default)
     {
-        await _ipc.MoveToTrashAsync(paths, ct).ConfigureAwait(false);
+        return await _ipc.MoveToTrashAsync(paths, ct).ConfigureAwait(false);
     }
 
     public Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default)
