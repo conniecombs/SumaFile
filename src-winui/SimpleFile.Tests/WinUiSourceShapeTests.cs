@@ -17,13 +17,15 @@ public class WinUiSourceShapeTests
     {
         var root = FindRepoRoot();
         var session = File.ReadAllText(Path.Combine(root, "SimpleFile.Core", "BackendSession.cs"));
-        var job = File.ReadAllText(Path.Combine(root, "SimpleFile.Core", "JobObject.cs"));
 
         Assert.DoesNotContain("entireProcessTree: true", session);
         Assert.Contains("entireProcessTree: false", session);
-        Assert.Contains("JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK", job);
-        Assert.Contains("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE", job);
+        Assert.Equal(
+            JobObject.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JobObject.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+            JobObject.DefaultLimitFlags);
+        Assert.Equal(0u, JobObject.DefaultLimitFlags & JobObject.JOB_OBJECT_LIMIT_BREAKAWAY_OK);
     }
+
     [Fact]
     public void FilePanes_AcceptClicksAcrossPaneAndRowWhitespace()
     {

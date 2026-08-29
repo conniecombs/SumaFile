@@ -42,4 +42,17 @@ public class AppCommandCatalogTests
         Assert.Equal("settings", AppCommandCatalog.Find("settings")?.Id);
         Assert.Null(AppCommandCatalog.Find("missing"));
     }
+
+    [Theory]
+    [InlineData("ctx-rename", "rename")]
+    [InlineData("ctx-copy-path", "copy-path")]
+    [InlineData("ctx-bookmark", "bookmark-selected-folder")]
+    [InlineData("ctx-open-tab", "open-selected-tab")]
+    [InlineData("ctx-open-other-pane", "open-other-pane")]
+    [InlineData("overflow-filter", "filter")]
+    [InlineData("view:details", "view:details")]
+    public void CommandAliases_NormalizeSharedRouterIds(string id, string expected)
+    {
+        Assert.Equal(expected, CommandAliasCatalog.Normalize(id));
+    }
 }

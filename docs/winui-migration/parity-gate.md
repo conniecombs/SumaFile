@@ -275,6 +275,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | --- | --- | --- | --- | --- | --- |
 | `ui.command-palette` | Ctrl+Shift+P | Overlay + `AppCommandCatalog` | `DesktopPolishTests` | Open; run Refresh | `PASS` |
 | `go-home` | Palette Go Home | Catalog + handler | Catalog test | — | `PASS` |
+| `go-back` `go-forward` `go-up` | Palette history navigation | Catalog + handler | Catalog test | Alt+Left/Right/Up | `PASS` |
 | `refresh` | Palette/F5 | Handler | Catalog | F5 | `PASS` |
 | `copy` `cut` `paste` | Palette clipboard | Handlers | Catalog + clipboard tests | — | `PASS` |
 | `clipboard-history` | Palette | `ClipboardHistory` | Catalog + tests | — | `PASS` |
@@ -286,6 +287,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `create-archive` | Palette | Dialog | Catalog | — | `MANUAL` |
 | `terminal` | Palette / F4 | IPC | Catalog | F4 | `MANUAL` |
 | `preview` | Toggle preview | Handler | Catalog | — | `MANUAL` |
+| `toggle-hidden` | Show or hide hidden files | Handler + workspace setting | Catalog test | Ctrl+H | `PASS` |
 | `toggle-side-menu` | Toggle sidebar | Handler | Catalog test | — | `PASS` |
 | `dual-pane` | Toggle | Handler | Dual-pane tests | F6 | `PASS` |
 | `close-left-pane` | Close left pane | Palette + handler | — | Dual pane | `PASS` |
@@ -295,6 +297,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `quick-look` | Space | Handler | Catalog | Space | `MANUAL` |
 | `properties` | Properties | Dialog | Catalog | — | `MANUAL` |
 | `color-label` | Tag picker | Dialog | Catalog | — | `MANUAL` |
+| `bookmark-folder` | Bookmark current folder | Workspace places | Catalog + places tests | Ctrl+B | `PASS` |
 | `folder-metrics` | Metrics | Dialog | Catalog | — | `MANUAL` |
 | `disk-cleanup` | Cleanup | Dialog | Catalog | — | `MANUAL` |
 | `duplicate-checker` | Duplicates | Dialog | Catalog | — | `MANUAL` |
@@ -302,6 +305,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `keyboard-help` | F1 | Dialog | Catalog + shortcut map | F1 | `PASS` |
 | `git-pull` `git-push` | Palette | IPC | Catalog | — | `MANUAL` |
 | `ctx-open` | Context Open | `ContextMenuBuilder` | `DesktopPolishTests` | Right-click | `PASS` |
+| `ctx-open-tab` `ctx-open-other-pane` | Context folder navigation | `ContextMenuBuilder` + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-open-with` `ctx-open-with-app-` `ctx-open-with-choose` | Open With | Builder | Same | — | `PASS` |
 | `ctx-preview` | Quick Look | Builder | Same | — | `PASS` |
 | `ctx-compare` | Compare | Builder | Same | Two files | `PASS` |
@@ -315,6 +319,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-rename` | Rename | Builder | Same | — | `PASS` |
 | `ctx-advanced-rename` | Advanced rename | Builder | Same | — | `PASS` |
 | `ctx-copy` `ctx-cut` `ctx-paste` | Clipboard | Builder | Same | — | `PASS` |
+| `ctx-copy-path` | Copy full path | Builder + handler | Context menu tests | Paste path in Notepad | `PASS` |
+| `ctx-bookmark` | Bookmark selected folder | Builder + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-copy-to-pane` `ctx-move-to-pane` | Other pane | Builder | Same | Dual pane | `PASS` |
 | `ctx-close-dual-pane` | Close right pane | Builder + handler | `DesktopPolishTests` | F6 or pane menu | `PASS` |
 | `ctx-close-left-pane` | Close left pane | Builder + handler | `DesktopPolishTests` | Dual pane | `PASS` |

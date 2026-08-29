@@ -186,19 +186,10 @@ public sealed partial class MainWindow
         ActiveFileList.SelectAll();
     }
 
-    private void OnCopyPathAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
+    private async void OnCopyPathAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
     {
         e.Handled = true;
-        var paths = SelectedPaths;
-        if (paths is null || paths.Length == 0)
-        {
-            return;
-        }
-
-        var package = new DataPackage();
-        package.SetText(string.Join(Environment.NewLine, paths));
-        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
-        SetStatusText(paths.Length == 1 ? "Path copied" : $"{paths.Length} paths copied");
+        await RunUiActionAsync("Copy path", () => RunAppCommandAsync("copy-path"));
     }
 
     private async void OnUndoAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
@@ -222,13 +213,73 @@ public sealed partial class MainWindow
     private async void OnCopyToOtherPaneAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
     {
         e.Handled = true;
-        await RunUiActionAsync("Copy to other pane", () => CopyOrMoveToOtherPaneAsync(move: false));
+        await RunUiActionAsync("Copy to other pane", () => RunAppCommandAsync("copy-to-pane"));
     }
 
     private async void OnMoveToOtherPaneAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
     {
         e.Handled = true;
-        await RunUiActionAsync("Move to other pane", () => CopyOrMoveToOtherPaneAsync(move: true));
+        await RunUiActionAsync("Move to other pane", () => RunAppCommandAsync("move-to-pane"));
+    }
+
+    private async void OnOpenInNewTabAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
+    {
+        e.Handled = true;
+        await RunUiActionAsync("Open in new tab", () => RunAppCommandAsync("open-selected-tab"));
+    }
+
+    private async void OnToggleHiddenAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
+    {
+        e.Handled = true;
+        await RunUiActionAsync("Hidden files", () => RunAppCommandAsync("toggle-hidden"));
+    }
+
+    private async void OnBookmarkAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
+    {
+        e.Handled = true;
+        await RunUiActionAsync("Bookmark", () => RunAppCommandAsync("bookmark-folder"));
+    }
+
+    private async void OnPropertiesAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
+    {
+        e.Handled = true;
+        await RunUiActionAsync("Properties", () => RunAppCommandAsync("properties"));
+    }
+
+    private async void OnTab1Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
+        await SwitchToTabAtFromAcceleratorAsync(e, 1);
+
+    private async void OnTab2Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
+        await SwitchToTabAtFromAcceleratorAsync(e, 2);
+
+    private async void OnTab3Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
+        await SwitchToTabAtFromAcceleratorAsync(e, 3);
+
+    private async void OnTab4Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
+        await SwitchToTabAtFromAcceleratorAsync(e, 4);
+
+    private async void OnTab5Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
+        await SwitchToTabAtFromAcceleratorAsync(e, 5);
+
+    private async void OnTab6Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
+        await SwitchToTabAtFromAcceleratorAsync(e, 6);
+
+    private async void OnTab7Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
+        await SwitchToTabAtFromAcceleratorAsync(e, 7);
+
+    private async void OnTab8Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
+        await SwitchToTabAtFromAcceleratorAsync(e, 8);
+
+    private async void OnTab9Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
+        await SwitchToTabAtFromAcceleratorAsync(e, 9);
+
+    private async Task SwitchToTabAtFromAcceleratorAsync(KeyboardAcceleratorInvokedEventArgs e, int index)
+    {
+        e.Handled = true;
+        if (_workspace is not null && !IsEditingPath)
+        {
+            await RunUiActionAsync("Tab", () => _workspace.SwitchToTabAtAsync(index));
+        }
     }
 
     private void OnQuickFilterChanged(object sender, TextChangedEventArgs e)
@@ -397,6 +448,79 @@ public sealed partial class MainWindow
         e.Handled = true;
     }
 
+    private void CopySelectedPathsToClipboard()
+    {
+        var paths = SelectedPaths;
+        if (paths is null || paths.Length == 0)
+        {
+            return;
+        }
+
+        var package = new DataPackage();
+        package.SetText(string.Join(Environment.NewLine, paths));
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+        SetStatusText(paths.Length == 1 ? "Path copied" : $"{paths.Length} paths copied");
+    }
+
+    private async Task ToggleHiddenFilesAsync()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var shown = _workspace.ToggleShowHidden();
+        SetStatusText(shown ? "Hidden files shown" : "Hidden files hidden");
+        await _workspace.SaveUiSettingsAsync();
+    }
+
+    private async Task BookmarkCurrentFolderAsync()
+    {
+        if (_workspace is null || string.IsNullOrEmpty(_workspace.Active.Path))
+        {
+            return;
+        }
+
+        _workspace.AddBookmark(_workspace.Active.Path);
+        await _workspace.SaveUiSettingsAsync();
+        SetStatusText("Current folder bookmarked");
+    }
+
+    private async Task BookmarkSelectedFolderAsync()
+    {
+        if (_workspace is null || ActiveSelectedRow is not { IsDir: true } row)
+        {
+            return;
+        }
+
+        _workspace.AddBookmark(row.Path);
+        await _workspace.SaveUiSettingsAsync();
+        SetStatusText($"Bookmarked {row.Name}");
+    }
+
+    private async Task OpenSelectedInNewTabAsync()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        await SaveViewIconSizeNowAsync();
+        var row = ActiveSelectedRow;
+        var path = row is { IsDir: true } ? row.Path : _workspace.Active.Path;
+        await _workspace.OpenNewTabAsync(_workspace.ActivePane, path);
+    }
+
+    private async Task OpenSelectedInOtherPaneAsync()
+    {
+        if (_workspace is null || ActiveSelectedRow is not { } row)
+        {
+            return;
+        }
+
+        await _workspace.OpenInOtherPaneAsync(row.Path, row.IsDir);
+    }
+
     private async Task RunAppCommandAsync(string id)
     {
         if (_workspace is null)
@@ -404,10 +528,28 @@ public sealed partial class MainWindow
             return;
         }
 
-        switch (id)
+        switch (CommandAliasCatalog.Normalize(id))
         {
             case "go-home":
                 await _workspace.NavigateSpecialAsync("navigateHome");
+                break;
+            case "go-back":
+                if (!IsEditingPath)
+                {
+                    await _workspace.GoBackAsync();
+                }
+                break;
+            case "go-forward":
+                if (!IsEditingPath)
+                {
+                    await _workspace.GoForwardAsync();
+                }
+                break;
+            case "go-up":
+                if (!IsEditingPath)
+                {
+                    await _workspace.GoUpAsync();
+                }
                 break;
             case "refresh":
                 await _workspace.RefreshAsync();
@@ -420,6 +562,9 @@ public sealed partial class MainWindow
                 break;
             case "paste":
                 await PasteFromClipboard();
+                break;
+            case "copy-path":
+                CopySelectedPathsToClipboard();
                 break;
             case "clipboard-history":
                 SetStatusText(_workspace.Clipboard.HasItems
@@ -462,8 +607,14 @@ public sealed partial class MainWindow
             case "terminal":
                 await OpenTerminalInActivePathAsync();
                 break;
+            case "powershell-admin":
+                await OpenPowershellAdminAsync();
+                break;
             case "preview":
                 OnTogglePreview(this, new RoutedEventArgs());
+                break;
+            case "toggle-hidden":
+                await ToggleHiddenFilesAsync();
                 break;
             case "toggle-side-menu":
                 await ToggleSidebarAsync();
@@ -473,6 +624,21 @@ public sealed partial class MainWindow
                 break;
             case "close-left-pane":
                 await CloseFilePaneFromUiAsync(PaneId.Primary);
+                break;
+            case "close-right-pane":
+                await CloseFilePaneFromUiAsync(PaneId.Secondary);
+                break;
+            case "copy-to-pane":
+                await CopyOrMoveToOtherPaneAsync(move: false);
+                break;
+            case "move-to-pane":
+                await CopyOrMoveToOtherPaneAsync(move: true);
+                break;
+            case "open-selected-tab":
+                await OpenSelectedInNewTabAsync();
+                break;
+            case "open-other-pane":
+                await OpenSelectedInOtherPaneAsync();
                 break;
             case "view-details":
                 await ApplyViewOptionAsync("view:details");
@@ -510,6 +676,9 @@ public sealed partial class MainWindow
             case "search":
                 FocusSearchUi();
                 break;
+            case "filter":
+                FocusFilterUi();
+                break;
             case "quick-look":
                 await ShowQuickLookAsync();
                 break;
@@ -518,6 +687,12 @@ public sealed partial class MainWindow
                 break;
             case "color-label":
                 await SetColorLabelAsync();
+                break;
+            case "bookmark-folder":
+                await BookmarkCurrentFolderAsync();
+                break;
+            case "bookmark-selected-folder":
+                await BookmarkSelectedFolderAsync();
                 break;
             case "folder-metrics":
                 await ShowFolderMetricsAsync();
@@ -942,26 +1117,15 @@ public sealed partial class MainWindow
             return;
         }
 
+        var commandId = CommandAliasCatalog.Normalize(id);
+        if (!string.Equals(commandId, id, StringComparison.Ordinal))
+        {
+            await RunAppCommandAsync(commandId);
+            return;
+        }
+
         switch (id)
         {
-            case "overflow-search":
-                FocusSearchUi();
-                break;
-            case "overflow-filter":
-                FocusFilterUi();
-                break;
-            case "overflow-new-folder":
-                await PromptAndCreateFolder(_workspace?.ActivePane ?? PaneId.Primary);
-                break;
-            case "overflow-new-file":
-                await PromptAndCreateFile(_workspace?.ActivePane ?? PaneId.Primary);
-                break;
-            case "overflow-dual-pane":
-                await ToggleDualPaneFromUiAsync();
-                break;
-            case "overflow-settings":
-                await ShowSettingsAsync();
-                break;
             case "ctx-open":
                 await OpenSelectedFile(ActiveFileList, _workspace?.ActivePane ?? PaneId.Primary);
                 break;
@@ -969,59 +1133,11 @@ public sealed partial class MainWindow
             case "ctx-open-with-choose":
                 await OpenSelectedWithAsync();
                 break;
-            case "ctx-preview":
-                await ShowQuickLookAsync();
-                break;
             case "ctx-compare":
                 await CompareSelectedFilesAsync();
                 break;
             case "ctx-view-archive":
                 await ViewSelectedArchiveAsync();
-                break;
-            case "ctx-terminal":
-                await OpenTerminalInActivePathAsync();
-                break;
-            case "ctx-powershell-admin":
-                await OpenPowershellAdminAsync();
-                break;
-            case "ctx-color-label":
-                await SetColorLabelAsync();
-                break;
-            case "ctx-folder-metrics":
-                await ShowFolderMetricsAsync();
-                break;
-            case "ctx-cleanup":
-                await ShowDiskCleanupAsync();
-                break;
-            case "ctx-duplicates":
-                await ShowDuplicateCheckerAsync();
-                break;
-            case "ctx-rename":
-                await PromptAndRename();
-                break;
-            case "ctx-advanced-rename":
-                await PromptAdvancedRenameAsync();
-                break;
-            case "ctx-copy":
-                CopyToClipboard();
-                break;
-            case "ctx-cut":
-                CutToClipboard();
-                break;
-            case "ctx-paste":
-                await PasteFromClipboard();
-                break;
-            case "ctx-copy-to-pane":
-                await CopyOrMoveToOtherPaneAsync(move: false);
-                break;
-            case "ctx-move-to-pane":
-                await CopyOrMoveToOtherPaneAsync(move: true);
-                break;
-            case "ctx-close-dual-pane":
-                await CloseFilePaneFromUiAsync(PaneId.Secondary);
-                break;
-            case "ctx-close-left-pane":
-                await CloseFilePaneFromUiAsync(PaneId.Primary);
                 break;
             case "ctx-pack":
                 await PromptPackIntoFolderAsync();
@@ -1029,22 +1145,10 @@ public sealed partial class MainWindow
             case "ctx-unpack":
                 await UnpackSelectedFolderAsync();
                 break;
-            case "ctx-compress":
-                await CreateArchiveAsync();
-                break;
             case "ctx-extract":
             case "ctx-extract-folder":
             case "ctx-extract-to":
                 await ExtractSelectedArchiveAsync(id);
-                break;
-            case "ctx-delete-recycle":
-                await TrashSelected();
-                break;
-            case "ctx-delete-permanent":
-                await DeleteSelected();
-                break;
-            case "ctx-info":
-                await ShowPropertiesAsync();
                 break;
         }
     }

@@ -288,7 +288,6 @@ public sealed partial class DuplicateCheckerDialog : ContentDialog
         return $"{len:0.##} {sizes[order]}";
     }
 }
-
 public class DuplicateGroupViewModel
 {
     public ObservableCollection<DuplicateFileViewModel> Files { get; set; } = new();
@@ -408,9 +407,3 @@ public class DuplicateFileViewModel : INotifyPropertyChanged
     protected void OnPropertyChanged([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
-
-// Dummy types in case they are not in SimpleFile.Core yet
-// public class DuplicateCheckResult { public List<DuplicateGroup> Groups { get; set; } = new(); }
-// public class DuplicateGroup { public List<DuplicateFile> Files { get; set; } = new(); }
-// public class DuplicateFile { public string Path { get; set; } = ""; public long Size { get; set; } public DateTime Modified { get; set; } }
-// public class ProgressUpdate { public long? Total { get; set; } public long Current { get; set; } public string? Message { get; set; } }

@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Windowing;
@@ -224,38 +223,6 @@ public sealed partial class MainWindow : Window
         {
             _transfer.ProgressReceived -= OnTransferProgressReceived;
         }
-    }
-
-    private void OnSearchResultsChanged(object? sender, SearchResultsChangedEventArgs e)
-    {
-        ApplySearchRows();
-    }
-
-    private void OnSearchCleared(object? sender, EventArgs e)
-    {
-        SyncFromWorkspace();
-    }
-
-    private void OnSearchPropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (_search is null)
-        {
-            return;
-        }
-
-        if (e.PropertyName == nameof(SearchViewModel.StatusText))
-        {
-            SetStatusText(_search.StatusText);
-        }
-        else if (e.PropertyName is nameof(SearchViewModel.CanCancel) or nameof(SearchViewModel.Pane))
-        {
-            UpdateSearchCancelButtons();
-        }
-    }
-
-    private void OnViewModelMessageRequested(object? sender, ViewModelMessageEventArgs e)
-    {
-        ShowMessage(e.Title, e.Message, InfoBarSeverity.Error);
     }
 
     private void OnTransferProgressReceived(object? sender, ProgressUpdate update)
@@ -1295,26 +1262,45 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        SetEmptyState(PrimaryEmptyText, PrimaryFiles.Count, _workspace.Primary, _search?.IsActiveForPane(PaneId.Primary) == true);
-        SetEmptyState(SecondaryEmptyText, SecondaryFiles.Count, _workspace.Secondary, _search?.IsActiveForPane(PaneId.Secondary) == true);
+        SetEmptyState(
+            PrimaryEmptyState,
+            PrimaryEmptyTitle,
+            PrimaryEmptyHint,
+            PrimaryFiles.Count,
+            _workspace.Primary,
+            _search?.IsActiveForPane(PaneId.Primary) == true);
+        SetEmptyState(
+            SecondaryEmptyState,
+            SecondaryEmptyTitle,
+            SecondaryEmptyHint,
+            SecondaryFiles.Count,
+            _workspace.Secondary,
+            _search?.IsActiveForPane(PaneId.Secondary) == true);
     }
 
-    private static void SetEmptyState(TextBlock target, int count, ExplorerPane pane, bool searching)
+    private static void SetEmptyState(FrameworkElement host, TextBlock title, TextBlock hint, int count, ExplorerPane pane, bool searching)
     {
         if (count > 0)
         {
-            target.Visibility = Visibility.Collapsed;
+            host.Visibility = Visibility.Collapsed;
             return;
         }
 
-        target.Text = pane.ListingInProgress
+        title.Text = pane.ListingInProgress
             ? "Loading…"
             : searching
                 ? "No search results"
                 : string.IsNullOrEmpty(pane.Path)
                     ? "Select a folder"
                     : "This folder is empty";
-        target.Visibility = Visibility.Visible;
+        hint.Text = pane.ListingInProgress
+            ? "Please wait while SumaFile reads this folder."
+            : searching
+                ? "Try a different search or clear the search box."
+                : string.IsNullOrEmpty(pane.Path)
+                    ? "Choose a drive or folder from the side menu."
+                    : "Drop files here, or press Ctrl+Shift+N to create a folder";
+        host.Visibility = Visibility.Visible;
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> source)
@@ -3030,69 +3016,6 @@ public sealed partial class MainWindow : Window
         if (!window.IsClosed)
         {
             window.Close();
-        }
-    }
-
-    private Task StartSearchAsync(PaneId? requestedPane = null)
-    {
-        if (_search is null)
-        {
-            return Task.CompletedTask;
-        }
-
-        var pane = _workspace?.Normalize(requestedPane ?? _workspace.ActivePane) ?? PaneId.Primary;
-        _search.Query = SearchTextBoxFor(pane).Text;
-        return _search.StartAsync(requestedPane, DispatchToUi);
-    }
-
-    private void ApplySearchRows()
-    {
-        if (_search is null)
-        {
-            return;
-        }
-
-        if (_search.Pane == PaneId.Secondary)
-        {
-            Replace(SecondaryFiles, _search.Results.Select(result => SearchRowFrom(result, PaneId.Secondary)));
-        }
-        else
-        {
-            Replace(PrimaryFiles, _search.Results.Select(result => SearchRowFrom(result, PaneId.Primary)));
-        }
-
-        SetCountText(_search.ResultCount == 1
-            ? "1 search result"
-            : $"{_search.ResultCount} search results");
-    }
-
-    private Task CancelActiveSearchAsync() =>
-        _search?.CancelActiveAsync() ?? Task.CompletedTask;
-
-    private void ClearSearchState() =>
-        _search?.ClearState();
-
-    private async void OnSearchClick(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("Search", () => StartSearchAsync(ActiveUiPane));
-
-    private async void OnCancelSearchClick(object sender, RoutedEventArgs e)
-    {
-        await RunUiActionAsync("Cancel search", CancelActiveSearchAsync);
-    }
-
-    private async void OnSearchKeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (e.Key == VirtualKey.Enter)
-        {
-            e.Handled = true;
-            await RunUiActionAsync("Search", () => StartSearchAsync(ActiveUiPane));
-        }
-        else if (e.Key == VirtualKey.Escape)
-        {
-            e.Handled = true;
-            await RunUiActionAsync("Cancel search", CancelActiveSearchAsync);
-            ClearSearchState();
-            SyncFromWorkspace();
         }
     }
 

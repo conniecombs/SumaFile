@@ -4,6 +4,9 @@
 //! from the service crate, tests, and future tools.
 
 use crate::models::{FileEntry, TreeNode};
+use crate::path_conflict::{
+    create_dir_exclusive, is_keep_both_action, path_collision_key, path_exists_no_follow,
+};
 use crate::utils::{
     count_directory_entries, get_file_entry, recreate_symlink, validate_existing_path_no_resolve,
     validate_name, validate_path_no_follow,
@@ -633,10 +636,6 @@ pub fn count_folder_items(path: &str, cancel: &AtomicBool) -> Option<u64> {
 // Private helpers
 // ============================================================================
 
-fn path_collision_key(path: &Path) -> String {
-    path.to_string_lossy().to_lowercase()
-}
-
 fn unique_rename_temp_path(parent: &Path, idx: usize) -> Result<PathBuf, String> {
     let mut random = [0u8; 16];
     getrandom::fill(&mut random)
@@ -689,10 +688,6 @@ fn batch_rename_recovery_error(
     }
 }
 
-fn path_exists_no_follow(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok()
-}
-
 fn remove_existing_path(path: &Path) -> Result<(), String> {
     let meta = fs::symlink_metadata(path)
         .map_err(|e| format!("Failed to stat existing destination: {e}"))?;
@@ -733,13 +728,6 @@ fn unique_destination_path(dest_dir: &Path, file_name: &std::ffi::OsStr) -> Path
         }
     }
     dest_dir.join(file_name)
-}
-
-fn is_keep_both_action(conflict_action: &str) -> bool {
-    matches!(
-        conflict_action.to_ascii_lowercase().as_str(),
-        "rename" | "keep-both" | "keep_both"
-    )
 }
 
 fn resolve_destination(
@@ -863,19 +851,6 @@ pub(crate) fn copy_dir_iterative(src: &Path, dst: &Path) -> Result<(), String> {
         preserve_basic_metadata(&src_dir, &dst_dir)?;
     }
     Ok(())
-}
-
-fn create_dir_exclusive(path: &Path) -> Result<(), String> {
-    fs::create_dir(path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AlreadyExists {
-            format!(
-                "CONFLICT: destination already exists: {}",
-                path.to_string_lossy()
-            )
-        } else {
-            format!("Failed to create directory: {e}")
-        }
-    })
 }
 
 pub fn preserve_basic_metadata(src: &Path, dst: &Path) -> Result<(), String> {

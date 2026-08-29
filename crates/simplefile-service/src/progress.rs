@@ -2,6 +2,10 @@
 
 use serde::Serialize;
 use simplefile_core::models::ProgressUpdate;
+use simplefile_core::path_conflict::{
+    create_dir_exclusive, is_keep_both_action, path_collision_key, path_exists_no_follow,
+    paths_refer_to_same_entry,
+};
 use simplefile_core::utils::{
     generate_operation_id, recreate_symlink, validate_existing_path_no_resolve,
     validate_path_no_follow,
@@ -71,21 +75,6 @@ struct TransferEstimate {
     files: u64,
 }
 
-fn path_exists_no_follow(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok()
-}
-
-fn path_collision_key(path: &Path) -> String {
-    path.to_string_lossy().to_lowercase()
-}
-
-fn paths_refer_to_same_entry(a: &Path, b: &Path) -> bool {
-    if let (Ok(a_canonical), Ok(b_canonical)) = (a.canonicalize(), b.canonicalize()) {
-        return path_collision_key(&a_canonical) == path_collision_key(&b_canonical);
-    }
-    path_collision_key(a) == path_collision_key(b)
-}
-
 fn ensure_not_copying_dir_into_itself(source_path: &Path, final_dest: &Path) -> Result<(), String> {
     let source_meta = fs::symlink_metadata(source_path)
         .map_err(|error| format!("Failed to stat source: {error}"))?;
@@ -140,13 +129,6 @@ fn unique_destination_path(
         "Could not choose a unique destination for {}",
         original.to_string_lossy()
     ))
-}
-
-fn is_keep_both_action(conflict_action: &str) -> bool {
-    matches!(
-        conflict_action.to_ascii_lowercase().as_str(),
-        "rename" | "keep-both" | "keep_both"
-    )
 }
 
 fn conflict_for_existing_destination(path: &Path) -> String {
@@ -382,19 +364,6 @@ impl CopyContext<'_> {
             LOCAL_BUFFER_SIZE
         }
     }
-}
-
-fn create_dir_exclusive(path: &Path) -> Result<(), String> {
-    fs::create_dir(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::AlreadyExists {
-            format!(
-                "CONFLICT: destination already exists: {}",
-                path.to_string_lossy()
-            )
-        } else {
-            format!("Failed to create directory: {error}")
-        }
-    })
 }
 
 fn is_real_directory(path: &Path) -> bool {

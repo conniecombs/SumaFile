@@ -1,6 +1,6 @@
 # Code Cleanup Candidates
 
-Status: analysis only. No program behavior was changed when this document was written.
+Status: living cleanup log. The original pass was analysis-only; the decision log records follow-up cleanup passes that changed code.
 
 These are structural cleanups that can be done without changing functionality or performance, if implemented as file/type splits, helper extraction with identical signatures, or dead-code removal.
 
@@ -10,34 +10,35 @@ Line counts are approximate (non-blank vs total lines differ). Generated IPC fil
 
 ## Suggested first-pass order
 
-1. **Finding 8** — delete unused `state.rs` / helpers / `src-tauri` lookup (smallest, no UX).
-2. **Finding 2** — kill unused ViewModels **or** finish the cutover; do not keep both.
-3. **Finding 1A** — split `MainWindow` into concern partials (biggest readability win, still one class).
-4. **Findings 4B + 5A + 7B** — completed: split `dispatch` / `archive` / `session` modules.
-5. **Finding 9A + 12A** — completed: shared IPC test stub; moved fakes out of test class files.
-6. **Finding 6** last — conflict-path unification needs a behavior comparison.
+1. Keep `npm run check` / `npm run check:release` green when command, context-menu, or parity rows change.
+2. Completed in the current pass: split search glue into `MainWindow.Search.cs`.
+3. Completed in the current pass: added `CommandAliasCatalog` so palette, context, overflow, and accelerator IDs share one router.
+4. Completed in the current pass: moved matching filesystem conflict helpers into `simplefile-core::path_conflict` with focused behavior tests.
+5. Completed in the current pass: removed stale dialog comments and replaced the reachable job-object source-string assertions with compiled behavior assertions.
+6. Next cleanup candidates: `ExplorerWorkspace`, backend file splits, and dialog/helper deduplication that needs broader WinUI coverage.
 
 For each finding, pick **A / B / C** before implementing.
 
 ---
 
-## 1. `MainWindow` is still one god window
+## 1. `MainWindow` is still too large
 
 **Files**
 
-- `src-winui/SimpleFile.App/MainWindow.xaml.cs` (~5,000 lines)
-- `src-winui/SimpleFile.App/MainWindow.Commands.cs` (~1,600)
-- `src-winui/SimpleFile.App/MainWindow.Transfer.cs` (~900)
+- `src-winui/SimpleFile.App/MainWindow.xaml.cs` (~3,100 lines)
+- `src-winui/SimpleFile.App/MainWindow.Commands.cs` (~1,560)
+- `src-winui/SimpleFile.App/MainWindow.Search.cs` (~90)
+- `src-winui/SimpleFile.App/MainWindow.Transfer.cs` (~830)
 - `src-winui/SimpleFile.App/MainWindow.OpenWith.cs` (~380)
-- `src-winui/SimpleFile.App/MainWindow.xaml` (~1,440)
+- `src-winui/SimpleFile.App/MainWindow.xaml` (~1,490)
 
-The four partials already exist, but they do not match concerns.
+The shell is smaller than it was: preview rendering now lives in `PreviewPresenter`, dialog-driven file operations in `FileOperationDialogService`, search state in `SearchViewModel`, and search event/result glue in `MainWindow.Search.cs`. The remaining partials still do not match concerns cleanly.
 
-- `xaml.cs` still owns session/IPC, workspace sync, dual-pane, sidebar, tabs, columns, preview, search, archives, duplicates, cleanup, tags, marquee, clipboard, and settings.
+- `xaml.cs` still owns session/IPC, workspace sync, dual-pane, sidebar, tabs, columns, archives, tags, marquee, clipboard, and settings.
 - `Commands.cs` mixes shortcuts, command palette, context menus, Quick Look, properties, Git, and PowerShell.
 - `Transfer.cs` mixes drag-drop with divider thumbs, pack/unpack, extract, advanced rename, and undo/redo.
 
-Large methods include `SyncFromWorkspaceCore`, `ShowDuplicateCheckerAsync`, `ShowDiskCleanupAsync`, `StartSearchAsync`, `ShowOpenWithChooserAsync`, `RunAppCommandAsync`, and `RunContextCommandAsync`. There are many `OnPrimary*` / `OnSecondary*` event twins.
+Large methods include `SyncFromWorkspaceCore`, `ShowOpenWithChooserAsync`, `RunAppCommandAsync`, and `RunContextCommandAsync`. There are many `OnPrimary*` / `OnSecondary*` event twins.
 
 **Options**
 
@@ -47,7 +48,7 @@ Large methods include `SyncFromWorkspaceCore`, `ShowDuplicateCheckerAsync`, `Sho
 
 ---
 
-## 2. Half-finished ViewModels that are constructed and then ignored
+## 2. ViewModel cutover still has window glue to finish
 
 **Files**
 
@@ -56,15 +57,15 @@ Large methods include `SyncFromWorkspaceCore`, `ShowDuplicateCheckerAsync`, `Sho
 - `src-winui/SimpleFile.Core/ToolbarViewModel.cs`
 - `src-winui/SimpleFile.Core/AppServices.cs`
 
-Wired in `ConnectAsync` (`AppServices.Configure` then `_search` / `_transfer` / `_toolbar`), then never read.
+Wired in `ConnectAsync` (`AppServices.Configure` then `_search` / `_transfer` / `_toolbar`) and now actively used by `MainWindow`.
 
-Search and transfer still live as window fields (`_searchMode`, `_searchCts`, `_transferCts`, …). `SearchViewModel.StartAsync` is a near-copy of `StartSearchAsync`. `_toolbar` is assigned and unused. `AppServices` is a global DI container for three transients.
+`SearchViewModel` owns search state/results/cancellation, `TransferViewModel` owns operation identity/progress/cancellation, and `ToolbarViewModel` owns toolbar/status snapshots. Remaining cleanup is mostly structural: the window still hosts adapter methods, direct control writes, and a global `AppServices` container for three transients.
 
 **Options**
 
-- **A (cleanup, no behavior change):** Delete the unused VMs, `AppServices`, and the three unused fields. MainWindow already owns the live logic.
-- **B:** Finish the cutover: window only binds/dispatches, VMs own search/transfer/toolbar. Same product, bigger diff; easy to drift if both copies stay.
-- **C:** Leave both. Do not do this — the two search implementations will diverge.
+- **A:** Finish the cutover: keep the window as UI binding/dispatch glue while ViewModels own search/transfer/toolbar behavior.
+- **B:** Remove `AppServices` and construct the three ViewModels directly from the workspace; lower indirection if no broader DI plan exists.
+- **C:** Leave the hybrid shape. Acceptable short term, but future command/search edits need extra care.
 
 ---
 
@@ -131,9 +132,9 @@ RAR installer already lives in `rar.rs`. Two unique-name loops in the same file 
 - `crates/simplefile-service/src/progress.rs`
 - `crates/simplefile-core/src/archive/`
 
-Same private helpers exist in all three: `unique_destination_path`, `is_keep_both_action`, `resolve_destination`, `path_exists_no_follow`, `path_collision_key`, `create_dir_exclusive`.
+Several private helpers existed in all three: `unique_destination_path`, `is_keep_both_action`, `resolve_destination`, `path_exists_no_follow`, `path_collision_key`, `create_dir_exclusive`.
 
-They are **not** identical. Progress also tracks `planned_destinations`. `file_ops` unique-name format still has leftover `format!("{} ({}){}.{}", stem, i, "", ext)`. List/extract uniqueness often uses `exists()`; file_ops uses `symlink_metadata`.
+The matching conflict helpers now live in `crates/simplefile-core/src/path_conflict.rs` and are reused by `file_ops` and service progress. They are **not all identical**, so unique-name loops remain local: progress also tracks `planned_destinations`, `file_ops` has its own sibling naming, and archive list/extract uniqueness often uses `exists()` while file operations use `symlink_metadata`.
 
 **Options**
 
@@ -157,23 +158,19 @@ They are **not** identical. Progress also tracks `planned_destinations`. `file_o
 
 ---
 
-## 8. Dead Tauri-era `AppState` and unused helpers
+## 8. Dead Tauri-era `AppState` and unused helpers - completed
 
 **Files / evidence**
 
-- `crates/simplefile-core/src/state.rs` is exported from `lib.rs` and never used.
+- `crates/simplefile-core/src/state.rs` has been removed.
 - Live watcher is `crates/simplefile-service/src/watcher.rs`.
 - Live cancel flags are `SessionState` in `dispatch/mod.rs`.
-- `notify` and `parking_lot` in core `Cargo.toml` appear to exist only for `state.rs`.
-- Unused: `utils::validate_existing_path`, `utils::count_items_scoped`.
-- `ServiceLocator` still searches `src-tauri/target/...`.
-- Module comments still mention Tauri / `fs_ops.rs`.
+- `notify` and `parking_lot` are no longer core dependencies for `state.rs`.
+- The old `src-tauri/target/...` service lookup is gone; `ServiceLocator` looks in root `target` paths and `PATH`.
 
 **Options**
 
-- **A:** Delete `state.rs`, drop unused deps/fns, drop `src-tauri` candidate paths, refresh comments.
-- **B:** Keep `src-tauri/target` lookup if old local binaries are still used.
-- **C:** Leave dead modules; they compile.
+- No current action. Keep this entry as a completion note and re-open only if live code grows new Tauri-era scaffolding.
 
 ---
 
@@ -212,7 +209,7 @@ Current test double shape: `NullIpc` provides strict default throws, `Configurab
 - `src-winui/SimpleFile.Core/AppCommandCatalog.cs`
 - `src-winui/SimpleFile.Core/ContextMenuBuilder.cs`
 
-The same actions are mapped three times (`rename` / `ctx-rename` / F2; `delete` vs `ctx-delete-recycle`). `SearchTextBoxFor(PaneId)` and friends take a pane and ignore it (always primary chrome). `PromptAndCreateFolder` / `PromptAndCreateFile` are almost copies.
+The same actions used to be mapped three times (`rename` / `ctx-rename` / F2; `delete` vs `ctx-delete-recycle`). `CommandAliasCatalog` now normalizes context-menu and overflow IDs into app-command IDs before `RunAppCommandAsync` handles them. Remaining cleanup: `SearchTextBoxFor(PaneId)` and friends take a pane and ignore it (always primary chrome), and `PromptAndCreateFolder` / `PromptAndCreateFile` are almost copies.
 
 **Options**
 
@@ -393,17 +390,17 @@ The same actions are mapped three times (`rename` / `ctx-rename` / F2; `delete` 
 
 ---
 
-## 12. Tests and dialogs as dump files
+## 12. Tests, dialogs, and source-shape checks
 
 **Original test files**
 
 - `src-winui/SimpleFile.Tests/ExplorerWorkspaceTests.cs` — tests + `FakeExplorerBackend` + `WorkspaceSettingsIpc`
-- `src-winui/SimpleFile.Tests/DesktopPolishTests.cs` — catalog, context menus, toolbar overflow, Open With prefs, transfer formatter
-- `src-winui/SimpleFile.Tests/ParityFeaturesTests.cs` — Places, TypeAhead, PhotoFolder, AdvancedRename, Marquee, FolderTree, clipboard
+- `src-winui/SimpleFile.Tests/WinUiSourceShapeTests.cs` — source-string tripwires for shell polish regressions
+- Historical: `DesktopPolishTests.cs` and `ParityFeaturesTests.cs` were split into focused Core test files.
 - `src-winui/SimpleFile.Tests/NamedPipeJsonClientTests.cs`
 - `src-winui/SimpleFile.Tests/FileOperationServiceTests.cs` — nested `StubIpc`
 
-Current split keeps `ExplorerWorkspaceTests.cs`, `FileOperationServiceTests.cs`, and `NamedPipeJsonClientTests.cs` type-focused, moves `FakeExplorerBackend` / `NullIpc` / `ConfigurableIpc` / `InlineProgress` to shared helper files, and replaces `DesktopPolishTests.cs` plus `ParityFeaturesTests.cs` with Core-type test files such as `ContextMenuBuilderTests.cs`, `ToolbarOverflowPlannerTests.cs`, `AdvancedRenameTests.cs`, and `FolderTreeTests.cs`.
+Current split keeps `ExplorerWorkspaceTests.cs`, `FileOperationServiceTests.cs`, and `NamedPipeJsonClientTests.cs` type-focused, moves `FakeExplorerBackend` / `NullIpc` / `ConfigurableIpc` / `InlineProgress` to shared helper files, and replaces `DesktopPolishTests.cs` plus `ParityFeaturesTests.cs` with Core-type test files such as `ContextMenuBuilderTests.cs`, `ToolbarOverflowPlannerTests.cs`, `AdvancedRenameTests.cs`, and `FolderTreeTests.cs`. `WinUiSourceShapeTests.cs` still contains WinUI source-substring tripwires where behavior is hard to reach without launching WinUI, but the job-object flag checks now assert compiled constants instead of source text.
 
 **Dialog / host duplication**
 
@@ -413,9 +410,10 @@ Current split keeps `ExplorerWorkspaceTests.cs`, `FileOperationServiceTests.cs`,
 
 **Options**
 
-- **A:** Split test files to match Core types; share one IPC stub (finding 9).
+- **A:** Completed for the old dump files: tests now match Core types and share one IPC stub family.
 - **B:** One `FormatSize` helper **per format**, not one helper for all four (do not unify `F1` with `0.##`).
 - **C:** Extract a shared “scan while dialog is open” helper for duplicates/cleanup. Move dialog VMs to sibling files.
+- **D:** Replace source-string assertions with behavior tests when the behavior is reachable without launching WinUI.
 
 ---
 
@@ -460,17 +458,17 @@ Record chosen options here when a cleanup pass starts.
 
 | Finding | Chosen option | Notes |
 | --- | --- | --- |
-| 1 MainWindow | C | Completed: extracted search lifetime/results into `SearchHost`, preview rendering/actions into `PreviewPresenter`, and dialog-driven file operations into `FileOperationDialogService`; `MainWindow` now delegates those workflows while preserving XAML event names. |
+| 1 MainWindow | C + A | Completed: extracted preview rendering/actions into `PreviewPresenter`, dialog-driven file operations into `FileOperationDialogService`, and current search event/result glue into `MainWindow.Search.cs`; `MainWindow` now delegates those workflows while preserving XAML event names. |
 | 2 Unused ViewModels | B | Completed: finished the ViewModel cutover so `SearchViewModel` owns live search state/results/cancellation, `TransferViewModel` owns transfer operation identity/progress/cancellation, and `ToolbarViewModel` owns toolbar/status snapshots; removed the app-side `SearchHost` duplicate. |
 | 3 ExplorerWorkspace | | |
 | 4 dispatch.rs | B | Completed: split the service dispatcher into `dispatch/{mod,params,handlers,async_ops,tests}.rs`, moved async arm construction behind `async_ops`, kept `dispatch()` re-exported from the module, replaced domain match arms with generated `METHOD_*` constants, and updated schema/parity checks for the split module. |
 | 5 archive.rs | A | Completed: split archive handling into `archive/{mod,path,list,extract,mutate,create,tests}.rs` with public functions re-exported from `archive/mod.rs`; kept `resolve_rar_binary` on the archive API and did not move RAR installer behavior in this pass. |
-| 6 Copy/conflict engines | | |
+| 6 Copy/conflict engines | B | Completed for matching helpers: added `simplefile-core::path_conflict` for no-follow existence, collision keys, same-entry checks, keep-both aliases, and exclusive directory creation; left divergent unique-name loops local. |
 | 7 session.rs | B | Completed: split the session runtime into `session/{mod,jobs,io,tests}.rs`; `serve_connection` now stays in `mod.rs`, pipe framing/outbound batching lives in `io.rs`, spawned service jobs live in `jobs.rs`, session tests moved to `tests.rs`, and shared spawned-job response helpers reduce repeated scheduler/result handling. |
 | 8 Dead AppState | A | Completed: removed dead core `state.rs`, unused helpers/deps, stale `src-tauri` service lookup, and live-code Tauri-era comments. |
 | 9 ISimpleFileIpc / tests | A | Completed: added shared `NullIpc` / `ConfigurableIpc` test doubles, removed the per-file `WorkspaceSettingsIpc` and `StubIpc` full-interface stubs, and moved `FakeExplorerBackend` into its own helper file. |
-| 10 Command routers | | |
+| 10 Command routers | A | Completed: added `CommandAliasCatalog`, routed app/context/overflow aliases through `RunAppCommandAsync`, and added tests for shared alias normalization. |
 | 11 Other splits | | |
-| 12 Tests / dialogs | A | Completed the test-file part: split `DesktopPolishTests.cs` and `ParityFeaturesTests.cs` into type-focused test classes, reused the shared IPC fake from Finding 9, and left dialog/host duplication for options B/C because 12A is the test split. |
+| 12 Tests / dialogs | A + D | Completed the test-file part: split `DesktopPolishTests.cs` and `ParityFeaturesTests.cs` into type-focused test classes, reused the shared IPC fake from Finding 9, replaced reachable job-object flag source checks with compiled assertions, and left dialog/host duplication for options B/C. |
 | 13 Small copy-pastes | | |
 | 14 IPC generated mix | | |
