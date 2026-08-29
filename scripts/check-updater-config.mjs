@@ -54,7 +54,9 @@ for (const snippet of [
 for (const snippet of [
   'RequireUpdaterSignature',
   'sign-update-payload.mjs',
+  'Get-Sha256Hash',
   'Get-FileHash',
+  '[System.Security.Cryptography.SHA256]::Create()',
   'SIMPLEFILE_UPDATER_PUBLIC_KEY',
 ]) {
   if (!releaseScript.includes(snippet)) {

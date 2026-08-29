@@ -152,6 +152,30 @@ function Assert-Payload {
     }
 }
 
+function Get-Sha256Hash {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $fileHashCommand = Get-Command "Get-FileHash" -ErrorAction SilentlyContinue
+    if ($fileHashCommand) {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashBytes = $sha256.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function New-WinUIPayload {
     param(
         [Parameter(Mandatory = $true)][string]$PublishDir,
@@ -356,7 +380,7 @@ $setupSize = 0
 if ($builtSetup) {
     $setupItem = Get-Item -LiteralPath $setupPath
     $setupSize = $setupItem.Length
-    $setupSha256 = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $setupSha256 = Get-Sha256Hash -Path $setupPath
 }
 $signingKey = $env:SIMPLEFILE_SIGNING_PRIVATE_KEY
 $requireUpdaterSignatureValue = if ($RequireUpdaterSignature) { "true" } else { "false" }
