@@ -195,7 +195,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        var action = await ChooseConflictActionAsync(sources, destination);
+        var conflictSession = new TransferConflictSession();
+        var action = await ChooseConflictActionAsync(sources, destination, conflictSession);
         if (action is null)
         {
             return;
@@ -247,7 +248,10 @@ public sealed partial class MainWindow
                 }
                 catch (IpcException exception) when (FileOperationService.IsConflict(exception) && !transferCts.IsCancellationRequested)
                 {
-                    var retryAction = await ChooseConflictActionFromBackendConflictAsync(exception.Message, destination);
+                    var retryAction = await ChooseConflictActionFromBackendConflictAsync(
+                        exception.Message,
+                        destination,
+                        conflictSession);
                     if (retryAction is null)
                     {
                         _transfer?.ClearCurrentOperation();
@@ -275,7 +279,10 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task<string?> ChooseConflictActionAsync(string[] sources, string destination)
+    private async Task<string?> ChooseConflictActionAsync(
+        string[] sources,
+        string destination,
+        TransferConflictSession session)
     {
         if (_workspace is null)
         {
@@ -294,7 +301,7 @@ public sealed partial class MainWindow
             return "error";
         }
 
-        return await ShowTransferConflictDialogAsync(destination, conflicts);
+        return await PromptConflictActionAsync(destination, conflicts, session);
     }
 
     private async Task<IReadOnlyList<string>?> LoadDestinationEntryNamesAsync(string destination)
@@ -329,8 +336,16 @@ public sealed partial class MainWindow
         return null;
     }
 
-    private async Task<string?> ChooseConflictActionFromBackendConflictAsync(string message, string destination)
+    private async Task<string?> ChooseConflictActionFromBackendConflictAsync(
+        string message,
+        string destination,
+        TransferConflictSession session)
     {
+        if (session.TryGetSticky(out var sticky))
+        {
+            return sticky;
+        }
+
         var conflictPath = ConflictPathFromMessage(message);
         var conflictName = string.IsNullOrWhiteSpace(conflictPath)
             ? PathRules.Basename(destination)
@@ -338,7 +353,7 @@ public sealed partial class MainWindow
         IReadOnlyList<string> conflicts = string.IsNullOrWhiteSpace(conflictName)
             ? Array.Empty<string>()
             : [conflictName];
-        return await ShowTransferConflictDialogAsync(destination, conflicts);
+        return await PromptConflictActionAsync(destination, conflicts, session);
     }
 
     private static string ConflictPathFromMessage(string message)
@@ -362,22 +377,34 @@ public sealed partial class MainWindow
         return detail;
     }
 
-    private async Task<string?> ShowTransferConflictDialogAsync(string destination, IReadOnlyList<string> conflicts)
+    private async Task<string?> PromptConflictActionAsync(
+        string destination,
+        IReadOnlyList<string> conflicts,
+        TransferConflictSession session)
     {
+        if (session.TryGetSticky(out var sticky))
+        {
+            return sticky;
+        }
+
         var dialog = new ConflictDialog { XamlRoot = Content.XamlRoot };
         dialog.SetConflict(destination, conflicts);
         var result = await dialog.ShowAsync();
-        if (dialog.Result == ConflictResolution.KeepBoth)
+        string? action = dialog.Result == ConflictResolution.KeepBoth
+            ? "keep-both"
+            : result switch
+            {
+                ContentDialogResult.Primary => "replace",
+                ContentDialogResult.Secondary => "skip",
+                _ => null,
+            };
+        if (action is null)
         {
-            return "keep-both";
+            return null;
         }
 
-        return result switch
-        {
-            ContentDialogResult.Primary => "replace",
-            ContentDialogResult.Secondary => "skip",
-            _ => null,
-        };
+        session.Remember(action, dialog.ApplyToAllChecked);
+        return action;
     }
 
     private async Task CopyOrMoveToOtherPaneAsync(bool move)

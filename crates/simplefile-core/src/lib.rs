@@ -22,6 +22,7 @@ pub mod open_with;
 pub mod path_conflict;
 pub mod preview;
 pub mod rar;
+pub mod recycle_bin;
 pub mod settings_store;
 pub mod smart_folders;
 pub mod tags;

@@ -11,6 +11,12 @@ pub struct FileEntry {
     pub path: String,
     pub is_dir: bool,
     pub is_symlink: bool,
+    /// Windows Hidden attribute, or a leading-dot name.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_hidden: bool,
+    /// Windows System attribute (protected operating-system files).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_system: bool,
     pub size: u64,
     pub modified: String,
     pub extension: String,

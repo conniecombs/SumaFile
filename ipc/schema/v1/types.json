@@ -19,8 +19,8 @@
   "types": {
     "FileEntry": {
       "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["name", "path", "is_dir", "is_symlink", "size", "modified", "extension", "permissions", "symlink_target", "git_status"],
-      "optional": ["permissions", "symlink_target", "git_status"]
+      "fields": ["name", "path", "is_dir", "is_symlink", "is_hidden", "is_system", "size", "modified", "extension", "permissions", "symlink_target", "git_status"],
+      "optional": ["is_hidden", "is_system", "permissions", "symlink_target", "git_status"]
     },
     "DirectoryListing": {
       "source": "crates/simplefile-core/src/models.rs",

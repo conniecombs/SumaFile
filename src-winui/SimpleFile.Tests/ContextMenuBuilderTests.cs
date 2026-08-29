@@ -150,6 +150,21 @@ public class ContextMenuBuilderTests
         Assert.Contains(folder, entry => entry.Id == "ctx-bookmark" && entry.Shortcut == "Ctrl+B");
         Assert.Contains(folder, entry => entry.Id == "ctx-copy-path");
     }
+
+    [Fact]
+    public void ContextMenu_RecycleBinShowsRestoreAndEmpty()
+    {
+        var menu = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            InRecycleBin = true,
+            SelectionCount = 1,
+        });
+        Assert.Contains(menu, entry => entry.Id == "ctx-restore");
+        Assert.Contains(menu, entry => entry.Id == "ctx-empty-recycle-bin");
+        Assert.Contains(menu, entry => entry.Id == "ctx-delete-permanent");
+        Assert.DoesNotContain(menu, entry => entry.Id == "ctx-delete-recycle");
+        Assert.DoesNotContain(menu, entry => entry.Id == "ctx-rename");
+    }
     [Fact]
     public void PaneMoreMenu_UsesPolishedLabelsAndSelectionGating()
     {

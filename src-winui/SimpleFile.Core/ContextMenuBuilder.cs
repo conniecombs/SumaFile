@@ -34,6 +34,7 @@ public sealed class ContextMenuRequest
     public string? SelectedExtension { get; init; }
     public IReadOnlyList<OpenWithApplication> OpenWithApplications { get; init; } = [];
     public IReadOnlyCollection<string> OverflowedToolbarIds { get; init; } = [];
+    public bool InRecycleBin { get; init; }
 }
 
 /// <summary>
@@ -49,6 +50,22 @@ public static class ContextMenuBuilder
         var extractFolder = string.IsNullOrEmpty(request.ArchiveExtractFolderName)
             ? "Extract to Folder"
             : $"Extract to {request.ArchiveExtractFolderName}/";
+
+        if (request.InRecycleBin)
+        {
+            return VisibleEntries(
+            [
+                Item("ctx-restore", "Restore", request.SelectionCount == 0),
+                Item("ctx-open", "Open", request.SelectionCount != 1 || request.SelectedIsDirectory, "Enter"),
+                Item("ctx-copy", "Copy", request.SelectionCount == 0, "Ctrl+C"),
+                Item("ctx-copy-path", "Copy original path", request.SelectionCount == 0, "Ctrl+Shift+C"),
+                Divider(),
+                Item("ctx-delete-permanent", "Delete Permanently", request.SelectionCount == 0, "Shift+Delete"),
+                Item("ctx-empty-recycle-bin", "Empty Recycle Bin"),
+                Divider(),
+                Item("ctx-info", "Properties", request.SelectionCount != 1, "Alt+Enter"),
+            ]);
+        }
 
         var entries = new List<ContextMenuEntry>
         {
@@ -111,6 +128,12 @@ public static class ContextMenuBuilder
         entries.AddRange(BuildToolbarOverflowItems(request));
         if (entries.Count > 0)
         {
+            entries.Add(Divider());
+        }
+
+        if (request.InRecycleBin)
+        {
+            entries.Add(Item("ctx-empty-recycle-bin", "Empty Recycle Bin"));
             entries.Add(Divider());
         }
 

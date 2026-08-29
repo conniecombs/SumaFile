@@ -27,6 +27,9 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "copy-path");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "bookmark-folder");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-back");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-recycle-bin");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "restore-selected");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "empty-recycle-bin");
         Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
         Assert.Equal("Alt+Enter", AppCommandCatalog.Find("properties")?.Shortcut);
         Assert.Equal("Disk cleanup", AppCommandCatalog.Find("disk-cleanup")?.Label);
@@ -50,6 +53,8 @@ public class AppCommandCatalogTests
     [InlineData("ctx-open-tab", "open-selected-tab")]
     [InlineData("ctx-open-other-pane", "open-other-pane")]
     [InlineData("overflow-filter", "filter")]
+    [InlineData("ctx-restore", "restore-selected")]
+    [InlineData("ctx-empty-recycle-bin", "empty-recycle-bin")]
     [InlineData("view:details", "view:details")]
     public void CommandAliases_NormalizeSharedRouterIds(string id, string expected)
     {

@@ -8,6 +8,13 @@ namespace SimpleFile.Core;
 /// </summary>
 public static class PathRules
 {
+    public const string RecycleBinPath = "recycle-bin:";
+
+    public static bool IsRecycleBinPath(string? path)
+    {
+        return string.Equals((path ?? "").Trim(), RecycleBinPath, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static bool IsWindowsRoot(string path)
     {
         var trimmed = path.Trim();
@@ -20,7 +27,7 @@ public static class PathRules
     public static bool IsRootPath(string path)
     {
         var trimmed = path.Trim();
-        return trimmed == "/" || IsWindowsRoot(trimmed);
+        return trimmed == "/" || IsWindowsRoot(trimmed) || IsRecycleBinPath(trimmed);
     }
 
     public static char PathSeparator(string path)

@@ -28,6 +28,9 @@ public sealed partial class SearchViewModel : ObservableObject
     [ObservableProperty]
     private PaneId _pane = PaneId.Primary;
 
+    [ObservableProperty]
+    private bool _contentSearch;
+
     private string? _activeSearchId;
     private string? _searchRoot;
     private CancellationTokenSource? _searchCts;
@@ -125,11 +128,11 @@ public sealed partial class SearchViewModel : ObservableObject
             Query = Query.Trim(),
             SearchPath = root,
             CaseSensitive = false,
-            IncludeHidden = false,
+            IncludeHidden = workspace.ShowHiddenFiles,
             MaxResults = 1000,
             MaxDepth = 10,
             SearchId = searchId,
-            ContentSearch = false,
+            ContentSearch = ContentSearch,
         };
 
         await RunAsync(

@@ -84,6 +84,17 @@ pub fn delete_entry(path: &str) -> Result<(), String> {
         return crate::archive::delete_archive_entry(path);
     }
 
+    let in_recycle_bin = path.contains("$Recycle.Bin") || path.contains("$recycle.bin");
+    let recycle_data = Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.len() >= 2 && name.as_bytes()[1].eq_ignore_ascii_case(&b'R'));
+    if in_recycle_bin
+        && (crate::recycle_bin::paired_info_path(Path::new(path)).exists() || recycle_data)
+    {
+        return crate::recycle_bin::delete_recycle_item(path);
+    }
+
     let path_buf = validate_path_no_follow(path)?;
     let lstat = fs::symlink_metadata(&path_buf).map_err(|e| format!("Failed to stat path: {e}"))?;
     if lstat.file_type().is_symlink() {
@@ -560,6 +571,10 @@ pub fn move_entry_resolved(
 // ============================================================================
 
 pub fn list_subdirectories(path: &str) -> Result<Vec<TreeNode>, String> {
+    if crate::recycle_bin::is_recycle_bin_path(path) {
+        return Ok(Vec::new());
+    }
+
     let path_buf = validate_existing_path_no_resolve(path)?;
     if !path_buf.is_dir() {
         return Err(format!("Path is not a directory: {path}"));
@@ -598,6 +613,10 @@ pub fn list_subdirectories(path: &str) -> Result<Vec<TreeNode>, String> {
 }
 
 pub fn get_entry_info_simple(path: &str) -> Result<FileEntry, String> {
+    if crate::recycle_bin::is_recycle_bin_path(path) {
+        return Ok(crate::recycle_bin::recycle_bin_entry());
+    }
+
     let path_buf = validate_path_no_follow(path)?;
     get_file_entry(&path_buf).ok_or_else(|| "Failed to get file info".to_string())
 }

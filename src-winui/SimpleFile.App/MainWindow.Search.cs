@@ -41,6 +41,19 @@ public sealed partial class MainWindow
         ShowMessage(e.Title, e.Message, InfoBarSeverity.Error);
     }
 
+    private void OnContentSearchToggle(object sender, RoutedEventArgs e)
+    {
+        if (_search is null)
+        {
+            return;
+        }
+
+        _search.ContentSearch = ContentSearchButton.IsChecked == true;
+        SetStatusText(_search.ContentSearch
+            ? "Search will include file contents"
+            : "Search filenames only");
+    }
+
     private Task StartSearchAsync(PaneId? requestedPane = null)
     {
         if (_search is null)

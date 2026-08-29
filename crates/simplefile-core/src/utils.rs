@@ -29,6 +29,31 @@ fn format_modified(meta: &fs::Metadata) -> String {
         .unwrap_or_else(|_| String::from("-"))
 }
 
+pub fn name_looks_hidden(name: &str) -> bool {
+    name.starts_with('.') && name != "." && name != ".."
+}
+
+pub fn hidden_system_from_attrs(name: &str, attrs: u32) -> (bool, bool) {
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x0000_0002;
+    const FILE_ATTRIBUTE_SYSTEM: u32 = 0x0000_0004;
+    let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN) != 0 || name_looks_hidden(name);
+    let system = (attrs & FILE_ATTRIBUTE_SYSTEM) != 0;
+    (hidden, system)
+}
+
+pub fn hidden_system_from_metadata(name: &str, meta: &fs::Metadata) -> (bool, bool) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        hidden_system_from_attrs(name, meta.file_attributes())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = meta;
+        (name_looks_hidden(name), false)
+    }
+}
+
 fn build_file_entry(
     path: &Path,
     is_dir: bool,
@@ -36,6 +61,7 @@ fn build_file_entry(
     size: u64,
     modified: String,
     symlink_target: Option<String>,
+    meta: Option<&fs::Metadata>,
 ) -> Option<FileEntry> {
     let name = path.file_name()?.to_string_lossy().to_string();
     let file_path = path.to_string_lossy().to_string();
@@ -46,12 +72,17 @@ fn build_file_entry(
             .map(|e| e.to_string_lossy().to_string())
             .unwrap_or_default()
     };
+    let (is_hidden, is_system) = meta
+        .map(|metadata| hidden_system_from_metadata(&name, metadata))
+        .unwrap_or_else(|| (name_looks_hidden(&name), false));
 
     Some(FileEntry {
         name,
         path: file_path,
         is_dir,
         is_symlink,
+        is_hidden,
+        is_system,
         size,
         modified,
         extension,
@@ -98,7 +129,15 @@ pub fn get_file_entry(path: &PathBuf) -> Option<FileEntry> {
         None
     };
 
-    build_file_entry(path, is_dir, is_symlink, size, modified, symlink_target)
+    build_file_entry(
+        path,
+        is_dir,
+        is_symlink,
+        size,
+        modified,
+        symlink_target,
+        Some(&symlink_meta),
+    )
 }
 
 /// Build a `FileEntry` from a `DirEntry` without re-opening the path for normal
@@ -134,6 +173,7 @@ pub fn get_file_entry_from_dir_entry(entry: &fs::DirEntry) -> Option<FileEntry> 
         meta.len(),
         format_modified(&meta),
         symlink_target,
+        Some(&meta),
     )
 }
 

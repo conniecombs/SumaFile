@@ -21,6 +21,7 @@ public sealed class ExplorerWorkspace
         ("Downloads", "\uE896", "navigateDownloads"),
         ("Documents", "\uE8A5", "navigateDocuments"),
         ("Pictures", "\uEB9F", "navigatePictures"),
+        ("Recycle Bin", "\uE74D", "navigateRecycleBin"),
     ];
 
     private static readonly Dictionary<string, string> SpecialFolders = new(StringComparer.Ordinal)
@@ -697,6 +698,11 @@ public sealed class ExplorerWorkspace
             return NavigatePaneAsync(pane, HomePath, HistoryMode.Push, activate: DualPaneEnabled, cancellationToken);
         }
 
+        if (command == "navigateRecycleBin")
+        {
+            return NavigatePaneAsync(pane, PathRules.RecycleBinPath, HistoryMode.Push, activate: DualPaneEnabled, cancellationToken);
+        }
+
         if (SpecialFolders.TryGetValue(command, out var folder))
         {
             return NavigatePaneAsync(
@@ -737,6 +743,11 @@ public sealed class ExplorerWorkspace
         FileOpenUnsupported = false;
         var target = Normalize(pane);
         var shouldNavigate = isDirectory;
+        if (PathRules.IsRecycleBinPath(path))
+        {
+            shouldNavigate = true;
+        }
+
         var drive = DrivePresentation.FindDriveForPath(path, _drives);
         if (drive is not null && PathRules.PathsEqual(drive.Path, path))
         {
@@ -1315,6 +1326,21 @@ public sealed class ExplorerWorkspace
     public async Task TrashSelectedAsync(string[] selectedPaths, CancellationToken cancellationToken = default)
     {
         await RequireFileOps().TrashAsync(selectedPaths, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken cancellationToken = default)
+    {
+        var restored = await RequireFileOps().RestoreRecycleBinAsync(paths, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        return restored;
+    }
+
+    public async Task EmptyRecycleBinAsync(CancellationToken cancellationToken = default)
+    {
+        await RequireFileOps().EmptyRecycleBinAsync(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         await RefreshAsync(cancellationToken).ConfigureAwait(false);
     }

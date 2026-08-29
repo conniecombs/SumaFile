@@ -26,4 +26,14 @@ public class BreadcrumbBuilderTests
     {
         Assert.Empty(BreadcrumbBuilder.FromPath(""));
     }
+
+    [Fact]
+    public void FromPath_RecycleBinIsSingleSegment()
+    {
+        var segments = BreadcrumbBuilder.FromPath(PathRules.RecycleBinPath);
+        var segment = Assert.Single(segments);
+        Assert.Equal("Recycle Bin", segment.Label);
+        Assert.Equal(PathRules.RecycleBinPath, segment.Path);
+        Assert.True(segment.Current);
+    }
 }

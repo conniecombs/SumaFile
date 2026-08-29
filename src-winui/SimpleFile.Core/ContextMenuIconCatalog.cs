@@ -41,6 +41,8 @@ public static class ContextMenuIconCatalog
     {
         return commandId switch
         {
+            "ctx-restore" => Import,
+            "ctx-empty-recycle-bin" => EraseTool,
             "ctx-open" => OpenFile,
             "ctx-open-tab" => NewTab,
             "ctx-open-other-pane" => OpenPane,

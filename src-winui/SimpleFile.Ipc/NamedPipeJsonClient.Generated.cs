@@ -52,6 +52,12 @@ public sealed partial class NamedPipeJsonClient
     public Task MoveToTrashAsync(string[] paths, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.MoveToTrashMethod, new { paths }, ct);
 
+    public Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default)
+        => InvokeAsync<string[]>(Protocol.RestoreRecycleBinMethod, new { paths }, ct);
+
+    public Task EmptyRecycleBinAsync(CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.EmptyRecycleBinMethod, new { }, ct);
+
     public Task<string> RenameEntryAsync(string path, string newName, CancellationToken ct = default)
         => InvokeAsync<string>(Protocol.RenameEntryMethod, new { path, newName }, ct);
 

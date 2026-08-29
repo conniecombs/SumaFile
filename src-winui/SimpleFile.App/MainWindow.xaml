@@ -621,7 +621,7 @@
                                 MaxWidth="480">
                                 <TextBox
                                     x:Name="SearchBox"
-                                    Padding="30,4,28,4"
+                                    Padding="30,4,56,4"
                                     VerticalAlignment="Center"
                                     AutomationProperties.Name="Search active pane"
                                     CornerRadius="4"
@@ -643,24 +643,43 @@
                                         FontSize="12"
                                         Glyph="&#xE721;" />
                                 </Button>
-                                <Button
-                                    x:Name="SearchCancelButton"
-                                    Width="28"
-                                    Height="28"
+                                <StackPanel
                                     Margin="0,0,2,0"
-                                    Padding="0"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center"
-                                    AutomationProperties.Name="Cancel search"
-                                    Click="OnCancelSearchClick"
-                                    IsEnabled="False"
-                                    Style="{StaticResource SfIconButtonStyle}"
-                                    ToolTipService.ToolTip="Cancel search">
-                                    <FontIcon
-                                        FontFamily="{StaticResource SfIconFont}"
-                                        FontSize="11"
-                                        Glyph="&#xE711;" />
-                                </Button>
+                                    Orientation="Horizontal">
+                                    <ToggleButton
+                                        x:Name="ContentSearchButton"
+                                        Width="28"
+                                        Height="28"
+                                        MinWidth="28"
+                                        Padding="0"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        AutomationProperties.Name="Search file contents"
+                                        Click="OnContentSearchToggle"
+                                        ToolTipService.ToolTip="Search file contents">
+                                        <FontIcon
+                                            FontFamily="{StaticResource SfIconFont}"
+                                            FontSize="12"
+                                            Glyph="&#xE8A5;" />
+                                    </ToggleButton>
+                                    <Button
+                                        x:Name="SearchCancelButton"
+                                        Width="28"
+                                        Height="28"
+                                        Padding="0"
+                                        AutomationProperties.Name="Cancel search"
+                                        Click="OnCancelSearchClick"
+                                        IsEnabled="False"
+                                        Style="{StaticResource SfIconButtonStyle}"
+                                        ToolTipService.ToolTip="Cancel search">
+                                        <FontIcon
+                                            FontFamily="{StaticResource SfIconFont}"
+                                            FontSize="11"
+                                            Glyph="&#xE711;" />
+                                    </Button>
+                                </StackPanel>
                             </Grid>
                             <StackPanel
                                 x:Name="PrimaryActionsHost"
@@ -920,7 +939,8 @@
                                             PlaceholderText="Enter path..."
                                             Visibility="Collapsed"
                                             KeyDown="OnPrimaryPathKeyDown"
-                                            LostFocus="OnPrimaryPathLostFocus" />
+                                            LostFocus="OnPrimaryPathLostFocus"
+                                            TextChanged="OnPrimaryPathTextChanged" />
                                     </Grid>
                                     <Button
                                         x:Name="PrimaryEditPathButton"
@@ -1135,7 +1155,8 @@
                                             PlaceholderText="Enter path..."
                                             Visibility="Collapsed"
                                             KeyDown="OnSecondaryPathKeyDown"
-                                            LostFocus="OnSecondaryPathLostFocus" />
+                                            LostFocus="OnSecondaryPathLostFocus"
+                                            TextChanged="OnSecondaryPathTextChanged" />
                                     </Grid>
                                     <Button
                                         x:Name="SecondaryEditPathButton"

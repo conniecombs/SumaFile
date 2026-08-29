@@ -491,6 +491,13 @@ fn leftover_domain_methods_are_wired() {
         assert_domain_method_is_wired(&mut state, method, id, json!({}));
     }
 
+    assert_domain_method_is_wired(
+        &mut state,
+        "restore_recycle_bin",
+        58,
+        json!({ "paths": [] }),
+    );
+
     let _ = fs::remove_file(db_path);
 }
 

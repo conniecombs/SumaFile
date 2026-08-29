@@ -13,6 +13,7 @@ public class PathRulesTests
     [InlineData("C:/", true)]
     [InlineData(@"C:\Users", false)]
     [InlineData("/", true)]
+    [InlineData("recycle-bin:", true)]
     [InlineData("/home", false)]
     public void IsRootPath_MatchesWindowsPathContract(string path, bool expected)
     {
@@ -35,6 +36,14 @@ public class PathRulesTests
     {
         Assert.Equal(@"C:\Users\Desktop", PathRules.JoinPath(@"C:\Users", "Desktop"));
         Assert.Equal(@"C:\Users\Desktop", PathRules.JoinPath(@"C:\Users\", "Desktop"));
+    }
+
+    [Fact]
+    public void RecycleBinPath_IsRootAndHasNoParent()
+    {
+        Assert.True(PathRules.IsRecycleBinPath("recycle-bin:"));
+        Assert.True(PathRules.IsRootPath(PathRules.RecycleBinPath));
+        Assert.Null(PathRules.GetParentPath(PathRules.RecycleBinPath));
     }
 
     [Fact]

@@ -24,6 +24,9 @@ public static class AppCommandCatalog
     public static readonly IReadOnlyList<AppCommand> All =
     [
         new("go-home", "Go home", "Navigation", "Alt+Home"),
+        new("go-recycle-bin", "Go to Recycle Bin", "Navigation"),
+        new("restore-selected", "Restore from Recycle Bin", "File"),
+        new("empty-recycle-bin", "Empty Recycle Bin", "File"),
         new("go-back", "Go back", "Navigation", "Alt+Left"),
         new("go-forward", "Go forward", "Navigation", "Alt+Right"),
         new("go-up", "Go up", "Navigation", "Alt+Up"),

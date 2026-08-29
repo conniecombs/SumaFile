@@ -26,6 +26,7 @@ public sealed class FileRow
     public string TagColor { get; set; } = "";
     public string TagName { get; set; } = "";
     public PaneId Pane { get; set; } = PaneId.Primary;
+    public bool IsHidden { get; set; }
     public string AutomationName => IsDir ? $"Folder {Name}" : $"File {Name}";
 
     public string ColumnText(string columnId)
@@ -69,6 +70,7 @@ public sealed class FileRow
             TagColor = tag?.Color ?? "",
             TagName = tag?.Name ?? "",
             Pane = pane,
+            IsHidden = EntryPresentation.IsHiddenFromUser(entry),
         };
     }
 }
@@ -147,6 +149,7 @@ public sealed class QuickAccessRow
                 "navigateDocuments" => paths.Documents,
                 "navigateDownloads" => paths.Downloads,
                 "navigatePictures" => paths.Pictures,
+                "navigateRecycleBin" => PathRules.RecycleBinPath,
                 _ => homePath,
             };
         }
@@ -161,6 +164,7 @@ public sealed class QuickAccessRow
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                     "Downloads"),
                 "navigatePictures" => Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+                "navigateRecycleBin" => PathRules.RecycleBinPath,
                 _ => homePath,
             };
         }

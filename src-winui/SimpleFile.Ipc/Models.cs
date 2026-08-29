@@ -16,6 +16,12 @@ public sealed class FileEntry
     [JsonPropertyName("is_symlink")]
     public bool IsSymlink { get; set; }
 
+    [JsonPropertyName("is_hidden")]
+    public bool IsHidden { get; set; }
+
+    [JsonPropertyName("is_system")]
+    public bool IsSystem { get; set; }
+
     [JsonPropertyName("size")]
     public ulong Size { get; set; }
 

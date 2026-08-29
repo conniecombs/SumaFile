@@ -46,6 +46,16 @@ public sealed class FileOperationService
         await _ipc.MoveToTrashAsync(paths, ct).ConfigureAwait(false);
     }
 
+    public Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default)
+    {
+        return _ipc.RestoreRecycleBinAsync(paths, ct);
+    }
+
+    public Task EmptyRecycleBinAsync(CancellationToken ct = default)
+    {
+        return _ipc.EmptyRecycleBinAsync(ct);
+    }
+
     // Rename a file or directory. Returns the new full path.
     public async Task<string> RenameAsync(string path, string newName, CancellationToken ct = default)
     {

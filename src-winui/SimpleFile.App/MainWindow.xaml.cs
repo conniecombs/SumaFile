@@ -5,6 +5,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
@@ -55,6 +56,11 @@ public sealed partial class MainWindow : Window
     private string? _columnEnrichmentSignature;
     private CancellationTokenSource? _columnEnrichmentCts;
     private int _columnEnrichmentToken;
+    private bool _acceptingPathSuggestion;
+    private int _pathLostFocusToken;
+    private Flyout? _pathSuggestFlyout;
+    private ListView? _pathSuggestList;
+    private PaneId _pathSuggestPane;
 
     public ObservableCollection<FileRow> PrimaryFiles { get; } = [];
     public ObservableCollection<FileRow> SecondaryFiles { get; } = [];
@@ -1278,29 +1284,29 @@ public sealed partial class MainWindow : Window
             _search?.IsActiveForPane(PaneId.Secondary) == true);
     }
 
-    private static void SetEmptyState(FrameworkElement host, TextBlock title, TextBlock hint, int count, ExplorerPane pane, bool searching)
+    private void SetEmptyState(FrameworkElement host, TextBlock title, TextBlock hint, int count, ExplorerPane pane, bool searching)
     {
-        if (count > 0)
+        var error = _workspace is not null && pane.Id == _workspace.ActivePane
+            ? _workspace.ErrorMessage
+            : null;
+        var state = EmptyPaneState.Resolve(
+            count,
+            pane.Entries.Count,
+            pane.ListingInProgress,
+            searching,
+            error,
+            _workspace?.FilterQueryFor(pane.Id),
+            _workspace?.ShowHiddenFiles ?? false,
+            pane.Path);
+        host.Visibility = state.Visible ? Visibility.Visible : Visibility.Collapsed;
+        if (!state.Visible)
         {
-            host.Visibility = Visibility.Collapsed;
             return;
         }
 
-        title.Text = pane.ListingInProgress
-            ? "Loading…"
-            : searching
-                ? "No search results"
-                : string.IsNullOrEmpty(pane.Path)
-                    ? "Select a folder"
-                    : "This folder is empty";
-        hint.Text = pane.ListingInProgress
-            ? "Please wait while SumaFile reads this folder."
-            : searching
-                ? "Try a different search or clear the search box."
-                : string.IsNullOrEmpty(pane.Path)
-                    ? "Choose a drive or folder from the side menu."
-                    : "Drop files here, or press Ctrl+Shift+N to create a folder";
-        host.Visibility = Visibility.Visible;
+        title.Text = state.Title;
+        hint.Text = state.Hint;
+        hint.Visibility = string.IsNullOrEmpty(state.Hint) ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> source)
@@ -1317,31 +1323,7 @@ public sealed partial class MainWindow : Window
         IReadOnlyList<T> source,
         Func<T, T, bool> same)
     {
-        if (target.Count == source.Count)
-        {
-            var unchanged = true;
-            for (var index = 0; index < source.Count; index++)
-            {
-                if (!same(target[index], source[index]))
-                {
-                    unchanged = false;
-                    break;
-                }
-            }
-
-            if (unchanged)
-            {
-                return false;
-            }
-        }
-
-        target.Clear();
-        foreach (var item in source)
-        {
-            target.Add(item);
-        }
-
-        return true;
+        return ListReplace.Apply(target, source, same);
     }
 
     private static bool SameFileRow(FileRow left, FileRow right) =>
@@ -1357,6 +1339,7 @@ public sealed partial class MainWindow : Window
         && left.ExtensionText == right.ExtensionText
         && left.GitText == right.GitText
         && left.SymlinkText == right.SymlinkText
+        && left.IsHidden == right.IsHidden
         && left.PathText == right.PathText
         && left.ParentText == right.ParentText
         && left.TagColor == right.TagColor
@@ -1456,6 +1439,34 @@ public sealed partial class MainWindow : Window
     {
         PrimaryPaneRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnPrimaryPanePressed), true);
         SecondaryPaneRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnSecondaryPanePressed), true);
+        PrimaryFileList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnPrimaryFileWheelChanged), true);
+        SecondaryFileList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnSecondaryFileWheelChanged), true);
+    }
+
+    private void OnPrimaryFileWheelChanged(object sender, PointerRoutedEventArgs e) =>
+        HandleFileListWheel(e, PaneId.Primary);
+
+    private void OnSecondaryFileWheelChanged(object sender, PointerRoutedEventArgs e) =>
+        HandleFileListWheel(e, PaneId.Secondary);
+
+    private void HandleFileListWheel(PointerRoutedEventArgs e, PaneId pane)
+    {
+        if (_workspace is null || !e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control))
+        {
+            return;
+        }
+
+        var delta = e.GetCurrentPoint(null).Properties.MouseWheelDelta;
+        if (delta == 0)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        var size = _workspace.NudgeFileListIconSize(pane, delta > 0 ? 1 : -1);
+        ApplyFileListViewPresentation();
+        QueueViewIconSizeSave();
+        SetStatusText($"Icon size {size} px");
     }
 
     private void OnPrimaryPanePressed(object sender, PointerRoutedEventArgs e) => _workspace?.ActivatePane(PaneId.Primary);
@@ -1636,20 +1647,147 @@ public sealed partial class MainWindow : Window
     private async void OnSecondaryPathKeyDown(object sender, KeyRoutedEventArgs e) =>
         await RunUiActionAsync("Navigation", () => HandlePathKey(e, PaneId.Secondary));
 
-    private void OnPrimaryPathLostFocus(object sender, RoutedEventArgs e)
+    private void OnPrimaryPathLostFocus(object sender, RoutedEventArgs e) =>
+        QueueEndPathEdit(PaneId.Primary);
+
+    private void OnSecondaryPathLostFocus(object sender, RoutedEventArgs e) =>
+        QueueEndPathEdit(PaneId.Secondary);
+
+    private void OnPrimaryPathTextChanged(object sender, TextChangedEventArgs e) =>
+        _ = UpdatePathSuggestionsAsync(PaneId.Primary);
+
+    private void OnSecondaryPathTextChanged(object sender, TextChangedEventArgs e) =>
+        _ = UpdatePathSuggestionsAsync(PaneId.Secondary);
+
+    private void QueueEndPathEdit(PaneId pane)
     {
-        if (_editingPrimaryPath)
+        var token = Interlocked.Increment(ref _pathLostFocusToken);
+        DispatcherQueue.TryEnqueue(() =>
         {
-            EndPathEdit(PaneId.Primary, reset: true);
-        }
+            if (token != Volatile.Read(ref _pathLostFocusToken) || _acceptingPathSuggestion)
+            {
+                return;
+            }
+
+            var editing = pane == PaneId.Secondary ? _editingSecondaryPath : _editingPrimaryPath;
+            if (editing)
+            {
+                HidePathSuggestions();
+                EndPathEdit(pane, reset: true);
+            }
+        });
     }
 
-    private void OnSecondaryPathLostFocus(object sender, RoutedEventArgs e)
+    private async Task UpdatePathSuggestionsAsync(PaneId pane)
     {
-        if (_editingSecondaryPath)
+        if (_workspace is null)
         {
-            EndPathEdit(PaneId.Secondary, reset: true);
+            return;
         }
+
+        var editing = pane == PaneId.Secondary ? _editingSecondaryPath : _editingPrimaryPath;
+        var input = pane == PaneId.Secondary ? SecondaryPathInput : PrimaryPathInput;
+        if (!editing || input.Visibility != Visibility.Visible)
+        {
+            HidePathSuggestions();
+            return;
+        }
+
+        if (!PathCompletion.TrySplit(input.Text, out var directory, out var prefix))
+        {
+            HidePathSuggestions();
+            return;
+        }
+
+        IEnumerable<string> candidates;
+        var paneState = _workspace.Pane(pane);
+        if (PathRules.PathsEqual(directory, paneState.Path))
+        {
+            candidates = paneState.Entries
+                .Where(entry => entry.IsDir)
+                .Select(entry => entry.Path);
+        }
+        else if (_workspace.FileOps is not null)
+        {
+            try
+            {
+                var nodes = await _workspace.FileOps.ListSubdirectoriesAsync(directory);
+                candidates = nodes.Select(node => node.Path);
+            }
+            catch
+            {
+                HidePathSuggestions();
+                return;
+            }
+        }
+        else
+        {
+            HidePathSuggestions();
+            return;
+        }
+
+        var suggestions = PathCompletion.Suggest(candidates, prefix);
+        if (suggestions.Count == 0)
+        {
+            HidePathSuggestions();
+            return;
+        }
+
+        ShowPathSuggestions(pane, input, suggestions);
+    }
+
+    private void ShowPathSuggestions(PaneId pane, FrameworkElement anchor, IReadOnlyList<string> suggestions)
+    {
+        EnsurePathSuggestUi();
+        _pathSuggestPane = pane;
+        _pathSuggestList!.ItemsSource = suggestions;
+        _pathSuggestFlyout!.ShowAt(anchor);
+    }
+
+    private void HidePathSuggestions()
+    {
+        _pathSuggestFlyout?.Hide();
+    }
+
+    private void EnsurePathSuggestUi()
+    {
+        if (_pathSuggestFlyout is not null)
+        {
+            return;
+        }
+
+        _pathSuggestList = new ListView
+        {
+            MinWidth = 360,
+            MaxHeight = 240,
+            IsItemClickEnabled = true,
+            SelectionMode = ListViewSelectionMode.Single,
+        };
+        _pathSuggestList.ItemClick += OnPathSuggestClick;
+        _pathSuggestFlyout = new Flyout
+        {
+            Content = _pathSuggestList,
+            Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft,
+        };
+    }
+
+    private void OnPathSuggestClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not string path || _workspace is null)
+        {
+            return;
+        }
+
+        _acceptingPathSuggestion = true;
+        Interlocked.Increment(ref _pathLostFocusToken);
+        var pane = _pathSuggestPane;
+        var input = pane == PaneId.Secondary ? SecondaryPathInput : PrimaryPathInput;
+        var filled = path.TrimEnd('\\', '/') + PathRules.PathSeparator(path);
+        input.Text = filled;
+        input.SelectionStart = filled.Length;
+        HidePathSuggestions();
+        input.Focus(FocusState.Programmatic);
+        _acceptingPathSuggestion = false;
     }
 
     private async Task HandlePathKey(KeyRoutedEventArgs e, PaneId pane)
@@ -1657,6 +1795,7 @@ public sealed partial class MainWindow : Window
         if (e.Key == VirtualKey.Escape)
         {
             e.Handled = true;
+            HidePathSuggestions();
             EndPathEdit(pane, reset: true);
             return;
         }
@@ -1674,6 +1813,7 @@ public sealed partial class MainWindow : Window
         }
 
         e.Handled = true;
+        HidePathSuggestions();
         EndPathEdit(pane, reset: false);
         await _workspace.NavigatePaneAsync(pane, path);
     }
@@ -1800,6 +1940,12 @@ public sealed partial class MainWindow : Window
         if (_workspace is not null && list.SelectedItem is FileRow row)
         {
             await SaveViewIconSizeNowAsync();
+            if (PathRules.IsRecycleBinPath(_workspace.Pane(pane).Path) && row.IsDir)
+            {
+                await RestoreSelectedAsync();
+                return;
+            }
+
             await _workspace.OpenEntryAsync(
                 new FileEntry { Name = row.Name, Path = row.Path, IsDir = row.IsDir },
                 pane);
@@ -3334,6 +3480,7 @@ public sealed partial class MainWindow : Window
                 ? _search.Root
                 : workspace.Active.Path,
             IncludeHidden = workspace.Settings.ShowHidden,
+            ContentSearch = _search?.ContentSearch == true,
             SearchId = $"smart_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
         };
         if (!ReferenceEquals(_workspace, workspace))

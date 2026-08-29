@@ -61,9 +61,17 @@ public class ViewModelCutoverTests
         Assert.Equal(["final-a.txt", "final-b.txt"], viewModel.Results.Select(result => result.Name));
         Assert.Equal("final", ipc.LastSearchOptions?.Query);
         Assert.Equal(@"C:\Users\test", ipc.LastSearchOptions?.SearchPath);
+        Assert.False(ipc.LastSearchOptions?.IncludeHidden);
+        Assert.False(ipc.LastSearchOptions?.ContentSearch);
         Assert.Equal("Search complete: 2 result(s)", viewModel.StatusText);
         Assert.Contains(1, resultCounts);
         Assert.Contains(2, resultCounts);
+
+        workspace.SetShowHidden(true);
+        viewModel.ContentSearch = true;
+        await viewModel.StartAsync(PaneId.Primary, action => action());
+        Assert.True(ipc.LastSearchOptions?.IncludeHidden);
+        Assert.True(ipc.LastSearchOptions?.ContentSearch);
     }
 
     [Fact]

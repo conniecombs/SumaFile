@@ -76,7 +76,7 @@ If Windows File Explorer feels limited for power workflows — dual panes, tabs 
 - **Per-pane tabs** — each pane keeps its own tab set, active tab, and navigation state
 - **Breadcrumb bar** — jump to any parent segment of the current path
 - **Tree view sidebar** — hierarchical folder navigation with optional auto-collapse
-- **Editable path bar** — click to type a path, with path autocomplete
+- **Editable path bar** — click to type a path; matching folders are suggested as you type
 - **Quick Access & bookmarks** — pin folders you use constantly
 - **Recent locations** — return to places you visited recently
 - **Back / forward history** — per-pane history via `Alt+Left` / `Alt+Right`
@@ -109,6 +109,7 @@ If Windows File Explorer feels limited for power workflows — dual panes, tabs 
 
 ### Windows drives & network
 
+- **Recycle Bin** — browse deleted items, restore them, or empty the bin
 - Native drive list with volume labels, drive types, and free-space indicators
 - Mapped network share names with offline / stale status detection
 - Drive refresh and reconnect flow when a share is unavailable
@@ -118,7 +119,7 @@ If Windows File Explorer feels limited for power workflows — dual panes, tabs 
 
 - **Quick filter** — instant filename filter in the current directory
 - **Recursive search** through subfolders
-- **Content search** inside file contents
+- **Content search** inside file contents (toggle on the search box)
 - Filters for size, date, depth, and hidden files
 - Cancellable, batched results so large trees stay usable
 - **Smart folders** — save search criteria as reusable virtual folders
@@ -156,7 +157,7 @@ If Windows File Explorer feels limited for power workflows — dual panes, tabs 
 - Configurable list columns (Size, Items, Modified, Type) with Explorer-style resize handles
 - List and grid views with adjustable default icon size
 - Dark and light themes
-- Show/hide hidden files
+- Show/hide Windows hidden and system files (`Ctrl+H`)
 - Optional folder size calculation and Git status in the list
 - Workspace layout persistence (panes, tabs, view mode, and related UI state)
 
@@ -233,13 +234,13 @@ After the first manual install, **Settings → Updates** can check for a newer v
 
 ## Keyboard Shortcuts
 
-Defaults are remappable under **Settings → Shortcuts**. Press **`F1`** (or **`Ctrl+?`**) inside the app for the live help sheet.
+Press **`F1`** (or **`Ctrl+?`**) inside the app, or open **Settings → Shortcuts**, for the live shortcut list.
 
 ### Navigation
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+L` / `Alt+D` | Focus path bar |
+| `Ctrl+L` / `Alt+D` | Focus path bar (folder suggestions while typing) |
 | `Enter` (in path bar) | Go to entered path |
 | `Alt+Up` / `Backspace` | Parent folder |
 | `Alt+Left` / `Alt+Right` | Back / forward |
@@ -254,6 +255,8 @@ Defaults are remappable under **Settings → Shortcuts**. Press **`F1`** (or **`
 | Shortcut | Action |
 | --- | --- |
 | `Enter` | Open selected item |
+| `Ctrl+Enter` | Open folder in new tab |
+| `Alt+Enter` | Properties |
 | `F2` | Rename |
 | `Delete` | Move to Recycle Bin |
 | `Shift+Delete` | Permanent delete |
@@ -273,6 +276,7 @@ Defaults are remappable under **Settings → Shortcuts**. Press **`F1`** (or **`
 | `Ctrl+T` | New tab (active pane) |
 | `Ctrl+W` | Close active tab |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+1`–`Ctrl+9` | Switch to tab (9 is last) |
 | `F6` | Toggle dual pane |
 | `Tab` | Switch active pane (when dual pane is on) |
 | `Alt+1` / `Alt+2` | Focus left / right pane |
@@ -284,7 +288,10 @@ Defaults are remappable under **Settings → Shortcuts**. Press **`F1`** (or **`
 | Shortcut | Action |
 | --- | --- |
 | `Space` | Quick Look |
-| `Ctrl+F` | Focus search / filter |
+| `Ctrl+H` | Show or hide hidden files |
+| `Ctrl+B` | Bookmark current folder |
+| `Ctrl+Mouse wheel` | Change icon size |
+| `Ctrl+F` / `F3` | Focus search |
 | `Ctrl+Shift+P` | Command palette |
 | `F4` | Open terminal here |
 | `F1` / `Ctrl+?` | Keyboard shortcuts help |
@@ -298,11 +305,10 @@ Settings are organized into searchable sections:
 
 | Section | What it controls |
 | --- | --- |
-| **Appearance** | Dark/light theme, default list or grid, icon size |
-| **File List** | Visible columns, hidden files, folder sizes, Git integration |
-| **Navigation** | Start location (Home / Last used / Custom path), open folders in new tab, auto-collapse tree, recent locations |
-| **Behavior** | Confirm before delete, use Recycle Bin by default |
-| **Shortcuts** | View, remap, and reset keyboard bindings |
+| **Appearance** | Dark/light theme, default list or grid, icon size, columns, hidden files |
+| **Navigation** | Start location (Home / Last used / Custom path), open folders in new tab, side menu sections |
+| **Behavior** | Confirm before delete, keep folders on top, folder sizes, Git |
+| **Shortcuts** | View the keyboard shortcut list (remapping is not available yet) |
 | **Tools** | Git tooling status, optional RAR install helpers |
 | **Updates** | Current version, check/install updates |
 | **About** | App info and project links |
@@ -355,7 +361,7 @@ Run from the **repository root** with `npm run <script>`.
 | `check:winui` | WinUI xUnit tests |
 | `generate:ipc-bindings` | Regenerates schema-derived IPC constants and C# client wrappers |
 | `check:ipc-generated` | Verifies generated IPC bindings are current |
-| `check:ipc-schema` | 76-command schema vs Rust/C# |
+| `check:ipc-schema` | 78-command schema vs Rust/C# |
 | `check:identity` | Guards current-facing links and repo metadata against stale legacy repository references |
 | `check:updater` | WinUI updater metadata wiring |
 | `check:workflows` | GitHub workflow sanity checks |
@@ -430,7 +436,7 @@ SumaFile uses a **WinUI 3 UI process** plus a **Rust IPC service**:
 
 ### Design rules that matter in practice
 
-- **Typed IPC surface** — `SimpleFile.Ipc.Protocol` and `ipc/schema/v1` stay aligned with the 76 domain commands.
+- **Typed IPC surface** — `SimpleFile.Ipc.Protocol` and `ipc/schema/v1` stay aligned with the 78 domain commands.
 - **Transfer safety** — copy/cut/paste/drag/drop/dual-pane transfers share a transfer manager with stable operation IDs, progress events, cancel, and conflict resolution.
 - **Host-owned pickers** — folder browse is WinUI `FolderPicker`; the service returns `HOST_OWNED:`.
 - **Windows-first filesystem APIs** — drive labels, mapped shares, trash, and process launching stay in dedicated Rust modules.
@@ -466,7 +472,7 @@ The `check` pipeline also enforces project invariants:
 
 - Out-of-scope provider/mount management surfaces stay excluded
 - Packaging assets and bundle targets stay Windows-only
-- The generated IPC bindings and 76-command schema stay aligned with C# / leftover Rust command names
+- The generated IPC bindings and 78-command schema stay aligned with C# / leftover Rust command names
 - Current-facing docs, updater metadata, and app links point to the SumaFile repository
 - WinUI parity-gate required rows stay `PASS` or `WAIVED`
 

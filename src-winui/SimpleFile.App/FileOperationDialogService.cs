@@ -223,6 +223,12 @@ internal sealed class FileOperationDialogService
             return;
         }
 
+        if (PathRules.IsRecycleBinPath(workspace.Active.Path))
+        {
+            await DeleteSelectedAsync();
+            return;
+        }
+
         var itemText = FormatItemCount(paths.Length);
         if (workspace.Settings.ConfirmDelete)
         {

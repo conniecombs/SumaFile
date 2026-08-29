@@ -19,6 +19,8 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<string, CancellationToken, Task<string?>>? GetDbSettingHandler { get; set; }
     public Func<string, string, CancellationToken, Task>? SetDbSettingHandler { get; set; }
     public Func<string[], CancellationToken, Task>? MoveToTrashHandler { get; set; }
+    public Func<string[], CancellationToken, Task<string[]>>? RestoreRecycleBinHandler { get; set; }
+    public Func<CancellationToken, Task>? EmptyRecycleBinHandler { get; set; }
     public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? CopyWithProgressHandler { get; set; }
     public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? MoveWithProgressHandler { get; set; }
     public Func<string, CancellationToken, Task>? CancelOperationHandler { get; set; }
@@ -108,6 +110,12 @@ internal sealed class ConfigurableIpc : NullIpc
 
     public override Task MoveToTrashAsync(string[] paths, CancellationToken ct = default)
         => MoveToTrashHandler?.Invoke(paths, ct) ?? throw NotConfigured();
+
+    public override Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default)
+        => RestoreRecycleBinHandler?.Invoke(paths, ct) ?? throw NotConfigured();
+
+    public override Task EmptyRecycleBinAsync(CancellationToken ct = default)
+        => EmptyRecycleBinHandler?.Invoke(ct) ?? throw NotConfigured();
 
     public override Task<string> RenameEntryAsync(string path, string newName, CancellationToken ct = default)
         => RenameEntryHandler?.Invoke(path, newName, ct) ?? throw NotConfigured();

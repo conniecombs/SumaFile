@@ -10,6 +10,22 @@ using Windows.System;
 
 namespace SimpleFile.App;
 
+internal sealed class ClipboardHistoryRow
+{
+    public ClipboardHistoryRow(ClipboardHistoryEntry entry)
+    {
+        Entry = entry;
+    }
+
+    public ClipboardHistoryEntry Entry { get; }
+
+    public override string ToString()
+    {
+        var names = string.Join(", ", Entry.Paths.Select(PathRules.Basename));
+        return $"{Entry.Operation} · {Entry.Paths.Length} item(s) · {names}";
+    }
+}
+
 public sealed partial class MainWindow
 {
     private bool _commandPaletteOpen;
@@ -450,16 +466,64 @@ public sealed partial class MainWindow
 
     private void CopySelectedPathsToClipboard()
     {
+        var rows = ActiveSelectedRows;
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        var inBin = PathRules.IsRecycleBinPath(_workspace?.Active.Path);
+        var paths = rows
+            .Select(row => inBin && !string.IsNullOrEmpty(row.SymlinkText) ? row.SymlinkText : row.Path)
+            .ToArray();
+        var package = new DataPackage();
+        package.SetText(string.Join(Environment.NewLine, paths));
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+        SetStatusText(paths.Length == 1 ? "Path copied" : $"{paths.Length} paths copied");
+    }
+
+    private async Task RestoreSelectedAsync()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
         var paths = SelectedPaths;
         if (paths is null || paths.Length == 0)
         {
             return;
         }
 
-        var package = new DataPackage();
-        package.SetText(string.Join(Environment.NewLine, paths));
-        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
-        SetStatusText(paths.Length == 1 ? "Path copied" : $"{paths.Length} paths copied");
+        var restored = await _workspace.RestoreRecycleBinAsync(paths);
+        SetStatusText(restored.Length == 1
+            ? $"Restored to {restored[0]}"
+            : $"Restored {restored.Length} item(s)");
+    }
+
+    private async Task EmptyRecycleBinAsync()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = "Empty Recycle Bin",
+            Content = "Permanently delete all items in the Recycle Bin?",
+            PrimaryButtonText = "Empty Recycle Bin",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        await _workspace.EmptyRecycleBinAsync();
+        SetStatusText("Recycle Bin emptied");
     }
 
     private async Task ToggleHiddenFilesAsync()
@@ -533,6 +597,15 @@ public sealed partial class MainWindow
             case "go-home":
                 await _workspace.NavigateSpecialAsync("navigateHome");
                 break;
+            case "go-recycle-bin":
+                await _workspace.NavigateSpecialAsync("navigateRecycleBin");
+                break;
+            case "restore-selected":
+                await RestoreSelectedAsync();
+                break;
+            case "empty-recycle-bin":
+                await EmptyRecycleBinAsync();
+                break;
             case "go-back":
                 if (!IsEditingPath)
                 {
@@ -567,9 +640,7 @@ public sealed partial class MainWindow
                 CopySelectedPathsToClipboard();
                 break;
             case "clipboard-history":
-                SetStatusText(_workspace.Clipboard.HasItems
-                    ? $"{_workspace.Clipboard.Operation}: {string.Join(", ", _workspace.Clipboard.SourcePaths.Select(PathRules.Basename))}"
-                    : "Clipboard is empty");
+                await ShowClipboardHistoryAsync();
                 break;
             case "operation-history":
                 await ShowOperationHistoryAsync();
@@ -1023,6 +1094,7 @@ public sealed partial class MainWindow
             SelectedExtension = selectedFile?.Extension,
             OpenWithApplications = selectedFile is null ? [] : OpenWithApplicationsForPath(selectedFile.Path),
             OverflowedToolbarIds = overflowedToolbarIds ?? [],
+            InRecycleBin = PathRules.IsRecycleBinPath(_workspace?.Active.Path),
         };
     }
 
@@ -1525,14 +1597,42 @@ public sealed partial class MainWindow
             return;
         }
 
-        var lines = new List<string>
+        var rows = new StackPanel { Spacing = 8, Width = 460 };
+        void AddRow(string label, string? value)
         {
-            $"Name: {row.Name}",
-            $"Path: {row.Path}",
-            $"Type: {row.TypeText}",
-            $"Size: {row.SizeText}",
-            $"Modified: {row.ModifiedText}",
-        };
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            rows.Children.Add(new TextBlock
+            {
+                Text = label,
+                FontSize = 11,
+                Opacity = 0.7,
+            });
+            rows.Children.Add(new TextBlock
+            {
+                Text = value,
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        AddRow("Name", row.Name);
+        AddRow("Type", row.TypeText);
+        AddRow("Location", PathRules.GetParentPath(row.Path) ?? row.Path);
+        AddRow("Path", row.Path);
+        if (!string.IsNullOrEmpty(row.SymlinkText))
+        {
+            AddRow(PathRules.IsRecycleBinPath(workspace.Active.Path) ? "Original location" : "Link target", row.SymlinkText);
+        }
+
+        AddRow("Size", row.SizeText);
+        AddRow("Modified", row.ModifiedText);
+
+        var checksumText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"), FontSize = 12 };
+        var checksumButton = new Button { Content = "Compute checksums", HorizontalAlignment = HorizontalAlignment.Left };
+
         var utilityCts = BeginUtilityOperation();
         try
         {
@@ -1542,15 +1642,47 @@ public sealed partial class MainWindow
                 return;
             }
 
-            lines.Add($"Directory: {info.IsDir}");
-            if (!string.IsNullOrEmpty(info.Permissions))
+            var attributes = new List<string>();
+            if (info.IsHidden)
             {
-                lines.Add($"Permissions: {info.Permissions}");
+                attributes.Add("Hidden");
             }
 
-            if (!string.IsNullOrEmpty(info.SymlinkTarget))
+            if (info.IsSystem)
             {
-                lines.Add($"Link: {info.SymlinkTarget}");
+                attributes.Add("System");
+            }
+
+            if (info.IsSymlink)
+            {
+                attributes.Add("Shortcut");
+            }
+
+            AddRow("Attributes", attributes.Count == 0 ? "Normal" : string.Join(", ", attributes));
+            if (!string.IsNullOrEmpty(info.Permissions))
+            {
+                AddRow("Permissions", info.Permissions);
+            }
+
+            try
+            {
+                var metadata = await fileOps.GetFileMetadataAsync(row.Path, utilityCts.Token);
+                if (!string.IsNullOrEmpty(metadata.Summary))
+                {
+                    AddRow("Summary", metadata.Summary);
+                }
+
+                foreach (var field in metadata.Fields)
+                {
+                    if (field.Length >= 2)
+                    {
+                        AddRow(field[0], field[1]);
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Metadata is optional; core properties still show.
             }
         }
         catch (OperationCanceledException)
@@ -1559,12 +1691,36 @@ public sealed partial class MainWindow
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            lines.Add(exception.Message);
+            AddRow("Error", exception.Message);
         }
         finally
         {
             FinishUtilityOperation(utilityCts);
         }
+
+        checksumButton.Click += async (_, _) =>
+        {
+            checksumButton.IsEnabled = false;
+            checksumText.Text = "Computing…";
+            var hashCts = BeginUtilityOperation();
+            try
+            {
+                var checksums = await fileOps.ComputeChecksumAsync(row.Path, hashCts.Token);
+                checksumText.Text = $"MD5    {checksums.Md5}{Environment.NewLine}SHA-1  {checksums.Sha1}{Environment.NewLine}SHA-256 {checksums.Sha256}";
+            }
+            catch (Exception exception)
+            {
+                checksumText.Text = exception.Message;
+            }
+            finally
+            {
+                FinishUtilityOperation(hashCts);
+                checksumButton.IsEnabled = true;
+            }
+        };
+
+        rows.Children.Add(checksumButton);
+        rows.Children.Add(checksumText);
 
         if (!ReferenceEquals(_workspace, workspace))
         {
@@ -1574,11 +1730,67 @@ public sealed partial class MainWindow
         var dialog = new ContentDialog
         {
             Title = "Properties",
-            Content = new TextBlock { Text = string.Join(Environment.NewLine, lines), TextWrapping = TextWrapping.Wrap, Width = 420 },
+            Content = new ScrollViewer
+            {
+                MaxHeight = 480,
+                Content = rows,
+            },
             CloseButtonText = "Close",
             XamlRoot = Content.XamlRoot,
         };
         await dialog.ShowAsync();
+    }
+
+    private async Task ShowClipboardHistoryAsync()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var entries = _workspace.ClipboardHistory.Items;
+        if (entries.Count == 0)
+        {
+            SetStatusText("Clipboard history is empty");
+            return;
+        }
+
+        var list = new ListView
+        {
+            MinWidth = 420,
+            MaxHeight = 320,
+            SelectionMode = ListViewSelectionMode.Single,
+        };
+        foreach (var entry in entries)
+        {
+            list.Items.Add(new ClipboardHistoryRow(entry));
+        }
+
+        list.SelectedIndex = 0;
+        var dialog = new ContentDialog
+        {
+            Title = "Clipboard history",
+            Content = list,
+            PrimaryButtonText = "Paste this",
+            CloseButtonText = "Close",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary || list.SelectedItem is not ClipboardHistoryRow row)
+        {
+            return;
+        }
+
+        if (row.Entry.Operation == ClipboardOperation.Cut)
+        {
+            _workspace.Clipboard.SetCut(row.Entry.Paths);
+        }
+        else
+        {
+            _workspace.Clipboard.SetCopy(row.Entry.Paths);
+        }
+
+        await PasteFromClipboard();
     }
 
     private async Task ShowFolderMetricsAsync()
@@ -1660,18 +1872,37 @@ public sealed partial class MainWindow
 
     private async Task ShowOperationHistoryAsync()
     {
-        var history = _workspace?.Undo.History ?? [];
-        var text = history.Count == 0
-            ? "No completed operations in this session."
-            : string.Join(Environment.NewLine, history.Reverse());
+        var entries = _workspace?.Undo.Entries ?? [];
+        if (entries.Count == 0)
+        {
+            SetStatusText("No completed operations in this session.");
+            return;
+        }
+
+        var list = new ListView
+        {
+            MinWidth = 420,
+            MaxHeight = 320,
+            SelectionMode = ListViewSelectionMode.None,
+        };
+        foreach (var entry in entries)
+        {
+            list.Items.Add(entry.Description);
+        }
+
         var dialog = new ContentDialog
         {
             Title = "Operation history",
-            Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, Width = 420 },
+            Content = list,
+            PrimaryButtonText = _workspace?.Undo.CanUndo == true ? "Undo last" : "Close",
             CloseButtonText = "Close",
+            DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot,
         };
-        await dialog.ShowAsync();
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary && _workspace?.Undo.CanUndo == true)
+        {
+            await UndoLastAsync();
+        }
     }
 
     private async Task RunGitAsync(bool pull)

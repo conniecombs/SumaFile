@@ -1,7 +1,9 @@
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use glob::Pattern;
 use simplefile_core::models::{SearchOptions, SearchResult};
-use simplefile_core::utils::validate_existing_path_no_resolve;
+use simplefile_core::utils::{
+    hidden_system_from_metadata, name_looks_hidden, validate_existing_path_no_resolve,
+};
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -209,13 +211,23 @@ pub fn search_files_blocking(
 
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
+            let metadata = entry.metadata().ok();
 
-            if !options.include_hidden && name.starts_with('.') {
-                continue;
+            if !options.include_hidden {
+                let skip = match &metadata {
+                    Some(meta) => {
+                        let (hidden, system) = hidden_system_from_metadata(&name, meta);
+                        hidden || system
+                    }
+                    None => name_looks_hidden(&name),
+                };
+                if skip {
+                    continue;
+                }
             }
 
-            let (is_dir, is_file, size, modified, modified_time) = match entry.metadata() {
-                Ok(metadata) => {
+            let (is_dir, is_file, size, modified, modified_time) = match metadata {
+                Some(metadata) => {
                     let file_type = metadata.file_type();
                     let is_dir = file_type.is_dir();
                     let is_file = file_type.is_file();
@@ -235,7 +247,7 @@ pub fn search_files_blocking(
                         modified_time,
                     )
                 }
-                Err(_) => {
+                None => {
                     let (is_dir, is_file, size, modified) = entry_metadata(&path);
                     (is_dir, is_file, size, modified, None)
                 }

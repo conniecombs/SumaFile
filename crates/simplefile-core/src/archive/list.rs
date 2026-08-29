@@ -274,12 +274,15 @@ fn file_entry_for_archive_child(
             .map(|ext| ext.to_string_lossy().to_string())
             .unwrap_or_default()
     };
+    let is_hidden = crate::utils::name_looks_hidden(&name);
 
     FileEntry {
         name,
         path: build_virtual_archive_path(archive_path, child_relative),
         is_dir,
         is_symlink: false,
+        is_hidden,
+        is_system: false,
         size: if is_dir { 0 } else { size },
         modified: "-".to_string(),
         extension,

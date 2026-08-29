@@ -33,6 +33,8 @@ public static class CommandAliasCatalog
         ["ctx-compress"] = "create-archive",
         ["ctx-delete-recycle"] = "delete",
         ["ctx-delete-permanent"] = "delete-permanent",
+        ["ctx-restore"] = "restore-selected",
+        ["ctx-empty-recycle-bin"] = "empty-recycle-bin",
         ["ctx-info"] = "properties",
     };
 

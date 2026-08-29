@@ -22,6 +22,7 @@ public sealed class UndoStack
     public string? NextUndoDescription => _undo.Count > 0 ? _undo.Peek().Description : null;
     public string? NextRedoDescription => _redo.Count > 0 ? _redo.Peek().Description : null;
     public IReadOnlyList<string> History => _undo.Reverse().Select(entry => entry.Description).ToList();
+    public IReadOnlyList<UndoEntry> Entries => _undo.Reverse().ToList();
 
     public void Push(UndoEntry entry)
     {

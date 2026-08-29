@@ -33,6 +33,31 @@ public class ModelsTests
         Assert.Null(entry.Permissions);
         Assert.Null(entry.GitStatus);
         Assert.Null(entry.ItemCount);
+        Assert.False(entry.IsHidden);
+        Assert.False(entry.IsSystem);
+    }
+
+    [Fact]
+    public void FileEntry_DeserializesHiddenAndSystemFlags()
+    {
+        const string json = """
+            {
+              "name": "desktop.ini",
+              "path": "C:\\desktop.ini",
+              "is_dir": false,
+              "is_symlink": false,
+              "is_hidden": true,
+              "is_system": true,
+              "size": 42,
+              "modified": "2026-01-01T00:00:00.000Z",
+              "extension": "ini"
+            }
+            """;
+
+        var entry = JsonSerializer.Deserialize<FileEntry>(json, IpcJson.Options);
+        Assert.NotNull(entry);
+        Assert.True(entry.IsHidden);
+        Assert.True(entry.IsSystem);
     }
 
     [Fact]

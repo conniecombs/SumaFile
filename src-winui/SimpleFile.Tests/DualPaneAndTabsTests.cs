@@ -6,6 +6,15 @@ namespace SimpleFile.Tests;
 public class DualPaneAndTabsTests
 {
     [Fact]
+    public async Task NavigateSpecial_OpensRecycleBinVirtualPath()
+    {
+        var workspace = await Started();
+        await workspace.NavigateSpecialAsync("navigateRecycleBin");
+        Assert.Equal(PathRules.RecycleBinPath, workspace.Primary.Path);
+        Assert.False(workspace.Primary.CanGoUp);
+    }
+
+    [Fact]
     public async Task ToggleDualPane_CopiesPrimaryPathAndKeepsPrimaryActive()
     {
         var workspace = await Started();

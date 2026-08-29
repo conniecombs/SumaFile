@@ -49,6 +49,11 @@ internal sealed class FakeExplorerBackend : IExplorerBackend
                 new FileEntry { Name = "shot.png", Path = @"C:\Users\test\Desktop\shot.png", Extension = "png" },
             ],
         };
+        backend.Listings[SimpleFile.Core.PathRules.RecycleBinPath] = new DirectoryListing
+        {
+            Path = SimpleFile.Core.PathRules.RecycleBinPath,
+            Entries = [],
+        };
         backend.Listings[@"C:\"] = new DirectoryListing
         {
             Path = @"C:\",

@@ -126,6 +126,19 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             },
             Err(r) => Dispatch::Reply(r),
         },
+        METHOD_RESTORE_RECYCLE_BIN => match parse_params::<PathsParams>(request) {
+            Ok(p) => match simplefile_core::recycle_bin::restore_recycle_bin(&p.paths) {
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Err(m) => {
+                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                }
+            },
+            Err(r) => Dispatch::Reply(r),
+        },
+        METHOD_EMPTY_RECYCLE_BIN => match simplefile_core::recycle_bin::empty_recycle_bin() {
+            Ok(()) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null)),
+            Err(m) => Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m)),
+        },
         METHOD_RENAME_ENTRY => match parse_params::<RenameParams>(request) {
             Ok(p) => match simplefile_core::file_ops::rename_entry(&p.path, &p.new_name) {
                 Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
