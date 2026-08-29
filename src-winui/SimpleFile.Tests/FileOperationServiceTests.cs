@@ -287,6 +287,7 @@ public class FileOperationServiceTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelRequested = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         string? copyOperationId = null;
+        var cancelCalls = 0;
         var stub = new ConfigurableIpc
         {
             CopyWithProgressHandler = async (sources, destination, operationId, conflictAction, ct) =>
@@ -298,7 +299,8 @@ public class FileOperationServiceTests
             },
             CancelOperationHandler = (operationId, ct) =>
             {
-                cancelRequested.SetResult(operationId);
+                Interlocked.Increment(ref cancelCalls);
+                cancelRequested.TrySetResult(operationId);
                 return Task.CompletedTask;
             }
         };
@@ -317,6 +319,7 @@ public class FileOperationServiceTests
         var cancelled = await cancelRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(copyOperationId, cancelled);
         Assert.False(string.IsNullOrEmpty(cancelled));
+        Assert.Equal(1, Volatile.Read(ref cancelCalls));
     }
 
     [Fact]
@@ -325,6 +328,7 @@ public class FileOperationServiceTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelRequested = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         string? moveOperationId = null;
+        var cancelCalls = 0;
         var stub = new ConfigurableIpc
         {
             MoveWithProgressHandler = async (sources, destination, operationId, conflictAction, ct) =>
@@ -336,7 +340,8 @@ public class FileOperationServiceTests
             },
             CancelOperationHandler = (operationId, ct) =>
             {
-                cancelRequested.SetResult(operationId);
+                Interlocked.Increment(ref cancelCalls);
+                cancelRequested.TrySetResult(operationId);
                 return Task.CompletedTask;
             }
         };
@@ -355,6 +360,7 @@ public class FileOperationServiceTests
         var cancelled = await cancelRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(moveOperationId, cancelled);
         Assert.False(string.IsNullOrEmpty(cancelled));
+        Assert.Equal(1, Volatile.Read(ref cancelCalls));
     }
 
     [Fact]
