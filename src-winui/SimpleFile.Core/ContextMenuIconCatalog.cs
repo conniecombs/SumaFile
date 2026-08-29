@@ -31,6 +31,7 @@ public static class ContextMenuIconCatalog
     public const string Preview = "\uE8FF";
     public const string Label = "\uE932";
     public const string Favorite = "\uE734";
+    public const string Save = "\uE74E";
     public const string NewTab = "\uE8BB";
     public const string Info = "\uE946";
     public const string AreaChart = "\uE9D2";

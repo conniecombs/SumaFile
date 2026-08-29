@@ -1716,6 +1716,11 @@ public sealed class ExplorerWorkspace
         };
     }
 
+    public WorkspaceChromeLayout CaptureChromeLayout()
+    {
+        return WorkspaceChromeLayout.Capture(Settings, Columns);
+    }
+
     public async Task ApplyLayoutAsync(WorkspaceLayout layout, CancellationToken cancellationToken = default)
     {
         DualPaneEnabled = layout.DualPaneEnabled;
@@ -1789,6 +1794,116 @@ public sealed class ExplorerWorkspace
         {
             return false;
         }
+    }
+
+    public async Task<IReadOnlyList<SavedWorkspaceLayout>> ListSavedWorkspaceLayoutsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var document = await LoadSavedWorkspaceLayoutsDocumentAsync(cancellationToken).ConfigureAwait(false);
+        return document.Layouts
+            .OrderBy(layout => layout.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public async Task<SavedWorkspaceLayout> SaveNamedWorkspaceLayoutAsync(
+        string name,
+        bool overwrite = false,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedName = SavedWorkspaceLayoutsDocument.NormalizeName(name);
+        if (string.IsNullOrWhiteSpace(normalizedName))
+        {
+            throw new ArgumentException("Layout name cannot be empty.", nameof(name));
+        }
+
+        var document = await LoadSavedWorkspaceLayoutsDocumentAsync(cancellationToken).ConfigureAwait(false);
+        var existing = document.FindByName(normalizedName);
+        if (existing is not null && !overwrite)
+        {
+            throw new InvalidOperationException($"A layout named \"{normalizedName}\" already exists.");
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var saved = existing ?? new SavedWorkspaceLayout
+        {
+            Id = SavedWorkspaceLayoutsDocument.NewId(),
+            CreatedAt = now,
+        };
+
+        saved.Name = normalizedName;
+        saved.UpdatedAt = now;
+        saved.Layout = CaptureLayout();
+        saved.Chrome = CaptureChromeLayout();
+        if (existing is null)
+        {
+            document.Layouts.Add(saved);
+        }
+
+        await SaveSavedWorkspaceLayoutsDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+        return saved;
+    }
+
+    public async Task<SavedWorkspaceLayout> OverwriteSavedWorkspaceLayoutAsync(
+        string id,
+        CancellationToken cancellationToken = default)
+    {
+        var document = await LoadSavedWorkspaceLayoutsDocumentAsync(cancellationToken).ConfigureAwait(false);
+        var saved = document.FindById(id)
+            ?? throw new KeyNotFoundException("Saved layout was not found.");
+        saved.UpdatedAt = DateTimeOffset.UtcNow;
+        saved.Layout = CaptureLayout();
+        saved.Chrome = CaptureChromeLayout();
+        await SaveSavedWorkspaceLayoutsDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+        return saved;
+    }
+
+    public async Task DeleteSavedWorkspaceLayoutAsync(string id, CancellationToken cancellationToken = default)
+    {
+        var document = await LoadSavedWorkspaceLayoutsDocumentAsync(cancellationToken).ConfigureAwait(false);
+        var saved = document.FindById(id)
+            ?? throw new KeyNotFoundException("Saved layout was not found.");
+        document.Layouts.Remove(saved);
+        await SaveSavedWorkspaceLayoutsDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task ApplySavedWorkspaceLayoutAsync(string id, CancellationToken cancellationToken = default)
+    {
+        var document = await LoadSavedWorkspaceLayoutsDocumentAsync(cancellationToken).ConfigureAwait(false);
+        var saved = document.FindById(id)
+            ?? throw new KeyNotFoundException("Saved layout was not found.");
+        (saved.Chrome ?? new WorkspaceChromeLayout()).Apply(Settings, Columns);
+        await ApplyLayoutAsync(saved.Layout, cancellationToken).ConfigureAwait(false);
+        await SaveWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false);
+        await SaveUiSettingsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<SavedWorkspaceLayoutsDocument> LoadSavedWorkspaceLayoutsDocumentAsync(
+        CancellationToken cancellationToken)
+    {
+        if (FileOps is null)
+        {
+            return new SavedWorkspaceLayoutsDocument();
+        }
+
+        var json = await FileOps.GetSettingAsync(
+            SavedWorkspaceLayoutsDocument.SettingsKey,
+            cancellationToken).ConfigureAwait(false);
+        return SavedWorkspaceLayoutsDocument.FromJson(json);
+    }
+
+    private async Task SaveSavedWorkspaceLayoutsDocumentAsync(
+        SavedWorkspaceLayoutsDocument document,
+        CancellationToken cancellationToken)
+    {
+        if (FileOps is null)
+        {
+            throw new InvalidOperationException("Settings service is required for saved layouts.");
+        }
+
+        await FileOps.SetSettingAsync(
+            SavedWorkspaceLayoutsDocument.SettingsKey,
+            document.ToJson(),
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SaveUiSettingsAsync(CancellationToken cancellationToken = default)

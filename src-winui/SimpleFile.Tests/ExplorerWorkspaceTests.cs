@@ -664,6 +664,98 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task NamedWorkspaceLayouts_SaveApplyOverwriteAndDelete()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(settingsIpc);
+        var workspace = new ExplorerWorkspace(backend, fileOps);
+        await workspace.InitializeAsync();
+
+        await workspace.OpenNewTabAsync(PaneId.Primary, @"C:\Users\test\Desktop");
+        await workspace.ToggleDualPaneAsync();
+        await workspace.NavigatePaneAsync(PaneId.Secondary, @"C:\", HistoryMode.ReplaceCurrent);
+        workspace.SetFileListView(PaneId.Primary, "content");
+        workspace.SetFileListIconSize(PaneId.Primary, 48);
+        workspace.SetFileListView(PaneId.Secondary, "tiles");
+        workspace.SetFileListIconSize(PaneId.Secondary, 96);
+        workspace.SetSort(PaneId.Secondary, "date");
+        workspace.SetSort(PaneId.Secondary, "date");
+
+        var settings = workspace.Settings;
+        settings.PreviewVisible = false;
+        settings.PreviewWidth = 420;
+        settings.SidebarVisible = false;
+        settings.SidebarWidth = 344;
+        settings.DualPanePrimaryPercent = 35;
+        settings.DualPanePrimaryWidth = 410;
+        settings.QuickAccessCollapsed = true;
+        settings.MyPcCollapsed = true;
+        settings.ColumnPreset = "developer";
+        workspace.ApplyUiSettings(settings, applyViewDefaultsToPanes: false);
+        workspace.Columns.Resize("path", 360);
+
+        var saved = await workspace.SaveNamedWorkspaceLayoutAsync("  Code    review  ");
+
+        Assert.Equal("Code review", saved.Name);
+        Assert.True(settingsIpc.Settings.ContainsKey(SavedWorkspaceLayoutsDocument.SettingsKey));
+        Assert.Contains("\"columnPreset\":\"developer\"", settingsIpc.Settings[SavedWorkspaceLayoutsDocument.SettingsKey]);
+
+        await workspace.ToggleDualPaneAsync();
+        await workspace.NavigatePaneAsync(PaneId.Primary, @"C:\", HistoryMode.ReplaceCurrent);
+        workspace.SetFileListView(PaneId.Primary, "details");
+        workspace.SetFileListIconSize(PaneId.Primary, 16);
+        settings = workspace.Settings;
+        settings.PreviewVisible = true;
+        settings.PreviewWidth = UiSettings.PreviewDefaultWidth;
+        settings.SidebarVisible = true;
+        settings.SidebarWidth = UiSettings.SidebarDefaultWidth;
+        settings.DualPanePrimaryPercent = UiSettings.DualPaneDefaultPercent;
+        settings.DualPanePrimaryWidth = 0;
+        settings.QuickAccessCollapsed = false;
+        settings.MyPcCollapsed = false;
+        settings.ColumnPreset = "photo";
+        workspace.ApplyUiSettings(settings, applyViewDefaultsToPanes: false);
+        workspace.Columns.Resize("name", 500);
+
+        await workspace.ApplySavedWorkspaceLayoutAsync(saved.Id);
+
+        Assert.True(workspace.DualPaneEnabled);
+        Assert.Equal(@"C:\Users\test\Desktop", workspace.Primary.Path);
+        Assert.Equal(@"C:\", workspace.Secondary.Path);
+        Assert.Equal("content", workspace.ViewFor(PaneId.Primary));
+        Assert.Equal(48, workspace.IconSizeFor(PaneId.Primary));
+        Assert.Equal("tiles", workspace.ViewFor(PaneId.Secondary));
+        Assert.Equal(96, workspace.IconSizeFor(PaneId.Secondary));
+        Assert.Equal("date", workspace.SortByFor(PaneId.Secondary));
+        Assert.False(workspace.SortAscendingFor(PaneId.Secondary));
+        Assert.False(workspace.Settings.PreviewVisible);
+        Assert.Equal(420, workspace.Settings.PreviewWidth);
+        Assert.False(workspace.Settings.SidebarVisible);
+        Assert.Equal(344, workspace.Settings.SidebarWidth);
+        Assert.Equal(35, workspace.Settings.DualPanePrimaryPercent);
+        Assert.Equal(410, workspace.Settings.DualPanePrimaryWidth);
+        Assert.True(workspace.Settings.QuickAccessCollapsed);
+        Assert.True(workspace.Settings.MyPcCollapsed);
+        Assert.Equal("developer", workspace.Settings.ColumnPreset);
+        Assert.Equal(360, workspace.Columns.WidthOf("path"));
+        Assert.Equal("developer", settingsIpc.Settings["columnPreset"]);
+        Assert.Equal("420", settingsIpc.Settings["preview.width"]);
+        Assert.Contains("\"dualPaneEnabled\":true", settingsIpc.Settings[WorkspaceLayout.SettingsKey]);
+
+        await workspace.NavigatePaneAsync(PaneId.Primary, @"C:\", HistoryMode.ReplaceCurrent);
+        var overwritten = await workspace.OverwriteSavedWorkspaceLayoutAsync(saved.Id);
+        var document = SavedWorkspaceLayoutsDocument.FromJson(settingsIpc.Settings[SavedWorkspaceLayoutsDocument.SettingsKey]);
+        Assert.Equal(saved.Id, overwritten.Id);
+        Assert.Equal(@"C:\", Assert.Single(document.Layouts).Layout.Primary.Path);
+
+        await workspace.DeleteSavedWorkspaceLayoutAsync(saved.Id);
+
+        Assert.Empty(await workspace.ListSavedWorkspaceLayoutsAsync());
+        Assert.Contains("\"layouts\":[]", settingsIpc.Settings[SavedWorkspaceLayoutsDocument.SettingsKey]);
+    }
+
+    [Fact]
     public async Task Initialize_HomeStartLocationIgnoresSavedWorkspaceLayout()
     {
         var backend = FakeExplorerBackend.Typical();

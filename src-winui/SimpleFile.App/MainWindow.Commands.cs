@@ -871,7 +871,7 @@ public sealed partial class MainWindow
     private void OnPrimaryMoreMenuOpening(object sender, object e) =>
         PopulatePaneMoreMenu(sender as MenuFlyout, ActiveUiPane);
 
-    private void OnViewOptionsFlyoutOpening(object sender, object e)
+    private async void OnViewOptionsFlyoutOpening(object sender, object e)
     {
         if (_workspace is null)
         {
@@ -899,10 +899,33 @@ public sealed partial class MainWindow
             ViewIconSizeSlider.StepFrequency = UiSettings.IconSizeStep;
             ViewIconSizeSlider.Value = currentIconSize;
             UpdateViewIconSizeValueText(currentIconSize);
+            SavedLayoutsHost.Children.Clear();
+            SavedLayoutsHost.Children.Add(new TextBlock
+            {
+                Text = "Loading layouts...",
+                FontSize = 12,
+                Opacity = 0.65,
+            });
         }
         finally
         {
             _syncingViewOptionsFlyout = false;
+        }
+
+        try
+        {
+            await RefreshSavedLayoutsHostAsync();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            SavedLayoutsHost.Children.Clear();
+            SavedLayoutsHost.Children.Add(new TextBlock
+            {
+                Text = exception.Message,
+                FontSize = 12,
+                Opacity = 0.75,
+                TextWrapping = TextWrapping.Wrap,
+            });
         }
     }
 
@@ -942,6 +965,294 @@ public sealed partial class MainWindow
     private async void OnViewApplyBothClicked(object sender, RoutedEventArgs e)
     {
         await RunUiActionAsync("View options", () => ApplyViewOptionAsync("pane:apply-view-to-both"));
+    }
+
+    private async void OnViewSaveLayoutClicked(object sender, RoutedEventArgs e)
+    {
+        PrimaryViewButton.Flyout?.Hide();
+        await RunUiActionAsync("Layout", PromptSaveNamedLayoutAsync);
+    }
+
+    private async Task RefreshSavedLayoutsHostAsync()
+    {
+        SavedLayoutsHost.Children.Clear();
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var layouts = await _workspace.ListSavedWorkspaceLayoutsAsync();
+        if (layouts.Count == 0)
+        {
+            SavedLayoutsHost.Children.Add(new TextBlock
+            {
+                Text = "No saved layouts",
+                FontSize = 12,
+                Opacity = 0.65,
+            });
+            return;
+        }
+
+        foreach (var layout in layouts)
+        {
+            SavedLayoutsHost.Children.Add(CreateSavedLayoutRow(layout));
+        }
+    }
+
+    private Grid CreateSavedLayoutRow(SavedWorkspaceLayout layout)
+    {
+        var row = new Grid
+        {
+            ColumnSpacing = 4,
+        };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var apply = new Button
+        {
+            Tag = layout.Id,
+            Style = ChromeStyle("SfGhostButtonStyle"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(8, 4, 8, 4),
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    CreateMenuIcon(ContextMenuIconCatalog.ViewAll),
+                    new TextBlock
+                    {
+                        Text = layout.Name,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                    },
+                },
+            },
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(apply, $"Apply layout {layout.Name}");
+        ToolTipService.SetToolTip(apply, "Apply layout");
+        apply.Click += OnApplySavedLayoutClicked;
+        Grid.SetColumn(apply, 0);
+        row.Children.Add(apply);
+
+        var overwrite = CreateSavedLayoutIconButton(layout.Id, "Overwrite layout", ContextMenuIconCatalog.Save, OnOverwriteSavedLayoutClicked);
+        Grid.SetColumn(overwrite, 1);
+        row.Children.Add(overwrite);
+
+        var delete = CreateSavedLayoutIconButton(layout.Id, "Delete layout", ContextMenuIconCatalog.Delete, OnDeleteSavedLayoutClicked);
+        Grid.SetColumn(delete, 2);
+        row.Children.Add(delete);
+
+        return row;
+    }
+
+    private Button CreateSavedLayoutIconButton(
+        string id,
+        string tooltip,
+        string glyph,
+        RoutedEventHandler handler)
+    {
+        var button = new Button
+        {
+            Tag = id,
+            Width = 30,
+            Height = 30,
+            MinWidth = 30,
+            Padding = new Thickness(0),
+            Style = ChromeStyle("SfIconButtonStyle"),
+            Content = new FontIcon
+            {
+                FontFamily = new FontFamily("Segoe Fluent Icons"),
+                FontSize = 12,
+                Glyph = glyph,
+            },
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, tooltip);
+        ToolTipService.SetToolTip(button, tooltip);
+        button.Click += handler;
+        return button;
+    }
+
+    private async void OnApplySavedLayoutClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string id } || _workspace is null)
+        {
+            return;
+        }
+
+        PrimaryViewButton.Flyout?.Hide();
+        await RunUiActionAsync("Layout", () => ApplySavedLayoutByIdAsync(id));
+    }
+
+    private async void OnOverwriteSavedLayoutClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string id } || _workspace is null)
+        {
+            return;
+        }
+
+        PrimaryViewButton.Flyout?.Hide();
+        await RunUiActionAsync("Layout", () => PromptOverwriteSavedLayoutAsync(id));
+    }
+
+    private async void OnDeleteSavedLayoutClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string id } || _workspace is null)
+        {
+            return;
+        }
+
+        PrimaryViewButton.Flyout?.Hide();
+        await RunUiActionAsync("Layout", () => PromptDeleteSavedLayoutAsync(id));
+    }
+
+    private async Task ApplySavedLayoutByIdAsync(string id)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        await _workspace.ApplySavedWorkspaceLayoutAsync(id);
+        SyncFromWorkspace();
+        ShowMessage("Layout", "Layout applied.", InfoBarSeverity.Success);
+    }
+
+    private async Task PromptSaveNamedLayoutAsync()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var layouts = await _workspace.ListSavedWorkspaceLayoutsAsync();
+        var suggestedName = SuggestedLayoutName(layouts);
+        var nameBox = new TextBox
+        {
+            Header = "Name",
+            Text = suggestedName,
+            SelectionStart = 0,
+            SelectionLength = suggestedName.Length,
+            MinWidth = 320,
+        };
+        var dialog = new ContentDialog
+        {
+            Title = "Save layout",
+            Content = nameBox,
+            PrimaryButtonText = "Save",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot,
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var name = SavedWorkspaceLayoutsDocument.NormalizeName(nameBox.Text);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            ShowMessage("Layout", "Layout name cannot be empty.", InfoBarSeverity.Warning);
+            return;
+        }
+
+        var duplicate = layouts.FirstOrDefault(layout =>
+            string.Equals(layout.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (duplicate is not null
+            && await ConfirmSavedLayoutOverwriteAsync(name) != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var saved = await _workspace.SaveNamedWorkspaceLayoutAsync(name, overwrite: duplicate is not null);
+        await RefreshSavedLayoutsHostAsync();
+        ShowMessage("Layout", $"Saved \"{saved.Name}\".", InfoBarSeverity.Success);
+    }
+
+    private static string SuggestedLayoutName(IReadOnlyList<SavedWorkspaceLayout> layouts)
+    {
+        const string baseName = "Layout";
+        var used = layouts.Select(layout => layout.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        for (var index = 1; index < 1000; index++)
+        {
+            var candidate = $"{baseName} {index}";
+            if (!used.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return baseName;
+    }
+
+    private async Task PromptOverwriteSavedLayoutAsync(string id)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var layout = (await _workspace.ListSavedWorkspaceLayoutsAsync()).FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (layout is null || await ConfirmSavedLayoutOverwriteAsync(layout.Name) != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var saved = await _workspace.OverwriteSavedWorkspaceLayoutAsync(id);
+        await RefreshSavedLayoutsHostAsync();
+        ShowMessage("Layout", $"Updated \"{saved.Name}\".", InfoBarSeverity.Success);
+    }
+
+    private async Task<ContentDialogResult> ConfirmSavedLayoutOverwriteAsync(string name)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Overwrite layout?",
+            Content = $"Replace \"{name}\" with the current window layout?",
+            PrimaryButtonText = "Overwrite",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+        return await dialog.ShowAsync();
+    }
+
+    private async Task PromptDeleteSavedLayoutAsync(string id)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var layout = (await _workspace.ListSavedWorkspaceLayoutsAsync()).FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (layout is null)
+        {
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = "Delete layout?",
+            Content = $"Delete \"{layout.Name}\"?",
+            PrimaryButtonText = "Delete",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        await _workspace.DeleteSavedWorkspaceLayoutAsync(id);
+        await RefreshSavedLayoutsHostAsync();
+        ShowMessage("Layout", $"Deleted \"{layout.Name}\".", InfoBarSeverity.Success);
     }
 
     private void OnViewIconSizeSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -1062,7 +1373,7 @@ public sealed partial class MainWindow
         PopulateMenuFlyout(flyout, ContextMenuBuilder.Build(BuildContextMenuRequest(selected)));
     }
 
-    private void PopulatePaneMoreMenu(MenuFlyout? flyout, PaneId pane)
+    private async void PopulatePaneMoreMenu(MenuFlyout? flyout, PaneId pane)
     {
         if (flyout is null || _workspace is null)
         {
@@ -1074,6 +1385,17 @@ public sealed partial class MainWindow
         var overflow = _primaryToolbarOverflow;
 
         PopulateMenuFlyout(flyout, ContextMenuBuilder.BuildPaneMoreMenu(BuildContextMenuRequest(selected, overflow)));
+        if (overflow.Contains(ToolbarOverflowPlanner.ViewOptions))
+        {
+            try
+            {
+                await AppendSavedLayoutOverflowMenuAsync(flyout);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                ShowMessage("Layout", exception.Message, InfoBarSeverity.Warning);
+            }
+        }
     }
 
     private PaneId ActivatePaneForMenu(PaneId pane)
@@ -1132,7 +1454,7 @@ public sealed partial class MainWindow
 
         if (entry.Children.Count > 0)
         {
-            var sub = new MenuFlyoutSubItem { Text = entry.Label, Tag = entry };
+            var sub = new MenuFlyoutSubItem { Text = entry.Label, Tag = entry, Name = entry.Id };
             if (!string.IsNullOrWhiteSpace(entry.IconGlyph))
             {
                 sub.Icon = CreateMenuIcon(entry.IconGlyph);
@@ -1172,6 +1494,66 @@ public sealed partial class MainWindow
         };
     }
 
+    private async Task AppendSavedLayoutOverflowMenuAsync(MenuFlyout flyout)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var viewMenu = flyout.Items
+            .OfType<MenuFlyoutSubItem>()
+            .FirstOrDefault(item => string.Equals(item.Name, "overflow-view", StringComparison.Ordinal));
+        if (viewMenu is null)
+        {
+            return;
+        }
+
+        var layouts = await _workspace.ListSavedWorkspaceLayoutsAsync();
+        var layoutsMenu = new MenuFlyoutSubItem
+        {
+            Text = "Layouts",
+            Icon = CreateMenuIcon(ContextMenuIconCatalog.ViewAll),
+        };
+        layoutsMenu.Items.Add(CreateSavedLayoutMenuItem("layout:save", "Save current layout...", ContextMenuIconCatalog.Save));
+        if (layouts.Count > 0)
+        {
+            layoutsMenu.Items.Add(new MenuFlyoutSeparator());
+            foreach (var layout in layouts)
+            {
+                layoutsMenu.Items.Add(CreateSavedLayoutSubMenu(layout));
+            }
+        }
+
+        viewMenu.Items.Add(new MenuFlyoutSeparator());
+        viewMenu.Items.Add(layoutsMenu);
+    }
+
+    private MenuFlyoutSubItem CreateSavedLayoutSubMenu(SavedWorkspaceLayout layout)
+    {
+        var sub = new MenuFlyoutSubItem
+        {
+            Text = layout.Name,
+            Icon = CreateMenuIcon(ContextMenuIconCatalog.ViewAll),
+        };
+        sub.Items.Add(CreateSavedLayoutMenuItem($"layout:apply:{layout.Id}", "Apply", ContextMenuIconCatalog.ViewAll));
+        sub.Items.Add(CreateSavedLayoutMenuItem($"layout:overwrite:{layout.Id}", "Overwrite", ContextMenuIconCatalog.Save));
+        sub.Items.Add(CreateSavedLayoutMenuItem($"layout:delete:{layout.Id}", "Delete", ContextMenuIconCatalog.Delete));
+        return sub;
+    }
+
+    private MenuFlyoutItem CreateSavedLayoutMenuItem(string tag, string text, string glyph)
+    {
+        var item = new MenuFlyoutItem
+        {
+            Text = text,
+            Tag = tag,
+            Icon = CreateMenuIcon(glyph),
+        };
+        item.Click += OnSavedLayoutMenuActionClick;
+        return item;
+    }
+
     private async void OnContextMenuItemClick(object sender, RoutedEventArgs e)
     {
         if (sender is not MenuFlyoutItem item)
@@ -1187,6 +1569,44 @@ public sealed partial class MainWindow
         }
 
         await RunUiActionAsync("Context menu", () => RunContextCommandAsync(id, entry?.CommandParameter));
+    }
+
+    private async void OnSavedLayoutMenuActionClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuFlyoutItem { Tag: string tag })
+        {
+            return;
+        }
+
+        await RunUiActionAsync("Layout", () => RunSavedLayoutMenuActionAsync(tag));
+    }
+
+    private async Task RunSavedLayoutMenuActionAsync(string tag)
+    {
+        if (tag == "layout:save")
+        {
+            await PromptSaveNamedLayoutAsync();
+            return;
+        }
+
+        var parts = tag.Split(':', 3);
+        if (parts.Length != 3 || parts[0] != "layout")
+        {
+            return;
+        }
+
+        switch (parts[1])
+        {
+            case "apply":
+                await ApplySavedLayoutByIdAsync(parts[2]);
+                break;
+            case "overwrite":
+                await PromptOverwriteSavedLayoutAsync(parts[2]);
+                break;
+            case "delete":
+                await PromptDeleteSavedLayoutAsync(parts[2]);
+                break;
+        }
     }
 
     private async Task RunContextCommandAsync(string id, string? commandParameter = null)

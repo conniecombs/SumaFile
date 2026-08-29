@@ -248,6 +248,37 @@
                                                     HorizontalContentAlignment="Left"
                                                     Click="OnViewApplyBothClicked"
                                                     Content="Apply view options to both panes" />
+                                                <Border
+                                                    Height="1"
+                                                    Margin="0,2,0,0"
+                                                    Background="{StaticResource SfBorderBrush}" />
+                                                <StackPanel Spacing="6">
+                                                    <Grid ColumnSpacing="8">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock
+                                                            VerticalAlignment="Center"
+                                                            FontWeight="SemiBold"
+                                                            Text="Layouts" />
+                                                        <Button
+                                                            x:Name="ViewSaveLayoutButton"
+                                                            Grid.Column="1"
+                                                            Style="{StaticResource SfGhostButtonStyle}"
+                                                            Click="OnViewSaveLayoutClicked"
+                                                            ToolTipService.ToolTip="Save current layout">
+                                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                                <FontIcon
+                                                                    FontFamily="{StaticResource SfIconFont}"
+                                                                    FontSize="13"
+                                                                    Glyph="&#xE74E;" />
+                                                                <TextBlock Text="Save" />
+                                                            </StackPanel>
+                                                        </Button>
+                                                    </Grid>
+                                                    <StackPanel x:Name="SavedLayoutsHost" Spacing="2" />
+                                                </StackPanel>
                                             </StackPanel>
                                         </Flyout>
                                     </Button.Flyout>

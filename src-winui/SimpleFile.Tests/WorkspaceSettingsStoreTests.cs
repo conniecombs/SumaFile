@@ -7,6 +7,66 @@ namespace SimpleFile.Tests;
 public class WorkspaceSettingsStoreTests
 {
     [Fact]
+    public void SavedWorkspaceLayoutsDocument_SanitizesStoredLayouts()
+    {
+        var raw = """
+            {
+              "version": 99,
+              "layouts": [
+                {
+                  "id": "",
+                  "name": "  Code    review  ",
+                  "createdAt": "0001-01-01T00:00:00+00:00",
+                  "updatedAt": "0001-01-01T00:00:00+00:00",
+                  "layout": {
+                    "dualPaneEnabled": true,
+                    "primary": { "path": "C:\\Work" }
+                  },
+                  "chrome": {
+                    "previewVisible": false,
+                    "previewWidth": 2000,
+                    "sidebarVisible": false,
+                    "sidebarWidth": 20,
+                    "dualPanePrimaryPercent": 5,
+                    "dualPanePrimaryWidth": 40,
+                    "columnPreset": "developer",
+                    "columnWidths": { "name": 321 }
+                  }
+                },
+                {
+                  "id": "duplicate",
+                  "name": "code review",
+                  "layout": {}
+                },
+                {
+                  "id": "blank",
+                  "name": "   ",
+                  "layout": {}
+                }
+              ]
+            }
+            """;
+
+        var document = SavedWorkspaceLayoutsDocument.FromJson(raw);
+        var saved = Assert.Single(document.Layouts);
+
+        Assert.Equal(SavedWorkspaceLayoutsDocument.CurrentVersion, document.Version);
+        Assert.NotEmpty(saved.Id);
+        Assert.Equal("Code review", saved.Name);
+        Assert.True(saved.Layout.DualPaneEnabled);
+        Assert.Equal(@"C:\Work", saved.Layout.Primary.Path);
+        Assert.NotNull(saved.Chrome);
+        Assert.False(saved.Chrome!.PreviewVisible);
+        Assert.Equal(UiSettings.PreviewMaxWidth, saved.Chrome.PreviewWidth);
+        Assert.False(saved.Chrome.SidebarVisible);
+        Assert.Equal(UiSettings.SidebarMinWidth, saved.Chrome.SidebarWidth);
+        Assert.Equal(UiSettings.DualPaneMinPercent, saved.Chrome.DualPanePrimaryPercent);
+        Assert.Equal(UiSettings.FilePaneMinWidth, saved.Chrome.DualPanePrimaryWidth);
+        Assert.Equal("developer", saved.Chrome.ColumnPreset);
+        Assert.Equal(321, saved.Chrome.ColumnWidths["name"]);
+    }
+
+    [Fact]
     public async Task SaveAndLoadAsync_RoundTripsSettingsPlacesAndColumnWidths()
     {
         var ipc = new ConfigurableIpc();

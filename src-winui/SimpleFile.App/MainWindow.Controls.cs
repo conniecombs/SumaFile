@@ -57,6 +57,8 @@ public sealed partial class MainWindow
     private TextBlock ViewIconSizeValueText => PrimaryToolbarPanel.ViewIconSizeValue;
     private Slider ViewIconSizeSlider => PrimaryToolbarPanel.ViewIconSize;
     private Button ViewApplyBothButton => PrimaryToolbarPanel.ViewApplyBoth;
+    private Button ViewSaveLayoutButton => PrimaryToolbarPanel.ViewSaveLayout;
+    private StackPanel SavedLayoutsHost => PrimaryToolbarPanel.SavedLayoutsList;
     private Button PrimarySettingsButton => PrimaryToolbarPanel.SettingsButton;
     private Button PrimaryMoreButton => PrimaryToolbarPanel.MoreButton;
 
@@ -162,6 +164,7 @@ public sealed partial class MainWindow
         PrimaryToolbarPanel.ViewStyleSelectionChanged += OnViewStyleSelectionChanged;
         PrimaryToolbarPanel.ViewIconSizeSliderChanged += OnViewIconSizeSliderChanged;
         PrimaryToolbarPanel.ViewApplyBothClicked += OnViewApplyBothClicked;
+        PrimaryToolbarPanel.ViewSaveLayoutClicked += OnViewSaveLayoutClicked;
         PrimaryToolbarPanel.SettingsClicked += OnSettingsClicked;
         PrimaryToolbarPanel.PrimaryMoreMenuOpening += (sender, e) => OnPrimaryMoreMenuOpening(sender!, e);
 

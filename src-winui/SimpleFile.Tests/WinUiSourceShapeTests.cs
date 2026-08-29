@@ -129,6 +129,27 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
+    public void NamedLayouts_AreDiscoverableFromViewFlyout()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var coreRoot = Path.Combine(root, "SimpleFile.Core");
+        var toolbar = File.ReadAllText(Path.Combine(appRoot, "PrimaryToolbarView.xaml"));
+        var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
+        var workspace = File.ReadAllText(Path.Combine(coreRoot, "ExplorerWorkspace.cs"));
+        var savedLayouts = File.ReadAllText(Path.Combine(coreRoot, "SavedWorkspaceLayout.cs"));
+
+        Assert.Contains("SavedLayoutsHost", toolbar);
+        Assert.Contains("OnViewSaveLayoutClicked", toolbar);
+        Assert.Contains("RefreshSavedLayoutsHostAsync", commands);
+        Assert.Contains("AppendSavedLayoutOverflowMenuAsync", commands);
+        Assert.Contains("layout:save", commands);
+        Assert.Contains("ApplySavedWorkspaceLayoutAsync", commands);
+        Assert.Contains("SaveNamedWorkspaceLayoutAsync", workspace);
+        Assert.Contains("workspace-layouts", savedLayouts);
+    }
+
+    [Fact]
     public void PreviewPane_UsesPathBackedPdfAndMediaControls()
     {
         var root = FindRepoRoot();
