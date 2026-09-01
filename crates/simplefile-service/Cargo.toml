@@ -1,6 +1,6 @@
 [package]
 name = "simplefile-service"
-version = "0.1.0"
+version = "1.0.0"
 description = "SumaFile named-pipe JSON-RPC IPC service"
 authors = ["SumaFile Team"]
 license-file = "../../LICENSE"

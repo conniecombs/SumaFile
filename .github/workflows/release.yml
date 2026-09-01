@@ -55,12 +55,14 @@ jobs:
             exit 1
           fi
 
+          CORE_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' crates/simplefile-core/Cargo.toml | head -n1)"
+          IPC_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' crates/simplefile-ipc/Cargo.toml | head -n1)"
           SERVICE_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' crates/simplefile-service/Cargo.toml | head -n1)"
           WINUI_VERSION="$(python3 -c 'import re,sys; t=open("src-winui/Directory.Build.props").read(); print(re.search(r"<Version>([^<]+)</Version>", t).group(1))')"
           TAG_VERSION="${VERSION#v}"
 
-          if [ "$SERVICE_VERSION" != "$TAG_VERSION" ] || [ "$WINUI_VERSION" != "$TAG_VERSION" ]; then
-            echo "Version mismatch: tag=$TAG_VERSION crates/simplefile-service/Cargo.toml=$SERVICE_VERSION Directory.Build.props=$WINUI_VERSION" >&2
+          if [ "$CORE_VERSION" != "$TAG_VERSION" ] || [ "$IPC_VERSION" != "$TAG_VERSION" ] || [ "$SERVICE_VERSION" != "$TAG_VERSION" ] || [ "$WINUI_VERSION" != "$TAG_VERSION" ]; then
+            echo "Version mismatch: tag=$TAG_VERSION crates/simplefile-core/Cargo.toml=$CORE_VERSION crates/simplefile-ipc/Cargo.toml=$IPC_VERSION crates/simplefile-service/Cargo.toml=$SERVICE_VERSION Directory.Build.props=$WINUI_VERSION" >&2
             exit 1
           fi
 
@@ -81,6 +83,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -133,6 +137,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -225,6 +231,10 @@ jobs:
         run: npm run smoke:winui-upgrade
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Smoke WinUI NSIS upgrade from first SumaFile baseline
+        if: needs.validate.outputs.version == 'v1.0.0'
+        run: npm run smoke:winui-upgrade-from-ref -- -PreviousRef b80caed932ab567695bb3ce38d5659217a7cb176
 
       - name: Stage WinUI release assets
         shell: pwsh

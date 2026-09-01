@@ -26,7 +26,7 @@ public class NamedPipeJsonClientTests
             new HandshakeResult
             {
                 ProtocolVersion = 1,
-                AppVersion = "BETA",
+                AppVersion = "1.0.0",
                 Identifier = Protocol.Identifier,
                 MethodCount = Protocol.DomainMethodCount,
             });
@@ -42,12 +42,12 @@ public class NamedPipeJsonClientTests
         {
             Ok = true,
             ProtocolVersion = 1,
-            AppVersion = "BETA",
+            AppVersion = "1.0.0",
         });
 
         var health = await healthTask;
         Assert.True(health.Ok);
-        Assert.Equal("BETA", health.AppVersion);
+        Assert.Equal("1.0.0", health.AppVersion);
     }
 
     [Fact]
@@ -611,8 +611,8 @@ public class NamedPipeJsonClientTests
         var nextRequest = await server.ReadRequestAsync();
         Assert.Equal(Protocol.GetAppVersionMethod, nextRequest.Method);
         Assert.NotEqual(request.Id, nextRequest.Id);
-        await server.SendResultAsync(nextRequest.Id, "BETA");
-        Assert.Equal("BETA", await next);
+        await server.SendResultAsync(nextRequest.Id, "1.0.0");
+        Assert.Equal("1.0.0", await next);
     }
 
     [Fact]

@@ -536,7 +536,7 @@ From `src-tauri/tauri.conf.json`:
 | Item | Current value |
 | --- | --- |
 | Product | SimpleFile |
-| Version | BETA |
+| Version | 1.0.0 |
 | Identifier | `com.simplefile.desktop` |
 | Window label | `main` |
 | Title | `SimpleFile - File Explorer` |

@@ -55,13 +55,18 @@ function Get-ReleaseMetadata {
     if ($props -match '<InformationalVersion>([^<]+)</InformationalVersion>') {
         $displayVersion = $Matches[1]
     }
-    $cargo = Get-Content -LiteralPath (Join-Path $root "crates\simplefile-service\Cargo.toml") -Raw
-    if ($cargo -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
-        throw "Could not read version from crates\simplefile-service\Cargo.toml."
+    $cargoVersions = [ordered]@{}
+    foreach ($crate in @("simplefile-core", "simplefile-ipc", "simplefile-service")) {
+        $cargo = Get-Content -LiteralPath (Join-Path $root "crates\$crate\Cargo.toml") -Raw
+        if ($cargo -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
+            throw "Could not read version from crates\$crate\Cargo.toml."
+        }
+        $cargoVersions[$crate] = $Matches[1]
     }
-    $serviceVersion = $Matches[1]
-    if ($serviceVersion -ne $numericVersion) {
-        throw "Version mismatch: simplefile-service=$serviceVersion Directory.Build.props=$numericVersion"
+    $mismatches = $cargoVersions.GetEnumerator() | Where-Object { $_.Value -ne $numericVersion }
+    if ($mismatches) {
+        $details = ($cargoVersions.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join " "
+        throw "Version mismatch: $details Directory.Build.props=$numericVersion"
     }
     return [pscustomobject]@{
         Numeric = $numericVersion
@@ -395,7 +400,6 @@ if ($builtSetup -and $signingKey) {
             "--require-public-key=$requireUpdaterSignatureValue"
         )
         Invoke-Native node $signArgs
-        Copy-Item -LiteralPath $sigPath -Destination $distRoot -Force
         $signature = (Get-Content -LiteralPath $sigPath -Raw).Trim()
     }
     catch {

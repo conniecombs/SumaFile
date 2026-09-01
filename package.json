@@ -28,6 +28,7 @@
     "smoke:winui-msi": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-msi.ps1",
     "smoke:winui-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-nsis.ps1",
     "smoke:winui-upgrade": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-upgrade.ps1 -SkipWhenPreviousUnavailable",
+    "smoke:winui-upgrade-from-ref": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-upgrade-from-ref.ps1",
     "release:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1",
     "release:winui": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1",
     "release:local": "npm run check:release && npm run build:winui:release"
