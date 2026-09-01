@@ -40,7 +40,6 @@ const releaseBuildPath = '.github/workflows/release-build.yml';
 const installerSmokePath = '.github/workflows/installer-smoke.yml';
 const dependabotAutoMergePath = '.github/workflows/dependabot-automerge.yml';
 const dependabotPath = '.github/dependabot.yml';
-const dependabotTriagePath = '.github/workflows/dependabot-automerge.yml';
 
 const ciWorkflow = readText(ciPath);
 const releaseWorkflow = readText(releasePath);
@@ -48,7 +47,6 @@ const releaseBuildWorkflow = readText(releaseBuildPath);
 const installerSmokeWorkflow = readText(installerSmokePath);
 const dependabotAutoMergeWorkflow = readText(dependabotAutoMergePath);
 const dependabot = readText(dependabotPath);
-const dependabotTriageWorkflow = readText(dependabotTriagePath);
 
 // Keep the expected action pins in one place. Dependabot updates must change
 // these values in the same PR as the workflow files, and CI must pass before
@@ -177,6 +175,7 @@ for (const snippet of installerSmokeSnippets) {
 }
 
 const dependabotAutoMergeSnippets = [
+    'name: Dependabot automerge',
     'workflow_run:',
     'workflows: [CI]',
     'types: [completed]',
@@ -185,7 +184,12 @@ const dependabotAutoMergeSnippets = [
     "github.event.workflow_run.conclusion == 'success'",
     "github.event.workflow_run.event == 'pull_request'",
     "github.event.workflow_run.actor.login == 'dependabot[bot]'",
+    'Resolve and verify Dependabot pull request',
+    'pr_author="$(gh api "repos/$REPOSITORY/pulls/$pr_number" --jq',
+    'Auto-merge Dependabot PR',
     'gh pr merge --auto --merge "$PR_URL"',
+    'PR_URL: ${{ steps.pull_request.outputs.url }}',
+    'GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
 ];
 
 for (const snippet of dependabotAutoMergeSnippets) {
@@ -269,11 +273,10 @@ for (const snippet of dependabotSnippets) {
 
 requireOccurrenceCount(dependabot, dependabotPath, 'directory: "/frontend"', 0);
 
-const dependabotTriageSnippets = [
-    'name: Dependabot triage',
+const retiredDependabotTriageSnippets = [
+    'on: pull_request',
     'contents: read',
     'issues: write',
-    'pull-requests: write',
     'uses: dependabot/fetch-metadata@v3',
     'Label and comment for local review',
     'needs-local-review',
@@ -281,12 +284,10 @@ const dependabotTriageSnippets = [
     'Repository auto-merge is disabled',
 ];
 
-for (const snippet of dependabotTriageSnippets) {
-    requireSnippet(dependabotTriageWorkflow, dependabotTriagePath, snippet);
-}
-
-if (dependabotTriageWorkflow.includes('gh pr merge --auto')) {
-    fail(`${dependabotTriagePath} should triage Dependabot PRs instead of enabling auto-merge.`);
+for (const snippet of retiredDependabotTriageSnippets) {
+    if (dependabotAutoMergeWorkflow.includes(snippet)) {
+        fail(`${dependabotAutoMergePath} should not include retired Dependabot triage snippet: ${snippet}.`);
+    }
 }
 
 if (!process.exitCode) {
