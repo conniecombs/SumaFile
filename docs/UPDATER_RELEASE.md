@@ -33,10 +33,12 @@ after the user-facing product name changed to SumaFile.
 
 ## Release flow
 
-1. Update the version in `src-winui/Directory.Build.props` and
-   `crates/simplefile-service/Cargo.toml`.
+1. Update the version in `src-winui/Directory.Build.props`,
+   `crates/simplefile-core/Cargo.toml`, `crates/simplefile-ipc/Cargo.toml`,
+   `crates/simplefile-service/Cargo.toml`, `Cargo.lock`, the
+   `APP_DISPLAY_VERSION` constant, and the README badge.
 2. Commit the version bump and release notes.
-3. Create a tag matching `Directory.Build.props` `<Version>` (currently `v0.1.0`; user-facing identity is BETA), or run the `Release` GitHub Actions workflow
+3. Create a tag matching `Directory.Build.props` `<Version>` (currently `v1.0.0`), or run the `Release` GitHub Actions workflow
    manually with that version.
 4. The release workflow runs quality gates, builds the WinUI host and Rust IPC
    service, signs the NSIS setup executable, uploads NSIS/MSI/portable
@@ -75,6 +77,17 @@ That command installs the latest published NSIS package when one is available,
 lays down a persisted app-data sentinel, upgrades to the local NSIS artifact,
 checks that the new version launches, and verifies the app-data sentinel
 survived.
+
+For a first release or another case where no published previous SumaFile NSIS
+installer exists, run a previous-ref upgrade smoke instead:
+
+```powershell
+npm run smoke:winui-upgrade-from-ref -- -PreviousRef <git-ref-before-this-release>
+```
+
+That command builds the previous ref in a temporary worktree, uses its NSIS
+installer as the old version, upgrades to the current local installer, and then
+removes the temporary worktree.
 
 To build release-quality artifacts on GitHub without publishing a release, run
 the `Release build` workflow from the Actions tab.

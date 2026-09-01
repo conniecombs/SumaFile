@@ -3,7 +3,7 @@
 [![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
 [![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
 [![Installer Smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
-![Version](https://img.shields.io/badge/version-BETA-2563eb)
+![Version](https://img.shields.io/badge/version-1.0.0-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B-0078D4?logo=windows)
 ![License](https://img.shields.io/badge/license-proprietary-444444)
 
@@ -32,6 +32,7 @@ tools, saved layouts, and installer/update plumbing in one desktop app.
 - [Release and Packaging](#release-and-packaging)
 - [Documentation Map](#documentation-map)
 - [Security Notes](#security-notes)
+- [Known Limitations](#known-limitations)
 - [Support](#support)
 - [License](#license)
 
@@ -39,7 +40,7 @@ tools, saved layouts, and installer/update plumbing in one desktop app.
 
 | Area | Current state |
 | --- | --- |
-| Product | SumaFile BETA |
+| Product | SumaFile 1.0.0 |
 | Platform | Windows 10 2004+ / Windows 11, x64 |
 | UI | WinUI 3, unpackaged desktop host |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
@@ -70,9 +71,9 @@ Download the latest Windows build from
 
 | Artifact | Use it when |
 | --- | --- |
-| `SumaFile_BETA_x64-winui-setup.exe` | You want the normal per-user installer |
-| `SumaFile_BETA_x64-winui.msi` | You need MSI-style Windows deployment |
-| `SumaFile_BETA_x64-winui-portable.zip` | You want to run the app from an extracted folder |
+| `SumaFile_1.0.0_x64-winui-setup.exe` | You want the normal per-user installer |
+| `SumaFile_1.0.0_x64-winui.msi` | You need MSI-style Windows deployment |
+| `SumaFile_1.0.0_x64-winui-portable.zip` | You want to run the app from an extracted folder |
 
 Requirements:
 
@@ -233,6 +234,11 @@ Persistent app data stays on the compatibility path used by earlier releases:
 ```text
 %APPDATA%\com.simplefile.desktop
 ```
+
+No manual import is needed for normal SimpleFile-to-SumaFile use. SumaFile reads
+the stable `com.simplefile.desktop` data folder and falls back to legacy
+`SimpleFile` / `SumaFile` app-data folders when an existing metadata database is
+found there.
 
 Runtime logs are written outside that compatibility folder:
 
@@ -465,8 +471,8 @@ The portable and installed app folder must contain both `SumaFile.exe` and
 
 ### Version Fields
 
-User-facing version is `BETA`. Numeric version is `0.1.0` where Windows,
-MSBuild, WiX, NSIS, and Cargo require numeric identifiers.
+User-facing version is `1.0.0`. Numeric version is also `1.0.0` for Windows,
+MSBuild, WiX, NSIS, and Cargo package identifiers.
 
 Keep these synchronized:
 
@@ -475,6 +481,10 @@ Keep these synchronized:
   - `<Version>`: numeric package identity
 - `crates/simplefile-core/src/lib.rs`
   - `APP_DISPLAY_VERSION`
+- `crates/simplefile-core/Cargo.toml`
+  - package `version`
+- `crates/simplefile-ipc/Cargo.toml`
+  - package `version`
 - `crates/simplefile-service/Cargo.toml`
   - package `version`
 - `Cargo.lock`
@@ -495,6 +505,7 @@ Updater signing details live in [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.m
 | [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
 | [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
 | [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | Signed updater releases |
+| [docs/RELEASE_1.0.0.md](docs/RELEASE_1.0.0.md) | 1.0.0 release checklist, dogfood script, and limitations |
 | [.github/RELEASE.md](.github/RELEASE.md) | Release checklist |
 | [src-winui/README.md](src-winui/README.md) | WinUI host build/run notes |
 | [docs/winui-migration/](docs/winui-migration/) | Historical migration architecture and parity records |
@@ -523,6 +534,17 @@ Out of scope for this branch:
 - App-managed external storage-account integrations
 - macOS or Linux desktop packages
 - Shortcut remapping
+
+## Known Limitations
+
+- SumaFile 1.0.0 is Windows-only and targets Windows 10 2004+ / Windows 11 x64.
+- The first 1.0.0 install is manual. In-app updates require a published GitHub
+  release with signed `latest-winui.json` metadata.
+- Optional archive tooling is still external: `.7z` workflows require 7-Zip, and
+  RAR creation/extraction uses the Settings -> Tools flow.
+- Account-backed storage integrations are intentionally out of scope for this
+  release; local folders, local drives, mapped network shares, and archives are
+  the supported storage surfaces.
 
 ## Support
 

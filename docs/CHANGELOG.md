@@ -9,6 +9,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 ## [Unreleased]
 
 ### Added
+- Nothing yet.
+
+---
+
+## [1.0.0] - 2026-09-01
+
+### Added
 - Recycle Bin is a first-class location (Quick Access). Restore, permanent delete, and Empty Recycle Bin work from the pane.
 - Properties, clipboard history (`Ctrl+Shift+V`), and operation history are real dialogs instead of text dumps.
 - `Ctrl+H` now follows Windows Hidden and System attributes, not just leading-dot names.
@@ -19,11 +26,10 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - `Ctrl+Mouse wheel` changes icon size; `Alt+Enter`, `Ctrl+Enter`, `Ctrl+1–9`, and `Ctrl+B` match the command list.
 
 ### Changed
-- Version identity is now **BETA**. About, Settings, handshake `appVersion`,
-  README badge, installer DisplayVersion/branding, and artifact names use BETA.
-  Technical fields that require x.y.z (Cargo package version, MSBuild
-  `<Version>`, assembly identity, WiX Product Version, NSIS VIProductVersion)
-  use `0.1.0`.
+- Version identity is now **1.0.0**. About, Settings, handshake `appVersion`,
+  README badge, installer DisplayVersion/branding, artifact names, Cargo
+  package versions, MSBuild `<Version>`, assembly identity, WiX Product
+  Version, and NSIS VIProductVersion all use `1.0.0`.
 - Product branding and runtime identity changed from SimpleFile to SumaFile:
   visible app chrome/About/Settings text, installer display names, shortcuts,
   release artifact names, packaged host executable, and startup log path now
@@ -178,7 +184,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
-## [1.0.0] - 2026-05-24
+## [SimpleFile 1.0.0] - 2026-05-24
 
 ### Added
 - Committed `src-tauri/Cargo.lock` so CI, local builds, and release builds use the same dependency graph.
@@ -408,12 +414,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
-[Unreleased]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/conniecombs/SumaFile/releases/tag/v1.0.0
 [1.1.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v0.2.1...v1.0.0
+[SimpleFile 1.0.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v0.2.1...v1.0.0
 [0.2.1]: https://github.com/conniecombs/SimpleFile-Windows/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/conniecombs/SimpleFile-Windows/releases/tag/v0.1.0

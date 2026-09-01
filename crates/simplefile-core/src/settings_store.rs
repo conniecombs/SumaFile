@@ -212,6 +212,8 @@ fn set_db_setting_at(path: &Path, key: &str, value: &str) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_db(name: &str) -> PathBuf {
@@ -220,6 +222,48 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("simplefile-settings-{name}-{nanos}.db"))
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("simplefile-settings-{name}-{nanos}"))
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvVarGuard {
+        name: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(name: &'static str, value: &Path) -> Self {
+            let original = std::env::var_os(name);
+            std::env::set_var(name, value);
+            Self { name, original }
+        }
+
+        fn remove(name: &'static str) -> Self {
+            let original = std::env::var_os(name);
+            std::env::remove_var(name);
+            Self { name, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.original {
+                std::env::set_var(self.name, value);
+            } else {
+                std::env::remove_var(self.name);
+            }
+        }
     }
 
     #[test]
@@ -249,5 +293,53 @@ mod tests {
     fn setting_keys_must_not_be_empty() {
         assert!(validate_key("workspace").is_ok());
         assert!(validate_key("  ").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn metadata_db_path_prefers_stable_compatibility_folder() {
+        let _lock = env_lock().lock().expect("env lock");
+        let root = temp_dir("stable-appdata");
+        let roaming = root.join("roaming");
+        let local = root.join("local");
+        let stable = roaming.join(APP_IDENTIFIER).join(METADATA_DB_NAME);
+        let product = roaming.join(PRODUCT_NAME).join(METADATA_DB_NAME);
+        let legacy = roaming.join(LEGACY_PRODUCT_NAME).join(METADATA_DB_NAME);
+        std::fs::create_dir_all(stable.parent().expect("stable parent")).expect("stable dir");
+        std::fs::create_dir_all(product.parent().expect("product parent")).expect("product dir");
+        std::fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("legacy dir");
+        std::fs::write(&stable, b"stable").expect("stable db");
+        std::fs::write(&product, b"product").expect("product db");
+        std::fs::write(&legacy, b"legacy").expect("legacy db");
+
+        let _metadata = EnvVarGuard::remove(METADATA_DB_ENV);
+        let _override_dir = EnvVarGuard::remove(APP_DATA_DIR_ENV);
+        let _app_data = EnvVarGuard::set("APPDATA", &roaming);
+        let _local_app_data = EnvVarGuard::set("LOCALAPPDATA", &local);
+
+        assert_eq!(metadata_db_path().expect("metadata path"), stable);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn metadata_db_path_falls_back_to_legacy_simplefile_database() {
+        let _lock = env_lock().lock().expect("env lock");
+        let root = temp_dir("legacy-appdata");
+        let roaming = root.join("roaming");
+        let local = root.join("local");
+        let legacy = roaming.join(LEGACY_PRODUCT_NAME).join(METADATA_DB_NAME);
+        std::fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("legacy dir");
+        std::fs::write(&legacy, b"legacy").expect("legacy db");
+
+        let _metadata = EnvVarGuard::remove(METADATA_DB_ENV);
+        let _override_dir = EnvVarGuard::remove(APP_DATA_DIR_ENV);
+        let _app_data = EnvVarGuard::set("APPDATA", &roaming);
+        let _local_app_data = EnvVarGuard::set("LOCALAPPDATA", &local);
+
+        assert_eq!(metadata_db_path().expect("metadata path"), legacy);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

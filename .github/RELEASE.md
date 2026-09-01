@@ -10,23 +10,26 @@ Releases are automated with GitHub Actions through `.github/workflows/release.ym
 
 ## Windows Build Prerequisites
 
-Local release validation requires Node.js 24 or newer, stable Rust, .NET SDK 8,
+Local release validation requires Node.js 24 or newer, stable Rust, .NET SDK 10,
 and optional NSIS / WiX for installer artifacts. GitHub-hosted `windows-latest`
 runners provide the Windows SDK.
 
 ### 1. Update Version Numbers
 
-The user-facing version is BETA. Keep display and numeric identities in sync:
+The user-facing version is 1.0.0. Keep display and numeric identities in sync:
 
-- `src-winui/Directory.Build.props` — `<InformationalVersion>` (BETA) and `<Version>` (numeric `0.1.0` for AssemblyVersion / WiX)
+- `src-winui/Directory.Build.props` — `<InformationalVersion>` and `<Version>`
+- `crates/simplefile-core/Cargo.toml` — package `version` field (must match `<Version>`)
+- `crates/simplefile-ipc/Cargo.toml` — package `version` field (must match `<Version>`)
 - `crates/simplefile-core/src/lib.rs` — `APP_DISPLAY_VERSION` (must match InformationalVersion)
 - `crates/simplefile-service/Cargo.toml` — package `version` field (must match `<Version>`)
 - [`README.md`](../README.md) — version badge
 - [`docs/CHANGELOG.md`](../docs/CHANGELOG.md) — release notes and compare links
 
-Release workflow validation fails if the tag/manual version does not match both
-the WinUI and service versions. Root `Cargo.lock` must also be committed and
-current so release builds use the reviewed dependency graph.
+Release workflow validation fails if the tag/manual version does not match the
+WinUI version or any workspace Cargo package version. Root `Cargo.lock` must
+also be committed and current so release builds use the reviewed dependency
+graph.
 For releases that change Windows drive enumeration, mapped network drive display,
 process launching, updater behavior, installer behavior, or release smoke tests,
 update [`docs/SECURITY.md`](../docs/SECURITY.md),
@@ -87,9 +90,9 @@ Windows build succeeds.
 
 | Platform | Installer Type | Example File |
 |----------|----------------|--------------|
-| Windows x64 | NSIS setup executable | `SumaFile_BETA_x64-winui-setup.exe` |
-| Windows x64 | MSI installer | `SumaFile_BETA_x64-winui.msi` |
-| Windows x64 | Portable zip | `SumaFile_BETA_x64-winui-portable.zip` |
+| Windows x64 | NSIS setup executable | `SumaFile_1.0.0_x64-winui-setup.exe` |
+| Windows x64 | MSI installer | `SumaFile_1.0.0_x64-winui.msi` |
+| Windows x64 | Portable zip | `SumaFile_1.0.0_x64-winui-portable.zip` |
 | Windows updater | Static JSON / signatures | `latest-winui.json`, SHA-256, size, and `.sig` files |
 
 ## Auto-Update
@@ -133,7 +136,7 @@ Add these secrets for Windows code signing when ready:
 
 ## Versioning
 
-The current user-facing version is **BETA**. Technical packaging fields that require x.y.z use `0.1.0`. Future numbered releases can follow Semantic Versioning:
+The current user-facing version is **1.0.0**. Technical packaging fields that require x.y.z also use `1.0.0`. Future numbered releases can follow Semantic Versioning:
 
 - **MAJOR**: breaking changes
 - **MINOR**: backward-compatible features

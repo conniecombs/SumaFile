@@ -19,7 +19,10 @@ const writer = readText('scripts/write-latest-winui.mjs');
 const signer = readText('scripts/sign-update-payload.mjs');
 const releaseScript = readText('scripts/build-winui-release.ps1');
 const releaseWorkflow = readText('.github/workflows/release.yml');
+const readme = readText('README.md');
 const props = readText('src-winui/Directory.Build.props');
+const coreCargo = readText('crates/simplefile-core/Cargo.toml');
+const ipcCargo = readText('crates/simplefile-ipc/Cargo.toml');
 const serviceCargo = readText('crates/simplefile-service/Cargo.toml');
 const coreLib = readText('crates/simplefile-core/src/lib.rs');
 const updater = readText('crates/simplefile-core/src/updater.rs');
@@ -77,22 +80,38 @@ for (const snippet of [
 
 const propsMatch = props.match(/<Version>([^<]+)<\/Version>/);
 const displayMatch = props.match(/<InformationalVersion>([^<]+)<\/InformationalVersion>/);
-const cargoMatch = serviceCargo.match(/^version\s*=\s*"([^"]+)"/m);
+const cargoMatches = new Map([
+  ['crates/simplefile-core/Cargo.toml', coreCargo.match(/^version\s*=\s*"([^"]+)"/m)],
+  ['crates/simplefile-ipc/Cargo.toml', ipcCargo.match(/^version\s*=\s*"([^"]+)"/m)],
+  ['crates/simplefile-service/Cargo.toml', serviceCargo.match(/^version\s*=\s*"([^"]+)"/m)],
+]);
 const displayConstMatch = coreLib.match(
   /pub const APP_DISPLAY_VERSION:\s*&str\s*=\s*"([^"]+)"/,
 );
-if (!propsMatch || !cargoMatch) {
-  fail('Could not read versions from Directory.Build.props and simplefile-service Cargo.toml.');
-} else if (propsMatch[1] !== cargoMatch[1]) {
-  fail(
-    `Version mismatch: Directory.Build.props=${propsMatch[1]} simplefile-service=${cargoMatch[1]}`,
-  );
+const readmeBadgeMatch = readme.match(/img\.shields\.io\/badge\/version-([^-]+)-/);
+if (!propsMatch) {
+  fail('Could not read Version from Directory.Build.props.');
+} else {
+  for (const [file, match] of cargoMatches) {
+    if (!match) {
+      fail(`Could not read package version from ${file}.`);
+    } else if (propsMatch[1] !== match[1]) {
+      fail(`Version mismatch: Directory.Build.props=${propsMatch[1]} ${file}=${match[1]}`);
+    }
+  }
 }
 if (!displayMatch || !displayConstMatch) {
   fail('Could not read InformationalVersion and APP_DISPLAY_VERSION.');
 } else if (displayMatch[1] !== displayConstMatch[1]) {
   fail(
     `Display version mismatch: InformationalVersion=${displayMatch[1]} APP_DISPLAY_VERSION=${displayConstMatch[1]}`,
+  );
+}
+if (!displayMatch || !readmeBadgeMatch) {
+  fail('Could not read InformationalVersion and README version badge.');
+} else if (displayMatch[1] !== decodeURIComponent(readmeBadgeMatch[1])) {
+  fail(
+    `Display version mismatch: InformationalVersion=${displayMatch[1]} README badge=${decodeURIComponent(readmeBadgeMatch[1])}`,
   );
 }
 

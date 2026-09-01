@@ -26,6 +26,12 @@ function fail(message) {
   process.exitCode = 1;
 }
 
+function requireSnippet(source, file, snippet) {
+  if (!source.includes(snippet)) {
+    fail(`${file} must include ${snippet}.`);
+  }
+}
+
 function isHistorical(relativePath) {
   return allowedHistoricalPaths.some((pattern) => pattern.test(relativePath));
 }
@@ -56,6 +62,49 @@ for (const relativePath of trackedFiles) {
       fail(`${relativePath} contains stale live repository identity: ${needle}`);
     }
   }
+}
+
+const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
+const packageJson = fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8');
+const release100 = fs.readFileSync(path.join(repoRoot, 'docs/RELEASE_1.0.0.md'), 'utf8');
+const upgradeFromRef = fs.readFileSync(
+  path.join(repoRoot, 'scripts/smoke-winui-upgrade-from-ref.ps1'),
+  'utf8',
+);
+
+for (const snippet of [
+  'SumaFile 1.0.0',
+  'docs/RELEASE_1.0.0.md',
+  '## Known Limitations',
+  'No manual import is needed for normal SimpleFile-to-SumaFile use.',
+]) {
+  requireSnippet(readme, 'README.md', snippet);
+}
+
+for (const snippet of [
+  '# SumaFile 1.0.0 Release Checklist',
+  'SumaFile_1.0.0_x64-winui-setup.exe',
+  'SumaFile_1.0.0_x64-winui.msi',
+  'SumaFile_1.0.0_x64-winui-portable.zip',
+  'latest-winui.json',
+  '## Dogfood 10-Step Script',
+  'smoke:winui-upgrade-from-ref',
+  '## SimpleFile Data Import',
+  '## Known Limitations',
+  'signed test release before claiming in-app updater installation is proven',
+]) {
+  requireSnippet(release100, 'docs/RELEASE_1.0.0.md', snippet);
+}
+
+requireSnippet(packageJson, 'package.json', 'smoke:winui-upgrade-from-ref');
+for (const snippet of [
+  'SUMAFILE_PREVIOUS_REF',
+  'git @("worktree", "add", "--detach"',
+  'build-winui-release.ps1',
+  'smoke-winui-upgrade.ps1',
+  'git @("worktree", "remove", "--force"',
+]) {
+  requireSnippet(upgradeFromRef, 'scripts/smoke-winui-upgrade-from-ref.ps1', snippet);
 }
 
 if (!process.exitCode) {

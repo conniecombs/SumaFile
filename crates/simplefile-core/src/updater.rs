@@ -451,15 +451,15 @@ mod tests {
     #[test]
     fn update_urls_are_allowlisted() {
         assert!(validate_update_url(
-            "https://github.com/conniecombs/SumaFile/releases/latest/download/SumaFile_BETA_x64-winui-setup.exe"
+            "https://github.com/conniecombs/SumaFile/releases/latest/download/SumaFile_1.0.0_x64-winui-setup.exe"
         )
         .is_ok());
         assert!(validate_update_url(
-            "https://example.com/conniecombs/SumaFile/releases/latest/download/SumaFile_BETA_x64-winui-setup.exe"
+            "https://example.com/conniecombs/SumaFile/releases/latest/download/SumaFile_1.0.0_x64-winui-setup.exe"
         )
         .is_err());
         assert!(validate_update_url(
-            "https://github.com/conniecombs/SumaFile/releases/latest/download/SumaFile_BETA_x64-winui.msi"
+            "https://github.com/conniecombs/SumaFile/releases/latest/download/SumaFile_1.0.0_x64-winui.msi"
         )
         .is_err());
     }
@@ -488,13 +488,13 @@ mod tests {
     #[test]
     fn downloaded_metadata_must_match_manifest() {
         let package = UpdatePackage {
-            url: "https://github.com/conniecombs/SumaFile/releases/latest/download/SumaFile_BETA_x64-winui-setup.exe",
+            url: "https://github.com/conniecombs/SumaFile/releases/latest/download/SumaFile_1.0.0_x64-winui-setup.exe",
             signature: RFC8032_EMPTY_MESSAGE_SIGNATURE,
             sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             size: 0,
         };
         let downloaded = DownloadedUpdate {
-            path: PathBuf::from("SumaFile_BETA_x64-winui-setup.exe"),
+            path: PathBuf::from("SumaFile_1.0.0_x64-winui-setup.exe"),
             bytes: Vec::new(),
             size: 0,
             sha256: package.sha256.to_string(),

@@ -1,6 +1,6 @@
 [package]
 name = "simplefile-core"
-version = "0.1.0"
+version = "1.0.0"
 description = "Reusable SumaFile backend domain types and utilities"
 authors = ["SumaFile Team"]
 license-file = "../../LICENSE"

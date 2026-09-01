@@ -29,6 +29,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -111,6 +113,9 @@ jobs:
         run: npm run smoke:winui-upgrade
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Smoke WinUI NSIS upgrade from first SumaFile baseline
+        run: npm run smoke:winui-upgrade-from-ref -- -PreviousRef b80caed932ab567695bb3ce38d5659217a7cb176
 
       - name: Upload installer artifacts
         if: always()
