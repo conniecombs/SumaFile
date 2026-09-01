@@ -191,6 +191,27 @@ public class WinUiSourceShapeTests
         Assert.Contains("\"binary_rows\"", schema);
     }
 
+    [Fact]
+    public void SidebarShellIcons_PassDirectoryIntentToShellIconImage()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var shellIcon = File.ReadAllText(Path.Combine(appRoot, "ShellIconLoader.cs"));
+        var sidebar = File.ReadAllText(Path.Combine(appRoot, "SidebarView.xaml"));
+
+        Assert.Contains("nameof(IsDirectory)", shellIcon);
+        Assert.Contains("public bool IsDirectory", shellIcon);
+        Assert.Contains("ShellIconLoader.ForPath(Path, IconSize, IsDirectory)", shellIcon);
+        Assert.Contains("isDirectory || IsLikelyDirectoryPath(path)", shellIcon);
+        Assert.Contains("treatAsDirectory ? \"dir\" : \"file\"", shellIcon);
+        Assert.Contains("ShouldRejectGenericIconIndex", shellIcon);
+        Assert.Contains("info.iIcon == 0 && ShouldRejectGenericIconIndex(path, isDirectory)", shellIcon);
+
+        var shellIconCount = CountOccurrences(sidebar, "<local:ShellIconImage");
+        Assert.Equal(4, shellIconCount);
+        Assert.Equal(shellIconCount, CountOccurrences(sidebar, "IsDirectory=\"True\""));
+    }
+
     private static string FindRepoRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -206,5 +227,18 @@ public class WinUiSourceShapeTests
         }
 
         throw new DirectoryNotFoundException("Could not locate src-winui source root.");
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count += 1;
+            index += value.Length;
+        }
+
+        return count;
     }
 }

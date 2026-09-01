@@ -169,6 +169,7 @@ public class NamedPipeJsonClientTests
                 Entries =
                 [
                     new FileEntry { Name = "notes.txt", Size = 42 },
+                    new FileEntry { Name = "Documents", IsDir = true },
                 ],
                 ChunkIndex = 0,
                 Done = true,
@@ -183,11 +184,77 @@ public class NamedPipeJsonClientTests
             });
 
         var listing = await listingTask;
-        var entry = Assert.Single(listing.Entries);
+        Assert.Equal(2, listing.Entries.Count);
+        var entry = Assert.Single(listing.Entries, item => item.Name == "notes.txt");
         Assert.Equal(@"C:\Users\Public\notes.txt", entry.Path);
         Assert.Equal("txt", entry.Extension);
+        var folder = Assert.Single(listing.Entries, item => item.Name == "Documents");
+        Assert.True(folder.IsDir);
+        Assert.Equal(@"C:\Users\Public\Documents", folder.Path);
+        Assert.Equal("", folder.Extension);
         Assert.Single(seen);
         Assert.Equal(@"C:\Users\Public\notes.txt", seen[0].Entries[0].Path);
+        Assert.Equal(@"C:\Users\Public\Documents", seen[0].Entries[1].Path);
+    }
+
+    [Fact]
+    public async Task BinaryListDirectory_LightStreamedRequestNormalizesIconCriticalFields()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+
+        var seen = new List<DirectoryListingChunk>();
+        var listingTask = client.ListDirectoryAsync(
+            @"C:\Users\Public",
+            seen.Add,
+            options: new ListDirectoryOptions
+            {
+                Mode = "light",
+                FinalEntries = false,
+                SortBy = "name",
+                SortAscending = true,
+                IncludeHidden = true,
+            });
+        var request = await server.ReadRequestAsync();
+
+        await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeDirectoryListingChunk(
+            new DirectoryListingChunkNotification
+            {
+                RequestId = request.Id,
+                Path = @"C:\Users\Public",
+                Parent = @"C:\Users",
+                Entries =
+                [
+                    new FileEntry { Name = "notes.txt", Size = 42 },
+                    new FileEntry { Name = "Documents", IsDir = true },
+                ],
+                ChunkIndex = 0,
+                Done = true,
+                IsNetwork = false,
+            }));
+        await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeDirectoryListingResult(
+            request.Id,
+            new DirectoryListing
+            {
+                Path = @"C:\Users\Public",
+                Parent = @"C:\Users",
+                Entries = [],
+                IsNetwork = false,
+            }));
+
+        var listing = await listingTask;
+        Assert.Equal(2, listing.Entries.Count);
+        var file = Assert.Single(listing.Entries, item => item.Name == "notes.txt");
+        Assert.Equal(@"C:\Users\Public\notes.txt", file.Path);
+        Assert.Equal("txt", file.Extension);
+        var folder = Assert.Single(listing.Entries, item => item.Name == "Documents");
+        Assert.True(folder.IsDir);
+        Assert.Equal(@"C:\Users\Public\Documents", folder.Path);
+        Assert.Equal("", folder.Extension);
+        Assert.Single(seen);
+        Assert.Equal(@"C:\Users\Public\notes.txt", seen[0].Entries[0].Path);
+        Assert.Equal(@"C:\Users\Public\Documents", seen[0].Entries[1].Path);
     }
 
     [Fact]

@@ -40,13 +40,6 @@ internal static class ShellIconLoader
                     : "file";
         var cacheKey = $"entry:{requestedSize}:{key}";
 
-        // Always return a fast, extension-based icon first (no network I/O).
-        var fallbackKey = isDirectory
-            ? $"entry:{requestedSize}:dir"
-            : System.IO.Path.GetExtension(path) is { Length: > 0 } ext
-                ? $"entry:{requestedSize}:{ext}"
-                : $"entry:{requestedSize}:file";
-
         try
         {
             return Cache.GetOrAdd(
@@ -90,7 +83,7 @@ internal static class ShellIconLoader
         }
     }
 
-    public static BitmapImage? ForPath(string path, int iconSize = 16)
+    public static BitmapImage? ForPath(string path, int iconSize = 16, bool isDirectory = false)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -98,13 +91,14 @@ internal static class ShellIconLoader
         }
 
         var requestedSize = NormalizeIconSize(iconSize);
+        var treatAsDirectory = isDirectory || IsLikelyDirectoryPath(path);
+        var cacheKey = $"path:{requestedSize}:{(treatAsDirectory ? "dir" : "file")}:{path}";
         try
         {
-            return Cache.GetOrAdd($"path:{requestedSize}:{path}", _ =>
+            return Cache.GetOrAdd(cacheKey, _ =>
             {
                 // Avoid Directory.Exists() which triggers network I/O. Instead, infer
-                // from path shape or fall back to treating as a file.
-                var treatAsDirectory = path.EndsWith('\\') || path.EndsWith('/');
+                // from path shape unless the caller already knows this is a directory.
                 return LoadFromSystemImageList(path, treatAsDirectory, requestedSize, useAttributes: true)
                     ?? Load(path, treatAsDirectory, requestedSize, useAttributes: true)
                     ?? CreateFallbackIcon(path, treatAsDirectory, requestedSize);
@@ -112,7 +106,6 @@ internal static class ShellIconLoader
         }
         catch
         {
-            var treatAsDirectory = path.EndsWith('\\') || path.EndsWith('/');
             return TryCreateFallbackIcon(path, treatAsDirectory, requestedSize);
         }
     }
@@ -132,6 +125,19 @@ internal static class ShellIconLoader
             ".exe" or ".ico" or ".cur" or ".lnk" or ".url" => true,
             _ => false,
         };
+    }
+
+    private static bool IsLikelyDirectoryPath(string path) =>
+        path.EndsWith('\\') || path.EndsWith('/');
+
+    private static bool ShouldRejectGenericIconIndex(string path, bool isDirectory)
+    {
+        if (isDirectory)
+        {
+            return true;
+        }
+
+        return System.IO.Path.GetExtension(path) is { Length: > 0 };
     }
 
     private static BitmapImage CreateFallbackIcon(string path, bool isDirectory, int iconSize)
@@ -266,14 +272,14 @@ internal static class ShellIconLoader
     {
         var info = new ShFileInfo();
         var attributes = isDirectory ? FileAttributeDirectory : FileAttributeNormal;
-        var flags = ShgfiIcon | (iconSize <= 16 ? ShgfiSmallIcon : ShgfiLargeIcon);
+        var flags = ShgfiIcon | ShgfiSysIconIndex | (iconSize <= 16 ? ShgfiSmallIcon : ShgfiLargeIcon);
 
         if (useAttributes)
         {
             flags |= ShgfiUseFileAttributes;
         }
 
-        SHGetFileInfo(string.IsNullOrWhiteSpace(path) ? "file" : path, attributes, ref info, (uint)Marshal.SizeOf<ShFileInfo>(), flags);
+        var result = SHGetFileInfo(string.IsNullOrWhiteSpace(path) ? "file" : path, attributes, ref info, (uint)Marshal.SizeOf<ShFileInfo>(), flags);
         if (info.hIcon == IntPtr.Zero)
         {
             return null;
@@ -281,6 +287,12 @@ internal static class ShellIconLoader
 
         try
         {
+            if (result == IntPtr.Zero
+                || (useAttributes && info.iIcon == 0 && ShouldRejectGenericIconIndex(path, isDirectory)))
+            {
+                return null;
+            }
+
             using var icon = Icon.FromHandle(info.hIcon);
             using var bitmap = icon.ToBitmap();
             return BitmapToBitmapImage(bitmap, iconSize);
@@ -308,7 +320,13 @@ internal static class ShellIconLoader
                 flags |= ShgfiUseFileAttributes;
             }
 
-            SHGetFileInfo(string.IsNullOrWhiteSpace(path) ? "file" : path, attributes, ref info, (uint)Marshal.SizeOf<ShFileInfo>(), flags);
+            var result = SHGetFileInfo(string.IsNullOrWhiteSpace(path) ? "file" : path, attributes, ref info, (uint)Marshal.SizeOf<ShFileInfo>(), flags);
+            if (result == IntPtr.Zero
+                || (useAttributes && info.iIcon == 0 && ShouldRejectGenericIconIndex(path, isDirectory)))
+            {
+                return null;
+            }
+
             var imageListSize = iconSize switch
             {
                 <= 16 => ShilSmall,
@@ -539,6 +557,19 @@ public sealed class ShellIconImage : Microsoft.UI.Xaml.Controls.UserControl
         _image.Height = IconSize;
         _image.Source = string.IsNullOrWhiteSpace(Path)
             ? null
-            : ShellIconLoader.ForPath(Path, IconSize);
+            : ShellIconLoader.ForPath(Path, IconSize, IsDirectory);
+    }
+
+    public static readonly Microsoft.UI.Xaml.DependencyProperty IsDirectoryProperty =
+        Microsoft.UI.Xaml.DependencyProperty.Register(
+            nameof(IsDirectory),
+            typeof(bool),
+            typeof(ShellIconImage),
+            new Microsoft.UI.Xaml.PropertyMetadata(false, OnIconPropertyChanged));
+
+    public bool IsDirectory
+    {
+        get => (bool)GetValue(IsDirectoryProperty);
+        set => SetValue(IsDirectoryProperty, value);
     }
 }
