@@ -125,6 +125,17 @@ public sealed class FileOperationService
         operationStarted?.Invoke(operationId);
         IDisposable? subscription = null;
         IDisposable? cancelRegistration = null;
+        var cancellationLock = new object();
+        Task? backendCancellation = null;
+
+        Task RequestBackendCancellationAsync()
+        {
+            lock (cancellationLock)
+            {
+                return backendCancellation ??= CancelOperationBestEffortAsync(ipc, operationId);
+            }
+        }
+
         if (progress != null)
         {
             subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
@@ -140,7 +151,7 @@ public sealed class FileOperationService
         {
             cancelRegistration = ct.Register(() =>
             {
-                _ = CancelOperationBestEffortAsync(ipc, operationId);
+                _ = RequestBackendCancellationAsync();
             });
         }
 
@@ -158,6 +169,11 @@ public sealed class FileOperationService
         }
         catch (OperationCanceledException)
         {
+            if (ct.IsCancellationRequested)
+            {
+                await RequestBackendCancellationAsync().ConfigureAwait(false);
+            }
+
             _journal?.Cancelled(operationType, operationId);
             throw;
         }
