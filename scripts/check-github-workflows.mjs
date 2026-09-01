@@ -40,6 +40,7 @@ const releaseBuildPath = '.github/workflows/release-build.yml';
 const installerSmokePath = '.github/workflows/installer-smoke.yml';
 const dependabotAutoMergePath = '.github/workflows/dependabot-automerge.yml';
 const dependabotPath = '.github/dependabot.yml';
+const dependabotTriagePath = '.github/workflows/dependabot-automerge.yml';
 
 const ciWorkflow = readText(ciPath);
 const releaseWorkflow = readText(releasePath);
@@ -47,6 +48,7 @@ const releaseBuildWorkflow = readText(releaseBuildPath);
 const installerSmokeWorkflow = readText(installerSmokePath);
 const dependabotAutoMergeWorkflow = readText(dependabotAutoMergePath);
 const dependabot = readText(dependabotPath);
+const dependabotTriageWorkflow = readText(dependabotTriagePath);
 
 // Keep the expected action pins in one place. Dependabot updates must change
 // these values in the same PR as the workflow files, and CI must pass before
@@ -64,10 +66,10 @@ const ciSnippets = [
     'permissions:',
     'contents: read',
     'pull-requests: read',
-    actionPins.checkout,
+    'uses: actions/checkout@v7',
     'uses: dtolnay/rust-toolchain@stable',
     'components: rustfmt, clippy',
-    actionPins.setupNode,
+    'uses: actions/setup-node@v7',
     'node-version: 24',
     'npm run check',
     'cargo fmt --all -- --check',
@@ -98,9 +100,7 @@ const releaseSnippets = [
     'Directory.Build.props',
     'crates/simplefile-service/Cargo.toml',
     'components: rustfmt, clippy',
-    actionPins.checkout,
-    actionPins.setupNode,
-    actionPins.setupDotnet,
+    'uses: actions/setup-node@v7',
     'node-version: 24',
     'npm run check',
     'cargo fmt --all -- --check',
@@ -110,6 +110,10 @@ const releaseSnippets = [
     'Install WiX Toolset (MSI)',
     'function Resolve-WixBin',
     'build-winui-release.ps1',
+    'RequireUpdaterSignature',
+    'SIMPLEFILE_UPDATER_PUBLIC_KEY',
+    'smoke:winui-installer',
+    'smoke:winui-upgrade',
     'latest-winui.json',
     'x64-winui-portable.zip',
     'x64-winui-setup.exe',
@@ -130,17 +134,17 @@ const releaseBuildSnippets = [
     'permissions:',
     'contents: read',
     'runs-on: windows-latest',
-    actionPins.checkout,
+    'uses: actions/checkout@v7',
     'uses: dtolnay/rust-toolchain@stable',
     'targets: x86_64-pc-windows-msvc',
     'components: rustfmt, clippy',
-    actionPins.setupNode,
-    actionPins.setupDotnet,
+    'uses: actions/setup-node@v7',
     'node-version: 24',
     'tool: cargo-audit',
     'dist/winui',
     'build-winui-release.ps1',
-    actionPins.uploadArtifact,
+    'smoke:winui-upgrade',
+    'uses: actions/upload-artifact@v4',
     'retention-days: 30',
 ];
 
@@ -155,12 +159,12 @@ const installerSmokeSnippets = [
     'permissions:',
     'contents: read',
     'runs-on: windows-latest',
-    actionPins.checkout,
+    'uses: actions/checkout@v7',
     'uses: dtolnay/rust-toolchain@stable',
-    actionPins.setupNode,
-    actionPins.setupDotnet,
+    'uses: actions/setup-node@v7',
     'node-version: 24',
     'smoke:winui',
+    'smoke:winui-upgrade',
     'Install WiX Toolset (MSI)',
     'function Resolve-WixBin',
     'Get-Command candle.exe',
@@ -264,6 +268,26 @@ for (const snippet of dependabotSnippets) {
 }
 
 requireOccurrenceCount(dependabot, dependabotPath, 'directory: "/frontend"', 0);
+
+const dependabotTriageSnippets = [
+    'name: Dependabot triage',
+    'contents: read',
+    'issues: write',
+    'pull-requests: write',
+    'uses: dependabot/fetch-metadata@v3',
+    'Label and comment for local review',
+    'needs-local-review',
+    'gh pr comment "$PR_URL"',
+    'Repository auto-merge is disabled',
+];
+
+for (const snippet of dependabotTriageSnippets) {
+    requireSnippet(dependabotTriageWorkflow, dependabotTriagePath, snippet);
+}
+
+if (dependabotTriageWorkflow.includes('gh pr merge --auto')) {
+    fail(`${dependabotTriagePath} should triage Dependabot PRs instead of enabling auto-merge.`);
+}
 
 if (!process.exitCode) {
     console.log('GitHub workflow configuration is wired.');

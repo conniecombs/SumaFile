@@ -84,7 +84,7 @@ public static class DrivePresentation
 
     public static bool IsNetwork(DriveInfo drive)
     {
-        return string.Equals(drive.DriveType, "network", StringComparison.OrdinalIgnoreCase);
+        return PathRules.IsNetworkOrRemoteLikeDrive(drive);
     }
 
     public static DriveInfo? FindDriveForPath(string path, IReadOnlyList<DriveInfo> drives)

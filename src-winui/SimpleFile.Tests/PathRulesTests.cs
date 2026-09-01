@@ -13,6 +13,7 @@ public class PathRulesTests
     [InlineData("C:/", true)]
     [InlineData(@"C:\Users", false)]
     [InlineData("/", true)]
+    [InlineData("recycle-bin:", true)]
     [InlineData("/home", false)]
     public void IsRootPath_MatchesWindowsPathContract(string path, bool expected)
     {
@@ -35,6 +36,14 @@ public class PathRulesTests
     {
         Assert.Equal(@"C:\Users\Desktop", PathRules.JoinPath(@"C:\Users", "Desktop"));
         Assert.Equal(@"C:\Users\Desktop", PathRules.JoinPath(@"C:\Users\", "Desktop"));
+    }
+
+    [Fact]
+    public void RecycleBinPath_IsRootAndHasNoParent()
+    {
+        Assert.True(PathRules.IsRecycleBinPath("recycle-bin:"));
+        Assert.True(PathRules.IsRootPath(PathRules.RecycleBinPath));
+        Assert.Null(PathRules.GetParentPath(PathRules.RecycleBinPath));
     }
 
     [Fact]
@@ -62,6 +71,31 @@ public class PathRulesTests
 
         Assert.True(PathRules.IsNetworkFsPath(@"\\server\share", drives));
         Assert.True(PathRules.IsNetworkFsPath(@"Z:\work", drives));
+        Assert.False(PathRules.IsNetworkFsPath(@"C:\Users", drives));
+    }
+
+    [Fact]
+    public void IsNetworkFsPath_TreatsVirtualFixedDrivesAsRemoteLike()
+    {
+        DriveInfo[] drives =
+        [
+            new()
+            {
+                Name = "Mounted Mirror (S:)",
+                Path = @"S:\",
+                DriveType = "Fixed",
+                FileSystem = "AirLiveDrive-7",
+            },
+            new()
+            {
+                Name = "Windows (C:)",
+                Path = @"C:\",
+                DriveType = "Fixed",
+                FileSystem = "NTFS",
+            },
+        ];
+
+        Assert.True(PathRules.IsNetworkFsPath(@"S:\My Drive [VoX MrZip]\Movies", drives));
         Assert.False(PathRules.IsNetworkFsPath(@"C:\Users", drives));
     }
 

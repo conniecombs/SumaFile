@@ -19,6 +19,19 @@ public static class BreadcrumbBuilder
             return [];
         }
 
+        if (PathRules.IsRecycleBinPath(path))
+        {
+            return
+            [
+                new BreadcrumbSegment
+                {
+                    Label = "Recycle Bin",
+                    Path = PathRules.RecycleBinPath,
+                    Current = true,
+                },
+            ];
+        }
+
         var parts = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
         var currentAccumulated = "";
         var segments = new List<BreadcrumbSegment>(parts.Length);

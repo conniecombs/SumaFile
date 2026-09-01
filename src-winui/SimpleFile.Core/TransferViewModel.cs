@@ -48,16 +48,22 @@ public sealed partial class TransferViewModel : ObservableObject
         _workspace = workspace;
     }
 
+    public bool HasActiveTransfer => CurrentOperationId is not null || _transferCts is not null;
+
     /// <summary>
     /// Creates a new CancellationTokenSource for the current transfer.
     /// Returns the token for the caller to use.
     /// </summary>
     public CancellationTokenSource BeginTransfer()
     {
+        _transferCts?.Cancel();
         var cts = new CancellationTokenSource();
         _transferCts = cts;
         IsTransferring = true;
         IsCancelling = false;
+        ProgressPercent = 0;
+        ProgressDetail = "";
+        StatusText = "";
         return cts;
     }
 
@@ -67,6 +73,13 @@ public sealed partial class TransferViewModel : ObservableObject
     public void SetOperationId(string operationId)
     {
         CurrentOperationId = operationId;
+        IsTransferring = true;
+    }
+
+    public void ClearCurrentOperation()
+    {
+        CurrentOperationId = null;
+        IsTransferring = _transferCts is not null;
     }
 
     /// <summary>
@@ -118,6 +131,20 @@ public sealed partial class TransferViewModel : ObservableObject
         {
             // Expected during teardown.
         }
+    }
+
+    public bool FinishTransfer(CancellationTokenSource transferCts)
+    {
+        if (!ReferenceEquals(_transferCts, transferCts))
+        {
+            return false;
+        }
+
+        _transferCts = null;
+        IsTransferring = CurrentOperationId is not null;
+        IsCancelling = false;
+        transferCts.Dispose();
+        return true;
     }
 
     /// <summary>

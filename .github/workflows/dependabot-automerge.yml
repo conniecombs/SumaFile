@@ -1,15 +1,9 @@
-name: Dependabot auto-merge
-
-# Run only after CI has completed. The previous pull_request trigger could
-# enable auto-merge before any checks finished, allowing a broken dependency
-# update to land on an unprotected branch.
-on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+name: Dependabot triage
+on: pull_request
 
 permissions:
-  contents: write
+  contents: read
+  issues: write
   pull-requests: write
 
 jobs:
@@ -20,36 +14,52 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.actor.login == 'dependabot[bot]'
     steps:
-      - name: Resolve and verify Dependabot pull request
-        id: pull_request
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+      - name: Label and comment for local review
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          REPOSITORY: ${{ github.repository }}
-          WORKFLOW_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         run: |
-          pr_number="$WORKFLOW_PR_NUMBER"
-          if [[ -z "$pr_number" ]]; then
-            pr_number="$(gh api "repos/$REPOSITORY/commits/$HEAD_SHA/pulls" \
-              --jq 'map(select(.state == "open"))[0].number // empty')"
+          set -euo pipefail
+
+          repo="${GITHUB_REPOSITORY}"
+          pr_number="${{ github.event.pull_request.number }}"
+
+          ensure_label() {
+            local name="$1"
+            local color="$2"
+            local description="$3"
+            if ! gh api "repos/${repo}/labels/${name}" >/dev/null 2>&1; then
+              gh api "repos/${repo}/labels" \
+                -f "name=${name}" \
+                -f "color=${color}" \
+                -f "description=${description}" >/dev/null
+            fi
+          }
+
+          ensure_label "dependencies" "0366d6" "Dependency update pull requests"
+          ensure_label "needs-local-review" "fbca04" "Dependency PR is ready for a local compatibility pass"
+
+          gh api "repos/${repo}/issues/${pr_number}/labels" \
+            --method POST \
+            -f labels[]="dependencies" \
+            -f labels[]="needs-local-review" >/dev/null
+
+          marker="<!-- sumafile-dependabot-triage -->"
+          if gh api "repos/${repo}/issues/${pr_number}/comments" --paginate --jq '.[].body' | grep -Fq "${marker}"; then
+            exit 0
           fi
 
-          if [[ -z "$pr_number" ]]; then
-            echo "No open pull request is associated with CI commit $HEAD_SHA." >&2
-            exit 1
-          fi
+          gh pr comment "$PR_URL" --body "${marker}
+          Dependency update detected:
+          - Dependencies: ${{ steps.metadata.outputs.dependency-names }}
+          - Update type: ${{ steps.metadata.outputs.update-type }}
+          - Previous version: ${{ steps.metadata.outputs.previous-version }}
+          - New version: ${{ steps.metadata.outputs.new-version }}
 
-          pr_author="$(gh api "repos/$REPOSITORY/pulls/$pr_number" --jq '.user.login')"
-          if [[ "$pr_author" != "dependabot[bot]" ]]; then
-            echo "Refusing to auto-merge PR #$pr_number authored by $pr_author." >&2
-            exit 1
-          fi
-
-          echo "url=https://github.com/$REPOSITORY/pull/$pr_number" >> "$GITHUB_OUTPUT"
-
-      - name: Enable auto-merge for Dependabot PRs
-        run: gh pr merge --auto --merge "$PR_URL"
+          Repository auto-merge is disabled, so this PR has been marked for a local compatibility pass instead of attempting auto-merge."
         env:
           PR_URL: ${{ steps.pull_request.outputs.url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

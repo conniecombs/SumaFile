@@ -1,10 +1,12 @@
-//! Reusable file operation logic extracted from the Tauri frontend's `fs_ops.rs`.
+//! Reusable file operation logic for the SumaFile backend.
 //!
-//! This module contains file system operations that need no Tauri dependencies,
-//! making them callable from any Rust-based backend (service crate, tests, CLI
-//! tools).
+//! This module contains host-independent file system operations that are callable
+//! from the service crate, tests, and future tools.
 
 use crate::models::{FileEntry, TreeNode};
+use crate::path_conflict::{
+    create_dir_exclusive, is_keep_both_action, path_collision_key, path_exists_no_follow,
+};
 use crate::utils::{
     count_directory_entries, get_file_entry, recreate_symlink, validate_existing_path_no_resolve,
     validate_name, validate_path_no_follow,
@@ -80,6 +82,17 @@ pub fn create_file(path: &str, name: &str) -> Result<String, String> {
 pub fn delete_entry(path: &str) -> Result<(), String> {
     if crate::archive::is_archive_virtual_path(path) {
         return crate::archive::delete_archive_entry(path);
+    }
+
+    let in_recycle_bin = path.contains("$Recycle.Bin") || path.contains("$recycle.bin");
+    let recycle_data = Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.len() >= 2 && name.as_bytes()[1].eq_ignore_ascii_case(&b'R'));
+    if in_recycle_bin
+        && (crate::recycle_bin::paired_info_path(Path::new(path)).exists() || recycle_data)
+    {
+        return crate::recycle_bin::delete_recycle_item(path);
     }
 
     let path_buf = validate_path_no_follow(path)?;
@@ -227,7 +240,10 @@ fn delete_with_shell_permanently(path: &Path) -> io::Result<()> {
     ))
 }
 
-pub fn move_to_trash(paths: &[String]) -> Result<(), String> {
+pub fn move_to_trash(paths: &[String]) -> Result<Vec<String>, String> {
+    let previous_recycle_paths = crate::recycle_bin::recycle_bin_data_path_set();
+    let mut trashed_original_paths = Vec::new();
+
     for path in paths {
         if crate::archive::is_archive_virtual_path(path) {
             crate::archive::delete_archive_entry(path)?;
@@ -236,8 +252,17 @@ pub fn move_to_trash(paths: &[String]) -> Result<(), String> {
 
         let validated = validate_path_no_follow(path)?;
         trash::delete(&validated).map_err(|e| format!("TRASH_UNAVAILABLE: {e}"))?;
+        trashed_original_paths.push(validated.to_string_lossy().to_string());
     }
-    Ok(())
+
+    if trashed_original_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    Ok(crate::recycle_bin::recycle_bin_paths_for_originals(
+        &trashed_original_paths,
+        &previous_recycle_paths,
+    ))
 }
 
 // ============================================================================
@@ -558,6 +583,10 @@ pub fn move_entry_resolved(
 // ============================================================================
 
 pub fn list_subdirectories(path: &str) -> Result<Vec<TreeNode>, String> {
+    if crate::recycle_bin::is_recycle_bin_path(path) {
+        return Ok(Vec::new());
+    }
+
     let path_buf = validate_existing_path_no_resolve(path)?;
     if !path_buf.is_dir() {
         return Err(format!("Path is not a directory: {path}"));
@@ -596,6 +625,10 @@ pub fn list_subdirectories(path: &str) -> Result<Vec<TreeNode>, String> {
 }
 
 pub fn get_entry_info_simple(path: &str) -> Result<FileEntry, String> {
+    if crate::recycle_bin::is_recycle_bin_path(path) {
+        return Ok(crate::recycle_bin::recycle_bin_entry());
+    }
+
     let path_buf = validate_path_no_follow(path)?;
     get_file_entry(&path_buf).ok_or_else(|| "Failed to get file info".to_string())
 }
@@ -633,10 +666,6 @@ pub fn count_folder_items(path: &str, cancel: &AtomicBool) -> Option<u64> {
 // ============================================================================
 // Private helpers
 // ============================================================================
-
-fn path_collision_key(path: &Path) -> String {
-    path.to_string_lossy().to_lowercase()
-}
 
 fn unique_rename_temp_path(parent: &Path, idx: usize) -> Result<PathBuf, String> {
     let mut random = [0u8; 16];
@@ -690,10 +719,6 @@ fn batch_rename_recovery_error(
     }
 }
 
-fn path_exists_no_follow(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok()
-}
-
 fn remove_existing_path(path: &Path) -> Result<(), String> {
     let meta = fs::symlink_metadata(path)
         .map_err(|e| format!("Failed to stat existing destination: {e}"))?;
@@ -734,13 +759,6 @@ fn unique_destination_path(dest_dir: &Path, file_name: &std::ffi::OsStr) -> Path
         }
     }
     dest_dir.join(file_name)
-}
-
-fn is_keep_both_action(conflict_action: &str) -> bool {
-    matches!(
-        conflict_action.to_ascii_lowercase().as_str(),
-        "rename" | "keep-both" | "keep_both"
-    )
 }
 
 fn resolve_destination(
@@ -864,19 +882,6 @@ pub(crate) fn copy_dir_iterative(src: &Path, dst: &Path) -> Result<(), String> {
         preserve_basic_metadata(&src_dir, &dst_dir)?;
     }
     Ok(())
-}
-
-fn create_dir_exclusive(path: &Path) -> Result<(), String> {
-    fs::create_dir(path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::AlreadyExists {
-            format!(
-                "CONFLICT: destination already exists: {}",
-                path.to_string_lossy()
-            )
-        } else {
-            format!("Failed to create directory: {e}")
-        }
-    })
 }
 
 pub fn preserve_basic_metadata(src: &Path, dst: &Path) -> Result<(), String> {

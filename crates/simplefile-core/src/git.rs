@@ -177,6 +177,8 @@ fn deleted_or_missing_entry(path: &Path, relative: &str) -> FileEntry {
         path: path_string,
         is_dir: false,
         is_symlink: false,
+        is_hidden: false,
+        is_system: false,
         size: 0,
         modified: "-".to_string(),
         extension,

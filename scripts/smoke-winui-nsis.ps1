@@ -12,10 +12,13 @@ $installer = Get-ChildItem -Path $bundleDir -Filter "SumaFile_*_x64-winui-setup.
 
 $expectedTitle = "SumaFile"
 $props = Get-Content -Path (Join-Path $root "src-winui\Directory.Build.props") -Raw
-if ($props -notmatch '<Version>([^<]+)</Version>') {
-    throw "Could not read Version from src-winui\Directory.Build.props."
+if ($props -match '<InformationalVersion>([^<]+)</InformationalVersion>') {
+    $expectedVersion = $Matches[1]
+} elseif ($props -match '<Version>([^<]+)</Version>') {
+    $expectedVersion = $Matches[1]
+} else {
+    throw "Could not read InformationalVersion or Version from src-winui\Directory.Build.props."
 }
-$expectedVersion = $Matches[1]
 $timeoutSeconds = 25
 $process = $null
 

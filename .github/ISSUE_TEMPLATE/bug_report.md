@@ -15,7 +15,7 @@ supported release target.
 | Field | Value |
 |-------|-------|
 | **Windows version/build** | <!-- e.g. Windows 11 24H2 build 26100 --> |
-| **SumaFile version** | <!-- e.g. v1.1.0 - check About dialog or release page --> |
+| **SumaFile version** | <!-- e.g. BETA - check About dialog or release page --> |
 | **Install/source** | <!-- e.g. NSIS installer, MSI installer, portable zip, `npm run dev:winui` --> |
 | **Affected storage** | <!-- e.g. local NTFS path, mapped network drive, UNC path, removable drive --> |
 | **Rust/.NET version** | <!-- For local/dev builds only; otherwise write N/A --> |

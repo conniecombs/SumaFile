@@ -11,6 +11,12 @@ pub struct FileEntry {
     pub path: String,
     pub is_dir: bool,
     pub is_symlink: bool,
+    /// Windows Hidden attribute, or a leading-dot name.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_hidden: bool,
+    /// Windows System attribute (protected operating-system files).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_system: bool,
     pub size: u64,
     pub modified: String,
     pub extension: String,
@@ -77,6 +83,8 @@ pub struct DriveInfo {
     pub name: String,
     pub path: String,
     pub drive_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_system: Option<String>,
     pub total_space: u64,
     pub free_space: u64,
     pub remote_path: Option<String>,
@@ -269,6 +277,11 @@ pub struct UpdateInfo {
     pub version: String,
     pub date: Option<String>,
     pub body: Option<String>,
+    pub installable: bool,
+    pub channel: Option<String>,
+    pub url: Option<String>,
+    pub sha256: Option<String>,
+    pub size: Option<u64>,
 }
 
 // ============================================================================

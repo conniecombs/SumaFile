@@ -29,6 +29,31 @@ fn format_modified(meta: &fs::Metadata) -> String {
         .unwrap_or_else(|_| String::from("-"))
 }
 
+pub fn name_looks_hidden(name: &str) -> bool {
+    name.starts_with('.') && name != "." && name != ".."
+}
+
+pub fn hidden_system_from_attrs(name: &str, attrs: u32) -> (bool, bool) {
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x0000_0002;
+    const FILE_ATTRIBUTE_SYSTEM: u32 = 0x0000_0004;
+    let hidden = (attrs & FILE_ATTRIBUTE_HIDDEN) != 0 || name_looks_hidden(name);
+    let system = (attrs & FILE_ATTRIBUTE_SYSTEM) != 0;
+    (hidden, system)
+}
+
+pub fn hidden_system_from_metadata(name: &str, meta: &fs::Metadata) -> (bool, bool) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        hidden_system_from_attrs(name, meta.file_attributes())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = meta;
+        (name_looks_hidden(name), false)
+    }
+}
+
 fn build_file_entry(
     path: &Path,
     is_dir: bool,
@@ -36,6 +61,7 @@ fn build_file_entry(
     size: u64,
     modified: String,
     symlink_target: Option<String>,
+    meta: Option<&fs::Metadata>,
 ) -> Option<FileEntry> {
     let name = path.file_name()?.to_string_lossy().to_string();
     let file_path = path.to_string_lossy().to_string();
@@ -46,12 +72,17 @@ fn build_file_entry(
             .map(|e| e.to_string_lossy().to_string())
             .unwrap_or_default()
     };
+    let (is_hidden, is_system) = meta
+        .map(|metadata| hidden_system_from_metadata(&name, metadata))
+        .unwrap_or_else(|| (name_looks_hidden(&name), false));
 
     Some(FileEntry {
         name,
         path: file_path,
         is_dir,
         is_symlink,
+        is_hidden,
+        is_system,
         size,
         modified,
         extension,
@@ -98,7 +129,15 @@ pub fn get_file_entry(path: &PathBuf) -> Option<FileEntry> {
         None
     };
 
-    build_file_entry(path, is_dir, is_symlink, size, modified, symlink_target)
+    build_file_entry(
+        path,
+        is_dir,
+        is_symlink,
+        size,
+        modified,
+        symlink_target,
+        Some(&symlink_meta),
+    )
 }
 
 /// Build a `FileEntry` from a `DirEntry` without re-opening the path for normal
@@ -134,10 +173,12 @@ pub fn get_file_entry_from_dir_entry(entry: &fs::DirEntry) -> Option<FileEntry> 
         meta.len(),
         format_modified(&meta),
         symlink_target,
+        Some(&meta),
     )
 }
 
-/// True for UNC paths (`\\server\share`) and mapped network drive letters.
+/// True for UNC paths (`\\server\share`), mapped network drive letters, and
+/// virtual file systems that report themselves as fixed disks.
 pub fn is_network_path(path: &Path) -> bool {
     let raw = path.to_string_lossy();
     let trimmed = raw.trim();
@@ -161,13 +202,60 @@ pub fn is_network_path(path: &Path) -> bool {
                     .chain(std::iter::once(0))
                     .collect();
                 let drive_type = unsafe { GetDriveTypeW(wide.as_ptr()) };
-                return drive_type == DRIVE_REMOTE;
+                return drive_type == DRIVE_REMOTE
+                    || windows_volume_file_system(&wide)
+                        .as_deref()
+                        .is_some_and(is_remote_like_file_system);
             }
         }
     }
 
     let _ = path;
     false
+}
+
+#[cfg(windows)]
+fn windows_volume_file_system(wide_root: &[u16]) -> Option<String> {
+    use std::ptr::null_mut;
+
+    let mut file_system_name = [0u16; 260];
+    let ok = unsafe {
+        winapi::um::fileapi::GetVolumeInformationW(
+            wide_root.as_ptr(),
+            null_mut(),
+            0,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            file_system_name.as_mut_ptr(),
+            file_system_name.len() as u32,
+        ) != 0
+    };
+
+    if !ok {
+        return None;
+    }
+
+    let len = file_system_name
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(file_system_name.len());
+    let value = String::from_utf16_lossy(&file_system_name[..len])
+        .trim()
+        .to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+#[cfg(windows)]
+fn is_remote_like_file_system(file_system: &str) -> bool {
+    let lower = file_system.to_ascii_lowercase();
+    ["airlivedrive", "virtual", "sshfs", "sftp", "fuse"]
+        .iter()
+        .any(|token| lower.contains(token))
 }
 
 pub fn generate_operation_id() -> String {
@@ -180,20 +268,6 @@ pub fn generate_operation_id() -> String {
         .unwrap_or_default()
         .as_secs();
     format!("op_{secs}_{count}")
-}
-
-/// Validate a path that must exist
-pub fn validate_existing_path(path: &str) -> Result<PathBuf, String> {
-    let path_buf = PathBuf::from(path);
-
-    if !path_buf.exists() {
-        return Err(format!("Path does not exist: {path}"));
-    }
-
-    // Canonicalize to resolve symlinks and ".." components
-    path_buf
-        .canonicalize()
-        .map_err(|e| format!("Failed to resolve path: {e}"))
 }
 
 /// Validate a path that must exist while preserving the exact path supplied.
@@ -210,7 +284,7 @@ pub fn validate_existing_path_no_resolve(path: &str) -> Result<PathBuf, String> 
 
 /// Validate a path that must exist **without following symlinks** (lstat).
 ///
-/// Use this instead of `validate_existing_path` whenever the operation must
+/// Use this whenever the operation must
 /// act on the symlink itself rather than its target — e.g. delete, rename,
 /// move, or `get_entry_info`.  Canonicalising the path first would silently
 /// redirect all of those operations to the symlink target, which:
@@ -400,37 +474,10 @@ pub fn count_directory_entries(
     Some(count)
 }
 
-/// Recursively count all entries under `path`, excluding the root directory itself.
-/// Returns `None` if cancelled or superseded by a newer count request.
-pub fn count_items_scoped(
-    path: &Path,
-    cancel: &std::sync::atomic::AtomicBool,
-    generation: Option<(&std::sync::atomic::AtomicU64, u64)>,
-) -> Option<u64> {
-    let mut count = 0u64;
-    let mut stack = vec![path.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        if should_cancel(cancel, generation) {
-            return None;
-        }
-        if let Ok(entries) = fs::read_dir(&current) {
-            for entry in entries.flatten() {
-                if should_cancel(cancel, generation) {
-                    return None;
-                }
-                count += 1;
-                let Ok(ft) = entry.file_type() else { continue };
-                if ft.is_dir() {
-                    stack.push(entry.path());
-                }
-            }
-        }
-    }
-    Some(count)
-}
-
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use super::is_remote_like_file_system;
     use super::{
         classify_symlink_target, recreate_symlink, symlink_target_classification_path,
         validate_name, SymlinkTargetKind,
@@ -525,6 +572,15 @@ mod tests {
         ] {
             assert!(validate_name(name).is_ok(), "{name} should be accepted");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn remote_like_file_system_detects_virtual_mounts() {
+        assert!(is_remote_like_file_system("AirLiveDrive-7"));
+        assert!(is_remote_like_file_system("FuseMountFS"));
+        assert!(is_remote_like_file_system("SSHFS"));
+        assert!(!is_remote_like_file_system("NTFS"));
     }
 
     #[test]

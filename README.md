@@ -1,264 +1,276 @@
 # SumaFile
 
-[![CI](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/ci.yml)
-[![Release](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/release.yml)
-[![Installer Smoke](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SimpleFile-Windows/actions/workflows/installer-smoke.yml)
-![Version](https://img.shields.io/badge/version-1.1.0-2563eb)
-![Platform](https://img.shields.io/badge/platform-Windows%2010+-0078D4?logo=windows)
+[![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
+[![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
+[![Installer Smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
+![Version](https://img.shields.io/badge/version-BETA-2563eb)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B-0078D4?logo=windows)
 ![License](https://img.shields.io/badge/license-proprietary-444444)
 
-**SumaFile** is a modern, high-performance file manager for **Windows 10+ (x64)**.
-It is built with [WinUI 3](https://learn.microsoft.com/windows/apps/winui/winui3/) and a Rust named-pipe IPC service.
+SumaFile is a Windows file manager for people who keep several folders, tools,
+and inspections open at once. It combines a native WinUI 3 interface with a Rust
+filesystem service so everyday browsing stays responsive while heavier work
+runs out of the UI process.
 
-If Windows File Explorer feels limited for power workflows — dual panes, tabs per pane, batch rename, archives, search, previews, checksums, Git status, cleanup tools — SumaFile puts those tools in one native desktop app.
+It is built for local Windows workflows: dual panes, per-pane tabs, fast
+search, rich previews, archives, checksums, Git status, batch rename, cleanup
+tools, saved layouts, and installer/update plumbing in one desktop app.
 
-<p align="center">
-  <img src="docs/assets/screenshots/simplefile-main-window.png" alt="SumaFile main window with preview pane" width="720" />
-</p>
+## Contents
 
----
-
-## Table of Contents
-
-- [Why SumaFile](#why-sumafile)
-- [Screenshots](#screenshots)
-- [Features](#features)
-- [Installation](#installation)
-- [Getting Started](#getting-started)
+- [Status](#status)
+- [Highlights](#highlights)
+- [Install](#install)
+- [Use SumaFile](#use-sumafile)
+- [Feature Reference](#feature-reference)
+- [Settings and Saved State](#settings-and-saved-state)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
-- [Settings](#settings)
-- [Development](#development)
-- [Project Structure](#project-structure)
+- [Develop](#develop)
+- [Project Layout](#project-layout)
 - [Architecture](#architecture)
-- [Verification & Testing](#verification--testing)
-- [Release & Packaging](#release--packaging)
-- [Documentation](#documentation)
-- [Security](#security)
-- [Scope of This Branch](#scope-of-this-branch)
+- [Testing and Verification](#testing-and-verification)
+- [Release and Packaging](#release-and-packaging)
+- [Documentation Map](#documentation-map)
+- [Security Notes](#security-notes)
 - [Support](#support)
 - [License](#license)
 
----
+## Status
 
-## Why SumaFile
-
-| Goal | What you get |
+| Area | Current state |
 | --- | --- |
-| Work faster on two folders | Dual-pane mode with independent tabs, history, and selection per pane |
-| Stay in one window | Tabbed browsing, breadcrumbs, tree view, Quick Access, bookmarks, recents |
-| Move files safely | Progress with bytes/rate/ETA, cancel, conflict options, undo/redo |
-| Inspect before you open | Preview pane + spacebar Quick Look for images, media, code, PDF, Markdown |
-| Clean and organize | Advanced rename, tags/labels, smart folders, duplicates, disk cleanup |
-| Stay Windows-native | Drive list, mapped network shares, Recycle Bin, Open With, terminal launch |
-| Ship with confidence | NSIS + MSI installers, in-app update check, CI and installer smoke tests |
+| Product | SumaFile BETA |
+| Platform | Windows 10 2004+ / Windows 11, x64 |
+| UI | WinUI 3, unpackaged desktop host |
+| Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
+| Release formats | NSIS setup, MSI, portable zip |
+| Update channel | GitHub Releases plus signed `latest-winui.json` metadata |
+| License | Proprietary |
 
-**Current release:** `1.1.0` (see [docs/RELEASE_1.1.0.md](docs/RELEASE_1.1.0.md) and [docs/CHANGELOG.md](docs/CHANGELOG.md)).
+The active product is the WinUI app in `src-winui/` plus the Rust crates in
+`crates/`. The older Svelte/Tauri surface has been retired from this branch;
+historical migration notes remain under `docs/winui-migration/`.
 
----
+## Highlights
 
-## Screenshots
+| Need | SumaFile surface |
+| --- | --- |
+| Work in two places | Dual-pane mode with independent tabs, history, view, sort, and selection |
+| Keep contexts ready | Named layouts for panes, tabs, columns, preview width, sidebar state, and pane split |
+| Move files safely | Copy/move progress, cancel, conflict choices, Recycle Bin delete, undo/redo |
+| Inspect files quickly | Preview pane and Quick Look for images, PDF, audio, video, text, source, Markdown, and fonts |
+| Understand files | Properties, metadata, checksums, text diff, and binary hex/ASCII compare |
+| Organize projects | Tags, bookmarks, recents, smart folders, advanced rename, duplicate finder |
+| Stay Windows-native | Drive labels, mapped network share status, Open With, terminals, NSIS/MSI packaging |
 
-| Main Window | Advanced Rename |
-| :---: | :---: |
-| ![Main window with preview pane](docs/assets/screenshots/simplefile-main-window.png) | ![Advanced rename template preview](docs/assets/screenshots/simplefile-advanced-rename.png) |
+## Install
 
-| File Comparison | File List Settings |
-| :---: | :---: |
-| ![Side-by-side text file comparison](docs/assets/screenshots/simplefile-file-compare.png) | ![Configurable visible columns](docs/assets/screenshots/simplefile-configurable-columns.png) |
+Download the latest Windows build from
+[GitHub Releases](https://github.com/conniecombs/SumaFile/releases).
 
----
+| Artifact | Use it when |
+| --- | --- |
+| `SumaFile_BETA_x64-winui-setup.exe` | You want the normal per-user installer |
+| `SumaFile_BETA_x64-winui.msi` | You need MSI-style Windows deployment |
+| `SumaFile_BETA_x64-winui-portable.zip` | You want to run the app from an extracted folder |
 
-## Features
+Requirements:
 
-### Navigation & browsing
+- Windows 10 2004 or newer, or Windows 11
+- x64 Windows
+- For `.7z` list/create/extract: install 7-Zip or set `SIMPLEFILE_7Z` to
+  `7z.exe`
+- For RAR creation/extraction workflows: use the optional RAR tooling in
+  Settings -> Tools
 
-- **Dual-pane mode** — two independent browsers side by side (`F6`)
-- **Per-pane tabs** — each pane keeps its own tab set, active tab, and navigation state
-- **Breadcrumb bar** — jump to any parent segment of the current path
-- **Tree view sidebar** — hierarchical folder navigation with optional auto-collapse
-- **Editable path bar** — click to type a path, with path autocomplete
-- **Quick Access & bookmarks** — pin folders you use constantly
-- **Recent locations** — return to places you visited recently
-- **Back / forward history** — per-pane history via `Alt+Left` / `Alt+Right`
-- **Type-ahead selection** — start typing a name to jump to matching items
-- **Marquee (rubber-band) selection** — drag to multi-select in list or grid
-- **Huge-folder virtualization** — list/grid stay responsive in very large directories
-- **Live folder watching** — directory contents refresh when the filesystem changes
+After installing, open Settings -> Updates to check published releases. Builds
+with trusted updater metadata can download, verify, and launch the NSIS setup
+from inside the app. Builds without complete trusted metadata fall back to the
+release page.
 
-### File operations
+## Use SumaFile
 
-- **Copy, cut, paste, move** with transfer manager operation IDs
-- **Real-time progress** — bytes completed/total, rate, ETA, and cancelling state
-- **Delete to Recycle Bin** or permanent delete (`Delete` / `Shift+Delete`)
-- **Conflict handling** — skip, replace, keep both, or refuse overwrite when needed
-- **Create file / folder** — `Ctrl+N` / `Ctrl+Shift+N`
-- **Rename** single items (`F2`) and **Advanced Rename** for batch patterns
-- **Drag and drop** between panes, tabs, and external applications
-- **Undo / redo** for create, rename, copy, and move (`Ctrl+Z` / `Ctrl+Y`)
-- **Clipboard history** — re-use recent copy/cut sets (`Ctrl+Shift+V`)
-- **Copy full path** to the system clipboard (`Ctrl+Shift+C`)
-- **Cross-pane transfer** — copy or move selection to the other pane (`Ctrl+Alt+C` / `Ctrl+Alt+M`)
+1. Open SumaFile.
+2. Pick a location from drives, Quick Access, bookmarks, recent locations, smart
+   folders, or the folder tree.
+3. Press `F6` to open or close the second pane.
+4. Use `Ctrl+T` for tabs. Each pane has its own tab set and navigation history.
+5. Press `Space` for Quick Look, or leave the preview pane open for continuous
+   inspection.
+6. Use View options -> Layouts to save named workspaces such as "Code review",
+   "Photos", or "Archive cleanup".
 
-### Advanced rename
+## Feature Reference
 
-- Batch rename with live preview
-- Template tokens, regex remove/replace, whitespace cleanup, separator conversion
-- Extension transforms and name sanitization
-- Optional recursive targeting into selected folders
-- Warnings for duplicates and invalid names before you commit
+### Navigation
 
-### Windows drives & network
+- Dual-pane browsing with independent active pane state
+- Per-pane tabs, tab history, and tab switching shortcuts
+- Breadcrumb navigation and editable path bar
+- Folder suggestions while typing a path
+- Quick Access, bookmarks, recent locations, smart folders, and optional tree
+- Type-ahead selection in file lists
+- Marquee selection in list and grid presentations
+- Live directory watching for changed folder contents
+- Recycle Bin as a browsable location with restore and empty actions
 
-- Native drive list with volume labels, drive types, and free-space indicators
-- Mapped network share names with offline / stale status detection
-- Drive refresh and reconnect flow when a share is unavailable
-- Status bar drive-space meter for the active location
+### Views and Layouts
 
-### Search & smart folders
+- Details, list, tiles, and content views
+- Per-pane view style, icon size, sort column, and sort direction
+- Column presets: default, details, media, developer, and photo
+- Explorer-style column resizing, size-to-fit, and horizontal scrolling
+- Dark, light, and Windows-default theme modes
+- Show or hide Windows hidden/system files
+- Optional folder size and Git status columns
+- Named saved layouts that capture tabs, panes, view settings, columns, preview,
+  sidebar, and pane split state
 
-- **Quick filter** — instant filename filter in the current directory
-- **Recursive search** through subfolders
-- **Content search** inside file contents
-- Filters for size, date, depth, and hidden files
-- Cancellable, batched results so large trees stay usable
-- **Smart folders** — save search criteria as reusable virtual folders
+### File Operations
+
+- Copy, cut, paste, move, rename, new file, and new folder
+- Recycle Bin delete and permanent delete
+- Transfer progress with bytes, total, rate, ETA, and cancelling feedback
+- Conflict handling for skip, replace, rename/keep-both, or fail
+- Drag and drop between panes, tabs, and external applications
+- Cross-pane copy/move commands
+- Undo/redo for create, rename, copy, move, and Recycle Bin delete flows
+- Clipboard history for recent copy/cut sets
+- Operation history for recent long-running work
+
+### Search and Smart Folders
+
+- Quick filter for the visible directory
+- Recursive filename search
+- Optional content search from the search box
+- Filters for size, date, depth, and hidden-file inclusion
+- Batched, cancellable results for large trees
+- Smart folders saved from reusable search criteria
+
+### Preview and Inspection
+
+| Kind | Support |
+| --- | --- |
+| Images | PNG, JPG/JPEG, GIF, SVG, WebP, BMP, ICO, TIFF |
+| PDF | Path-backed PDF preview plus metadata |
+| Video | MP4, WebM, AVI, MOV, MKV, FLV, WMV, OGG |
+| Audio | MP3, WAV, FLAC, OGG, AAC, WMA, M4A, AIFF |
+| Text/code | Plain text, source files, scripts, config, logs |
+| Markdown | Text preview |
+| Fonts | TTF, OTF, WOFF, WOFF2 |
+
+Inspection tools:
+
+- Properties dialog with size, type, timestamps, attributes, and path details
+- Metadata for images, PDF, audio, video, and Office package properties
+- Checksums: MD5, SHA-1, SHA-256
+- Compare files:
+  - small UTF-8 files render as side-by-side text diffs
+  - binary files, images, executables, invalid UTF-8, and oversized text render
+    as byte comparison with hex and ASCII rows
 
 ### Archives
 
-- List, create, and extract **ZIP**, **TAR**, **TAR.GZ / TGZ**, and **RAR**
-- Extraction path validation so unpack stays inside the chosen destination
-- Optional RAR tooling install from **Settings → Tools**
+SumaFile can list, create, extract, and browse supported archive contents.
 
-### Preview, inspection & comparison
+| Format | Extension(s) | Notes |
+| --- | --- | --- |
+| ZIP | `.zip` | Built in |
+| TAR | `.tar` | Built in |
+| TAR.GZ | `.tar.gz`, `.tgz` | Built in |
+| RAR | `.rar` | Uses optional RAR tooling |
+| 7-Zip | `.7z` | Uses installed 7-Zip or `SIMPLEFILE_7Z` |
 
-**Preview pane / Quick Look (`Space`) support includes:**
+Archive extraction validates entry paths before writing so files stay inside the
+chosen destination. TAR extraction skips links and special entries that could
+escape the output folder.
 
-| Kind | Formats / notes |
+### Organization
+
+- Color labels/tags on files and folders
+- Bookmarks and recent locations
+- Smart folders
+- Advanced rename:
+  - live preview
+  - template tokens
+  - regex remove/replace
+  - whitespace cleanup and separator conversion
+  - extension transforms
+  - optional recursive targeting
+  - duplicate/invalid-name warnings before applying
+
+### Windows and Developer Tools
+
+- Git branch/status indicators and per-file Git column
+- Git pull and push for the current directory
+- Open terminal here (`F4`)
+- Elevated PowerShell launch
+- Open With menu and chooser
+- Pinned/recent Open With apps per extension
+- About dialog with live version metadata
+
+## Settings and Saved State
+
+Settings is searchable and organized into:
+
+| Section | Controls |
 | --- | --- |
-| Images | PNG, JPG, GIF, SVG, WebP, BMP, ICO, TIFF (+ EXIF where available) |
-| Video | MP4, WebM, AVI, MOV, MKV, FLV, WMV, OGG |
-| Audio | MP3, WAV, FLAC, OGG, AAC, WMA, M4A, AIFF |
-| Code & text | Plain-text and common source-file previews |
-| Documents | PDF metadata/preview and Markdown text preview |
-| Fonts | TTF, OTF, WOFF, WOFF2 |
+| Appearance | Theme, default display style, icon size, column preset, hidden files |
+| Navigation | start location, custom path, tab behavior, side menu sections, recent history |
+| Behavior | delete confirmation, folder sorting, folder sizes, Git integration |
+| Shortcuts | live shortcut list; remapping is not available yet |
+| Tools | RAR tooling status/install |
+| Updates | current version, update check/install action |
+| About | version, project link, app metadata |
 
-**Also available:**
+Startup can open Home, the last used workspace, or a custom path. The last-used
+workspace persists panes, active pane, tabs, view mode, icon size, and sort.
+Named layouts are separate saved snapshots available from View options ->
+Layouts.
 
-- Properties panel — size, type, timestamps, attributes
-- Folder size and recursive item counts (optional, cached for responsiveness)
-- Metadata for PDF, audio, video, and Office package props
-- Checksums — **MD5**, **SHA-1**, **SHA-256**
-- **Compare Files** — side-by-side text diff for two selected UTF-8 files
+Persistent app data stays on the compatibility path used by earlier releases:
 
-### Organization & views
+```text
+%APPDATA%\com.simplefile.desktop
+```
 
-- Color **labels / tags** on files and folders
-- Configurable list columns (Size, Items, Modified, Type) with Explorer-style resize handles
-- List and grid views with adjustable default icon size
-- Dark and light themes
-- Show/hide hidden files
-- Optional folder size calculation and Git status in the list
-- Workspace layout persistence (panes, tabs, view mode, and related UI state)
+Runtime logs are written outside that compatibility folder:
 
-### Developer-friendly tools
-
-- **Git integration** — branch name, status counts, per-file indicators; pull/push from the app
-- **Open in terminal** — PowerShell, Command Prompt, Git Bash, or Windows Terminal (`F4`)
-- Elevated PowerShell launch when you need admin shell access
-- **Open With** for choosing an application per file
-- **Command palette** (`Ctrl+Shift+P`) for quick actions
-
-### Cleanup & maintenance
-
-- **Duplicate file finder** with progress and cancellation
-- **Disk cleanup** helpers for large/old clutter workflows
-- In-app **update check** against `latest-winui.json`. Install stays on GitHub Releases until Ed25519 verification lands
-
-### Productivity surfaces
-
-- Context menus for files, folders, and column headers
-- Keyboard help overlay (`F1` or `Ctrl+?`)
-- Toasts for operation feedback
-- About dialog with live app version metadata
-
----
-
-## Installation
-
-### End users
-
-Download the latest Windows installer or portable package from **[GitHub Releases](https://github.com/conniecombs/SimpleFile-Windows/releases)**.
-
-| Artifact | Best for |
-| --- | --- |
-| `SumaFile_1.1.0_x64-winui-setup.exe` | **Recommended** — NSIS per-user install |
-| `SumaFile_1.1.0_x64-winui.msi` | Enterprise / GPO-style MSI deployment |
-| `SumaFile_1.1.0_x64-winui-portable.zip` | Portable use without running an installer |
-
-**Requirements:** Windows 10 or later, x64.
-
-After the first manual install, **Settings → Updates** can check for a newer version. In-app install is disabled until installer signatures are verified, so download new releases from GitHub.
-
-### What the release ships
-
-- Windows x64 WinUI NSIS setup executable
-- Windows x64 WinUI MSI package
-- Windows x64 portable zip (`SumaFile.exe` + `simplefile-service.exe`)
-- Updater metadata `latest-winui.json` (production releases)
-
----
-
-## Getting Started
-
-1. Install SumaFile and open it.
-2. Browse with the **sidebar** (drives, Quick Access, bookmarks, recents, smart folders) or the **tree**.
-3. Press **`F6`** for dual-pane when you need source and destination side by side.
-4. Use **`Ctrl+T`** for a new tab on the active pane; each pane keeps its own tabs.
-5. Press **`Space`** for Quick Look, or open the preview pane for persistent inspection.
-6. Open **Settings** to set theme, start location, columns, shortcuts, Git, RAR tools, and updates.
-
-### Suggested first customizations
-
-| Preference | Where |
-| --- | --- |
-| Theme & default list/grid | Settings → Appearance |
-| Visible columns, hidden files, folder sizes, Git | Settings → File List |
-| Home / last used / custom start path | Settings → Navigation |
-| Confirm delete & Recycle Bin default | Settings → Behavior |
-| Remap shortcuts | Settings → Shortcuts |
-| Git & RAR tooling | Settings → Tools |
-| Check for app updates | Settings → Updates |
-
----
+```text
+%LOCALAPPDATA%\SumaFile\startup.log
+%LOCALAPPDATA%\SumaFile\operations.jsonl
+```
 
 ## Keyboard Shortcuts
 
-Defaults are remappable under **Settings → Shortcuts**. Press **`F1`** (or **`Ctrl+?`**) inside the app for the live help sheet.
+Press `F1` or `Ctrl+?` in the app for the live shortcut list.
 
 ### Navigation
 
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+L` / `Alt+D` | Focus path bar |
-| `Enter` (in path bar) | Go to entered path |
+| `Enter` in path bar | Go to typed path |
+| `Alt+Home` | Go home |
 | `Alt+Up` / `Backspace` | Parent folder |
 | `Alt+Left` / `Alt+Right` | Back / forward |
-| `F5` | Refresh active pane |
+| `F5` | Refresh |
+| Type letters | Select matching item |
 | Arrow keys | Move selection |
-| `Shift` + arrows / `Home` / `End` | Extend selection |
-| `Home` / `End` | First / last item |
-| Type-ahead | Jump to matching name (no modifiers) |
+| `Shift` + selection keys | Extend selection |
 
-### File operations
+### Files
 
 | Shortcut | Action |
 | --- | --- |
 | `Enter` | Open selected item |
+| `Ctrl+Enter` | Open folder in new tab |
+| `Alt+Enter` | Properties |
 | `F2` | Rename |
 | `Delete` | Move to Recycle Bin |
-| `Shift+Delete` | Permanent delete |
-| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / Cut / Paste |
-| `Ctrl+Shift+C` | Copy full path(s) |
+| `Shift+Delete` | Delete permanently |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
+| `Ctrl+Shift+C` | Copy path |
 | `Ctrl+Shift+V` | Clipboard history |
 | `Ctrl+A` | Select all |
 | `Ctrl+N` | New file |
@@ -266,334 +278,287 @@ Defaults are remappable under **Settings → Shortcuts**. Press **`F1`** (or **`
 | `Ctrl+Z` | Undo |
 | `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
 
-### Tabs & dual pane
+### Panes, Tabs, and Tools
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl+T` | New tab (active pane) |
-| `Ctrl+W` | Close active tab |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
-| `F6` | Toggle dual pane |
-| `Tab` | Switch active pane (when dual pane is on) |
+| `F6` | Open or close second pane |
+| `Tab` | Switch active pane when dual pane is open |
 | `Alt+1` / `Alt+2` | Focus left / right pane |
-| `Ctrl+Shift+Left` / `Right` | Focus left / right pane |
-| `Ctrl+Alt+C` / `Ctrl+Alt+M` | Copy / move selection to other pane |
-
-### View & tools
-
-| Shortcut | Action |
-| --- | --- |
+| `Ctrl+Shift+Left` / `Ctrl+Shift+Right` | Focus left / right pane |
+| `Ctrl+T` | New tab |
+| `Ctrl+W` | Close tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+1`-`Ctrl+9` | Jump to tab; 9 means last tab |
+| `Ctrl+Alt+C` / `Ctrl+Alt+M` | Copy / move to other pane |
 | `Space` | Quick Look |
-| `Ctrl+F` | Focus search / filter |
+| `Ctrl+H` | Show or hide hidden files |
+| `Ctrl+B` | Bookmark current folder |
+| `Ctrl+Mouse wheel` | Change icon size |
+| `Ctrl+F` / `F3` | Focus search |
 | `Ctrl+Shift+P` | Command palette |
 | `F4` | Open terminal here |
-| `F1` / `Ctrl+?` | Keyboard shortcuts help |
-| `Escape` | Close surface, clear filter, or clear selection |
+| `Escape` | Close transient UI, clear filter, or clear selection |
 
----
-
-## Settings
-
-Settings are organized into searchable sections:
-
-| Section | What it controls |
-| --- | --- |
-| **Appearance** | Dark/light theme, default list or grid, icon size |
-| **File List** | Visible columns, hidden files, folder sizes, Git integration |
-| **Navigation** | Start location (Home / Last used / Custom path), open folders in new tab, auto-collapse tree, recent locations |
-| **Behavior** | Confirm before delete, use Recycle Bin by default |
-| **Shortcuts** | View, remap, and reset keyboard bindings |
-| **Tools** | Git tooling status, optional RAR install helpers |
-| **Updates** | Current version, check/install updates |
-| **About** | App info and project links |
-
-Workspace layout (dual pane, active pane, tabs per pane, view mode, and related chrome) is restored across sessions where possible.
-
----
-
-## Development
+## Develop
 
 ### Prerequisites
 
-| Tool | Version | Purpose |
+| Tool | Version | Why |
 | --- | --- | --- |
-| [Node.js](https://nodejs.org/) | **24+** | Repo check scripts |
-| [Rust](https://rustup.rs/) | Stable | `simplefile-service` and core crates |
-| [.NET SDK](https://dotnet.microsoft.com/download) | **8+** | WinUI 3 host |
-| Windows SDK | — | WinUI / Windows App SDK targeting |
-| [NSIS](https://nsis.sourceforge.io/) | Optional | Local setup.exe |
-| [WiX Toolset](https://wixtoolset.org/) | Optional | Local MSI |
+| Windows | 10 2004+ or 11, x64 | App target |
+| Node.js | 24+ | Repo orchestration and guard scripts |
+| Rust | Stable MSVC toolchain | `simplefile-service` and `simplefile-core` |
+| .NET SDK | 10+ | `net10.0-windows` WinUI projects |
+| Windows SDK | 10.0.19041+ | WinUI target platform |
+| NSIS | Optional | Local setup executable |
+| WiX v3 | Optional | Local MSI |
+| 7-Zip | Optional | `.7z` archive operations |
 
-### Quick start
+### Local App
 
 ```powershell
-# 1. Clone
-git clone https://github.com/conniecombs/SimpleFile-Windows.git
-cd SimpleFile-Windows
-
-# 2. Development app (Rust IPC service + WinUI 3 host)
+git clone https://github.com/conniecombs/SumaFile.git
+cd SumaFile
 npm run dev
-
-# 3. Quality gates used by contributors and CI
-npm run check
-npm run check:winui
-npm run check:rust
 ```
 
-See [src-winui/README.md](src-winui/README.md).
+`npm run dev` builds the Rust service and starts the WinUI host. To use a
+specific service binary while developing the UI, set:
 
-### Root scripts
+```powershell
+$env:SIMPLEFILE_SERVICE_PATH = "R:\path\to\simplefile-service.exe"
+npm run dev:winui
+```
 
-Run from the **repository root** with `npm run <script>`.
+### Common Commands
 
-| Script | Description |
+Run these from the repository root.
+
+| Command | Purpose |
 | --- | --- |
-| `dev` / `dev:winui` | Build `simplefile-service` and run the WinUI 3 host |
-| `build` / `build:winui:release` | Publish WinUI payload, portable zip, and installers |
-| `build:winui` | `dotnet build src-winui/SimpleFile.sln` |
-| `check` | IPC schema, updater, workflows, packaging, parity gate |
-| `check:winui` | WinUI xUnit tests |
-| `check:ipc-schema` | 76-command schema vs Rust/C# |
-| `check:updater` | WinUI updater metadata wiring |
-| `check:workflows` | GitHub workflow sanity checks |
-| `check:provider-surface` | Guards out-of-scope provider/mount surfaces |
-| `check:windows-assets` | Packaging assets remain Windows-correct |
-| `check:winui-packaging` | NSIS / MSI / release script surface |
-| `check:winui-parity-gate` | Parity gate statuses stay PASS/WAIVED |
-| `check:rust` | `cargo fmt --check`, tests, Clippy (`-D warnings`) |
-| `check:security` | Rust dependency audit (`cargo-audit`) |
-| `check:release` | `check` + `check:rust` + `check:security` |
-| `release:build` / `release:local` | Local WinUI release pipeline |
-| `smoke:winui` | Built payload launch smoke |
-| `smoke:winui-msi` | MSI extract/launch smoke |
-| `smoke:winui-installer` | NSIS install → launch → uninstall smoke |
+| `npm run dev` | Build service and run the WinUI app |
+| `npm run build:winui` | Build the WinUI solution in Debug |
+| `npm run check:winui` | Run the WinUI xUnit suite |
+| `npm run check:rust` | Rust format check, tests, and Clippy with warnings denied |
+| `npm run check` | Repo guard scripts: IPC, identity, updater, workflows, packaging, parity |
+| `npm run check:release` | `check` + Rust checks + security audit |
+| `npm run build` | Build release payload/installers through the WinUI release script |
+| `npm run release:build` | Local release pipeline plus smoke checks |
+| `npm run generate:ipc-bindings` | Regenerate schema-derived Rust/C# IPC bindings |
+| `npm run smoke:winui` | Launch smoke for built payload |
+| `npm run smoke:winui-msi` | MSI extraction/launch smoke |
+| `npm run smoke:winui-installer` | NSIS install/launch/uninstall smoke |
+| `npm run smoke:winui-upgrade` | Previous installer -> local installer upgrade smoke |
 
----
-
-## Project Structure
+## Project Layout
 
 ```text
-SimpleFile-Windows/
-├── src-winui/                    WinUI 3 unpackaged host
-│   ├── SimpleFile.App/           Explorer window, settings, chrome
-│   ├── SimpleFile.Core/          Workspace, menus, transfers, settings
-│   ├── SimpleFile.Ipc/           Named-pipe JSON-RPC client
-│   └── SimpleFile.Tests/         xUnit navigation / IPC / polish tests
-├── crates/
-│   ├── simplefile-core/          Host-independent file-manager domain
-│   ├── simplefile-ipc/           Framing + JSON-RPC types
-│   └── simplefile-service/       Named-pipe IPC service process
-├── ipc/schema/                   Named-pipe JSON-RPC contract
-├── packaging/winui/              NSIS + WiX + app icon
-├── scripts/                      Repo-level checks, release, and smokes
-├── docs/                         User/dev docs, changelog, screenshots
-├── build_notes/                  Internal hardening / migration notes
-├── .github/workflows/            CI, release, installer smoke, Dependabot
-├── package.json                  Root orchestration scripts
-├── base_icon.png                 Generated D3 SumaFile icon artwork
-└── LICENSE                       Proprietary license
+SumaFile/
+|-- src-winui/
+|   |-- SimpleFile.App/       WinUI window, dialogs, preview, app chrome
+|   |-- SimpleFile.Core/      Workspace, settings, menus, transfers, layout state
+|   |-- SimpleFile.Ipc/       Named-pipe JSON-RPC client and generated bindings
+|   `-- SimpleFile.Tests/     xUnit tests for WinUI/core/IPC behavior
+|-- crates/
+|   |-- simplefile-core/      Host-independent filesystem, archive, preview logic
+|   |-- simplefile-ipc/       Protocol constants, framing, schema tests
+|   `-- simplefile-service/   Rust named-pipe service process
+|-- ipc/schema/               JSON-RPC command/type/event contract
+|-- packaging/winui/          NSIS, WiX, and icon assets
+|-- scripts/                  Checks, release scripts, smoke tests, codegen
+|-- docs/                     Roadmap, support, updater, release, migration docs
+|-- build_notes/              Maintainer notes from hardening/migration work
+|-- .github/workflows/        CI, release, release-build, installer smoke
+|-- package.json              Root command runner
+|-- Cargo.toml                Rust workspace
+`-- LICENSE                   Proprietary license
 ```
-
-**Entry points**
-
-- Shipping UI: `src-winui/SimpleFile.App`
-- IPC client: `src-winui/SimpleFile.Ipc`
-- Backend service: `crates/simplefile-service`
-- Reusable domain: `crates/simplefile-core`
-
----
 
 ## Architecture
 
-SumaFile uses a **WinUI 3 UI process** plus a **Rust IPC service**:
-
 ```text
-┌──────────────────────────────────────────────────────┐
-│                 WinUI 3 host                         │
-│                                                      │
-│  ExplorerWorkspace → ISimpleFileIpc                  │
-│                      named-pipe JSON-RPC             │
-└──────────────────────────────┬───────────────────────┘
-                               │
-                               ▼
-┌──────────────────────────────────────────────────────┐
-│            simplefile-service (Rust)                 │
-│                                                      │
-│  dispatch.rs → simplefile-core                       │
-│    file_ops / progress / drives / search / archive   │
-│    preview / metadata / checksum / compare / watcher │
-└──────────────────────────────────────────────────────┘
+SumaFile.exe
+  WinUI 3 window
+  ExplorerWorkspace
+  Settings, dialogs, preview, toolbar, panes
+        |
+        | length-prefixed named-pipe JSON-RPC
+        v
+simplefile-service.exe
+  dispatch handlers
+  progress events, search events, watcher events
+        |
+        v
+simplefile-core
+  file ops, archive, preview, metadata, checksum,
+  compare, drives, tags, smart folders, updater
 ```
 
-### Design rules that matter in practice
+Important contracts:
 
-- **Typed IPC surface** — `SimpleFile.Ipc.Protocol` and `ipc/schema/v1` stay aligned with the 76 domain commands.
-- **Transfer safety** — copy/cut/paste/drag/drop/dual-pane transfers share a transfer manager with stable operation IDs, progress events, cancel, and conflict resolution.
-- **Host-owned pickers** — folder browse is WinUI `FolderPicker`; the service returns `HOST_OWNED:`.
-- **Windows-first filesystem APIs** — drive labels, mapped shares, trash, and process launching stay in dedicated Rust modules.
-- **Job-object lifetime** — the UI starts `simplefile-service` and kills it when the window exits.
+- The app owns one service process per UI process.
+- The service is tied to the UI process with a Windows job object; shell-opened
+  files are allowed to outlive SumaFile.
+- IPC contracts live in `ipc/schema/v1` and generated bindings must stay
+  current.
+- The app data directory remains `%APPDATA%\com.simplefile.desktop` for
+  compatibility.
+- Startup panic/log output uses `%LOCALAPPDATA%\SumaFile`.
+- Windows packaging emits `SumaFile.exe` and `simplefile-service.exe` together.
 
----
+## Testing and Verification
 
-## Verification & Testing
+### Everyday development
 
-### Quality gates
+```powershell
+npm run build:winui
+npm run check:winui
+npm run check
+npm run check:rust
+git diff --check
+```
 
-| Command | Covers |
+### Release-quality proof
+
+```powershell
+npm run check:release
+npm run release:build
+```
+
+### What the gates cover
+
+| Gate | Coverage |
 | --- | --- |
-| `npm run check` | IPC schema, updater, workflows, provider surface, Windows assets, WinUI packaging, parity gate |
-| `npm run check:winui` | WinUI xUnit tests for navigation, transfers, and polish |
-| `npm run check:rust` | Format, unit/integration tests, Clippy with warnings denied |
-| `npm run check:security` | Rust dependency audit |
-| `npm run check:release` | All of the above — release-quality gate |
-| `npm run release:build` | Local WinUI release build + installer smokes + artifact listing |
+| `check:ipc-generated` | generated Rust/C# IPC bindings match schema |
+| `check:ipc-schema` | schema, service dispatcher, and C# client stay aligned |
+| `check:identity` | current-facing files use the SumaFile repository identity |
+| `check:updater` | updater URL, signature, and manifest wiring |
+| `check:workflows` | GitHub Actions workflow surface |
+| `check:provider-surface` | excludes out-of-scope external storage integration surfaces |
+| `check:windows-assets` | Windows app and packaging assets |
+| `check:winui-packaging` | NSIS/MSI/release-script contracts |
+| `check:winui-parity-gate` | WinUI parity rows remain PASS/WAIVED |
+| `check:winui` | xUnit coverage for app/core/IPC behavior |
+| `check:rust` | Rust fmt, tests, and Clippy |
+| `check:security` | Rust dependency audit |
 
-### Smoke tests
+Installer smoke coverage is slower by design. Use the nightly/manual Installer
+Smoke workflow or local smoke commands before shipping release assets.
 
-| Command | Validates |
+## Release and Packaging
+
+### Outputs
+
+`scripts/build-winui-release.ps1` writes release output under `dist/winui/`.
+
+| Output | Contents |
 | --- | --- |
-| `npm run smoke:winui` | Built payload executable launches |
-| `npm run smoke:winui-msi` | MSI artifact extract/launch |
-| `npm run smoke:winui-installer` | Full NSIS install → launch → uninstall |
+| `payload/` | runnable unpackaged app folder |
+| `SumaFile_<version>_x64-winui-portable.zip` | portable app package |
+| `SumaFile_<version>_x64-winui-setup.exe` | NSIS per-user installer |
+| `SumaFile_<version>_x64-winui.msi` | MSI package |
+| `latest-winui.json` | updater manifest for published releases |
 
-### Architectural guards
+The portable and installed app folder must contain both `SumaFile.exe` and
+`simplefile-service.exe`.
 
-The `check` pipeline also enforces project invariants:
+### Version Fields
 
-- Out-of-scope provider/mount management surfaces stay excluded
-- Packaging assets and bundle targets stay Windows-only
-- The 76-command IPC schema stays aligned with C# / leftover Rust command names
-- WinUI parity-gate required rows stay `PASS` or `WAIVED`
+User-facing version is `BETA`. Numeric version is `0.1.0` where Windows,
+MSBuild, WiX, NSIS, and Cargo require numeric identifiers.
 
-> **Note:** Full installer packaging is intentionally slow. PR CI focuses on fast gates; run the **Installer Smoke** workflow (nightly or manual) or `npm run release:build` before cutting a release.
+Keep these synchronized:
 
----
+- `src-winui/Directory.Build.props`
+  - `<InformationalVersion>`: user-facing version
+  - `<Version>`: numeric package identity
+- `crates/simplefile-core/src/lib.rs`
+  - `APP_DISPLAY_VERSION`
+- `crates/simplefile-service/Cargo.toml`
+  - package `version`
+- `Cargo.lock`
+- README badge
+- `docs/CHANGELOG.md`
 
-## Release & Packaging
+Release process details live in [.github/RELEASE.md](.github/RELEASE.md).
+Updater signing details live in [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md).
 
-### Bundle targets
+## Documentation Map
 
-| Format | Artifact pattern | Notes |
-| --- | --- | --- |
-| NSIS | `SumaFile_<version>_x64-winui-setup.exe` | Per-user install; recommended for most users |
-| MSI | `SumaFile_<version>_x64-winui.msi` | Per-user style deployment |
-| Portable | `SumaFile_<version>_x64-winui-portable.zip` | `SumaFile.exe` + `simplefile-service.exe` |
-
-### Config files
-
-| File | Role |
+| Document | Use it for |
 | --- | --- |
-| `packaging/winui/simplefile-winui.nsi` | Per-user NSIS setup |
-| `packaging/winui/Product.wxs` | Per-user WiX MSI |
-| `packaging/winui/icon.ico` | Embedded app, installer, and shortcut icon |
-| `scripts/generate-winui-icon.py` | Regenerates `base_icon.png` and `packaging/winui/icon.ico` |
-| `src-winui/Directory.Build.props` | WinUI version |
-| `crates/simplefile-service/Cargo.toml` | Service version |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Current and historical changes |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Near-term priorities and branch scope |
+| [docs/FEATURE_OPPORTUNITIES.md](docs/FEATURE_OPPORTUNITIES.md) | Candidate product gaps and recently closed gaps |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Contributor workflow and expectations |
+| [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
+| [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
+| [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | Signed updater releases |
+| [.github/RELEASE.md](.github/RELEASE.md) | Release checklist |
+| [src-winui/README.md](src-winui/README.md) | WinUI host build/run notes |
+| [docs/winui-migration/](docs/winui-migration/) | Historical migration architecture and parity records |
 
-### Auto-updater
+## Security Notes
 
-Production builds publish updater metadata to:
+- Do not commit updater private keys, signing keys, `.env` files, local secrets,
+  personal settings exports, or logs with private paths.
+- Gitignored sensitive locations include `.secrets/`, `*.key`, `.env`, and
+  `.env.*`.
+- Archive extraction validates destination paths before writing output.
+- TAR extraction skips links and special entries.
+- Open With refuses executable/script payload files as targets.
+- Report vulnerabilities through [docs/SECURITY.md](docs/SECURITY.md).
 
-`https://github.com/conniecombs/SimpleFile-Windows/releases/latest/download/latest-winui.json`
+## Scope
 
-**Settings → Updates** checks that manifest. In-app **Download & Install is disabled** until Ed25519 verification of the downloaded installer exists (`install_update` fail-closes). Users download NSIS/MSI/portable artifacts from GitHub Releases.
+In scope for this branch:
 
-Operational details: [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md).
+- Local disks, removable media, and mapped network shares
+- WinUI desktop browsing, dual panes, tabs, layouts, search, previews, metadata,
+  Git status/actions, archives, cleanup, updater, and Windows installers
 
-### Release workflows
+Out of scope for this branch:
 
-| Workflow | Purpose |
-| --- | --- |
-| [CI](.github/workflows/ci.yml) | Push/PR quality gates |
-| [Release build](.github/workflows/release-build.yml) | On-demand `npm run release:build`; uploads artifacts; does **not** publish a GitHub Release |
-| [Release](.github/workflows/release.yml) | Tag `v*` or manual dispatch: validate version, run `check:release`, build signed installers plus portable zip, publish draft GitHub Release |
-| [Installer Smoke](.github/workflows/installer-smoke.yml) | Nightly/manual installer validation |
-
-### Versioning
-
-Keep these in sync when bumping a release:
-
-- `src-winui/Directory.Build.props` → `<Version>`
-- `crates/simplefile-service/Cargo.toml` → package `version` (and committed `Cargo.lock`)
-- README version badge
-- `docs/CHANGELOG.md` (and release notes as needed)
-
-Checklist: [.github/RELEASE.md](.github/RELEASE.md).
-
----
-
-## Documentation
-
-| Document | Description |
-| --- | --- |
-| [Changelog](docs/CHANGELOG.md) | Version history |
-| [v1.1.0 Release Notes](docs/RELEASE_1.1.0.md) | Current public release notes |
-| [Roadmap](docs/ROADMAP.md) | Near-term priorities and non-goals |
-| [Contributing](docs/CONTRIBUTING.md) | How to work on this repo |
-| [Code of Conduct](docs/CODE_OF_CONDUCT.md) | Community standards |
-| [Support](docs/SUPPORT.md) | What to include when reporting issues |
-| [Security Policy](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
-| [Updater Release Guide](docs/UPDATER_RELEASE.md) | Publishing signed updates |
-| [Release Checklist](.github/RELEASE.md) | Step-by-step release process |
-
-Additional design/history notes live under `docs/` and `build_notes/` for maintainers.
-
----
-
-## Security
-
-- **Do not commit** signing keys, updater private keys, `.env` files, local secrets, personal settings exports, or logs with private paths.
-- Archive extraction re-validates destination paths; TAR extraction skips symlink/special entries that could escape the target tree.
-- Report vulnerabilities as described in [docs/SECURITY.md](docs/SECURITY.md).
-
-Sensitive paths ignored by the repo include `.secrets/`, `*.key`, `.env`, and `.env.*`.
-
----
-
-## Scope of This Branch
-
-This repository targets a **Windows-only local file manager**.
-
-### In scope
-
-- Local disks, removable media, and mapped network drives
-- Dual pane, per-pane tabs, search, smart folders, previews, metadata
-- Archives, Git status/actions, cleanup tools
-- NSIS/MSI packaging and `latest-winui.json` updater metadata (check-only until Ed25519 install)
-
-### Out of scope (for this branch)
-
-- App-managed provider integrations
-- Provider-backed mount management
-- Linux/macOS desktop packaging targets
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) for active priorities.
-
----
+- App-managed external storage-account integrations
+- macOS or Linux desktop packages
+- Shortcut remapping
 
 ## Support
 
-Before opening an issue:
+When reporting a problem, include:
 
-1. Confirm you are on a Windows release or a build from this repo’s Windows-focused `main` branch.
-2. Note SumaFile version from **Settings → About** (or the About dialog).
-3. Capture whether the problem is in dev, an unpacked build, NSIS, or MSI.
-4. For installers, run `npm run smoke:winui-installer` / `npm run smoke:winui-msi` when possible.
-5. Redact personal paths from logs and screenshots.
+- Windows version
+- SumaFile version from Settings -> About or the About dialog
+- Whether you used installer, MSI, portable zip, or dev run
+- The exact path/workflow where the issue happened, with private path parts
+  redacted if needed
+- Relevant log snippets from:
+
+```text
+%LOCALAPPDATA%\SumaFile\startup.log
+%LOCALAPPDATA%\SumaFile\operations.jsonl
+```
+
+For installer/update issues, also say whether these commands pass locally:
+
+```powershell
+npm run smoke:winui
+npm run smoke:winui-installer
+npm run smoke:winui-msi
+npm run smoke:winui-upgrade
+```
 
 More detail: [docs/SUPPORT.md](docs/SUPPORT.md).
 
-Startup diagnostics on Windows may be written to:
-
-`%LOCALAPPDATA%\SumaFile\startup.log`
-
----
-
 ## License
 
-SumaFile is **proprietary software**.
-Copyright © 2024–2026 conniecombs. All rights reserved.
+SumaFile is proprietary software. Copyright (c) 2024-2026 conniecombs.
+All rights reserved.
 
-Access to this repository or possession of a copy does **not** grant permission to use, copy, modify, redistribute, sublicense, host, resell, or create derivative works without prior written permission.
+Access to this repository or possession of a copy does not grant permission to
+use, copy, modify, redistribute, sublicense, host, resell, or create derivative
+works without prior written permission.
 
-See [LICENSE](LICENSE) for full terms. Third-party libraries remain under their own licenses.
+See [LICENSE](LICENSE) for the full terms. Third-party libraries remain under
+their own licenses.

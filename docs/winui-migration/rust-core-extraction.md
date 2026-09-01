@@ -61,7 +61,7 @@ src-tauri/src/
 crates/simplefile-service/src/
   main.rs
   ipc_host.rs             # IpcHost only
-  dispatch.rs             # 74 JSON-RPC methods → core
+  dispatch/               # JSON-RPC method routing → core
 ```
 
 `src-tauri` modules stay as `mod` wrappers until each extract PR. After a move, `src-tauri` re-exports so `cargo test -p simplefile` and `lib.rs` tests still compile.

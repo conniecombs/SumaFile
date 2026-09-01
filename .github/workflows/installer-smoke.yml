@@ -98,11 +98,19 @@ jobs:
       - name: Smoke WinUI payload startup
         run: npm run smoke:winui
 
+      - name: Smoke WinUI packaged file operations
+        run: npm run smoke:winui-file-ops
+
       - name: Smoke WinUI MSI extract and launch
         run: npm run smoke:winui-msi
 
       - name: Smoke WinUI NSIS install, launch, and uninstall
         run: npm run smoke:winui-installer
+
+      - name: Smoke WinUI NSIS upgrade from latest published release
+        run: npm run smoke:winui-upgrade
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Upload installer artifacts
         if: always()

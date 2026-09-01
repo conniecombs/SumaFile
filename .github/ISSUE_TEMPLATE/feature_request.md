@@ -39,6 +39,6 @@ assignees: ""
 
 ---
 
-> **Note:** Before implementing a large feature, please check [`ROADMAP.md`](https://github.com/conniecombs/SimpleFile-Windows/blob/main/docs/ROADMAP.md) and discuss in this
+> **Note:** Before implementing a large feature, please check [`ROADMAP.md`](https://github.com/conniecombs/SumaFile/blob/main/docs/ROADMAP.md) and discuss in this
 > issue first. This avoids duplication with planned work and ensures the approach fits the
 > project architecture.

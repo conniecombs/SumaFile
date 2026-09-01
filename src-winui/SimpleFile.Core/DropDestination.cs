@@ -95,4 +95,34 @@ public static class DropDestination
 
         return conflicts;
     }
+
+    public static IReadOnlyList<string> ProbeConflictingTransferNames(
+        IReadOnlyList<string> sources,
+        string destination,
+        Func<string, bool> destinationPathExists,
+        CancellationToken cancellationToken = default)
+    {
+        var seenSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var conflicts = new List<string>();
+        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var source in sources)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var name = PathRules.Basename(source);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            var sourceDuplicate = !seenSources.Add(name);
+            var destinationConflict = destinationPathExists(PathRules.JoinPath(destination, name));
+            if ((sourceDuplicate || destinationConflict) && emitted.Add(name))
+            {
+                conflicts.Add(name);
+            }
+        }
+
+        return conflicts;
+    }
 }

@@ -5,6 +5,7 @@ param(
     [switch]$SkipSmoke,
     [switch]$SkipInstaller,
     [switch]$RequireInstaller,
+    [switch]$RequireUpdaterSignature,
     [switch]$Clean,
     [string]$Configuration = "Release"
 )
@@ -44,21 +45,28 @@ function Invoke-Native {
     }
 }
 
-function Get-ReleaseVersion {
+function Get-ReleaseMetadata {
     $props = Get-Content -LiteralPath (Join-Path $root "src-winui\Directory.Build.props") -Raw
     if ($props -notmatch '<Version>([^<]+)</Version>') {
         throw "Could not read Version from src-winui\Directory.Build.props."
     }
-    $winuiVersion = $Matches[1]
+    $numericVersion = $Matches[1]
+    $displayVersion = $numericVersion
+    if ($props -match '<InformationalVersion>([^<]+)</InformationalVersion>') {
+        $displayVersion = $Matches[1]
+    }
     $cargo = Get-Content -LiteralPath (Join-Path $root "crates\simplefile-service\Cargo.toml") -Raw
     if ($cargo -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
         throw "Could not read version from crates\simplefile-service\Cargo.toml."
     }
     $serviceVersion = $Matches[1]
-    if ($serviceVersion -ne $winuiVersion) {
-        throw "Version mismatch: simplefile-service=$serviceVersion Directory.Build.props=$winuiVersion"
+    if ($serviceVersion -ne $numericVersion) {
+        throw "Version mismatch: simplefile-service=$serviceVersion Directory.Build.props=$numericVersion"
     }
-    return $winuiVersion
+    return [pscustomobject]@{
+        Numeric = $numericVersion
+        Display = $displayVersion
+    }
 }
 
 function Find-ServiceExecutable {
@@ -144,6 +152,30 @@ function Assert-Payload {
     }
 }
 
+function Get-Sha256Hash {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $fileHashCommand = Get-Command "Get-FileHash" -ErrorAction SilentlyContinue
+    if ($fileHashCommand) {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashBytes = $sha256.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 function New-WinUIPayload {
     param(
         [Parameter(Mandatory = $true)][string]$PublishDir,
@@ -169,8 +201,19 @@ function New-WinUIPayload {
     Assert-Payload $Destination
 }
 
-$version = Get-ReleaseVersion
-Write-Host "WinUI release version: $version"
+$release = Get-ReleaseMetadata
+$version = $release.Display
+$numericVersion = $release.Numeric
+Write-Host "WinUI release version: $version (numeric $numericVersion)"
+
+if ($RequireUpdaterSignature) {
+    if (-not $env:SIMPLEFILE_SIGNING_PRIVATE_KEY) {
+        throw "SIMPLEFILE_SIGNING_PRIVATE_KEY is required when -RequireUpdaterSignature is supplied."
+    }
+    if (-not $env:SIMPLEFILE_UPDATER_PUBLIC_KEY) {
+        throw "SIMPLEFILE_UPDATER_PUBLIC_KEY is required when -RequireUpdaterSignature is supplied."
+    }
+}
 
 if ($Clean -and (Test-Path -LiteralPath $distRoot)) {
     Write-Step "Cleaning $distRoot"
@@ -234,6 +277,7 @@ if (-not $SkipInstaller) {
         $iconNsis = $iconPath.Replace('\', '/')
         Invoke-Native $makensis @(
             "/DVERSION=$version",
+            "/DNUMERIC_VERSION=$numericVersion",
             "/DPAYLOAD=$payloadNsis",
             "/DOUTFILE=$setupNsis",
             "/DICON=$iconNsis",
@@ -280,7 +324,7 @@ if (-not $SkipInstaller) {
         )
         Invoke-Native $candle @(
             "-nologo",
-            "-dProductVersion=$version",
+            "-dProductVersion=$numericVersion",
             "-dPayloadDir=$payloadDir",
             "-dIconFile=$iconPath",
             "-out", (Join-Path $wixOut "\"),
@@ -331,24 +375,36 @@ if (-not $SkipInstaller) {
 }
 
 $signature = ""
+$setupSha256 = ""
+$setupSize = 0
+if ($builtSetup) {
+    $setupItem = Get-Item -LiteralPath $setupPath
+    $setupSize = $setupItem.Length
+    $setupSha256 = Get-Sha256Hash -Path $setupPath
+}
 $signingKey = $env:SIMPLEFILE_SIGNING_PRIVATE_KEY
+$requireUpdaterSignatureValue = if ($RequireUpdaterSignature) { "true" } else { "false" }
 if ($builtSetup -and $signingKey) {
     Write-Step "Sign WinUI setup for latest-winui.json"
     try {
-        # TODO: Replace with minisign or Ed25519 signing when implemented.
-        # For now, the signing step is a placeholder that will warn when
-        # no signing tool is available.
-        Write-Warning "Updater payload signing is not yet implemented; latest-winui.json will ship without a signature."
-        $sigFile = Get-ChildItem -Path "$setupPath*.sig" -File -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($sigFile) {
-            Copy-Item -LiteralPath $sigFile.FullName -Destination $distRoot -Force
-            $signature = (Get-Content -LiteralPath $sigFile.FullName -Raw).Trim()
-        }
+        $sigPath = "$setupPath.sig"
+        $signArgs = @(
+            "scripts/sign-update-payload.mjs",
+            "--file=$setupPath",
+            "--out=$sigPath",
+            "--require-public-key=$requireUpdaterSignatureValue"
+        )
+        Invoke-Native node $signArgs
+        Copy-Item -LiteralPath $sigPath -Destination $distRoot -Force
+        $signature = (Get-Content -LiteralPath $sigPath -Raw).Trim()
     }
     catch {
         Write-Warning "WinUI updater signing failed: $($_.Exception.Message)"
-        if ($RequireInstaller) { throw }
+        if ($RequireInstaller -or $RequireUpdaterSignature) { throw }
     }
+}
+elseif ($RequireUpdaterSignature) {
+    throw "NSIS setup was built but could not be signed because SIMPLEFILE_SIGNING_PRIVATE_KEY is not set."
 }
 
 $latestArgs = @(
@@ -356,12 +412,17 @@ $latestArgs = @(
     "--version=$version",
     "--setup=$setupName",
     "--out=$distRoot",
-    "--signature=$signature"
+    "--signature=$signature",
+    "--sha256=$setupSha256",
+    "--size=$setupSize",
+    "--channel=stable",
+    "--require-installable=$requireUpdaterSignatureValue"
 )
 Invoke-Native node $latestArgs
 
 if (-not $SkipSmoke) {
     Invoke-Native powershell @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\smoke-winui-startup.ps1")
+    Invoke-Native powershell @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\smoke-winui-file-ops.ps1")
     if ($builtMsi) {
         Invoke-Native powershell @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\smoke-winui-msi.ps1")
     }

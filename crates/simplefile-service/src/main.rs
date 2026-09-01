@@ -13,7 +13,7 @@ async fn run() -> Result<(), String> {
     let pipe = pipe_path(&args.pipe_name);
     eprintln!(
         "simplefile-service {} listening on {pipe}",
-        env!("CARGO_PKG_VERSION")
+        simplefile_core::APP_DISPLAY_VERSION
     );
 
     let auth_token = read_required_auth_token()?;

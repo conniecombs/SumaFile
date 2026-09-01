@@ -16,10 +16,11 @@ runners provide the Windows SDK.
 
 ### 1. Update Version Numbers
 
-Update the version in these files and keep them identical:
+The user-facing version is BETA. Keep display and numeric identities in sync:
 
-- `src-winui/Directory.Build.props` — `<Version>`
-- `crates/simplefile-service/Cargo.toml` — package `version` field
+- `src-winui/Directory.Build.props` — `<InformationalVersion>` (BETA) and `<Version>` (numeric `0.1.0` for AssemblyVersion / WiX)
+- `crates/simplefile-core/src/lib.rs` — `APP_DISPLAY_VERSION` (must match InformationalVersion)
+- `crates/simplefile-service/Cargo.toml` — package `version` field (must match `<Version>`)
 - [`README.md`](../README.md) — version badge
 - [`docs/CHANGELOG.md`](../docs/CHANGELOG.md) — release notes and compare links
 
@@ -63,10 +64,11 @@ The release workflow will:
 4. Build the WinUI host and Rust IPC service (`scripts/build-winui-release.ps1`):
    `SumaFile_*_x64-winui-setup.exe`, `SumaFile_*_x64-winui.msi`,
    `SumaFile_*_x64-winui-portable.zip` (inner `SumaFile.exe` +
-   `simplefile-service.exe`), and `latest-winui.json`.
+   `simplefile-service.exe`), signed update metadata, and `latest-winui.json`.
 5. Keep tag-triggered releases as drafts by default so assets can be reviewed
    before publishing.
-6. Publish the release only after the Windows build succeeds when manual
+6. Run NSIS install and previous-version upgrade smoke before asset upload.
+7. Publish the release only after the Windows build succeeds when manual
    `draft=false` is selected.
 
 ### 5. Manual Release
@@ -85,25 +87,28 @@ Windows build succeeds.
 
 | Platform | Installer Type | Example File |
 |----------|----------------|--------------|
-| Windows x64 | NSIS setup executable | `SumaFile_x.x.x_x64-winui-setup.exe` |
-| Windows x64 | MSI installer | `SumaFile_x.x.x_x64-winui.msi` |
-| Windows x64 | Portable zip | `SumaFile_x.x.x_x64-winui-portable.zip` |
-| Windows updater | Static JSON / signatures | `latest-winui.json` and optional `.sig` files |
+| Windows x64 | NSIS setup executable | `SumaFile_BETA_x64-winui-setup.exe` |
+| Windows x64 | MSI installer | `SumaFile_BETA_x64-winui.msi` |
+| Windows x64 | Portable zip | `SumaFile_BETA_x64-winui-portable.zip` |
+| Windows updater | Static JSON / signatures | `latest-winui.json`, SHA-256, size, and `.sig` files |
 
 ## Auto-Update
 
 SumaFile publishes `latest-winui.json` to GitHub Releases. The app checks
-`https://github.com/conniecombs/SimpleFile-Windows/releases/latest/download/latest-winui.json`.
+`https://github.com/conniecombs/SumaFile/releases/latest/download/latest-winui.json`.
 
 ### Setup Requirements
 
-1. **Optional signing key** in GitHub secrets. These keep the existing
+1. **Required production signing key** in GitHub secrets and repository variables. These keep the existing
    `SIMPLEFILE_*` names for release compatibility:
    - `SIMPLEFILE_SIGNING_PRIVATE_KEY` — private signing key content
    - `SIMPLEFILE_SIGNING_PRIVATE_KEY_PASSWORD` — optional private key passphrase
+   - `SIMPLEFILE_UPDATER_PUBLIC_KEY` — base64 Ed25519 public key stored as a GitHub Actions variable and present at build time
 
 2. Keep `scripts/write-latest-winui.mjs` pointed at the GitHub release
-   `latest-winui.json` URL.
+   `latest-winui.json` URL. Production releases run `build-winui-release.ps1`
+   with `-RequireUpdaterSignature`, so unsigned updater metadata cannot be
+   published accidentally.
 
 The first updater-enabled release must be installed manually by existing users.
 After that, future published releases can be installed through Settings -> Updates.
@@ -128,7 +133,7 @@ Add these secrets for Windows code signing when ready:
 
 ## Versioning
 
-SumaFile follows Semantic Versioning:
+The current user-facing version is **BETA**. Technical packaging fields that require x.y.z use `0.1.0`. Future numbered releases can follow Semantic Versioning:
 
 - **MAJOR**: breaking changes
 - **MINOR**: backward-compatible features

@@ -102,6 +102,13 @@ public static class EntryPresentation
         return entry.IsDir ? "\uE8B7" : "\uE8A5";
     }
 
+    public static bool IsHiddenFromUser(FileEntry entry)
+    {
+        return entry.IsHidden
+            || entry.IsSystem
+            || (!string.IsNullOrEmpty(entry.Name) && entry.Name[0] == '.');
+    }
+
     public static IReadOnlyList<FileEntry> FilterEntries(
         IEnumerable<FileEntry> entries,
         string query = "",
@@ -110,7 +117,7 @@ public static class EntryPresentation
         var normalizedQuery = query.Trim().ToLowerInvariant();
         return entries.Where(entry =>
         {
-            if (!showHidden && entry.Name.StartsWith('.'))
+            if (!showHidden && IsHiddenFromUser(entry))
             {
                 return false;
             }

@@ -8,6 +8,13 @@ namespace SimpleFile.Core;
 /// </summary>
 public static class PathRules
 {
+    public const string RecycleBinPath = "recycle-bin:";
+
+    public static bool IsRecycleBinPath(string? path)
+    {
+        return string.Equals((path ?? "").Trim(), RecycleBinPath, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static bool IsWindowsRoot(string path)
     {
         var trimmed = path.Trim();
@@ -20,7 +27,7 @@ public static class PathRules
     public static bool IsRootPath(string path)
     {
         var trimmed = path.Trim();
-        return trimmed == "/" || IsWindowsRoot(trimmed);
+        return trimmed == "/" || IsWindowsRoot(trimmed) || IsRecycleBinPath(trimmed);
     }
 
     public static char PathSeparator(string path)
@@ -170,6 +177,44 @@ public static class PathRules
             return candidateRoot == root || candidateRoot == root[..2];
         });
 
-        return string.Equals(drive?.DriveType, "network", StringComparison.OrdinalIgnoreCase);
+        return IsNetworkOrRemoteLikeDrive(drive);
+    }
+
+    public static bool IsNetworkOrRemoteLikeDrive(DriveInfo? drive)
+    {
+        if (drive is null)
+        {
+            return false;
+        }
+
+        if (string.Equals(drive.DriveType, "network", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(drive.RemotePath))
+        {
+            return true;
+        }
+
+        return ContainsRemoteLikeToken(drive.FileSystem)
+            || ContainsRemoteLikeToken(drive.Name)
+            || ContainsRemoteLikeToken(drive.StatusDetail);
+    }
+
+    private static bool ContainsRemoteLikeToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains("network", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("remote", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("airlivedrive", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("virtual", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("sshfs", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("sftp", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("fuse", StringComparison.OrdinalIgnoreCase);
     }
 }

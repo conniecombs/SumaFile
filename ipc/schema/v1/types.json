@@ -10,7 +10,7 @@
     "ListDirectoryMode": ["full", "light"],
     "ProgressStatus": ["running", "completed", "error", "cancelled"],
     "FileChangeKind": ["create", "modify", "remove", "rename"],
-    "ArchiveFormat": ["zip", "tar", "tar.gz", "tgz", "rar"]
+    "ArchiveFormat": ["zip", "7z", "tar", "tar.gz", "tgz", "rar"]
   },
   "frontendOnlyFields": {
     "FileEntry": ["itemCount"],
@@ -19,8 +19,8 @@
   "types": {
     "FileEntry": {
       "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["name", "path", "is_dir", "is_symlink", "size", "modified", "extension", "permissions", "symlink_target", "git_status"],
-      "optional": ["permissions", "symlink_target", "git_status"]
+      "fields": ["name", "path", "is_dir", "is_symlink", "is_hidden", "is_system", "size", "modified", "extension", "permissions", "symlink_target", "git_status"],
+      "optional": ["is_hidden", "is_system", "permissions", "symlink_target", "git_status"]
     },
     "DirectoryListing": {
       "source": "crates/simplefile-core/src/models.rs",
@@ -141,13 +141,17 @@
       "source": "crates/simplefile-core/src/compare.rs",
       "fields": ["kind", "left_line", "right_line", "left_text", "right_text"]
     },
+    "BinaryDiffRow": {
+      "source": "crates/simplefile-core/src/compare.rs",
+      "fields": ["offset", "left_hex", "right_hex", "left_ascii", "right_ascii", "different"]
+    },
     "FileComparison": {
       "source": "crates/simplefile-core/src/compare.rs",
-      "fields": ["left_path", "right_path", "left_name", "right_name", "left_size", "right_size", "identical", "added", "removed", "changed", "rows"]
+      "fields": ["left_path", "right_path", "left_name", "right_name", "left_size", "right_size", "identical", "added", "removed", "changed", "comparison_type", "compared_bytes", "different_bytes", "first_difference", "binary_rows_truncated", "rows", "binary_rows"]
     },
     "UpdateInfo": {
       "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["version", "date", "body"]
+      "fields": ["version", "date", "body", "installable", "channel", "url", "sha256", "size"]
     },
     "AppAboutInfo": {
       "source": "crates/simplefile-core/src/models.rs",

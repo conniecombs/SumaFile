@@ -69,7 +69,6 @@ public sealed partial class TagPickerDialog : ContentDialog
         ApplyRequested = false;
     }
 }
-
 public class TagViewModel : INotifyPropertyChanged
 {
     private bool _isSelected;
@@ -124,6 +123,3 @@ public class TagViewModel : INotifyPropertyChanged
     protected void OnPropertyChanged([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
-
-// Dummy types
-// public class Tag { public long Id { get; set; } public string Name { get; set; } = ""; public string Color { get; set; } = ""; }

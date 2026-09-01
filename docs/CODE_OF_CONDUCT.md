@@ -44,7 +44,7 @@ officially representing the community in public spaces.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the
 project maintainers via GitHub's private messaging or by opening a
-[Security Advisory](https://github.com/conniecombs/SimpleFile-Windows/security/advisories/new)
+[Security Advisory](https://github.com/conniecombs/SumaFile/security/advisories/new)
 (for privacy). All complaints will be reviewed and investigated promptly and fairly.
 
 ## Attribution

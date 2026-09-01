@@ -8,11 +8,11 @@ This roadmap tracks the Windows-focused SumaFile release.
 - Preserve Windows drive labels, mapped network share names, and native drive types.
 - Keep folder openings inside SumaFile unless the user explicitly opens a file externally.
 - Maintain dual-pane, tabs, Quick Access, bookmarks, recent locations, search, smart folders, previews, metadata, checksums, labels, and archive workflows.
-- Keep updater metadata and Windows installer outputs reliable.
+- Keep signed updater metadata, verified installer downloads, and Windows installer outputs reliable.
 
 ## Near-Term Work
 
-- Broaden smoke coverage for settings startup, updater metadata, MSI artifacts, and NSIS install/uninstall.
+- Broaden smoke coverage for settings startup, updater metadata, MSI artifacts, NSIS install/uninstall, and previous-version upgrades.
   Installer package smoke runs nightly and on demand via `.github/workflows/installer-smoke.yml`.
 - Add targeted tests around mapped network drive display names.
 - Improve large-folder progress and cancellation visibility.
@@ -23,8 +23,8 @@ This roadmap tracks the Windows-focused SumaFile release.
 ## Release Work
 
 - Windows x64 CI artifact build.
-- NSIS and MSI installer verification.
-- Updater JSON and signature verification.
+- NSIS, MSI, and NSIS upgrade verification.
+- Signed updater JSON, SHA-256, size, and Ed25519 payload verification.
 - Documentation sweep for local-file, archive, preview, metadata, Git, cleanup, and Windows installer behavior.
 
 ## Out Of Scope For This Branch

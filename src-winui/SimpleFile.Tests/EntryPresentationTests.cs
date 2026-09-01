@@ -38,6 +38,23 @@ public class EntryPresentationTests
     }
 
     [Fact]
+    public void VisibleEntries_HidesWindowsHiddenAndSystemAttributes()
+    {
+        FileEntry[] entries =
+        [
+            new() { Name = "desktop.ini", Path = @"C:\desktop.ini", IsHidden = true, IsSystem = true },
+            new() { Name = "notes.txt", Path = @"C:\notes.txt" },
+            new() { Name = "secret.txt", Path = @"C:\secret.txt", IsHidden = true },
+        ];
+
+        var hidden = EntryPresentation.VisibleEntries(entries, showHidden: false);
+        Assert.Equal("notes.txt", Assert.Single(hidden).Name);
+
+        var shown = EntryPresentation.VisibleEntries(entries, showHidden: true);
+        Assert.Equal(["desktop.ini", "notes.txt", "secret.txt"], shown.Select(entry => entry.Name));
+    }
+
+    [Fact]
     public void SortEntries_CanMixFoldersWithFiles()
     {
         FileEntry[] entries =

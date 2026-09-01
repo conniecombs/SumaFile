@@ -51,6 +51,19 @@ pub fn list_directory(
     path: String,
     mut on_chunk: impl FnMut(DirectoryListingChunk) -> Result<(), String>,
 ) -> Result<DirectoryListing, String> {
+    if crate::recycle_bin::is_recycle_bin_path(&path) {
+        let listing = crate::recycle_bin::list_recycle_bin()?;
+        on_chunk(DirectoryListingChunk {
+            path: listing.path.clone(),
+            parent: listing.parent.clone(),
+            entries: listing.entries.clone(),
+            chunk_index: 0,
+            done: true,
+            is_network: false,
+        })?;
+        return Ok(listing);
+    }
+
     if let Some(listing) = crate::archive::list_archive_directory(&path)? {
         on_chunk(DirectoryListingChunk {
             path: listing.path.clone(),
@@ -149,6 +162,27 @@ pub fn list_directory_with_options(
     options: ListDirectoryOptions,
     mut on_chunk: impl FnMut(DirectoryListingChunk) -> Result<(), String>,
 ) -> Result<DirectoryListing, String> {
+    if crate::recycle_bin::is_recycle_bin_path(&path) {
+        let listing = crate::recycle_bin::list_recycle_bin()?;
+        let mut entries = prepare_entries(listing.entries, &options);
+        emit_prepared_chunks(
+            &listing.path,
+            listing.parent.as_deref(),
+            listing.is_network,
+            &entries,
+            &mut on_chunk,
+        )?;
+        if !options.final_entries {
+            entries.clear();
+        }
+        return Ok(DirectoryListing {
+            path: listing.path,
+            parent: listing.parent,
+            entries,
+            is_network: listing.is_network,
+        });
+    }
+
     if let Some(listing) = crate::archive::list_archive_directory(&path)? {
         let mut entries = prepare_entries(listing.entries, &options);
         emit_prepared_chunks(
@@ -222,7 +256,7 @@ fn enumerate_directory(
 
 fn prepare_entries(mut entries: Vec<FileEntry>, options: &ListDirectoryOptions) -> Vec<FileEntry> {
     if !options.include_hidden {
-        entries.retain(|entry| !entry.name.starts_with('.'));
+        entries.retain(|entry| !entry.is_hidden && !entry.is_system);
     }
 
     if let Some(filter) = options
@@ -425,6 +459,7 @@ fn file_entry_from_find_data(
     parent: &Path,
     data: &winapi::um::minwinbase::WIN32_FIND_DATAW,
 ) -> Option<FileEntry> {
+    use crate::utils::hidden_system_from_attrs;
     use std::os::windows::ffi::OsStringExt;
     use winapi::um::winnt::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT};
 
@@ -446,6 +481,7 @@ fn file_entry_from_find_data(
     let attrs = data.dwFileAttributes;
     let is_dir = attrs & FILE_ATTRIBUTE_DIRECTORY != 0;
     let is_reparse = attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+    let (is_hidden, is_system) = hidden_system_from_attrs(&name_str, attrs);
     let size = ((data.nFileSizeHigh as u64) << 32) | (data.nFileSizeLow as u64);
     let modified = filetime_to_string(data.ftLastWriteTime);
 
@@ -474,6 +510,8 @@ fn file_entry_from_find_data(
         path: file_path,
         is_dir,
         is_symlink: is_reparse,
+        is_hidden,
+        is_system,
         size,
         modified,
         extension,
@@ -570,6 +608,49 @@ mod tests {
         assert_eq!(entry.name, "a.txt");
         assert!(entry.path.is_empty());
         assert!(entry.extension.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn listing_hides_windows_hidden_attribute() {
+        use std::os::windows::ffi::OsStrExt;
+        use winapi::um::fileapi::SetFileAttributesW;
+        use winapi::um::winnt::FILE_ATTRIBUTE_HIDDEN;
+
+        let dir = unique_temp("win-hidden");
+        let hidden_path = dir.join("secret.txt");
+        fs::write(&hidden_path, b"n").unwrap();
+        let wide: Vec<u16> = hidden_path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let ok = unsafe { SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_HIDDEN) };
+        assert_ne!(ok, 0);
+
+        let hidden_listing = list_directory_with_options(
+            dir.to_string_lossy().to_string(),
+            ListDirectoryOptions {
+                include_hidden: false,
+                ..Default::default()
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert!(hidden_listing
+            .entries
+            .iter()
+            .all(|entry| entry.name != "secret.txt"));
+
+        let shown = list_directory_collect(dir.to_string_lossy().to_string()).unwrap();
+        let secret = shown
+            .entries
+            .iter()
+            .find(|entry| entry.name == "secret.txt")
+            .expect("hidden file should be listed when include_hidden is default");
+        assert!(secret.is_hidden);
 
         let _ = fs::remove_dir_all(&dir);
     }

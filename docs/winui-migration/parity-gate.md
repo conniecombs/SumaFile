@@ -2,12 +2,12 @@
 
 **Date:** 2026-08-15  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
-**Contract:** [`inventory.md`](inventory.md) (76 commands / emitted events / Svelte workflows)
+**Contract:** [`inventory.md`](inventory.md) (78 commands / emitted events / Svelte workflows)
 **Hosts:** WinUI 3 + `simplefile-service` is the shipping app. Svelte/Tauri UI and packaging glue have been retired.
 
 This is the **retirement lock**. Required `OPEN` rows are none. `MANUAL` rows stay as human smoke coverage. Retired `src-tauri/` domain now lives solely in `crates/simplefile-core`.
 
-Inspected for this gate: `src-winui/SimpleFile.Ipc/Protocol.cs`, `crates/simplefile-service/src/dispatch.rs`, `src-winui/**`, `ipc/schema/v1/`, `package.json`, `.github/workflows/*`.
+Inspected for this gate: `src-winui/SimpleFile.Ipc/Protocol.cs`, `crates/simplefile-service/src/dispatch/`, `src-winui/**`, `ipc/schema/v1/`, `package.json`, `.github/workflows/*`.
 
 ---
 
@@ -30,14 +30,16 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 76-command schema vs Rust/C#
+npm run check:ipc-schema      # 78-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
 # WinUI smokes (after npm run build:winui:release)
 npm run smoke:winui
+npm run smoke:winui-file-ops # packaged copy/move/conflict/drop-target/progress IPC smoke
 npm run smoke:winui-msi       # needs WiX MSI
 npm run smoke:winui-installer # needs NSIS setup
+npm run smoke:winui-upgrade   # previous NSIS -> new NSIS
 ```
 
 Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
@@ -59,9 +61,9 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (76)
+## 2. IPC commands (78)
 
-Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch.rs`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
+Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
 ### 2.1 Filesystem and listing
 
@@ -76,6 +78,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `create_file` | New file | Dialog + IPC | `FileOperationServiceTests` | Ctrl+N | `PASS` |
 | `delete_entry` | Permanent delete | Shift+Delete confirm | `FileOperationServiceTests` | Shift+Delete | `PASS` |
 | `move_to_trash` | Recycle Bin | Delete / setting | `FileOperationServiceTests` trash prefix | Delete; network `TRASH_UNAVAILABLE:` | `PASS` |
+| `restore_recycle_bin` | Restore Recycle Bin items | Context Restore | Core recycle_bin tests | Restore a deleted file | `PASS` |
+| `empty_recycle_bin` | Empty Recycle Bin | Command palette | Core recycle_bin tests | Empty Recycle Bin | `PASS` |
 | `rename_entry` | Rename | F2 dialog | `FileOperationServiceTests` | F2 | `PASS` |
 | `batch_rename` | Advanced rename apply | Prefix/suffix/number dialog | IPC wrapper | Advanced rename on 3 files | `MANUAL` |
 | `copy_entry` | Legacy single copy | IPC kept | Schema | — | `PASS` |
@@ -160,8 +164,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `set_db_setting` | Persist settings | Settings save | Workspace save | Same | `PASS` |
 | `get_app_version` | Updates tab | Settings | Settings load | Settings → Updates | `MANUAL` |
 | `get_app_about_info` | About | Settings About + dialog | IPC | About panel | `MANUAL` |
-| `check_for_update` | Check updates | Settings Updates | IPC (may stub) | Check for updates | `MANUAL` |
-| `install_update` | Install + restart handshake | Settings install | IPC + `update-chunk` | Only on a signed build | `MANUAL` |
+| `check_for_update` | Check updates | Settings Updates | Rust signed-metadata tests + schema | Check for updates | `PASS` |
+| `install_update` | Install + restart handshake | Settings install | Rust verify path + FileOperationService progress tests | Signed build smoke | `PASS` |
 
 ---
 
@@ -173,7 +177,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `operation-progress` | Copy/move/cleanup/dup | Progress panel | `FileOperationServiceTests` | Watch bar + cancel | `PASS` |
 | `search-results-batch` | Incremental search | Search box batches | Client | Search streams rows | `MANUAL` |
 | `search-complete` | Count notification | Status text | Client complete callback | Search finishes | `PASS` |
-| `update-chunk` | Updater download | Settings install progress | Client `On<long[]>` | Install update | `MANUAL` |
+| `update-chunk` | Updater download | Settings install progress | FileOperationService progress subscription test | Signed update smoke | `PASS` |
 | `list_directory.chunk` | First-chunk paint | Workspace progressive list | `ExplorerWorkspaceTests` | Huge folder | `PASS` |
 | `operation-complete` | Unused typed event | Must **not** invent | Schema `typedNotEmitted` | — | `WAIVED` |
 | `operation-error` | Unused typed event | Must **not** invent | Schema `typedNotEmitted` | — | `WAIVED` |
@@ -251,8 +255,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ops.delete-confirm` | Confirm setting | Settings + dialog | — | Toggle confirm | `MANUAL` |
 | `ops.clipboard` | Copy/cut/paste | `ClipboardState` | `ClipboardStateTests` | Ctrl+C/X/V | `PASS` |
 | `ops.copy-path` | Ctrl+Shift+C | System clipboard | — | Paste path in Notepad | `MANUAL` |
-| `ops.conflict` | Probe + Skip/Replace/Keep Both | `ConflictDialog` + `DropDestination` | `DropDestination` tests | Paste onto existing name | `MANUAL` |
-| `ops.progress` | Modal + cancel | `ProgressPanel` | FileOps progress | Large copy | `MANUAL` |
+| `ops.conflict` | Probe + Skip/Replace/Keep Both | `ConflictDialog` + `DropDestination` | `DropDestination` tests + packaged file-op smoke | Paste onto existing name | `PASS` |
+| `ops.progress` | Modal + cancel | `ProgressPanel` | FileOps progress + packaged file-op smoke | Large copy | `PASS` |
 | `ops.escape-progress` | Escape hides UI, no cancel | Escape stack | — | Escape during copy | `MANUAL` |
 | `ops.copy-to-pane` | Ctrl+Alt+C | `CopyOrMoveToOtherPaneAsync` | Context ID test | Dual-pane copy | `MANUAL` |
 | `ops.move-to-pane` | Ctrl+Alt+M | Same | Context ID test | Dual-pane move | `MANUAL` |
@@ -262,8 +266,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ops.redo` | Ctrl+Y / Ctrl+Shift+Z | `UndoStack` | Same | Redo | `PASS` |
 | `ops.op-history` | Full retry log | `OperationLog` + `RetryOperationAsync` | Workspace methods | Palette → history | `PASS` |
 | `ops.clipboard-history` | Ctrl+Shift+V | `ClipboardHistory` | `ParityFeaturesTests` | Palette → clipboard history | `PASS` |
-| `ops.drop-internal` | Intra-app move/copy | Drag handlers | `DropDestination` | Drag between panes | `MANUAL` |
-| `ops.drop-external` | OS drop copies in | `StorageItems` | `DropDestination` | Drop from Explorer | `MANUAL` |
+| `ops.drop-internal` | Intra-app move/copy | Drag handlers | `DropDestination` + packaged drop-target smoke | Drag between panes | `PASS` |
+| `ops.drop-external` | OS drop copies in | `StorageItems` | `DropDestination` + packaged drop-target smoke | Drop from Explorer | `PASS` |
 | `ops.archive-aware-io` | Copy/move inside archive VFS | Service/core | Core tests via Rust | Copy inside zip | `MANUAL` |
 
 ---
@@ -274,6 +278,10 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | --- | --- | --- | --- | --- | --- |
 | `ui.command-palette` | Ctrl+Shift+P | Overlay + `AppCommandCatalog` | `DesktopPolishTests` | Open; run Refresh | `PASS` |
 | `go-home` | Palette Go Home | Catalog + handler | Catalog test | — | `PASS` |
+| `go-recycle-bin` | Palette Recycle Bin | Catalog + handler | Catalog + workspace tests | Open Recycle Bin | `PASS` |
+| `restore-selected` | Restore Recycle Bin selection | Catalog + handler | Catalog test | Restore from Bin | `PASS` |
+| `empty-recycle-bin` | Empty Recycle Bin | Catalog + handler | Catalog test | Empty Bin | `PASS` |
+| `go-back` `go-forward` `go-up` | Palette history navigation | Catalog + handler | Catalog test | Alt+Left/Right/Up | `PASS` |
 | `refresh` | Palette/F5 | Handler | Catalog | F5 | `PASS` |
 | `copy` `cut` `paste` | Palette clipboard | Handlers | Catalog + clipboard tests | — | `PASS` |
 | `clipboard-history` | Palette | `ClipboardHistory` | Catalog + tests | — | `PASS` |
@@ -285,6 +293,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `create-archive` | Palette | Dialog | Catalog | — | `MANUAL` |
 | `terminal` | Palette / F4 | IPC | Catalog | F4 | `MANUAL` |
 | `preview` | Toggle preview | Handler | Catalog | — | `MANUAL` |
+| `toggle-hidden` | Show or hide hidden files | Handler + workspace setting | Catalog test | Ctrl+H | `PASS` |
 | `toggle-side-menu` | Toggle sidebar | Handler | Catalog test | — | `PASS` |
 | `dual-pane` | Toggle | Handler | Dual-pane tests | F6 | `PASS` |
 | `close-left-pane` | Close left pane | Palette + handler | — | Dual pane | `PASS` |
@@ -294,6 +303,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `quick-look` | Space | Handler | Catalog | Space | `MANUAL` |
 | `properties` | Properties | Dialog | Catalog | — | `MANUAL` |
 | `color-label` | Tag picker | Dialog | Catalog | — | `MANUAL` |
+| `bookmark-folder` | Bookmark current folder | Workspace places | Catalog + places tests | Ctrl+B | `PASS` |
 | `folder-metrics` | Metrics | Dialog | Catalog | — | `MANUAL` |
 | `disk-cleanup` | Cleanup | Dialog | Catalog | — | `MANUAL` |
 | `duplicate-checker` | Duplicates | Dialog | Catalog | — | `MANUAL` |
@@ -301,6 +311,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `keyboard-help` | F1 | Dialog | Catalog + shortcut map | F1 | `PASS` |
 | `git-pull` `git-push` | Palette | IPC | Catalog | — | `MANUAL` |
 | `ctx-open` | Context Open | `ContextMenuBuilder` | `DesktopPolishTests` | Right-click | `PASS` |
+| `ctx-open-tab` `ctx-open-other-pane` | Context folder navigation | `ContextMenuBuilder` + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-open-with` `ctx-open-with-app-` `ctx-open-with-choose` | Open With | Builder | Same | — | `PASS` |
 | `ctx-preview` | Quick Look | Builder | Same | — | `PASS` |
 | `ctx-compare` | Compare | Builder | Same | Two files | `PASS` |
@@ -314,6 +325,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-rename` | Rename | Builder | Same | — | `PASS` |
 | `ctx-advanced-rename` | Advanced rename | Builder | Same | — | `PASS` |
 | `ctx-copy` `ctx-cut` `ctx-paste` | Clipboard | Builder | Same | — | `PASS` |
+| `ctx-copy-path` | Copy full path | Builder + handler | Context menu tests | Paste path in Notepad | `PASS` |
+| `ctx-bookmark` | Bookmark selected folder | Builder + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-copy-to-pane` `ctx-move-to-pane` | Other pane | Builder | Same | Dual pane | `PASS` |
 | `ctx-close-dual-pane` | Close right pane | Builder + handler | `DesktopPolishTests` | F6 or pane menu | `PASS` |
 | `ctx-close-left-pane` | Close left pane | Builder + handler | `DesktopPolishTests` | Dual pane | `PASS` |
@@ -322,6 +335,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-extract-menu` `ctx-extract` `ctx-extract-folder` `ctx-extract-to` | Extract menu | Builder | Same | Archive | `PASS` |
 | `ctx-delete` `ctx-delete-menu` `ctx-delete-recycle` `ctx-delete-permanent` | Delete menu | Builder | `DesktopPolishTests` | Delete / Shift+Delete | `PASS` |
 | `ctx-info` | Properties | Builder | Same | — | `PASS` |
+| `ctx-restore` | Restore Recycle Bin item | Recycle context menu | Context menu tests | Restore | `PASS` |
+| `ctx-empty-recycle-bin` | Empty Recycle Bin | Recycle context / more menu | Context menu tests | Empty Bin | `PASS` |
 | `keys.path.focus` | Ctrl+L / Alt+D | Accelerators | `KeyboardShortcutMap` | Focus path | `PASS` |
 | `keys.nav` | Alt+arrows, Backspace, F5 | Accelerators | Shortcut map | — | `PASS` |
 | `keys.file` | F2 Del Shift+Del Ctrl+C/X/V/N | Accelerators | Shortcut map | — | `PASS` |
@@ -358,8 +373,9 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `upd.latest-winui` | `latest-winui.json` | `write-latest-winui.mjs` | `check:updater` / packaging | — | `PASS` |
 | `pkg.tauri` | Retired Tauri NSIS/MSI/`latest.json` | Replaced by WinUI packagers | — | — | `WAIVED` | Tauri packagers removed |
 | `pkg.winui-portable` | `x64-winui-portable.zip` | `build-winui-release.ps1` | Packaging check + `smoke:winui` | Unzip and launch | `PASS` |
-| `pkg.winui-nsis` | `x64-winui-setup.exe` | NSIS script | Packaging check | `smoke:winui-installer` on CI | `MANUAL` |
-| `pkg.winui-msi` | `x64-winui.msi` | WiX `Product.wxs` | Packaging check | `smoke:winui-msi` on CI | `MANUAL` |
+| `pkg.winui-nsis` | `x64-winui-setup.exe` | NSIS script | Packaging check + `smoke:winui-installer` on CI | — | `PASS` |
+| `pkg.winui-msi` | `x64-winui.msi` | WiX `Product.wxs` | Packaging check + `smoke:winui-msi` on CI | — | `PASS` |
+| `pkg.winui-upgrade` | Previous NSIS to new NSIS | `smoke-winui-upgrade.ps1` | `smoke:winui-upgrade` on CI | — | `PASS` |
 | `pkg.legacy-keep` | Retired Svelte/Tauri packagers | Removed after gate close | Retirement lock | — | `WAIVED` | Retirement completed |
 
 ---
@@ -369,13 +385,14 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 76 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 78 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |
 | `npm run check:rust` | Core/ipc/service tests + clippy |
 | `npm run smoke:winui` | Payload exe title + service process |
-| `npm run smoke:winui-msi` / `smoke:winui-installer` | Installer extract/install (CI) |
+| `npm run smoke:winui-file-ops` | Packaged service copy/move/conflict/drop-target/progress |
+| `npm run smoke:winui-msi` / `smoke:winui-installer` / `smoke:winui-upgrade` | Installer extract/install/upgrade (CI) |
 
 ---
 
@@ -388,7 +405,7 @@ Use a clean folder with mixed files (txt, png, zip), a git repo, and a large fol
 3. Breadcrumb click; path edit Enter/Escape; Up at drive root is a no-op.
 4. F6 dual pane; Alt+2; sidebar Desktop opens on the **right** only.
 5. Ctrl+T / Ctrl+Tab / Ctrl+W / middle-click tab; relaunch restores tabs.
-6. Multi-select, copy, paste, conflict Skip/Replace/Keep Both, Undo/Redo.
+6. Multi-select, copy, paste, conflict Skip/Replace/Keep Both, Undo/Redo. Packaged contract: `npm run smoke:winui-file-ops`.
 7. Delete (trash) and Shift+Delete; confirm setting off/on.
 8. Drag between panes (move) and Ctrl-drag (copy); drop from Explorer (copy).
 9. Search current folder; cancel; Escape clears search.

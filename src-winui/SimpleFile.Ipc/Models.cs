@@ -16,6 +16,12 @@ public sealed class FileEntry
     [JsonPropertyName("is_symlink")]
     public bool IsSymlink { get; set; }
 
+    [JsonPropertyName("is_hidden")]
+    public bool IsHidden { get; set; }
+
+    [JsonPropertyName("is_system")]
+    public bool IsSystem { get; set; }
+
     [JsonPropertyName("size")]
     public ulong Size { get; set; }
 
@@ -142,6 +148,9 @@ public sealed class DriveInfo
 
     [JsonPropertyName("drive_type")]
     public string DriveType { get; set; } = "";
+
+    [JsonPropertyName("file_system")]
+    public string? FileSystem { get; set; }
 
     [JsonPropertyName("total_space")]
     public ulong TotalSpace { get; set; }
@@ -376,6 +385,27 @@ public sealed class DiffRow
     public string? RightText { get; set; }
 }
 
+public sealed class BinaryDiffRow
+{
+    [JsonPropertyName("offset")]
+    public ulong Offset { get; set; }
+
+    [JsonPropertyName("left_hex")]
+    public string LeftHex { get; set; } = "";
+
+    [JsonPropertyName("right_hex")]
+    public string RightHex { get; set; } = "";
+
+    [JsonPropertyName("left_ascii")]
+    public string LeftAscii { get; set; } = "";
+
+    [JsonPropertyName("right_ascii")]
+    public string RightAscii { get; set; } = "";
+
+    [JsonPropertyName("different")]
+    public bool Different { get; set; }
+}
+
 public sealed class FileComparison
 {
     [JsonPropertyName("left_path")]
@@ -408,8 +438,26 @@ public sealed class FileComparison
     [JsonPropertyName("changed")]
     public int Changed { get; set; }
 
+    [JsonPropertyName("comparison_type")]
+    public string ComparisonType { get; set; } = "text";
+
+    [JsonPropertyName("compared_bytes")]
+    public ulong? ComparedBytes { get; set; }
+
+    [JsonPropertyName("different_bytes")]
+    public ulong? DifferentBytes { get; set; }
+
+    [JsonPropertyName("first_difference")]
+    public ulong? FirstDifference { get; set; }
+
+    [JsonPropertyName("binary_rows_truncated")]
+    public bool BinaryRowsTruncated { get; set; }
+
     [JsonPropertyName("rows")]
     public List<DiffRow> Rows { get; set; } = [];
+
+    [JsonPropertyName("binary_rows")]
+    public List<BinaryDiffRow> BinaryRows { get; set; } = [];
 }
 
 public sealed class ArchiveEntry
@@ -539,6 +587,11 @@ public sealed class UpdateInfo
     [JsonPropertyName("version")] public string Version { get; set; } = "";
     [JsonPropertyName("date")] public string? Date { get; set; }
     [JsonPropertyName("body")] public string? Body { get; set; }
+    [JsonPropertyName("installable")] public bool Installable { get; set; }
+    [JsonPropertyName("channel")] public string? Channel { get; set; }
+    [JsonPropertyName("url")] public string? Url { get; set; }
+    [JsonPropertyName("sha256")] public string? Sha256 { get; set; }
+    [JsonPropertyName("size")] public ulong? Size { get; set; }
 }
 
 public sealed class GitStatus

@@ -8,7 +8,22 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Added
+- Recycle Bin is a first-class location (Quick Access). Restore, permanent delete, and Empty Recycle Bin work from the pane.
+- Properties, clipboard history (`Ctrl+Shift+V`), and operation history are real dialogs instead of text dumps.
+- `Ctrl+H` now follows Windows Hidden and System attributes, not just leading-dot names.
+- Empty panes distinguish loading, search, filters, access errors, and hidden-only folders.
+- Conflict dialog “Apply to all remaining conflicts” is honored for the rest of the transfer.
+- Search uses the Show Hidden setting and can include file contents from the search box toggle.
+- Path bar suggests folders while typing. Settings → Shortcuts lists the live keybindings.
+- `Ctrl+Mouse wheel` changes icon size; `Alt+Enter`, `Ctrl+Enter`, `Ctrl+1–9`, and `Ctrl+B` match the command list.
+
 ### Changed
+- Version identity is now **BETA**. About, Settings, handshake `appVersion`,
+  README badge, installer DisplayVersion/branding, and artifact names use BETA.
+  Technical fields that require x.y.z (Cargo package version, MSBuild
+  `<Version>`, assembly identity, WiX Product Version, NSIS VIProductVersion)
+  use `0.1.0`.
 - Product branding and runtime identity changed from SimpleFile to SumaFile:
   visible app chrome/About/Settings text, installer display names, shortcuts,
   release artifact names, packaged host executable, and startup log path now
@@ -31,6 +46,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   MVP stub.
 
 ### Fixed
+- Large folder lists append incoming chunks instead of rebuilding the whole collection on every page.
 - Closing SumaFile no longer closes files opened in external programs
   (Notepad, image viewers, video players). The service job still dies with
   the UI; shell children break away, matching Explorer.

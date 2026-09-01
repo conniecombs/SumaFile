@@ -1,4 +1,5 @@
 use serde_json::{Map, Value};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -63,6 +64,13 @@ fn commands_cover_seventy_six_domain_methods_plus_handshake() {
         .filter(|name| !name.starts_with("ipc."))
         .collect();
     assert_eq!(domain.len(), simplefile_ipc::DOMAIN_METHOD_COUNT);
+    let schema_domain: HashSet<&str> = domain.iter().map(|name| name.as_str()).collect();
+    let generated_domain: HashSet<&str> = simplefile_ipc::DOMAIN_METHODS.iter().copied().collect();
+    assert_eq!(schema_domain, generated_domain);
+    assert!(simplefile_ipc::is_domain_method("get_home_dir"));
+    assert!(!simplefile_ipc::is_domain_method(
+        simplefile_ipc::HANDSHAKE_METHOD
+    ));
     assert!(methods["list_directory"]["params"]
         .as_object()
         .unwrap()

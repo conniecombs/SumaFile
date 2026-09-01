@@ -88,6 +88,7 @@ public sealed partial class FileRowView : UserControl
 
         ApplyColumns();
         ApplyIcon();
+        Opacity = Row.IsHidden ? 0.55 : 1;
 
         if (_nameText is not null)
         {

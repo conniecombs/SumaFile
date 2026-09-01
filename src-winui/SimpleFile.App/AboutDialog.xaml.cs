@@ -7,7 +7,7 @@ namespace SimpleFile.App;
 
 public sealed partial class AboutDialog : ContentDialog
 {
-    private const string RepositoryUrl = "https://github.com/conniecombs/SimpleFile-Windows";
+    private const string RepositoryUrl = "https://github.com/conniecombs/SumaFile";
 
     public AboutDialog()
     {

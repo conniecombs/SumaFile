@@ -43,7 +43,9 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default);
     Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default);
     Task DeleteEntryAsync(string path, CancellationToken ct = default);
-    Task MoveToTrashAsync(string[] paths, CancellationToken ct = default);
+    Task<string[]> MoveToTrashAsync(string[] paths, CancellationToken ct = default);
+    Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default);
+    Task EmptyRecycleBinAsync(CancellationToken ct = default);
     Task<string> RenameEntryAsync(string path, string newName, CancellationToken ct = default);
     Task<string[]> BatchRenameAsync(RenameRequest[] entries, CancellationToken ct = default);
     Task<string> CopyEntryAsync(string source, string destination, CancellationToken ct = default);

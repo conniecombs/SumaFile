@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 76,
+  "domainMethodCount": 78,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -44,7 +44,9 @@
     "create_directory": { "params": { "path": "string", "name": "string" }, "result": "string" },
     "create_file": { "params": { "path": "string", "name": "string" }, "result": "string" },
     "delete_entry": { "params": { "path": "string" }, "result": "null" },
-    "move_to_trash": { "params": { "paths": "string[]" }, "result": "null" },
+    "move_to_trash": { "params": { "paths": "string[]" }, "result": "string[]" },
+    "restore_recycle_bin": { "params": { "paths": "string[]" }, "result": "string[]" },
+    "empty_recycle_bin": { "params": null, "result": "null" },
     "rename_entry": { "params": { "path": "string", "newName": "string" }, "result": "string" },
     "batch_rename": { "params": { "entries": "RenameRequest[]" }, "result": "string[]" },
     "copy_entry": { "params": { "source": "string", "destination": "string" }, "result": "string" },

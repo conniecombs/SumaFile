@@ -19,7 +19,7 @@ Closes #<!-- issue number -->
 
 ## How Has This Been Tested?
 
-<!-- SimpleFile-Windows is Windows-only. Describe the Windows environment and exact test coverage. -->
+<!-- SumaFile is Windows-only. Describe the Windows environment and exact test coverage. -->
 
 **Windows version:**
 - [ ] Windows 11

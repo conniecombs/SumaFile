@@ -19,7 +19,7 @@
 
     <Icon Id="AppIcon.ico" SourceFile="$(var.IconFile)" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/conniecombs/SimpleFile-Windows" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/conniecombs/SumaFile" />
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPNOMODIFY" Value="1" />
 

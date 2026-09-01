@@ -5,10 +5,12 @@ namespace SimpleFile.Core;
 public sealed class FileOperationService
 {
     private ISimpleFileIpc _ipc;
+    private readonly OperationJournal? _journal;
 
-    public FileOperationService(ISimpleFileIpc ipc)
+    public FileOperationService(ISimpleFileIpc ipc, OperationJournal? journal = null)
     {
         _ipc = ipc;
+        _journal = journal;
     }
 
     public void ReplaceIpc(ISimpleFileIpc ipc)
@@ -39,9 +41,19 @@ public sealed class FileOperationService
 
     // Move files to the system trash. Throws FileOperationException with
     // IsTrashUnavailable = true if the trash service is unavailable.
-    public async Task TrashAsync(string[] paths, CancellationToken ct = default)
+    public async Task<string[]> TrashAsync(string[] paths, CancellationToken ct = default)
     {
-        await _ipc.MoveToTrashAsync(paths, ct).ConfigureAwait(false);
+        return await _ipc.MoveToTrashAsync(paths, ct).ConfigureAwait(false);
+    }
+
+    public Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default)
+    {
+        return _ipc.RestoreRecycleBinAsync(paths, ct);
+    }
+
+    public Task EmptyRecycleBinAsync(CancellationToken ct = default)
+    {
+        return _ipc.EmptyRecycleBinAsync(ct);
     }
 
     // Rename a file or directory. Returns the new full path.
@@ -68,6 +80,9 @@ public sealed class FileOperationService
         CancellationToken ct = default)
     {
         return RunTransferAsync(
+            "copy",
+            sources,
+            destination,
             (ipc, operationId, token) => ipc.CopyWithProgressAsync(
                 sources, destination, operationId, conflictAction, token),
             progress,
@@ -85,6 +100,9 @@ public sealed class FileOperationService
         CancellationToken ct = default)
     {
         return RunTransferAsync(
+            "move",
+            sources,
+            destination,
             (ipc, operationId, token) => ipc.MoveWithProgressAsync(
                 sources, destination, operationId, conflictAction, token),
             progress,
@@ -93,6 +111,9 @@ public sealed class FileOperationService
     }
 
     private async Task<TransferResult[]> RunTransferAsync(
+        string operationType,
+        string[] sources,
+        string destination,
         Func<ISimpleFileIpc, string, CancellationToken, Task<TransferResult[]>> invoke,
         IProgress<ProgressUpdate>? progress,
         Action<string>? operationStarted,
@@ -100,9 +121,21 @@ public sealed class FileOperationService
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
+        _journal?.Started(operationType, operationId, sources, destination);
         operationStarted?.Invoke(operationId);
         IDisposable? subscription = null;
         IDisposable? cancelRegistration = null;
+        var cancellationLock = new object();
+        Task? backendCancellation = null;
+
+        Task RequestBackendCancellationAsync()
+        {
+            lock (cancellationLock)
+            {
+                return backendCancellation ??= CancelOperationBestEffortAsync(ipc, operationId);
+            }
+        }
+
         if (progress != null)
         {
             subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
@@ -118,13 +151,36 @@ public sealed class FileOperationService
         {
             cancelRegistration = ct.Register(() =>
             {
-                _ = CancelOperationBestEffortAsync(ipc, operationId);
+                _ = RequestBackendCancellationAsync();
             });
         }
 
         try
         {
-            return await invoke(ipc, operationId, ct).ConfigureAwait(false);
+            var results = await invoke(ipc, operationId, ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested)
+            {
+                _journal?.Cancelled(operationType, operationId);
+                throw new OperationCanceledException(ct);
+            }
+
+            _journal?.Completed(operationType, operationId);
+            return results;
+        }
+        catch (OperationCanceledException)
+        {
+            if (ct.IsCancellationRequested)
+            {
+                await RequestBackendCancellationAsync().ConfigureAwait(false);
+            }
+
+            _journal?.Cancelled(operationType, operationId);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _journal?.Failed(operationType, operationId, exception);
+            throw;
         }
         finally
         {
@@ -202,14 +258,32 @@ public sealed class FileOperationService
         return _ipc.ListSubdirectoriesAsync(path, ct);
     }
 
-    public Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)
+    public async Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)
     {
-        return _ipc.CalculateFolderSizeAsync(path, ct);
+        var ipc = _ipc;
+        try
+        {
+            return await ipc.CalculateFolderSizeAsync(path, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderSizeAsync(cancelCt)).ConfigureAwait(false);
+            throw;
+        }
     }
 
-    public Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default)
+    public async Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default)
     {
-        return _ipc.CountFolderItemsAsync(path, ct);
+        var ipc = _ipc;
+        try
+        {
+            return await ipc.CountFolderItemsAsync(path, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderItemCountAsync(cancelCt)).ConfigureAwait(false);
+            throw;
+        }
     }
 
     public Task GitPullAsync(string path, CancellationToken ct = default) => _ipc.GitPullAsync(path, ct);
@@ -322,6 +396,7 @@ public sealed class FileOperationService
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
+        _journal?.Started("cleanup", operationId, [directory]);
         IDisposable? subscription = null;
         if (progress != null)
         {
@@ -333,7 +408,19 @@ public sealed class FileOperationService
         }
         try
         {
-            return await ipc.DiskCleanupAsync(directory, sizeThreshold, operationId, ct).ConfigureAwait(false);
+            var result = await ipc.DiskCleanupAsync(directory, sizeThreshold, operationId, ct).ConfigureAwait(false);
+            _journal?.Completed("cleanup", operationId);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            _journal?.Cancelled("cleanup", operationId);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _journal?.Failed("cleanup", operationId, exception);
+            throw;
         }
         finally
         {
@@ -350,6 +437,7 @@ public sealed class FileOperationService
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
+        _journal?.Started("duplicate-check", operationId, [directory]);
         IDisposable? subscription = null;
         if (progress != null)
         {
@@ -361,7 +449,19 @@ public sealed class FileOperationService
         }
         try
         {
-            return await ipc.DuplicateCheckAsync(directory, minSize, partialHashBytes, operationId, ct).ConfigureAwait(false);
+            var result = await ipc.DuplicateCheckAsync(directory, minSize, partialHashBytes, operationId, ct).ConfigureAwait(false);
+            _journal?.Completed("duplicate-check", operationId);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            _journal?.Cancelled("duplicate-check", operationId);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _journal?.Failed("duplicate-check", operationId, exception);
+            throw;
         }
         finally
         {
@@ -374,6 +474,18 @@ public sealed class FileOperationService
     public Task CancelFolderSizeAsync(CancellationToken ct = default) => _ipc.CancelFolderSizeAsync(ct);
     public Task CancelFolderItemCountAsync(CancellationToken ct = default) => _ipc.CancelFolderItemCountAsync(ct);
 
+    private static async Task TryCancelBestEffortAsync(Func<CancellationToken, Task> cancel)
+    {
+        try
+        {
+            await cancel(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Cancellation is opportunistic; preserve the original canceled operation.
+        }
+    }
+
     public Task<bool> CheckRarInstalledAsync(CancellationToken ct = default) => _ipc.CheckRarInstalledAsync(ct);
     public Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default) => _ipc.PrepareRarInstallAsync(ct);
     public Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default) => _ipc.DiscardRarInstallAsync(confirmationToken, ct);
@@ -385,6 +497,8 @@ public sealed class FileOperationService
     public async Task InstallUpdateAsync(IProgress<long[]>? progress = null, CancellationToken ct = default)
     {
         var ipc = _ipc;
+        var operationId = GenerateOperationId();
+        _journal?.Started("update", operationId);
         IDisposable? subscription = null;
         if (progress != null)
         {
@@ -396,6 +510,17 @@ public sealed class FileOperationService
         try
         {
             await ipc.InstallUpdateAsync(ct).ConfigureAwait(false);
+            _journal?.Completed("update", operationId);
+        }
+        catch (OperationCanceledException)
+        {
+            _journal?.Cancelled("update", operationId);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _journal?.Failed("update", operationId, exception);
+            throw;
         }
         finally
         {
@@ -422,7 +547,7 @@ public sealed class FileOperationService
             return "Windows could not move the selection to the Recycle Bin. The item may no longer be available, or this location may not support Recycle Bin operations. Refresh the folder and try again, or use Delete Permanently instead.";
         }
 
-        return "The Recycle Bin is not available for this location. This can happen on network, virtual, cloud-backed, or removable drives.";
+        return "The Recycle Bin is not available for this location. This can happen on network, virtual, or removable drives.";
     }
 
     private static string StripPrefix(string message, string prefix)

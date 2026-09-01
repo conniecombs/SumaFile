@@ -31,8 +31,10 @@ const requiredFiles = [
   'scripts/build-winui-release.ps1',
   'scripts/write-latest-winui.mjs',
   'scripts/smoke-winui-startup.ps1',
+  'scripts/smoke-winui-file-ops.ps1',
   'scripts/smoke-winui-msi.ps1',
   'scripts/smoke-winui-nsis.ps1',
+  'scripts/smoke-winui-upgrade.ps1',
   'scripts/generate-winui-icon.py',
   'scripts/check-winui-parity-gate.mjs',
   'docs/winui-migration/parity-gate.md',
@@ -103,8 +105,10 @@ for (const snippet of buildSnippets) {
 const npmSnippets = [
   '"build:winui:release"',
   '"smoke:winui"',
+  '"smoke:winui-file-ops"',
   '"smoke:winui-msi"',
   '"smoke:winui-installer"',
+  '"smoke:winui-upgrade"',
   '"release:build"',
   '"dev:winui"',
 ];
@@ -131,10 +135,18 @@ const workflowSnippets = [
   ['release.yml', releaseYml, 'SumaFile_*_x64-winui-portable.zip'],
   ['release.yml', releaseYml, 'x64-winui-portable.zip'],
   ['release.yml', releaseYml, 'build-winui-release.ps1'],
+  ['release.yml', releaseYml, 'RequireUpdaterSignature'],
+  ['release.yml', releaseYml, 'SIMPLEFILE_UPDATER_PUBLIC_KEY'],
+  ['release.yml', releaseYml, 'smoke:winui-upgrade'],
+  ['release.yml', releaseYml, 'smoke:winui-file-ops'],
   ['release-build.yml', releaseBuildYml, 'dist/winui'],
   ['release-build.yml', releaseBuildYml, 'SumaFile_*_x64-winui-portable.zip'],
+  ['release-build.yml', releaseBuildYml, 'smoke:winui-file-ops'],
+  ['release-build.yml', releaseBuildYml, 'smoke:winui-upgrade'],
   ['installer-smoke.yml', installerSmokeYml, 'smoke:winui'],
+  ['installer-smoke.yml', installerSmokeYml, 'smoke:winui-file-ops'],
   ['installer-smoke.yml', installerSmokeYml, 'SumaFile_*_x64-winui-portable.zip'],
+  ['installer-smoke.yml', installerSmokeYml, 'smoke:winui-upgrade'],
 ];
 
 for (const [file, source, snippet] of workflowSnippets) {

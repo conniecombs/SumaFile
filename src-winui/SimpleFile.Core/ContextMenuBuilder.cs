@@ -27,6 +27,7 @@ public sealed class ContextMenuRequest
     public PaneId MenuPane { get; init; } = PaneId.Primary;
     public bool OtherPaneHasPath { get; init; }
     public bool SelectedIsDirectory { get; init; }
+    public string? SelectedDirectoryPath { get; init; }
     public bool HasFolderSelection { get; init; }
     public bool AllSelectedAreFiles { get; init; }
     public bool SelectedIsArchive { get; init; }
@@ -34,6 +35,7 @@ public sealed class ContextMenuRequest
     public string? SelectedExtension { get; init; }
     public IReadOnlyList<OpenWithApplication> OpenWithApplications { get; init; } = [];
     public IReadOnlyCollection<string> OverflowedToolbarIds { get; init; } = [];
+    public bool InRecycleBin { get; init; }
 }
 
 /// <summary>
@@ -50,10 +52,28 @@ public static class ContextMenuBuilder
             ? "Extract to Folder"
             : $"Extract to {request.ArchiveExtractFolderName}/";
 
+        if (request.InRecycleBin)
+        {
+            return VisibleEntries(
+            [
+                Item("ctx-restore", "Restore", request.SelectionCount == 0),
+                Item("ctx-open", "Open", request.SelectionCount != 1 || request.SelectedIsDirectory, "Enter"),
+                Item("ctx-copy", "Copy", request.SelectionCount == 0, "Ctrl+C"),
+                Item("ctx-copy-path", "Copy original path", request.SelectionCount == 0, "Ctrl+Shift+C"),
+                Divider(),
+                Item("ctx-delete-permanent", "Delete Permanently", request.SelectionCount == 0, "Shift+Delete"),
+                Item("ctx-empty-recycle-bin", "Empty Recycle Bin"),
+                Divider(),
+                Item("ctx-info", "Properties", request.SelectionCount != 1, "Alt+Enter"),
+            ]);
+        }
+
         var entries = new List<ContextMenuEntry>
         {
             Item("ctx-open", "Open", request.SelectionCount != 1, "Enter"),
             OpenWithMenu(request),
+            Item("ctx-open-tab", "Open in new tab", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+Enter"),
+            Item("ctx-open-other-pane", "Open in other pane", request.SelectionCount != 1 || !request.SelectedIsDirectory),
             Item("ctx-preview", "Quick Look", request.SelectionCount != 1, "Space"),
             Item("ctx-compare", "Compare files", !canCompare),
             Item("ctx-terminal", "Open terminal here", false, "F4"),
@@ -68,7 +88,14 @@ public static class ContextMenuBuilder
             Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0),
             Item("ctx-copy", "Copy", request.SelectionCount == 0, "Ctrl+C"),
             Item("ctx-cut", "Cut", request.SelectionCount == 0, "Ctrl+X"),
-            Item("ctx-paste", "Paste", !request.HasClipboard, "Ctrl+V"),
+            Item(
+                "ctx-paste",
+                request.SelectedIsDirectory ? "Paste into folder" : "Paste",
+                !request.HasClipboard,
+                "Ctrl+V",
+                commandParameter: request.SelectedIsDirectory ? request.SelectedDirectoryPath : null),
+            Item("ctx-copy-path", "Copy path", request.SelectionCount == 0, "Ctrl+Shift+C"),
+            Item("ctx-bookmark", "Bookmark folder", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+B"),
             Item("ctx-copy-to-pane", "Copy to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+C"),
             Item("ctx-move-to-pane", "Move to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+M"),
             Divider(),
@@ -107,6 +134,12 @@ public static class ContextMenuBuilder
         entries.AddRange(BuildToolbarOverflowItems(request));
         if (entries.Count > 0)
         {
+            entries.Add(Divider());
+        }
+
+        if (request.InRecycleBin)
+        {
+            entries.Add(Item("ctx-empty-recycle-bin", "Empty Recycle Bin"));
             entries.Add(Divider());
         }
 
