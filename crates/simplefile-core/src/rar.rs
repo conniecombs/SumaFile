@@ -1,5 +1,5 @@
 use crate::models::RarInstallPlan;
-use crate::utils::hidden_command;
+use crate::utils::{hex_encode, hidden_command};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -173,7 +173,7 @@ fn verify_sha256_file(path: &Path) -> Result<String, String> {
         std::fs::read(path).map_err(|error| format!("Failed to read WinRAR installer: {error}"))?;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    let actual = hex_encode(&hasher.finalize());
+    let actual = hex_encode(hasher.finalize());
     if actual != EXPECTED_DOWNLOAD_SHA256 {
         return Err(format!(
             "Downloaded RAR artifact SHA-256 mismatch. Expected {EXPECTED_DOWNLOAD_SHA256}, got {actual}."
@@ -236,7 +236,7 @@ fn generate_confirmation_token() -> Result<String, String> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes)
         .map_err(|error| format!("Failed to create confirmation token: {error}"))?;
-    Ok(hex_encode(&bytes))
+    Ok(hex_encode(bytes))
 }
 
 fn pending_installer_path(token: &str) -> Result<PathBuf, String> {
@@ -247,14 +247,4 @@ fn pending_installer_path(token: &str) -> Result<PathBuf, String> {
         .unwrap_or("rar-installer.download");
     let filename = format!("simplefile-rar-installer-{token}-{source_name}");
     Ok(std::env::temp_dir().join(filename))
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
 }

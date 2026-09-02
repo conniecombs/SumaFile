@@ -4,7 +4,7 @@ use crate::models::{
     CleanupFile, CleanupResult, DuplicateCheckFile, DuplicateCheckGroup, DuplicateCheckResult,
     DuplicateGroup,
 };
-use crate::utils::{format_system_time, validate_existing_path_no_resolve};
+use crate::utils::{format_system_time, hex_encode, validate_existing_path_no_resolve};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
@@ -465,17 +465,6 @@ fn compute_sha256(path: &Path, cancel: &AtomicBool) -> Result<String, io::Error>
         hasher.update(&buffer[..n]);
     }
     Ok(hex_encode(hasher.finalize()))
-}
-
-fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let bytes = bytes.as_ref();
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 #[cfg(test)]

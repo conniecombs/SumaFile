@@ -1,9 +1,8 @@
-use crate::utils::validate_existing_path_no_resolve;
+use crate::utils::{hex_encode, resolve_readable_path};
 use md5::Md5;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use std::io::Read;
-use std::path::PathBuf;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Checksums {
@@ -31,14 +30,6 @@ pub fn compute_checksum(path: String) -> Result<serde_json::Value, String> {
     }))
 }
 
-fn resolve_readable_path(path: &str) -> Result<PathBuf, String> {
-    if crate::archive::is_archive_virtual_path(path) {
-        return crate::archive::materialize_archive_entry_to_temp(path);
-    }
-
-    validate_existing_path_no_resolve(path)
-}
-
 fn compute_checksums<R: Read>(reader: &mut R) -> Result<Checksums, std::io::Error> {
     let mut md5_hasher = Md5::new();
     let mut sha1_hasher = Sha1::new();
@@ -61,17 +52,6 @@ fn compute_checksums<R: Read>(reader: &mut R) -> Result<Checksums, std::io::Erro
         sha1: hex_encode(sha1_hasher.finalize()),
         sha256: hex_encode(sha256_hasher.finalize()),
     })
-}
-
-fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let bytes = bytes.as_ref();
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use crate::utils::validate_existing_path_no_resolve;
+use crate::utils::resolve_readable_path;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
@@ -208,14 +208,6 @@ pub fn open_file_with(path: String, application: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("failed to launch {}: {}", application_path.display(), e))
-}
-
-fn resolve_readable_path(path: &str) -> Result<PathBuf, String> {
-    if crate::archive::is_archive_virtual_path(path) {
-        return crate::archive::materialize_archive_entry_to_temp(path);
-    }
-
-    validate_existing_path_no_resolve(path)
 }
 
 #[cfg(test)]

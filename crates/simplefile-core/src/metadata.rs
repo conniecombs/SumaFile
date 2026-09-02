@@ -1,11 +1,11 @@
 use crate::models::{FileMetadata, ImageMetadata};
-use crate::utils::validate_existing_path_no_resolve;
+use crate::utils::resolve_readable_path;
 use image::GenericImageView;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::tag::{Accessor, ItemKey};
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use zip::ZipArchive;
 
@@ -87,14 +87,6 @@ enum MetadataKind {
     Video,
     Office,
     Unsupported,
-}
-
-fn resolve_readable_path(path: &str) -> Result<PathBuf, String> {
-    if crate::archive::is_archive_virtual_path(path) {
-        return crate::archive::materialize_archive_entry_to_temp(path);
-    }
-
-    validate_existing_path_no_resolve(path)
 }
 
 fn classify_extension(extension: &str) -> MetadataKind {

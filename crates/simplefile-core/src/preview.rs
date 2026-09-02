@@ -1,6 +1,6 @@
 use crate::models::{FilePreview, ThumbnailResult};
 
-use crate::utils::validate_existing_path_no_resolve;
+use crate::utils::resolve_readable_path;
 use std::fs;
 
 pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePreview, String> {
@@ -279,14 +279,6 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
         "torrent" => Some(("torrent", mime("application/x-bittorrent"))),
         _ => None,
     }
-}
-
-fn resolve_readable_path(path: &str) -> Result<std::path::PathBuf, String> {
-    if crate::archive::is_archive_virtual_path(path) {
-        return crate::archive::materialize_archive_entry_to_temp(path);
-    }
-
-    validate_existing_path_no_resolve(path)
 }
 
 #[cfg(test)]

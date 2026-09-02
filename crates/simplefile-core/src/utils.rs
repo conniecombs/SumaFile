@@ -282,6 +282,25 @@ pub fn validate_existing_path_no_resolve(path: &str) -> Result<PathBuf, String> 
     Ok(path_buf)
 }
 
+pub(crate) fn resolve_readable_path(path: &str) -> Result<PathBuf, String> {
+    if crate::archive::is_archive_virtual_path(path) {
+        return crate::archive::materialize_archive_entry_to_temp(path);
+    }
+
+    validate_existing_path_no_resolve(path)
+}
+
+pub(crate) fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = bytes.as_ref();
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
 /// Validate a path that must exist **without following symlinks** (lstat).
 ///
 /// Use this whenever the operation must
