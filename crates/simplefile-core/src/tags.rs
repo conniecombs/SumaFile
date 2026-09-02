@@ -218,13 +218,7 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::fs;
-    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn metadata_db_env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     struct EnvVarGuard {
         previous: Option<OsString>,
@@ -258,7 +252,7 @@ mod tests {
 
     #[test]
     fn tags_round_trip_through_metadata_db() {
-        let _lock = metadata_db_env_lock().lock().expect("env lock");
+        let _lock = crate::test_support::env_lock().lock().expect("env lock");
         let db = temp_db();
         let _env = EnvVarGuard::set(&db);
 
