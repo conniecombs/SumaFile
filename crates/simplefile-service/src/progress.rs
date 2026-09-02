@@ -14,14 +14,17 @@ use simplefile_core::utils::{
     generate_operation_id, is_network_path, recreate_symlink, validate_existing_path_no_resolve,
     validate_path_no_follow,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+
+mod registry;
+
+pub use registry::OperationRegistry;
 
 const NETWORK_BUFFER_SIZE: usize = 512 * 1024;
 const LOCAL_BUFFER_SIZE: usize = 4 * 1024 * 1024;
@@ -33,35 +36,6 @@ const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(80);
 pub struct TransferResult {
     pub source: String,
     pub destination: String,
-}
-
-#[derive(Default)]
-pub struct OperationRegistry {
-    operations: Mutex<HashMap<String, Arc<AtomicBool>>>,
-}
-
-impl OperationRegistry {
-    pub async fn register(&self, operation_id: &str) -> Arc<AtomicBool> {
-        let cancel = Arc::new(AtomicBool::new(false));
-        self.operations
-            .lock()
-            .await
-            .insert(operation_id.to_string(), cancel.clone());
-        cancel
-    }
-
-    pub async fn cancel(&self, operation_id: &str) -> bool {
-        if let Some(cancel) = self.operations.lock().await.get(operation_id) {
-            cancel.store(true, Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub async fn remove(&self, operation_id: &str) {
-        self.operations.lock().await.remove(operation_id);
-    }
 }
 
 #[derive(Debug)]

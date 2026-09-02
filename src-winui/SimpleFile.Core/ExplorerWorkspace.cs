@@ -29,14 +29,42 @@ public sealed class ExplorerWorkspace
         ["navigatePictures"] = "Pictures",
     };
 
+    private const int ClosedTabLimit = 20;
     private readonly IExplorerBackend _backend;
+    private readonly WorkspaceProfileService _profiles;
+    private readonly SavedWorkspaceLayoutService _savedLayouts;
     private readonly object _gate = new();
+    private readonly List<ClosedFileTab> _closedTabs = [];
     private List<DriveInfo> _drives = [];
+
+    private sealed class ClosedFileTab
+    {
+        public ClosedFileTab(PaneId pane, FileTab tab, int index)
+        {
+            Pane = pane;
+            Tab = tab;
+            Index = index;
+        }
+
+        public PaneId Pane { get; }
+        public FileTab Tab { get; }
+        public int Index { get; }
+    }
 
     public ExplorerWorkspace(IExplorerBackend backend, FileOperationService? fileOps = null)
     {
         _backend = backend;
         FileOps = fileOps;
+        _profiles = new WorkspaceProfileService(
+            () => FileOps,
+            () => HomePath,
+            CaptureLayout,
+            CaptureChromeLayout,
+            profileId => ActiveProfileId = profileId);
+        _savedLayouts = new SavedWorkspaceLayoutService(
+            () => FileOps,
+            CaptureLayout,
+            CaptureChromeLayout);
         Clipboard = new ClipboardState();
         Undo = new UndoStack();
         Columns = new ColumnLayout();
@@ -70,6 +98,16 @@ public sealed class ExplorerWorkspace
     public DriveInfo? PendingReconnect { get; private set; }
     public PaneId PendingReconnectPane { get; private set; } = PaneId.Primary;
     public bool FileOpenUnsupported { get; private set; }
+    public bool CanReopenClosedTab
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _closedTabs.Count > 0;
+            }
+        }
+    }
 
     public List<SmartFolder> SmartFolders { get; private set; } = [];
     public List<Tag> AllTags { get; private set; } = [];
@@ -163,6 +201,8 @@ public sealed class ExplorerWorkspace
         Settings.PreviewWidth = UiSettings.NormalizePreviewWidth(settings.PreviewWidth);
         Settings.DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(settings.DualPanePrimaryPercent);
         Settings.DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(settings.DualPanePrimaryWidth);
+        Settings.ShortcutOverrides = KeyboardShortcutMap.NormalizeOverrides(Settings.ShortcutOverrides);
+        Settings.FolderViewSettings.Normalize();
         ShowHiddenFiles = settings.ShowHidden;
         if (applyViewDefaultsToPanes)
         {
@@ -262,6 +302,143 @@ public sealed class ExplorerWorkspace
     public bool SortAscendingFor(PaneId pane)
     {
         return Pane(pane).SortAscending;
+    }
+
+    public FolderViewRule? EffectiveFolderViewRuleFor(PaneId pane)
+    {
+        lock (_gate)
+        {
+            return Settings.FolderViewSettings.Resolve(Pane(pane).Path, _drives);
+        }
+    }
+
+    public async Task<FolderViewRule> SaveFolderViewSettingsAsync(
+        FolderViewScope scope,
+        PaneId? pane = null,
+        CancellationToken cancellationToken = default)
+    {
+        var target = Normalize(pane ?? ActivePane);
+        FolderViewRule saved;
+        lock (_gate)
+        {
+            var state = Pane(target);
+            saved = Settings.FolderViewSettings.Upsert(
+                scope,
+                state.Path,
+                _drives,
+                CaptureFolderViewOptions(state));
+        }
+
+        await SaveUiSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return saved;
+    }
+
+    private FolderViewOptions CaptureFolderViewOptions(ExplorerPane pane)
+    {
+        return new FolderViewOptions
+        {
+            View = pane.View,
+            IconSize = pane.IconSize,
+            VisibleColumnIds = Columns.SnapshotVisibleIds(),
+            ColumnWidths = Columns.SnapshotWidths(),
+            SortBy = pane.SortBy,
+            SortAscending = pane.SortAscending,
+            PreviewVisible = Settings.PreviewVisible,
+            ShowHidden = ShowHiddenFiles,
+            WorkspaceProfileId = ActiveProfileId,
+            ColumnPreset = Settings.ColumnPreset,
+        };
+    }
+
+    private bool ApplyFolderViewSettingsForPathLocked(PaneId pane, string path)
+    {
+        var rule = Settings.FolderViewSettings.Resolve(path, _drives);
+        return rule is not null && ApplyFolderViewOptionsLocked(Pane(pane), rule.Options);
+    }
+
+    private bool ApplyFolderViewOptionsLocked(ExplorerPane pane, FolderViewOptions options)
+    {
+        options.Normalize();
+        var changed = false;
+        if (!string.IsNullOrWhiteSpace(options.View))
+        {
+            var view = UiSettings.NormalizeDefaultView(options.View);
+            if (!string.Equals(pane.View, view, StringComparison.Ordinal))
+            {
+                pane.View = view;
+                changed = true;
+            }
+        }
+
+        if (options.IconSize is { } iconSize)
+        {
+            var normalizedIconSize = UiSettings.NormalizeIconSize(iconSize);
+            if (pane.IconSize != normalizedIconSize)
+            {
+                pane.IconSize = normalizedIconSize;
+                changed = true;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.SortBy) || options.SortAscending.HasValue)
+        {
+            var sortBy = string.IsNullOrWhiteSpace(options.SortBy) ? pane.SortBy : options.SortBy.Trim();
+            var sortAscending = options.SortAscending ?? pane.SortAscending;
+            if (!string.Equals(pane.SortBy, sortBy, StringComparison.OrdinalIgnoreCase)
+                || pane.SortAscending != sortAscending)
+            {
+                pane.SortBy = sortBy;
+                pane.SortAscending = sortAscending;
+                changed = true;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.ColumnPreset))
+        {
+            var preset = UiSettings.NormalizeColumnPreset(options.ColumnPreset);
+            if (!string.Equals(Settings.ColumnPreset, preset, StringComparison.Ordinal))
+            {
+                Settings.ColumnPreset = preset;
+                changed = true;
+            }
+
+            Columns.ApplyPreset(preset);
+        }
+
+        if (options.VisibleColumnIds is { Count: > 0 } visibleColumnIds)
+        {
+            Columns.RestoreVisibleIds(visibleColumnIds);
+            changed = true;
+        }
+
+        if (options.ColumnWidths is { Count: > 0 } columnWidths)
+        {
+            Settings.ColumnWidths = new Dictionary<string, double>(columnWidths, StringComparer.Ordinal);
+            Columns.RestoreWidths(Settings.ColumnWidths);
+            changed = true;
+        }
+
+        if (options.PreviewVisible.HasValue && Settings.PreviewVisible != options.PreviewVisible.Value)
+        {
+            Settings.PreviewVisible = options.PreviewVisible.Value;
+            changed = true;
+        }
+
+        if (options.ShowHidden.HasValue && ShowHiddenFiles != options.ShowHidden.Value)
+        {
+            ShowHiddenFiles = options.ShowHidden.Value;
+            Settings.ShowHidden = options.ShowHidden.Value;
+            changed = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.WorkspaceProfileId)
+            && !string.Equals(ActiveProfileId, options.WorkspaceProfileId, StringComparison.OrdinalIgnoreCase))
+        {
+            ActiveProfileId = options.WorkspaceProfileId.Trim();
+            changed = true;
+        }
+
+        return changed;
     }
 
     private static bool SameViewOptions(ExplorerPane left, ExplorerPane right)
@@ -401,6 +578,7 @@ public sealed class ExplorerWorkspace
             FileOpenUnsupported = false;
             PendingReconnect = null;
             state.PathIsNetwork = PathRules.IsNetworkFsPath(path, _drives);
+            ApplyFolderViewSettingsForPathLocked(target, path);
         }
 
         RaiseChanged();
@@ -458,6 +636,7 @@ public sealed class ExplorerWorkspace
                 state.Path = listing.Path;
                 state.Entries = [.. listing.Entries];
                 state.PathIsNetwork = listing.IsNetwork || PathRules.IsNetworkFsPath(listing.Path, _drives);
+                ApplyFolderViewSettingsForPathLocked(target, listing.Path);
                 state.RecordHistory(listing.Path, historyMode);
                 state.SyncActiveTab();
                 StatusMessage = null;
@@ -996,6 +1175,7 @@ public sealed class ExplorerWorkspace
                 return;
             }
 
+            RememberClosedTabLocked(target, state.Tabs[closingIndex], closingIndex);
             state.Tabs.RemoveAt(closingIndex);
             if (state.Tabs.Count == 0)
             {
@@ -1044,6 +1224,79 @@ public sealed class ExplorerWorkspace
         }
 
         RaiseChanged();
+    }
+
+    public async Task ReopenClosedTabAsync(CancellationToken cancellationToken = default)
+    {
+        ClosedFileTab? closed;
+        lock (_gate)
+        {
+            if (_closedTabs.Count == 0)
+            {
+                return;
+            }
+
+            var lastIndex = _closedTabs.Count - 1;
+            closed = _closedTabs[lastIndex];
+            _closedTabs.RemoveAt(lastIndex);
+        }
+
+        if (closed.Pane == PaneId.Secondary && !DualPaneEnabled)
+        {
+            await ToggleDualPaneAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var target = Normalize(closed.Pane);
+        string targetPath;
+        lock (_gate)
+        {
+            var state = Pane(target);
+            var tab = state.Tabs.FirstOrDefault(candidate =>
+                PathRules.PathsEqual(candidate.Path, closed.Tab.Path));
+            if (tab is null)
+            {
+                tab = closed.Tab.Clone();
+                if (string.IsNullOrWhiteSpace(tab.Id)
+                    || state.Tabs.Any(candidate => string.Equals(candidate.Id, tab.Id, StringComparison.Ordinal)))
+                {
+                    tab.Id = ExplorerPane.CreateTab(tab.Path).Id;
+                }
+
+                if (string.IsNullOrWhiteSpace(tab.Title))
+                {
+                    tab.Title = PathRules.Basename(tab.Path);
+                }
+
+                if (tab.History.Count == 0)
+                {
+                    tab.History = [tab.Path];
+                    tab.HistoryIndex = 0;
+                }
+
+                var insertIndex = Math.Clamp(closed.Index, 0, state.Tabs.Count);
+                state.Tabs.Insert(insertIndex, tab);
+            }
+
+            state.ApplyTabHistory(tab);
+            targetPath = tab.Path;
+        }
+
+        await NavigatePaneAsync(target, targetPath, HistoryMode.None, activate: DualPaneEnabled, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private void RememberClosedTabLocked(PaneId pane, FileTab tab, int index)
+    {
+        if (string.IsNullOrWhiteSpace(tab.Path))
+        {
+            return;
+        }
+
+        _closedTabs.Add(new ClosedFileTab(pane, tab.Clone(), Math.Max(0, index)));
+        while (_closedTabs.Count > ClosedTabLimit)
+        {
+            _closedTabs.RemoveAt(0);
+        }
     }
 
     public Task SwitchTabByAsync(int delta, CancellationToken cancellationToken = default)
@@ -1797,411 +2050,84 @@ public sealed class ExplorerWorkspace
         }
     }
 
-    public async Task<IReadOnlyList<WorkspaceProfile>> ListWorkspaceProfilesAsync(
+    public Task<IReadOnlyList<WorkspaceProfile>> ListWorkspaceProfilesAsync(
         CancellationToken cancellationToken = default)
-    {
-        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
-        ActiveProfileId = document.ActiveProfileId;
-        var builtIns = WorkspaceProfileTemplates.All(HomePath).Select(profile => profile.Clone()).ToList();
-        var custom = document.Profiles
-            .OrderBy(profile => profile.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(profile => profile.Clone())
-            .ToList();
-        return [.. builtIns, .. custom];
-    }
+        => _profiles.ListAsync(cancellationToken);
 
-    public async Task<WorkspaceProfile> SaveWorkspaceProfileAsync(
+    public Task<WorkspaceProfile> SaveWorkspaceProfileAsync(
         string name,
         bool overwrite = false,
         CancellationToken cancellationToken = default)
-    {
-        var normalizedName = WorkspaceProfilesDocument.NormalizeName(name);
-        if (string.IsNullOrWhiteSpace(normalizedName))
-        {
-            throw new ArgumentException("Profile name cannot be empty.", nameof(name));
-        }
+        => _profiles.SaveAsync(name, overwrite, cancellationToken);
 
-        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var builtIn = WorkspaceProfileTemplates.All(HomePath).FirstOrDefault(profile =>
-            string.Equals(profile.Name, normalizedName, StringComparison.OrdinalIgnoreCase));
-        if (builtIn is not null)
-        {
-            throw new InvalidOperationException($"A built-in profile named \"{normalizedName}\" already exists.");
-        }
-
-        var existing = document.FindByName(normalizedName);
-        if (existing is not null && !overwrite)
-        {
-            throw new InvalidOperationException($"A profile named \"{normalizedName}\" already exists.");
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        var saved = existing ?? new WorkspaceProfile
-        {
-            Id = WorkspaceProfilesDocument.NewId(),
-            CreatedAt = now,
-        };
-
-        saved.Name = normalizedName;
-        saved.UpdatedAt = now;
-        saved.Layout = CaptureLayout();
-        saved.Chrome = CaptureChromeLayout();
-        if (existing is null)
-        {
-            document.Profiles.Add(saved);
-        }
-
-        document.ActiveProfileId = saved.Id;
-        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
-        ActiveProfileId = saved.Id;
-        return saved.Clone();
-    }
-
-    public async Task<WorkspaceProfile> OverwriteWorkspaceProfileAsync(
+    public Task<WorkspaceProfile> OverwriteWorkspaceProfileAsync(
         string id,
         CancellationToken cancellationToken = default)
-    {
-        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var saved = document.FindById(id)
-            ?? throw new KeyNotFoundException("Profile was not found.");
-        saved.UpdatedAt = DateTimeOffset.UtcNow;
-        saved.Layout = CaptureLayout();
-        saved.Chrome = CaptureChromeLayout();
-        document.ActiveProfileId = saved.Id;
-        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
-        ActiveProfileId = saved.Id;
-        return saved.Clone();
-    }
+        => _profiles.OverwriteAsync(id, cancellationToken);
 
-    public async Task<WorkspaceProfile> DuplicateWorkspaceProfileAsync(
+    public Task<WorkspaceProfile> DuplicateWorkspaceProfileAsync(
         string id,
         string? name = null,
         CancellationToken cancellationToken = default)
-    {
-        var profiles = await ListWorkspaceProfilesAsync(cancellationToken).ConfigureAwait(false);
-        var source = profiles.FirstOrDefault(profile =>
-            string.Equals(profile.Id, id, StringComparison.OrdinalIgnoreCase))
-            ?? throw new KeyNotFoundException("Profile was not found.");
+        => _profiles.DuplicateAsync(id, name, cancellationToken);
 
-        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var cloneName = UniqueWorkspaceProfileName(
-            string.IsNullOrWhiteSpace(name) ? $"{source.Name} copy" : name,
-            profiles);
-        var clone = source.CloneAsUser(cloneName);
-        if (!source.IsBuiltIn && string.IsNullOrWhiteSpace(clone.SourceProfileId))
-        {
-            clone.SourceProfileId = source.Id;
-        }
-
-        document.Profiles.Add(clone);
-        document.ActiveProfileId = clone.Id;
-        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
-        ActiveProfileId = clone.Id;
-        return clone.Clone();
-    }
-
-    public async Task<WorkspaceProfile> RenameWorkspaceProfileAsync(
+    public Task<WorkspaceProfile> RenameWorkspaceProfileAsync(
         string id,
         string name,
         CancellationToken cancellationToken = default)
-    {
-        var normalizedName = WorkspaceProfilesDocument.NormalizeName(name);
-        if (string.IsNullOrWhiteSpace(normalizedName))
-        {
-            throw new ArgumentException("Profile name cannot be empty.", nameof(name));
-        }
+        => _profiles.RenameAsync(id, name, cancellationToken);
 
-        if (WorkspaceProfileTemplates.IsBuiltInId(id))
-        {
-            throw new InvalidOperationException("Built-in profiles cannot be renamed. Duplicate it first.");
-        }
-
-        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var saved = document.FindById(id)
-            ?? throw new KeyNotFoundException("Profile was not found.");
-        var profiles = await ListWorkspaceProfilesAsync(cancellationToken).ConfigureAwait(false);
-        if (profiles.Any(profile =>
-                !string.Equals(profile.Id, id, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(profile.Name, normalizedName, StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new InvalidOperationException($"A profile named \"{normalizedName}\" already exists.");
-        }
-
-        saved.Name = normalizedName;
-        saved.UpdatedAt = DateTimeOffset.UtcNow;
-        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
-        return saved.Clone();
-    }
-
-    public async Task<WorkspaceProfile> ResetWorkspaceProfileAsync(
+    public Task<WorkspaceProfile> ResetWorkspaceProfileAsync(
         string id,
         CancellationToken cancellationToken = default)
-    {
-        if (WorkspaceProfileTemplates.Find(id, HomePath) is { } builtIn)
-        {
-            return builtIn.Clone();
-        }
+        => _profiles.ResetAsync(id, cancellationToken);
 
-        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var saved = document.FindById(id)
-            ?? throw new KeyNotFoundException("Profile was not found.");
-        if (string.IsNullOrWhiteSpace(saved.SourceProfileId))
-        {
-            throw new InvalidOperationException("This profile does not have a reset source.");
-        }
-
-        var source = await FindWorkspaceProfileAsync(saved.SourceProfileId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("The reset source profile was not found.");
-        var sourceClone = source.Clone();
-        saved.Layout = sourceClone.Layout;
-        saved.Chrome = sourceClone.Chrome;
-        saved.UpdatedAt = DateTimeOffset.UtcNow;
-        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
-        return saved.Clone();
-    }
-
-    public async Task DeleteWorkspaceProfileAsync(string id, CancellationToken cancellationToken = default)
-    {
-        if (WorkspaceProfileTemplates.IsBuiltInId(id))
-        {
-            throw new InvalidOperationException("Built-in profiles cannot be deleted.");
-        }
-
-        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var saved = document.FindById(id)
-            ?? throw new KeyNotFoundException("Profile was not found.");
-        document.Profiles.Remove(saved);
-        if (string.Equals(document.ActiveProfileId, saved.Id, StringComparison.OrdinalIgnoreCase))
-        {
-            document.ActiveProfileId = "";
-        }
-
-        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
-        ActiveProfileId = document.ActiveProfileId;
-    }
+    public Task DeleteWorkspaceProfileAsync(string id, CancellationToken cancellationToken = default)
+        => _profiles.DeleteAsync(id, cancellationToken);
 
     public async Task ApplyWorkspaceProfileAsync(string id, CancellationToken cancellationToken = default)
     {
-        var profile = await FindWorkspaceProfileAsync(id, cancellationToken).ConfigureAwait(false)
+        var profile = await _profiles.FindAsync(id, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Profile was not found.");
         var clone = profile.Clone();
         (clone.Chrome ?? new WorkspaceChromeLayout()).Apply(Settings, Columns);
         await ApplyLayoutAsync(clone.Layout, cancellationToken).ConfigureAwait(false);
-        ActiveProfileId = clone.Id;
-        if (FileOps is not null)
-        {
-            var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
-            document.ActiveProfileId = clone.Id;
-            await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
-        }
-
+        await _profiles.SetActiveAsync(clone.Id, cancellationToken).ConfigureAwait(false);
         await SaveWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false);
         await SaveUiSettingsAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<string> ExportWorkspaceProfileAsync(
+    public Task<string> ExportWorkspaceProfileAsync(
         string id,
         CancellationToken cancellationToken = default)
-    {
-        var profile = await FindWorkspaceProfileAsync(id, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Profile was not found.");
-        return WorkspaceProfileExportDocument.ToJson(profile);
-    }
+        => _profiles.ExportAsync(id, cancellationToken);
 
-    private async Task<WorkspaceProfile?> FindWorkspaceProfileAsync(
-        string id,
-        CancellationToken cancellationToken)
-    {
-        if (WorkspaceProfileTemplates.Find(id, HomePath) is { } builtIn)
-        {
-            return builtIn;
-        }
-
-        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
-        return document.FindById(id);
-    }
-
-    private async Task<WorkspaceProfilesDocument> LoadWorkspaceProfilesDocumentAsync(
-        CancellationToken cancellationToken)
-    {
-        if (FileOps is null)
-        {
-            return new WorkspaceProfilesDocument();
-        }
-
-        var json = await FileOps.GetSettingAsync(
-            WorkspaceProfilesDocument.SettingsKey,
-            cancellationToken).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(json))
-        {
-            return WorkspaceProfilesDocument.FromJson(json);
-        }
-
-        var legacyJson = await FileOps.GetSettingAsync(
-            SavedWorkspaceLayoutsDocument.SettingsKey,
-            cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(legacyJson))
-        {
-            return new WorkspaceProfilesDocument();
-        }
-
-        var migrated = WorkspaceProfilesDocument.FromLegacyLayouts(
-            SavedWorkspaceLayoutsDocument.FromJson(legacyJson));
-        await SaveWorkspaceProfilesDocumentAsync(migrated, cancellationToken).ConfigureAwait(false);
-        return migrated;
-    }
-
-    private async Task SaveWorkspaceProfilesDocumentAsync(
-        WorkspaceProfilesDocument document,
-        CancellationToken cancellationToken)
-    {
-        if (FileOps is null)
-        {
-            throw new InvalidOperationException("Settings service is required for workspace profiles.");
-        }
-
-        await FileOps.SetSettingAsync(
-            WorkspaceProfilesDocument.SettingsKey,
-            document.ToJson(),
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    private static string UniqueWorkspaceProfileName(
-        string? requested,
-        IReadOnlyList<WorkspaceProfile> profiles)
-    {
-        var baseName = WorkspaceProfilesDocument.NormalizeName(requested);
-        if (string.IsNullOrWhiteSpace(baseName))
-        {
-            baseName = "Profile";
-        }
-
-        var used = profiles.Select(profile => profile.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (!used.Contains(baseName))
-        {
-            return baseName;
-        }
-
-        for (var index = 2; index < 1000; index++)
-        {
-            var candidate = $"{baseName} {index}";
-            if (!used.Contains(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return $"{baseName} copy";
-    }
-
-    public async Task<IReadOnlyList<SavedWorkspaceLayout>> ListSavedWorkspaceLayoutsAsync(
+    public Task<IReadOnlyList<SavedWorkspaceLayout>> ListSavedWorkspaceLayoutsAsync(
         CancellationToken cancellationToken = default)
-    {
-        var document = await LoadSavedWorkspaceLayoutsDocumentAsync(cancellationToken).ConfigureAwait(false);
-        return document.Layouts
-            .OrderBy(layout => layout.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
+        => _savedLayouts.ListAsync(cancellationToken);
 
-    public async Task<SavedWorkspaceLayout> SaveNamedWorkspaceLayoutAsync(
+    public Task<SavedWorkspaceLayout> SaveNamedWorkspaceLayoutAsync(
         string name,
         bool overwrite = false,
         CancellationToken cancellationToken = default)
-    {
-        var normalizedName = SavedWorkspaceLayoutsDocument.NormalizeName(name);
-        if (string.IsNullOrWhiteSpace(normalizedName))
-        {
-            throw new ArgumentException("Layout name cannot be empty.", nameof(name));
-        }
+        => _savedLayouts.SaveAsync(name, overwrite, cancellationToken);
 
-        var document = await LoadSavedWorkspaceLayoutsDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var existing = document.FindByName(normalizedName);
-        if (existing is not null && !overwrite)
-        {
-            throw new InvalidOperationException($"A layout named \"{normalizedName}\" already exists.");
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        var saved = existing ?? new SavedWorkspaceLayout
-        {
-            Id = SavedWorkspaceLayoutsDocument.NewId(),
-            CreatedAt = now,
-        };
-
-        saved.Name = normalizedName;
-        saved.UpdatedAt = now;
-        saved.Layout = CaptureLayout();
-        saved.Chrome = CaptureChromeLayout();
-        if (existing is null)
-        {
-            document.Layouts.Add(saved);
-        }
-
-        await SaveSavedWorkspaceLayoutsDocumentAsync(document, cancellationToken).ConfigureAwait(false);
-        return saved;
-    }
-
-    public async Task<SavedWorkspaceLayout> OverwriteSavedWorkspaceLayoutAsync(
+    public Task<SavedWorkspaceLayout> OverwriteSavedWorkspaceLayoutAsync(
         string id,
         CancellationToken cancellationToken = default)
-    {
-        var document = await LoadSavedWorkspaceLayoutsDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var saved = document.FindById(id)
-            ?? throw new KeyNotFoundException("Saved layout was not found.");
-        saved.UpdatedAt = DateTimeOffset.UtcNow;
-        saved.Layout = CaptureLayout();
-        saved.Chrome = CaptureChromeLayout();
-        await SaveSavedWorkspaceLayoutsDocumentAsync(document, cancellationToken).ConfigureAwait(false);
-        return saved;
-    }
+        => _savedLayouts.OverwriteAsync(id, cancellationToken);
 
-    public async Task DeleteSavedWorkspaceLayoutAsync(string id, CancellationToken cancellationToken = default)
-    {
-        var document = await LoadSavedWorkspaceLayoutsDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var saved = document.FindById(id)
-            ?? throw new KeyNotFoundException("Saved layout was not found.");
-        document.Layouts.Remove(saved);
-        await SaveSavedWorkspaceLayoutsDocumentAsync(document, cancellationToken).ConfigureAwait(false);
-    }
+    public Task DeleteSavedWorkspaceLayoutAsync(string id, CancellationToken cancellationToken = default)
+        => _savedLayouts.DeleteAsync(id, cancellationToken);
 
     public async Task ApplySavedWorkspaceLayoutAsync(string id, CancellationToken cancellationToken = default)
     {
-        var document = await LoadSavedWorkspaceLayoutsDocumentAsync(cancellationToken).ConfigureAwait(false);
-        var saved = document.FindById(id)
+        var saved = await _savedLayouts.FindAsync(id, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Saved layout was not found.");
         (saved.Chrome ?? new WorkspaceChromeLayout()).Apply(Settings, Columns);
         await ApplyLayoutAsync(saved.Layout, cancellationToken).ConfigureAwait(false);
         await SaveWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false);
         await SaveUiSettingsAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<SavedWorkspaceLayoutsDocument> LoadSavedWorkspaceLayoutsDocumentAsync(
-        CancellationToken cancellationToken)
-    {
-        if (FileOps is null)
-        {
-            return new SavedWorkspaceLayoutsDocument();
-        }
-
-        var json = await FileOps.GetSettingAsync(
-            SavedWorkspaceLayoutsDocument.SettingsKey,
-            cancellationToken).ConfigureAwait(false);
-        return SavedWorkspaceLayoutsDocument.FromJson(json);
-    }
-
-    private async Task SaveSavedWorkspaceLayoutsDocumentAsync(
-        SavedWorkspaceLayoutsDocument document,
-        CancellationToken cancellationToken)
-    {
-        if (FileOps is null)
-        {
-            throw new InvalidOperationException("Settings service is required for saved layouts.");
-        }
-
-        await FileOps.SetSettingAsync(
-            SavedWorkspaceLayoutsDocument.SettingsKey,
-            document.ToJson(),
-            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SaveUiSettingsAsync(CancellationToken cancellationToken = default)
@@ -2306,6 +2232,7 @@ public sealed class ExplorerWorkspace
             Settings = state.Settings;
             Bookmarks = state.Bookmarks;
             RecentPaths = state.RecentPaths;
+            Settings.FolderViewSettings.Normalize();
             ShowHiddenFiles = Settings.ShowHidden;
             ApplyDefaultViewOptionsToPanes();
             Columns.ApplyPreset(Settings.ColumnPreset);

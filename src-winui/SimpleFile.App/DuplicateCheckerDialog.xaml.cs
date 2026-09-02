@@ -11,7 +11,7 @@ using SimpleFile.Ipc;
 
 namespace SimpleFile.App;
 
-public sealed partial class DuplicateCheckerDialog : ContentDialog
+public sealed partial class DuplicateCheckerDialog : ContentDialog, IScanDialog<DuplicateCheckResult>
 {
     public string Directory { get; set; } = string.Empty;
     public ulong MinSizeBytes =>

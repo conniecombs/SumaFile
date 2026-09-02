@@ -24,6 +24,12 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "clear-recent-history");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-side-menu");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-hidden");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "focus-path");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "switch-pane");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "copy-to-pane");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "move-to-pane");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "reopen-closed-tab");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "command-palette");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "copy-path");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "bookmark-folder");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-back");
@@ -37,6 +43,7 @@ public class AppCommandCatalogTests
         Assert.Equal("Disk cleanup", AppCommandCatalog.Find("disk-cleanup")?.Label);
         Assert.Equal("Open or close second pane", AppCommandCatalog.Find("dual-pane")?.Label);
         Assert.Equal("Manage workspace profiles", AppCommandCatalog.Find("profile-manage")?.Label);
+        Assert.Equal("Ctrl+Alt+C", AppCommandCatalog.Find("copy-to-pane")?.Shortcut);
         Assert.Equal("Move to Recycle Bin", AppCommandCatalog.Find("delete")?.Label);
         Assert.Equal("Delete Permanently", AppCommandCatalog.Find("delete-permanent")?.Label);
         Assert.Equal(AppCommandCatalog.All.Count, AppCommandCatalog.Filter("").Count);

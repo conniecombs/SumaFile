@@ -458,9 +458,9 @@ Record chosen options here when a cleanup pass starts.
 
 | Finding | Chosen option | Notes |
 | --- | --- | --- |
-| 1 MainWindow | C + A | Completed: extracted preview rendering/actions into `PreviewPresenter`, dialog-driven file operations into `FileOperationDialogService`, and current search event/result glue into `MainWindow.Search.cs`; `MainWindow` now delegates those workflows while preserving XAML event names. |
+| 1 MainWindow | C + A | Completed: extracted preview rendering/actions into `PreviewPresenter`, dialog-driven file operations into `FileOperationDialogService`, current search event/result glue into `MainWindow.Search.cs`, and app-command routing into `MainWindow.CommandRouting.cs`; `MainWindow` now delegates those workflows while preserving XAML event names. |
 | 2 Unused ViewModels | B | Completed: finished the ViewModel cutover so `SearchViewModel` owns live search state/results/cancellation, `TransferViewModel` owns transfer operation identity/progress/cancellation, and `ToolbarViewModel` owns toolbar/status snapshots; removed the app-side `SearchHost` duplicate. |
-| 3 ExplorerWorkspace | | |
+| 3 ExplorerWorkspace | B | Completed for profiles/layouts: extracted workspace profile persistence and saved layout persistence into owned services while keeping the existing `ExplorerWorkspace` public API. |
 | 4 dispatch.rs | B | Completed: split the service dispatcher into `dispatch/{mod,params,handlers,async_ops,tests}.rs`, moved async arm construction behind `async_ops`, kept `dispatch()` re-exported from the module, replaced domain match arms with generated `METHOD_*` constants, and updated schema/parity checks for the split module. |
 | 5 archive.rs | A | Completed: split archive handling into `archive/{mod,path,list,extract,mutate,create,tests}.rs` with public functions re-exported from `archive/mod.rs`; kept `resolve_rar_binary` on the archive API and did not move RAR installer behavior in this pass. |
 | 6 Copy/conflict engines | B | Completed for matching helpers: added `simplefile-core::path_conflict` for no-follow existence, collision keys, same-entry checks, keep-both aliases, and exclusive directory creation; left divergent unique-name loops local. |
@@ -468,7 +468,7 @@ Record chosen options here when a cleanup pass starts.
 | 8 Dead AppState | A | Completed: removed dead core `state.rs`, unused helpers/deps, stale `src-tauri` service lookup, and live-code Tauri-era comments. |
 | 9 ISimpleFileIpc / tests | A | Completed: added shared `NullIpc` / `ConfigurableIpc` test doubles, removed the per-file `WorkspaceSettingsIpc` and `StubIpc` full-interface stubs, and moved `FakeExplorerBackend` into its own helper file. |
 | 10 Command routers | A | Completed: added `CommandAliasCatalog`, routed app/context/overflow aliases through `RunAppCommandAsync`, and added tests for shared alias normalization. |
-| 11 Other splits | | |
-| 12 Tests / dialogs | A + D | Completed the test-file part: split `DesktopPolishTests.cs` and `ParityFeaturesTests.cs` into type-focused test classes, reused the shared IPC fake from Finding 9, replaced reachable job-object flag source checks with compiled assertions, and left dialog/host duplication for options B/C. |
+| 11 Other splits | A | Completed for the transfer/file-op pair: split `progress::OperationRegistry` into `progress/registry.rs`, and split folder metrics plus metadata preservation out of `file_ops.rs` while preserving public re-exports. |
+| 12 Tests / dialogs | A + D + B | Completed the test-file part: split `DesktopPolishTests.cs` and `ParityFeaturesTests.cs` into type-focused test classes, reused the shared IPC fake from Finding 9, replaced reachable job-object flag source checks with compiled assertions, and extracted the duplicate-checker/disk-cleanup scan skeleton into `FileOperationDialogService.Scans.cs`. |
 | 13 Small copy-pastes | | |
-| 14 IPC generated mix | | |
+| 14 IPC generated mix | A | Started Core-side facade cleanup: added small file/settings/tag/smart-folder operation interfaces over the generated IPC surface so Core consumers can depend on domain-sized contracts without editing generated files. |

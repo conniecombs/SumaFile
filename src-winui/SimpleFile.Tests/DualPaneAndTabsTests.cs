@@ -125,6 +125,25 @@ public class DualPaneAndTabsTests
     }
 
     [Fact]
+    public async Task ReopenClosedTab_RestoresTabAndHistory()
+    {
+        var workspace = await Started();
+        await workspace.OpenNewTabAsync(PaneId.Primary, @"C:\Users\test\Desktop");
+        var closed = workspace.Primary.ActiveTabId;
+        await workspace.NavigatePaneAsync(PaneId.Primary, @"C:\");
+
+        await workspace.CloseTabAsync(closed!, PaneId.Primary);
+        Assert.True(workspace.CanReopenClosedTab);
+
+        await workspace.ReopenClosedTabAsync();
+
+        Assert.False(workspace.CanReopenClosedTab);
+        Assert.Equal(2, workspace.Primary.Tabs.Count);
+        Assert.Equal(@"C:\", workspace.Primary.Path);
+        Assert.Contains(@"C:\Users\test\Desktop", workspace.Primary.History);
+    }
+
+    [Fact]
     public async Task CloseLastTabInSinglePane_OpensHome()
     {
         var workspace = await Started();
@@ -163,6 +182,25 @@ public class DualPaneAndTabsTests
         Assert.Equal(@"C:\", workspace.Secondary.Path);
         Assert.Single(workspace.Secondary.Tabs);
         Assert.NotNull(workspace.Secondary.ActiveTabId);
+    }
+
+    [Fact]
+    public async Task ReopenClosedTab_ReopensHiddenSecondaryPane()
+    {
+        var workspace = await Started();
+        await workspace.ToggleDualPaneAsync();
+        await workspace.NavigatePaneAsync(PaneId.Secondary, @"C:\");
+        var only = workspace.Secondary.ActiveTabId;
+
+        await workspace.CloseTabAsync(only!, PaneId.Secondary);
+        Assert.False(workspace.DualPaneEnabled);
+
+        await workspace.ReopenClosedTabAsync();
+
+        Assert.True(workspace.DualPaneEnabled);
+        Assert.Equal(PaneId.Secondary, workspace.ActivePane);
+        Assert.Equal(@"C:\", workspace.Secondary.Path);
+        Assert.Single(workspace.Secondary.Tabs);
     }
 
     [Fact]

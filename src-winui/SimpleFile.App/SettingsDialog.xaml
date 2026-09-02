@@ -8,7 +8,7 @@
     SecondaryButtonText="Cancel"
     DefaultButton="Primary">
     
-    <Grid Width="600" Height="400">
+    <Grid Width="760" Height="520">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="200" />
             <ColumnDefinition Width="*" />
@@ -146,32 +146,157 @@
 
                 <StackPanel x:Name="ShortcutsPanel" Spacing="12" Visibility="Collapsed">
                     <TextBlock Text="Shortcuts" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock
-                        Foreground="{StaticResource SfTextMutedBrush}"
-                        TextWrapping="Wrap"
-                        Text="Keyboard shortcuts used in the main window. Press F1 while browsing to see this list without opening Settings. Remapping is not available yet." />
-                    <ListView
-                        x:Name="ShortcutsList"
-                        MaxHeight="280"
-                        SelectionMode="None">
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="local:ShortcutHelpRow">
-                                <Grid ColumnSpacing="12" Padding="0,4">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="160" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock
-                                        FontFamily="Consolas"
-                                        Text="{x:Bind Keys}" />
-                                    <TextBlock
-                                        Grid.Column="1"
-                                        Text="{x:Bind Action}"
-                                        TextWrapping="Wrap" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
+                    <TextBox
+                        x:Name="ShortcutSearchBox"
+                        Header="Search"
+                        PlaceholderText="Command or shortcut"
+                        TextChanged="OnShortcutSearchTextChanged" />
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="320" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ListView
+                            x:Name="ShortcutsList"
+                            MaxHeight="340"
+                            SelectionChanged="OnShortcutSelectionChanged"
+                            SelectionMode="Single">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="local:ShortcutEditorRow">
+                                    <Grid Padding="0,6">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock
+                                                FontWeight="SemiBold"
+                                                Text="{x:Bind Label, Mode=OneWay}"
+                                                TextTrimming="CharacterEllipsis" />
+                                            <TextBlock
+                                                Grid.Column="1"
+                                                Foreground="{StaticResource SfTextMutedBrush}"
+                                                Text="{x:Bind Group, Mode=OneWay}" />
+                                        </Grid>
+                                        <TextBlock
+                                            Grid.Row="1"
+                                            FontFamily="Consolas"
+                                            Foreground="{StaticResource SfTextMutedBrush}"
+                                            Text="{x:Bind ShortcutText, Mode=OneWay}"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Grid.Row="2"
+                                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                            Text="{x:Bind IssueText, Mode=OneWay}"
+                                            TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <StackPanel Grid.Column="1" Spacing="10">
+                            <TextBlock
+                                x:Name="SelectedShortcutTitle"
+                                FontSize="16"
+                                FontWeight="SemiBold"
+                                Text="Select a command" />
+                            <TextBlock
+                                x:Name="SelectedShortcutDefaultText"
+                                Foreground="{StaticResource SfTextMutedBrush}"
+                                TextWrapping="Wrap" />
+                            <ListView
+                                x:Name="SelectedShortcutList"
+                                MaxHeight="100"
+                                SelectionMode="Single">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid ColumnSpacing="8" Padding="0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock
+                                                FontFamily="Consolas"
+                                                Text="{Binding}" />
+                                            <Button
+                                                Grid.Column="1"
+                                                Click="OnRemoveShortcutClicked"
+                                                Content="Remove"
+                                                Tag="{Binding}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox
+                                    x:Name="ShortcutRecorderBox"
+                                    Header="Shortcut"
+                                    KeyDown="OnShortcutRecorderKeyDown"
+                                    PlaceholderText="Press keys"
+                                    TextChanged="OnShortcutRecorderTextChanged" />
+                                <Button
+                                    x:Name="ShortcutAddButton"
+                                    Grid.Column="1"
+                                    VerticalAlignment="Bottom"
+                                    Click="OnAddShortcutClicked"
+                                    Content="Add" />
+                            </Grid>
+                            <TextBlock
+                                x:Name="ShortcutRecorderStatusText"
+                                Foreground="{StaticResource SfTextMutedBrush}"
+                                TextWrapping="Wrap" />
+                            <TextBlock
+                                x:Name="ShortcutIssueText"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                TextWrapping="Wrap" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button
+                                    x:Name="ShortcutResetButton"
+                                    Click="OnResetShortcutClicked"
+                                    Content="Reset command" />
+                                <Button
+                                    x:Name="ShortcutClearButton"
+                                    Click="OnClearShortcutClicked"
+                                    Content="Clear command" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            x:Name="ShortcutSummaryText"
+                            VerticalAlignment="Center"
+                            Foreground="{StaticResource SfTextMutedBrush}"
+                            TextWrapping="Wrap" />
+                        <Button
+                            x:Name="ShortcutResetAllButton"
+                            Grid.Column="1"
+                            Click="OnResetAllShortcutsClicked"
+                            Content="Reset all" />
+                        <Button
+                            x:Name="ShortcutImportButton"
+                            Grid.Column="2"
+                            Click="OnImportShortcutsClicked"
+                            Content="Import" />
+                        <Button
+                            x:Name="ShortcutExportButton"
+                            Grid.Column="3"
+                            Click="OnExportShortcutsClicked"
+                            Content="Export" />
+                    </Grid>
                 </StackPanel>
                 
                 <StackPanel x:Name="ToolsPanel" Spacing="16" Visibility="Collapsed">

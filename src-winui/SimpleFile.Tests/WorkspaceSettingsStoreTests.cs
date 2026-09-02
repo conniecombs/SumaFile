@@ -156,6 +156,11 @@ public class WorkspaceSettingsStoreTests
             QuickAccessCollapsed = true,
             MyPcCollapsed = true,
             LastPath = @"C:\Last",
+            ShortcutOverrides = new Dictionary<string, List<string>>(StringComparer.Ordinal)
+            {
+                ["search.focus"] = ["Ctrl+K", "F3"],
+                ["tabs.close"] = [],
+            },
         };
         var bookmarks = new List<BookmarkItem>
         {
@@ -166,6 +171,20 @@ public class WorkspaceSettingsStoreTests
             @"D:\Work",
             @"C:\Last",
         };
+        settings.FolderViewSettings.Upsert(
+            FolderViewScope.Descendants,
+            @"D:\Work",
+            [],
+            new FolderViewOptions
+            {
+                View = "content",
+                IconSize = 48,
+                SortBy = "date",
+                SortAscending = false,
+                PreviewVisible = false,
+                ShowHidden = true,
+                WorkspaceProfileId = WorkspaceProfileTemplates.DeveloperId,
+            });
 
         await WorkspaceSettingsStore.SaveAsync(
             fileOps,
@@ -205,7 +224,17 @@ public class WorkspaceSettingsStoreTests
         Assert.True(state.Settings.QuickAccessCollapsed);
         Assert.True(state.Settings.MyPcCollapsed);
         Assert.Equal(@"C:\Last", state.Settings.LastPath);
+        Assert.Equal(["Ctrl+K", "F3"], state.Settings.ShortcutOverrides["search.focus"]);
+        Assert.Equal([], state.Settings.ShortcutOverrides["tabs.close"]);
+        var folderRule = Assert.Single(state.Settings.FolderViewSettings.Rules);
+        Assert.Equal(FolderViewRuleScope.Descendants, folderRule.Scope);
+        Assert.Equal("content", folderRule.Options.View);
+        Assert.False(folderRule.Options.SortAscending);
+        Assert.True(folderRule.Options.ShowHidden);
+        Assert.Equal(WorkspaceProfileTemplates.DeveloperId, folderRule.Options.WorkspaceProfileId);
         Assert.Equal("true", ipc.Settings["progressQueue.visible"]);
+        Assert.Contains("\"search.focus\"", ipc.Settings[KeyboardShortcutMap.SettingsKey], StringComparison.Ordinal);
+        Assert.Contains("\"scope\": \"descendants\"", ipc.Settings[FolderViewSettingsDocument.SettingsKey], StringComparison.Ordinal);
         Assert.Equal(bookmarks.Single().Path, state.Bookmarks.Single().Path);
         Assert.Equal(recentPaths, state.RecentPaths);
     }
@@ -216,6 +245,14 @@ public class WorkspaceSettingsStoreTests
         var ipc = new ConfigurableIpc();
         var fileOps = new FileOperationService(ipc);
         ipc.Settings["columnWidths"] = "{not json";
+        ipc.Settings[KeyboardShortcutMap.SettingsKey] = """
+            {
+              "search.focus": "Ctrl+K",
+              "tabs.close": [],
+              "directory.refresh": [ "F5" ],
+              "tabs.jump": [ "Ctrl+9" ]
+            }
+            """;
         ipc.Settings["places.bookmarks"] = JsonSerializer.Serialize(new[]
         {
             new BookmarkItem { Name = "", Path = "  C:\\Work  " },
@@ -235,6 +272,10 @@ public class WorkspaceSettingsStoreTests
         var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
 
         Assert.Empty(state.Settings.ColumnWidths);
+        Assert.Equal(["Ctrl+K"], state.Settings.ShortcutOverrides["search.focus"]);
+        Assert.Equal([], state.Settings.ShortcutOverrides["tabs.close"]);
+        Assert.False(state.Settings.ShortcutOverrides.ContainsKey("directory.refresh"));
+        Assert.False(state.Settings.ShortcutOverrides.ContainsKey("tabs.jump"));
         Assert.Equal(
             [
                 @"C:\Work",

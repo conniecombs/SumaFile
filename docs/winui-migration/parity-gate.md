@@ -211,6 +211,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `nav.tabs-arrows` | Arrow wrap on tab | `OnTabKeyDown` | — | Focus tab; Left/Right | `MANUAL` |
 | `nav.tabs-persist` | Restore workspace | `workspace-layout` IPC | `Initialize_RestoresSavedWorkspaceLayoutFromIpcSettings` | Relaunch after tabs | `PASS` |
 | `nav.profiles` | Named workspace profiles | `workspace-profiles` IPC + Profiles toolbar | `WorkspaceProfiles_SaveApplyDuplicateExportResetAndDelete` | Apply each built-in profile | `PASS` |
+| `nav.folder-view-settings` | Per-folder view defaults | `folder-view-settings` IPC + View options | `FolderViewSettings` tests | Save folder/default scopes; revisit folders | `PASS` |
 | `nav.sidebar-collapse` | Persist Quick Access / My PC | Settings keys | Save/load settings | Collapse; relaunch | `MANUAL` |
 | `nav.bookmarks` | Bookmark list | Sidebar Bookmarks | `PlacesStore` tests | Pin current folder | `PASS` |
 | `nav.recents` | Recent locations | Sidebar Recent | `PlacesStore` recents cap | Navigate; see recents | `PASS` |
@@ -283,6 +284,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `restore-selected` | Restore Recycle Bin selection | Catalog + handler | Catalog test | Restore from Bin | `PASS` |
 | `empty-recycle-bin` | Empty Recycle Bin | Catalog + handler | Catalog test | Empty Bin | `PASS` |
 | `go-back` `go-forward` `go-up` | Palette history navigation | Catalog + handler | Catalog test | Alt+Left/Right/Up | `PASS` |
+| `focus-path` | Focus path bar | Catalog + handler | Catalog test | Ctrl+L / Alt+D | `PASS` |
 | `refresh` | Palette/F5 | Handler | Catalog | F5 | `PASS` |
 | `copy` `cut` `paste` | Palette clipboard | Handlers | Catalog + clipboard tests | — | `PASS` |
 | `clipboard-history` | Palette | `ClipboardHistory` | Catalog + tests | — | `PASS` |
@@ -297,6 +299,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `toggle-hidden` | Show or hide hidden files | Handler + workspace setting | Catalog test | Ctrl+H | `PASS` |
 | `toggle-side-menu` | Toggle sidebar | Handler | Catalog test | — | `PASS` |
 | `dual-pane` | Toggle | Handler | Dual-pane tests | F6 | `PASS` |
+| `switch-pane` | Switch active pane | Catalog + shortcut handler | Catalog test | Tab in dual pane | `PASS` |
 | `close-left-pane` | Close left pane | Palette + handler | — | Dual pane | `PASS` |
 | `profile-manage` | Manage workspace profiles | Profiles dialog | Profile workspace tests | Open manager | `PASS` |
 | `profile-save` | Save current workspace profile | Save dialog | Profile workspace tests | Save profile | `PASS` |
@@ -304,7 +307,9 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `view-details` `view-list` `view-tiles` `view-content` | Palette display style commands | Handler applies file-list presentation | Catalog test | Switch each view | `MANUAL` |
 | `icon-size-small` `icon-size-medium` `icon-size-large` `icon-size-extra-large` `icon-size-jumbo` `icon-size-huge` `icon-size-maximum` | Palette icon size commands | Handler updates file-list icon size | Catalog test | Change each icon size | `MANUAL` |
 | `search` | Focus search | Handler | Catalog | Ctrl+F | `MANUAL` |
+| `filter` | Focus filter | Handler | Catalog | Overflow filter | `MANUAL` |
 | `quick-look` | Space | Handler | Catalog | Space | `MANUAL` |
+| `open-selected-tab` `open-other-pane` `reopen-closed-tab` | Tab and pane open commands | Catalog + handlers | Tab workspace tests | Ctrl+Enter / reopen tab | `PASS` |
 | `properties` | Properties | Dialog | Catalog | — | `MANUAL` |
 | `color-label` | Tag picker | Dialog | Catalog | — | `MANUAL` |
 | `bookmark-folder` | Bookmark current folder | Workspace places | Catalog + places tests | Ctrl+B | `PASS` |
@@ -312,6 +317,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `disk-cleanup` | Cleanup | Dialog | Catalog | — | `MANUAL` |
 | `duplicate-checker` | Duplicates | Dialog | Catalog | — | `MANUAL` |
 | `settings` | Settings | Dialog | Catalog | Ctrl+Shift+S | `MANUAL` |
+| `command-palette` | Open command palette | Handler | Catalog test | Ctrl+Shift+P | `PASS` |
 | `keyboard-help` | F1 | Dialog | Catalog + shortcut map | F1 | `PASS` |
 | `git-pull` `git-push` | Palette | IPC | Catalog | — | `MANUAL` |
 | `ctx-open` | Context Open | `ContextMenuBuilder` | `DesktopPolishTests` | Right-click | `PASS` |

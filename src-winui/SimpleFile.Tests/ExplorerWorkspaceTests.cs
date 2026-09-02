@@ -1159,6 +1159,71 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task FolderViewSettings_ApplyDescendantRuleBeforeListing()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var fileOps = new FileOperationService(new ConfigurableIpc());
+        var workspace = new ExplorerWorkspace(backend, fileOps);
+        await workspace.InitializeAsync();
+
+        workspace.SetFileListView(PaneId.Primary, "content");
+        workspace.SetFileListIconSize(PaneId.Primary, 48);
+        workspace.SetSort(PaneId.Primary, "date");
+        workspace.SetSort(PaneId.Primary, "date");
+        workspace.SetShowHidden(true);
+        workspace.Settings.PreviewVisible = false;
+        workspace.Settings.ColumnPreset = "developer";
+        workspace.Columns.ApplyPreset("developer");
+        workspace.Columns.RestoreVisibleIds(["name", "git", "path"]);
+        workspace.Columns.Resize("path", 360);
+
+        var saved = await workspace.SaveFolderViewSettingsAsync(FolderViewScope.Descendants, PaneId.Primary);
+
+        Assert.Equal(FolderViewRuleScope.Descendants, saved.Scope);
+        Assert.Equal(@"C:\Users\test", saved.Path);
+
+        workspace.SetFileListView(PaneId.Primary, "details");
+        workspace.SetFileListIconSize(PaneId.Primary, 16);
+        workspace.SetSort(PaneId.Primary, "name");
+        workspace.SetShowHidden(false);
+        workspace.Settings.PreviewVisible = true;
+        workspace.Settings.ColumnPreset = "default";
+        workspace.Columns.ApplyPreset("default");
+        workspace.Columns.Resize("path", 220);
+
+        await workspace.NavigateToAsync(@"C:\Users\test\Desktop");
+
+        Assert.Equal("content", workspace.ViewFor(PaneId.Primary));
+        Assert.Equal(48, workspace.IconSizeFor(PaneId.Primary));
+        Assert.Equal("date", workspace.SortByFor(PaneId.Primary));
+        Assert.False(workspace.SortAscendingFor(PaneId.Primary));
+        Assert.True(workspace.ShowHiddenFiles);
+        Assert.False(workspace.Settings.PreviewVisible);
+        Assert.Equal("developer", workspace.Settings.ColumnPreset);
+        Assert.Equal(["name", "git", "path"], workspace.Columns.SnapshotVisibleIds());
+        Assert.Equal(360, workspace.Columns.WidthOf("path"));
+        Assert.Equal("date", backend.LastListDirectoryOptions?.SortBy);
+        Assert.False(backend.LastListDirectoryOptions?.SortAscending);
+    }
+
+    [Fact]
+    public async Task FolderViewSettings_SaveAllThreeScopes()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var fileOps = new FileOperationService(new ConfigurableIpc());
+        var workspace = new ExplorerWorkspace(backend, fileOps);
+        await workspace.InitializeAsync();
+
+        await workspace.SaveFolderViewSettingsAsync(FolderViewScope.Global, PaneId.Primary);
+        await workspace.SaveFolderViewSettingsAsync(FolderViewScope.Folder, PaneId.Primary);
+        await workspace.SaveFolderViewSettingsAsync(FolderViewScope.Descendants, PaneId.Primary);
+
+        Assert.Contains(workspace.Settings.FolderViewSettings.Rules, rule => rule.Scope == FolderViewRuleScope.Global);
+        Assert.Contains(workspace.Settings.FolderViewSettings.Rules, rule => rule.Scope == FolderViewRuleScope.Folder);
+        Assert.Contains(workspace.Settings.FolderViewSettings.Rules, rule => rule.Scope == FolderViewRuleScope.Descendants);
+    }
+
+    [Fact]
     public async Task KeepFoldersOnTop_CanBeTurnedOffToMixFiles()
     {
         var backend = FakeExplorerBackend.Typical();

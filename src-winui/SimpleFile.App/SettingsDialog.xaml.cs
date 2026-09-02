@@ -1,20 +1,100 @@
 using System;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
+using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.System;
+using Windows.UI.Core;
 
 namespace SimpleFile.App;
 
-public sealed class ShortcutHelpRow
+public sealed class ShortcutEditorRow : INotifyPropertyChanged
 {
-    public string Keys { get; init; } = "";
-    public string Action { get; init; } = "";
+    private string _issueText = "";
+    private bool _updatingShortcuts;
+
+    public ShortcutEditorRow(KeyboardShortcut definition)
+    {
+        Definition = definition;
+        Shortcuts.CollectionChanged += (_, _) =>
+        {
+            if (!_updatingShortcuts)
+            {
+                NotifyShortcutStateChanged();
+            }
+        };
+        SetShortcuts(definition.DefaultShortcuts);
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public KeyboardShortcut Definition { get; }
+    public ObservableCollection<string> Shortcuts { get; } = [];
+    public string Id => Definition.Id;
+    public string Label => Definition.Label;
+    public string Group => Definition.Group;
+    public bool IsEditable => Definition.IsEditable;
+    public string ShortcutText => KeyboardShortcutMap.FormatShortcuts(Shortcuts);
+    public string DefaultText => KeyboardShortcutMap.FormatShortcuts(Definition.DefaultShortcuts);
+    public bool IsModified => !KeyboardShortcutMap.ShortcutListsEqual(Shortcuts, Definition.DefaultShortcuts);
+
+    public string IssueText
+    {
+        get => _issueText;
+        set
+        {
+            if (string.Equals(_issueText, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _issueText = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IssueText)));
+        }
+    }
+
+    public bool Matches(string query)
+    {
+        return query.Length == 0
+            || Id.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || Label.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || Group.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || ShortcutText.Contains(query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public void SetShortcuts(IEnumerable<string>? shortcuts)
+    {
+        _updatingShortcuts = true;
+        Shortcuts.Clear();
+        var next = IsEditable
+            ? KeyboardShortcutMap.NormalizeShortcutList(shortcuts)
+            : (shortcuts ?? [])
+                .Where(shortcut => !string.IsNullOrWhiteSpace(shortcut))
+                .Select(shortcut => shortcut.Trim());
+        foreach (var shortcut in next)
+        {
+            Shortcuts.Add(shortcut);
+        }
+
+        _updatingShortcuts = false;
+        NotifyShortcutStateChanged();
+    }
+
+    private void NotifyShortcutStateChanged()
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShortcutText)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsModified)));
+    }
 }
 
 public sealed partial class SettingsDialog : ContentDialog
@@ -22,15 +102,18 @@ public sealed partial class SettingsDialog : ContentDialog
     private const string RepositoryUrl = "https://github.com/conniecombs/SumaFile";
     private FileOperationService? _fileOps;
     private bool _checkedUpdateIsInstallable;
+    private readonly List<ShortcutEditorRow> _shortcutRows;
 
     public SettingsDialog()
     {
         InitializeComponent();
         CategoryList.SelectedIndex = 0;
         UpdateDefaultIconSizeValueText(DefaultIconSize);
-        ShortcutsList.ItemsSource = KeyboardShortcutMap.Defaults
-            .Select(item => new ShortcutHelpRow { Keys = item.Keys, Action = item.Label })
+        _shortcutRows = KeyboardShortcutMap.Defaults
+            .Select(definition => new ShortcutEditorRow(definition))
             .ToList();
+        RefreshShortcutList(selectFirst: true);
+        RefreshShortcutValidation();
     }
 
     private void OnCategorySelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -124,6 +207,7 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.ShowSmartFolders = ShowSmartFoldersSwitch.IsOn;
         settings.EnableGitIntegration = EnableGitSwitch.IsOn;
         settings.ShowFolderSizes = ShowFolderSizesSwitch.IsOn;
+        settings.ShortcutOverrides = CurrentShortcutOverrides();
     }
 
     public async Task LoadSettingsAsync(FileOperationService fileOps, CancellationToken cancellationToken = default)
@@ -160,6 +244,8 @@ public sealed partial class SettingsDialog : ContentDialog
 
         EnableGitSwitch.IsOn = await ReadBoolSettingAsync(fileOps, "enableGitIntegration", defaults.EnableGitIntegration, cancellationToken).ConfigureAwait(true);
         ShowFolderSizesSwitch.IsOn = await ReadBoolSettingAsync(fileOps, "showFolderSizes", defaults.ShowFolderSizes, cancellationToken).ConfigureAwait(true);
+        ApplyShortcutOverrides(KeyboardShortcutMap.ReadOverridesJson(
+            await GetSettingOrDefaultAsync(fileOps, KeyboardShortcutMap.SettingsKey, "", cancellationToken).ConfigureAwait(true)));
 
         await CheckRarInstalledAsync(cancellationToken).ConfigureAwait(true);
 
@@ -206,6 +292,415 @@ public sealed partial class SettingsDialog : ContentDialog
     private void UpdateDefaultIconSizeValueText(int iconSize)
     {
         DefaultIconSizeValueText.Text = $"{UiSettings.NormalizeIconSize(iconSize)} px";
+    }
+
+    private void OnShortcutSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        RefreshShortcutList();
+    }
+
+    private void OnShortcutSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateShortcutEditor(SelectedShortcutRow);
+    }
+
+    private void RefreshShortcutList(bool selectFirst = false)
+    {
+        var query = ShortcutSearchBox?.Text?.Trim() ?? "";
+        var selectedId = SelectedShortcutRow?.Id;
+        var visibleRows = _shortcutRows
+            .Where(row => row.Matches(query))
+            .ToList();
+
+        ShortcutsList.ItemsSource = visibleRows;
+        var selected = visibleRows.FirstOrDefault(row => string.Equals(row.Id, selectedId, StringComparison.Ordinal))
+            ?? (selectFirst ? visibleRows.FirstOrDefault() : null);
+        ShortcutsList.SelectedItem = selected;
+        if (selected is null)
+        {
+            UpdateShortcutEditor(null);
+        }
+    }
+
+    private ShortcutEditorRow? SelectedShortcutRow => ShortcutsList.SelectedItem as ShortcutEditorRow;
+
+    private void UpdateShortcutEditor(ShortcutEditorRow? row)
+    {
+        SelectedShortcutTitle.Text = row?.Label ?? "Select a command";
+        SelectedShortcutDefaultText.Text = row is null
+            ? ""
+            : row.IsEditable
+                ? $"Default: {row.DefaultText}"
+                : $"Default: {row.DefaultText} (fixed)";
+        SelectedShortcutList.ItemsSource = row?.Shortcuts;
+        ShortcutIssueText.Text = row?.IssueText ?? "";
+        var canEdit = row?.IsEditable == true;
+        ShortcutRecorderBox.IsEnabled = canEdit;
+        ShortcutAddButton.IsEnabled = canEdit;
+        ShortcutResetButton.IsEnabled = canEdit;
+        ShortcutClearButton.IsEnabled = canEdit;
+        if (!canEdit)
+        {
+            ShortcutRecorderBox.Text = "";
+            ShortcutRecorderStatusText.Text = row is null ? "" : "Fixed shortcut.";
+        }
+        else
+        {
+            ValidateShortcutRecorderText();
+        }
+    }
+
+    private Dictionary<string, List<string>> CurrentShortcutOverrides()
+    {
+        var raw = _shortcutRows
+            .Where(row => row.IsEditable)
+            .ToDictionary(
+                row => row.Id,
+                row => row.Shortcuts.ToList(),
+                StringComparer.Ordinal);
+        return KeyboardShortcutMap.NormalizeOverrides(raw);
+    }
+
+    private void ApplyShortcutOverrides(IDictionary<string, List<string>>? overrides)
+    {
+        var effective = KeyboardShortcutMap.EffectiveShortcuts(
+                overrides is null ? null : new Dictionary<string, List<string>>(overrides, StringComparer.Ordinal))
+            .ToDictionary(item => item.Id, StringComparer.Ordinal);
+        foreach (var row in _shortcutRows)
+        {
+            if (effective.TryGetValue(row.Id, out var assignment))
+            {
+                row.SetShortcuts(assignment.Shortcuts);
+            }
+        }
+
+        RefreshShortcutList();
+        RefreshShortcutValidation();
+    }
+
+    private void RefreshShortcutValidation()
+    {
+        var issues = KeyboardShortcutMap.ValidateOverrides(CurrentShortcutOverrides());
+        var issueLookup = issues
+            .GroupBy(issue => issue.CommandId, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => string.Join(" ", group.Select(issue => issue.Message).Distinct(StringComparer.Ordinal).Take(2)),
+                StringComparer.Ordinal);
+
+        foreach (var row in _shortcutRows)
+        {
+            row.IssueText = issueLookup.TryGetValue(row.Id, out var issueText) ? issueText : "";
+        }
+
+        var errors = issues.Count(issue => issue.Severity == KeyboardShortcutIssueSeverity.Error);
+        var warnings = issues.Count(issue => issue.Severity == KeyboardShortcutIssueSeverity.Warning);
+        var modified = CurrentShortcutOverrides().Count;
+        ShortcutSummaryText.Text = errors > 0 || warnings > 0
+            ? $"{modified} modified, {errors} conflicts, {warnings} warnings"
+            : $"{modified} modified";
+        UpdateShortcutEditor(SelectedShortcutRow);
+    }
+
+    private void OnShortcutRecorderKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (!TryFormatRecordedShortcut(e.Key, out var shortcut))
+        {
+            return;
+        }
+
+        ShortcutRecorderBox.Text = shortcut;
+        ShortcutRecorderBox.SelectionStart = ShortcutRecorderBox.Text.Length;
+        e.Handled = true;
+        ValidateShortcutRecorderText();
+    }
+
+    private void OnShortcutRecorderTextChanged(object sender, TextChangedEventArgs e)
+    {
+        ValidateShortcutRecorderText();
+    }
+
+    private void ValidateShortcutRecorderText()
+    {
+        var row = SelectedShortcutRow;
+        if (row?.IsEditable != true)
+        {
+            ShortcutAddButton.IsEnabled = false;
+            return;
+        }
+
+        var text = ShortcutRecorderBox.Text.Trim();
+        if (text.Length == 0)
+        {
+            ShortcutRecorderStatusText.Text = "";
+            ShortcutAddButton.IsEnabled = false;
+            return;
+        }
+
+        if (!KeyboardShortcutMap.TryParseShortcut(text, out var gesture, out var error) || gesture is null)
+        {
+            ShortcutRecorderStatusText.Text = error ?? "Shortcut is not valid.";
+            ShortcutAddButton.IsEnabled = false;
+            return;
+        }
+
+        ShortcutRecorderStatusText.Text = KeyboardShortcutMap.TryGetReservedWindowsWarning(gesture.DisplayText, out var warning)
+            ? warning
+            : "";
+        ShortcutAddButton.IsEnabled = true;
+    }
+
+    private void OnAddShortcutClicked(object sender, RoutedEventArgs e)
+    {
+        var row = SelectedShortcutRow;
+        if (row?.IsEditable != true)
+        {
+            return;
+        }
+
+        if (!KeyboardShortcutMap.TryParseShortcut(ShortcutRecorderBox.Text, out var gesture, out var error)
+            || gesture is null)
+        {
+            ShortcutRecorderStatusText.Text = error ?? "Shortcut is not valid.";
+            return;
+        }
+
+        if (!row.Shortcuts.Contains(gesture.DisplayText, StringComparer.Ordinal))
+        {
+            row.Shortcuts.Add(gesture.DisplayText);
+        }
+
+        ShortcutRecorderBox.Text = "";
+        RefreshShortcutList();
+        RefreshShortcutValidation();
+    }
+
+    private void OnRemoveShortcutClicked(object sender, RoutedEventArgs e)
+    {
+        var row = SelectedShortcutRow;
+        if (row?.IsEditable != true || sender is not Button { Tag: string shortcut })
+        {
+            return;
+        }
+
+        row.Shortcuts.Remove(shortcut);
+        RefreshShortcutList();
+        RefreshShortcutValidation();
+    }
+
+    private void OnResetShortcutClicked(object sender, RoutedEventArgs e)
+    {
+        var row = SelectedShortcutRow;
+        if (row?.IsEditable != true)
+        {
+            return;
+        }
+
+        row.SetShortcuts(row.Definition.DefaultShortcuts);
+        RefreshShortcutList();
+        RefreshShortcutValidation();
+    }
+
+    private void OnClearShortcutClicked(object sender, RoutedEventArgs e)
+    {
+        var row = SelectedShortcutRow;
+        if (row?.IsEditable != true)
+        {
+            return;
+        }
+
+        row.SetShortcuts([]);
+        RefreshShortcutList();
+        RefreshShortcutValidation();
+    }
+
+    private void OnResetAllShortcutsClicked(object sender, RoutedEventArgs e)
+    {
+        foreach (var row in _shortcutRows.Where(row => row.IsEditable))
+        {
+            row.SetShortcuts(row.Definition.DefaultShortcuts);
+        }
+
+        RefreshShortcutList();
+        RefreshShortcutValidation();
+    }
+
+    private async void OnImportShortcutsClicked(object sender, RoutedEventArgs e)
+    {
+        var button = sender as Control;
+        if (button is not null)
+        {
+            button.IsEnabled = false;
+        }
+
+        try
+        {
+            var picker = new FileOpenPicker();
+            picker.FileTypeFilter.Add(".json");
+            if (OwnerHwnd != 0)
+            {
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, OwnerHwnd);
+            }
+
+            var file = await picker.PickSingleFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            var json = await FileIO.ReadTextAsync(file);
+            ApplyShortcutOverrides(KeyboardShortcutExportDocument.FromJson(json));
+            ShortcutSummaryText.Text = $"Imported {file.Name}";
+        }
+        catch (Exception exception)
+        {
+            ShortcutSummaryText.Text = exception.Message;
+        }
+        finally
+        {
+            if (button is not null)
+            {
+                button.IsEnabled = true;
+            }
+        }
+    }
+
+    private async void OnExportShortcutsClicked(object sender, RoutedEventArgs e)
+    {
+        var button = sender as Control;
+        if (button is not null)
+        {
+            button.IsEnabled = false;
+        }
+
+        try
+        {
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                SuggestedFileName = "sumafile-shortcuts",
+            };
+            picker.FileTypeChoices.Add("JSON", [".json"]);
+            if (OwnerHwnd != 0)
+            {
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, OwnerHwnd);
+            }
+
+            var file = await picker.PickSaveFileAsync();
+            if (file is null)
+            {
+                return;
+            }
+
+            await FileIO.WriteTextAsync(file, KeyboardShortcutExportDocument.ToJson(CurrentShortcutOverrides()));
+            ShortcutSummaryText.Text = $"Exported {file.Name}";
+        }
+        catch (Exception exception)
+        {
+            ShortcutSummaryText.Text = exception.Message;
+        }
+        finally
+        {
+            if (button is not null)
+            {
+                button.IsEnabled = true;
+            }
+        }
+    }
+
+    private static bool TryFormatRecordedShortcut(VirtualKey key, out string shortcut)
+    {
+        shortcut = "";
+        if (IsModifierKey(key))
+        {
+            return false;
+        }
+
+        var keyText = KeyText(key);
+        if (string.IsNullOrWhiteSpace(keyText))
+        {
+            return false;
+        }
+
+        var parts = new List<string>();
+        if (IsKeyDown(VirtualKey.Control))
+        {
+            parts.Add("Ctrl");
+        }
+
+        if (IsKeyDown(VirtualKey.Menu))
+        {
+            parts.Add("Alt");
+        }
+
+        if (IsKeyDown(VirtualKey.Shift))
+        {
+            parts.Add("Shift");
+        }
+
+        if (IsKeyDown(VirtualKey.LeftWindows) || IsKeyDown(VirtualKey.RightWindows))
+        {
+            parts.Add("Win");
+        }
+
+        parts.Add(keyText);
+        shortcut = string.Join("+", parts);
+        return KeyboardShortcutMap.TryParseShortcut(shortcut, out var gesture, out _)
+            && gesture is not null
+            && (shortcut = gesture.DisplayText).Length > 0;
+    }
+
+    private static bool IsKeyDown(VirtualKey key)
+    {
+        return (InputKeyboardSource.GetKeyStateForCurrentThread(key) & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
+    }
+
+    private static bool IsModifierKey(VirtualKey key)
+    {
+        return key == VirtualKey.Control
+            || key == VirtualKey.Menu
+            || key == VirtualKey.Shift
+            || key == VirtualKey.LeftWindows
+            || key == VirtualKey.RightWindows;
+    }
+
+    private static string KeyText(VirtualKey key)
+    {
+        if (key is >= VirtualKey.Number0 and <= VirtualKey.Number9)
+        {
+            return ((int)key - (int)VirtualKey.Number0).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        if (key is >= VirtualKey.A and <= VirtualKey.Z)
+        {
+            return key.ToString();
+        }
+
+        if (key is >= VirtualKey.NumberPad0 and <= VirtualKey.NumberPad9)
+        {
+            return ((int)key - (int)VirtualKey.NumberPad0).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return key switch
+        {
+            VirtualKey.Back => "Backspace",
+            VirtualKey.Escape => "Escape",
+            VirtualKey.Enter => "Enter",
+            VirtualKey.Space => "Space",
+            VirtualKey.PageUp => "PageUp",
+            VirtualKey.PageDown => "PageDown",
+            VirtualKey.Left => "Left",
+            VirtualKey.Right => "Right",
+            VirtualKey.Up => "Up",
+            VirtualKey.Down => "Down",
+            VirtualKey.Add => "Plus",
+            VirtualKey.Subtract => "Minus",
+            VirtualKey.Separator => "Comma",
+            VirtualKey.Decimal => "Period",
+            VirtualKey.Divide => "Divide",
+            VirtualKey.Multiply => "Multiply",
+            _ => key.ToString(),
+        };
     }
 
     private void SelectTheme(string? theme)

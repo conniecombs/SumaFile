@@ -59,6 +59,10 @@ public sealed partial class MainWindow
     private TextBlock ViewIconSizeValueText => PrimaryToolbarPanel.ViewIconSizeValue;
     private Slider ViewIconSizeSlider => PrimaryToolbarPanel.ViewIconSize;
     private Button ViewApplyBothButton => PrimaryToolbarPanel.ViewApplyBoth;
+    private Button ViewUseGloballyButton => PrimaryToolbarPanel.ViewUseGlobally;
+    private Button ViewUseForFolderButton => PrimaryToolbarPanel.ViewUseForFolder;
+    private Button ViewUseForDescendantsButton => PrimaryToolbarPanel.ViewUseForDescendants;
+    private TextBlock ViewFolderRuleStatusText => PrimaryToolbarPanel.ViewFolderRuleStatus;
     private Button ViewSaveLayoutButton => PrimaryToolbarPanel.ViewSaveLayout;
     private StackPanel SavedLayoutsHost => PrimaryToolbarPanel.SavedLayoutsList;
     private Button PrimarySettingsButton => PrimaryToolbarPanel.SettingsButton;
@@ -169,6 +173,9 @@ public sealed partial class MainWindow
         PrimaryToolbarPanel.ViewStyleSelectionChanged += OnViewStyleSelectionChanged;
         PrimaryToolbarPanel.ViewIconSizeSliderChanged += OnViewIconSizeSliderChanged;
         PrimaryToolbarPanel.ViewApplyBothClicked += OnViewApplyBothClicked;
+        PrimaryToolbarPanel.ViewUseGloballyClicked += OnViewUseGloballyClicked;
+        PrimaryToolbarPanel.ViewUseForFolderClicked += OnViewUseForFolderClicked;
+        PrimaryToolbarPanel.ViewUseForDescendantsClicked += OnViewUseForDescendantsClicked;
         PrimaryToolbarPanel.ViewSaveLayoutClicked += OnViewSaveLayoutClicked;
         PrimaryToolbarPanel.SettingsClicked += OnSettingsClicked;
         PrimaryToolbarPanel.PrimaryMoreMenuOpening += (sender, e) => OnPrimaryMoreMenuOpening(sender!, e);

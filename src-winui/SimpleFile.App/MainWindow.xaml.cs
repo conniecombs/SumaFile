@@ -80,6 +80,7 @@ public sealed partial class MainWindow : Window
         }
 
         AttachControlEvents();
+        ApplyKeyboardShortcuts();
 
         _previewPresenter = new PreviewPresenter(
             () => _workspace,
@@ -125,6 +126,7 @@ public sealed partial class MainWindow : Window
             ToFileRow,
             RefreshView,
             ApplyTheme,
+            ApplyKeyboardShortcuts,
             ClearRecentHistoryAsync,
             action => DispatcherQueue.TryEnqueue(() => action()));
 
@@ -179,6 +181,7 @@ public sealed partial class MainWindow : Window
             _workspace.Changed += OnWorkspaceChanged;
             _fileChangeSubscription = client.On<FileChangeEvent>(Protocol.FileChangeEvent, OnFileChange);
             await _workspace.InitializeAsync();
+            ApplyKeyboardShortcuts();
             await LoadOpenWithPreferencesAsync(fileOps, CancellationToken.None);
             ApplyTheme(_workspace.Settings.Theme);
             SyncSidebarCollapseStateFromSettings();

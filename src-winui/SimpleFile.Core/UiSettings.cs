@@ -47,7 +47,8 @@ public sealed class UiSettings
     public int PhotoFolderImageThreshold { get; set; } = 70;
     public string ColumnPreset { get; set; } = "default";
     public Dictionary<string, double> ColumnWidths { get; set; } = new(StringComparer.Ordinal);
-    public Dictionary<string, string> ShortcutOverrides { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, List<string>> ShortcutOverrides { get; set; } = new(StringComparer.Ordinal);
+    public FolderViewSettingsDocument FolderViewSettings { get; set; } = new();
 
     public static UiSettings CreateDefault() => new();
 

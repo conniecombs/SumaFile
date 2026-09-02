@@ -10,58 +10,6 @@
         x:Name="RootGrid"
         Background="Transparent"
         PreviewKeyDown="OnRootPreviewKeyDown">
-        <Grid.KeyboardAccelerators>
-            <KeyboardAccelerator Key="F5" Invoked="OnRefreshAccelerator" />
-            <KeyboardAccelerator Key="F6" Invoked="OnDualPaneAccelerator" />
-            <KeyboardAccelerator Key="Left" Modifiers="Menu" Invoked="OnBackAccelerator" />
-            <KeyboardAccelerator Key="Right" Modifiers="Menu" Invoked="OnForwardAccelerator" />
-            <KeyboardAccelerator Key="Up" Modifiers="Menu" Invoked="OnUpAccelerator" />
-            <KeyboardAccelerator Key="Number1" Modifiers="Menu" Invoked="OnFocusPrimaryAccelerator" />
-            <KeyboardAccelerator Key="Number2" Modifiers="Menu" Invoked="OnFocusSecondaryAccelerator" />
-            <KeyboardAccelerator Key="T" Modifiers="Control" Invoked="OnNewTabAccelerator" />
-            <KeyboardAccelerator Key="W" Modifiers="Control" Invoked="OnCloseTabAccelerator" />
-            <KeyboardAccelerator Key="Tab" Modifiers="Control" Invoked="OnNextTabAccelerator" />
-            <KeyboardAccelerator Key="Tab" Modifiers="Control,Shift" Invoked="OnPreviousTabAccelerator" />
-            <KeyboardAccelerator Key="Left" Modifiers="Control,Shift" Invoked="OnFocusPrimaryAccelerator" />
-            <KeyboardAccelerator Key="Right" Modifiers="Control,Shift" Invoked="OnFocusSecondaryAccelerator" />
-            <KeyboardAccelerator Key="N" Modifiers="Control,Shift" Invoked="OnNewFolderAccelerator" />
-            <KeyboardAccelerator Key="N" Modifiers="Control" Invoked="OnNewFileAccelerator" />
-            <KeyboardAccelerator Key="F2" Invoked="OnRenameAccelerator" />
-            <KeyboardAccelerator Key="Enter" Modifiers="Menu" Invoked="OnPropertiesAccelerator" />
-            <KeyboardAccelerator Key="Enter" Modifiers="Control" Invoked="OnOpenInNewTabAccelerator" />
-            <KeyboardAccelerator Key="H" Modifiers="Control" Invoked="OnToggleHiddenAccelerator" />
-            <KeyboardAccelerator Key="B" Modifiers="Control" Invoked="OnBookmarkAccelerator" />
-            <KeyboardAccelerator Key="F3" Invoked="OnFocusSearchAccelerator" />
-            <KeyboardAccelerator Key="Number1" Modifiers="Control" Invoked="OnTab1Accelerator" />
-            <KeyboardAccelerator Key="Number2" Modifiers="Control" Invoked="OnTab2Accelerator" />
-            <KeyboardAccelerator Key="Number3" Modifiers="Control" Invoked="OnTab3Accelerator" />
-            <KeyboardAccelerator Key="Number4" Modifiers="Control" Invoked="OnTab4Accelerator" />
-            <KeyboardAccelerator Key="Number5" Modifiers="Control" Invoked="OnTab5Accelerator" />
-            <KeyboardAccelerator Key="Number6" Modifiers="Control" Invoked="OnTab6Accelerator" />
-            <KeyboardAccelerator Key="Number7" Modifiers="Control" Invoked="OnTab7Accelerator" />
-            <KeyboardAccelerator Key="Number8" Modifiers="Control" Invoked="OnTab8Accelerator" />
-            <KeyboardAccelerator Key="Number9" Modifiers="Control" Invoked="OnTab9Accelerator" />
-            <KeyboardAccelerator Key="Delete" Modifiers="Shift" Invoked="OnDeleteAccelerator" />
-            <KeyboardAccelerator Key="Delete" Invoked="OnTrashAccelerator" />
-            <KeyboardAccelerator Key="C" Modifiers="Control" Invoked="OnCopyAccelerator" />
-            <KeyboardAccelerator Key="X" Modifiers="Control" Invoked="OnCutAccelerator" />
-            <KeyboardAccelerator Key="V" Modifiers="Control" Invoked="OnPasteAccelerator" />
-            <KeyboardAccelerator Key="F4" Invoked="OnOpenTerminalAccelerator" />
-            <KeyboardAccelerator Key="S" Modifiers="Control,Shift" Invoked="OnSettingsAccelerator" />
-            <KeyboardAccelerator Key="P" Modifiers="Control,Shift" Invoked="OnCommandPaletteAccelerator" />
-            <KeyboardAccelerator Key="L" Modifiers="Control" Invoked="OnFocusPathAccelerator" />
-            <KeyboardAccelerator Key="D" Modifiers="Menu" Invoked="OnFocusPathAccelerator" />
-            <KeyboardAccelerator Key="F" Modifiers="Control" Invoked="OnFocusSearchAccelerator" />
-            <KeyboardAccelerator Key="A" Modifiers="Control" Invoked="OnSelectAllAccelerator" />
-            <KeyboardAccelerator Key="C" Modifiers="Control,Shift" Invoked="OnCopyPathAccelerator" />
-            <KeyboardAccelerator Key="Z" Modifiers="Control" Invoked="OnUndoAccelerator" />
-            <KeyboardAccelerator Key="Y" Modifiers="Control" Invoked="OnRedoAccelerator" />
-            <KeyboardAccelerator Key="Z" Modifiers="Control,Shift" Invoked="OnRedoAccelerator" />
-            <KeyboardAccelerator Key="F1" Invoked="OnKeyboardHelpAccelerator" />
-            <KeyboardAccelerator Key="Divide" Modifiers="Control" Invoked="OnKeyboardHelpAccelerator" />
-            <KeyboardAccelerator Key="C" Modifiers="Control,Menu" Invoked="OnCopyToOtherPaneAccelerator" />
-            <KeyboardAccelerator Key="M" Modifiers="Control,Menu" Invoked="OnMoveToOtherPaneAccelerator" />
-        </Grid.KeyboardAccelerators>
         <Grid.RowDefinitions>
             <RowDefinition Height="32" />
             <RowDefinition Height="*" />

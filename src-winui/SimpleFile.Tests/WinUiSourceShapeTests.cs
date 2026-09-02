@@ -157,6 +157,55 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
+    public void FolderViewSettings_AreDiscoverableFromViewOptions()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var coreRoot = Path.Combine(root, "SimpleFile.Core");
+        var toolbar = File.ReadAllText(Path.Combine(appRoot, "PrimaryToolbarView.xaml"));
+        var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
+        var workspace = File.ReadAllText(Path.Combine(coreRoot, "ExplorerWorkspace.cs"));
+        var settingsStore = File.ReadAllText(Path.Combine(coreRoot, "WorkspaceSettingsStore.cs"));
+        var folderViews = File.ReadAllText(Path.Combine(coreRoot, "FolderViewSettings.cs"));
+
+        Assert.Contains("ViewUseGloballyButton", toolbar);
+        Assert.Contains("ViewUseForFolderButton", toolbar);
+        Assert.Contains("ViewUseForDescendantsButton", toolbar);
+        Assert.Contains("Folder defaults", toolbar);
+        Assert.Contains("SaveFolderViewSettingsFromFlyoutAsync", commands);
+        Assert.Contains("EffectiveFolderViewRuleFor", workspace);
+        Assert.Contains("FolderViewSettingsDocument.SettingsKey", settingsStore);
+        Assert.Contains("StableKeyFromPath", folderViews);
+    }
+
+    [Fact]
+    public void ShortcutEditor_UsesRuntimeShortcutRegistry()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var coreRoot = Path.Combine(root, "SimpleFile.Core");
+        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsDialog.xaml"));
+        var settingsCode = File.ReadAllText(Path.Combine(appRoot, "SettingsDialog.xaml.cs"));
+        var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var mainWindowCode = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var shortcutBinder = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Shortcuts.cs"));
+        var settingsStore = File.ReadAllText(Path.Combine(coreRoot, "WorkspaceSettingsStore.cs"));
+        var shortcutMap = File.ReadAllText(Path.Combine(coreRoot, "KeyboardShortcutMap.cs"));
+
+        Assert.Contains("ShortcutRecorderBox", settingsXaml);
+        Assert.Contains("ShortcutImportButton", settingsXaml);
+        Assert.Contains("ShortcutExportButton", settingsXaml);
+        Assert.Contains("OnShortcutRecorderKeyDown", settingsCode);
+        Assert.Contains("KeyboardShortcutExportDocument.FromJson", settingsCode);
+        Assert.Contains("ApplyKeyboardShortcuts();", mainWindowCode);
+        Assert.Contains("KeyboardShortcutMap.EffectiveShortcuts", shortcutBinder);
+        Assert.Contains("KeyboardShortcutMap.SettingsKey", settingsStore);
+        Assert.Contains("TryGetReservedWindowsWarning", shortcutMap);
+        Assert.DoesNotContain("Remapping is not available yet", settingsXaml);
+        Assert.DoesNotContain("<Grid.KeyboardAccelerators>", mainWindowXaml);
+    }
+
+    [Fact]
     public void PreviewPane_UsesPathBackedPdfAndMediaControls()
     {
         var root = FindRepoRoot();
@@ -172,6 +221,48 @@ public class WinUiSourceShapeTests
         Assert.Contains("TryRenderMediaPreview", presenter);
         Assert.Contains("TryCreatePathBackedPreview", commands);
         Assert.DoesNotContain("const PDF_MAX", backendPreview);
+    }
+
+    [Fact]
+    public void GodObjectRefactors_KeepLargeWorkflowsBehindFocusedSplitPoints()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var coreRoot = Path.Combine(root, "SimpleFile.Core");
+        var repoRoot = Path.GetFullPath(Path.Combine(root, ".."));
+        var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
+        var commandRouting = File.ReadAllText(Path.Combine(appRoot, "MainWindow.CommandRouting.cs"));
+        var dialogService = File.ReadAllText(Path.Combine(appRoot, "FileOperationDialogService.cs"));
+        var scanDialogHost = File.ReadAllText(Path.Combine(appRoot, "FileOperationDialogService.Scans.cs"));
+        var workspace = File.ReadAllText(Path.Combine(coreRoot, "ExplorerWorkspace.cs"));
+        var profileService = File.ReadAllText(Path.Combine(coreRoot, "WorkspaceProfileService.cs"));
+        var layoutService = File.ReadAllText(Path.Combine(coreRoot, "SavedWorkspaceLayoutService.cs"));
+        var facades = File.ReadAllText(Path.Combine(coreRoot, "FileOperationFacades.cs"));
+        var fileOperationService = File.ReadAllText(Path.Combine(coreRoot, "FileOperationService.cs"));
+        var rustFileOps = File.ReadAllText(Path.Combine(repoRoot, "crates", "simplefile-core", "src", "file_ops.rs"));
+        var rustProgress = File.ReadAllText(Path.Combine(repoRoot, "crates", "simplefile-service", "src", "progress.rs"));
+
+        Assert.Contains("CommandAliasCatalog.Normalize", commandRouting);
+        Assert.Contains("CreateAppCommandHandlers", commandRouting);
+        Assert.DoesNotContain("private async Task RunAppCommandAsync", commands);
+
+        Assert.Contains("interface IScanDialog", scanDialogHost);
+        Assert.Contains("RunScanDialogAsync", scanDialogHost);
+        Assert.Contains("RunScanDialogAsync", dialogService);
+
+        Assert.Contains("WorkspaceProfileService _profiles", workspace);
+        Assert.Contains("SavedWorkspaceLayoutService _savedLayouts", workspace);
+        Assert.Contains("internal sealed class WorkspaceProfileService", profileService);
+        Assert.Contains("internal sealed class SavedWorkspaceLayoutService", layoutService);
+
+        Assert.Contains("interface ISettingsBackend", facades);
+        Assert.Contains("interface IFileOperationBackend", facades);
+        Assert.Contains("IFileOperationBackend", fileOperationService);
+
+        Assert.Contains("mod folder_metrics;", rustFileOps);
+        Assert.Contains("mod metadata_preserve;", rustFileOps);
+        Assert.Contains("mod registry;", rustProgress);
+        Assert.Contains("pub use registry::OperationRegistry;", rustProgress);
     }
 
     [Fact]

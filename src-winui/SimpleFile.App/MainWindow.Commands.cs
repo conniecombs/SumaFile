@@ -617,231 +617,6 @@ public sealed partial class MainWindow
         await _workspace.OpenInOtherPaneAsync(row.Path, row.IsDir);
     }
 
-    private async Task RunAppCommandAsync(string id)
-    {
-        if (_workspace is null)
-        {
-            return;
-        }
-
-        switch (CommandAliasCatalog.Normalize(id))
-        {
-            case "go-home":
-                await _workspace.NavigateSpecialAsync("navigateHome");
-                break;
-            case "go-recycle-bin":
-                await _workspace.NavigateSpecialAsync("navigateRecycleBin");
-                break;
-            case "restore-selected":
-                await RestoreSelectedAsync();
-                break;
-            case "empty-recycle-bin":
-                await EmptyRecycleBinAsync();
-                break;
-            case "go-back":
-                if (!IsEditingPath)
-                {
-                    await _workspace.GoBackAsync();
-                }
-                break;
-            case "go-forward":
-                if (!IsEditingPath)
-                {
-                    await _workspace.GoForwardAsync();
-                }
-                break;
-            case "go-up":
-                if (!IsEditingPath)
-                {
-                    await _workspace.GoUpAsync();
-                }
-                break;
-            case "refresh":
-                await _workspace.RefreshAsync();
-                break;
-            case "copy":
-                await CopyToClipboard();
-                break;
-            case "cut":
-                await CutToClipboard();
-                break;
-            case "paste":
-                await PasteFromClipboard();
-                break;
-            case "copy-path":
-                CopySelectedPathsToClipboard();
-                break;
-            case "clipboard-history":
-                await ShowClipboardHistoryAsync();
-                break;
-            case "operation-history":
-                await ShowOperationHistoryAsync();
-                break;
-            case "clear-recent-history":
-                await ClearRecentHistoryAsync();
-                break;
-            case "undo":
-                await UndoLastAsync();
-                break;
-            case "redo":
-                await RedoLastAsync();
-                break;
-            case "delete":
-                await TrashSelected();
-                break;
-            case "delete-permanent":
-                await DeleteSelected();
-                break;
-            case "rename":
-                await PromptAndRename();
-                break;
-            case "advanced-rename":
-                await PromptAdvancedRenameAsync();
-                break;
-            case "new-folder":
-                await PromptAndCreateFolder(_workspace.ActivePane);
-                break;
-            case "new-file":
-                await PromptAndCreateFile(_workspace.ActivePane);
-                break;
-            case "create-archive":
-                await CreateArchiveAsync();
-                break;
-            case "terminal":
-                await OpenTerminalInActivePathAsync();
-                break;
-            case "powershell-admin":
-                await OpenPowershellAdminAsync();
-                break;
-            case "preview":
-                OnTogglePreview(this, new RoutedEventArgs());
-                break;
-            case "toggle-hidden":
-                await ToggleHiddenFilesAsync();
-                break;
-            case "toggle-side-menu":
-                await ToggleSidebarAsync();
-                break;
-            case "dual-pane":
-                await ToggleDualPaneFromUiAsync();
-                break;
-            case "close-left-pane":
-                await CloseFilePaneFromUiAsync(PaneId.Primary);
-                break;
-            case "close-right-pane":
-                await CloseFilePaneFromUiAsync(PaneId.Secondary);
-                break;
-            case "copy-to-pane":
-                await CopyOrMoveToOtherPaneAsync(move: false);
-                break;
-            case "move-to-pane":
-                await CopyOrMoveToOtherPaneAsync(move: true);
-                break;
-            case "open-selected-tab":
-                await OpenSelectedInNewTabAsync();
-                break;
-            case "open-other-pane":
-                await OpenSelectedInOtherPaneAsync();
-                break;
-            case "view-details":
-                await ApplyViewOptionAsync("view:details");
-                break;
-            case "view-list":
-                await ApplyViewOptionAsync("view:list");
-                break;
-            case "view-tiles":
-                await ApplyViewOptionAsync("view:tiles");
-                break;
-            case "view-content":
-                await ApplyViewOptionAsync("view:content");
-                break;
-            case "icon-size-small":
-                await ApplyViewOptionAsync("icon:16");
-                break;
-            case "icon-size-medium":
-                await ApplyViewOptionAsync("icon:32");
-                break;
-            case "icon-size-large":
-                await ApplyViewOptionAsync("icon:48");
-                break;
-            case "icon-size-extra-large":
-                await ApplyViewOptionAsync("icon:96");
-                break;
-            case "icon-size-jumbo":
-                await ApplyViewOptionAsync("icon:128");
-                break;
-            case "icon-size-huge":
-                await ApplyViewOptionAsync("icon:192");
-                break;
-            case "icon-size-maximum":
-                await ApplyViewOptionAsync("icon:256");
-                break;
-            case "search":
-                FocusSearchUi();
-                break;
-            case "filter":
-                FocusFilterUi();
-                break;
-            case "quick-look":
-                await ShowQuickLookAsync();
-                break;
-            case "properties":
-                await ShowPropertiesAsync();
-                break;
-            case "color-label":
-                await SetColorLabelAsync();
-                break;
-            case "bookmark-folder":
-                await BookmarkCurrentFolderAsync();
-                break;
-            case "bookmark-selected-folder":
-                await BookmarkSelectedFolderAsync();
-                break;
-            case "folder-metrics":
-                await ShowFolderMetricsAsync();
-                break;
-            case "disk-cleanup":
-                await ShowDiskCleanupAsync();
-                break;
-            case "duplicate-checker":
-                await ShowDuplicateCheckerAsync();
-                break;
-            case "settings":
-                await ShowSettingsAsync();
-                break;
-            case "profile-manage":
-                await ShowWorkspaceProfileManagerAsync();
-                break;
-            case "profile-save":
-                await PromptSaveWorkspaceProfileAsync();
-                break;
-            case "profile-standard":
-                await ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.StandardId);
-                break;
-            case "profile-developer":
-                await ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.DeveloperId);
-                break;
-            case "profile-photos":
-                await ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.PhotosId);
-                break;
-            case "profile-transfer":
-                await ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.TransferId);
-                break;
-            case "profile-minimal":
-                await ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.MinimalId);
-                break;
-            case "keyboard-help":
-                await ShowKeyboardHelpAsync();
-                break;
-            case "git-pull":
-                await RunGitAsync(pull: true);
-                break;
-            case "git-push":
-                await RunGitAsync(pull: false);
-                break;
-        }
-    }
-
     private void OnFileRowContextRequested(object sender, ContextRequestedEventArgs e)
     {
         if (sender is not FileRowView view || view.Row is null || _workspace is null)
@@ -937,6 +712,10 @@ public sealed partial class MainWindow
             ViewIconSizeSlider.StepFrequency = UiSettings.IconSizeStep;
             ViewIconSizeSlider.Value = currentIconSize;
             UpdateViewIconSizeValueText(currentIconSize);
+            var hasFolderPath = !string.IsNullOrWhiteSpace(_workspace.Pane(pane).Path);
+            ViewUseForFolderButton.IsEnabled = hasFolderPath;
+            ViewUseForDescendantsButton.IsEnabled = hasFolderPath;
+            UpdateFolderViewRuleStatusText();
             SavedLayoutsHost.Children.Clear();
             SavedLayoutsHost.Children.Add(new TextBlock
             {
@@ -1003,6 +782,51 @@ public sealed partial class MainWindow
     private async void OnViewApplyBothClicked(object sender, RoutedEventArgs e)
     {
         await RunUiActionAsync("View options", () => ApplyViewOptionAsync("pane:apply-view-to-both"));
+    }
+
+    private async void OnViewUseGloballyClicked(object sender, RoutedEventArgs e)
+    {
+        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Global));
+    }
+
+    private async void OnViewUseForFolderClicked(object sender, RoutedEventArgs e)
+    {
+        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Folder));
+    }
+
+    private async void OnViewUseForDescendantsClicked(object sender, RoutedEventArgs e)
+    {
+        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Descendants));
+    }
+
+    private async Task SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope scope)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        await SaveViewIconSizeNowAsync();
+        var rule = await _workspace.SaveFolderViewSettingsAsync(scope, ActiveUiPane);
+        UpdateFolderViewRuleStatusText(rule);
+        ApplyPreviewVisibility();
+        ApplyColumnWidths();
+        ApplyFileListViewPresentation();
+        SetStatusText($"Saved view defaults for {rule.ScopeLabel}.");
+    }
+
+    private void UpdateFolderViewRuleStatusText(FolderViewRule? rule = null)
+    {
+        if (_workspace is null)
+        {
+            ViewFolderRuleStatusText.Text = "";
+            return;
+        }
+
+        rule ??= _workspace.EffectiveFolderViewRuleFor(ActiveUiPane);
+        ViewFolderRuleStatusText.Text = rule is null
+            ? "Current folder uses global settings."
+            : $"Current folder uses {rule.ScopeLabel} defaults.";
     }
 
     private async void OnViewSaveLayoutClicked(object sender, RoutedEventArgs e)
@@ -2211,25 +2035,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (e.Key == VirtualKey.Tab && _workspace.DualPaneEnabled)
-        {
-            e.Handled = true;
-            _workspace.SwitchActivePane();
-            return;
-        }
-
-        if (e.Key == VirtualKey.Back)
-        {
-            e.Handled = true;
-            await RunUiActionAsync("Navigation", () => _workspace.GoUpAsync());
-            return;
-        }
-
-        if (e.Key == VirtualKey.Space)
-        {
-            e.Handled = true;
-            await RunUiActionAsync("Quick Look", ShowQuickLookAsync);
-        }
+        // Pane switching, backspace navigation, and Quick Look are routed through
+        // ApplyKeyboardShortcuts so user remaps take effect consistently.
     }
 
     private bool IsTextInputFocused()
@@ -2239,7 +2046,9 @@ public sealed partial class MainWindow
 
     private async Task ShowKeyboardHelpAsync()
     {
-        var lines = KeyboardShortcutMap.Defaults.Select(item => $"{item.Keys,-22}  {item.Label}");
+        var lines = KeyboardShortcutMap
+            .EffectiveShortcuts(_workspace?.Settings.ShortcutOverrides)
+            .Select(item => $"{item.Keys,-28}  {item.Label}");
         var box = new TextBox
         {
             Text = string.Join(Environment.NewLine, lines),

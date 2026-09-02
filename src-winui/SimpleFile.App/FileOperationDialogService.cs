@@ -5,7 +5,7 @@ using SimpleFile.Ipc;
 
 namespace SimpleFile.App;
 
-internal sealed class FileOperationDialogService
+internal sealed partial class FileOperationDialogService
 {
     private readonly Func<ExplorerWorkspace?> _workspace;
     private readonly Func<XamlRoot> _xamlRoot;
@@ -24,6 +24,7 @@ internal sealed class FileOperationDialogService
     private readonly Func<FileEntry, FileRow> _toFileRow;
     private readonly Action _refreshView;
     private readonly Action<string?> _applyTheme;
+    private readonly Action _applyKeyboardShortcuts;
     private readonly Func<CancellationToken, Task> _clearRecentHistoryAsync;
     private readonly Action<Action> _dispatchToUi;
 
@@ -45,6 +46,7 @@ internal sealed class FileOperationDialogService
         Func<FileEntry, FileRow> toFileRow,
         Action refreshView,
         Action<string?> applyTheme,
+        Action applyKeyboardShortcuts,
         Func<CancellationToken, Task> clearRecentHistoryAsync,
         Action<Action> dispatchToUi)
     {
@@ -65,6 +67,7 @@ internal sealed class FileOperationDialogService
         _toFileRow = toFileRow;
         _refreshView = refreshView;
         _applyTheme = applyTheme;
+        _applyKeyboardShortcuts = applyKeyboardShortcuts;
         _clearRecentHistoryAsync = clearRecentHistoryAsync;
         _dispatchToUi = dispatchToUi;
     }
@@ -385,6 +388,7 @@ internal sealed class FileOperationDialogService
                 dialog.ApplyTo(workspace.Settings);
                 workspace.ApplyUiSettings(workspace.Settings, applyViewDefaultsToPanes: false);
                 _applyTheme(workspace.Settings.Theme);
+                _applyKeyboardShortcuts();
                 await workspace.SaveUiSettingsAsync(utilityCts.Token);
             }
             catch (OperationCanceledException)
@@ -534,38 +538,6 @@ internal sealed class FileOperationDialogService
         }
 
         var dialog = new DuplicateCheckerDialog { XamlRoot = _xamlRoot(), Directory = path };
-        dialog.ShowConfiguration();
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-        {
-            return;
-        }
-
-        if (!ReferenceEquals(_workspace(), workspace))
-        {
-            return;
-        }
-
-        var utilityCts = _beginUtilityOperation();
-        using var scanCts = CancellationTokenSource.CreateLinkedTokenSource(utilityCts.Token);
-        var scanToken = scanCts.Token;
-        var progress = new Progress<ProgressUpdate>(update =>
-        {
-            _dispatchToUi(() =>
-            {
-                if (ReferenceEquals(_workspace(), workspace) && !scanToken.IsCancellationRequested)
-                {
-                    dialog.UpdateProgress(update);
-                }
-            });
-        });
-
-        dialog.ScanCancelled += async (_, _) =>
-        {
-            scanCts.Cancel();
-            await _runUiActionAsync(
-                "Duplicate checker",
-                () => fileOps.CancelDuplicateCheckAsync());
-        };
         dialog.PreviewRequested += (_, filePath) =>
         {
             if (!ReferenceEquals(_workspace(), workspace))
@@ -596,42 +568,38 @@ internal sealed class FileOperationDialogService
                     : Task.CompletedTask);
         };
 
-        try
-        {
-            dialog.ShowScanning();
-            var scanUi = dialog.ShowAsync();
-            var result = await fileOps.DuplicateCheckAsync(
-                path, dialog.MinSizeBytes, null, progress, scanCts.Token);
-            if (dialog.ScanWasCancelled
-                || !ReferenceEquals(_workspace(), workspace)
-                || scanCts.IsCancellationRequested)
+        await RunScanDialogAsync(
+            workspace,
+            fileOps,
+            dialog,
+            "Duplicate checker",
+            (scanDialog, progress, token) => fileOps.DuplicateCheckAsync(
+                path,
+                scanDialog.MinSizeBytes,
+                partialHashBytes: null,
+                progress: progress,
+                ct: token),
+            () => fileOps.CancelDuplicateCheckAsync(),
+            async (scanDialog, _, token) =>
             {
-                return;
-            }
-
-            dialog.ShowResults(result);
-            await scanUi;
-            if (dialog.DeleteRequested && ReferenceEquals(_workspace(), workspace))
-            {
-                var trash = dialog.PathsToDelete;
-                if (trash.Length > 0)
+                if (!scanDialog.DeleteRequested)
                 {
-                    await fileOps.TrashAsync(trash, scanCts.Token);
-                    if (ReferenceEquals(_workspace(), workspace) && !scanCts.IsCancellationRequested)
-                    {
-                        await workspace.RefreshAsync(scanCts.Token);
-                    }
+                    return;
                 }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            dialog.Hide();
-        }
-        catch (Exception exception)
-        {
-            dialog.Hide();
-            if (!IsCancellationMessage(exception.Message))
+
+                var trash = scanDialog.PathsToDelete;
+                if (trash.Length == 0)
+                {
+                    return;
+                }
+
+                await fileOps.TrashAsync(trash, token);
+                if (ReferenceEquals(_workspace(), workspace) && !token.IsCancellationRequested)
+                {
+                    await workspace.RefreshAsync(token);
+                }
+            },
+            exception =>
             {
                 if (exception is IpcException ipcException && FileOperationService.IsTrashUnavailable(ipcException))
                 {
@@ -644,12 +612,7 @@ internal sealed class FileOperationDialogService
                 {
                     _showMessage("Duplicate checker", exception.Message, InfoBarSeverity.Error);
                 }
-            }
-        }
-        finally
-        {
-            _finishUtilityOperation(utilityCts);
-        }
+            });
     }
 
     public async Task ShowDiskCleanupAsync()
@@ -668,70 +631,17 @@ internal sealed class FileOperationDialogService
         }
 
         var dialog = new DiskCleanupDialog { XamlRoot = _xamlRoot(), Directory = path };
-        dialog.ShowConfiguration();
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-        {
-            return;
-        }
-
-        if (!ReferenceEquals(_workspace(), workspace))
-        {
-            return;
-        }
-
-        var utilityCts = _beginUtilityOperation();
-        using var scanCts = CancellationTokenSource.CreateLinkedTokenSource(utilityCts.Token);
-        var scanToken = scanCts.Token;
-        var progress = new Progress<ProgressUpdate>(update =>
-        {
-            _dispatchToUi(() =>
-            {
-                if (ReferenceEquals(_workspace(), workspace) && !scanToken.IsCancellationRequested)
-                {
-                    dialog.UpdateProgress(update);
-                }
-            });
-        });
-
-        dialog.ScanCancelled += async (_, _) =>
-        {
-            scanCts.Cancel();
-            await _runUiActionAsync(
-                "Disk cleanup",
-                () => fileOps.CancelDiskCleanupAsync());
-        };
-
-        try
-        {
-            dialog.ShowScanning();
-            var scanUi = dialog.ShowAsync();
-            var result = await fileOps.DiskCleanupAsync(path, dialog.ThresholdBytes, progress, scanCts.Token);
-            if (dialog.ScanWasCancelled
-                || !ReferenceEquals(_workspace(), workspace)
-                || scanCts.IsCancellationRequested)
-            {
-                return;
-            }
-
-            dialog.ShowResults(result);
-            await scanUi;
-        }
-        catch (OperationCanceledException)
-        {
-            dialog.Hide();
-        }
-        catch (Exception exception)
-        {
-            dialog.Hide();
-            if (!IsCancellationMessage(exception.Message))
-            {
-                _showMessage("Disk cleanup", exception.Message, InfoBarSeverity.Error);
-            }
-        }
-        finally
-        {
-            _finishUtilityOperation(utilityCts);
-        }
+        await RunScanDialogAsync(
+            workspace,
+            fileOps,
+            dialog,
+            "Disk cleanup",
+            (scanDialog, progress, token) => fileOps.DiskCleanupAsync(
+                path,
+                scanDialog.ThresholdBytes,
+                progress,
+                token),
+            () => fileOps.CancelDiskCleanupAsync());
     }
 
     public async Task SetColorLabelAsync()

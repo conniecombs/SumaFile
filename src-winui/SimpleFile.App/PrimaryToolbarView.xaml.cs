@@ -42,6 +42,10 @@ public sealed partial class PrimaryToolbarView : UserControl
     public TextBlock ViewIconSizeValue => ViewIconSizeValueText;
     public Slider ViewIconSize => ViewIconSizeSlider;
     public Button ViewApplyBoth => ViewApplyBothButton;
+    public Button ViewUseGlobally => ViewUseGloballyButton;
+    public Button ViewUseForFolder => ViewUseForFolderButton;
+    public Button ViewUseForDescendants => ViewUseForDescendantsButton;
+    public TextBlock ViewFolderRuleStatus => ViewFolderRuleStatusText;
     public Button ViewSaveLayout => ViewSaveLayoutButton;
     public StackPanel SavedLayoutsList => SavedLayoutsHost;
     public Button SettingsButton => PrimarySettingsButton;
@@ -69,6 +73,9 @@ public sealed partial class PrimaryToolbarView : UserControl
     public event SelectionChangedEventHandler? ViewStyleSelectionChanged;
     public event RangeBaseValueChangedEventHandler? ViewIconSizeSliderChanged;
     public event RoutedEventHandler? ViewApplyBothClicked;
+    public event RoutedEventHandler? ViewUseGloballyClicked;
+    public event RoutedEventHandler? ViewUseForFolderClicked;
+    public event RoutedEventHandler? ViewUseForDescendantsClicked;
     public event RoutedEventHandler? ViewSaveLayoutClicked;
     public event RoutedEventHandler? SettingsClicked;
     public event EventHandler<object>? PrimaryMoreMenuOpening;
@@ -122,6 +129,12 @@ public sealed partial class PrimaryToolbarView : UserControl
         ViewIconSizeSliderChanged?.Invoke(sender, e);
 
     private void OnViewApplyBothClicked(object sender, RoutedEventArgs e) => ViewApplyBothClicked?.Invoke(sender, e);
+
+    private void OnViewUseGloballyClicked(object sender, RoutedEventArgs e) => ViewUseGloballyClicked?.Invoke(sender, e);
+
+    private void OnViewUseForFolderClicked(object sender, RoutedEventArgs e) => ViewUseForFolderClicked?.Invoke(sender, e);
+
+    private void OnViewUseForDescendantsClicked(object sender, RoutedEventArgs e) => ViewUseForDescendantsClicked?.Invoke(sender, e);
 
     private void OnViewSaveLayoutClicked(object sender, RoutedEventArgs e) => ViewSaveLayoutClicked?.Invoke(sender, e);
 

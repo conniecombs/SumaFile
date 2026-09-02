@@ -16,7 +16,7 @@ internal static class WorkspaceSettingsStore
     private const string RecentPathsSettingsKey = "places.recents";
 
     public static async Task<WorkspaceSettingsState> LoadAsync(
-        FileOperationService fileOps,
+        ISettingsBackend fileOps,
         CancellationToken cancellationToken)
     {
         var settings = UiSettings.CreateDefault();
@@ -44,6 +44,9 @@ internal static class WorkspaceSettingsStore
         settings.ColumnPreset = UiSettings.NormalizeColumnPreset(
             await fileOps.GetSettingAsync("columnPreset", cancellationToken).ConfigureAwait(false));
         settings.ColumnWidths = await ReadColumnWidthsAsync(fileOps, cancellationToken).ConfigureAwait(false);
+        settings.ShortcutOverrides = await ReadShortcutOverridesAsync(fileOps, cancellationToken).ConfigureAwait(false);
+        settings.FolderViewSettings = FolderViewSettingsDocument.FromJson(
+            await fileOps.GetSettingAsync(FolderViewSettingsDocument.SettingsKey, cancellationToken).ConfigureAwait(false));
         settings.ShowQuickAccess = await ReadBoolSettingAsync(fileOps, "sidebar.showQuickAccess", true, cancellationToken).ConfigureAwait(false);
         settings.ShowFolderTree = await ReadBoolSettingAsync(fileOps, "sidebar.showFolders", false, cancellationToken).ConfigureAwait(false);
         settings.ShowBookmarks = await ReadBoolSettingAsync(fileOps, "sidebar.showBookmarks", true, cancellationToken).ConfigureAwait(false);
@@ -64,7 +67,7 @@ internal static class WorkspaceSettingsStore
     }
 
     public static async Task SaveAsync(
-        FileOperationService fileOps,
+        ISettingsBackend fileOps,
         UiSettings settings,
         ColumnLayout columns,
         bool showHidden,
@@ -81,6 +84,7 @@ internal static class WorkspaceSettingsStore
         settings.DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(settings.DualPanePrimaryWidth);
         settings.ColumnPreset = UiSettings.NormalizeColumnPreset(settings.ColumnPreset);
         settings.ColumnWidths = columns.SnapshotWidths();
+        settings.FolderViewSettings.Normalize();
         await fileOps.SetSettingAsync("theme", settings.Theme, cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("defaultView", settings.DefaultView, cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("defaultIconSize", settings.DefaultIconSize.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
@@ -101,6 +105,15 @@ internal static class WorkspaceSettingsStore
         await fileOps.SetSettingAsync(
             "columnWidths",
             JsonSerializer.Serialize(settings.ColumnWidths),
+            cancellationToken).ConfigureAwait(false);
+        settings.ShortcutOverrides = KeyboardShortcutMap.NormalizeOverrides(settings.ShortcutOverrides);
+        await fileOps.SetSettingAsync(
+            KeyboardShortcutMap.SettingsKey,
+            KeyboardShortcutMap.WriteOverridesJson(settings.ShortcutOverrides),
+            cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync(
+            FolderViewSettingsDocument.SettingsKey,
+            settings.FolderViewSettings.ToJson(),
             cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.showQuickAccess", settings.ShowQuickAccess ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.showFolders", settings.ShowFolderTree ? "true" : "false", cancellationToken).ConfigureAwait(false);
@@ -123,7 +136,7 @@ internal static class WorkspaceSettingsStore
     }
 
     private static async Task<Dictionary<string, double>> ReadColumnWidthsAsync(
-        FileOperationService fileOps,
+        ISettingsBackend fileOps,
         CancellationToken cancellationToken)
     {
         var raw = await fileOps.GetSettingAsync("columnWidths", cancellationToken).ConfigureAwait(false);
@@ -143,8 +156,16 @@ internal static class WorkspaceSettingsStore
         }
     }
 
+    private static async Task<Dictionary<string, List<string>>> ReadShortcutOverridesAsync(
+        ISettingsBackend fileOps,
+        CancellationToken cancellationToken)
+    {
+        var raw = await fileOps.GetSettingAsync(KeyboardShortcutMap.SettingsKey, cancellationToken).ConfigureAwait(false);
+        return KeyboardShortcutMap.ReadOverridesJson(raw);
+    }
+
     private static async Task<List<BookmarkItem>> ReadBookmarksAsync(
-        FileOperationService fileOps,
+        ISettingsBackend fileOps,
         CancellationToken cancellationToken)
     {
         var raw = await fileOps.GetSettingAsync(BookmarksSettingsKey, cancellationToken).ConfigureAwait(false);
@@ -183,7 +204,7 @@ internal static class WorkspaceSettingsStore
     }
 
     private static async Task<List<string>> ReadRecentPathsAsync(
-        FileOperationService fileOps,
+        ISettingsBackend fileOps,
         CancellationToken cancellationToken)
     {
         var raw = await fileOps.GetSettingAsync(RecentPathsSettingsKey, cancellationToken).ConfigureAwait(false);
@@ -221,7 +242,7 @@ internal static class WorkspaceSettingsStore
     }
 
     private static async Task<bool> ReadBoolSettingAsync(
-        FileOperationService fileOps,
+        ISettingsBackend fileOps,
         string key,
         bool fallback,
         CancellationToken cancellationToken)
@@ -246,7 +267,7 @@ internal static class WorkspaceSettingsStore
     }
 
     private static async Task<double> ReadDoubleSettingAsync(
-        FileOperationService fileOps,
+        ISettingsBackend fileOps,
         string key,
         double fallback,
         CancellationToken cancellationToken)

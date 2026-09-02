@@ -7,7 +7,7 @@ using SimpleFile.Ipc;
 
 namespace SimpleFile.App;
 
-public sealed partial class DiskCleanupDialog : ContentDialog
+public sealed partial class DiskCleanupDialog : ContentDialog, IScanDialog<CleanupResult>
 {
     private const int LargeFileLimit = 50;
     private const int DuplicateGroupLimit = 25;
