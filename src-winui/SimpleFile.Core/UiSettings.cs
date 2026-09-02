@@ -34,6 +34,7 @@ public sealed class UiSettings
     public double SidebarWidth { get; set; } = SidebarDefaultWidth;
     public bool ShowFolderSizes { get; set; }
     public bool EnableGitIntegration { get; set; } = true;
+    public bool ProgressQueueVisible { get; set; }
     public string StartLocation { get; set; } = "home";
     public string CustomPath { get; set; } = "";
     public string LastPath { get; set; } = "";

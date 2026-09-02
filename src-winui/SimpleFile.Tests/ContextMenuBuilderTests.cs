@@ -245,6 +245,7 @@ public class ContextMenuBuilderTests
                 ToolbarOverflowPlanner.NewFolder,
                 ToolbarOverflowPlanner.NewFile,
                 ToolbarOverflowPlanner.DualPane,
+                ToolbarOverflowPlanner.Profiles,
                 ToolbarOverflowPlanner.ViewOptions,
                 ToolbarOverflowPlanner.Settings,
             ],
@@ -256,12 +257,16 @@ public class ContextMenuBuilderTests
         Assert.Equal("overflow-new-file", overflowed[3].Id);
         Assert.Equal("overflow-dual-pane", overflowed[4].Id);
         Assert.Equal("Open second pane", overflowed[4].Label);
-        Assert.Equal("overflow-view", overflowed[5].Id);
-        Assert.Equal("overflow-settings", overflowed[6].Id);
+        Assert.Equal("overflow-profiles", overflowed[5].Id);
+        Assert.Equal("overflow-view", overflowed[6].Id);
+        Assert.Equal("overflow-settings", overflowed[7].Id);
         Assert.Equal(ContextMenuIconCatalog.OpenPane, overflowed[4].IconGlyph);
-        Assert.Equal(ContextMenuIconCatalog.ViewAll, overflowed[5].IconGlyph);
-        Assert.Equal(ContextMenuIconCatalog.Settings, overflowed[6].IconGlyph);
-        Assert.Contains(overflowed[5].Children, child => child.Id == "view:details");
+        Assert.Equal(ContextMenuIconCatalog.Switch, overflowed[5].IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.ViewAll, overflowed[6].IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.Settings, overflowed[7].IconGlyph);
+        Assert.Contains(overflowed[5].Children, child => child.Id == "profile:save");
+        Assert.Contains(overflowed[5].Children, child => child.Id == "profile:manage");
+        Assert.Contains(overflowed[6].Children, child => child.Id == "view:details");
         Assert.Contains(overflowed, entry => entry.Id == "ctx-duplicates");
         Assert.DoesNotContain(overflowed, entry => entry.Id == "ctx-close-dual-pane");
 

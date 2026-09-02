@@ -203,6 +203,21 @@ public static class ContextMenuBuilder
             items.Add(Item("overflow-dual-pane", "Open second pane", shortcut: "F6"));
         }
 
+        if (Has(ToolbarOverflowPlanner.Profiles))
+        {
+            items.Add(new ContextMenuEntry
+            {
+                Id = "overflow-profiles",
+                Label = "Profiles",
+                IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-profiles"),
+                Children =
+                [
+                    Item("profile:save", "Save current profile..."),
+                    Item("profile:manage", "Manage profiles..."),
+                ],
+            });
+        }
+
         if (Has(ToolbarOverflowPlanner.ViewOptions))
         {
             items.Add(new ContextMenuEntry

@@ -115,6 +115,35 @@ public sealed class ColumnLayout
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
+    public List<string> SnapshotVisibleIds()
+    {
+        return VisibleIds
+            .Where(id => Find(id) is not null)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    public void RestoreVisibleIds(IReadOnlyList<string>? ids)
+    {
+        if (ids is null || ids.Count == 0)
+        {
+            return;
+        }
+
+        var visible = ids
+            .Where(id => !string.IsNullOrWhiteSpace(id) && Find(id) is not null)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (visible.Count == 0)
+        {
+            return;
+        }
+
+        VisibleIds.Clear();
+        VisibleIds.AddRange(visible);
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
     public Dictionary<string, double> SnapshotWidths()
     {
         return Columns.ToDictionary(column => column.Id, column => column.Width, StringComparer.Ordinal);

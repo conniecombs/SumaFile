@@ -55,6 +55,7 @@ public sealed class ExplorerWorkspace
     public UiSettings Settings { get; private set; }
     public ExplorerPane Primary { get; }
     public ExplorerPane Secondary { get; }
+    public string ActiveProfileId { get; private set; } = "";
 
     public string HomePath { get; private set; } = "";
     public bool DualPaneEnabled { get; private set; }
@@ -1794,6 +1795,303 @@ public sealed class ExplorerWorkspace
         {
             return false;
         }
+    }
+
+    public async Task<IReadOnlyList<WorkspaceProfile>> ListWorkspaceProfilesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
+        ActiveProfileId = document.ActiveProfileId;
+        var builtIns = WorkspaceProfileTemplates.All(HomePath).Select(profile => profile.Clone()).ToList();
+        var custom = document.Profiles
+            .OrderBy(profile => profile.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(profile => profile.Clone())
+            .ToList();
+        return [.. builtIns, .. custom];
+    }
+
+    public async Task<WorkspaceProfile> SaveWorkspaceProfileAsync(
+        string name,
+        bool overwrite = false,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedName = WorkspaceProfilesDocument.NormalizeName(name);
+        if (string.IsNullOrWhiteSpace(normalizedName))
+        {
+            throw new ArgumentException("Profile name cannot be empty.", nameof(name));
+        }
+
+        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
+        var builtIn = WorkspaceProfileTemplates.All(HomePath).FirstOrDefault(profile =>
+            string.Equals(profile.Name, normalizedName, StringComparison.OrdinalIgnoreCase));
+        if (builtIn is not null)
+        {
+            throw new InvalidOperationException($"A built-in profile named \"{normalizedName}\" already exists.");
+        }
+
+        var existing = document.FindByName(normalizedName);
+        if (existing is not null && !overwrite)
+        {
+            throw new InvalidOperationException($"A profile named \"{normalizedName}\" already exists.");
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var saved = existing ?? new WorkspaceProfile
+        {
+            Id = WorkspaceProfilesDocument.NewId(),
+            CreatedAt = now,
+        };
+
+        saved.Name = normalizedName;
+        saved.UpdatedAt = now;
+        saved.Layout = CaptureLayout();
+        saved.Chrome = CaptureChromeLayout();
+        if (existing is null)
+        {
+            document.Profiles.Add(saved);
+        }
+
+        document.ActiveProfileId = saved.Id;
+        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+        ActiveProfileId = saved.Id;
+        return saved.Clone();
+    }
+
+    public async Task<WorkspaceProfile> OverwriteWorkspaceProfileAsync(
+        string id,
+        CancellationToken cancellationToken = default)
+    {
+        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
+        var saved = document.FindById(id)
+            ?? throw new KeyNotFoundException("Profile was not found.");
+        saved.UpdatedAt = DateTimeOffset.UtcNow;
+        saved.Layout = CaptureLayout();
+        saved.Chrome = CaptureChromeLayout();
+        document.ActiveProfileId = saved.Id;
+        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+        ActiveProfileId = saved.Id;
+        return saved.Clone();
+    }
+
+    public async Task<WorkspaceProfile> DuplicateWorkspaceProfileAsync(
+        string id,
+        string? name = null,
+        CancellationToken cancellationToken = default)
+    {
+        var profiles = await ListWorkspaceProfilesAsync(cancellationToken).ConfigureAwait(false);
+        var source = profiles.FirstOrDefault(profile =>
+            string.Equals(profile.Id, id, StringComparison.OrdinalIgnoreCase))
+            ?? throw new KeyNotFoundException("Profile was not found.");
+
+        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
+        var cloneName = UniqueWorkspaceProfileName(
+            string.IsNullOrWhiteSpace(name) ? $"{source.Name} copy" : name,
+            profiles);
+        var clone = source.CloneAsUser(cloneName);
+        if (!source.IsBuiltIn && string.IsNullOrWhiteSpace(clone.SourceProfileId))
+        {
+            clone.SourceProfileId = source.Id;
+        }
+
+        document.Profiles.Add(clone);
+        document.ActiveProfileId = clone.Id;
+        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+        ActiveProfileId = clone.Id;
+        return clone.Clone();
+    }
+
+    public async Task<WorkspaceProfile> RenameWorkspaceProfileAsync(
+        string id,
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedName = WorkspaceProfilesDocument.NormalizeName(name);
+        if (string.IsNullOrWhiteSpace(normalizedName))
+        {
+            throw new ArgumentException("Profile name cannot be empty.", nameof(name));
+        }
+
+        if (WorkspaceProfileTemplates.IsBuiltInId(id))
+        {
+            throw new InvalidOperationException("Built-in profiles cannot be renamed. Duplicate it first.");
+        }
+
+        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
+        var saved = document.FindById(id)
+            ?? throw new KeyNotFoundException("Profile was not found.");
+        var profiles = await ListWorkspaceProfilesAsync(cancellationToken).ConfigureAwait(false);
+        if (profiles.Any(profile =>
+                !string.Equals(profile.Id, id, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(profile.Name, normalizedName, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException($"A profile named \"{normalizedName}\" already exists.");
+        }
+
+        saved.Name = normalizedName;
+        saved.UpdatedAt = DateTimeOffset.UtcNow;
+        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+        return saved.Clone();
+    }
+
+    public async Task<WorkspaceProfile> ResetWorkspaceProfileAsync(
+        string id,
+        CancellationToken cancellationToken = default)
+    {
+        if (WorkspaceProfileTemplates.Find(id, HomePath) is { } builtIn)
+        {
+            return builtIn.Clone();
+        }
+
+        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
+        var saved = document.FindById(id)
+            ?? throw new KeyNotFoundException("Profile was not found.");
+        if (string.IsNullOrWhiteSpace(saved.SourceProfileId))
+        {
+            throw new InvalidOperationException("This profile does not have a reset source.");
+        }
+
+        var source = await FindWorkspaceProfileAsync(saved.SourceProfileId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("The reset source profile was not found.");
+        var sourceClone = source.Clone();
+        saved.Layout = sourceClone.Layout;
+        saved.Chrome = sourceClone.Chrome;
+        saved.UpdatedAt = DateTimeOffset.UtcNow;
+        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+        return saved.Clone();
+    }
+
+    public async Task DeleteWorkspaceProfileAsync(string id, CancellationToken cancellationToken = default)
+    {
+        if (WorkspaceProfileTemplates.IsBuiltInId(id))
+        {
+            throw new InvalidOperationException("Built-in profiles cannot be deleted.");
+        }
+
+        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
+        var saved = document.FindById(id)
+            ?? throw new KeyNotFoundException("Profile was not found.");
+        document.Profiles.Remove(saved);
+        if (string.Equals(document.ActiveProfileId, saved.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            document.ActiveProfileId = "";
+        }
+
+        await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+        ActiveProfileId = document.ActiveProfileId;
+    }
+
+    public async Task ApplyWorkspaceProfileAsync(string id, CancellationToken cancellationToken = default)
+    {
+        var profile = await FindWorkspaceProfileAsync(id, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Profile was not found.");
+        var clone = profile.Clone();
+        (clone.Chrome ?? new WorkspaceChromeLayout()).Apply(Settings, Columns);
+        await ApplyLayoutAsync(clone.Layout, cancellationToken).ConfigureAwait(false);
+        ActiveProfileId = clone.Id;
+        if (FileOps is not null)
+        {
+            var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
+            document.ActiveProfileId = clone.Id;
+            await SaveWorkspaceProfilesDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+        }
+
+        await SaveWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false);
+        await SaveUiSettingsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<string> ExportWorkspaceProfileAsync(
+        string id,
+        CancellationToken cancellationToken = default)
+    {
+        var profile = await FindWorkspaceProfileAsync(id, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException("Profile was not found.");
+        return WorkspaceProfileExportDocument.ToJson(profile);
+    }
+
+    private async Task<WorkspaceProfile?> FindWorkspaceProfileAsync(
+        string id,
+        CancellationToken cancellationToken)
+    {
+        if (WorkspaceProfileTemplates.Find(id, HomePath) is { } builtIn)
+        {
+            return builtIn;
+        }
+
+        var document = await LoadWorkspaceProfilesDocumentAsync(cancellationToken).ConfigureAwait(false);
+        return document.FindById(id);
+    }
+
+    private async Task<WorkspaceProfilesDocument> LoadWorkspaceProfilesDocumentAsync(
+        CancellationToken cancellationToken)
+    {
+        if (FileOps is null)
+        {
+            return new WorkspaceProfilesDocument();
+        }
+
+        var json = await FileOps.GetSettingAsync(
+            WorkspaceProfilesDocument.SettingsKey,
+            cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(json))
+        {
+            return WorkspaceProfilesDocument.FromJson(json);
+        }
+
+        var legacyJson = await FileOps.GetSettingAsync(
+            SavedWorkspaceLayoutsDocument.SettingsKey,
+            cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(legacyJson))
+        {
+            return new WorkspaceProfilesDocument();
+        }
+
+        var migrated = WorkspaceProfilesDocument.FromLegacyLayouts(
+            SavedWorkspaceLayoutsDocument.FromJson(legacyJson));
+        await SaveWorkspaceProfilesDocumentAsync(migrated, cancellationToken).ConfigureAwait(false);
+        return migrated;
+    }
+
+    private async Task SaveWorkspaceProfilesDocumentAsync(
+        WorkspaceProfilesDocument document,
+        CancellationToken cancellationToken)
+    {
+        if (FileOps is null)
+        {
+            throw new InvalidOperationException("Settings service is required for workspace profiles.");
+        }
+
+        await FileOps.SetSettingAsync(
+            WorkspaceProfilesDocument.SettingsKey,
+            document.ToJson(),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string UniqueWorkspaceProfileName(
+        string? requested,
+        IReadOnlyList<WorkspaceProfile> profiles)
+    {
+        var baseName = WorkspaceProfilesDocument.NormalizeName(requested);
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            baseName = "Profile";
+        }
+
+        var used = profiles.Select(profile => profile.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!used.Contains(baseName))
+        {
+            return baseName;
+        }
+
+        for (var index = 2; index < 1000; index++)
+        {
+            var candidate = $"{baseName} {index}";
+            if (!used.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return $"{baseName} copy";
     }
 
     public async Task<IReadOnlyList<SavedWorkspaceLayout>> ListSavedWorkspaceLayoutsAsync(

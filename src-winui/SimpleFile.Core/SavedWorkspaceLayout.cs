@@ -131,6 +131,15 @@ public sealed class SavedWorkspaceLayout
 
 public sealed class WorkspaceChromeLayout
 {
+    [JsonPropertyName("keepFoldersOnTop")]
+    public bool KeepFoldersOnTop { get; set; } = true;
+
+    [JsonPropertyName("enableGitIntegration")]
+    public bool EnableGitIntegration { get; set; } = true;
+
+    [JsonPropertyName("progressQueueVisible")]
+    public bool ProgressQueueVisible { get; set; }
+
     [JsonPropertyName("previewVisible")]
     public bool PreviewVisible { get; set; } = true;
 
@@ -158,6 +167,9 @@ public sealed class WorkspaceChromeLayout
     [JsonPropertyName("columnPreset")]
     public string ColumnPreset { get; set; } = "default";
 
+    [JsonPropertyName("visibleColumnIds")]
+    public List<string> VisibleColumnIds { get; set; } = [];
+
     [JsonPropertyName("columnWidths")]
     public Dictionary<string, double> ColumnWidths { get; set; } = new(StringComparer.Ordinal);
 
@@ -165,6 +177,9 @@ public sealed class WorkspaceChromeLayout
     {
         return new WorkspaceChromeLayout
         {
+            KeepFoldersOnTop = settings.KeepFoldersOnTop,
+            EnableGitIntegration = settings.EnableGitIntegration,
+            ProgressQueueVisible = settings.ProgressQueueVisible,
             PreviewVisible = settings.PreviewVisible,
             PreviewWidth = UiSettings.NormalizePreviewWidth(settings.PreviewWidth),
             SidebarVisible = settings.SidebarVisible,
@@ -174,6 +189,7 @@ public sealed class WorkspaceChromeLayout
             QuickAccessCollapsed = settings.QuickAccessCollapsed,
             MyPcCollapsed = settings.MyPcCollapsed,
             ColumnPreset = UiSettings.NormalizeColumnPreset(settings.ColumnPreset),
+            VisibleColumnIds = columns.SnapshotVisibleIds(),
             ColumnWidths = columns.SnapshotWidths(),
         };
     }
@@ -181,6 +197,9 @@ public sealed class WorkspaceChromeLayout
     public void Apply(UiSettings settings, ColumnLayout columns)
     {
         Normalize();
+        settings.KeepFoldersOnTop = KeepFoldersOnTop;
+        settings.EnableGitIntegration = EnableGitIntegration;
+        settings.ProgressQueueVisible = ProgressQueueVisible;
         settings.PreviewVisible = PreviewVisible;
         settings.PreviewWidth = PreviewWidth;
         settings.SidebarVisible = SidebarVisible;
@@ -192,6 +211,7 @@ public sealed class WorkspaceChromeLayout
         settings.ColumnPreset = ColumnPreset;
         settings.ColumnWidths = new Dictionary<string, double>(ColumnWidths, StringComparer.Ordinal);
         columns.ApplyPreset(settings.ColumnPreset);
+        columns.RestoreVisibleIds(VisibleColumnIds);
         columns.RestoreWidths(settings.ColumnWidths);
     }
 
@@ -202,6 +222,11 @@ public sealed class WorkspaceChromeLayout
         DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(DualPanePrimaryPercent);
         DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(DualPanePrimaryWidth);
         ColumnPreset = UiSettings.NormalizeColumnPreset(ColumnPreset);
+        var knownColumns = new ColumnLayout();
+        VisibleColumnIds = VisibleColumnIds
+            .Where(id => !string.IsNullOrWhiteSpace(id) && knownColumns.Find(id) is not null)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
         ColumnWidths = ColumnWidths
             .Where(pair => !string.IsNullOrWhiteSpace(pair.Key)
                 && !double.IsNaN(pair.Value)

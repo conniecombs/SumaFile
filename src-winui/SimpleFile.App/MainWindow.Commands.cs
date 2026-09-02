@@ -6,6 +6,8 @@ using Microsoft.UI.Xaml.Media;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
+using Windows.Storage.Pickers;
 using Windows.System;
 
 namespace SimpleFile.App;
@@ -38,6 +40,21 @@ internal sealed class OperationHistoryRow
     public override string ToString()
     {
         return $"{Record.Status} · {Record.Description}";
+    }
+}
+
+internal sealed class WorkspaceProfileListRow
+{
+    public WorkspaceProfileListRow(WorkspaceProfile profile)
+    {
+        Profile = profile;
+    }
+
+    public WorkspaceProfile Profile { get; }
+
+    public override string ToString()
+    {
+        return Profile.IsBuiltIn ? $"{Profile.Name} · Built-in" : Profile.Name;
     }
 }
 
@@ -792,6 +809,27 @@ public sealed partial class MainWindow
             case "settings":
                 await ShowSettingsAsync();
                 break;
+            case "profile-manage":
+                await ShowWorkspaceProfileManagerAsync();
+                break;
+            case "profile-save":
+                await PromptSaveWorkspaceProfileAsync();
+                break;
+            case "profile-standard":
+                await ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.StandardId);
+                break;
+            case "profile-developer":
+                await ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.DeveloperId);
+                break;
+            case "profile-photos":
+                await ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.PhotosId);
+                break;
+            case "profile-transfer":
+                await ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.TransferId);
+                break;
+            case "profile-minimal":
+                await ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.MinimalId);
+                break;
             case "keyboard-help":
                 await ShowKeyboardHelpAsync();
                 break;
@@ -902,7 +940,7 @@ public sealed partial class MainWindow
             SavedLayoutsHost.Children.Clear();
             SavedLayoutsHost.Children.Add(new TextBlock
             {
-                Text = "Loading layouts...",
+                Text = "Loading profiles...",
                 FontSize = 12,
                 Opacity = 0.65,
             });
@@ -970,36 +1008,80 @@ public sealed partial class MainWindow
     private async void OnViewSaveLayoutClicked(object sender, RoutedEventArgs e)
     {
         PrimaryViewButton.Flyout?.Hide();
-        await RunUiActionAsync("Layout", PromptSaveNamedLayoutAsync);
+        await RunUiActionAsync("Profile", PromptSaveWorkspaceProfileAsync);
+    }
+
+    private async void OnWorkspaceProfileSaveClicked(object sender, RoutedEventArgs e)
+    {
+        WorkspaceProfileButton.Flyout?.Hide();
+        await RunUiActionAsync("Profile", PromptSaveWorkspaceProfileAsync);
+    }
+
+    private async void OnWorkspaceProfileManageClicked(object sender, RoutedEventArgs e)
+    {
+        WorkspaceProfileButton.Flyout?.Hide();
+        await RunUiActionAsync("Profile", ShowWorkspaceProfileManagerAsync);
+    }
+
+    private async void OnWorkspaceProfilesFlyoutOpening(object sender, object e)
+    {
+        WorkspaceProfilesHost.Children.Clear();
+        WorkspaceProfilesHost.Children.Add(new TextBlock
+        {
+            Text = "Loading profiles...",
+            FontSize = 12,
+            Opacity = 0.65,
+        });
+
+        try
+        {
+            await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            WorkspaceProfilesHost.Children.Clear();
+            WorkspaceProfilesHost.Children.Add(new TextBlock
+            {
+                Text = exception.Message,
+                FontSize = 12,
+                Opacity = 0.65,
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
     }
 
     private async Task RefreshSavedLayoutsHostAsync()
     {
-        SavedLayoutsHost.Children.Clear();
+        await RefreshWorkspaceProfilesHostAsync(SavedLayoutsHost);
+    }
+
+    private async Task RefreshWorkspaceProfilesHostAsync(StackPanel host)
+    {
+        host.Children.Clear();
         if (_workspace is null)
         {
             return;
         }
 
-        var layouts = await _workspace.ListSavedWorkspaceLayoutsAsync();
-        if (layouts.Count == 0)
+        var profiles = await _workspace.ListWorkspaceProfilesAsync();
+        if (profiles.Count == 0)
         {
-            SavedLayoutsHost.Children.Add(new TextBlock
+            host.Children.Add(new TextBlock
             {
-                Text = "No saved layouts",
+                Text = "No profiles",
                 FontSize = 12,
                 Opacity = 0.65,
             });
             return;
         }
 
-        foreach (var layout in layouts)
+        foreach (var profile in profiles)
         {
-            SavedLayoutsHost.Children.Add(CreateSavedLayoutRow(layout));
+            host.Children.Add(CreateWorkspaceProfileRow(profile));
         }
     }
 
-    private Grid CreateSavedLayoutRow(SavedWorkspaceLayout layout)
+    private Grid CreateWorkspaceProfileRow(WorkspaceProfile profile)
     {
         var row = new Grid
         {
@@ -1007,57 +1089,65 @@ public sealed partial class MainWindow
         };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var profileLabel = new Grid
+        {
+            ColumnSpacing = 8,
+        };
+        profileLabel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        profileLabel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        profileLabel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var icon = CreateMenuIcon(ContextMenuIconCatalog.ViewAll);
+        Grid.SetColumn(icon, 0);
+        profileLabel.Children.Add(icon);
+        var name = new TextBlock
+        {
+            Text = profile.Name,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        Grid.SetColumn(name, 1);
+        profileLabel.Children.Add(name);
+        if (profile.IsBuiltIn)
+        {
+            var badge = new TextBlock
+            {
+                Text = "Built-in",
+                VerticalAlignment = VerticalAlignment.Center,
+                FontSize = 11,
+                Opacity = 0.62,
+            };
+            Grid.SetColumn(badge, 2);
+            profileLabel.Children.Add(badge);
+        }
 
         var apply = new Button
         {
-            Tag = layout.Id,
+            Tag = profile.Id,
             Style = ChromeStyle("SfGhostButtonStyle"),
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Padding = new Thickness(8, 4, 8, 4),
-            Content = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 8,
-                Children =
-                {
-                    CreateMenuIcon(ContextMenuIconCatalog.ViewAll),
-                    new TextBlock
-                    {
-                        Text = layout.Name,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                    },
-                },
-            },
+            Content = profileLabel,
         };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(apply, $"Apply layout {layout.Name}");
-        ToolTipService.SetToolTip(apply, "Apply layout");
-        apply.Click += OnApplySavedLayoutClicked;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(apply, $"Apply profile {profile.Name}");
+        ToolTipService.SetToolTip(apply, "Apply profile");
+        apply.Click += OnApplyWorkspaceProfileClicked;
         Grid.SetColumn(apply, 0);
         row.Children.Add(apply);
 
-        var overwrite = CreateSavedLayoutIconButton(layout.Id, "Overwrite layout", ContextMenuIconCatalog.Save, OnOverwriteSavedLayoutClicked);
-        Grid.SetColumn(overwrite, 1);
-        row.Children.Add(overwrite);
-
-        var delete = CreateSavedLayoutIconButton(layout.Id, "Delete layout", ContextMenuIconCatalog.Delete, OnDeleteSavedLayoutClicked);
-        Grid.SetColumn(delete, 2);
-        row.Children.Add(delete);
+        var more = CreateWorkspaceProfileMoreButton(profile);
+        Grid.SetColumn(more, 1);
+        row.Children.Add(more);
 
         return row;
     }
 
-    private Button CreateSavedLayoutIconButton(
-        string id,
-        string tooltip,
-        string glyph,
-        RoutedEventHandler handler)
+    private Button CreateWorkspaceProfileMoreButton(WorkspaceProfile profile)
     {
         var button = new Button
         {
-            Tag = id,
+            Tag = profile.Id,
             Width = 30,
             Height = 30,
             MinWidth = 30,
@@ -1067,16 +1157,53 @@ public sealed partial class MainWindow
             {
                 FontFamily = new FontFamily("Segoe Fluent Icons"),
                 FontSize = 12,
-                Glyph = glyph,
+                Glyph = "\uE712",
             },
         };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, tooltip);
-        ToolTipService.SetToolTip(button, tooltip);
-        button.Click += handler;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, $"Profile actions for {profile.Name}");
+        ToolTipService.SetToolTip(button, "Profile actions");
+
+        var flyout = new MenuFlyout();
+        flyout.Items.Add(CreateWorkspaceProfileMenuItem($"profile:duplicate:{profile.Id}", "Duplicate", ContextMenuIconCatalog.Copy));
+        flyout.Items.Add(CreateWorkspaceProfileMenuItem($"profile:export:{profile.Id}", "Export...", ContextMenuIconCatalog.Import));
+        if (profile.CanRename)
+        {
+            flyout.Items.Add(CreateWorkspaceProfileMenuItem($"profile:rename:{profile.Id}", "Rename...", ContextMenuIconCatalog.Rename));
+        }
+
+        if (profile.CanOverwrite)
+        {
+            flyout.Items.Add(CreateWorkspaceProfileMenuItem($"profile:overwrite:{profile.Id}", "Overwrite with current layout", ContextMenuIconCatalog.Save));
+        }
+
+        if (profile.CanReset)
+        {
+            flyout.Items.Add(CreateWorkspaceProfileMenuItem($"profile:reset:{profile.Id}", "Reset", ContextMenuIconCatalog.EraseTool));
+        }
+
+        if (profile.CanDelete)
+        {
+            flyout.Items.Add(new MenuFlyoutSeparator());
+            flyout.Items.Add(CreateWorkspaceProfileMenuItem($"profile:delete:{profile.Id}", "Delete", ContextMenuIconCatalog.Delete));
+        }
+
+        button.Flyout = flyout;
         return button;
     }
 
-    private async void OnApplySavedLayoutClicked(object sender, RoutedEventArgs e)
+    private MenuFlyoutItem CreateWorkspaceProfileMenuItem(string tag, string text, string glyph)
+    {
+        var item = new MenuFlyoutItem
+        {
+            Text = text,
+            Tag = tag,
+            Icon = CreateMenuIcon(glyph),
+        };
+        item.Click += OnWorkspaceProfileMenuActionClick;
+        return item;
+    }
+
+    private async void OnApplyWorkspaceProfileClicked(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { Tag: string id } || _workspace is null)
         {
@@ -1084,52 +1211,43 @@ public sealed partial class MainWindow
         }
 
         PrimaryViewButton.Flyout?.Hide();
-        await RunUiActionAsync("Layout", () => ApplySavedLayoutByIdAsync(id));
+        WorkspaceProfileButton.Flyout?.Hide();
+        await RunUiActionAsync("Profile", () => ApplyWorkspaceProfileByIdAsync(id));
     }
 
-    private async void OnOverwriteSavedLayoutClicked(object sender, RoutedEventArgs e)
+    private async void OnWorkspaceProfileMenuActionClick(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { Tag: string id } || _workspace is null)
+        if (sender is not MenuFlyoutItem { Tag: string tag } || _workspace is null)
         {
             return;
         }
 
-        PrimaryViewButton.Flyout?.Hide();
-        await RunUiActionAsync("Layout", () => PromptOverwriteSavedLayoutAsync(id));
+        await RunUiActionAsync("Profile", () => RunWorkspaceProfileMenuActionAsync(tag));
     }
 
-    private async void OnDeleteSavedLayoutClicked(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { Tag: string id } || _workspace is null)
-        {
-            return;
-        }
-
-        PrimaryViewButton.Flyout?.Hide();
-        await RunUiActionAsync("Layout", () => PromptDeleteSavedLayoutAsync(id));
-    }
-
-    private async Task ApplySavedLayoutByIdAsync(string id)
+    private async Task ApplyWorkspaceProfileByIdAsync(string id)
     {
         if (_workspace is null)
         {
             return;
         }
 
-        await _workspace.ApplySavedWorkspaceLayoutAsync(id);
+        await _workspace.ApplyWorkspaceProfileAsync(id);
         SyncFromWorkspace();
-        ShowMessage("Layout", "Layout applied.", InfoBarSeverity.Success);
+        var profile = (await _workspace.ListWorkspaceProfilesAsync()).FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+        ShowMessage("Profile", $"Applied \"{profile?.Name ?? "profile"}\".", InfoBarSeverity.Success);
     }
 
-    private async Task PromptSaveNamedLayoutAsync()
+    private async Task PromptSaveWorkspaceProfileAsync()
     {
         if (_workspace is null)
         {
             return;
         }
 
-        var layouts = await _workspace.ListSavedWorkspaceLayoutsAsync();
-        var suggestedName = SuggestedLayoutName(layouts);
+        var profiles = await _workspace.ListWorkspaceProfilesAsync();
+        var suggestedName = SuggestedProfileName(profiles);
         var nameBox = new TextBox
         {
             Header = "Name",
@@ -1140,7 +1258,7 @@ public sealed partial class MainWindow
         };
         var dialog = new ContentDialog
         {
-            Title = "Save layout",
+            Title = "Save profile",
             Content = nameBox,
             PrimaryButtonText = "Save",
             CloseButtonText = "Cancel",
@@ -1153,30 +1271,36 @@ public sealed partial class MainWindow
             return;
         }
 
-        var name = SavedWorkspaceLayoutsDocument.NormalizeName(nameBox.Text);
+        var name = WorkspaceProfilesDocument.NormalizeName(nameBox.Text);
         if (string.IsNullOrWhiteSpace(name))
         {
-            ShowMessage("Layout", "Layout name cannot be empty.", InfoBarSeverity.Warning);
+            ShowMessage("Profile", "Profile name cannot be empty.", InfoBarSeverity.Warning);
             return;
         }
 
-        var duplicate = layouts.FirstOrDefault(layout =>
-            string.Equals(layout.Name, name, StringComparison.OrdinalIgnoreCase));
+        var duplicate = profiles.FirstOrDefault(profile =>
+            string.Equals(profile.Name, name, StringComparison.OrdinalIgnoreCase));
         if (duplicate is not null
-            && await ConfirmSavedLayoutOverwriteAsync(name) != ContentDialogResult.Primary)
+            && (!duplicate.CanOverwrite || await ConfirmWorkspaceProfileOverwriteAsync(name) != ContentDialogResult.Primary))
         {
+            if (!duplicate.CanOverwrite)
+            {
+                ShowMessage("Profile", $"\"{name}\" is a built-in profile. Choose another name.", InfoBarSeverity.Warning);
+            }
+
             return;
         }
 
-        var saved = await _workspace.SaveNamedWorkspaceLayoutAsync(name, overwrite: duplicate is not null);
+        var saved = await _workspace.SaveWorkspaceProfileAsync(name, overwrite: duplicate is not null);
         await RefreshSavedLayoutsHostAsync();
-        ShowMessage("Layout", $"Saved \"{saved.Name}\".", InfoBarSeverity.Success);
+        await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
+        ShowMessage("Profile", $"Saved \"{saved.Name}\".", InfoBarSeverity.Success);
     }
 
-    private static string SuggestedLayoutName(IReadOnlyList<SavedWorkspaceLayout> layouts)
+    private static string SuggestedProfileName(IReadOnlyList<WorkspaceProfile> profiles)
     {
-        const string baseName = "Layout";
-        var used = layouts.Select(layout => layout.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        const string baseName = "Profile";
+        var used = profiles.Select(profile => profile.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         for (var index = 1; index < 1000; index++)
         {
             var candidate = $"{baseName} {index}";
@@ -1189,31 +1313,96 @@ public sealed partial class MainWindow
         return baseName;
     }
 
-    private async Task PromptOverwriteSavedLayoutAsync(string id)
+    private async Task PromptDuplicateWorkspaceProfileAsync(string id)
     {
         if (_workspace is null)
         {
             return;
         }
 
-        var layout = (await _workspace.ListSavedWorkspaceLayoutsAsync()).FirstOrDefault(candidate =>
+        var profile = (await _workspace.ListWorkspaceProfilesAsync()).FirstOrDefault(candidate =>
             string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
-        if (layout is null || await ConfirmSavedLayoutOverwriteAsync(layout.Name) != ContentDialogResult.Primary)
+        if (profile is null)
         {
             return;
         }
 
-        var saved = await _workspace.OverwriteSavedWorkspaceLayoutAsync(id);
+        var name = await PromptProfileNameAsync("Duplicate profile", $"{profile.Name} copy", "Duplicate");
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        var saved = await _workspace.DuplicateWorkspaceProfileAsync(id, name);
         await RefreshSavedLayoutsHostAsync();
-        ShowMessage("Layout", $"Updated \"{saved.Name}\".", InfoBarSeverity.Success);
+        await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
+        ShowMessage("Profile", $"Duplicated \"{saved.Name}\".", InfoBarSeverity.Success);
     }
 
-    private async Task<ContentDialogResult> ConfirmSavedLayoutOverwriteAsync(string name)
+    private async Task PromptRenameWorkspaceProfileAsync(string id)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var profile = (await _workspace.ListWorkspaceProfilesAsync()).FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (profile is null || !profile.CanRename)
+        {
+            ShowMessage("Profile", "Built-in profiles cannot be renamed. Duplicate it first.", InfoBarSeverity.Warning);
+            return;
+        }
+
+        var name = await PromptProfileNameAsync("Rename profile", profile.Name, "Rename");
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        var saved = await _workspace.RenameWorkspaceProfileAsync(id, name);
+        await RefreshSavedLayoutsHostAsync();
+        await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
+        ShowMessage("Profile", $"Renamed to \"{saved.Name}\".", InfoBarSeverity.Success);
+    }
+
+    private async Task PromptOverwriteWorkspaceProfileAsync(string id)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var profile = (await _workspace.ListWorkspaceProfilesAsync()).FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (profile is null)
+        {
+            return;
+        }
+
+        if (!profile.CanOverwrite)
+        {
+            ShowMessage("Profile", "Built-in profiles cannot be overwritten. Duplicate it first.", InfoBarSeverity.Warning);
+            return;
+        }
+
+        if (await ConfirmWorkspaceProfileOverwriteAsync(profile.Name) != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var saved = await _workspace.OverwriteWorkspaceProfileAsync(id);
+        await RefreshSavedLayoutsHostAsync();
+        await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
+        ShowMessage("Profile", $"Updated \"{saved.Name}\".", InfoBarSeverity.Success);
+    }
+
+    private async Task<ContentDialogResult> ConfirmWorkspaceProfileOverwriteAsync(string name)
     {
         var dialog = new ContentDialog
         {
-            Title = "Overwrite layout?",
-            Content = $"Replace \"{name}\" with the current window layout?",
+            Title = "Overwrite profile?",
+            Content = $"Replace \"{name}\" with the current workspace profile?",
             PrimaryButtonText = "Overwrite",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
@@ -1222,24 +1411,74 @@ public sealed partial class MainWindow
         return await dialog.ShowAsync();
     }
 
-    private async Task PromptDeleteSavedLayoutAsync(string id)
+    private async Task PromptResetWorkspaceProfileAsync(string id)
     {
         if (_workspace is null)
         {
             return;
         }
 
-        var layout = (await _workspace.ListSavedWorkspaceLayoutsAsync()).FirstOrDefault(candidate =>
+        var profile = (await _workspace.ListWorkspaceProfilesAsync()).FirstOrDefault(candidate =>
             string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
-        if (layout is null)
+        if (profile is null)
         {
+            return;
+        }
+
+        if (!profile.CanReset)
+        {
+            ShowMessage("Profile", "This profile does not have a reset source.", InfoBarSeverity.Warning);
             return;
         }
 
         var dialog = new ContentDialog
         {
-            Title = "Delete layout?",
-            Content = $"Delete \"{layout.Name}\"?",
+            Title = "Reset profile?",
+            Content = profile.IsBuiltIn
+                ? $"Apply the built-in defaults for \"{profile.Name}\"?"
+                : $"Reset \"{profile.Name}\" from its source profile?",
+            PrimaryButtonText = "Reset",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        await _workspace.ResetWorkspaceProfileAsync(id);
+        await _workspace.ApplyWorkspaceProfileAsync(id);
+        SyncFromWorkspace();
+        await RefreshSavedLayoutsHostAsync();
+        await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
+        ShowMessage("Profile", $"Reset \"{profile.Name}\".", InfoBarSeverity.Success);
+    }
+
+    private async Task PromptDeleteWorkspaceProfileAsync(string id)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var profile = (await _workspace.ListWorkspaceProfilesAsync()).FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (profile is null)
+        {
+            return;
+        }
+
+        if (!profile.CanDelete)
+        {
+            ShowMessage("Profile", "Built-in profiles cannot be deleted.", InfoBarSeverity.Warning);
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = "Delete profile?",
+            Content = $"Delete \"{profile.Name}\"?",
             PrimaryButtonText = "Delete",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
@@ -1250,9 +1489,245 @@ public sealed partial class MainWindow
             return;
         }
 
-        await _workspace.DeleteSavedWorkspaceLayoutAsync(id);
+        await _workspace.DeleteWorkspaceProfileAsync(id);
         await RefreshSavedLayoutsHostAsync();
-        ShowMessage("Layout", $"Deleted \"{layout.Name}\".", InfoBarSeverity.Success);
+        await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
+        ShowMessage("Profile", $"Deleted \"{profile.Name}\".", InfoBarSeverity.Success);
+    }
+
+    private async Task PromptExportWorkspaceProfileAsync(string id)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var profile = (await _workspace.ListWorkspaceProfilesAsync()).FirstOrDefault(candidate =>
+            string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (profile is null)
+        {
+            return;
+        }
+
+        var json = await _workspace.ExportWorkspaceProfileAsync(id);
+        var picker = new FileSavePicker
+        {
+            SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+            SuggestedFileName = SafeProfileExportName(profile.Name) + ".sumafile-profile",
+        };
+        picker.FileTypeChoices.Add("SumaFile profile", new[] { ".json" });
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+
+        var file = await picker.PickSaveFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        await FileIO.WriteTextAsync(file, json);
+        ShowMessage("Profile", $"Exported \"{profile.Name}\".", InfoBarSeverity.Success);
+    }
+
+    private async Task<string?> PromptProfileNameAsync(string title, string suggestedName, string action)
+    {
+        var nameBox = new TextBox
+        {
+            Header = "Name",
+            Text = WorkspaceProfilesDocument.NormalizeName(suggestedName),
+            SelectionStart = 0,
+            SelectionLength = WorkspaceProfilesDocument.NormalizeName(suggestedName).Length,
+            MinWidth = 320,
+        };
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = nameBox,
+            PrimaryButtonText = action,
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return null;
+        }
+
+        var name = WorkspaceProfilesDocument.NormalizeName(nameBox.Text);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            ShowMessage("Profile", "Profile name cannot be empty.", InfoBarSeverity.Warning);
+            return null;
+        }
+
+        return name;
+    }
+
+    private static string SafeProfileExportName(string name)
+    {
+        var safe = new string((name ?? "profile")
+            .Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '-' : ch)
+            .ToArray()).Trim();
+        return string.IsNullOrWhiteSpace(safe) ? "profile" : safe;
+    }
+
+    private async Task ShowWorkspaceProfileManagerAsync()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var list = new ListView
+        {
+            MinWidth = 520,
+            MaxHeight = 320,
+            SelectionMode = ListViewSelectionMode.Single,
+        };
+        var apply = new Button { Content = "Apply" };
+        var duplicate = new Button { Content = "Duplicate" };
+        var rename = new Button { Content = "Rename" };
+        var overwrite = new Button { Content = "Overwrite" };
+        var export = new Button { Content = "Export" };
+        var reset = new Button { Content = "Reset" };
+        var delete = new Button { Content = "Delete" };
+
+        WorkspaceProfile? SelectedProfile() =>
+            (list.SelectedItem as WorkspaceProfileListRow)?.Profile;
+
+        void UpdateButtons()
+        {
+            var selected = SelectedProfile();
+            apply.IsEnabled = selected is not null;
+            duplicate.IsEnabled = selected is not null;
+            export.IsEnabled = selected is not null;
+            rename.IsEnabled = selected?.CanRename == true;
+            overwrite.IsEnabled = selected?.CanOverwrite == true;
+            reset.IsEnabled = selected?.CanReset == true;
+            delete.IsEnabled = selected?.CanDelete == true;
+        }
+
+        async Task RefreshListAsync(string? selectedId = null)
+        {
+            var profiles = await _workspace.ListWorkspaceProfilesAsync();
+            list.Items.Clear();
+            WorkspaceProfileListRow? selectedRow = null;
+            foreach (var profile in profiles)
+            {
+                var row = new WorkspaceProfileListRow(profile);
+                list.Items.Add(row);
+                if (string.Equals(profile.Id, selectedId ?? _workspace.ActiveProfileId, StringComparison.OrdinalIgnoreCase))
+                {
+                    selectedRow = row;
+                }
+            }
+
+            list.SelectedItem = selectedRow ?? (list.Items.Count > 0 ? list.Items[0] : null);
+            UpdateButtons();
+        }
+
+        list.SelectionChanged += (_, _) => UpdateButtons();
+        apply.Click += async (_, _) =>
+        {
+            if (SelectedProfile() is { } profile)
+            {
+                await ApplyWorkspaceProfileByIdAsync(profile.Id);
+                await RefreshListAsync(profile.Id);
+            }
+        };
+        duplicate.Click += async (_, _) =>
+        {
+            if (SelectedProfile() is { } profile)
+            {
+                await PromptDuplicateWorkspaceProfileAsync(profile.Id);
+                await RefreshListAsync(_workspace.ActiveProfileId);
+            }
+        };
+        rename.Click += async (_, _) =>
+        {
+            if (SelectedProfile() is { } profile)
+            {
+                await PromptRenameWorkspaceProfileAsync(profile.Id);
+                await RefreshListAsync(profile.Id);
+            }
+        };
+        overwrite.Click += async (_, _) =>
+        {
+            if (SelectedProfile() is { } profile)
+            {
+                await PromptOverwriteWorkspaceProfileAsync(profile.Id);
+                await RefreshListAsync(profile.Id);
+            }
+        };
+        export.Click += async (_, _) =>
+        {
+            if (SelectedProfile() is { } profile)
+            {
+                await PromptExportWorkspaceProfileAsync(profile.Id);
+            }
+        };
+        reset.Click += async (_, _) =>
+        {
+            if (SelectedProfile() is { } profile)
+            {
+                await PromptResetWorkspaceProfileAsync(profile.Id);
+                await RefreshListAsync(profile.Id);
+            }
+        };
+        delete.Click += async (_, _) =>
+        {
+            if (SelectedProfile() is { } profile)
+            {
+                await PromptDeleteWorkspaceProfileAsync(profile.Id);
+                await RefreshListAsync();
+            }
+        };
+
+        foreach (var button in new[] { apply, duplicate, rename, overwrite, export, reset, delete })
+        {
+            button.HorizontalAlignment = HorizontalAlignment.Stretch;
+        }
+
+        var buttons = new Grid
+        {
+            ColumnSpacing = 8,
+            RowSpacing = 8,
+        };
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        buttons.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        buttons.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        AddProfileManagerButton(buttons, apply, row: 0, column: 0);
+        AddProfileManagerButton(buttons, duplicate, row: 0, column: 1);
+        AddProfileManagerButton(buttons, rename, row: 0, column: 2);
+        AddProfileManagerButton(buttons, overwrite, row: 0, column: 3);
+        AddProfileManagerButton(buttons, export, row: 1, column: 0);
+        AddProfileManagerButton(buttons, reset, row: 1, column: 1);
+        AddProfileManagerButton(buttons, delete, row: 1, column: 2);
+        var body = new StackPanel
+        {
+            Spacing = 12,
+            Children = { list, buttons },
+        };
+        await RefreshListAsync();
+
+        var dialog = new ContentDialog
+        {
+            Title = "Workspace profiles",
+            Content = body,
+            CloseButtonText = "Close",
+            XamlRoot = Content.XamlRoot,
+        };
+        await dialog.ShowAsync();
+    }
+
+    private static void AddProfileManagerButton(Grid host, Button button, int row, int column)
+    {
+        Grid.SetRow(button, row);
+        Grid.SetColumn(button, column);
+        host.Children.Add(button);
     }
 
     private void OnViewIconSizeSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -1385,15 +1860,15 @@ public sealed partial class MainWindow
         var overflow = _primaryToolbarOverflow;
 
         PopulateMenuFlyout(flyout, ContextMenuBuilder.BuildPaneMoreMenu(BuildContextMenuRequest(selected, overflow)));
-        if (overflow.Contains(ToolbarOverflowPlanner.ViewOptions))
+        if (overflow.Contains(ToolbarOverflowPlanner.Profiles))
         {
             try
             {
-                await AppendSavedLayoutOverflowMenuAsync(flyout);
+                await AppendWorkspaceProfileOverflowMenuAsync(flyout);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                ShowMessage("Layout", exception.Message, InfoBarSeverity.Warning);
+                ShowMessage("Profile", exception.Message, InfoBarSeverity.Warning);
             }
         }
     }
@@ -1494,64 +1969,64 @@ public sealed partial class MainWindow
         };
     }
 
-    private async Task AppendSavedLayoutOverflowMenuAsync(MenuFlyout flyout)
+    private async Task AppendWorkspaceProfileOverflowMenuAsync(MenuFlyout flyout)
     {
         if (_workspace is null)
         {
             return;
         }
 
-        var viewMenu = flyout.Items
+        var profilesMenu = flyout.Items
             .OfType<MenuFlyoutSubItem>()
-            .FirstOrDefault(item => string.Equals(item.Name, "overflow-view", StringComparison.Ordinal));
-        if (viewMenu is null)
+            .FirstOrDefault(item => string.Equals(item.Name, "overflow-profiles", StringComparison.Ordinal));
+        if (profilesMenu is null)
         {
             return;
         }
 
-        var layouts = await _workspace.ListSavedWorkspaceLayoutsAsync();
-        var layoutsMenu = new MenuFlyoutSubItem
-        {
-            Text = "Layouts",
-            Icon = CreateMenuIcon(ContextMenuIconCatalog.ViewAll),
-        };
-        layoutsMenu.Items.Add(CreateSavedLayoutMenuItem("layout:save", "Save current layout...", ContextMenuIconCatalog.Save));
-        if (layouts.Count > 0)
-        {
-            layoutsMenu.Items.Add(new MenuFlyoutSeparator());
-            foreach (var layout in layouts)
-            {
-                layoutsMenu.Items.Add(CreateSavedLayoutSubMenu(layout));
-            }
-        }
+        profilesMenu.Items.Clear();
+        profilesMenu.Items.Add(CreateWorkspaceProfileMenuItem("profile:save", "Save current profile...", ContextMenuIconCatalog.Save));
+        profilesMenu.Items.Add(CreateWorkspaceProfileMenuItem("profile:manage", "Manage profiles...", ContextMenuIconCatalog.Settings));
+        profilesMenu.Items.Add(new MenuFlyoutSeparator());
 
-        viewMenu.Items.Add(new MenuFlyoutSeparator());
-        viewMenu.Items.Add(layoutsMenu);
+        foreach (var profile in await _workspace.ListWorkspaceProfilesAsync())
+        {
+            profilesMenu.Items.Add(CreateWorkspaceProfileSubMenu(profile));
+        }
     }
 
-    private MenuFlyoutSubItem CreateSavedLayoutSubMenu(SavedWorkspaceLayout layout)
+    private MenuFlyoutSubItem CreateWorkspaceProfileSubMenu(WorkspaceProfile profile)
     {
         var sub = new MenuFlyoutSubItem
         {
-            Text = layout.Name,
+            Text = profile.IsBuiltIn ? $"{profile.Name} (Built-in)" : profile.Name,
             Icon = CreateMenuIcon(ContextMenuIconCatalog.ViewAll),
         };
-        sub.Items.Add(CreateSavedLayoutMenuItem($"layout:apply:{layout.Id}", "Apply", ContextMenuIconCatalog.ViewAll));
-        sub.Items.Add(CreateSavedLayoutMenuItem($"layout:overwrite:{layout.Id}", "Overwrite", ContextMenuIconCatalog.Save));
-        sub.Items.Add(CreateSavedLayoutMenuItem($"layout:delete:{layout.Id}", "Delete", ContextMenuIconCatalog.Delete));
-        return sub;
-    }
-
-    private MenuFlyoutItem CreateSavedLayoutMenuItem(string tag, string text, string glyph)
-    {
-        var item = new MenuFlyoutItem
+        sub.Items.Add(CreateWorkspaceProfileMenuItem($"profile:apply:{profile.Id}", "Apply", ContextMenuIconCatalog.ViewAll));
+        sub.Items.Add(CreateWorkspaceProfileMenuItem($"profile:duplicate:{profile.Id}", "Duplicate", ContextMenuIconCatalog.Copy));
+        sub.Items.Add(CreateWorkspaceProfileMenuItem($"profile:export:{profile.Id}", "Export...", ContextMenuIconCatalog.Import));
+        if (profile.CanRename)
         {
-            Text = text,
-            Tag = tag,
-            Icon = CreateMenuIcon(glyph),
-        };
-        item.Click += OnSavedLayoutMenuActionClick;
-        return item;
+            sub.Items.Add(CreateWorkspaceProfileMenuItem($"profile:rename:{profile.Id}", "Rename...", ContextMenuIconCatalog.Rename));
+        }
+
+        if (profile.CanOverwrite)
+        {
+            sub.Items.Add(CreateWorkspaceProfileMenuItem($"profile:overwrite:{profile.Id}", "Overwrite", ContextMenuIconCatalog.Save));
+        }
+
+        if (profile.CanReset)
+        {
+            sub.Items.Add(CreateWorkspaceProfileMenuItem($"profile:reset:{profile.Id}", "Reset", ContextMenuIconCatalog.EraseTool));
+        }
+
+        if (profile.CanDelete)
+        {
+            sub.Items.Add(new MenuFlyoutSeparator());
+            sub.Items.Add(CreateWorkspaceProfileMenuItem($"profile:delete:{profile.Id}", "Delete", ContextMenuIconCatalog.Delete));
+        }
+
+        return sub;
     }
 
     private async void OnContextMenuItemClick(object sender, RoutedEventArgs e)
@@ -1571,26 +2046,22 @@ public sealed partial class MainWindow
         await RunUiActionAsync("Context menu", () => RunContextCommandAsync(id, entry?.CommandParameter));
     }
 
-    private async void OnSavedLayoutMenuActionClick(object sender, RoutedEventArgs e)
+    private async Task RunWorkspaceProfileMenuActionAsync(string tag)
     {
-        if (sender is not MenuFlyoutItem { Tag: string tag })
+        if (tag == "profile:save")
         {
+            await PromptSaveWorkspaceProfileAsync();
             return;
         }
 
-        await RunUiActionAsync("Layout", () => RunSavedLayoutMenuActionAsync(tag));
-    }
-
-    private async Task RunSavedLayoutMenuActionAsync(string tag)
-    {
-        if (tag == "layout:save")
+        if (tag == "profile:manage")
         {
-            await PromptSaveNamedLayoutAsync();
+            await ShowWorkspaceProfileManagerAsync();
             return;
         }
 
         var parts = tag.Split(':', 3);
-        if (parts.Length != 3 || parts[0] != "layout")
+        if (parts.Length != 3 || parts[0] != "profile")
         {
             return;
         }
@@ -1598,13 +2069,25 @@ public sealed partial class MainWindow
         switch (parts[1])
         {
             case "apply":
-                await ApplySavedLayoutByIdAsync(parts[2]);
+                await ApplyWorkspaceProfileByIdAsync(parts[2]);
+                break;
+            case "duplicate":
+                await PromptDuplicateWorkspaceProfileAsync(parts[2]);
+                break;
+            case "rename":
+                await PromptRenameWorkspaceProfileAsync(parts[2]);
                 break;
             case "overwrite":
-                await PromptOverwriteSavedLayoutAsync(parts[2]);
+                await PromptOverwriteWorkspaceProfileAsync(parts[2]);
+                break;
+            case "export":
+                await PromptExportWorkspaceProfileAsync(parts[2]);
+                break;
+            case "reset":
+                await PromptResetWorkspaceProfileAsync(parts[2]);
                 break;
             case "delete":
-                await PromptDeleteSavedLayoutAsync(parts[2]);
+                await PromptDeleteWorkspaceProfileAsync(parts[2]);
                 break;
         }
     }
@@ -1628,6 +2111,12 @@ public sealed partial class MainWindow
         if (id.StartsWith("ctx-open-with-app-", StringComparison.Ordinal))
         {
             await OpenSelectedWithApplicationAsync(commandParameter);
+            return;
+        }
+
+        if (id.StartsWith("profile:", StringComparison.Ordinal))
+        {
+            await RunWorkspaceProfileMenuActionAsync(id);
             return;
         }
 

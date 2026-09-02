@@ -30,6 +30,10 @@ public sealed partial class PrimaryToolbarView : UserControl
     public Button NewFileButton => PrimaryNewFileButton;
     public Button DualPaneToggleButton => DualPaneButton;
     public Button ClosePaneButton => ClosePrimaryPaneButton;
+    public Button ProfileButton => WorkspaceProfileButton;
+    public StackPanel WorkspaceProfilesList => WorkspaceProfilesHost;
+    public Button WorkspaceProfileSave => WorkspaceProfileSaveButton;
+    public Button WorkspaceProfileManage => WorkspaceProfileManageButton;
     public Button ViewButton => PrimaryViewButton;
     public Button ViewDualPaneToggleButton => ViewDualPaneButton;
     public FontIcon ViewDualPaneGlyph => ViewDualPaneIcon;
@@ -57,6 +61,9 @@ public sealed partial class PrimaryToolbarView : UserControl
     public event RoutedEventHandler? PrimaryNewFile;
     public event RoutedEventHandler? ToggleDualPane;
     public event RoutedEventHandler? ClosePrimaryPane;
+    public event EventHandler<object>? WorkspaceProfilesFlyoutOpening;
+    public event RoutedEventHandler? WorkspaceProfileSaveClicked;
+    public event RoutedEventHandler? WorkspaceProfileManageClicked;
     public event EventHandler<object>? ViewOptionsFlyoutOpening;
     public event RoutedEventHandler? ViewDualPaneClicked;
     public event SelectionChangedEventHandler? ViewStyleSelectionChanged;
@@ -94,6 +101,15 @@ public sealed partial class PrimaryToolbarView : UserControl
     private void OnToggleDualPane(object sender, RoutedEventArgs e) => ToggleDualPane?.Invoke(sender, e);
 
     private void OnClosePrimaryPane(object sender, RoutedEventArgs e) => ClosePrimaryPane?.Invoke(sender, e);
+
+    private void OnWorkspaceProfilesFlyoutOpening(object sender, object e) =>
+        WorkspaceProfilesFlyoutOpening?.Invoke(sender, e);
+
+    private void OnWorkspaceProfileSaveClicked(object sender, RoutedEventArgs e) =>
+        WorkspaceProfileSaveClicked?.Invoke(sender, e);
+
+    private void OnWorkspaceProfileManageClicked(object sender, RoutedEventArgs e) =>
+        WorkspaceProfileManageClicked?.Invoke(sender, e);
 
     private void OnViewOptionsFlyoutOpening(object sender, object e) => ViewOptionsFlyoutOpening?.Invoke(sender, e);
 

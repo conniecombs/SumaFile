@@ -23,6 +23,9 @@ public class WorkspaceSettingsStoreTests
                     "primary": { "path": "C:\\Work" }
                   },
                   "chrome": {
+                    "keepFoldersOnTop": false,
+                    "enableGitIntegration": false,
+                    "progressQueueVisible": true,
                     "previewVisible": false,
                     "previewWidth": 2000,
                     "sidebarVisible": false,
@@ -30,6 +33,7 @@ public class WorkspaceSettingsStoreTests
                     "dualPanePrimaryPercent": 5,
                     "dualPanePrimaryWidth": 40,
                     "columnPreset": "developer",
+                    "visibleColumnIds": [ "name", "git", "name", "missing", " " ],
                     "columnWidths": { "name": 321 }
                   }
                 },
@@ -56,14 +60,63 @@ public class WorkspaceSettingsStoreTests
         Assert.True(saved.Layout.DualPaneEnabled);
         Assert.Equal(@"C:\Work", saved.Layout.Primary.Path);
         Assert.NotNull(saved.Chrome);
-        Assert.False(saved.Chrome!.PreviewVisible);
+        Assert.False(saved.Chrome!.KeepFoldersOnTop);
+        Assert.False(saved.Chrome.EnableGitIntegration);
+        Assert.True(saved.Chrome.ProgressQueueVisible);
+        Assert.False(saved.Chrome.PreviewVisible);
         Assert.Equal(UiSettings.PreviewMaxWidth, saved.Chrome.PreviewWidth);
         Assert.False(saved.Chrome.SidebarVisible);
         Assert.Equal(UiSettings.SidebarMinWidth, saved.Chrome.SidebarWidth);
         Assert.Equal(UiSettings.DualPaneMinPercent, saved.Chrome.DualPanePrimaryPercent);
         Assert.Equal(UiSettings.FilePaneMinWidth, saved.Chrome.DualPanePrimaryWidth);
         Assert.Equal("developer", saved.Chrome.ColumnPreset);
+        Assert.Equal(["name", "git"], saved.Chrome.VisibleColumnIds);
         Assert.Equal(321, saved.Chrome.ColumnWidths["name"]);
+    }
+
+    [Fact]
+    public void WorkspaceProfilesDocument_SanitizesStoredProfilesAndTracksActiveBuiltIn()
+    {
+        var raw = """
+            {
+              "version": 99,
+              "activeProfileId": "builtin-transfer",
+              "profiles": [
+                {
+                  "id": "",
+                  "name": "  Photo    triage  ",
+                  "builtInId": "builtin-photos",
+                  "sourceProfileId": " builtin-photos ",
+                  "layout": {
+                    "dualPaneEnabled": false,
+                    "primary": { "path": "D:\\Photos", "view": "tiles", "iconSize": 192 }
+                  },
+                  "chrome": {
+                    "columnPreset": "photo",
+                    "visibleColumnIds": [ "name", "date", "missing" ]
+                  }
+                },
+                {
+                  "id": "duplicate",
+                  "name": "photo triage",
+                  "layout": {}
+                }
+              ]
+            }
+            """;
+
+        var document = WorkspaceProfilesDocument.FromJson(raw);
+        var saved = Assert.Single(document.Profiles);
+
+        Assert.Equal(WorkspaceProfilesDocument.CurrentVersion, document.Version);
+        Assert.Equal(WorkspaceProfileTemplates.TransferId, document.ActiveProfileId);
+        Assert.NotEmpty(saved.Id);
+        Assert.Equal("Photo triage", saved.Name);
+        Assert.False(saved.IsBuiltIn);
+        Assert.Equal(WorkspaceProfileTemplates.PhotosId, saved.SourceProfileId);
+        Assert.Equal(@"D:\Photos", saved.Layout.Primary.Path);
+        Assert.Equal("photo", saved.Chrome!.ColumnPreset);
+        Assert.Equal(["name", "date"], saved.Chrome.VisibleColumnIds);
     }
 
     [Fact]
@@ -86,6 +139,7 @@ public class WorkspaceSettingsStoreTests
             CustomPath = @"D:\Work",
             OpenInNewTab = true,
             EnableGitIntegration = false,
+            ProgressQueueVisible = true,
             ShowFolderSizes = true,
             PreviewVisible = false,
             PreviewWidth = 2000,
@@ -133,6 +187,7 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal(@"D:\Work", state.Settings.CustomPath);
         Assert.True(state.Settings.OpenInNewTab);
         Assert.False(state.Settings.EnableGitIntegration);
+        Assert.True(state.Settings.ProgressQueueVisible);
         Assert.True(state.Settings.ShowFolderSizes);
         Assert.False(state.Settings.PreviewVisible);
         Assert.Equal(UiSettings.PreviewMaxWidth, state.Settings.PreviewWidth);
@@ -150,6 +205,7 @@ public class WorkspaceSettingsStoreTests
         Assert.True(state.Settings.QuickAccessCollapsed);
         Assert.True(state.Settings.MyPcCollapsed);
         Assert.Equal(@"C:\Last", state.Settings.LastPath);
+        Assert.Equal("true", ipc.Settings["progressQueue.visible"]);
         Assert.Equal(bookmarks.Single().Path, state.Bookmarks.Single().Path);
         Assert.Equal(recentPaths, state.RecentPaths);
     }

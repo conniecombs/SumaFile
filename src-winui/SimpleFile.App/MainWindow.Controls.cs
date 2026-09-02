@@ -49,6 +49,8 @@ public sealed partial class MainWindow
     private Button PrimaryNewFileButton => PrimaryToolbarPanel.NewFileButton;
     private Button DualPaneButton => PrimaryToolbarPanel.DualPaneToggleButton;
     private Button ClosePrimaryPaneButton => PrimaryToolbarPanel.ClosePaneButton;
+    private Button WorkspaceProfileButton => PrimaryToolbarPanel.ProfileButton;
+    private StackPanel WorkspaceProfilesHost => PrimaryToolbarPanel.WorkspaceProfilesList;
     private Button PrimaryViewButton => PrimaryToolbarPanel.ViewButton;
     private Button ViewDualPaneButton => PrimaryToolbarPanel.ViewDualPaneToggleButton;
     private FontIcon ViewDualPaneIcon => PrimaryToolbarPanel.ViewDualPaneGlyph;
@@ -159,6 +161,9 @@ public sealed partial class MainWindow
         PrimaryToolbarPanel.PrimaryNewFile += OnPrimaryNewFile;
         PrimaryToolbarPanel.ToggleDualPane += OnToggleDualPane;
         PrimaryToolbarPanel.ClosePrimaryPane += OnClosePrimaryPane;
+        PrimaryToolbarPanel.WorkspaceProfilesFlyoutOpening += (sender, e) => OnWorkspaceProfilesFlyoutOpening(sender!, e);
+        PrimaryToolbarPanel.WorkspaceProfileSaveClicked += OnWorkspaceProfileSaveClicked;
+        PrimaryToolbarPanel.WorkspaceProfileManageClicked += OnWorkspaceProfileManageClicked;
         PrimaryToolbarPanel.ViewOptionsFlyoutOpening += (sender, e) => OnViewOptionsFlyoutOpening(sender!, e);
         PrimaryToolbarPanel.ViewDualPaneClicked += OnViewDualPaneClicked;
         PrimaryToolbarPanel.ViewStyleSelectionChanged += OnViewStyleSelectionChanged;

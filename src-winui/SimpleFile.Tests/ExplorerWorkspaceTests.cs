@@ -756,6 +756,201 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task WorkspaceProfiles_SaveApplyDuplicateExportResetAndDelete()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(settingsIpc);
+        var workspace = new ExplorerWorkspace(backend, fileOps);
+        await workspace.InitializeAsync();
+
+        var builtIns = await workspace.ListWorkspaceProfilesAsync();
+        Assert.Equal(
+            ["Standard", "Developer", "Photos", "Transfer", "Minimal"],
+            builtIns.Take(5).Select(profile => profile.Name));
+        Assert.All(builtIns.Take(5), profile => Assert.True(profile.IsBuiltIn));
+
+        await workspace.ApplyWorkspaceProfileAsync(WorkspaceProfileTemplates.DeveloperId);
+
+        Assert.Equal(WorkspaceProfileTemplates.DeveloperId, workspace.ActiveProfileId);
+        Assert.False(workspace.DualPaneEnabled);
+        Assert.Equal("details", workspace.ViewFor(PaneId.Primary));
+        Assert.Equal(16, workspace.IconSizeFor(PaneId.Primary));
+        Assert.True(workspace.Settings.EnableGitIntegration);
+        Assert.Equal("developer", workspace.Settings.ColumnPreset);
+        Assert.Contains("git", workspace.Columns.VisibleIds);
+        Assert.Equal(
+            WorkspaceProfileTemplates.DeveloperId,
+            WorkspaceProfilesDocument.FromJson(settingsIpc.Settings[WorkspaceProfilesDocument.SettingsKey]).ActiveProfileId);
+
+        await workspace.OpenNewTabAsync(PaneId.Primary, @"C:\Users\test\Desktop");
+        await workspace.ToggleDualPaneAsync();
+        await workspace.NavigatePaneAsync(PaneId.Secondary, @"C:\", HistoryMode.ReplaceCurrent);
+        workspace.SetFileListView(PaneId.Primary, "content");
+        workspace.SetFileListIconSize(PaneId.Primary, 48);
+        workspace.SetFileListView(PaneId.Secondary, "tiles");
+        workspace.SetFileListIconSize(PaneId.Secondary, 96);
+        workspace.SetSort(PaneId.Secondary, "date");
+        workspace.SetSort(PaneId.Secondary, "date");
+
+        var settings = workspace.Settings;
+        settings.KeepFoldersOnTop = false;
+        settings.EnableGitIntegration = false;
+        settings.ProgressQueueVisible = true;
+        settings.PreviewVisible = false;
+        settings.PreviewWidth = 420;
+        settings.SidebarVisible = false;
+        settings.SidebarWidth = 344;
+        settings.DualPanePrimaryPercent = 35;
+        settings.DualPanePrimaryWidth = 410;
+        settings.QuickAccessCollapsed = true;
+        settings.MyPcCollapsed = true;
+        settings.ColumnPreset = "developer";
+        workspace.ApplyUiSettings(settings, applyViewDefaultsToPanes: false);
+        workspace.Columns.RestoreVisibleIds(["name", "path", "git"]);
+        workspace.Columns.Resize("path", 360);
+
+        var saved = await workspace.SaveWorkspaceProfileAsync("  Code    review  ");
+        var document = WorkspaceProfilesDocument.FromJson(settingsIpc.Settings[WorkspaceProfilesDocument.SettingsKey]);
+        var stored = Assert.Single(document.Profiles);
+
+        Assert.Equal("Code review", saved.Name);
+        Assert.Equal(saved.Id, workspace.ActiveProfileId);
+        Assert.Equal(saved.Id, document.ActiveProfileId);
+        Assert.Equal(["name", "path", "git"], stored.Chrome!.VisibleColumnIds);
+        Assert.False(stored.Chrome.KeepFoldersOnTop);
+        Assert.False(stored.Chrome.EnableGitIntegration);
+        Assert.True(stored.Chrome.ProgressQueueVisible);
+
+        await workspace.ApplyWorkspaceProfileAsync(WorkspaceProfileTemplates.MinimalId);
+        await workspace.ApplyWorkspaceProfileAsync(saved.Id);
+
+        Assert.True(workspace.DualPaneEnabled);
+        Assert.Equal(@"C:\Users\test\Desktop", workspace.Primary.Path);
+        Assert.Equal(@"C:\", workspace.Secondary.Path);
+        Assert.Equal("content", workspace.ViewFor(PaneId.Primary));
+        Assert.Equal(48, workspace.IconSizeFor(PaneId.Primary));
+        Assert.Equal("tiles", workspace.ViewFor(PaneId.Secondary));
+        Assert.Equal(96, workspace.IconSizeFor(PaneId.Secondary));
+        Assert.Equal("date", workspace.SortByFor(PaneId.Secondary));
+        Assert.False(workspace.SortAscendingFor(PaneId.Secondary));
+        Assert.False(workspace.Settings.KeepFoldersOnTop);
+        Assert.False(workspace.Settings.EnableGitIntegration);
+        Assert.True(workspace.Settings.ProgressQueueVisible);
+        Assert.False(workspace.Settings.PreviewVisible);
+        Assert.Equal(420, workspace.Settings.PreviewWidth);
+        Assert.False(workspace.Settings.SidebarVisible);
+        Assert.Equal(344, workspace.Settings.SidebarWidth);
+        Assert.Equal(35, workspace.Settings.DualPanePrimaryPercent);
+        Assert.Equal(410, workspace.Settings.DualPanePrimaryWidth);
+        Assert.Equal("developer", workspace.Settings.ColumnPreset);
+        Assert.Equal(["name", "path", "git"], workspace.Columns.SnapshotVisibleIds());
+        Assert.Equal(360, workspace.Columns.WidthOf("path"));
+        Assert.Equal("false", settingsIpc.Settings["enableGitIntegration"]);
+        Assert.Equal("true", settingsIpc.Settings["progressQueue.visible"]);
+
+        var duplicate = await workspace.DuplicateWorkspaceProfileAsync(WorkspaceProfileTemplates.PhotosId, "Vacation photos");
+        Assert.False(duplicate.IsBuiltIn);
+        Assert.Equal(WorkspaceProfileTemplates.PhotosId, duplicate.SourceProfileId);
+        Assert.Equal(duplicate.Id, workspace.ActiveProfileId);
+
+        var renamed = await workspace.RenameWorkspaceProfileAsync(duplicate.Id, "Vacation review");
+        Assert.Equal("Vacation review", renamed.Name);
+        var exported = await workspace.ExportWorkspaceProfileAsync(renamed.Id);
+        Assert.Contains("sumafile.workspace-profile", exported);
+        Assert.Contains("Vacation review", exported);
+
+        await workspace.OverwriteWorkspaceProfileAsync(renamed.Id);
+        var reset = await workspace.ResetWorkspaceProfileAsync(renamed.Id);
+        Assert.Equal("photo", reset.Chrome!.ColumnPreset);
+
+        await workspace.ApplyWorkspaceProfileAsync(renamed.Id);
+        Assert.Equal("tiles", workspace.ViewFor(PaneId.Primary));
+        Assert.Equal(192, workspace.IconSizeFor(PaneId.Primary));
+        Assert.Equal("photo", workspace.Settings.ColumnPreset);
+        Assert.False(workspace.Settings.EnableGitIntegration);
+        Assert.Contains("date", workspace.Columns.VisibleIds);
+
+        await workspace.DeleteWorkspaceProfileAsync(renamed.Id);
+
+        Assert.Equal("", workspace.ActiveProfileId);
+        Assert.DoesNotContain(
+            await workspace.ListWorkspaceProfilesAsync(),
+            profile => string.Equals(profile.Id, renamed.Id, StringComparison.OrdinalIgnoreCase));
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => workspace.DeleteWorkspaceProfileAsync(WorkspaceProfileTemplates.StandardId));
+    }
+
+    [Fact]
+    public async Task WorkspaceProfiles_MigrateLegacySavedLayouts()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(settingsIpc);
+        var legacy = new SavedWorkspaceLayoutsDocument
+        {
+            Layouts =
+            [
+                new SavedWorkspaceLayout
+                {
+                    Id = "legacy-id",
+                    Name = "  Legacy    layout  ",
+                    CreatedAt = DateTimeOffset.Parse("2026-01-01T00:00:00+00:00"),
+                    UpdatedAt = DateTimeOffset.Parse("2026-01-02T00:00:00+00:00"),
+                    Layout = new WorkspaceLayout
+                    {
+                        DualPaneEnabled = true,
+                        Primary = new WorkspacePaneLayout
+                        {
+                            Path = @"C:\Users\test\Desktop",
+                            View = "tiles",
+                            IconSize = 96,
+                        },
+                        Secondary = new WorkspacePaneLayout
+                        {
+                            Path = @"C:\",
+                            View = "details",
+                            IconSize = 32,
+                        },
+                    },
+                    Chrome = new WorkspaceChromeLayout
+                    {
+                        PreviewVisible = false,
+                        SidebarVisible = false,
+                        ColumnPreset = "developer",
+                        VisibleColumnIds = ["name", "git"],
+                    },
+                },
+            ],
+        };
+        settingsIpc.Settings[SavedWorkspaceLayoutsDocument.SettingsKey] = legacy.ToJson();
+        var workspace = new ExplorerWorkspace(backend, fileOps);
+        await workspace.InitializeAsync();
+
+        var profiles = await workspace.ListWorkspaceProfilesAsync();
+        var migrated = Assert.Single(profiles, profile => !profile.IsBuiltIn);
+
+        Assert.True(settingsIpc.Settings.ContainsKey(WorkspaceProfilesDocument.SettingsKey));
+        Assert.Equal("legacy-id", migrated.Id);
+        Assert.Equal("Legacy layout", migrated.Name);
+        Assert.Equal(@"C:\Users\test\Desktop", migrated.Layout.Primary.Path);
+        Assert.False(migrated.Chrome!.PreviewVisible);
+        Assert.Equal(["name", "git"], migrated.Chrome.VisibleColumnIds);
+
+        await workspace.ApplyWorkspaceProfileAsync(migrated.Id);
+
+        Assert.True(workspace.DualPaneEnabled);
+        Assert.Equal(@"C:\Users\test\Desktop", workspace.Primary.Path);
+        Assert.Equal(@"C:\", workspace.Secondary.Path);
+        Assert.Equal("tiles", workspace.ViewFor(PaneId.Primary));
+        Assert.Equal(96, workspace.IconSizeFor(PaneId.Primary));
+        Assert.False(workspace.Settings.PreviewVisible);
+        Assert.False(workspace.Settings.SidebarVisible);
+        Assert.Equal("developer", workspace.Settings.ColumnPreset);
+        Assert.Equal(["name", "git"], workspace.Columns.SnapshotVisibleIds());
+    }
+
+    [Fact]
     public async Task Initialize_HomeStartLocationIgnoresSavedWorkspaceLayout()
     {
         var backend = FakeExplorerBackend.Typical();

@@ -32,6 +32,7 @@ internal static class WorkspaceSettingsStore
         settings.LastPath = await fileOps.GetSettingAsync("lastPath", cancellationToken).ConfigureAwait(false) ?? "";
         settings.OpenInNewTab = await ReadBoolSettingAsync(fileOps, "openInNewTab", false, cancellationToken).ConfigureAwait(false);
         settings.EnableGitIntegration = await ReadBoolSettingAsync(fileOps, "enableGitIntegration", true, cancellationToken).ConfigureAwait(false);
+        settings.ProgressQueueVisible = await ReadBoolSettingAsync(fileOps, "progressQueue.visible", false, cancellationToken).ConfigureAwait(false);
         settings.ShowFolderSizes = await ReadBoolSettingAsync(fileOps, "showFolderSizes", false, cancellationToken).ConfigureAwait(false);
         settings.PreviewVisible = await ReadBoolSettingAsync(fileOps, "previewVisible", true, cancellationToken).ConfigureAwait(false);
         settings.PreviewWidth = UiSettings.NormalizePreviewWidth(
@@ -90,6 +91,7 @@ internal static class WorkspaceSettingsStore
         await fileOps.SetSettingAsync("customPath", settings.CustomPath, cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("openInNewTab", settings.OpenInNewTab ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("enableGitIntegration", settings.EnableGitIntegration ? "true" : "false", cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync("progressQueue.visible", settings.ProgressQueueVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("showFolderSizes", settings.ShowFolderSizes ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("previewVisible", settings.PreviewVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("preview.width", settings.PreviewWidth.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);

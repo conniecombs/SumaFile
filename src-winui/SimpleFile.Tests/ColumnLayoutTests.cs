@@ -31,4 +31,19 @@ public class ColumnLayoutTests
         columns.RestoreWidths(new Dictionary<string, double> { ["name"] = 300 });
         Assert.Equal(300, columns.WidthOf("name"));
     }
+
+    [Fact]
+    public void ColumnLayout_RestoresExplicitVisibleColumns()
+    {
+        var columns = new ColumnLayout();
+        columns.ApplyPreset("developer");
+
+        columns.RestoreVisibleIds(["name", "git", "name", "missing", "path"]);
+
+        Assert.Equal(["name", "git", "path"], columns.SnapshotVisibleIds());
+        Assert.Equal(["name", "git", "path"], columns.VisibleColumns.Select(column => column.Id));
+
+        columns.RestoreVisibleIds([]);
+        Assert.Equal(["name", "git", "path"], columns.SnapshotVisibleIds());
+    }
 }

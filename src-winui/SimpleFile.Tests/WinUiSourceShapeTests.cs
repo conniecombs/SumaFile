@@ -129,7 +129,7 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
-    public void NamedLayouts_AreDiscoverableFromViewFlyout()
+    public void WorkspaceProfiles_AreDiscoverableFromToolbarViewAndOverflow()
     {
         var root = FindRepoRoot();
         var appRoot = Path.Combine(root, "SimpleFile.App");
@@ -137,16 +137,23 @@ public class WinUiSourceShapeTests
         var toolbar = File.ReadAllText(Path.Combine(appRoot, "PrimaryToolbarView.xaml"));
         var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
         var workspace = File.ReadAllText(Path.Combine(coreRoot, "ExplorerWorkspace.cs"));
-        var savedLayouts = File.ReadAllText(Path.Combine(coreRoot, "SavedWorkspaceLayout.cs"));
+        var profiles = File.ReadAllText(Path.Combine(coreRoot, "WorkspaceProfile.cs"));
 
-        Assert.Contains("SavedLayoutsHost", toolbar);
-        Assert.Contains("OnViewSaveLayoutClicked", toolbar);
-        Assert.Contains("RefreshSavedLayoutsHostAsync", commands);
-        Assert.Contains("AppendSavedLayoutOverflowMenuAsync", commands);
-        Assert.Contains("layout:save", commands);
-        Assert.Contains("ApplySavedWorkspaceLayoutAsync", commands);
-        Assert.Contains("SaveNamedWorkspaceLayoutAsync", workspace);
-        Assert.Contains("workspace-layouts", savedLayouts);
+        Assert.Contains("WorkspaceProfileButton", toolbar);
+        Assert.Contains("WorkspaceProfilesHost", toolbar);
+        Assert.Contains("OnWorkspaceProfilesFlyoutOpening", toolbar);
+        Assert.Contains("WorkspaceProfileManageButton", toolbar);
+        Assert.Contains("RefreshWorkspaceProfilesHostAsync", commands);
+        Assert.Contains("AppendWorkspaceProfileOverflowMenuAsync", commands);
+        Assert.Contains("profile:save", commands);
+        Assert.Contains("ApplyWorkspaceProfileAsync", commands);
+        Assert.Contains("SaveWorkspaceProfileAsync", workspace);
+        Assert.Contains("DuplicateWorkspaceProfileAsync", workspace);
+        Assert.Contains("ExportWorkspaceProfileAsync", workspace);
+        Assert.Contains("workspace-profiles", profiles);
+        Assert.Contains("builtin-transfer", profiles);
+        Assert.DoesNotContain("AppendSavedLayoutOverflowMenuAsync", commands);
+        Assert.DoesNotContain("layout:save", commands);
     }
 
     [Fact]

@@ -30,10 +30,13 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-recycle-bin");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "restore-selected");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "empty-recycle-bin");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "profile-manage");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "profile-transfer");
         Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
         Assert.Equal("Alt+Enter", AppCommandCatalog.Find("properties")?.Shortcut);
         Assert.Equal("Disk cleanup", AppCommandCatalog.Find("disk-cleanup")?.Label);
         Assert.Equal("Open or close second pane", AppCommandCatalog.Find("dual-pane")?.Label);
+        Assert.Equal("Manage workspace profiles", AppCommandCatalog.Find("profile-manage")?.Label);
         Assert.Equal("Move to Recycle Bin", AppCommandCatalog.Find("delete")?.Label);
         Assert.Equal("Delete Permanently", AppCommandCatalog.Find("delete-permanent")?.Label);
         Assert.Equal(AppCommandCatalog.All.Count, AppCommandCatalog.Filter("").Count);
@@ -41,6 +44,7 @@ public class AppCommandCatalogTests
         Assert.Equal(2, git.Count);
         Assert.All(git, command => Assert.StartsWith("git-", command.Id, StringComparison.Ordinal));
         Assert.Equal(7, AppCommandCatalog.Filter("icon size").Count);
+        Assert.Equal(7, AppCommandCatalog.Filter("profile").Count);
         Assert.Equal("toggle-side-menu", Assert.Single(AppCommandCatalog.Filter("side menu")).Id);
         Assert.Equal("settings", AppCommandCatalog.Find("settings")?.Id);
         Assert.Null(AppCommandCatalog.Find("missing"));
@@ -53,6 +57,7 @@ public class AppCommandCatalogTests
     [InlineData("ctx-open-tab", "open-selected-tab")]
     [InlineData("ctx-open-other-pane", "open-other-pane")]
     [InlineData("overflow-filter", "filter")]
+    [InlineData("overflow-profiles", "profile-manage")]
     [InlineData("ctx-restore", "restore-selected")]
     [InlineData("ctx-empty-recycle-bin", "empty-recycle-bin")]
     [InlineData("view:details", "view:details")]

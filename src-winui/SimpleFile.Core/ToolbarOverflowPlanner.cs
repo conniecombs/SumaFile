@@ -10,6 +10,7 @@ public static class ToolbarOverflowPlanner
     public const string Filter = "filter";
     public const string Search = "search";
     public const string Settings = "settings";
+    public const string Profiles = "profiles";
     public const string DualPane = "dual-pane";
     public const string ViewOptions = "view-options";
     public const string NewFile = "new-file";
@@ -32,6 +33,7 @@ public static class ToolbarOverflowPlanner
         Filter,
         Search,
         Settings,
+        Profiles,
         DualPane,
         ViewOptions,
         NewFile,

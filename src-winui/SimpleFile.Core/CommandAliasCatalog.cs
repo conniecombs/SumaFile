@@ -9,6 +9,7 @@ public static class CommandAliasCatalog
         ["overflow-new-folder"] = "new-folder",
         ["overflow-new-file"] = "new-file",
         ["overflow-dual-pane"] = "dual-pane",
+        ["overflow-profiles"] = "profile-manage",
         ["overflow-settings"] = "settings",
         ["ctx-open-tab"] = "open-selected-tab",
         ["ctx-open-other-pane"] = "open-other-pane",

@@ -586,6 +586,7 @@ public sealed partial class MainWindow : Window
             [ToolbarOverflowPlanner.Filter] = ToolbarOverflowPlanner.FilterOverflowWidthFor(toolbarWidth),
             [ToolbarOverflowPlanner.Search] = ToolbarOverflowPlanner.SearchOverflowWidthFor(toolbarWidth),
             [ToolbarOverflowPlanner.Settings] = 32,
+            [ToolbarOverflowPlanner.Profiles] = 32,
             [ToolbarOverflowPlanner.DualPane] = 32,
             [ToolbarOverflowPlanner.ViewOptions] = 32,
             [ToolbarOverflowPlanner.NewFile] = 32,
@@ -641,6 +642,7 @@ public sealed partial class MainWindow : Window
         SetOverflowVisible(PrimarySearchHost, searchVisible);
         PrimarySearchColumn.Width = searchVisible ? GridLength.Auto : new GridLength(0);
         SetOverflowVisible(PrimarySettingsButton, !overflowed.Contains(ToolbarOverflowPlanner.Settings));
+        SetOverflowVisible(WorkspaceProfileButton, !overflowed.Contains(ToolbarOverflowPlanner.Profiles));
         var dualOverflowed = overflowed.Contains(ToolbarOverflowPlanner.DualPane);
         SetOverflowVisible(DualPaneButton, !dualOverflowed);
         SetOverflowVisible(ClosePrimaryPaneButton, false);
@@ -651,6 +653,7 @@ public sealed partial class MainWindow : Window
             || PrimaryNewFileButton.Visibility == Visibility.Visible
             || DualPaneButton.Visibility == Visibility.Visible
             || ClosePrimaryPaneButton.Visibility == Visibility.Visible
+            || WorkspaceProfileButton.Visibility == Visibility.Visible
             || PrimaryViewButton.Visibility == Visibility.Visible
             || PrimarySettingsButton.Visibility == Visibility.Visible
             || QuickFilterBox.Visibility == Visibility.Visible;

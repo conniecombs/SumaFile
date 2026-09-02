@@ -210,6 +210,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `nav.tabs-middle` | Middle-click close | Pointer handler | — | Middle-click tab | `MANUAL` |
 | `nav.tabs-arrows` | Arrow wrap on tab | `OnTabKeyDown` | — | Focus tab; Left/Right | `MANUAL` |
 | `nav.tabs-persist` | Restore workspace | `workspace-layout` IPC | `Initialize_RestoresSavedWorkspaceLayoutFromIpcSettings` | Relaunch after tabs | `PASS` |
+| `nav.profiles` | Named workspace profiles | `workspace-profiles` IPC + Profiles toolbar | `WorkspaceProfiles_SaveApplyDuplicateExportResetAndDelete` | Apply each built-in profile | `PASS` |
 | `nav.sidebar-collapse` | Persist Quick Access / My PC | Settings keys | Save/load settings | Collapse; relaunch | `MANUAL` |
 | `nav.bookmarks` | Bookmark list | Sidebar Bookmarks | `PlacesStore` tests | Pin current folder | `PASS` |
 | `nav.recents` | Recent locations | Sidebar Recent | `PlacesStore` recents cap | Navigate; see recents | `PASS` |
@@ -297,6 +298,9 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `toggle-side-menu` | Toggle sidebar | Handler | Catalog test | — | `PASS` |
 | `dual-pane` | Toggle | Handler | Dual-pane tests | F6 | `PASS` |
 | `close-left-pane` | Close left pane | Palette + handler | — | Dual pane | `PASS` |
+| `profile-manage` | Manage workspace profiles | Profiles dialog | Profile workspace tests | Open manager | `PASS` |
+| `profile-save` | Save current workspace profile | Save dialog | Profile workspace tests | Save profile | `PASS` |
+| `profile-standard` `profile-developer` `profile-photos` `profile-transfer` `profile-minimal` | Apply built-in profiles | Profile command handlers | Profile workspace tests | Apply each built-in | `PASS` |
 | `view-details` `view-list` `view-tiles` `view-content` | Palette display style commands | Handler applies file-list presentation | Catalog test | Switch each view | `MANUAL` |
 | `icon-size-small` `icon-size-medium` `icon-size-large` `icon-size-extra-large` `icon-size-jumbo` `icon-size-huge` `icon-size-maximum` | Palette icon size commands | Handler updates file-list icon size | Catalog test | Change each icon size | `MANUAL` |
 | `search` | Focus search | Handler | Catalog | Ctrl+F | `MANUAL` |

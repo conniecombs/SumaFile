@@ -75,6 +75,7 @@ public static class ContextMenuIconCatalog
             "overflow-new-folder" => NewFolder,
             "overflow-new-file" => Document,
             "overflow-dual-pane" => OpenPane,
+            "overflow-profiles" => Switch,
             "overflow-view" => ViewAll,
             "overflow-settings" => Settings,
             "view:details" => BulletedList,
