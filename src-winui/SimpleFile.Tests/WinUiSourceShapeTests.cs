@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
@@ -201,8 +202,45 @@ public class WinUiSourceShapeTests
         Assert.Contains("KeyboardShortcutMap.EffectiveShortcuts", shortcutBinder);
         Assert.Contains("KeyboardShortcutMap.SettingsKey", settingsStore);
         Assert.Contains("TryGetReservedWindowsWarning", shortcutMap);
+        Assert.Contains("<x:Double x:Key=\"ContentDialogMaxWidth\">820</x:Double>", settingsXaml);
+        Assert.Contains("HorizontalScrollMode=\"Disabled\"", settingsXaml);
+        Assert.Contains("<ColumnDefinition Width=\"300\" />", settingsXaml);
         Assert.DoesNotContain("Remapping is not available yet", settingsXaml);
         Assert.DoesNotContain("<Grid.KeyboardAccelerators>", mainWindowXaml);
+    }
+
+    [Fact]
+    public void ThemeChrome_FollowsWindowsDefaultAndAvoidsStaticSfBrushes()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsDialog.xaml"));
+        var mainWindowCode = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
+        var fileRows = File.ReadAllText(Path.Combine(appRoot, "FileRowView.xaml.cs"));
+        var preview = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.cs"));
+        var themeResources = File.ReadAllText(Path.Combine(appRoot, "ThemeResourceLookup.cs"));
+
+        Assert.Contains("<ComboBoxItem Content=\"Windows default\" Tag=\"System\" />", settingsXaml);
+        Assert.Contains("<ComboBoxItem Content=\"Dark\" Tag=\"Dark\" />", settingsXaml);
+        Assert.DoesNotContain("Content=\"Light\"", settingsXaml);
+        Assert.DoesNotContain("Tag=\"Light\"", settingsXaml);
+
+        Assert.DoesNotContain("\"light\" => ElementTheme.Light", commands);
+        Assert.Contains("RootGrid.ActualThemeChanged += OnRootActualThemeChanged;", mainWindowCode);
+        Assert.Contains("RefreshGeneratedThemeResources", commands);
+        Assert.Contains("ThemeResourceLookup.Brush(RootGrid, key)", mainWindowCode);
+        Assert.Contains("ThemeResourceLookup.Brush(this, key)", fileRows);
+        Assert.Contains("ThemeResourceLookup.Brush(_metadataRows, key)", preview);
+        Assert.Contains("appResources.ThemeDictionaries.TryGetValue(themeKey", themeResources);
+
+        var staleBrushReferences = Directory
+            .EnumerateFiles(appRoot, "*.xaml")
+            .SelectMany(file => File.ReadLines(file).Select((line, index) => new { file, line, index }))
+            .Where(item => Regex.IsMatch(item.line, "\\{StaticResource Sf[A-Za-z]+Brush\\}"))
+            .Select(item => $"{Path.GetFileName(item.file)}:{item.index + 1}: {item.line.Trim()}")
+            .ToList();
+        Assert.Empty(staleBrushReferences);
     }
 
     [Fact]

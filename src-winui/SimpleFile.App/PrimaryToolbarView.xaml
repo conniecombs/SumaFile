@@ -358,7 +358,7 @@
                                                 <Border
                                                     Height="1"
                                                     Margin="0,2,0,0"
-                                                    Background="{StaticResource SfBorderBrush}" />
+                                                    Background="{ThemeResource SfBorderBrush}" />
                                                 <StackPanel Spacing="6">
                                                     <Grid ColumnSpacing="8">
                                                         <Grid.ColumnDefinitions>

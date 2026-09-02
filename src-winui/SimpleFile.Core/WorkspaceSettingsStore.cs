@@ -76,6 +76,7 @@ internal static class WorkspaceSettingsStore
         CancellationToken cancellationToken)
     {
         settings.ShowHidden = showHidden;
+        settings.Theme = UiSettings.NormalizeTheme(settings.Theme);
         settings.DefaultView = UiSettings.NormalizeDefaultView(settings.DefaultView);
         settings.DefaultIconSize = UiSettings.NormalizeIconSize(settings.DefaultIconSize);
         settings.SidebarWidth = UiSettings.NormalizeSidebarWidth(settings.SidebarWidth);

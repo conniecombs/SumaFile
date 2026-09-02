@@ -1,4 +1,3 @@
-using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -900,13 +899,19 @@ internal sealed class PreviewPresenter
         };
     }
 
-    private static Brush Brush(string key)
+    public void RefreshThemeResources()
     {
-        if (Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush)
+        foreach (var row in _metadataRows.Children.OfType<Grid>())
         {
-            return brush;
+            foreach (var text in row.Children.OfType<TextBlock>())
+            {
+                text.Foreground = Brush(Grid.GetColumn(text) == 0 ? "SfTextMutedBrush" : "SfTextPrimaryBrush");
+            }
         }
+    }
 
-        return new SolidColorBrush(Colors.Transparent);
+    private Brush Brush(string key)
+    {
+        return ThemeResourceLookup.Brush(_metadataRows, key);
     }
 }

@@ -73,19 +73,20 @@ public sealed class UiSettings
 
     public static string NormalizeTheme(string? theme)
     {
-        if (string.Equals(theme, "light", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase))
         {
-            return "light";
+            return "dark";
         }
 
         if (string.Equals(theme, "system", StringComparison.OrdinalIgnoreCase)
             || string.Equals(theme, "windows", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(theme, "default", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(theme, "default", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(theme, "light", StringComparison.OrdinalIgnoreCase))
         {
             return "system";
         }
 
-        return "dark";
+        return "system";
     }
 
     public static string NormalizeStartLocation(string? startLocation)

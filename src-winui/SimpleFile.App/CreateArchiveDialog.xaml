@@ -27,7 +27,7 @@
 
         <StackPanel Spacing="4">
             <TextBlock Text="Files to Compress:" FontWeight="SemiBold" />
-            <ScrollViewer MaxHeight="200" BorderBrush="{StaticResource SfBorderBrush}" BorderThickness="1" CornerRadius="4">
+            <ScrollViewer MaxHeight="200" BorderBrush="{ThemeResource SfBorderBrush}" BorderThickness="1" CornerRadius="4">
                 <ItemsControl x:Name="FilesList" Margin="4">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="x:String">

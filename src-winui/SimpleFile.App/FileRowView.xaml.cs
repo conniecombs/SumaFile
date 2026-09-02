@@ -30,6 +30,12 @@ public sealed partial class FileRowView : UserControl
         InitializeComponent();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        ActualThemeChanged += OnActualThemeChanged;
+    }
+
+    private void OnActualThemeChanged(FrameworkElement sender, object args)
+    {
+        ApplyThemeResources();
     }
 
     public FileRow? Row
@@ -578,11 +584,32 @@ public sealed partial class FileRowView : UserControl
         _tagPip.Visibility = Visibility.Visible;
     }
 
-    private static Brush Brush(string key)
+    private void ApplyThemeResources()
     {
-        return Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush
-            ? brush
-            : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        if (_nameText is not null)
+        {
+            _nameText.Foreground = Brush("SfTextPrimaryBrush");
+        }
+
+        if (_metadataText is not null)
+        {
+            _metadataText.Foreground = Brush("SfTextMutedBrush");
+        }
+
+        if (_secondaryText is not null)
+        {
+            _secondaryText.Foreground = Brush("SfTextMutedBrush");
+        }
+
+        foreach (var text in _textCells.Values)
+        {
+            text.Foreground = Brush("SfTextMutedBrush");
+        }
+    }
+
+    private Brush Brush(string key)
+    {
+        return ThemeResourceLookup.Brush(this, key);
     }
 
     private static Brush? TryBrush(string color)

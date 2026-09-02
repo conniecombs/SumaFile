@@ -197,7 +197,7 @@ public class WorkspaceSettingsStoreTests
         var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
 
         Assert.True(state.Settings.ShowHidden);
-        Assert.Equal("light", state.Settings.Theme);
+        Assert.Equal("system", state.Settings.Theme);
         Assert.Equal("tiles", state.Settings.DefaultView);
         Assert.Equal(96, state.Settings.DefaultIconSize);
         Assert.False(state.Settings.ConfirmDelete);
@@ -233,6 +233,7 @@ public class WorkspaceSettingsStoreTests
         Assert.True(folderRule.Options.ShowHidden);
         Assert.Equal(WorkspaceProfileTemplates.DeveloperId, folderRule.Options.WorkspaceProfileId);
         Assert.Equal("true", ipc.Settings["progressQueue.visible"]);
+        Assert.Equal("system", ipc.Settings["theme"]);
         Assert.Contains("\"search.focus\"", ipc.Settings[KeyboardShortcutMap.SettingsKey], StringComparison.Ordinal);
         Assert.Contains("\"scope\": \"descendants\"", ipc.Settings[FolderViewSettingsDocument.SettingsKey], StringComparison.Ordinal);
         Assert.Equal(bookmarks.Single().Path, state.Bookmarks.Single().Path);

@@ -388,7 +388,6 @@ public sealed partial class MainWindow
     {
         var next = UiSettings.NormalizeTheme(theme) switch
         {
-            "light" => ElementTheme.Light,
             "dark" => ElementTheme.Dark,
             _ => ElementTheme.Default,
         };
@@ -398,6 +397,33 @@ public sealed partial class MainWindow
         }
 
         ApplyCaptionButtonColors(next);
+        RefreshGeneratedThemeResources();
+    }
+
+    private void OnRootActualThemeChanged(FrameworkElement sender, object args)
+    {
+        ApplyCaptionButtonColors(sender.ActualTheme);
+        RefreshGeneratedThemeResources();
+    }
+
+    private void RefreshGeneratedThemeResources()
+    {
+        PrimaryBreadcrumbHost.Tag = null;
+        SecondaryBreadcrumbHost.Tag = null;
+        PrimaryTabHost.Tag = null;
+        SecondaryTabHost.Tag = null;
+
+        if (_workspace is not null)
+        {
+            RebuildBreadcrumbs(PrimaryBreadcrumbHost, _workspace.Primary.Breadcrumbs, PaneId.Primary);
+            RebuildBreadcrumbs(SecondaryBreadcrumbHost, _workspace.Secondary.Breadcrumbs, PaneId.Secondary);
+            RebuildTabs(PrimaryTabHost, _workspace.Primary, PaneId.Primary);
+            RebuildTabs(SecondaryTabHost, _workspace.Secondary, PaneId.Secondary);
+            HighlightSidebarTarget();
+            HighlightActivePane();
+        }
+
+        _previewPresenter.RefreshThemeResources();
     }
 
     private void OpenCommandPalette()

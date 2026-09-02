@@ -130,6 +130,7 @@ public sealed partial class MainWindow : Window
             ClearRecentHistoryAsync,
             action => DispatcherQueue.TryEnqueue(() => action()));
 
+        RootGrid.ActualThemeChanged += OnRootActualThemeChanged;
         Title = "SumaFile";
         AppIcon.ApplyTo(this);
         SystemBackdrop = new MicaBackdrop();
@@ -1040,14 +1041,9 @@ public sealed partial class MainWindow : Window
 
     private static Style? ChromeStyle(string key) => ChromeResource<Style>(key);
 
-    private static Brush Brush(string key)
+    private Brush Brush(string key)
     {
-        if (Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush)
-        {
-            return brush;
-        }
-
-        return new SolidColorBrush(Colors.Transparent);
+        return ThemeResourceLookup.Brush(RootGrid, key);
     }
 
     private void ApplyFileListViewPresentation()

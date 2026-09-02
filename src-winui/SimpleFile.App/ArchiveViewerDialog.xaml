@@ -19,8 +19,8 @@
         <!-- Header -->
         <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
             <TextBlock x:Name="ArchiveNameText" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
-            <Border Background="{StaticResource SfBgSelectedBrush}" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
-                <TextBlock x:Name="FormatBadgeText" FontSize="12" Foreground="{StaticResource SfTextPrimaryBrush}" />
+            <Border Background="{ThemeResource SfBgSelectedBrush}" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
+                <TextBlock x:Name="FormatBadgeText" FontSize="12" Foreground="{ThemeResource SfTextPrimaryBrush}" />
             </Border>
         </StackPanel>
 
@@ -32,15 +32,15 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <StackPanel>
-                <TextBlock Text="Entries" FontSize="12" Foreground="{StaticResource SfTextMutedBrush}" />
+                <TextBlock Text="Entries" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" />
                 <TextBlock x:Name="EntryCountText" />
             </StackPanel>
             <StackPanel Grid.Column="1">
-                <TextBlock Text="Total Size" FontSize="12" Foreground="{StaticResource SfTextMutedBrush}" />
+                <TextBlock Text="Total Size" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" />
                 <TextBlock x:Name="TotalSizeText" />
             </StackPanel>
             <StackPanel Grid.Column="2">
-                <TextBlock Text="Compressed Size" FontSize="12" Foreground="{StaticResource SfTextMutedBrush}" />
+                <TextBlock Text="Compressed Size" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" />
                 <TextBlock x:Name="CompressedSizeText" />
             </StackPanel>
         </Grid>
@@ -49,7 +49,7 @@
         <InfoBar x:Name="WarningBar" Grid.Row="2" Severity="Warning" IsOpen="False" IsClosable="False" Margin="0,0,0,12" />
 
         <!-- ListView of entries -->
-        <ListView x:Name="EntriesList" Grid.Row="3" BorderBrush="{StaticResource SfBorderBrush}" BorderThickness="1" CornerRadius="4">
+        <ListView x:Name="EntriesList" Grid.Row="3" BorderBrush="{ThemeResource SfBorderBrush}" BorderThickness="1" CornerRadius="4">
             <ListView.ItemTemplate>
                 <DataTemplate>
                     <Grid ColumnSpacing="8" Padding="4">
@@ -60,7 +60,7 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{Binding Icon}" VerticalAlignment="Center" HorizontalAlignment="Center" />
                         <TextBlock Grid.Column="1" Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Grid.Column="2" Text="{Binding SizeFormatted}" VerticalAlignment="Center" Foreground="{StaticResource SfTextMutedBrush}" HorizontalAlignment="Right" />
+                        <TextBlock Grid.Column="2" Text="{Binding SizeFormatted}" VerticalAlignment="Center" Foreground="{ThemeResource SfTextMutedBrush}" HorizontalAlignment="Right" />
                     </Grid>
                 </DataTemplate>
             </ListView.ItemTemplate>

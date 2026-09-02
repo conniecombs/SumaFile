@@ -15,9 +15,10 @@ public class UiSettingsTests
     [Fact]
     public void UiSettings_NormalizesAppearanceAndStartLocation()
     {
-        Assert.Equal("light", UiSettings.NormalizeTheme("Light"));
+        Assert.Equal("system", UiSettings.NormalizeTheme("Light"));
         Assert.Equal("system", UiSettings.NormalizeTheme("system"));
-        Assert.Equal("dark", UiSettings.NormalizeTheme("nope"));
+        Assert.Equal("system", UiSettings.NormalizeTheme("nope"));
+        Assert.Equal("dark", UiSettings.NormalizeTheme("Dark"));
         Assert.Equal("last", UiSettings.NormalizeStartLocation("Last"));
         Assert.Equal("custom", UiSettings.NormalizeStartLocation("custom"));
         Assert.Equal("home", UiSettings.NormalizeStartLocation(null));

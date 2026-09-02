@@ -195,6 +195,7 @@ public sealed class ExplorerWorkspace
     public void ApplyUiSettings(UiSettings settings, bool applyViewDefaultsToPanes = true)
     {
         Settings = settings;
+        Settings.Theme = UiSettings.NormalizeTheme(settings.Theme);
         Settings.DefaultView = UiSettings.NormalizeDefaultView(settings.DefaultView);
         Settings.DefaultIconSize = UiSettings.NormalizeIconSize(settings.DefaultIconSize);
         Settings.SidebarWidth = UiSettings.NormalizeSidebarWidth(settings.SidebarWidth);

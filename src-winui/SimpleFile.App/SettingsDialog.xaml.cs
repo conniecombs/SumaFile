@@ -705,12 +705,7 @@ public sealed partial class SettingsDialog : ContentDialog
 
     private void SelectTheme(string? theme)
     {
-        ThemeComboBox.SelectedIndex = UiSettings.NormalizeTheme(theme) switch
-        {
-            "light" => 1,
-            "dark" => 2,
-            _ => 0,
-        };
+        ThemeComboBox.SelectedIndex = UiSettings.NormalizeTheme(theme) == "dark" ? 1 : 0;
     }
 
     private static async Task<string?> GetSettingOrDefaultAsync(
