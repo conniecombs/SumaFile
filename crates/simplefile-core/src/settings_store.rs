@@ -213,7 +213,6 @@ fn set_db_setting_at(path: &Path, key: &str, value: &str) -> Result<(), String> 
 mod tests {
     use super::*;
     use std::ffi::OsString;
-    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_db(name: &str) -> PathBuf {
@@ -230,11 +229,6 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("simplefile-settings-{name}-{nanos}"))
-    }
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
     }
 
     struct EnvVarGuard {
@@ -298,7 +292,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn metadata_db_path_prefers_stable_compatibility_folder() {
-        let _lock = env_lock().lock().expect("env lock");
+        let _lock = crate::test_support::env_lock().lock().expect("env lock");
         let root = temp_dir("stable-appdata");
         let roaming = root.join("roaming");
         let local = root.join("local");
@@ -325,7 +319,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn metadata_db_path_falls_back_to_legacy_simplefile_database() {
-        let _lock = env_lock().lock().expect("env lock");
+        let _lock = crate::test_support::env_lock().lock().expect("env lock");
         let root = temp_dir("legacy-appdata");
         let roaming = root.join("roaming");
         let local = root.join("local");
