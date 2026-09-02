@@ -112,6 +112,11 @@ const releaseSnippets = [
     'node scripts/cargo-audit-release.mjs',
     'Install WiX Toolset (MSI)',
     'function Resolve-WixBin',
+    'Install NSIS',
+    'function Resolve-NsisDir',
+    'choco install nsis -y --no-progress',
+    "throw 'NSIS directory not found after install.'",
+    "Join-Path $nsis 'makensis.exe'",
     'build-winui-release.ps1',
     'RequireUpdaterSignature',
     'SIMPLEFILE_UPDATER_PUBLIC_KEY',
@@ -152,6 +157,11 @@ const releaseBuildSnippets = [
     'function Resolve-WixBin',
     'Get-Command candle.exe',
     'choco install wixtoolset -y --no-progress',
+    'Install NSIS',
+    'function Resolve-NsisDir',
+    'choco install nsis -y --no-progress',
+    "throw 'NSIS directory not found after install.'",
+    "Join-Path $nsis 'makensis.exe'",
     'dist/winui',
     'build-winui-release.ps1',
     'smoke:winui-upgrade',
@@ -186,6 +196,11 @@ const installerSmokeSnippets = [
     'function Resolve-WixBin',
     'Get-Command candle.exe',
     'choco install wixtoolset -y --no-progress',
+    'Install NSIS',
+    'function Resolve-NsisDir',
+    'choco install nsis -y --no-progress',
+    "throw 'NSIS directory not found after install.'",
+    "Join-Path $nsis 'makensis.exe'",
     actionPins.uploadArtifact,
 ];
 
@@ -248,6 +263,7 @@ const retiredWorkflowSnippets = [
     'Install Linux/Tauri dependencies',
     'libwebkit2gtk',
     '--ignore RUSTSEC-',
+    'Get-Command makensis.exe | Select-Object -ExpandProperty Source',
 ];
 
 for (const snippet of retiredWorkflowSnippets) {
