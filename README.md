@@ -7,7 +7,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%7C%20Windows%2011-0078D4?logo=windows)
 ![UI](https://img.shields.io/badge/UI-WinUI%203-5b8def)
 ![Backend](https://img.shields.io/badge/backend-Rust%20IPC-b7410e?logo=rust)
-![License](https://img.shields.io/badge/license-proprietary-444444)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 SumaFile is a native Windows file manager for people who work across several
 folders at once and need more than a basic file list. It pairs a WinUI 3 desktop
@@ -96,7 +96,7 @@ repositories can be reviewed without jumping between Explorer and a terminal.
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
 | Release artifacts | NSIS setup, MSI, portable ZIP, updater manifest |
 | Storage scope | Local folders, local drives, removable media, mapped network shares, archives |
-| License | Proprietary, all rights reserved |
+| License | [MIT](LICENSE) |
 
 The active application is the WinUI host under `src-winui/` plus the Rust crates
 under `crates/`. Historical migration notes remain in `docs/winui-migration/`,
@@ -589,12 +589,8 @@ See [docs/SUPPORT.md](docs/SUPPORT.md) for the full support checklist.
 
 ## License
 
-SumaFile is proprietary software. Copyright (c) 2024-2026 conniecombs.
-All rights reserved.
+SumaFile is open-source software licensed under the [MIT License](LICENSE).
 
-Access to this repository or possession of a copy does not grant permission to
-use, copy, modify, redistribute, sublicense, host, resell, or create derivative
-works without prior written permission.
+Copyright (c) 2024-2026 conniecombs.
 
-See [LICENSE](LICENSE) for the full terms. Third-party libraries remain under
-their own licenses.
+Third-party libraries remain governed by their own license terms.

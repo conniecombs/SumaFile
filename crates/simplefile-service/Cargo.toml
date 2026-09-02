@@ -3,7 +3,7 @@ name = "simplefile-service"
 version = "1.0.0"
 description = "SumaFile named-pipe JSON-RPC IPC service"
 authors = ["SumaFile Team"]
-license-file = "../../LICENSE"
+license = "MIT"
 repository = "https://github.com/conniecombs/SumaFile"
 edition = "2021"
 

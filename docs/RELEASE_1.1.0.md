@@ -2,6 +2,11 @@
 
 Release date: 2026-05-29
 
+> [!NOTE]
+> Licensing update (2026-09-02): the current SumaFile source repository is
+> licensed under the MIT License. The licensing language below records the
+> terms under which SimpleFile 1.1.0 was originally published.
+
 ## Summary
 
 SimpleFile 1.1.0 is the first public release from the `SimpleFile-Windows`
@@ -10,9 +15,9 @@ Svelte/Vite shell migration, release-readiness hardening, Windows installer
 smoke coverage, startup-location fixes, safer file-operation conflict behavior,
 and the new proprietary project license.
 
-## Licensing
+## Licensing at Release
 
-SimpleFile is proprietary software as of this release. All rights are reserved
+SimpleFile 1.1.0 was originally published as proprietary software. All rights are reserved
 by conniecombs. Access to the repository or a copy of the software does not
 grant permission to use, copy, modify, redistribute, sublicense, host, resell,
 or create derivative works without prior written permission.
@@ -84,6 +89,5 @@ If the signing key is password-protected, it also requires
   validation only.
 - The real GitHub release workflow keeps updater signing enabled and fails if
   the signing secret is missing.
-- Older Git tags and commits may still contain historical MIT license text. The
-  `v1.1.0` release tag must point to the proprietary-license commit before
-  publishing.
+- Older Git tags and commits preserve the licensing terms that applied at the
+  time. The current SumaFile source repository is licensed under MIT.

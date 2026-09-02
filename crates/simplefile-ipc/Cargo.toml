@@ -3,7 +3,7 @@ name = "simplefile-ipc"
 version = "1.0.0"
 description = "SumaFile IPC protocol constants and schema tests"
 authors = ["SumaFile Team"]
-license-file = "../../LICENSE"
+license = "MIT"
 repository = "https://github.com/conniecombs/SumaFile"
 edition = "2021"
 

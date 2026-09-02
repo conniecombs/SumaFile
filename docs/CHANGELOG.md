@@ -11,6 +11,11 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 ### Added
 - Nothing yet.
 
+### Changed
+- Relicensed SumaFile under the MIT License. The root license text, README
+  badge and status table, npm package metadata, and Rust crate metadata now
+  consistently identify MIT.
+
 ---
 
 ## [1.0.0] - 2026-09-01

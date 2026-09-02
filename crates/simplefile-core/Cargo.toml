@@ -3,7 +3,7 @@ name = "simplefile-core"
 version = "1.0.0"
 description = "Reusable SumaFile backend domain types and utilities"
 authors = ["SumaFile Team"]
-license-file = "../../LICENSE"
+license = "MIT"
 repository = "https://github.com/conniecombs/SumaFile"
 edition = "2021"
 
