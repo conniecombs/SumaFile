@@ -15,6 +15,15 @@ public class EntryPresentationTests
     }
 
     [Fact]
+    public void FormatCompactFileSize_UsesShortFractions()
+    {
+        Assert.Equal("0 B", EntryPresentation.FormatCompactFileSize(0UL));
+        Assert.Equal("1 KB", EntryPresentation.FormatCompactFileSize(1024UL));
+        Assert.Equal("1.5 KB", EntryPresentation.FormatCompactFileSize(1536UL));
+        Assert.Equal("0 B", EntryPresentation.FormatCompactFileSize(-10L));
+    }
+
+    [Fact]
     public void FileType_FolderOrExtension()
     {
         Assert.Equal("Folder", EntryPresentation.FileType(new FileEntry { IsDir = true, Name = "src" }));

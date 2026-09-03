@@ -159,8 +159,8 @@ public sealed partial class DuplicateCheckerDialog : ContentDialog, IScanDialog<
 
         SummaryGroups.Text = groupsCount.ToString();
         SummaryFiles.Text = filesCount.ToString();
-        SummaryReclaimable.Text = FormatSize(reclaimable);
-        SummarySelected.Text = FormatSize(selectedSize);
+        SummaryReclaimable.Text = EntryPresentation.FormatCompactFileSize(reclaimable);
+        SummarySelected.Text = EntryPresentation.FormatCompactFileSize(selectedSize);
 
         TrashButton.IsEnabled = selectedSize > 0;
     }
@@ -274,29 +274,16 @@ public sealed partial class DuplicateCheckerDialog : ContentDialog, IScanDialog<
             RevealRequested?.Invoke(this, file.Path);
         }
     }
-
-    public static string FormatSize(long bytes)
-    {
-        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
-        double len = bytes;
-        int order = 0;
-        while (len >= 1024 && order < sizes.Length - 1)
-        {
-            order++;
-            len = len / 1024;
-        }
-        return $"{len:0.##} {sizes[order]}";
-    }
 }
 public class DuplicateGroupViewModel
 {
     public ObservableCollection<DuplicateFileViewModel> Files { get; set; } = new();
     private readonly DuplicateCheckerDialog _dialog;
     public long SizeEach { get; }
-    
+
     public long WastedBytes => (Files.Count > 1) ? (Files.Count - 1) * SizeEach : 0;
-    
-    public string HeaderText => $"{Files.Count} matching files · {DuplicateCheckerDialog.FormatSize(SizeEach)} each · {DuplicateCheckerDialog.FormatSize(WastedBytes)} wasted";
+
+    public string HeaderText => $"{Files.Count} matching files · {EntryPresentation.FormatCompactFileSize(SizeEach)} each · {EntryPresentation.FormatCompactFileSize(WastedBytes)} wasted";
 
     public DuplicateGroupViewModel(DuplicateCheckGroup group, DuplicateCheckerDialog dialog)
     {
@@ -357,7 +344,7 @@ public class DuplicateFileViewModel : INotifyPropertyChanged
     public long Size { get; }
     public DateTime Modified { get; }
 
-    public string SizeAndDate => $"{DuplicateCheckerDialog.FormatSize(Size)} · {Modified:g}";
+    public string SizeAndDate => $"{EntryPresentation.FormatCompactFileSize(Size)} · {Modified:g}";
 
     public bool IsSelected
     {

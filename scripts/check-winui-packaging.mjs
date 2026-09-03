@@ -58,6 +58,13 @@ const releaseBuildYml = readText('.github/workflows/release-build.yml');
 const installerSmokeYml = readText('.github/workflows/installer-smoke.yml');
 const appCsproj = readText('src-winui/SimpleFile.App/SimpleFile.App.csproj');
 
+let packageScripts = {};
+try {
+  packageScripts = JSON.parse(packageJson).scripts ?? {};
+} catch (error) {
+  fail(`package.json must be valid JSON: ${error.message}`);
+}
+
 const nsisSnippets = [
   'Name "SumaFile"',
   'simplefile-service.exe',
@@ -115,6 +122,24 @@ const npmSnippets = [
 
 for (const snippet of npmSnippets) {
   requireSnippet(packageJson, 'package.json', snippet);
+}
+
+const releaseBuildCommand = 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1';
+const expectedReleaseAliases = {
+  build: 'npm run release:build',
+  'build:winui:release': 'npm run release:build',
+  'release:build': releaseBuildCommand,
+  'release:local': 'npm run check:release && npm run release:build',
+};
+
+for (const [name, expectedCommand] of Object.entries(expectedReleaseAliases)) {
+  if (packageScripts[name] !== expectedCommand) {
+    fail(`package.json script ${name} must be "${expectedCommand}".`);
+  }
+}
+
+if (Object.hasOwn(packageScripts, 'release:winui')) {
+  fail('package.json should not keep the redundant release:winui alias; use release:build.');
 }
 
 

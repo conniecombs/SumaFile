@@ -76,20 +76,7 @@ public static class TransferProgressFormatter
     }
 
     public static string FormatBytes(ulong bytes)
-    {
-        string[] units = ["B", "KB", "MB", "GB", "TB", "PB"];
-        var value = (double)bytes;
-        var unit = 0;
-        while (value >= 1024 && unit < units.Length - 1)
-        {
-            value /= 1024;
-            unit++;
-        }
-
-        return unit == 0
-            ? $"{bytes} B"
-            : $"{value:0.##} {units[unit]}";
-    }
+        => EntryPresentation.FormatCompactFileSize(bytes);
 
     private static string Title(TransferProgressContext context, ProgressUpdate update)
     {

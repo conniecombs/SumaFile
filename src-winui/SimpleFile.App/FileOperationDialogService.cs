@@ -72,7 +72,25 @@ internal sealed partial class FileOperationDialogService
         _dispatchToUi = dispatchToUi;
     }
 
-    public async Task PromptAndCreateFolderAsync(PaneId pane)
+    public Task PromptAndCreateFolderAsync(PaneId pane)
+        => PromptForNameAndInvokeAsync(
+            pane,
+            "New Folder",
+            "Folder name",
+            static (workspace, name, cancellationToken) => workspace.CreateFolderInCurrentPaneAsync(name, cancellationToken));
+
+    public Task PromptAndCreateFileAsync(PaneId pane)
+        => PromptForNameAndInvokeAsync(
+            pane,
+            "New File",
+            "File name",
+            static (workspace, name, cancellationToken) => workspace.CreateFileInCurrentPaneAsync(name, cancellationToken));
+
+    private async Task PromptForNameAndInvokeAsync(
+        PaneId pane,
+        string title,
+        string placeholderText,
+        Func<ExplorerWorkspace, string, CancellationToken, Task<string>> invokeAsync)
     {
         var workspace = _workspace();
         if (workspace is null)
@@ -82,8 +100,8 @@ internal sealed partial class FileOperationDialogService
 
         var dialog = new ContentDialog
         {
-            Title = "New Folder",
-            Content = new TextBox { PlaceholderText = "Folder name" },
+            Title = title,
+            Content = new TextBox { PlaceholderText = placeholderText },
             PrimaryButtonText = "Create",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
@@ -91,76 +109,38 @@ internal sealed partial class FileOperationDialogService
         };
 
         var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary && dialog.Content is TextBox tb && !string.IsNullOrWhiteSpace(tb.Text))
-        {
-            if (!ReferenceEquals(_workspace(), workspace))
-            {
-                return;
-            }
-
-            var utilityCts = _beginUtilityOperation();
-            try
-            {
-                workspace.ActivatePane(pane);
-                await workspace.CreateFolderInCurrentPaneAsync(tb.Text.Trim(), utilityCts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception exception)
-            {
-                _showMessage("New Folder", exception.Message, InfoBarSeverity.Error);
-            }
-            finally
-            {
-                _finishUtilityOperation(utilityCts);
-            }
-        }
-    }
-
-    public async Task PromptAndCreateFileAsync(PaneId pane)
-    {
-        var workspace = _workspace();
-        if (workspace is null)
+        if (result != ContentDialogResult.Primary || dialog.Content is not TextBox tb)
         {
             return;
         }
 
-        var dialog = new ContentDialog
+        var name = tb.Text.Trim();
+        if (name.Length == 0)
         {
-            Title = "New File",
-            Content = new TextBox { PlaceholderText = "File name" },
-            PrimaryButtonText = "Create",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = _xamlRoot(),
-        };
+            return;
+        }
 
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary && dialog.Content is TextBox tb && !string.IsNullOrWhiteSpace(tb.Text))
+        if (!ReferenceEquals(_workspace(), workspace))
         {
-            if (!ReferenceEquals(_workspace(), workspace))
-            {
-                return;
-            }
+            return;
+        }
 
-            var utilityCts = _beginUtilityOperation();
-            try
-            {
-                workspace.ActivatePane(pane);
-                await workspace.CreateFileInCurrentPaneAsync(tb.Text.Trim(), utilityCts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception exception)
-            {
-                _showMessage("New File", exception.Message, InfoBarSeverity.Error);
-            }
-            finally
-            {
-                _finishUtilityOperation(utilityCts);
-            }
+        var utilityCts = _beginUtilityOperation();
+        try
+        {
+            workspace.ActivatePane(pane);
+            await invokeAsync(workspace, name, utilityCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _showMessage(title, exception.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _finishUtilityOperation(utilityCts);
         }
     }
 

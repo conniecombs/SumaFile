@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "npm run dev:winui",
-    "build": "npm run build:winui:release",
+    "build": "npm run release:build",
     "generate:ipc-bindings": "node scripts/generate-ipc-bindings.mjs",
     "check:ipc-generated": "node scripts/generate-ipc-bindings.mjs --check",
     "check:ipc-schema": "node scripts/check-ipc-schema.mjs",
@@ -20,7 +20,7 @@
     "check:security": "node scripts/cargo-audit-release.mjs",
     "check:release": "npm run check && npm run check:rust && npm run check:security",
     "build:winui": "dotnet build src-winui/SimpleFile.sln -c Debug",
-    "build:winui:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1",
+    "build:winui:release": "npm run release:build",
     "check:winui": "dotnet test src-winui/SimpleFile.Tests/SimpleFile.Tests.csproj -c Debug --nologo",
     "dev:winui": "cargo build -p simplefile-service && dotnet run --project src-winui/SimpleFile.App/SimpleFile.App.csproj -c Debug",
     "smoke:winui": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-startup.ps1",
@@ -30,7 +30,6 @@
     "smoke:winui-upgrade": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-upgrade.ps1 -SkipWhenPreviousUnavailable",
     "smoke:winui-upgrade-from-ref": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-winui-upgrade-from-ref.ps1",
     "release:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1",
-    "release:winui": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1",
-    "release:local": "npm run check:release && npm run build:winui:release"
+    "release:local": "npm run check:release && npm run release:build"
   }
 }

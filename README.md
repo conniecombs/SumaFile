@@ -448,7 +448,7 @@ SumaFile/
 |-- .github/workflows/        CI, release, release-build, installer smoke
 |-- package.json              Root command runner
 |-- Cargo.toml                Rust workspace
-`-- LICENSE                   Proprietary license
+`-- LICENSE                   MIT License
 ```
 
 ## Testing and Verification
@@ -567,8 +567,8 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 - RAR creation/extraction depends on optional RAR tooling.
 - Account-backed storage integrations are intentionally out of scope for
   this branch.
-- Shortcut remapping is not implemented yet; Settings -> Shortcuts lists the
-  live shortcuts.
+- Some Windows-reserved shortcuts may not be assignable; shortcut remapping,
+  import, and export live in Settings -> Shortcuts.
 
 ## Support
 

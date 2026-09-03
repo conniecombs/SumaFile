@@ -15,12 +15,18 @@ public static class EntryPresentation
             return "";
         }
 
-        if (bytes == 0)
-        {
-            return "0 B";
-        }
+        return FormatByteSize(bytes, "0.0");
+    }
 
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
+    public static string FormatCompactFileSize(long bytes) =>
+        FormatCompactFileSize((ulong)Math.Max(0, bytes));
+
+    public static string FormatCompactFileSize(ulong bytes) =>
+        FormatByteSize(bytes, "0.##");
+
+    private static string FormatByteSize(ulong bytes, string fractionalFormat)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB", "PB"];
         double size = bytes;
         var unitIndex = 0;
         while (size >= 1024 && unitIndex < units.Length - 1)
@@ -31,7 +37,7 @@ public static class EntryPresentation
 
         return unitIndex == 0
             ? $"{size:0} {units[unitIndex]}"
-            : $"{size:0.0} {units[unitIndex]}";
+            : $"{size.ToString(fractionalFormat, CultureInfo.CurrentCulture)} {units[unitIndex]}";
     }
 
     public static string FormatModified(string value)
