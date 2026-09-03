@@ -1843,6 +1843,12 @@ public sealed partial class MainWindow
             return;
         }
 
+        if (id.StartsWith("new:", StringComparison.Ordinal))
+        {
+            await RunNewItemCommandAsync(id, ActiveUiPane);
+            return;
+        }
+
         var commandId = CommandAliasCatalog.Normalize(id);
         if (!string.Equals(commandId, id, StringComparison.Ordinal))
         {

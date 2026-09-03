@@ -137,20 +137,50 @@
                                     PlaceholderText="Filter list"
                                     TextChanged="OnQuickFilterChanged" />
                                 <Button
-                                    x:Name="PrimaryNewFolderButton"
+                                    x:Name="PrimaryNewButton"
                                     Style="{StaticResource SfToolbarButtonStyle}"
-                                    AutomationProperties.Name="New folder"
-                                    Click="OnPrimaryNewFolder"
-                                    ToolTipService.ToolTip="New Folder (Ctrl+Shift+N)">
+                                    AutomationProperties.Name="New"
+                                    ToolTipService.ToolTip="New">
+                                    <Button.Flyout>
+                                        <MenuFlyout>
+                                            <MenuFlyoutItem
+                                                Text="Folder"
+                                                Tag="new:folder"
+                                                Click="OnNewMenuItemClick"
+                                                KeyboardAcceleratorTextOverride="Ctrl+Shift+N">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8F4;" />
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutSeparator />
+                                            <MenuFlyoutItem
+                                                Text="Text file"
+                                                Tag="new:text"
+                                                Click="OnNewMenuItemClick"
+                                                KeyboardAcceleratorTextOverride="Ctrl+N">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutItem Text="Markdown file" Tag="new:markdown" Click="OnNewMenuItemClick">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutItem Text="JSON file" Tag="new:json" Click="OnNewMenuItemClick">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutSeparator />
+                                            <MenuFlyoutItem Text="Empty file..." Tag="new:empty" Click="OnNewMenuItemClick">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                        </MenuFlyout>
+                                    </Button.Flyout>
                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8F4;" />
-                                </Button>
-                                <Button
-                                    x:Name="PrimaryNewFileButton"
-                                    Style="{StaticResource SfToolbarButtonStyle}"
-                                    AutomationProperties.Name="New file"
-                                    Click="OnPrimaryNewFile"
-                                    ToolTipService.ToolTip="New File (Ctrl+N)">
-                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
                                 </Button>
                                 <Button
                                     x:Name="DualPaneButton"

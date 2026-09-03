@@ -26,8 +26,7 @@ public sealed partial class PrimaryToolbarView : UserControl
     public Button SearchCancel => SearchCancelButton;
     public StackPanel ActionsHost => PrimaryActionsHost;
     public TextBox QuickFilterTextBox => QuickFilterBox;
-    public Button NewFolderButton => PrimaryNewFolderButton;
-    public Button NewFileButton => PrimaryNewFileButton;
+    public Button NewButton => PrimaryNewButton;
     public Button DualPaneToggleButton => DualPaneButton;
     public Button ClosePaneButton => ClosePrimaryPaneButton;
     public Button ProfileButton => WorkspaceProfileButton;
@@ -61,8 +60,7 @@ public sealed partial class PrimaryToolbarView : UserControl
     public event RoutedEventHandler? ContentSearchToggleClick;
     public event RoutedEventHandler? CancelSearchClick;
     public event TextChangedEventHandler? QuickFilterChanged;
-    public event RoutedEventHandler? PrimaryNewFolder;
-    public event RoutedEventHandler? PrimaryNewFile;
+    public event EventHandler<string>? PrimaryNewItemRequested;
     public event RoutedEventHandler? ToggleDualPane;
     public event RoutedEventHandler? ClosePrimaryPane;
     public event EventHandler<object>? WorkspaceProfilesFlyoutOpening;
@@ -101,9 +99,13 @@ public sealed partial class PrimaryToolbarView : UserControl
 
     private void OnQuickFilterChanged(object sender, TextChangedEventArgs e) => QuickFilterChanged?.Invoke(sender, e);
 
-    private void OnPrimaryNewFolder(object sender, RoutedEventArgs e) => PrimaryNewFolder?.Invoke(sender, e);
-
-    private void OnPrimaryNewFile(object sender, RoutedEventArgs e) => PrimaryNewFile?.Invoke(sender, e);
+    private void OnNewMenuItemClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuFlyoutItem { Tag: string id })
+        {
+            PrimaryNewItemRequested?.Invoke(this, id);
+        }
+    }
 
     private void OnToggleDualPane(object sender, RoutedEventArgs e) => ToggleDualPane?.Invoke(sender, e);
 

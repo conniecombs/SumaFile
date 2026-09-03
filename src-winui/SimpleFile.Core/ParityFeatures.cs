@@ -160,6 +160,42 @@ public static class PhotoFolder
     }
 }
 
+public static class MediaFolder
+{
+    public static bool IsMediaFolder(IEnumerable<FileEntry> entries, int thresholdPercent = 70)
+    {
+        var files = entries.Where(entry => !entry.IsDir).ToList();
+        if (files.Count == 0)
+        {
+            return false;
+        }
+
+        var visualMedia = files.Count(entry =>
+            IsVisualMedia(entry.Extension) || IsVisualMedia(entry.Name));
+        return visualMedia * 100 / files.Count >= thresholdPercent;
+    }
+
+    public static bool IsVisualMedia(string? nameOrExtension) =>
+        PhotoFolder.IsImage(nameOrExtension) || IsVideo(nameOrExtension);
+
+    public static bool IsVideo(string? nameOrExtension)
+    {
+        var value = (nameOrExtension ?? "").Trim().ToLowerInvariant();
+        return value is "mp4" or "m4v" or "mov" or "webm" or "mkv" or "avi" or "wmv" or "mpg" or "mpeg" or "flv" or "3gp"
+            || value.EndsWith(".mp4", StringComparison.Ordinal)
+            || value.EndsWith(".m4v", StringComparison.Ordinal)
+            || value.EndsWith(".mov", StringComparison.Ordinal)
+            || value.EndsWith(".webm", StringComparison.Ordinal)
+            || value.EndsWith(".mkv", StringComparison.Ordinal)
+            || value.EndsWith(".avi", StringComparison.Ordinal)
+            || value.EndsWith(".wmv", StringComparison.Ordinal)
+            || value.EndsWith(".mpg", StringComparison.Ordinal)
+            || value.EndsWith(".mpeg", StringComparison.Ordinal)
+            || value.EndsWith(".flv", StringComparison.Ordinal)
+            || value.EndsWith(".3gp", StringComparison.Ordinal);
+    }
+}
+
 public static class MarqueeSelection
 {
     public static bool Intersects(double x, double y, double width, double height, double itemTop, double itemBottom)

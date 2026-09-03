@@ -24,6 +24,9 @@ public sealed partial class PreviewPaneView : UserControl
     public Image ImagePreview => PreviewImage;
     public WebView2 PdfPreview => PreviewPdfWebView;
     public MediaPlayerElement MediaPreview => PreviewMediaPlayer;
+    public StackPanel VideoFrameControls => PreviewVideoFrameControls;
+    public Image VideoFrameImage => PreviewVideoFrameImage;
+    public RadioButtons VideoFramePresets => PreviewVideoFramePresetOptions;
     public TextBox TextPreview => PreviewTextBox;
     public TextBlock EmptyText => PreviewEmptyText;
     public StackPanel MetadataRows => PreviewMetadataRows;

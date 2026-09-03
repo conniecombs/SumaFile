@@ -72,24 +72,52 @@ internal sealed partial class FileOperationDialogService
         _dispatchToUi = dispatchToUi;
     }
 
-    public Task PromptAndCreateFolderAsync(PaneId pane)
-        => PromptForNameAndInvokeAsync(
-            pane,
-            "New Folder",
-            "Folder name",
-            static (workspace, name, cancellationToken) => workspace.CreateFolderInCurrentPaneAsync(name, cancellationToken));
-
     public Task PromptAndCreateFileAsync(PaneId pane)
         => PromptForNameAndInvokeAsync(
             pane,
-            "New File",
+            "Empty File",
             "File name",
+            NewItemTemplate.EmptyFile,
             static (workspace, name, cancellationToken) => workspace.CreateFileInCurrentPaneAsync(name, cancellationToken));
+
+    public async Task CreateNewItemFromTemplateAsync(PaneId pane, NewItemTemplate template)
+    {
+        var workspace = _workspace();
+        if (workspace is null)
+        {
+            return;
+        }
+
+        string? createdPath = null;
+        var utilityCts = _beginUtilityOperation();
+        try
+        {
+            workspace.ActivatePane(pane);
+            createdPath = await workspace.CreateNewItemInCurrentPaneAsync(template, utilityCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _showMessage("New", exception.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _finishUtilityOperation(utilityCts);
+        }
+
+        if (createdPath is not null && ReferenceEquals(_workspace(), workspace))
+        {
+            await PromptRenameCreatedItemAsync(workspace, createdPath, template);
+        }
+    }
 
     private async Task PromptForNameAndInvokeAsync(
         PaneId pane,
         string title,
         string placeholderText,
+        NewItemTemplate template,
         Func<ExplorerWorkspace, string, CancellationToken, Task<string>> invokeAsync)
     {
         var workspace = _workspace();
@@ -98,10 +126,14 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
+        var suggestedName = workspace.SuggestedNameForNewItem(template, pane);
+        var textBox = new TextBox { Text = suggestedName, PlaceholderText = placeholderText };
+        textBox.Select(0, NewItemTemplate.RenameSelectionLength(suggestedName, template.IsDirectory));
+
         var dialog = new ContentDialog
         {
             Title = title,
-            Content = new TextBox { PlaceholderText = placeholderText },
+            Content = textBox,
             PrimaryButtonText = "Create",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
@@ -137,6 +169,65 @@ internal sealed partial class FileOperationDialogService
         catch (Exception exception)
         {
             _showMessage(title, exception.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _finishUtilityOperation(utilityCts);
+        }
+    }
+
+    private async Task PromptRenameCreatedItemAsync(
+        ExplorerWorkspace workspace,
+        string path,
+        NewItemTemplate template)
+    {
+        var currentName = Path.GetFileName(path);
+        if (string.IsNullOrWhiteSpace(currentName))
+        {
+            return;
+        }
+
+        var tb = new TextBox { Text = currentName };
+        tb.Select(0, NewItemTemplate.RenameSelectionLength(currentName, template.IsDirectory));
+
+        var dialog = new ContentDialog
+        {
+            Title = template.IsDirectory ? "Name Folder" : "Name File",
+            Content = tb,
+            PrimaryButtonText = "Rename",
+            CloseButtonText = "Keep Name",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _xamlRoot(),
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var newName = tb.Text.Trim();
+        if (newName.Length == 0 || string.Equals(newName, currentName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(_workspace(), workspace))
+        {
+            return;
+        }
+
+        var utilityCts = _beginUtilityOperation();
+        try
+        {
+            await workspace.RenameSelectedAsync(path, newName, utilityCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _showMessage("Rename", exception.Message, InfoBarSeverity.Error);
         }
         finally
         {

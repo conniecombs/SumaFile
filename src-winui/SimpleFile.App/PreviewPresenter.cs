@@ -33,14 +33,19 @@ internal sealed class PreviewPresenter
     private readonly Image _image;
     private readonly WebView2 _pdfView;
     private readonly MediaPlayerElement _mediaPlayer;
+    private readonly StackPanel _videoFrameControls;
+    private readonly Image _videoFrameImage;
+    private readonly RadioButtons _videoFramePresets;
     private readonly TextBox _textBox;
     private readonly TextBlock _emptyText;
     private readonly StackPanel _metadataRows;
     private readonly TextBlock _checksumText;
 
     private int _previewToken;
+    private int _videoFrameToken;
     private string? _previewPath;
     private CancellationTokenSource? _previewCts;
+    private bool _updatingVideoFrameSelection;
 
     public PreviewPresenter(
         Func<ExplorerWorkspace?> workspace,
@@ -64,6 +69,9 @@ internal sealed class PreviewPresenter
         Image image,
         WebView2 pdfView,
         MediaPlayerElement mediaPlayer,
+        StackPanel videoFrameControls,
+        Image videoFrameImage,
+        RadioButtons videoFramePresets,
         TextBox textBox,
         TextBlock emptyText,
         StackPanel metadataRows,
@@ -90,10 +98,14 @@ internal sealed class PreviewPresenter
         _image = image;
         _pdfView = pdfView;
         _mediaPlayer = mediaPlayer;
+        _videoFrameControls = videoFrameControls;
+        _videoFrameImage = videoFrameImage;
+        _videoFramePresets = videoFramePresets;
         _textBox = textBox;
         _emptyText = emptyText;
         _metadataRows = metadataRows;
         _checksumText = checksumText;
+        _videoFramePresets.SelectionChanged += OnVideoFramePresetChanged;
     }
 
     public string? CurrentPath => _previewPath;
@@ -137,6 +149,7 @@ internal sealed class PreviewPresenter
         _image.Source = null;
         _image.Visibility = Visibility.Collapsed;
         ClearPathBackedPreviews();
+        HideVideoFrameControls();
         _textBox.Text = "";
         _textBox.Visibility = Visibility.Collapsed;
         _emptyText.Text = "No preview loaded.";
@@ -153,6 +166,7 @@ internal sealed class PreviewPresenter
         _previewCts = null;
         _ = Interlocked.Increment(ref _previewToken);
         ClearPathBackedPreviews();
+        HideVideoFrameControls();
     }
 
     public void UpdateButtons(FileRow? row)
@@ -326,6 +340,7 @@ internal sealed class PreviewPresenter
             _image.Source = null;
             _image.Visibility = Visibility.Collapsed;
             ClearPathBackedPreviews();
+            HideVideoFrameControls();
             _textBox.Text = "";
             _textBox.Visibility = Visibility.Collapsed;
             _emptyText.Text = row.IsDir ? "Folder selected." : "Loading preview...";
@@ -555,6 +570,15 @@ internal sealed class PreviewPresenter
             _mediaPlayer.Height = string.Equals(fileType, "audio", StringComparison.OrdinalIgnoreCase) ? 96 : 220;
             _mediaPlayer.Source = MediaSource.CreateFromUri(new Uri(path));
             _mediaPlayer.Visibility = Visibility.Visible;
+            if (string.Equals(fileType, "video", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowVideoFrameControls(path, token, cancellationToken);
+            }
+            else
+            {
+                HideVideoFrameControls();
+            }
+
             _emptyText.Visibility = Visibility.Collapsed;
             return true;
         }
@@ -562,7 +586,141 @@ internal sealed class PreviewPresenter
         {
             _mediaPlayer.Source = null;
             _mediaPlayer.Visibility = Visibility.Collapsed;
+            HideVideoFrameControls();
             return false;
+        }
+    }
+
+    private void ShowVideoFrameControls(string path, int token, CancellationToken cancellationToken)
+    {
+        if (!VideoThumbnailExtractor.CanUseVideoThumbnail(path) || !IsCurrent(path, token, cancellationToken))
+        {
+            HideVideoFrameControls();
+            return;
+        }
+
+        var frame = FileListThumbnailHost.VideoFrameForPath(path);
+        _videoFrameControls.Visibility = Visibility.Visible;
+        _videoFrameImage.Source = ShellIconLoader.ForEntry(path, isDirectory: false, 72);
+        SelectVideoFramePreset(frame);
+        _ = LoadVideoFramePreviewAsync(path, frame, token, cancellationToken);
+    }
+
+    private async Task LoadVideoFramePreviewAsync(
+        string path,
+        VideoThumbnailFrame frame,
+        int previewToken,
+        CancellationToken cancellationToken)
+    {
+        var frameToken = Interlocked.Increment(ref _videoFrameToken);
+        try
+        {
+            var source = await VideoThumbnailExtractor.LoadAsync(path, 144, frame);
+            if (source is null || !IsCurrentVideoFrame(path, previewToken, frame, frameToken, cancellationToken))
+            {
+                return;
+            }
+
+            _videoFrameImage.Source = source;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private bool IsCurrentVideoFrame(
+        string path,
+        int previewToken,
+        VideoThumbnailFrame frame,
+        int frameToken,
+        CancellationToken cancellationToken)
+    {
+        return !cancellationToken.IsCancellationRequested
+            && IsCurrent(path, previewToken)
+            && frameToken == _videoFrameToken
+            && FileListThumbnailHost.VideoFrameForPath(path).Percent == frame.Percent;
+    }
+
+    private void OnVideoFramePresetChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_updatingVideoFrameSelection || _previewPath is not { } path)
+        {
+            return;
+        }
+
+        if (!TrySelectedVideoFrame(out var frame) || !VideoThumbnailExtractor.CanUseVideoThumbnail(path))
+        {
+            return;
+        }
+
+        FileListThumbnailHost.SetVideoFramePreference(path, frame);
+        _videoFrameImage.Source = ShellIconLoader.ForEntry(path, isDirectory: false, 72);
+        var cancellationToken = _previewCts?.Token ?? CancellationToken.None;
+        _ = LoadVideoFramePreviewAsync(path, frame, _previewToken, cancellationToken);
+    }
+
+    private void SelectVideoFramePreset(VideoThumbnailFrame frame)
+    {
+        _updatingVideoFrameSelection = true;
+        try
+        {
+            for (var index = 0; index < _videoFramePresets.Items.Count; index++)
+            {
+                if (_videoFramePresets.Items[index] is RadioButton item
+                    && TryReadVideoFrame(item, out var itemFrame)
+                    && itemFrame.Percent == frame.Percent)
+                {
+                    _videoFramePresets.SelectedIndex = index;
+                    return;
+                }
+            }
+
+            _videoFramePresets.SelectedIndex = -1;
+        }
+        finally
+        {
+            _updatingVideoFrameSelection = false;
+        }
+    }
+
+    private bool TrySelectedVideoFrame(out VideoThumbnailFrame frame)
+    {
+        if (_videoFramePresets.SelectedItem is RadioButton item
+            && TryReadVideoFrame(item, out frame))
+        {
+            return true;
+        }
+
+        frame = VideoThumbnailFrame.Default;
+        return false;
+    }
+
+    private static bool TryReadVideoFrame(RadioButton item, out VideoThumbnailFrame frame)
+    {
+        if (item.Tag is string tag
+            && int.TryParse(tag, NumberStyles.Integer, CultureInfo.InvariantCulture, out var percent))
+        {
+            frame = new VideoThumbnailFrame(percent);
+            return true;
+        }
+
+        frame = VideoThumbnailFrame.Default;
+        return false;
+    }
+
+    private void HideVideoFrameControls()
+    {
+        _ = Interlocked.Increment(ref _videoFrameToken);
+        _videoFrameControls.Visibility = Visibility.Collapsed;
+        _videoFrameImage.Source = null;
+        _updatingVideoFrameSelection = true;
+        try
+        {
+            _videoFramePresets.SelectedIndex = -1;
+        }
+        finally
+        {
+            _updatingVideoFrameSelection = false;
         }
     }
 

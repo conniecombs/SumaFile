@@ -46,7 +46,7 @@ public static class AppCommandCatalog
         new("rename", "Rename", "File", "F2"),
         new("advanced-rename", "Advanced rename", "File"),
         new("new-folder", "New folder", "File", "Ctrl+Shift+N"),
-        new("new-file", "New file", "File", "Ctrl+N"),
+        new("new-file", "New text file", "File", "Ctrl+N"),
         new("create-archive", "Create archive", "Archive"),
         new("terminal", "Open terminal", "Tools", "F4"),
         new("preview", "Toggle preview pane", "View"),

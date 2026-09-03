@@ -265,8 +265,7 @@ public class ContextMenuBuilderTests
             [
                 ToolbarOverflowPlanner.Search,
                 ToolbarOverflowPlanner.Filter,
-                ToolbarOverflowPlanner.NewFolder,
-                ToolbarOverflowPlanner.NewFile,
+                ToolbarOverflowPlanner.New,
                 ToolbarOverflowPlanner.DualPane,
                 ToolbarOverflowPlanner.Profiles,
                 ToolbarOverflowPlanner.ViewOptions,
@@ -278,20 +277,27 @@ public class ContextMenuBuilderTests
         Assert.Equal("Find in folder", overflowed[0].Label);
         Assert.Equal("overflow-filter", overflowed[1].Id);
         Assert.Equal("Filter list", overflowed[1].Label);
-        Assert.Equal("overflow-new-folder", overflowed[2].Id);
-        Assert.Equal("overflow-new-file", overflowed[3].Id);
-        Assert.Equal("overflow-dual-pane", overflowed[4].Id);
-        Assert.Equal("Open second pane", overflowed[4].Label);
-        Assert.Equal("overflow-profiles", overflowed[5].Id);
-        Assert.Equal("overflow-view", overflowed[6].Id);
-        Assert.Equal("overflow-settings", overflowed[7].Id);
-        Assert.Equal(ContextMenuIconCatalog.OpenPane, overflowed[4].IconGlyph);
-        Assert.Equal(ContextMenuIconCatalog.Switch, overflowed[5].IconGlyph);
-        Assert.Equal(ContextMenuIconCatalog.ViewAll, overflowed[6].IconGlyph);
-        Assert.Equal(ContextMenuIconCatalog.Settings, overflowed[7].IconGlyph);
-        Assert.Contains(overflowed[5].Children, child => child.Id == "profile:save");
-        Assert.Contains(overflowed[5].Children, child => child.Id == "profile:manage");
-        Assert.Contains(overflowed[6].Children, child => child.Id == "view:details");
+        var newMenu = overflowed[2];
+        Assert.Equal("overflow-new", newMenu.Id);
+        Assert.Equal("New", newMenu.Label);
+        Assert.Contains(newMenu.Children, child => child.Id == "new:folder" && child.Shortcut == "Ctrl+Shift+N");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:text" && child.Shortcut == "Ctrl+N");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:markdown");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:json");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:empty");
+        Assert.Equal("overflow-dual-pane", overflowed[3].Id);
+        Assert.Equal("Open second pane", overflowed[3].Label);
+        Assert.Equal("overflow-profiles", overflowed[4].Id);
+        Assert.Equal("overflow-view", overflowed[5].Id);
+        Assert.Equal("overflow-settings", overflowed[6].Id);
+        Assert.Equal(ContextMenuIconCatalog.NewFolder, overflowed[2].IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.OpenPane, overflowed[3].IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.Switch, overflowed[4].IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.ViewAll, overflowed[5].IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.Settings, overflowed[6].IconGlyph);
+        Assert.Contains(overflowed[4].Children, child => child.Id == "profile:save");
+        Assert.Contains(overflowed[4].Children, child => child.Id == "profile:manage");
+        Assert.Contains(overflowed[5].Children, child => child.Id == "view:details");
         Assert.Contains(overflowed, entry => entry.Id == "ctx-duplicates");
         Assert.DoesNotContain(overflowed, entry => entry.Id == "ctx-close-dual-pane");
 

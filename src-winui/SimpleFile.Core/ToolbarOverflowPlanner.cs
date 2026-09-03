@@ -13,8 +13,7 @@ public static class ToolbarOverflowPlanner
     public const string Profiles = "profiles";
     public const string DualPane = "dual-pane";
     public const string ViewOptions = "view-options";
-    public const string NewFile = "new-file";
-    public const string NewFolder = "new-folder";
+    public const string New = "new";
 
     public const double PathMinWidth = 140;
     public const double ColumnSpacing = 8;
@@ -36,8 +35,7 @@ public static class ToolbarOverflowPlanner
         Profiles,
         DualPane,
         ViewOptions,
-        NewFile,
-        NewFolder,
+        New,
     ];
 
     public static HashSet<string> OverflowIds(

@@ -67,7 +67,7 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | `list_directory` | `fs_ops` → `dir_list` | `{ path, onChunk }` | `DirectoryListing` | Primary/secondary listing, progressive chunks |
 | `list_subdirectories` | `fs_ops` | `{ path }` | `TreeNode[]` | Sidebar tree expand |
 | `create_directory` | `fs_ops` | `{ path, name }` | `string` | New folder, pack-into-folder |
-| `create_file` | `fs_ops` | `{ path, name }` | `string` | New file |
+| `create_file` | `fs_ops` | `{ path, name }` | `string` | New text/Markdown/JSON/empty file |
 | `delete_entry` | `fs_ops` | `{ path }` | `void` | Permanent delete, undo of copy |
 | `move_to_trash` | `fs_ops` | `{ paths }` | `void` | Trash delete |
 | `rename_entry` | `fs_ops` | `{ path, newName }` | `string` | Rename |
@@ -265,7 +265,7 @@ Workflows live in `frontend/src/lib/app/` plus host-style modules under `fronten
 
 | Workflow | Source | Behavior to keep |
 | --- | --- | --- |
-| New folder / file | `createFolderFlow`, `createFileFlow` | Name prompt, validation, undo |
+| New folder / file | `New` menu templates | Unique default names, rename prompt, selection after refresh, validation, undo |
 | Rename | `renameSelectedFlow` | Inline/dialog, invalid-name rules |
 | Advanced rename | `advanced_rename.ts` | Preview, filters, numbering, templates, `batch_rename` |
 | Delete | `deleteSelectedFlow` | Trash vs permanent, confirm setting, Shift+Delete |
@@ -355,7 +355,7 @@ These are the Svelte-to-workflow bus. WinUI should keep equivalent commands even
 
 **Inspection / tools:** `properties`, `quick-look`, `quick-look-open`, `quick-look-close`, `preview-close`, `create-archive`, `archive-extract`, `create-archive-confirm`, `advanced-rename`, `advanced-rename-close`, `advanced-rename-confirm`, `advanced-rename-input`, `keyboard-help`, `operation-history`, `set-color-label`, `folder-metrics`, `disk-cleanup`, `duplicate-checker`, `duplicate-checker-close`, `duplicate-checker-delete`, `duplicate-checker-open`, `duplicate-checker-preview`, `duplicate-checker-reveal`, `column-header-menu`, `column-autofit`, `tags-updated`
 
-**Toolbar command ids:** `back`, `forward`, `up`, `refresh`, `new-folder`, `new-file`, `rename`, `copy`, `cut`, `paste`, `delete`, `undo`, `redo`, `clipboard-history`, `operation-history`, `color-label`, `folder-metrics`, `disk-cleanup`, `duplicate-checker`, `view-toggle`, `preview-toggle`, `theme-toggle`, `dual-pane`, `terminal`, `navigateHome`, `navigateDesktop`, `navigateDocuments`, `navigateDownloads`, `navigatePictures`
+**Toolbar command ids:** `back`, `forward`, `up`, `refresh`, `new`, `rename`, `copy`, `cut`, `paste`, `delete`, `undo`, `redo`, `clipboard-history`, `operation-history`, `color-label`, `folder-metrics`, `disk-cleanup`, `duplicate-checker`, `view-toggle`, `preview-toggle`, `theme-toggle`, `dual-pane`, `terminal`, `navigateHome`, `navigateDesktop`, `navigateDocuments`, `navigateDownloads`, `navigatePictures`
 
 **Context menu ids:** `ctx-open`, `ctx-open-with`, `ctx-preview`, `ctx-compare`, `ctx-terminal`, `ctx-powershell-admin`, `ctx-color-label`, `ctx-folder-metrics`, `ctx-cleanup`, `ctx-duplicates`, `ctx-rename`, `ctx-advanced-rename`, `ctx-copy`, `ctx-cut`, `ctx-paste`, `ctx-copy-to-pane`, `ctx-move-to-pane`, `ctx-pack`, `ctx-unpack`, `ctx-compress`, `ctx-extract`, `ctx-extract-folder`, `ctx-extract-to`, `ctx-delete`, `ctx-info`
 

@@ -13,6 +13,7 @@ internal static class FileListThumbnailHost
 
     private static readonly ConcurrentDictionary<string, ImageSource> Cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, Task<ImageSource?>> InFlight = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, VideoThumbnailFrame> VideoFramePreferences = new(StringComparer.OrdinalIgnoreCase);
     private static readonly SemaphoreSlim LoadGate = new(4, 4);
 
     private static Func<string, uint, CancellationToken, Task<string>>? _loadImageThumbnailAsync;
@@ -32,6 +33,22 @@ internal static class FileListThumbnailHost
 
         Cache.Clear();
         InFlight.Clear();
+        Changed?.Invoke(null, EventArgs.Empty);
+    }
+
+    public static VideoThumbnailFrame VideoFrameForPath(string path) =>
+        !string.IsNullOrWhiteSpace(path) && VideoFramePreferences.TryGetValue(path, out var frame)
+            ? frame
+            : VideoThumbnailFrame.Default;
+
+    public static void SetVideoFramePreference(string path, VideoThumbnailFrame frame)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        VideoFramePreferences[path] = frame;
         Changed?.Invoke(null, EventArgs.Empty);
     }
 
@@ -71,7 +88,7 @@ internal static class FileListThumbnailHost
         }
 
         var extension = ExtensionFor(row);
-        return CanUseAppThumbnail(extension) || CanUseWindowsThumbnail(extension);
+        return CanUseAppThumbnail(extension) || IsVideoThumbnail(extension) || CanUseWindowsThumbnail(extension);
     }
 
     public static ImageSource? CachedThumbnail(FileRow row, int iconSize)
@@ -98,9 +115,12 @@ internal static class FileListThumbnailHost
         var path = row.Path;
         var extension = ExtensionFor(row);
         var requestSize = ThumbnailSizeFor(iconSize);
+        var videoFrame = IsVideoThumbnail(extension)
+            ? VideoFrameForPath(path)
+            : VideoThumbnailFrame.Default;
         var task = InFlight.GetOrAdd(
             key,
-            _ => LoadAndCacheThumbnailAsync(key, path, extension, requestSize));
+            _ => LoadAndCacheThumbnailAsync(key, path, extension, requestSize, videoFrame));
         return await task.WaitAsync(cancellationToken);
     }
 
@@ -108,14 +128,15 @@ internal static class FileListThumbnailHost
         string key,
         string path,
         string extension,
-        int requestSize)
+        int requestSize,
+        VideoThumbnailFrame videoFrame)
     {
         try
         {
             await LoadGate.WaitAsync();
             try
             {
-                var source = await LoadCoreAsync(path, extension, requestSize);
+                var source = await LoadCoreAsync(path, extension, requestSize, videoFrame);
                 if (source is not null)
                 {
                     if (Cache.Count > MaxCachedThumbnails)
@@ -139,8 +160,21 @@ internal static class FileListThumbnailHost
         }
     }
 
-    private static async Task<ImageSource?> LoadCoreAsync(string path, string extension, int requestSize)
+    private static async Task<ImageSource?> LoadCoreAsync(
+        string path,
+        string extension,
+        int requestSize,
+        VideoThumbnailFrame videoFrame)
     {
+        if (IsVideoThumbnail(extension))
+        {
+            var source = await VideoThumbnailExtractor.LoadAsync(path, requestSize, videoFrame);
+            if (source is not null)
+            {
+                return source;
+            }
+        }
+
         if (CanUseAppThumbnail(extension) && _loadImageThumbnailAsync is not null)
         {
             try
@@ -189,7 +223,11 @@ internal static class FileListThumbnailHost
     private static string CacheKey(FileRow row, int iconSize)
     {
         var size = ThumbnailSizeFor(iconSize);
-        return $"{size}|{row.Path}|{row.Size}|{row.ModifiedText}";
+        var extension = ExtensionFor(row);
+        var videoFrame = IsVideoThumbnail(extension)
+            ? $"|video:{VideoFrameForPath(row.Path).CacheToken}"
+            : "";
+        return $"{size}|{row.Path}|{row.Size}|{row.ModifiedText}{videoFrame}";
     }
 
     private static int ThumbnailSizeFor(int iconSize) =>
@@ -205,6 +243,9 @@ internal static class FileListThumbnailHost
 
     private static bool CanUseAppThumbnail(string extension) =>
         extension is "jpg" or "jpeg" or "png" or "gif" or "webp" or "bmp";
+
+    private static bool IsVideoThumbnail(string extension) =>
+        VideoThumbnailExtractor.CanUseVideoThumbnail(extension);
 
     private static bool CanUseWindowsThumbnail(string extension) =>
         extension is

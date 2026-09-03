@@ -164,6 +164,32 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
+    public void PrimaryToolbar_NewActionIsTemplateMenu()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var coreRoot = Path.Combine(root, "SimpleFile.Core");
+        var toolbar = File.ReadAllText(Path.Combine(appRoot, "PrimaryToolbarView.xaml"));
+        var toolbarCode = File.ReadAllText(Path.Combine(appRoot, "PrimaryToolbarView.xaml.cs"));
+        var mainWindow = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var commandRouting = File.ReadAllText(Path.Combine(appRoot, "MainWindow.CommandRouting.cs"));
+        var overflow = File.ReadAllText(Path.Combine(coreRoot, "ContextMenuBuilder.cs"));
+
+        Assert.Contains("PrimaryNewButton", toolbar);
+        Assert.Contains("Tag=\"new:folder\"", toolbar);
+        Assert.Contains("Tag=\"new:text\"", toolbar);
+        Assert.Contains("Tag=\"new:markdown\"", toolbar);
+        Assert.Contains("Tag=\"new:json\"", toolbar);
+        Assert.Contains("Tag=\"new:empty\"", toolbar);
+        Assert.DoesNotContain("PrimaryNewFileButton", toolbar);
+        Assert.DoesNotContain("PrimaryNewFolderButton", toolbar);
+        Assert.Contains("PrimaryNewItemRequested", toolbarCode);
+        Assert.Contains("RunNewItemCommandAsync", mainWindow);
+        Assert.Contains("NewItemTemplate.TextFile", commandRouting);
+        Assert.Contains("overflow-new", overflow);
+    }
+
+    [Fact]
     public void FolderViewSettings_AreDiscoverableFromViewOptions()
     {
         var root = FindRepoRoot();
@@ -260,13 +286,20 @@ public class WinUiSourceShapeTests
         var pane = File.ReadAllText(Path.Combine(appRoot, "PreviewPaneView.xaml"));
         var presenter = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.cs"));
         var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
+        var mainWindow = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var thumbnailHost = File.ReadAllText(Path.Combine(appRoot, "FileListThumbnailHost.cs"));
         var inspectionDetails = File.ReadAllText(Path.Combine(appRoot, "InspectionDetails.cs"));
         var backendPreview = File.ReadAllText(Path.Combine(root, "..", "crates", "simplefile-core", "src", "preview.rs"));
 
         Assert.Contains("<WebView2", pane);
         Assert.Contains("<MediaPlayerElement", pane);
+        Assert.Contains("PreviewVideoFramePresetOptions", pane);
         Assert.Contains("TryRenderPdfPreview", presenter);
         Assert.Contains("TryRenderMediaPreview", presenter);
+        Assert.Contains("VideoThumbnailExtractor", presenter);
+        Assert.Contains("SetVideoFramePreference", presenter);
+        Assert.Contains("VideoThumbnailExtractor", thumbnailHost);
+        Assert.Contains("MediaFolder.IsMediaFolder", mainWindow);
         Assert.Contains("TryCreatePathBackedPreview", commands);
         Assert.Contains("InspectionDetails", presenter);
         Assert.Contains("InspectionDetails", commands);

@@ -104,6 +104,9 @@ public sealed partial class MainWindow : Window
             PreviewImage,
             PreviewPdfWebView,
             PreviewMediaPlayer,
+            PreviewVideoFrameControls,
+            PreviewVideoFrameImage,
+            PreviewVideoFramePresets,
             PreviewTextBox,
             PreviewEmptyText,
             PreviewMetadataRows,
@@ -593,8 +596,7 @@ public sealed partial class MainWindow : Window
             [ToolbarOverflowPlanner.Profiles] = 32,
             [ToolbarOverflowPlanner.DualPane] = 32,
             [ToolbarOverflowPlanner.ViewOptions] = 32,
-            [ToolbarOverflowPlanner.NewFile] = 32,
-            [ToolbarOverflowPlanner.NewFolder] = 32,
+            [ToolbarOverflowPlanner.New] = 32,
         };
 
         var overflowed = ToolbarOverflowPlanner.OverflowIds(
@@ -651,10 +653,8 @@ public sealed partial class MainWindow : Window
         SetOverflowVisible(DualPaneButton, !dualOverflowed);
         SetOverflowVisible(ClosePrimaryPaneButton, false);
         SetOverflowVisible(PrimaryViewButton, !overflowed.Contains(ToolbarOverflowPlanner.ViewOptions));
-        SetOverflowVisible(PrimaryNewFileButton, !overflowed.Contains(ToolbarOverflowPlanner.NewFile));
-        SetOverflowVisible(PrimaryNewFolderButton, !overflowed.Contains(ToolbarOverflowPlanner.NewFolder));
-        var actionsVisible = PrimaryNewFolderButton.Visibility == Visibility.Visible
-            || PrimaryNewFileButton.Visibility == Visibility.Visible
+        SetOverflowVisible(PrimaryNewButton, !overflowed.Contains(ToolbarOverflowPlanner.New));
+        var actionsVisible = PrimaryNewButton.Visibility == Visibility.Visible
             || DualPaneButton.Visibility == Visibility.Visible
             || ClosePrimaryPaneButton.Visibility == Visibility.Visible
             || WorkspaceProfileButton.Visibility == Visibility.Visible
@@ -1222,7 +1222,7 @@ public sealed partial class MainWindow : Window
             IsDir = row.IsDir,
             Extension = row.Extension,
         });
-        return PhotoFolder.IsPhotoFolder(entries, _workspace.Settings.PhotoFolderImageThreshold);
+        return MediaFolder.IsMediaFolder(entries, _workspace.Settings.PhotoFolderImageThreshold);
     }
 
     private Task<string> LoadFileListImageThumbnailAsync(string path, uint size, CancellationToken cancellationToken)
@@ -2931,14 +2931,30 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task PromptAndCreateFolder(PaneId pane)
-    {
-        await _fileOperationDialogs.PromptAndCreateFolderAsync(pane);
-    }
-
     private async Task PromptAndCreateFile(PaneId pane)
     {
         await _fileOperationDialogs.PromptAndCreateFileAsync(pane);
+    }
+
+    private async Task CreateNewItem(PaneId pane, NewItemTemplate template)
+    {
+        await _fileOperationDialogs.CreateNewItemFromTemplateAsync(pane, template);
+    }
+
+    private async Task RunNewItemCommandAsync(string id, PaneId pane)
+    {
+        if (NewItemTemplate.Find(id) is not { } template)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(template, NewItemTemplate.EmptyFile))
+        {
+            await PromptAndCreateFile(pane);
+            return;
+        }
+
+        await CreateNewItem(pane, template);
     }
 
     private async Task PromptAndRename()
@@ -3108,11 +3124,8 @@ public sealed partial class MainWindow : Window
     // Per-pane button Click handlers
     // ========================================================================
 
-    private async void OnPrimaryNewFolder(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("New Folder", () => PromptAndCreateFolder(ActiveUiPane));
-
-    private async void OnPrimaryNewFile(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("New File", () => PromptAndCreateFile(ActiveUiPane));
+    private async void OnPrimaryNewItemRequested(object? sender, string id) =>
+        await RunUiActionAsync("New", () => RunNewItemCommandAsync(id, ActiveUiPane));
 
     private async void OnPrimaryRename(object sender, RoutedEventArgs e)
     {
@@ -3127,10 +3140,10 @@ public sealed partial class MainWindow : Window
     }
 
     private async void OnSecondaryNewFolder(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("New Folder", () => PromptAndCreateFolder(PaneId.Secondary));
+        await RunUiActionAsync("New Folder", () => CreateNewItem(PaneId.Secondary, NewItemTemplate.Folder));
 
     private async void OnSecondaryNewFile(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("New File", () => PromptAndCreateFile(PaneId.Secondary));
+        await RunUiActionAsync("New Text File", () => CreateNewItem(PaneId.Secondary, NewItemTemplate.TextFile));
 
     private async void OnSecondaryRename(object sender, RoutedEventArgs e)
     {

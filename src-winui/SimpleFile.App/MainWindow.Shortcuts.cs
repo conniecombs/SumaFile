@@ -274,10 +274,14 @@ public sealed partial class MainWindow
 
                 break;
             case "file.newFolder":
-                await RunUiActionAsync("New Folder", () => PromptAndCreateFolder(_workspace?.ActivePane ?? PaneId.Primary));
+                await RunUiActionAsync(
+                    "New Folder",
+                    () => CreateNewItem(_workspace?.ActivePane ?? PaneId.Primary, NewItemTemplate.Folder));
                 break;
             case "file.newFile":
-                await RunUiActionAsync("New File", () => PromptAndCreateFile(_workspace?.ActivePane ?? PaneId.Primary));
+                await RunUiActionAsync(
+                    "New Text File",
+                    () => CreateNewItem(_workspace?.ActivePane ?? PaneId.Primary, NewItemTemplate.TextFile));
                 break;
             case "quickLook.toggle":
                 if (!IsEditingPath && !IsTextInputFocused())

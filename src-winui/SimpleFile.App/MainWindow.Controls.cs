@@ -45,8 +45,7 @@ public sealed partial class MainWindow
     private Button SearchCancelButton => PrimaryToolbarPanel.SearchCancel;
     private StackPanel PrimaryActionsHost => PrimaryToolbarPanel.ActionsHost;
     private TextBox QuickFilterBox => PrimaryToolbarPanel.QuickFilterTextBox;
-    private Button PrimaryNewFolderButton => PrimaryToolbarPanel.NewFolderButton;
-    private Button PrimaryNewFileButton => PrimaryToolbarPanel.NewFileButton;
+    private Button PrimaryNewButton => PrimaryToolbarPanel.NewButton;
     private Button DualPaneButton => PrimaryToolbarPanel.DualPaneToggleButton;
     private Button ClosePrimaryPaneButton => PrimaryToolbarPanel.ClosePaneButton;
     private Button WorkspaceProfileButton => PrimaryToolbarPanel.ProfileButton;
@@ -124,6 +123,9 @@ public sealed partial class MainWindow
     private Image PreviewImage => PreviewPanel.ImagePreview;
     private WebView2 PreviewPdfWebView => PreviewPanel.PdfPreview;
     private MediaPlayerElement PreviewMediaPlayer => PreviewPanel.MediaPreview;
+    private StackPanel PreviewVideoFrameControls => PreviewPanel.VideoFrameControls;
+    private Image PreviewVideoFrameImage => PreviewPanel.VideoFrameImage;
+    private RadioButtons PreviewVideoFramePresets => PreviewPanel.VideoFramePresets;
     private TextBox PreviewTextBox => PreviewPanel.TextPreview;
     private TextBlock PreviewEmptyText => PreviewPanel.EmptyText;
     private StackPanel PreviewMetadataRows => PreviewPanel.MetadataRows;
@@ -161,8 +163,7 @@ public sealed partial class MainWindow
         PrimaryToolbarPanel.ContentSearchToggleClick += OnContentSearchToggle;
         PrimaryToolbarPanel.CancelSearchClick += OnCancelSearchClick;
         PrimaryToolbarPanel.QuickFilterChanged += OnQuickFilterChanged;
-        PrimaryToolbarPanel.PrimaryNewFolder += OnPrimaryNewFolder;
-        PrimaryToolbarPanel.PrimaryNewFile += OnPrimaryNewFile;
+        PrimaryToolbarPanel.PrimaryNewItemRequested += OnPrimaryNewItemRequested;
         PrimaryToolbarPanel.ToggleDualPane += OnToggleDualPane;
         PrimaryToolbarPanel.ClosePrimaryPane += OnClosePrimaryPane;
         PrimaryToolbarPanel.WorkspaceProfilesFlyoutOpening += (sender, e) => OnWorkspaceProfilesFlyoutOpening(sender!, e);

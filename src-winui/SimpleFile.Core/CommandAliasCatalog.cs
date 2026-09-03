@@ -6,8 +6,6 @@ public static class CommandAliasCatalog
     {
         ["overflow-search"] = "search",
         ["overflow-filter"] = "filter",
-        ["overflow-new-folder"] = "new-folder",
-        ["overflow-new-file"] = "new-file",
         ["overflow-dual-pane"] = "dual-pane",
         ["overflow-profiles"] = "profile-manage",
         ["overflow-settings"] = "settings",

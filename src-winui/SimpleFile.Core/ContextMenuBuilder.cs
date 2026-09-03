@@ -190,14 +190,9 @@ public static class ContextMenuBuilder
             items.Add(Item("overflow-filter", "Filter list"));
         }
 
-        if (Has(ToolbarOverflowPlanner.NewFolder))
+        if (Has(ToolbarOverflowPlanner.New))
         {
-            items.Add(Item("overflow-new-folder", "New folder", shortcut: "Ctrl+Shift+N"));
-        }
-
-        if (Has(ToolbarOverflowPlanner.NewFile))
-        {
-            items.Add(Item("overflow-new-file", "New file", shortcut: "Ctrl+N"));
+            items.Add(NewItemMenu());
         }
 
         if (Has(ToolbarOverflowPlanner.DualPane) && !request.DualPaneEnabled)
@@ -366,6 +361,26 @@ public static class ContextMenuBuilder
     private static ContextMenuEntry Divider()
     {
         return new ContextMenuEntry { Kind = ContextMenuKind.Divider };
+    }
+
+    private static ContextMenuEntry NewItemMenu()
+    {
+        return new ContextMenuEntry
+        {
+            Id = "overflow-new",
+            Label = "New",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-new"),
+            Children =
+            [
+                Item("new:folder", "Folder", shortcut: "Ctrl+Shift+N", showIcon: false),
+                Divider(),
+                Item("new:text", "Text file", shortcut: "Ctrl+N", showIcon: false),
+                Item("new:markdown", "Markdown file", showIcon: false),
+                Item("new:json", "JSON file", showIcon: false),
+                Divider(),
+                Item("new:empty", "Empty file...", showIcon: false),
+            ],
+        };
     }
 
     private static ContextMenuEntry DeleteMenu(bool disabled)

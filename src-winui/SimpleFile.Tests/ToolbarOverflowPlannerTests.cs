@@ -23,8 +23,7 @@ public class ToolbarOverflowPlannerTests
             [ToolbarOverflowPlanner.Profiles] = 32,
             [ToolbarOverflowPlanner.DualPane] = 32,
             [ToolbarOverflowPlanner.ViewOptions] = 32,
-            [ToolbarOverflowPlanner.NewFile] = 32,
-            [ToolbarOverflowPlanner.NewFolder] = 32,
+            [ToolbarOverflowPlanner.New] = 32,
         };
         var reserved = 360;
 
@@ -36,8 +35,7 @@ public class ToolbarOverflowPlannerTests
                 ToolbarOverflowPlanner.Profiles,
                 ToolbarOverflowPlanner.DualPane,
                 ToolbarOverflowPlanner.ViewOptions,
-                ToolbarOverflowPlanner.NewFile,
-                ToolbarOverflowPlanner.NewFolder,
+                ToolbarOverflowPlanner.New,
             ],
             ToolbarOverflowPlanner.PrimaryHideOrder);
 
@@ -47,11 +45,11 @@ public class ToolbarOverflowPlannerTests
         var medium = ToolbarOverflowPlanner.OverflowIds(700, reserved, widths, ToolbarOverflowPlanner.PrimaryHideOrder);
         Assert.Contains(ToolbarOverflowPlanner.Filter, medium);
         Assert.Contains(ToolbarOverflowPlanner.Search, medium);
-        Assert.DoesNotContain(ToolbarOverflowPlanner.NewFolder, medium);
+        Assert.DoesNotContain(ToolbarOverflowPlanner.New, medium);
 
         var narrow = ToolbarOverflowPlanner.OverflowIds(340, reserved, widths, ToolbarOverflowPlanner.PrimaryHideOrder);
         Assert.True(narrow.IsSupersetOf(medium));
-        Assert.Contains(ToolbarOverflowPlanner.NewFolder, narrow);
+        Assert.Contains(ToolbarOverflowPlanner.New, narrow);
 
         var again = ToolbarOverflowPlanner.OverflowIds(340, reserved, widths, ToolbarOverflowPlanner.PrimaryHideOrder);
         Assert.True(narrow.SetEquals(again));

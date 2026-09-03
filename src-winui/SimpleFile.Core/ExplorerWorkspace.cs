@@ -637,7 +637,7 @@ public sealed class ExplorerWorkspace
                 state.SyncActiveTab();
                 StatusMessage = null;
                 RecentPaths = PlacesStore.RecordRecent(RecentPaths, listing.Path);
-                PhotoFolderActive = PhotoFolder.IsPhotoFolder(listing.Entries, Settings.PhotoFolderImageThreshold);
+                PhotoFolderActive = MediaFolder.IsMediaFolder(listing.Entries, Settings.PhotoFolderImageThreshold);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -799,7 +799,7 @@ public sealed class ExplorerWorkspace
 
                 state.PathIsNetwork = listing.IsNetwork || PathRules.IsNetworkFsPath(state.Path, _drives);
                 state.SyncActiveTab();
-                PhotoFolderActive = PhotoFolder.IsPhotoFolder(listing.Entries, Settings.PhotoFolderImageThreshold);
+                PhotoFolderActive = MediaFolder.IsMediaFolder(listing.Entries, Settings.PhotoFolderImageThreshold);
                 state.SelectedPath = selected is not null
                     && state.Entries.Any(entry => PathRules.PathsEqual(entry.Path, selected))
                         ? selected
@@ -1525,26 +1525,78 @@ public sealed class ExplorerWorkspace
         => FileOps ?? throw new InvalidOperationException(
             "FileOperationService is required for file operations.");
 
+    public string SuggestedNameForNewItem(NewItemTemplate template, PaneId? pane = null)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        var target = Normalize(pane.GetValueOrDefault(ActivePane));
+        List<FileEntry> entries;
+        lock (_gate)
+        {
+            entries = [.. Pane(target).Entries];
+        }
+
+        return template.SuggestedName(entries);
+    }
+
+    public Task<string> CreateNewItemInCurrentPaneAsync(
+        NewItemTemplate template,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        var name = SuggestedNameForNewItem(template, ActivePane);
+        return template.IsDirectory
+            ? CreateFolderInCurrentPaneAsync(name, cancellationToken)
+            : CreateFileInCurrentPaneAsync(name, cancellationToken);
+    }
+
     public async Task<string> CreateFolderInCurrentPaneAsync(string name, CancellationToken cancellationToken = default)
+        => await CreateEntryInCurrentPaneAsync(name, isDirectory: true, cancellationToken).ConfigureAwait(false);
+
+    public async Task<string> CreateFileInCurrentPaneAsync(string name, CancellationToken cancellationToken = default)
+        => await CreateEntryInCurrentPaneAsync(name, isDirectory: false, cancellationToken).ConfigureAwait(false);
+
+    private async Task<string> CreateEntryInCurrentPaneAsync(
+        string name,
+        bool isDirectory,
+        CancellationToken cancellationToken)
     {
         var ops = RequireFileOps();
-        var path = ActivePane == PaneId.Primary ? Primary.Path : Secondary.Path;
-        var result = await ops.CreateFolderAsync(path, name, cancellationToken).ConfigureAwait(false);
+        var target = Normalize(ActivePane);
+        var path = Pane(target).Path;
+        var result = isDirectory
+            ? await ops.CreateFolderAsync(path, name, cancellationToken).ConfigureAwait(false)
+            : await ops.CreateFileAsync(path, name, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        Undo.PushCreate(path, name, result, isDirectory: true, ops);
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        Undo.PushCreate(path, name, result, isDirectory, ops);
+        SelectPathForRefresh(target, result);
+        await RefreshAsync(target, cancellationToken).ConfigureAwait(false);
+        MarkPathSelectedAfterRefresh(target, result, $"Created {PathRules.Basename(result)}");
         return result;
     }
 
-    public async Task<string> CreateFileInCurrentPaneAsync(string name, CancellationToken cancellationToken = default)
+    private void SelectPathForRefresh(PaneId pane, string path)
     {
-        var ops = RequireFileOps();
-        var path = ActivePane == PaneId.Primary ? Primary.Path : Secondary.Path;
-        var result = await ops.CreateFileAsync(path, name, cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        Undo.PushCreate(path, name, result, isDirectory: false, ops);
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
-        return result;
+        lock (_gate)
+        {
+            Pane(pane).SelectedPath = path;
+        }
+    }
+
+    private void MarkPathSelectedAfterRefresh(PaneId pane, string path, string statusMessage)
+    {
+        lock (_gate)
+        {
+            var state = Pane(pane);
+            if (state.Entries.Any(entry => PathRules.PathsEqual(entry.Path, path)))
+            {
+                state.SelectedPath = path;
+            }
+
+            StatusMessage = statusMessage;
+            ErrorMessage = null;
+        }
+
+        RaiseChanged();
     }
 
     public async Task TrashSelectedAsync(string[] selectedPaths, CancellationToken cancellationToken = default)
@@ -1581,10 +1633,13 @@ public sealed class ExplorerWorkspace
     public async Task<string> RenameSelectedAsync(string path, string newName, CancellationToken cancellationToken = default)
     {
         var ops = RequireFileOps();
+        var target = Normalize(ActivePane);
         var result = await ops.RenameAsync(path, newName, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         Undo.PushRename(path, result, ops);
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        SelectPathForRefresh(target, result);
+        await RefreshAsync(target, cancellationToken).ConfigureAwait(false);
+        MarkPathSelectedAfterRefresh(target, result, $"Renamed to {PathRules.Basename(result)}");
         return result;
     }
 

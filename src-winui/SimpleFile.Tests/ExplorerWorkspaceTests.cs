@@ -313,6 +313,42 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task CreateNewItem_UsesUniqueTemplateNameAndSelectsCreatedEntry()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var root = backend.Listings[@"C:\Users\test"];
+        root.Entries.Add(new FileEntry
+        {
+            Name = "New Text Document.txt",
+            Path = @"C:\Users\test\New Text Document.txt",
+            Extension = "txt",
+        });
+        var settingsIpc = new ConfigurableIpc
+        {
+            CreateFileHandler = (path, name, ct) =>
+            {
+                var created = $@"{path}\{name}";
+                backend.Listings[path].Entries.Add(new FileEntry
+                {
+                    Name = name,
+                    Path = created,
+                    Extension = Path.GetExtension(name).TrimStart('.'),
+                });
+                return Task.FromResult(created);
+            },
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        var result = await workspace.CreateNewItemInCurrentPaneAsync(NewItemTemplate.TextFile);
+
+        Assert.Equal(@"C:\Users\test\New Text Document (2).txt", result);
+        Assert.Equal(result, workspace.SelectedPath);
+        Assert.Contains(workspace.VisibleEntries, entry => entry.Path == result);
+        Assert.Equal("Created New Text Document (2).txt", workspace.StatusMessage);
+    }
+
+    [Fact]
     public async Task RenameSelected_PushesUndoEntryAfterSuccess()
     {
         var backend = FakeExplorerBackend.Typical();
@@ -327,6 +363,40 @@ public class ExplorerWorkspaceTests
 
         Assert.True(workspace.Undo.CanUndo);
         Assert.Equal("Rename 1 item(s)", workspace.Undo.NextUndoDescription);
+    }
+
+    [Fact]
+    public async Task RenameSelected_SelectsRenamedEntryAfterRefresh()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var original = @"C:\Users\test\notes.txt";
+        var settingsIpc = new ConfigurableIpc
+        {
+            RenameEntryHandler = (path, name, ct) =>
+            {
+                var renamed = $@"C:\Users\test\{name}";
+                var listing = backend.Listings[@"C:\Users\test"];
+                var entry = listing.Entries.Single(item => item.Path == path);
+                listing.Entries.Remove(entry);
+                listing.Entries.Add(new FileEntry
+                {
+                    Name = name,
+                    Path = renamed,
+                    Extension = Path.GetExtension(name).TrimStart('.'),
+                    Size = entry.Size,
+                });
+                return Task.FromResult(renamed);
+            },
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        var result = await workspace.RenameSelectedAsync(original, "renamed.txt");
+
+        Assert.Equal(@"C:\Users\test\renamed.txt", result);
+        Assert.Equal(result, workspace.SelectedPath);
+        Assert.Contains(workspace.VisibleEntries, entry => entry.Path == result);
+        Assert.Equal("Renamed to renamed.txt", workspace.StatusMessage);
     }
 
     [Fact]

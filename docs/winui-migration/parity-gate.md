@@ -74,8 +74,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `list_drives` | This PC | Sidebar drive list | `ExplorerWorkspaceTests` | Offline badge | `PASS` |
 | `list_directory` | Listing + chunks | `list_directory.chunk` then result | `ExplorerWorkspaceTests` huge-folder / `RESULT_TOO_LARGE` | First paint on large folder | `PASS` |
 | `list_subdirectories` | Sidebar tree children | `LoadTreeChildrenAsync` + Folders list | `ParityFeaturesTests` tree flatten | Expand a tree node | `PASS` |
-| `create_directory` | New folder | Dialog + IPC | `FileOperationServiceTests` | Ctrl+Shift+N | `PASS` |
-| `create_file` | New file | Dialog + IPC | `FileOperationServiceTests` | Ctrl+N | `PASS` |
+| `create_directory` | New folder | New menu template + rename + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+Shift+N | `PASS` |
+| `create_file` | New text/Markdown/JSON/empty file | New menu template + selection + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+N | `PASS` |
 | `delete_entry` | Permanent delete | Shift+Delete confirm | `FileOperationServiceTests` | Shift+Delete | `PASS` |
 | `move_to_trash` | Recycle Bin | Delete / setting | `FileOperationServiceTests` trash prefix | Delete; network `TRASH_UNAVAILABLE:` | `PASS` |
 | `restore_recycle_bin` | Restore Recycle Bin items | Context Restore | Core recycle_bin tests | Restore a deleted file | `PASS` |
@@ -250,8 +250,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `ops.new-folder` | Name prompt + validation | Dialog | FileOps tests | Ctrl+Shift+N | `PASS` |
-| `ops.new-file` | Name prompt | Dialog | FileOps tests | Ctrl+N | `PASS` |
+| `ops.new-folder` | Template name + rename | New menu | NewItemTemplate / workspace tests | Ctrl+Shift+N | `PASS` |
+| `ops.new-file` | Text/Markdown/JSON/empty templates | New menu + optional empty-file prompt | NewItemTemplate / workspace tests | Ctrl+N | `PASS` |
 | `ops.rename` | F2 | Dialog | FileOps tests | F2 | `PASS` |
 | `ops.advanced-rename` | Full templates/filters/numbering | `AdvancedRename` find/replace/number | `ParityFeaturesTests` | Advanced rename | `PASS` |
 | `ops.delete-confirm` | Confirm setting | Settings + dialog | — | Toggle confirm | `MANUAL` |
