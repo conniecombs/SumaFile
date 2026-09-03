@@ -61,6 +61,8 @@ for (const snippet of [
   'Get-FileHash',
   '[System.Security.Cryptography.SHA256]::Create()',
   'SIMPLEFILE_UPDATER_PUBLIC_KEY',
+  'Remove-PathWithRetry',
+  'Get-LikelyWinUILockHolder',
 ]) {
   if (!releaseScript.includes(snippet)) {
     fail(`scripts/build-winui-release.ps1 must include ${snippet}.`);

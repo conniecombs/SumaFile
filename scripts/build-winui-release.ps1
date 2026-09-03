@@ -181,6 +181,97 @@ function Get-Sha256Hash {
     }
 }
 
+function Test-TextContains {
+    param(
+        [string]$Text,
+        [Parameter(Mandatory = $true)][string]$Needle
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $false
+    }
+
+    return $Text.IndexOf($Needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Get-LikelyWinUILockHolder {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $resolved = $Path
+    if (Test-Path -LiteralPath $Path) {
+        try {
+            $resolved = (Resolve-Path -LiteralPath $Path).Path
+        }
+        catch {
+        }
+    }
+
+    $forward = $resolved.Replace('\', '/')
+    $processNames = @("SumaFile.exe", "SimpleFile.App.exe", "SimpleFile.exe", "simplefile-service.exe")
+    $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
+    if (-not $processes) {
+        return @()
+    }
+
+    return @(
+        $processes | Where-Object {
+            $isKnownWinUIProcess = $processNames -contains $_.Name
+            $matchesExecutable = (Test-TextContains -Text $_.ExecutablePath -Needle $resolved) -or
+                (Test-TextContains -Text $_.ExecutablePath -Needle $forward)
+            $matchesCommandLine = (Test-TextContains -Text $_.CommandLine -Needle $resolved) -or
+                (Test-TextContains -Text $_.CommandLine -Needle $forward)
+            $isKnownWinUIProcess -or $matchesExecutable -or $matchesCommandLine
+        } | Select-Object ProcessId, Name, ExecutablePath, CommandLine
+    )
+}
+
+function Remove-PathWithRetry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [switch]$Recurse,
+        [string]$Context = "path",
+        [int]$Attempts = 6,
+        [int]$DelayMilliseconds = 750
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $removeArgs = @{
+        LiteralPath = $Path
+        Force = $true
+        ErrorAction = "Stop"
+    }
+    if ($Recurse) {
+        $removeArgs.Recurse = $true
+    }
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            Remove-Item @removeArgs
+            return
+        }
+        catch {
+            if ($attempt -lt $Attempts) {
+                Start-Sleep -Milliseconds $DelayMilliseconds
+                continue
+            }
+
+            $lockHolders = Get-LikelyWinUILockHolder -Path $Path
+            if ($lockHolders.Count -gt 0) {
+                Write-Warning "Possible WinUI payload lock holders:"
+                $lockHolders | ForEach-Object {
+                    $detail = if ($_.ExecutablePath) { $_.ExecutablePath } else { $_.CommandLine }
+                    Write-Warning ("  PID {0} {1} {2}" -f $_.ProcessId, $_.Name, $detail)
+                }
+            }
+
+            throw "Could not remove $Context at ${Path} after $Attempts attempts. Close any SumaFile window, installer, smoke-test app, Explorer window, or terminal opened inside that path, then rerun. Original error: $($_.Exception.Message)"
+        }
+    }
+}
+
 function New-WinUIPayload {
     param(
         [Parameter(Mandatory = $true)][string]$PublishDir,
@@ -189,7 +280,7 @@ function New-WinUIPayload {
     )
 
     if (Test-Path -LiteralPath $Destination) {
-        Remove-Item -LiteralPath $Destination -Recurse -Force
+        Remove-PathWithRetry -Path $Destination -Recurse -Context "WinUI payload directory"
     }
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
     Copy-Item -Path (Join-Path $PublishDir "*") -Destination $Destination -Recurse -Force
@@ -222,7 +313,7 @@ if ($RequireUpdaterSignature) {
 
 if ($Clean -and (Test-Path -LiteralPath $distRoot)) {
     Write-Step "Cleaning $distRoot"
-    Remove-Item -LiteralPath $distRoot -Recurse -Force
+    Remove-PathWithRetry -Path $distRoot -Recurse -Context "WinUI dist directory"
 }
 
 New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
@@ -258,7 +349,7 @@ New-WinUIPayload -PublishDir $publishDir -ServiceExe $serviceExe -Destination $p
 
 $portableZip = Join-Path $distRoot "SumaFile_${version}_x64-winui-portable.zip"
 if (Test-Path -LiteralPath $portableZip) {
-    Remove-Item -LiteralPath $portableZip -Force
+    Remove-PathWithRetry -Path $portableZip -Context "existing portable ZIP"
 }
 Compress-Archive -Path (Join-Path $payloadDir "*") -DestinationPath $portableZip -Force
 Write-Host "Wrote $portableZip"
@@ -357,7 +448,7 @@ if (-not $SkipInstaller) {
             )
             if (Test-Path -LiteralPath $msiPath) {
                 try {
-                    Remove-Item -LiteralPath $msiPath -Force -ErrorAction Stop
+                    Remove-PathWithRetry -Path $msiPath -Context "existing WinUI MSI"
                 }
                 catch {
                     throw "Could not replace existing WinUI MSI at ${msiPath}. Close any installer or smoke-test process using it, then rerun. Original error: $($_.Exception.Message)"
