@@ -830,7 +830,16 @@ internal sealed partial class FileOperationDialogService
                     return;
                 }
 
-                await fileOps.TrashAsync(trash, token);
+                try
+                {
+                    await fileOps.TrashAsync(trash, token);
+                }
+                catch (IpcException ipcException) when (FileOperationService.IsTrashUnavailable(ipcException))
+                {
+                    await PromptPermanentDeleteAfterTrashUnavailableAsync(trash, workspace, ipcException, token);
+                    return;
+                }
+
                 if (ReferenceEquals(_workspace(), workspace) && !token.IsCancellationRequested)
                 {
                     await workspace.RefreshAsync(token);

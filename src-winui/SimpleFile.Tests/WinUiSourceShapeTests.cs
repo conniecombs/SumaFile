@@ -31,7 +31,7 @@ public class WinUiSourceShapeTests
     public void FilePanes_AcceptClicksAcrossPaneAndRowWhitespace()
     {
         var root = FindRepoRoot();
-        var mainWindow = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
         var fileRowView = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "FileRowView.xaml"));
 
         Assert.Contains("AttachPaneActivationHandlers();", mainWindow);
@@ -48,8 +48,7 @@ public class WinUiSourceShapeTests
     public void DetailsColumns_UseIndependentPixelWidthsLikeExplorer()
     {
         var root = FindRepoRoot();
-        var mainWindow = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"))
-            + File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Transfer.cs"));
+        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
         var fileRowView = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "FileRowView.xaml.cs"));
 
         Assert.Contains("ColumnResizeTarget", mainWindow);
@@ -68,7 +67,7 @@ public class WinUiSourceShapeTests
         var root = FindRepoRoot();
         var metrics = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "FileTileLayoutMetrics.cs"));
         var fileRowView = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "FileRowView.xaml.cs"));
-        var mainWindow = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
         var app = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "App.xaml"));
 
         Assert.Contains("StackedIconThreshold = 128", metrics);
@@ -91,7 +90,7 @@ public class WinUiSourceShapeTests
         var root = FindRepoRoot();
         var appRoot = Path.Combine(root, "SimpleFile.App");
         var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
-        var mainWindowCode = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var mainWindowCode = ReadMainWindowSource(appRoot);
         var bridge = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Controls.cs"));
 
         foreach (var control in new[]
@@ -120,7 +119,7 @@ public class WinUiSourceShapeTests
     public void OpeningFiles_FlushesPendingIconSizePersistence()
     {
         var root = FindRepoRoot();
-        var mainWindow = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
         var commands = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Commands.cs"));
 
         Assert.Contains("await SaveViewIconSizeNowAsync();", mainWindow);
@@ -171,7 +170,7 @@ public class WinUiSourceShapeTests
         var coreRoot = Path.Combine(root, "SimpleFile.Core");
         var toolbar = File.ReadAllText(Path.Combine(appRoot, "PrimaryToolbarView.xaml"));
         var toolbarCode = File.ReadAllText(Path.Combine(appRoot, "PrimaryToolbarView.xaml.cs"));
-        var mainWindow = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var mainWindow = ReadMainWindowSource(appRoot);
         var commandRouting = File.ReadAllText(Path.Combine(appRoot, "MainWindow.CommandRouting.cs"));
         var overflow = File.ReadAllText(Path.Combine(coreRoot, "ContextMenuBuilder.cs"));
 
@@ -225,7 +224,7 @@ public class WinUiSourceShapeTests
         var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsDialog.xaml"));
         var settingsCode = File.ReadAllText(Path.Combine(appRoot, "SettingsDialog.xaml.cs"));
         var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
-        var mainWindowCode = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var mainWindowCode = ReadMainWindowSource(appRoot);
         var shortcutBinder = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Shortcuts.cs"));
         var settingsStore = File.ReadAllText(Path.Combine(coreRoot, "WorkspaceSettingsStore.cs"));
         var shortcutMap = File.ReadAllText(Path.Combine(coreRoot, "KeyboardShortcutMap.cs"));
@@ -252,7 +251,7 @@ public class WinUiSourceShapeTests
         var root = FindRepoRoot();
         var appRoot = Path.Combine(root, "SimpleFile.App");
         var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsDialog.xaml"));
-        var mainWindowCode = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var mainWindowCode = ReadMainWindowSource(appRoot);
         var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
         var fileRows = File.ReadAllText(Path.Combine(appRoot, "FileRowView.xaml.cs"));
         var preview = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.cs"));
@@ -288,7 +287,7 @@ public class WinUiSourceShapeTests
         var pane = File.ReadAllText(Path.Combine(appRoot, "PreviewPaneView.xaml"));
         var presenter = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.cs"));
         var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
-        var mainWindow = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var mainWindow = ReadMainWindowSource(appRoot);
         var thumbnailHost = File.ReadAllText(Path.Combine(appRoot, "FileListThumbnailHost.cs"));
         var inspectionDetails = File.ReadAllText(Path.Combine(appRoot, "InspectionDetails.cs"));
         var backendPreview = File.ReadAllText(Path.Combine(root, "..", "crates", "simplefile-core", "src", "preview.rs"));
@@ -359,6 +358,20 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
+    public void DuplicateChecker_OffersPermanentDeleteFallbackWhenTrashIsUnavailable()
+    {
+        var root = FindRepoRoot();
+        var dialogService = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "FileOperationDialogService.cs"));
+
+        Assert.Contains(
+            "catch (IpcException ipcException) when (FileOperationService.IsTrashUnavailable(ipcException))",
+            dialogService);
+        Assert.Contains(
+            "PromptPermanentDeleteAfterTrashUnavailableAsync(trash, workspace, ipcException, token)",
+            dialogService);
+    }
+
+    [Fact]
     public void AdvancedRename_PushesUndoEntryAfterBatchRename()
     {
         var root = FindRepoRoot();
@@ -418,6 +431,15 @@ public class WinUiSourceShapeTests
         }
 
         throw new DirectoryNotFoundException("Could not locate src-winui source root.");
+    }
+
+    private static string ReadMainWindowSource(string appRoot)
+    {
+        return string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(appRoot, "MainWindow*.cs")
+                .OrderBy(Path.GetFileName)
+                .Select(File.ReadAllText));
     }
 
     private static int CountOccurrences(string text, string value)
