@@ -2,11 +2,7 @@ using SimpleFile.Ipc;
 
 namespace SimpleFile.Core;
 
-public sealed class FileOperationService :
-    ISettingsBackend,
-    ITagBackend,
-    ISmartFolderBackend,
-    IFileOperationBackend
+public sealed class FileOperationService : ISettingsBackend
 {
     private ISimpleFileIpc _ipc;
     private readonly OperationJournal? _journal;

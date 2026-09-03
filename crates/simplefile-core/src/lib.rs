@@ -1,4 +1,4 @@
-//! Host-independent SimpleFile backend types and utilities.
+//! Host-independent SumaFile backend types and utilities.
 //!
 //! Shared domain logic lives here so the WinUI 3 named-pipe service can use it
 //! without depending on a UI host.

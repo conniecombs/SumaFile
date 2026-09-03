@@ -207,7 +207,7 @@ struct Args {
 
 impl Args {
     fn parse(args: impl IntoIterator<Item = String>) -> Result<Self, String> {
-        let mut pipe_name = format!("SimpleFile.dev.{}", std::process::id());
+        let mut pipe_name = format!("SumaFile.dev.{}", std::process::id());
         let mut parent_pid = None;
         let mut items = args.into_iter();
         while let Some(arg) = items.next() {

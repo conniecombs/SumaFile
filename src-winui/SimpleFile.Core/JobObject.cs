@@ -8,7 +8,7 @@ namespace SimpleFile.Core;
 /// owning its shell extensions — without dragging opened documents with it.
 /// <c>KILL_ON_JOB_CLOSE</c> still kills the service when the last job handle
 /// closes. <c>SILENT_BREAKAWAY_OK</c> keeps ShellExecute/Open With children
-/// (Notepad, viewers, players) out of the job so they survive SimpleFile exit.
+/// (Notepad, viewers, players) out of the job so they survive SumaFile exit.
 /// </summary>
 internal sealed class JobObject : IDisposable
 {

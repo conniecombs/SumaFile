@@ -51,7 +51,7 @@ fn protocol_constants_match_schema() {
 }
 
 #[test]
-fn commands_cover_seventy_six_domain_methods_plus_handshake() {
+fn commands_cover_seventy_eight_domain_methods_plus_handshake() {
     let commands = read_json("commands.json");
     assert_eq!(
         commands["domainMethodCount"],

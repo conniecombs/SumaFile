@@ -294,8 +294,10 @@ public class WinUiSourceShapeTests
         Assert.Contains("internal sealed class SavedWorkspaceLayoutService", layoutService);
 
         Assert.Contains("interface ISettingsBackend", facades);
-        Assert.Contains("interface IFileOperationBackend", facades);
-        Assert.Contains("IFileOperationBackend", fileOperationService);
+        Assert.DoesNotContain("interface IFileOperationBackend", facades);
+        Assert.DoesNotContain("interface ITagBackend", facades);
+        Assert.DoesNotContain("interface ISmartFolderBackend", facades);
+        Assert.Contains("ISettingsBackend", fileOperationService);
 
         Assert.Contains("mod folder_metrics;", rustFileOps);
         Assert.Contains("mod metadata_preserve;", rustFileOps);

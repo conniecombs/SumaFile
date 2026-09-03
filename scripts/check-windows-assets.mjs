@@ -33,18 +33,18 @@ for (const relativePath of [
 for (const relativePath of [
   'base_icon.png',
   'packaging/winui/icon.ico',
-  'packaging/winui/simplefile-winui.nsi',
+  'packaging/winui/sumafile-winui.nsi',
   'packaging/winui/Product.wxs',
   'scripts/generate-winui-icon.py',
 ]) {
   assertExists(relativePath);
 }
 
-const nsis = readFileSync(resolve(repoRoot, 'packaging/winui/simplefile-winui.nsi'), 'utf8');
+const nsis = readFileSync(resolve(repoRoot, 'packaging/winui/sumafile-winui.nsi'), 'utf8');
 const wxs = readFileSync(resolve(repoRoot, 'packaging/winui/Product.wxs'), 'utf8');
 
 if (!nsis.includes('Name "SumaFile"') || !nsis.includes('RequestExecutionLevel user')) {
-  fail('packaging/winui/simplefile-winui.nsi must remain a per-user Windows NSIS installer.');
+  fail('packaging/winui/sumafile-winui.nsi must remain a per-user Windows NSIS installer.');
 }
 if (!wxs.includes('InstallScope="perUser"') || !wxs.includes('SimpleFileWinUIFiles')) {
   fail('packaging/winui/Product.wxs must remain a per-user Windows MSI.');

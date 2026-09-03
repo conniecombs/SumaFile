@@ -276,7 +276,7 @@ if (-not $SkipInstaller) {
     )
     if ($makensis) {
         Write-Step "Build NSIS WinUI setup"
-        $nsi = Join-Path $root "packaging\winui\simplefile-winui.nsi"
+        $nsi = Join-Path $root "packaging\winui\sumafile-winui.nsi"
         $payloadNsis = $payloadDir.Replace('\', '/')
         $setupNsis = $setupPath.Replace('\', '/')
         $iconNsis = $iconPath.Replace('\', '/')

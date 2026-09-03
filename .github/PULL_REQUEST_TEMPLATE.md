@@ -27,7 +27,7 @@ Closes #<!-- issue number -->
 - [ ] Other Windows version:
 
 **Windows build tools:**
-- [ ] .NET SDK 8 and stable Rust are available
+- [ ] .NET SDK 10 and stable Rust are available
 - [ ] Not applicable for this change
 
 **Run/install mode tested:**

@@ -11,7 +11,7 @@ npm run check:winui
 npm run check:rust
 ```
 
-Use Node.js 24 or newer, stable Rust, and .NET SDK 8 or newer.
+Use Node.js 24 or newer, stable Rust, and .NET SDK 10 or newer.
 
 ## Project Layout
 

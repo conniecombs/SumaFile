@@ -433,6 +433,6 @@ Use a clean folder with mixed files (txt, png, zip), a git repo, and a large fol
 
 Required `OPEN` rows: **none**. Remaining `MANUAL` rows are implemented and listed above for human smoke.
 
-**Retirement completed** 2026-08-15. Removed `frontend/` and unused Tauri packaging glue. Keep `crates/simplefile-core`, `crates/simplefile-ipc`, and `crates/simplefile-service`. Keep leftover `src-tauri/src` domain until those modules live solely in `simplefile-core`. Keep this file.
+**Retirement completed** 2026-08-15. Removed `frontend/`, `src-tauri/`, and unused Tauri packaging glue. Keep `crates/simplefile-core`, `crates/simplefile-ipc`, and `crates/simplefile-service` as the shipping Rust backend. Keep this file as the historical parity record.
 
 Gate check: `npm run check:winui-parity-gate`.

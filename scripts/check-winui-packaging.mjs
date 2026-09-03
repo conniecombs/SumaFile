@@ -26,7 +26,7 @@ function requireSnippet(source, file, snippet) {
 }
 
 const requiredFiles = [
-  'packaging/winui/simplefile-winui.nsi',
+  'packaging/winui/sumafile-winui.nsi',
   'packaging/winui/Product.wxs',
   'scripts/build-winui-release.ps1',
   'scripts/write-latest-winui.mjs',
@@ -48,7 +48,7 @@ for (const relativePath of requiredFiles) {
   }
 }
 
-const nsis = readText('packaging/winui/simplefile-winui.nsi');
+const nsis = readText('packaging/winui/sumafile-winui.nsi');
 const wxs = readText('packaging/winui/Product.wxs');
 const buildScript = readText('scripts/build-winui-release.ps1');
 const packageJson = readText('package.json');
@@ -75,7 +75,7 @@ const nsisSnippets = [
 ];
 
 for (const snippet of nsisSnippets) {
-  requireSnippet(nsis, 'packaging/winui/simplefile-winui.nsi', snippet);
+  requireSnippet(nsis, 'packaging/winui/sumafile-winui.nsi', snippet);
 }
 
 const wxsSnippets = [

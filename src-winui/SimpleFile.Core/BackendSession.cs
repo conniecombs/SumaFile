@@ -170,8 +170,8 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
         _authToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         ProcessIdToSessionId((uint)Environment.ProcessId, out var sessionId);
         PipeName = _generation == 0
-            ? $"SimpleFile.{sessionId}.{Environment.ProcessId}"
-            : $"SimpleFile.{sessionId}.{Environment.ProcessId}.{_generation}";
+            ? $"SumaFile.{sessionId}.{Environment.ProcessId}"
+            : $"SumaFile.{sessionId}.{Environment.ProcessId}.{_generation}";
 
         _job ??= JobObject.TryCreate();
 

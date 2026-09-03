@@ -62,15 +62,24 @@ const palette = readRepo('src-winui/SimpleFile.Core/AppCommandCatalog.cs');
 const events = readRepo('ipc/schema/v1/events.json');
 const ipcClient = readRepo('src-winui/SimpleFile.Ipc/ISimpleFileIpc.cs');
 const packageJson = readRepo('package.json');
+const retirementSummary =
+  '**Retirement completed** 2026-08-15. Removed `frontend/`, `src-tauri/`, and unused Tauri packaging glue. Keep `crates/simplefile-core`, `crates/simplefile-ipc`, and `crates/simplefile-service` as the shipping Rust backend. Keep this file as the historical parity record.';
+const staleRetirementPhrases = [
+  'Keep leftover `src-tauri/src` domain',
+  'Svelte/Tauri remain buildable',
+  'Keep while Svelte/Tauri remain',
+];
 
 if (!gate.includes('## Retirement lock')) {
   fail(`${gatePath} must include a "## Retirement lock" section.`);
 }
-if (!gate.includes('Retirement completed')) {
-  fail(`${gatePath} must record that Svelte/Tauri retirement completed.`);
+if (!gate.includes(retirementSummary)) {
+  fail(`${gatePath} must include the current retirement summary.`);
 }
-if (!gate.includes('frontend/') || !gate.includes('src-tauri/')) {
-  fail(`${gatePath} must name retired frontend/ and src-tauri/ domain.`);
+for (const phrase of staleRetirementPhrases) {
+  if (gate.includes(phrase)) {
+    fail(`${gatePath} still contains stale retirement wording: ${phrase}`);
+  }
 }
 if (!gate.includes('crates/simplefile-core') || !gate.includes('crates/simplefile-service')) {
   fail(`${gatePath} must keep reusable Rust crates named.`);
