@@ -5,6 +5,13 @@ namespace SimpleFile.Tests;
 
 public class OpenWithPolicyTests
 {
+    [Fact]
+    public void DeniedExtensionsComeFromGeneratedPolicy()
+    {
+        Assert.Contains(".ps1", OpenWithPolicyGenerated.DeniedTargetExtensions);
+        Assert.DoesNotContain(".txt", OpenWithPolicyGenerated.DeniedTargetExtensions);
+    }
+
     [Theory]
     [InlineData(".ps1")]
     [InlineData("ps1")]

@@ -19,6 +19,7 @@ pub mod metadata;
 pub mod models;
 pub mod native_accel;
 pub mod open_with;
+mod open_with_policy_generated;
 pub mod path_conflict;
 pub mod preview;
 pub mod rar;

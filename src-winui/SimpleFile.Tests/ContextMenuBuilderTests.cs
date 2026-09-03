@@ -142,6 +142,7 @@ public class ContextMenuBuilderTests
             SelectionCount = 1,
             SelectedIsDirectory = true,
             SelectedDirectoryPath = @"C:\Users\test\Desktop",
+            FolderSelectionCount = 1,
             HasClipboard = true,
         });
 
@@ -154,6 +155,28 @@ public class ContextMenuBuilderTests
         var paste = Assert.Single(folder, entry => entry.Id == "ctx-paste");
         Assert.Equal("Paste into folder", paste.Label);
         Assert.Equal(@"C:\Users\test\Desktop", paste.CommandParameter);
+        Assert.DoesNotContain(folder, entry => entry.Id == "ctx-folder-metrics");
+    }
+
+    [Fact]
+    public void ContextMenu_FolderMetricsRequiresMultipleFolders()
+    {
+        var oneFolder = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            SelectionCount = 1,
+            SelectedIsDirectory = true,
+            HasFolderSelection = true,
+            FolderSelectionCount = 1,
+        });
+        Assert.DoesNotContain(oneFolder, entry => entry.Id == "ctx-folder-metrics");
+
+        var twoFolders = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            SelectionCount = 2,
+            HasFolderSelection = true,
+            FolderSelectionCount = 2,
+        });
+        Assert.Contains(twoFolders, entry => entry.Id == "ctx-folder-metrics" && entry.Label == "Compare folder metrics");
     }
 
     [Fact]
@@ -252,7 +275,9 @@ public class ContextMenuBuilderTests
         });
 
         Assert.Equal("overflow-search", overflowed[0].Id);
+        Assert.Equal("Find in folder", overflowed[0].Label);
         Assert.Equal("overflow-filter", overflowed[1].Id);
+        Assert.Equal("Filter list", overflowed[1].Label);
         Assert.Equal("overflow-new-folder", overflowed[2].Id);
         Assert.Equal("overflow-new-file", overflowed[3].Id);
         Assert.Equal("overflow-dual-pane", overflowed[4].Id);

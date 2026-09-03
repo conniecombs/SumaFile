@@ -272,6 +272,20 @@ public sealed class FileOperationService : ISettingsBackend
         }
     }
 
+    public async Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default)
+    {
+        var ipc = _ipc;
+        try
+        {
+            return await ipc.GetFolderMetricsAsync(path, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderMetricsAsync(cancelCt)).ConfigureAwait(false);
+            throw;
+        }
+    }
+
     public async Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default)
     {
         var ipc = _ipc;
@@ -388,79 +402,67 @@ public sealed class FileOperationService : ISettingsBackend
     public Task SetSettingAsync(string key, string value, CancellationToken ct = default) => _ipc.SetDbSettingAsync(key, value, ct);
     public Task<string> GetAppVersionAsync(CancellationToken ct = default) => _ipc.GetAppVersionAsync(ct);
 
-    public async Task<CleanupResult> DiskCleanupAsync(
+    public Task<CleanupResult> DiskCleanupAsync(
         string directory,
         ulong? sizeThreshold = null,
         IProgress<ProgressUpdate>? progress = null,
-        CancellationToken ct = default)
-    {
-        var ipc = _ipc;
-        var operationId = GenerateOperationId();
-        _journal?.Started("cleanup", operationId, [directory]);
-        IDisposable? subscription = null;
-        if (progress != null)
-        {
-            subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
-            {
-                if (update.OperationId == operationId && update.OperationType == "cleanup")
-                    progress.Report(update);
-            });
-        }
-        try
-        {
-            var result = await ipc.DiskCleanupAsync(directory, sizeThreshold, operationId, ct).ConfigureAwait(false);
-            _journal?.Completed("cleanup", operationId);
-            return result;
-        }
-        catch (OperationCanceledException)
-        {
-            _journal?.Cancelled("cleanup", operationId);
-            throw;
-        }
-        catch (Exception exception)
-        {
-            _journal?.Failed("cleanup", operationId, exception);
-            throw;
-        }
-        finally
-        {
-            subscription?.Dispose();
-        }
-    }
+        CancellationToken ct = default) =>
+        RunJournaledScanAsync(
+            "cleanup",
+            [directory],
+            progress,
+            (ipc, operationId, token) => ipc.DiskCleanupAsync(directory, sizeThreshold, operationId, token),
+            ct);
 
-    public async Task<DuplicateCheckResult> DuplicateCheckAsync(
+    public Task<DuplicateCheckResult> DuplicateCheckAsync(
         string directory,
         ulong? minSize = null,
         ulong? partialHashBytes = null,
         IProgress<ProgressUpdate>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        RunJournaledScanAsync(
+            "duplicate-check",
+            [directory],
+            progress,
+            (ipc, operationId, token) => ipc.DuplicateCheckAsync(directory, minSize, partialHashBytes, operationId, token),
+            ct);
+
+    private async Task<TResult> RunJournaledScanAsync<TResult>(
+        string operationType,
+        string[] sources,
+        IProgress<ProgressUpdate>? progress,
+        Func<ISimpleFileIpc, string, CancellationToken, Task<TResult>> invoke,
+        CancellationToken ct)
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
-        _journal?.Started("duplicate-check", operationId, [directory]);
+        _journal?.Started(operationType, operationId, sources);
         IDisposable? subscription = null;
         if (progress != null)
         {
             subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
             {
-                if (update.OperationId == operationId && update.OperationType == "duplicate-check")
+                if (update.OperationId == operationId && update.OperationType == operationType)
+                {
                     progress.Report(update);
+                }
             });
         }
+
         try
         {
-            var result = await ipc.DuplicateCheckAsync(directory, minSize, partialHashBytes, operationId, ct).ConfigureAwait(false);
-            _journal?.Completed("duplicate-check", operationId);
+            var result = await invoke(ipc, operationId, ct).ConfigureAwait(false);
+            _journal?.Completed(operationType, operationId);
             return result;
         }
         catch (OperationCanceledException)
         {
-            _journal?.Cancelled("duplicate-check", operationId);
+            _journal?.Cancelled(operationType, operationId);
             throw;
         }
         catch (Exception exception)
         {
-            _journal?.Failed("duplicate-check", operationId, exception);
+            _journal?.Failed(operationType, operationId, exception);
             throw;
         }
         finally
@@ -473,6 +475,7 @@ public sealed class FileOperationService : ISettingsBackend
     public Task CancelDuplicateCheckAsync(CancellationToken ct = default) => _ipc.CancelDuplicateCheckAsync(ct);
     public Task CancelFolderSizeAsync(CancellationToken ct = default) => _ipc.CancelFolderSizeAsync(ct);
     public Task CancelFolderItemCountAsync(CancellationToken ct = default) => _ipc.CancelFolderItemCountAsync(ct);
+    public Task CancelFolderMetricsAsync(CancellationToken ct = default) => _ipc.CancelFolderMetricsAsync(ct);
 
     private static async Task TryCancelBestEffortAsync(Func<CancellationToken, Task> cancel)
     {

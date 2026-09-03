@@ -52,6 +52,10 @@
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["name", "path", "has_children", "children"]
     },
+    "FolderMetrics": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["size", "item_count", "subdirectories"]
+    },
     "SearchResult": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["name", "path", "is_dir", "size", "modified", "extension", "match_type"]

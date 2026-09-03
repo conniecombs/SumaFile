@@ -32,7 +32,6 @@ public sealed class ExplorerWorkspace
     private const int ClosedTabLimit = 20;
     private readonly IExplorerBackend _backend;
     private readonly WorkspaceProfileService _profiles;
-    private readonly SavedWorkspaceLayoutService _savedLayouts;
     private readonly object _gate = new();
     private readonly List<ClosedFileTab> _closedTabs = [];
     private List<DriveInfo> _drives = [];
@@ -61,10 +60,6 @@ public sealed class ExplorerWorkspace
             CaptureLayout,
             CaptureChromeLayout,
             profileId => ActiveProfileId = profileId);
-        _savedLayouts = new SavedWorkspaceLayoutService(
-            () => FileOps,
-            CaptureLayout,
-            CaptureChromeLayout);
         Clipboard = new ClipboardState();
         Undo = new UndoStack();
         Columns = new ColumnLayout();
@@ -1806,6 +1801,20 @@ public sealed class ExplorerWorkspace
 
             try
             {
+                if (includeSizes && includeItemCounts)
+                {
+                    var metrics = await FileOps.GetFolderMetricsAsync(entry.Path, cancellationToken).ConfigureAwait(false);
+                    if (!IsCurrent())
+                    {
+                        return;
+                    }
+
+                    entry.Size = metrics.Size;
+                    entry.ItemCount = metrics.ItemCount;
+                    changed = true;
+                    continue;
+                }
+
                 if (includeSizes)
                 {
                     var size = await FileOps.CalculateFolderSizeAsync(entry.Path, cancellationToken).ConfigureAwait(false);
@@ -2102,34 +2111,6 @@ public sealed class ExplorerWorkspace
         string id,
         CancellationToken cancellationToken = default)
         => _profiles.ExportAsync(id, cancellationToken);
-
-    public Task<IReadOnlyList<SavedWorkspaceLayout>> ListSavedWorkspaceLayoutsAsync(
-        CancellationToken cancellationToken = default)
-        => _savedLayouts.ListAsync(cancellationToken);
-
-    public Task<SavedWorkspaceLayout> SaveNamedWorkspaceLayoutAsync(
-        string name,
-        bool overwrite = false,
-        CancellationToken cancellationToken = default)
-        => _savedLayouts.SaveAsync(name, overwrite, cancellationToken);
-
-    public Task<SavedWorkspaceLayout> OverwriteSavedWorkspaceLayoutAsync(
-        string id,
-        CancellationToken cancellationToken = default)
-        => _savedLayouts.OverwriteAsync(id, cancellationToken);
-
-    public Task DeleteSavedWorkspaceLayoutAsync(string id, CancellationToken cancellationToken = default)
-        => _savedLayouts.DeleteAsync(id, cancellationToken);
-
-    public async Task ApplySavedWorkspaceLayoutAsync(string id, CancellationToken cancellationToken = default)
-    {
-        var saved = await _savedLayouts.FindAsync(id, cancellationToken).ConfigureAwait(false)
-            ?? throw new KeyNotFoundException("Saved layout was not found.");
-        (saved.Chrome ?? new WorkspaceChromeLayout()).Apply(Settings, Columns);
-        await ApplyLayoutAsync(saved.Layout, cancellationToken).ConfigureAwait(false);
-        await SaveWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false);
-        await SaveUiSettingsAsync(cancellationToken).ConfigureAwait(false);
-    }
 
     public async Task SaveUiSettingsAsync(CancellationToken cancellationToken = default)
     {

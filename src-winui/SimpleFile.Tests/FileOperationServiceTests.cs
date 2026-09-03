@@ -323,6 +323,26 @@ public class FileOperationServiceTests
     }
 
     [Fact]
+    public async Task GetFolderMetricsAsync_CancellationSendsBackendCancel()
+    {
+        using var cts = new CancellationTokenSource();
+        var stub = new ConfigurableIpc
+        {
+            GetFolderMetricsHandler = (_, ct) =>
+            {
+                cts.Cancel();
+                return Task.FromCanceled<FolderMetrics>(ct);
+            },
+        };
+        var service = new FileOperationService(stub);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.GetFolderMetricsAsync(@"S:\Movies", cts.Token));
+
+        Assert.Equal(1, stub.CancelFolderMetricsCalls);
+    }
+
+    [Fact]
     public async Task CopyAsync_TokenCancel_CallsBackendCancel()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -580,6 +600,45 @@ public class FileOperationServiceTests
         Assert.Equal(@"C:\a.txt", entries[0].Sources.Single());
         Assert.Equal(@"C:\dest", entries[0].Destination);
         Assert.Equal(entries[0].OperationId, entries[1].OperationId);
+    }
+
+    [Fact]
+    public async Task OperationJournal_RecordsScanLifecycle()
+    {
+        var journal = TempJournal();
+        var stub = new ConfigurableIpc
+        {
+            DiskCleanupHandler = (directory, minSize, operationId, ct) =>
+            {
+                Assert.Equal(@"C:\temp", directory);
+                Assert.Equal(1024UL, minSize);
+                Assert.NotNull(operationId);
+                return Task.FromResult(new CleanupResult { ScannedFiles = 3 });
+            },
+            DuplicateCheckHandler = (directory, minSize, partialHashBytes, operationId, ct) =>
+            {
+                Assert.Equal(@"C:\temp", directory);
+                Assert.Equal(2048UL, minSize);
+                Assert.Equal(4096UL, partialHashBytes);
+                Assert.NotNull(operationId);
+                return Task.FromResult(new DuplicateCheckResult { ScannedFiles = 4 });
+            },
+        };
+        var service = new FileOperationService(stub, journal);
+
+        await service.DiskCleanupAsync(@"C:\temp", 1024);
+        await service.DuplicateCheckAsync(@"C:\temp", 2048, 4096);
+
+        var entries = journal.ReadEntries();
+        var cleanup = entries.Where(entry => entry.OperationType == "cleanup").ToList();
+        var duplicates = entries.Where(entry => entry.OperationType == "duplicate-check").ToList();
+
+        Assert.Equal(["started", "completed"], cleanup.Select(entry => entry.State));
+        Assert.Equal(["started", "completed"], duplicates.Select(entry => entry.State));
+        Assert.Equal(@"C:\temp", cleanup[0].Sources.Single());
+        Assert.Equal(@"C:\temp", duplicates[0].Sources.Single());
+        Assert.Equal(cleanup[0].OperationId, cleanup[1].OperationId);
+        Assert.Equal(duplicates[0].OperationId, duplicates[1].OperationId);
     }
 
     [Fact]

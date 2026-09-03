@@ -149,7 +149,7 @@ the app. Builds without complete trusted metadata fall back to the release page.
    Look on the selected item.
 6. Use right-click menus, toolbar buttons, or `Ctrl+Shift+P` for command
    palette access.
-7. Save repeatable pane/tab/column setups from View options -> Layouts.
+7. Save repeatable pane/tab/column setups from View options -> Profiles.
 
 ## Feature Reference
 
@@ -327,7 +327,7 @@ Press `F1` or `Ctrl+?` in SumaFile for the live shortcut list.
 | `Ctrl+H` | Show or hide hidden/system files |
 | `Ctrl+B` | Bookmark current folder |
 | `Ctrl+Mouse wheel` | Change icon size |
-| `Ctrl+F` / `F3` | Focus search |
+| `Ctrl+F` / `F3` | Focus find in folder |
 | `Ctrl+Shift+P` | Command palette |
 | `F4` | Open terminal here |
 | `Escape` | Close transient UI, clear filter, or clear selection |

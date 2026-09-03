@@ -55,7 +55,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 | `host.handshake` | `ipc.handshake` first | Client + service dispatch | `BackendSessionTests`, service unit tests | — | `PASS` |
 | `host.errors` | `-32000` exact `Err(String)`; `CONFLICT:`; `TRASH_UNAVAILABLE:`; `HOST_OWNED:` | `IpcException` + `FileOperationService` | `IpcExceptionTests`, `FileOperationServiceTests` | Conflict / trash fallback dialogs | `PASS` |
 | `host.select_directory` | Folder picker is host-owned | `FolderPicker` in Settings / extract-to | Service returns `HOST_OWNED:`; `BackendSessionTests` | Browse custom start path | `PASS` |
-| `show_main_window` | Service no-op; UI `Activate()` | IPC method kept | Schema + client method | — | `WAIVED` | Service `Ok(())`; no Svelte live caller |
+| `show_main_window` | Service no-op; UI `Activate()` | Schema `hostOwned`/`compatOnly` | Schema + client method | — | `WAIVED` | Service `Ok(())`; WinUI activates locally |
 | `host.convertFileSrc` | Media via filesystem path | Preview uses path / base64 | — | Open image preview | `PASS` |
 | `host.browser-dev-fs` | In-memory Tauri DEV FS | Not ported | — | — | `WAIVED` | Inventory §5.5: do not ship |
 
@@ -82,8 +82,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `empty_recycle_bin` | Empty Recycle Bin | Command palette | Core recycle_bin tests | Empty Recycle Bin | `PASS` |
 | `rename_entry` | Rename | F2 dialog | `FileOperationServiceTests` | F2 | `PASS` |
 | `batch_rename` | Advanced rename apply | Prefix/suffix/number dialog | IPC wrapper | Advanced rename on 3 files | `MANUAL` |
-| `copy_entry` | Legacy single copy | IPC kept | Schema | — | `PASS` |
-| `move_entry` | Legacy single move | IPC kept | Schema | — | `PASS` |
+| `copy_entry` | Legacy single copy | Schema `legacy`/`compatOnly`; no live App/Core caller | Schema | — | `PASS` |
+| `move_entry` | Legacy single move | Schema `legacy`/`compatOnly`; no live App/Core caller | Schema | — | `PASS` |
 | `copy_entry_resolved` | Conflict-aware copy / undo | Undo stack redo | `UndoStack` tests | Undo a copy | `PASS` |
 | `move_entry_resolved` | Conflict-aware move / undo | Undo stack | `UndoStack` tests | Undo a move | `PASS` |
 | `get_entry_info` | Properties / type probe | Properties dialog | IPC wrapper | Properties on file | `MANUAL` |
@@ -97,7 +97,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `get_folder_metrics` | Combined folder metrics | Metrics dialog | IPC service | Folder metrics on a folder | `PASS` |
 | `cancel_folder_size` | Abort size on nav | Wired on IPC | Schema/client | Navigate during metrics | `MANUAL` |
 | `cancel_folder_item_count` | Abort counts | IPC | Schema/client | — | `PASS` |
-| `cancel_count_items` | Unused wrapper | IPC kept | Schema | — | `WAIVED` | No live Svelte caller |
+| `cancel_count_items` | Unused wrapper | Schema `compatOnly`; no live App/Core caller | Schema | — | `WAIVED` | Use `cancel_folder_item_count` |
 | `cancel_folder_metrics` | Abort combined metrics | IPC service | Schema | Navigate during metrics | `PASS` |
 
 ### 2.2 Preview, open, inspection
@@ -146,7 +146,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `get_git_status` | Repo status | IPC only | Schema/client | — | `WAIVED` | Typed; no live Svelte caller |
+| `get_git_status` | Repo status | Schema `compatOnly`; no live App/Core caller | Schema/client | — | `WAIVED` | Live UI uses `get_git_file_statuses` |
 | `get_git_file_statuses` | Git column | `ApplyGitStatusesAsync` + `FileRow.GitText` | Workspace + FileRow | Enable Git; open a repo | `PASS` |
 | `git_pull` | Palette Git pull | Command palette | Catalog test | Git pull in a repo | `MANUAL` |
 | `git_push` | Palette Git push | Command palette | Catalog test | Git push | `MANUAL` |
@@ -179,8 +179,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `search-complete` | Count notification | Status text | Client complete callback | Search finishes | `PASS` |
 | `update-chunk` | Updater download | Settings install progress | FileOperationService progress subscription test | Signed update smoke | `PASS` |
 | `list_directory.chunk` | First-chunk paint | Workspace progressive list | `ExplorerWorkspaceTests` | Huge folder | `PASS` |
-| `operation-complete` | Unused typed event | Must **not** invent | Schema `typedNotEmitted` | — | `WAIVED` |
-| `operation-error` | Unused typed event | Must **not** invent | Schema `typedNotEmitted` | — | `WAIVED` |
+| `operation-complete` | Unused typed event | Must **not** invent | Schema `typedNotEmitted`/`compatOnly` | — | `WAIVED` |
+| `operation-error` | Unused typed event | Must **not** invent | Schema `typedNotEmitted`/`compatOnly` | — | `WAIVED` |
 | `tauri://drag-*` | OS drag | WinUI `DragOver`/`Drop` | `DropDestination` tests | Drop files from Explorer | `PASS` |
 
 ---
@@ -306,8 +306,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `profile-standard` `profile-developer` `profile-photos` `profile-transfer` `profile-minimal` | Apply built-in profiles | Profile command handlers | Profile workspace tests | Apply each built-in | `PASS` |
 | `view-details` `view-list` `view-tiles` `view-content` | Palette display style commands | Handler applies file-list presentation | Catalog test | Switch each view | `MANUAL` |
 | `icon-size-small` `icon-size-medium` `icon-size-large` `icon-size-extra-large` `icon-size-jumbo` `icon-size-huge` `icon-size-maximum` | Palette icon size commands | Handler updates file-list icon size | Catalog test | Change each icon size | `MANUAL` |
-| `search` | Focus search | Handler | Catalog | Ctrl+F | `MANUAL` |
-| `filter` | Focus filter | Handler | Catalog | Overflow filter | `MANUAL` |
+| `search` | Focus find in folder | Handler | Catalog | Ctrl+F | `MANUAL` |
+| `filter` | Focus filter list | Handler | Catalog | Overflow filter | `MANUAL` |
 | `quick-look` | Space | Handler | Catalog | Space | `MANUAL` |
 | `open-selected-tab` `open-other-pane` `reopen-closed-tab` | Tab and pane open commands | Catalog + handlers | Tab workspace tests | Ctrl+Enter / reopen tab | `PASS` |
 | `properties` | Properties | Dialog | Catalog | — | `MANUAL` |

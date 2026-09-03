@@ -285,6 +285,18 @@ public sealed class TreeNode
     public List<TreeNode> Children { get; set; } = [];
 }
 
+public sealed class FolderMetrics
+{
+    [JsonPropertyName("size")]
+    public ulong Size { get; set; }
+
+    [JsonPropertyName("item_count")]
+    public ulong ItemCount { get; set; }
+
+    [JsonPropertyName("subdirectories")]
+    public List<TreeNode> Subdirectories { get; set; } = [];
+}
+
 public sealed class RenameRequest
 {
     [JsonPropertyName("path")]

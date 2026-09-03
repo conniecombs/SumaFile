@@ -124,6 +124,9 @@ public sealed partial class NamedPipeJsonClient
     public Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default)
         => InvokeAsync<TreeNode[]>(Protocol.ListSubdirectoriesMethod, new { path }, ct);
 
+    public Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default)
+        => InvokeAsync<FolderMetrics>(Protocol.GetFolderMetricsMethod, new { path }, ct);
+
     public Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)
         => InvokeAsync<ulong>(Protocol.CalculateFolderSizeMethod, new { path }, ct);
 
@@ -156,6 +159,9 @@ public sealed partial class NamedPipeJsonClient
 
     public Task CancelCountItemsAsync(CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.CancelCountItemsMethod, new { }, ct);
+
+    public Task CancelFolderMetricsAsync(CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CancelFolderMetricsMethod, new { }, ct);
 
     public Task<bool> CheckRarInstalledAsync(CancellationToken ct = default)
         => InvokeAsync<bool>(Protocol.CheckRarInstalledMethod, new { }, ct);

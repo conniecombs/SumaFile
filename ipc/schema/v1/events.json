@@ -36,10 +36,12 @@
   },
   "typedNotEmitted": {
     "operation-complete": {
-      "reason": "Present on TauriEventMap only. Completion is ProgressUpdate.status plus the command result."
+      "reason": "Present on TauriEventMap only. Completion is ProgressUpdate.status plus the command result.",
+      "compatOnly": true
     },
     "operation-error": {
-      "reason": "Present on TauriEventMap only. Errors are ProgressUpdate.status === error plus Err(String)."
+      "reason": "Present on TauriEventMap only. Errors are ProgressUpdate.status === error plus Err(String).",
+      "compatOnly": true
     }
   },
   "hostOnly": {

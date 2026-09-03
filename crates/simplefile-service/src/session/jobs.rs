@@ -195,62 +195,19 @@ pub(super) fn spawn_folder_metrics(
     cancel: Arc<AtomicBool>,
 ) {
     tokio::spawn(async move {
-        let cancel2 = cancel.clone();
-        let cancel3 = cancel.clone();
-        let path2 = path.clone();
-        let path3 = path.clone();
+        let result = scheduler
+            .run_general(move || simplefile_core::file_ops::get_folder_metrics(&path, &cancel))
+            .await;
 
-        let size_scheduler = scheduler.clone();
-        let count_scheduler = scheduler.clone();
-        let subdirs_scheduler = scheduler;
-        let size_handle = async move {
-            size_scheduler
-                .run_general(move || {
-                    simplefile_core::file_ops::calculate_folder_size(&path, &cancel)
-                })
-                .await
-        };
-        let count_handle = async move {
-            count_scheduler
-                .run_general(move || {
-                    simplefile_core::file_ops::count_folder_items(&path2, &cancel2)
-                })
-                .await
-        };
-        let subdirs_handle = async move {
-            subdirs_scheduler
-                .run_general(move || {
-                    if cancel3.load(Ordering::Relaxed) {
-                        Err("cancelled".to_string())
-                    } else {
-                        simplefile_core::file_ops::list_subdirectories(&path3)
-                    }
-                })
-                .await
-        };
-
-        let (size_result, count_result, subdirs_result) =
-            tokio::join!(size_handle, count_handle, subdirs_handle);
-
-        let response = match (size_result, count_result, subdirs_result) {
-            (Ok(Some(size)), Ok(Some(count)), Ok(Ok(subdirs))) => JsonRpcResponse::result(
+        let response = match result {
+            Ok(Some(metrics)) => {
+                json_result_response(id, metrics, "failed to serialize folder metrics result")
+            }
+            Ok(None) => JsonRpcResponse::application_error(id, "cancelled".to_string()),
+            Err(error) => JsonRpcResponse::application_error(
                 id,
-                json!({
-                    "size": size,
-                    "itemCount": count,
-                    "subdirectories": subdirs,
-                }),
+                format!("folder metrics task failed: {error}"),
             ),
-            (Ok(None), _, _) | (_, Ok(None), _) => {
-                JsonRpcResponse::application_error(id, "cancelled".to_string())
-            }
-            (_, _, Ok(Err(message))) => JsonRpcResponse::application_error(id, message),
-            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
-                JsonRpcResponse::application_error(
-                    id,
-                    format!("folder metrics task failed: {error}"),
-                )
-            }
         };
         let _ = write_json(&writer, &response).await;
     });

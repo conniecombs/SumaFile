@@ -1983,7 +1983,7 @@ public sealed partial class MainWindow : Window
             visible.Count,
             selectedEntries,
             searchCount,
-            _search is null ? null : SearchTextBoxFor(_search.Pane).Text);
+            _search is null ? null : ActiveToolbarSearchTextBox().Text);
         ApplyStatusBarState();
     }
 
@@ -3326,8 +3326,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var queryPane = _search?.IsActive == true ? _search.Pane : workspace.ActivePane;
-        var query = SearchTextBoxFor(queryPane).Text.Trim();
+        var query = ActiveToolbarSearchTextBox().Text.Trim();
         if (string.IsNullOrWhiteSpace(query))
         {
             ShowMessage("Smart folder", "Run a search before saving it as a smart folder.", InfoBarSeverity.Informational);

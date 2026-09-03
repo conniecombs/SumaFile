@@ -6,6 +6,9 @@ Release date: 2026-05-29
 > Licensing update (2026-09-02): the current SumaFile source repository is
 > licensed under the MIT License. The licensing language below records the
 > terms under which SimpleFile 1.1.0 was originally published.
+> This file is a historical SimpleFile 1.1.0 snapshot. Current SumaFile
+> release validation, packaging, and runtime behavior use the WinUI host plus
+> Rust IPC service documented in `README.md` and `docs/RELEASE_1.0.0.md`.
 
 ## Summary
 

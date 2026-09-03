@@ -104,6 +104,13 @@ pub struct TreeNode {
     pub children: Vec<TreeNode>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FolderMetrics {
+    pub size: u64,
+    pub item_count: u64,
+    pub subdirectories: Vec<TreeNode>,
+}
+
 // ============================================================================
 // Search Types
 // ============================================================================

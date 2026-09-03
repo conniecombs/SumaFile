@@ -29,6 +29,27 @@ function readDispatchSource() {
     .join('\n');
 }
 
+function repoFiles(relativeRoot, extension) {
+  const root = join(repoRoot, relativeRoot);
+  if (!existsSync(root)) {
+    return [];
+  }
+
+  const results = [];
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const absolutePath = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(absolutePath);
+      } else if (entry.isFile() && entry.name.endsWith(extension)) {
+        results.push(absolutePath);
+      }
+    }
+  };
+  visit(root);
+  return results;
+}
+
 function setDifference(left, right) {
   return [...left].filter((value) => !right.has(value)).sort();
 }
@@ -150,6 +171,58 @@ for (const name of requiredEmitted) {
 for (const name of ['operation-complete', 'operation-error']) {
   if (!events.typedNotEmitted?.[name]) {
     fail(`events.json must list ${name} under typedNotEmitted`);
+  } else if (events.typedNotEmitted[name].compatOnly !== true) {
+    fail(`events.json typedNotEmitted.${name} must be marked compatOnly`);
+  }
+}
+
+const compatOnlyMethods = {
+  copy_entry: { replacement: 'copy_with_progress', legacy: true, caller: 'CopyEntryAsync' },
+  move_entry: { replacement: 'move_with_progress', legacy: true, caller: 'MoveEntryAsync' },
+  cancel_count_items: { replacement: 'cancel_folder_item_count', caller: 'CancelCountItemsAsync' },
+  get_git_status: { replacement: 'get_git_file_statuses', caller: 'GetGitStatusAsync' },
+  show_main_window: { replacement: 'WinUI AppWindow.Show/Activate', hostOwned: true, caller: 'ShowMainWindowAsync' },
+};
+for (const [methodName, expected] of Object.entries(compatOnlyMethods)) {
+  const method = commands.methods?.[methodName];
+  if (!method) {
+    fail(`commands.json missing compatibility method ${methodName}`);
+    continue;
+  }
+  if (method.compatOnly !== true) {
+    fail(`commands.json ${methodName} must be marked compatOnly`);
+  }
+  if (expected.legacy && method.legacy !== true) {
+    fail(`commands.json ${methodName} must be marked legacy`);
+  }
+  if (expected.hostOwned && method.hostOwned !== true) {
+    fail(`commands.json ${methodName} must be marked hostOwned`);
+  }
+  if (method.replacement !== expected.replacement) {
+    fail(`commands.json ${methodName} replacement must be ${expected.replacement}`);
+  }
+}
+
+const liveCallerFiles = [
+  ...repoFiles('src-winui/SimpleFile.App', '.cs'),
+  ...repoFiles('src-winui/SimpleFile.Core', '.cs').filter(
+    (file) => !file.endsWith('FileOperationService.cs'),
+  ),
+];
+for (const file of liveCallerFiles) {
+  const relativePath = file.slice(repoRoot.length + 1).replace(/\\/g, '/');
+  const source = readFileSync(file, 'utf8');
+  for (const { caller } of Object.values(compatOnlyMethods)) {
+    if (
+      caller === 'ShowMainWindowAsync'
+      && relativePath === 'src-winui/SimpleFile.Core/BackendSession.cs'
+    ) {
+      continue;
+    }
+
+    if (new RegExp(`\\b${caller}\\s*\\(`, 'u').test(source)) {
+      fail(`${relativePath} must not call compat-only IPC wrapper ${caller}`);
+    }
   }
 }
 
@@ -159,6 +232,8 @@ const rustCheckedTypes = [
   'DirectoryListing',
   'DirectoryListingChunk',
   'ProgressUpdate',
+  'TreeNode',
+  'FolderMetrics',
   'SearchOptions',
   'SearchResult',
   'SmartFolder',

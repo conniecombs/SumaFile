@@ -246,10 +246,7 @@ internal sealed class PreviewPresenter
                 return;
             }
 
-            _checksumText.Text =
-                $"MD5    {checksums.Md5}{Environment.NewLine}" +
-                $"SHA1   {checksums.Sha1}{Environment.NewLine}" +
-                $"SHA256 {checksums.Sha256}";
+            _checksumText.Text = InspectionDetails.ChecksumsText(checksums);
         }
         catch (OperationCanceledException)
         {
@@ -335,9 +332,7 @@ internal sealed class PreviewPresenter
             _emptyText.Visibility = Visibility.Visible;
             _metadataRows.Children.Clear();
             _checksumText.Text = "";
-            AddMetadataRow("Type", row.TypeText);
-            AddMetadataRow("Size", row.SizeText);
-            AddMetadataRow("Modified", row.ModifiedText);
+            AddMetadataRows(InspectionDetails.PreviewSelectionRows(row));
 
             if (row.IsDir || _workspace()?.FileOps is null)
             {
@@ -353,9 +348,7 @@ internal sealed class PreviewPresenter
                     return;
                 }
 
-                AddMetadataRow("Preview type", preview.FileType);
-                AddMetadataRow("MIME", preview.MimeType);
-                AddMetadataRow("Preview size", EntryPresentation.FormatFileSize(preview.Size, isDirectory: false));
+                AddMetadataRows(InspectionDetails.PreviewRows(preview));
                 await RenderContentAsync(row, preview, token, cancellationToken);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
@@ -462,17 +455,7 @@ internal sealed class PreviewPresenter
                 return;
             }
 
-            if (!string.IsNullOrWhiteSpace(metadata.Summary))
-            {
-                AddMetadataRow("Summary", metadata.Summary!);
-            }
-
-            if (!string.Equals(metadata.Kind, "unsupported", StringComparison.OrdinalIgnoreCase))
-            {
-                AddMetadataRow("Metadata kind", metadata.Kind);
-            }
-
-            AddMetadataRows(metadata.Fields);
+            AddMetadataRows(InspectionDetails.MetadataRows(metadata, includeSummary: true, includeKind: true));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -496,7 +479,7 @@ internal sealed class PreviewPresenter
             }
 
             AddMetadataRow("Dimensions", $"{image.Width} x {image.Height}");
-            AddMetadataRows(image.Exif.Take(12));
+            AddMetadataRows(InspectionDetails.RawRows(image.Exif.Take(12)));
         }
         catch
         {
@@ -616,14 +599,11 @@ internal sealed class PreviewPresenter
         _iconPanel.Visibility = Visibility.Collapsed;
     }
 
-    private void AddMetadataRows(IEnumerable<string[]> rows)
+    private void AddMetadataRows(IEnumerable<InspectionDetailRow> rows)
     {
         foreach (var row in rows)
         {
-            if (row.Length >= 2)
-            {
-                AddMetadataRow(row[0], row[1]);
-            }
+            AddMetadataRow(row.Label, row.Value);
         }
     }
 

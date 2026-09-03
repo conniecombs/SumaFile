@@ -72,8 +72,8 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | `move_to_trash` | `fs_ops` | `{ paths }` | `void` | Trash delete |
 | `rename_entry` | `fs_ops` | `{ path, newName }` | `string` | Rename |
 | `batch_rename` | `fs_ops` | `{ entries: RenameRequest[] }` | `string[]` | Advanced rename apply |
-| `copy_entry` | `fs_ops` | `{ source, destination }` | `string` | Legacy single copy; conflict = error |
-| `move_entry` | `fs_ops` | `{ source, destination }` | `string` | Legacy single move; conflict = error |
+| `copy_entry` | `fs_ops` | `{ source, destination }` | `string` | `compatOnly` legacy single copy; use `copy_with_progress` for live UI |
+| `move_entry` | `fs_ops` | `{ source, destination }` | `string` | `compatOnly` legacy single move; use `move_with_progress` for live UI |
 | `copy_entry_resolved` | `fs_ops` | `{ source, destination, conflictAction }` | `string` | Conflict-aware single copy / undo |
 | `move_entry_resolved` | `fs_ops` | `{ source, destination, conflictAction }` | `string` | Conflict-aware single move / undo |
 | `get_entry_info` | `fs_ops` | `{ path }` | `FileEntry` | Properties, open-with, preview fallback |
@@ -86,7 +86,7 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | `count_folder_items` | `fs_ops` | `{ path }` | `number` | Folder metrics (recursive) |
 | `cancel_folder_size` | `fs_ops` | none | `void` | Cancel size work on navigation |
 | `cancel_folder_item_count` | `fs_ops` | none | `void` | Cancel passive child counts |
-| `cancel_count_items` | `fs_ops` | none | `void` | Wrapper exists; no live UI caller |
+| `cancel_count_items` | `fs_ops` | none | `void` | `compatOnly`; use `cancel_folder_item_count` |
 
 ### 2.2 Preview, open, and inspection
 
@@ -136,7 +136,7 @@ Formats that must remain: `zip`, `tar`, `tar.gz` / `tgz`, `rar`. Archive paths c
 
 | Command | Rust module | JS args | Result | Used by |
 | --- | --- | --- | --- | --- |
-| `get_git_status` | `git` | `{ path }` | `GitStatus` | Contract/wrapper only; no live UI caller |
+| `get_git_status` | `git` | `{ path }` | `GitStatus` | `compatOnly`; live UI uses `get_git_file_statuses` |
 | `get_git_file_statuses` | `git` | `{ path }` | `Record<string, string>` | Optional git column when `enableGitIntegration` |
 | `git_pull` | `git` | `{ path }` | `string \| void` | Command palette |
 | `git_push` | `git` | `{ path }` | `string \| void` | Command palette |
@@ -156,7 +156,7 @@ Formats that must remain: `zip`, `tar`, `tar.gz` / `tgz`, `rar`. Archive paths c
 | `get_app_about_info` | `updater` | none | `AppAboutInfo` | About dialog |
 | `check_for_update` | `updater` | none | `UpdateInfo \| null` | Settings check |
 | `install_update` | `updater` | none | `void` | Settings install; then `app.restart()` |
-| `show_main_window` | `lib.rs` | none | `void` | Wrapper only; shows/focuses window `main` |
+| `show_main_window` | `lib.rs` | none | `void` | `hostOwned`/`compatOnly`; WinUI activates locally |
 
 ### 2.6 Conflict actions and transfer semantics
 
@@ -649,7 +649,7 @@ Secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Any 
 
 These are real current-code facts, not extra features:
 
-1. `show_main_window`, `get_db_setting`, `set_db_setting`, `get_git_status`, `cancel_count_items`, `onOperationComplete`, `onOperationError`, `onSearchComplete`, and `onUpdateChunk` are part of the typed contract but have no live Svelte caller. Keep the Rust commands unless a later retirement step removes them.
+1. `show_main_window`, `get_git_status`, `cancel_count_items`, `copy_entry`, `move_entry`, `onOperationComplete`, and `onOperationError` are part of the compatibility contract and are marked in schema as host-owned, legacy, or typed-not-emitted where applicable. Keep them unless a later protocol version removes them.
 2. `search-complete` and `update-chunk` **are** emitted. Wire them in WinUI even if the Svelte UI currently ignores the wrappers.
 3. `operation-complete` / `operation-error` are **not** emitted. Do not invent them unless both sides agree.
 4. `list_directory` streaming is a Channel, not an event.

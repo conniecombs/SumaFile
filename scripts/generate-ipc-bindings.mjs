@@ -154,7 +154,7 @@ for (const tag of binaryTags) {
 }
 
 const manualClientMethods = new Set(['ipc.handshake', 'list_directory', 'search_files']);
-const intentionallyUnexposedClientMethods = new Set(['get_folder_metrics', 'cancel_folder_metrics']);
+const intentionallyUnexposedClientMethods = new Set();
 const wrappers = [
   { method: 'ipc.health', signature: 'public Task<HealthResult> HealthAsync(CancellationToken cancellationToken = default)', body: 'InvokeAsync<HealthResult>(Protocol.HealthMethod, new { }, cancellationToken)' },
   { method: 'ipc.shutdown', signature: 'public Task ShutdownAsync(CancellationToken cancellationToken = default)', body: 'InvokeAsync(Protocol.ShutdownMethod, new { }, cancellationToken)' },
@@ -203,6 +203,7 @@ const wrappers = [
   { method: 'get_image_metadata', signature: 'public Task<ImageMetadata> GetImageMetadataAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<ImageMetadata>(Protocol.GetImageMetadataMethod, new { path }, ct)' },
   { method: 'get_file_metadata', signature: 'public Task<FileMetadata> GetFileMetadataAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<FileMetadata>(Protocol.GetFileMetadataMethod, new { path }, ct)' },
   { method: 'list_subdirectories', signature: 'public Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<TreeNode[]>(Protocol.ListSubdirectoriesMethod, new { path }, ct)' },
+  { method: 'get_folder_metrics', signature: 'public Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<FolderMetrics>(Protocol.GetFolderMetricsMethod, new { path }, ct)' },
   { method: 'calculate_folder_size', signature: 'public Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<ulong>(Protocol.CalculateFolderSizeMethod, new { path }, ct)' },
   { method: 'count_folder_items', signature: 'public Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<ulong>(Protocol.CountFolderItemsMethod, new { path }, ct)' },
   { method: 'copy_with_progress', signature: 'public Task<TransferResult[]> CopyWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default)', body: 'InvokeAsync<TransferResult[]>(Protocol.CopyWithProgressMethod, new { sources, destination, operationId, conflictAction }, ct)' },
@@ -214,6 +215,7 @@ const wrappers = [
   { method: 'cancel_folder_size', signature: 'public Task CancelFolderSizeAsync(CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelFolderSizeMethod, new { }, ct)' },
   { method: 'cancel_folder_item_count', signature: 'public Task CancelFolderItemCountAsync(CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelFolderItemCountMethod, new { }, ct)' },
   { method: 'cancel_count_items', signature: 'public Task CancelCountItemsAsync(CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelCountItemsMethod, new { }, ct)' },
+  { method: 'cancel_folder_metrics', signature: 'public Task CancelFolderMetricsAsync(CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelFolderMetricsMethod, new { }, ct)' },
   { method: 'check_rar_installed', signature: 'public Task<bool> CheckRarInstalledAsync(CancellationToken ct = default)', body: 'InvokeAsync<bool>(Protocol.CheckRarInstalledMethod, new { }, ct)' },
   { method: 'prepare_rar_install', signature: 'public Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default)', body: 'InvokeAsync<RarInstallPlan>(Protocol.PrepareRarInstallMethod, new { }, ct)' },
   { method: 'discard_rar_install', signature: 'public Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.DiscardRarInstallMethod, new { confirmationToken }, ct)' },

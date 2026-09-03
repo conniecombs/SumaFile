@@ -142,9 +142,12 @@ public class WinUiSourceShapeTests
 
         Assert.Contains("WorkspaceProfileButton", toolbar);
         Assert.Contains("WorkspaceProfilesHost", toolbar);
+        Assert.Contains("ViewProfilesHost", toolbar);
+        Assert.Contains("OnViewSaveProfileClicked", toolbar);
         Assert.Contains("OnWorkspaceProfilesFlyoutOpening", toolbar);
         Assert.Contains("WorkspaceProfileManageButton", toolbar);
         Assert.Contains("RefreshWorkspaceProfilesHostAsync", commands);
+        Assert.Contains("RefreshViewProfilesHostAsync", commands);
         Assert.Contains("AppendWorkspaceProfileOverflowMenuAsync", commands);
         Assert.Contains("profile:save", commands);
         Assert.Contains("ApplyWorkspaceProfileAsync", commands);
@@ -153,7 +156,10 @@ public class WinUiSourceShapeTests
         Assert.Contains("ExportWorkspaceProfileAsync", workspace);
         Assert.Contains("workspace-profiles", profiles);
         Assert.Contains("builtin-transfer", profiles);
+        Assert.DoesNotContain("SavedLayoutsHost", toolbar);
+        Assert.DoesNotContain("ViewSaveLayout", toolbar);
         Assert.DoesNotContain("AppendSavedLayoutOverflowMenuAsync", commands);
+        Assert.DoesNotContain("RefreshSavedLayoutsHostAsync", commands);
         Assert.DoesNotContain("layout:save", commands);
     }
 
@@ -172,8 +178,11 @@ public class WinUiSourceShapeTests
         Assert.Contains("ViewUseGloballyButton", toolbar);
         Assert.Contains("ViewUseForFolderButton", toolbar);
         Assert.Contains("ViewUseForDescendantsButton", toolbar);
-        Assert.Contains("Folder defaults", toolbar);
+        Assert.Contains("Current view options", toolbar);
+        Assert.Contains("Save view defaults", toolbar);
         Assert.Contains("SaveFolderViewSettingsFromFlyoutAsync", commands);
+        Assert.Contains("ActiveToolbarSearchTextBox", commands);
+        Assert.DoesNotContain("SearchTextBoxFor", commands);
         Assert.Contains("EffectiveFolderViewRuleFor", workspace);
         Assert.Contains("FolderViewSettingsDocument.SettingsKey", settingsStore);
         Assert.Contains("StableKeyFromPath", folderViews);
@@ -251,6 +260,7 @@ public class WinUiSourceShapeTests
         var pane = File.ReadAllText(Path.Combine(appRoot, "PreviewPaneView.xaml"));
         var presenter = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.cs"));
         var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
+        var inspectionDetails = File.ReadAllText(Path.Combine(appRoot, "InspectionDetails.cs"));
         var backendPreview = File.ReadAllText(Path.Combine(root, "..", "crates", "simplefile-core", "src", "preview.rs"));
 
         Assert.Contains("<WebView2", pane);
@@ -258,6 +268,10 @@ public class WinUiSourceShapeTests
         Assert.Contains("TryRenderPdfPreview", presenter);
         Assert.Contains("TryRenderMediaPreview", presenter);
         Assert.Contains("TryCreatePathBackedPreview", commands);
+        Assert.Contains("InspectionDetails", presenter);
+        Assert.Contains("InspectionDetails", commands);
+        Assert.Contains("FolderMetricRows", inspectionDetails);
+        Assert.Contains("ChecksumsText", inspectionDetails);
         Assert.DoesNotContain("const PDF_MAX", backendPreview);
     }
 
@@ -274,7 +288,7 @@ public class WinUiSourceShapeTests
         var scanDialogHost = File.ReadAllText(Path.Combine(appRoot, "FileOperationDialogService.Scans.cs"));
         var workspace = File.ReadAllText(Path.Combine(coreRoot, "ExplorerWorkspace.cs"));
         var profileService = File.ReadAllText(Path.Combine(coreRoot, "WorkspaceProfileService.cs"));
-        var layoutService = File.ReadAllText(Path.Combine(coreRoot, "SavedWorkspaceLayoutService.cs"));
+        var legacyLayoutDocument = File.ReadAllText(Path.Combine(coreRoot, "SavedWorkspaceLayout.cs"));
         var facades = File.ReadAllText(Path.Combine(coreRoot, "FileOperationFacades.cs"));
         var fileOperationService = File.ReadAllText(Path.Combine(coreRoot, "FileOperationService.cs"));
         var rustFileOps = File.ReadAllText(Path.Combine(repoRoot, "crates", "simplefile-core", "src", "file_ops.rs"));
@@ -289,15 +303,19 @@ public class WinUiSourceShapeTests
         Assert.Contains("RunScanDialogAsync", dialogService);
 
         Assert.Contains("WorkspaceProfileService _profiles", workspace);
-        Assert.Contains("SavedWorkspaceLayoutService _savedLayouts", workspace);
+        Assert.DoesNotContain("SavedWorkspaceLayoutService", workspace);
+        Assert.DoesNotContain("_savedLayouts", workspace);
         Assert.Contains("internal sealed class WorkspaceProfileService", profileService);
-        Assert.Contains("internal sealed class SavedWorkspaceLayoutService", layoutService);
+        Assert.Contains("SavedWorkspaceLayoutsDocument", legacyLayoutDocument);
+        Assert.Contains("WorkspaceProfilesDocument.FromLegacyLayouts", profileService);
+        Assert.False(File.Exists(Path.Combine(coreRoot, "SavedWorkspaceLayoutService.cs")));
 
         Assert.Contains("interface ISettingsBackend", facades);
         Assert.DoesNotContain("interface IFileOperationBackend", facades);
         Assert.DoesNotContain("interface ITagBackend", facades);
         Assert.DoesNotContain("interface ISmartFolderBackend", facades);
         Assert.Contains("ISettingsBackend", fileOperationService);
+        Assert.Contains("RunJournaledScanAsync", fileOperationService);
 
         Assert.Contains("mod folder_metrics;", rustFileOps);
         Assert.Contains("mod metadata_preserve;", rustFileOps);

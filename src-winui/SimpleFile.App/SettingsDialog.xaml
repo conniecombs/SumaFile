@@ -51,7 +51,7 @@
                         <ComboBoxItem Content="Windows default" Tag="System" />
                         <ComboBoxItem Content="Dark" Tag="Dark" />
                     </ComboBox>
-                    <ComboBox x:Name="DefaultViewComboBox" Header="Display style" HorizontalAlignment="Stretch">
+                    <ComboBox x:Name="DefaultViewComboBox" Header="Default display style" HorizontalAlignment="Stretch">
                         <ComboBoxItem Content="Details" Tag="details" />
                         <ComboBoxItem Content="List" Tag="list" />
                         <ComboBoxItem Content="Tiles" Tag="tiles" />
@@ -63,7 +63,7 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="Icon size" />
+                            <TextBlock Text="Default icon size" />
                             <TextBlock
                                 x:Name="DefaultIconSizeValueText"
                                 Grid.Column="1"
@@ -94,7 +94,7 @@
                                 Text="256 px" />
                         </Grid>
                     </StackPanel>
-                    <ComboBox x:Name="ColumnPresetComboBox" Header="File list columns" HorizontalAlignment="Stretch">
+                    <ComboBox x:Name="ColumnPresetComboBox" Header="Default file list columns" HorizontalAlignment="Stretch">
                         <ComboBoxItem Content="Default" Tag="default" />
                         <ComboBoxItem Content="Details" Tag="details" />
                         <ComboBoxItem Content="Media" Tag="media" />
@@ -150,7 +150,7 @@
                     <TextBlock Text="Behavior" FontSize="18" FontWeight="SemiBold" />
                     <ToggleSwitch x:Name="ConfirmDeleteSwitch" Header="Confirm before delete" />
                     <ToggleSwitch x:Name="KeepFoldersOnTopSwitch" Header="Keep folders on top when sorting" />
-                    <ToggleSwitch x:Name="ShowFolderSizesSwitch" Header="Show folder sizes" />
+                    <ToggleSwitch x:Name="ShowFolderSizesSwitch" Header="Show folder sizes in file lists" />
                     <ToggleSwitch x:Name="EnableGitSwitch" Header="Enable Git integration" />
                 </StackPanel>
 

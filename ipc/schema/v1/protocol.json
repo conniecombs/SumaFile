@@ -30,7 +30,7 @@
     "rule": "additive-optional-fields-ok",
     "renamesRequireBump": true,
     "frozenMethodNames": true,
-    "notes": "protocolVersion 1 is frozen to the 76 WinUI service domain method names plus ipc.handshake. Unknown major versions return an application error and leave the process up."
+    "notes": "protocolVersion 1 is frozen to the 78 WinUI service domain method names plus ipc.handshake. Unknown major versions return an application error and leave the process up."
   },
   "handshake": {
     "method": "ipc.handshake",

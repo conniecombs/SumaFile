@@ -29,6 +29,7 @@ public sealed class ContextMenuRequest
     public bool SelectedIsDirectory { get; init; }
     public string? SelectedDirectoryPath { get; init; }
     public bool HasFolderSelection { get; init; }
+    public int FolderSelectionCount { get; init; }
     public bool AllSelectedAreFiles { get; init; }
     public bool SelectedIsArchive { get; init; }
     public string? ArchiveExtractFolderName { get; init; }
@@ -47,6 +48,7 @@ public static class ContextMenuBuilder
     {
         var hasOtherPane = request.DualPaneEnabled && request.OtherPaneHasPath;
         var canCompare = request.SelectionCount == 2 && request.AllSelectedAreFiles;
+        var canCompareFolders = request.FolderSelectionCount > 1;
         var canUnpack = request.SelectionCount == 1 && request.SelectedIsDirectory;
         var extractFolder = string.IsNullOrEmpty(request.ArchiveExtractFolderName)
             ? "Extract to Folder"
@@ -80,7 +82,7 @@ public static class ContextMenuBuilder
             Item("ctx-powershell-admin", "Open PowerShell as administrator"),
             Divider(),
             Item("ctx-color-label", "Set color label...", request.SelectionCount == 0),
-            Item("ctx-folder-metrics", "Folder metrics", !request.HasFolderSelection),
+            Item("ctx-folder-metrics", "Compare folder metrics", !canCompareFolders),
             Item("ctx-cleanup", "Disk cleanup here..."),
             Item("ctx-duplicates", "Find duplicates here..."),
             Divider(),
@@ -156,7 +158,7 @@ public static class ContextMenuBuilder
             Item("ctx-extract-to", "Extract archive...", !request.SelectedIsArchive),
             Item("ctx-compress", "Create archive...", !hasSelection),
             Divider(),
-            Item("ctx-folder-metrics", "Folder metrics", !request.HasFolderSelection),
+            Item("ctx-folder-metrics", "Compare folder metrics", request.FolderSelectionCount < 2),
             Item("ctx-duplicates", "Find duplicates here..."),
             Item("ctx-cleanup", "Disk cleanup here..."),
             Divider(),
@@ -180,12 +182,12 @@ public static class ContextMenuBuilder
         var items = new List<ContextMenuEntry>();
         if (Has(ToolbarOverflowPlanner.Search))
         {
-            items.Add(Item("overflow-search", "Search", shortcut: "Ctrl+F"));
+            items.Add(Item("overflow-search", "Find in folder", shortcut: "Ctrl+F"));
         }
 
         if (Has(ToolbarOverflowPlanner.Filter))
         {
-            items.Add(Item("overflow-filter", "Filter"));
+            items.Add(Item("overflow-filter", "Filter list"));
         }
 
         if (Has(ToolbarOverflowPlanner.NewFolder))

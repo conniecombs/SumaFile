@@ -68,6 +68,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<ImageMetadata> GetImageMetadataAsync(string path, CancellationToken ct = default);
     Task<FileMetadata> GetFileMetadataAsync(string path, CancellationToken ct = default);
     Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default);
+    Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default);
     Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default);
     Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default);
     Task<TransferResult[]> CopyWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default);
@@ -80,6 +81,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task CancelFolderSizeAsync(CancellationToken ct = default);
     Task CancelFolderItemCountAsync(CancellationToken ct = default);
     Task CancelCountItemsAsync(CancellationToken ct = default);
+    Task CancelFolderMetricsAsync(CancellationToken ct = default);
     Task<bool> CheckRarInstalledAsync(CancellationToken ct = default);
     Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default);
     Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default);

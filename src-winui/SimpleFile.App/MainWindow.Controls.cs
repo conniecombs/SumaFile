@@ -63,8 +63,8 @@ public sealed partial class MainWindow
     private Button ViewUseForFolderButton => PrimaryToolbarPanel.ViewUseForFolder;
     private Button ViewUseForDescendantsButton => PrimaryToolbarPanel.ViewUseForDescendants;
     private TextBlock ViewFolderRuleStatusText => PrimaryToolbarPanel.ViewFolderRuleStatus;
-    private Button ViewSaveLayoutButton => PrimaryToolbarPanel.ViewSaveLayout;
-    private StackPanel SavedLayoutsHost => PrimaryToolbarPanel.SavedLayoutsList;
+    private Button ViewSaveProfileButton => PrimaryToolbarPanel.ViewSaveProfile;
+    private StackPanel ViewProfilesHost => PrimaryToolbarPanel.ViewProfilesList;
     private Button PrimarySettingsButton => PrimaryToolbarPanel.SettingsButton;
     private Button PrimaryMoreButton => PrimaryToolbarPanel.MoreButton;
 
@@ -176,7 +176,7 @@ public sealed partial class MainWindow
         PrimaryToolbarPanel.ViewUseGloballyClicked += OnViewUseGloballyClicked;
         PrimaryToolbarPanel.ViewUseForFolderClicked += OnViewUseForFolderClicked;
         PrimaryToolbarPanel.ViewUseForDescendantsClicked += OnViewUseForDescendantsClicked;
-        PrimaryToolbarPanel.ViewSaveLayoutClicked += OnViewSaveLayoutClicked;
+        PrimaryToolbarPanel.ViewSaveProfileClicked += OnViewSaveProfileClicked;
         PrimaryToolbarPanel.SettingsClicked += OnSettingsClicked;
         PrimaryToolbarPanel.PrimaryMoreMenuOpening += (sender, e) => OnPrimaryMoreMenuOpening(sender!, e);
 

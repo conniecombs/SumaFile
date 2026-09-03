@@ -49,8 +49,20 @@
     "empty_recycle_bin": { "params": null, "result": "null" },
     "rename_entry": { "params": { "path": "string", "newName": "string" }, "result": "string" },
     "batch_rename": { "params": { "entries": "RenameRequest[]" }, "result": "string[]" },
-    "copy_entry": { "params": { "source": "string", "destination": "string" }, "result": "string" },
-    "move_entry": { "params": { "source": "string", "destination": "string" }, "result": "string" },
+    "copy_entry": {
+      "params": { "source": "string", "destination": "string" },
+      "result": "string",
+      "legacy": true,
+      "compatOnly": true,
+      "replacement": "copy_with_progress"
+    },
+    "move_entry": {
+      "params": { "source": "string", "destination": "string" },
+      "result": "string",
+      "legacy": true,
+      "compatOnly": true,
+      "replacement": "move_with_progress"
+    },
     "copy_entry_resolved": {
       "params": { "source": "string", "destination": "string", "conflictAction": "ConflictAction" },
       "result": "string"
@@ -90,11 +102,17 @@
     "count_folder_items": { "params": { "path": "string" }, "result": "number" },
     "get_folder_metrics": {
       "params": { "path": "string" },
-      "result": { "size": "number", "itemCount": "number", "subdirectories": "TreeNode[]" }
+      "result": "FolderMetrics"
     },
     "cancel_folder_size": { "params": null, "result": "null", "cancellation": true },
     "cancel_folder_item_count": { "params": null, "result": "null", "cancellation": true },
-    "cancel_count_items": { "params": null, "result": "null", "cancellation": true },
+    "cancel_count_items": {
+      "params": null,
+      "result": "null",
+      "cancellation": true,
+      "compatOnly": true,
+      "replacement": "cancel_folder_item_count"
+    },
     "cancel_folder_metrics": { "params": null, "result": "null", "cancellation": true },
     "open_file": { "params": { "path": "string" }, "result": "null" },
     "reveal_in_folder": { "params": { "path": "string" }, "result": "null" },
@@ -129,7 +147,12 @@
       "result": "DuplicateCheckResult"
     },
     "cancel_duplicate_check": { "params": null, "result": "null", "cancellation": true },
-    "get_git_status": { "params": { "path": "string" }, "result": "GitStatus" },
+    "get_git_status": {
+      "params": { "path": "string" },
+      "result": "GitStatus",
+      "compatOnly": true,
+      "replacement": "get_git_file_statuses"
+    },
     "compute_checksum": { "params": { "path": "string" }, "result": "Checksums" },
     "get_image_metadata": { "params": { "path": "string" }, "result": "ImageMetadata" },
     "get_file_metadata": { "params": { "path": "string" }, "result": "FileMetadata" },
@@ -137,7 +160,13 @@
     "get_app_about_info": { "params": null, "result": "AppAboutInfo" },
     "check_for_update": { "params": null, "result": "UpdateInfo?" },
     "install_update": { "params": null, "result": "null" },
-    "show_main_window": { "params": null, "result": "null", "hostOwned": true },
+    "show_main_window": {
+      "params": null,
+      "result": "null",
+      "hostOwned": true,
+      "compatOnly": true,
+      "replacement": "WinUI AppWindow.Show/Activate"
+    },
     "get_git_file_statuses": { "params": { "path": "string" }, "result": "FileEntry[]" },
     "get_all_tags": { "params": null, "result": "Tag[]" },
     "create_tag": { "params": { "name": "string", "color": "string" }, "result": "Tag" },

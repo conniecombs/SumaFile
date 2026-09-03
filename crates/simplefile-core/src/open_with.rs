@@ -1,46 +1,7 @@
+use crate::open_with_policy_generated::{DENIED_EXECUTABLE_NAMES, DENIED_TARGET_EXTENSIONS};
 use crate::utils::resolve_readable_path;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-
-const DENIED_EXECUTABLE_NAMES: &[&str] = &[
-    "bash",
-    "bitsadmin",
-    "certutil",
-    "cmstp",
-    "cmd",
-    "control",
-    "cscript",
-    "dash",
-    "fish",
-    "forfiles",
-    "installutil",
-    "msbuild",
-    "mshta",
-    "msiexec",
-    "node",
-    "nodejs",
-    "perl",
-    "pwsh",
-    "powershell",
-    "python",
-    "python3",
-    "regasm",
-    "regsvcs",
-    "regsvr32",
-    "rundll32",
-    "ruby",
-    "schtasks",
-    "sh",
-    "wmic",
-    "wscript",
-    "zsh",
-];
-
-const DENIED_TARGET_EXTENSIONS: &[&str] = &[
-    "bat", "cmd", "com", "cpl", "dll", "exe", "hta", "inf", "ins", "iso", "jar", "js", "jse",
-    "lnk", "msc", "msi", "msp", "pif", "ps1", "ps1xml", "ps2", "ps2xml", "psc1", "psc2", "reg",
-    "scr", "sct", "sh", "sys", "vb", "vbe", "vbs", "ws", "wsc", "wsf", "wsh",
-];
 
 fn executable_stem(path: &Path) -> String {
     path.file_stem()

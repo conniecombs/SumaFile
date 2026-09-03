@@ -87,6 +87,25 @@ fn commands_cover_seventy_eight_domain_methods_plus_handshake() {
         methods["select_directory"]["hostOwned"].as_bool(),
         Some(true)
     );
+    for name in [
+        "copy_entry",
+        "move_entry",
+        "cancel_count_items",
+        "get_git_status",
+        "show_main_window",
+    ] {
+        assert_eq!(
+            methods[name]["compatOnly"].as_bool(),
+            Some(true),
+            "{name} should be marked compatOnly"
+        );
+    }
+    assert_eq!(methods["copy_entry"]["legacy"].as_bool(), Some(true));
+    assert_eq!(methods["move_entry"]["legacy"].as_bool(), Some(true));
+    assert_eq!(
+        methods["show_main_window"]["hostOwned"].as_bool(),
+        Some(true)
+    );
 }
 
 #[test]
@@ -111,6 +130,14 @@ fn events_include_progress_search_and_listing_chunks() {
         .as_object()
         .unwrap()
         .contains_key("operation-error"));
+    assert_eq!(
+        events["typedNotEmitted"]["operation-complete"]["compatOnly"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        events["typedNotEmitted"]["operation-error"]["compatOnly"].as_bool(),
+        Some(true)
+    );
 }
 
 #[test]

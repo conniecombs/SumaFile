@@ -120,6 +120,8 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default) => throw NotConfigured();
@@ -157,6 +159,8 @@ internal abstract class NullIpc : ISimpleFileIpc
     public virtual Task CancelFolderItemCountAsync(CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task CancelCountItemsAsync(CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task CancelFolderMetricsAsync(CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<bool> CheckRarInstalledAsync(CancellationToken ct = default) => throw NotConfigured();
 

@@ -166,7 +166,7 @@ public static class KeyboardShortcutMap
         new("tabs.jump", ["Ctrl+1-9"], "Switch to tab (9 is last)", "Tabs", isEditable: false),
         new("quickLook.toggle", ["Space"], "Quick Look", "Inspection"),
         new("preview.toggle", [], "Toggle preview pane", "View"),
-        new("search.focus", ["Ctrl+F", "F3"], "Focus search", "Search"),
+        new("search.focus", ["Ctrl+F", "F3"], "Focus find in folder", "Search"),
         new("view.toggleHidden", ["Ctrl+H"], "Show or hide hidden files", "View"),
         new("view.iconSize", ["Ctrl+Mouse wheel"], "Change icon size", "View", isEditable: false),
         new("places.bookmark", ["Ctrl+B"], "Bookmark current folder", "Organization"),

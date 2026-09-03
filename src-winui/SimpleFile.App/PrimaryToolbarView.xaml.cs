@@ -46,8 +46,8 @@ public sealed partial class PrimaryToolbarView : UserControl
     public Button ViewUseForFolder => ViewUseForFolderButton;
     public Button ViewUseForDescendants => ViewUseForDescendantsButton;
     public TextBlock ViewFolderRuleStatus => ViewFolderRuleStatusText;
-    public Button ViewSaveLayout => ViewSaveLayoutButton;
-    public StackPanel SavedLayoutsList => SavedLayoutsHost;
+    public Button ViewSaveProfile => ViewSaveProfileButton;
+    public StackPanel ViewProfilesList => ViewProfilesHost;
     public Button SettingsButton => PrimarySettingsButton;
     public Button MoreButton => PrimaryMoreButton;
 
@@ -76,7 +76,7 @@ public sealed partial class PrimaryToolbarView : UserControl
     public event RoutedEventHandler? ViewUseGloballyClicked;
     public event RoutedEventHandler? ViewUseForFolderClicked;
     public event RoutedEventHandler? ViewUseForDescendantsClicked;
-    public event RoutedEventHandler? ViewSaveLayoutClicked;
+    public event RoutedEventHandler? ViewSaveProfileClicked;
     public event RoutedEventHandler? SettingsClicked;
     public event EventHandler<object>? PrimaryMoreMenuOpening;
 
@@ -136,7 +136,7 @@ public sealed partial class PrimaryToolbarView : UserControl
 
     private void OnViewUseForDescendantsClicked(object sender, RoutedEventArgs e) => ViewUseForDescendantsClicked?.Invoke(sender, e);
 
-    private void OnViewSaveLayoutClicked(object sender, RoutedEventArgs e) => ViewSaveLayoutClicked?.Invoke(sender, e);
+    private void OnViewSaveProfileClicked(object sender, RoutedEventArgs e) => ViewSaveProfileClicked?.Invoke(sender, e);
 
     private void OnSettingsClicked(object sender, RoutedEventArgs e) => SettingsClicked?.Invoke(sender, e);
 

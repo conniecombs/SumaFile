@@ -62,10 +62,10 @@
                                     x:Name="SearchBox"
                                     Padding="30,4,56,4"
                                     VerticalAlignment="Center"
-                                    AutomationProperties.Name="Search active pane"
+                                    AutomationProperties.Name="Find in folder"
                                     CornerRadius="4"
                                     KeyDown="OnSearchKeyDown"
-                                    PlaceholderText="Search" />
+                                    PlaceholderText="Find in folder" />
                                 <Button
                                     Width="28"
                                     Height="28"
@@ -73,10 +73,10 @@
                                     Padding="0"
                                     HorizontalAlignment="Left"
                                     VerticalAlignment="Center"
-                                    AutomationProperties.Name="Search active pane"
+                                    AutomationProperties.Name="Find in folder"
                                     Click="OnSearchClick"
                                     Style="{StaticResource SfIconButtonStyle}"
-                                    ToolTipService.ToolTip="Search active pane">
+                                    ToolTipService.ToolTip="Find in folder">
                                     <FontIcon
                                         FontFamily="{StaticResource SfIconFont}"
                                         FontSize="12"
@@ -132,9 +132,9 @@
                                     MaxWidth="200"
                                     Margin="4,0,6,0"
                                     VerticalAlignment="Center"
-                                    AutomationProperties.Name="Quick filter active pane"
+                                    AutomationProperties.Name="Filter current list"
                                     Style="{StaticResource SfTextBoxStyle}"
-                                    PlaceholderText="Filter"
+                                    PlaceholderText="Filter list"
                                     TextChanged="OnQuickFilterChanged" />
                                 <Button
                                     x:Name="PrimaryNewFolderButton"
@@ -227,8 +227,8 @@
                                 <Button
                                     x:Name="PrimaryViewButton"
                                     Style="{StaticResource SfToolbarButtonStyle}"
-                                    AutomationProperties.Name="View options"
-                                    ToolTipService.ToolTip="View options">
+                                    AutomationProperties.Name="Current view options"
+                                    ToolTipService.ToolTip="Current view options">
                                     <Button.Flyout>
                                         <Flyout Opening="OnViewOptionsFlyoutOpening">
                                             <StackPanel
@@ -251,7 +251,7 @@
                                                 </Button>
                                                 <RadioButtons
                                                     x:Name="ViewStyleRadioButtons"
-                                                    Header="Display style"
+                                                    Header="Current display style"
                                                     MaxColumns="2"
                                                     SelectionChanged="OnViewStyleSelectionChanged">
                                                     <RadioButton Content="Details" Tag="details" />
@@ -265,7 +265,7 @@
                                                             <ColumnDefinition Width="*" />
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
-                                                        <TextBlock Text="Icon size" />
+                                                        <TextBlock Text="Current icon size" />
                                                         <TextBlock
                                                             x:Name="ViewIconSizeValueText"
                                                             Grid.Column="1"
@@ -302,11 +302,11 @@
                                                     HorizontalAlignment="Stretch"
                                                     HorizontalContentAlignment="Left"
                                                     Click="OnViewApplyBothClicked"
-                                                    Content="Apply view options to both panes" />
+                                                    Content="Apply current view to both panes" />
                                                 <StackPanel Spacing="6">
                                                     <TextBlock
                                                         FontWeight="SemiBold"
-                                                        Text="Folder defaults" />
+                                                        Text="Save view defaults" />
                                                     <Button
                                                         x:Name="ViewUseGloballyButton"
                                                         Style="{StaticResource SfGhostButtonStyle}"
@@ -370,10 +370,10 @@
                                                             FontWeight="SemiBold"
                                                             Text="Profiles" />
                                                         <Button
-                                                            x:Name="ViewSaveLayoutButton"
+                                                            x:Name="ViewSaveProfileButton"
                                                             Grid.Column="1"
                                                             Style="{StaticResource SfGhostButtonStyle}"
-                                                            Click="OnViewSaveLayoutClicked"
+                                                            Click="OnViewSaveProfileClicked"
                                                             ToolTipService.ToolTip="Save current profile">
                                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                                 <FontIcon
@@ -384,7 +384,7 @@
                                                             </StackPanel>
                                                         </Button>
                                                     </Grid>
-                                                    <StackPanel x:Name="SavedLayoutsHost" Spacing="2" />
+                                                    <StackPanel x:Name="ViewProfilesHost" Spacing="2" />
                                                 </StackPanel>
                                             </StackPanel>
                                         </Flyout>

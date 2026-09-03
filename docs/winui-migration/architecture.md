@@ -57,7 +57,7 @@ The Svelte/Tauri stack stays until retirement so existing 1.1.0 users, CI, and u
 - Keep `{app_data_dir}/metadata.db`, `{app_data_dir}/smart_folders.json`, and `%LOCALAPPDATA%\SumaFile\startup.log` on their current paths.
 - Migrate WebView `localStorage` keys listed in the inventory into WinUI-owned files without dropping workspace tabs, bookmarks, or color labels.
 - Dual-host during migration: Tauri remains the shipped UI until staged gates say otherwise.
-- Replace `check-api-parity.mjs` / `check-tauri-invokes.mjs` with an IPC contract parity check that still covers the 74 handlers.
+- Replace `check-api-parity.mjs` / `check-tauri-invokes.mjs` with an IPC contract parity check that covers the 78 service domain methods.
 
 ### Non-Goals
 
@@ -511,11 +511,11 @@ Rules:
 
 ### Method names
 
-The 74 Tauri command names, verbatim, from `tauri::generate_handler!` in `src-tauri/src/lib.rs` / `TauriCommandMap` in `frontend/src/lib/types.ts`:
+The v1 WinUI service method names are frozen in `ipc/schema/v1/commands.json`:
 
 `get_home_dir`, `select_directory`, `list_drives`, `list_directory`, `create_directory`, `create_file`, `delete_entry`, `move_to_trash`, `rename_entry`, `batch_rename`, `copy_entry`, `move_entry`, `copy_entry_resolved`, `move_entry_resolved`, `get_entry_info`, `watch_directory`, `unwatch_directory`, `copy_with_progress`, `move_with_progress`, `cancel_operation`, `open_file`, `open_external_url`, `reveal_in_folder`, `list_subdirectories`, `calculate_folder_size`, `count_folder_items`, `cancel_folder_size`, `cancel_folder_item_count`, `cancel_count_items`, `read_file_preview`, `generate_thumbnail`, `generate_thumbnails`, `search_files`, `cancel_search`, `get_git_status`, `get_git_file_statuses`, `git_pull`, `git_push`, `list_archive`, `extract_archive`, `create_archive`, `open_terminal`, `open_powershell_admin`, `compute_checksum`, `check_rar_installed`, `prepare_rar_install`, `discard_rar_install`, `install_rar`, `get_app_version`, `get_app_about_info`, `check_for_update`, `install_update`, `open_file_with`, `compare_files`, `disk_cleanup`, `cancel_disk_cleanup`, `duplicate_check`, `cancel_duplicate_check`, `get_image_metadata`, `get_file_metadata`, `show_main_window`, `load_smart_folders`, `save_smart_folder`, `delete_smart_folder`, `get_db_setting`, `set_db_setting`, `get_all_tags`, `create_tag`, `update_tag`, `delete_tag`, `get_tags_for_path`, `set_tags_for_path`, `get_files_with_tag`, `get_all_file_tags`.
 
-Keep unused-but-typed commands (`get_db_setting`, `set_db_setting`, `get_git_status`, `cancel_count_items`, `show_main_window`). Do not drop them in the service.
+Compatibility-only or host-owned wrappers (`copy_entry`, `move_entry`, `get_git_status`, `cancel_count_items`, `show_main_window`) are marked in `commands.json`. Do not add new live App/Core callers for those wrappers.
 
 ### Argument naming
 
@@ -571,7 +571,7 @@ C# DTOs use `[JsonPropertyName]` per field. Do not set a global `PropertyNamingP
 
 1. **Behavioral contract:** [`docs/winui-migration/inventory.md`](inventory.md) plus `frontend/src/lib/types.ts` `TauriCommandMap` / `TauriEventMap`.
 2. **Serde models:** `src-tauri/src/models.rs` (later `simplefile-core`).
-3. **Handler table:** `src-tauri/src/lib.rs` `generate_handler!` until retirement; service registry must be a superset (74 + `ipc.handshake`).
+3. **Handler table:** `simplefile-service` dispatch plus generated method metadata; service registry must match the 78 domain methods plus `ipc.handshake`.
 
 ### C# DTOs
 
@@ -585,9 +585,9 @@ New script, e.g. `scripts/check-ipc-parity.mjs` (and a C# test), must assert:
 
 | Check | Sources |
 | --- | --- |
-| 74 handler names ⊆ service registry | `lib.rs` `generate_handler!` vs `simplefile-service` method table vs `SimpleFile.Ipc` client |
-| 74 names ⊆ `TauriCommandMap` while Svelte remains | `frontend/src/lib/types.ts` |
-| 74 names ⊆ `api.ts` wrappers while Svelte remains | `frontend/src/lib/api.ts` |
+| 78 domain method names ⊆ service registry | `commands.json` vs `simplefile-service` method table vs `SimpleFile.Ipc` client |
+| Compatibility-only wrappers have no live App/Core callers | `commands.json` `compatOnly` markers vs WinUI source scan |
+| Host-owned methods stay labeled | `commands.json` `hostOwned` markers |
 | Event names | emit sites vs C# event map vs `TauriEventMap` |
 | DTO field names | `models.rs` struct fields vs C# `[JsonPropertyName]` |
 | Top-level camelCase vs nested snake_case | `TauriCommandMap` args vs `SearchOptions` / `RenameRequest` / `SmartFolder` |
@@ -606,7 +606,7 @@ Check in JSON samples produced by Rust serde for: `FileEntry` (without `itemCoun
 
 ### Protocol versioning
 
-`ipc.handshake.protocolVersion = 1`. Additive optional fields are allowed. Renames or meaning changes require a version bump and a dual-stack compatibility decision. The 74 method names are frozen for v1.
+`ipc.handshake.protocolVersion = 1`. Additive optional fields are allowed. Renames or meaning changes require a version bump and a dual-stack compatibility decision. The 78 domain method names are frozen for v1.
 
 ---
 
@@ -770,7 +770,7 @@ Keep the **existing cancel commands**. Do not add JSON-RPC `$/cancel` unless tho
 | `cancel_search` | `{ searchId }` | `SEARCH_CANCEL_FLAGS` | Sets flag; `search_files` returns **partial results**, not an error. |
 | `cancel_folder_size` | none | `folder_size_cancel` + generation | Navigation abort |
 | `cancel_folder_item_count` | none | `folder_item_count_cancel` + generation | Passive list counts |
-| `cancel_count_items` | none | `item_count_cancel` | Wrapper exists; no live Svelte caller; keep |
+| `cancel_count_items` | none | `item_count_cancel` | `compatOnly`; use `cancel_folder_item_count` |
 | `cancel_disk_cleanup` | none | `disk_cleanup_cancel` | |
 | `cancel_duplicate_check` | none | `duplicate_check_cancel` | |
 

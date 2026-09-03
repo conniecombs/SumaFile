@@ -69,8 +69,8 @@ public sealed partial class MainWindow
     private void FocusSearchUi()
     {
         var pane = ActiveUiPane;
-        var host = SearchHostFor(pane);
-        var box = SearchTextBoxFor(pane);
+        var host = ActiveToolbarSearchHost();
+        var box = ActiveToolbarSearchTextBox();
         if (host.Visibility == Visibility.Visible)
         {
             _workspace?.ActivatePane(pane);
@@ -80,8 +80,8 @@ public sealed partial class MainWindow
         }
 
         ShowOverflowInputFlyout(
-            MoreButtonFor(pane),
-            "Search",
+            ActiveToolbarMoreButton(),
+            "Find in folder",
             box.Text,
             async text =>
             {
@@ -94,7 +94,7 @@ public sealed partial class MainWindow
     private void FocusFilterUi()
     {
         var pane = ActiveUiPane;
-        var box = QuickFilterBoxFor(pane);
+        var box = ActiveToolbarQuickFilterBox();
         if (box.Visibility == Visibility.Visible)
         {
             _workspace?.ActivatePane(pane);
@@ -104,8 +104,8 @@ public sealed partial class MainWindow
         }
 
         ShowOverflowInputFlyout(
-            MoreButtonFor(pane),
-            "Filter",
+            ActiveToolbarMoreButton(),
+            "Filter list",
             box.Text,
             text =>
             {
@@ -177,29 +177,29 @@ public sealed partial class MainWindow
 
     private PaneId ActiveUiPane => _workspace?.Normalize(_workspace.ActivePane) ?? PaneId.Primary;
 
-    private TextBox SearchTextBoxFor(PaneId pane) =>
+    private TextBox ActiveToolbarSearchTextBox() =>
         SearchBox;
 
-    private Button SearchCancelButtonFor(PaneId pane) =>
+    private Button ActiveToolbarSearchCancelButton() =>
         SearchCancelButton;
 
-    private FrameworkElement SearchHostFor(PaneId pane) =>
+    private FrameworkElement ActiveToolbarSearchHost() =>
         PrimarySearchHost;
 
-    private TextBox QuickFilterBoxFor(PaneId pane) =>
+    private TextBox ActiveToolbarQuickFilterBox() =>
         QuickFilterBox;
 
-    private Button MoreButtonFor(PaneId pane) =>
+    private Button ActiveToolbarMoreButton() =>
         PrimaryMoreButton;
 
-    private void SetSearchCancelEnabled(PaneId pane, bool enabled)
+    private void SetSearchCancelEnabled(bool enabled)
     {
-        SearchCancelButtonFor(pane).IsEnabled = enabled;
+        ActiveToolbarSearchCancelButton().IsEnabled = enabled;
     }
 
     private void UpdateSearchCancelButtons()
     {
-        SetSearchCancelEnabled(_search?.Pane ?? PaneId.Primary, _search?.CanCancel == true);
+        SetSearchCancelEnabled(_search?.CanCancel == true);
     }
 
     private void OnQuickFilterChanged(object sender, TextChangedEventArgs e)
@@ -614,8 +614,8 @@ public sealed partial class MainWindow
             ViewUseForFolderButton.IsEnabled = hasFolderPath;
             ViewUseForDescendantsButton.IsEnabled = hasFolderPath;
             UpdateFolderViewRuleStatusText();
-            SavedLayoutsHost.Children.Clear();
-            SavedLayoutsHost.Children.Add(new TextBlock
+            ViewProfilesHost.Children.Clear();
+            ViewProfilesHost.Children.Add(new TextBlock
             {
                 Text = "Loading profiles...",
                 FontSize = 12,
@@ -629,12 +629,12 @@ public sealed partial class MainWindow
 
         try
         {
-            await RefreshSavedLayoutsHostAsync();
+            await RefreshViewProfilesHostAsync();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            SavedLayoutsHost.Children.Clear();
-            SavedLayoutsHost.Children.Add(new TextBlock
+            ViewProfilesHost.Children.Clear();
+            ViewProfilesHost.Children.Add(new TextBlock
             {
                 Text = exception.Message,
                 FontSize = 12,
@@ -727,7 +727,7 @@ public sealed partial class MainWindow
             : $"Current folder uses {rule.ScopeLabel} defaults.";
     }
 
-    private async void OnViewSaveLayoutClicked(object sender, RoutedEventArgs e)
+    private async void OnViewSaveProfileClicked(object sender, RoutedEventArgs e)
     {
         PrimaryViewButton.Flyout?.Hide();
         await RunUiActionAsync("Profile", PromptSaveWorkspaceProfileAsync);
@@ -772,9 +772,9 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task RefreshSavedLayoutsHostAsync()
+    private async Task RefreshViewProfilesHostAsync()
     {
-        await RefreshWorkspaceProfilesHostAsync(SavedLayoutsHost);
+        await RefreshWorkspaceProfilesHostAsync(ViewProfilesHost);
     }
 
     private async Task RefreshWorkspaceProfilesHostAsync(StackPanel host)
@@ -1014,7 +1014,7 @@ public sealed partial class MainWindow
         }
 
         var saved = await _workspace.SaveWorkspaceProfileAsync(name, overwrite: duplicate is not null);
-        await RefreshSavedLayoutsHostAsync();
+        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Saved \"{saved.Name}\".", InfoBarSeverity.Success);
     }
@@ -1056,7 +1056,7 @@ public sealed partial class MainWindow
         }
 
         var saved = await _workspace.DuplicateWorkspaceProfileAsync(id, name);
-        await RefreshSavedLayoutsHostAsync();
+        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Duplicated \"{saved.Name}\".", InfoBarSeverity.Success);
     }
@@ -1083,7 +1083,7 @@ public sealed partial class MainWindow
         }
 
         var saved = await _workspace.RenameWorkspaceProfileAsync(id, name);
-        await RefreshSavedLayoutsHostAsync();
+        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Renamed to \"{saved.Name}\".", InfoBarSeverity.Success);
     }
@@ -1114,7 +1114,7 @@ public sealed partial class MainWindow
         }
 
         var saved = await _workspace.OverwriteWorkspaceProfileAsync(id);
-        await RefreshSavedLayoutsHostAsync();
+        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Updated \"{saved.Name}\".", InfoBarSeverity.Success);
     }
@@ -1172,7 +1172,7 @@ public sealed partial class MainWindow
         await _workspace.ResetWorkspaceProfileAsync(id);
         await _workspace.ApplyWorkspaceProfileAsync(id);
         SyncFromWorkspace();
-        await RefreshSavedLayoutsHostAsync();
+        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Reset \"{profile.Name}\".", InfoBarSeverity.Success);
     }
@@ -1212,7 +1212,7 @@ public sealed partial class MainWindow
         }
 
         await _workspace.DeleteWorkspaceProfileAsync(id);
-        await RefreshSavedLayoutsHostAsync();
+        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Deleted \"{profile.Name}\".", InfoBarSeverity.Success);
     }
@@ -1623,6 +1623,7 @@ public sealed partial class MainWindow
             SelectedIsDirectory = selected.Count == 1 && selected[0].IsDir,
             SelectedDirectoryPath = selected.Count == 1 && selected[0].IsDir ? selected[0].Path : null,
             HasFolderSelection = selected.Any(row => row.IsDir),
+            FolderSelectionCount = selected.Count(row => row.IsDir),
             AllSelectedAreFiles = selected.Count > 0 && selected.All(row => !row.IsDir),
             SelectedIsArchive = selected.Count == 1 && !selected[0].IsDir && ArchivePaths.IsArchiveFile(selected[0].Path),
             ArchiveExtractFolderName = selected.Count == 1 ? ArchivePaths.ExtractFolderName(selected[0].Name) : null,
@@ -1910,7 +1911,7 @@ public sealed partial class MainWindow
                 return;
             }
 
-            var filterBox = QuickFilterBoxFor(_workspace.ActivePane);
+            var filterBox = ActiveToolbarQuickFilterBox();
             if (!string.IsNullOrEmpty(filterBox.Text))
             {
                 e.Handled = true;
@@ -1985,23 +1986,16 @@ public sealed partial class MainWindow
 
         if (fileOps is not null && row.IsDir)
         {
-            // Folder summary stats: show item count and total size.
             var utilityCts = BeginUtilityOperation();
             try
             {
-                var sizeTask = fileOps.CalculateFolderSizeAsync(row.Path, utilityCts.Token);
-                var countTask = fileOps.CountFolderItemsAsync(row.Path, utilityCts.Token);
-                var subdirsTask = fileOps.ListSubdirectoriesAsync(row.Path, utilityCts.Token);
-                await Task.WhenAll(sizeTask, countTask, subdirsTask).ConfigureAwait(true);
+                var metrics = await fileOps.GetFolderMetricsAsync(row.Path, utilityCts.Token)
+                    .ConfigureAwait(true);
 
                 if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
                 {
                     return;
                 }
-
-                var totalSize = sizeTask.Result;
-                var totalItems = countTask.Result;
-                var subdirs = subdirsTask.Result;
 
                 var statsPanel = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
                 statsPanel.Children.Add(new TextBlock
@@ -2011,15 +2005,7 @@ public sealed partial class MainWindow
                     Opacity = 0.7,
                     FontSize = 12,
                 });
-                statsPanel.Children.Add(QuickLookMetadataRow(
-                    "Subfolders",
-                    $"{subdirs.Length:N0} {(subdirs.Length == 1 ? "folder" : "folders")}"));
-                statsPanel.Children.Add(QuickLookMetadataRow(
-                    "Total Items",
-                    $"{totalItems:N0} {(totalItems == 1 ? "item" : "items")}"));
-                statsPanel.Children.Add(QuickLookMetadataRow(
-                    "Total Size",
-                    EntryPresentation.FormatFileSize(totalSize)));
+                AddQuickLookMetadataRows(statsPanel, InspectionDetails.FolderMetricRows(metrics));
                 body.Children.Add(statsPanel);
                 hasVisualPreview = true;
             }
@@ -2092,41 +2078,29 @@ public sealed partial class MainWindow
                         return;
                     }
 
-                    if (metadata.Fields.Count > 0)
+                    var detailRows = InspectionDetails.MetadataRows(
+                        metadata,
+                        includeSummary: false,
+                        includeKind: false,
+                        maxFields: 12);
+                    if (detailRows.Count > 0)
                     {
                         var metaPanel = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
-                        var heading = metadata.Summary ?? metadata.Kind switch
-                        {
-                            "image" => "Image Details",
-                            "audio" => "Audio Details",
-                            "video" => "Video Details",
-                            "pdf" => "PDF Details",
-                            "office" => "Document Details",
-                            _ => "Details",
-                        };
                         metaPanel.Children.Add(new TextBlock
                         {
-                            Text = heading,
+                            Text = InspectionDetails.MetadataHeading(metadata),
                             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                             Opacity = 0.7,
                             FontSize = 12,
                         });
 
-                        var maxFields = Math.Min(metadata.Fields.Count, 12);
-                        for (var i = 0; i < maxFields; i++)
-                        {
-                            var field = metadata.Fields[i];
-                            if (field.Length >= 2)
-                            {
-                                metaPanel.Children.Add(QuickLookMetadataRow(field[0], field[1]));
-                            }
-                        }
+                        AddQuickLookMetadataRows(metaPanel, detailRows);
 
-                        if (metadata.Fields.Count > maxFields)
+                        if (metadata.Fields.Count > 12)
                         {
                             metaPanel.Children.Add(new TextBlock
                             {
-                                Text = $"+ {metadata.Fields.Count - maxFields} more fields…",
+                                Text = InspectionDetails.MoreFieldsText(metadata.Fields.Count - 12),
                                 Opacity = 0.6,
                                 FontSize = 12,
                             });
@@ -2176,6 +2150,14 @@ public sealed partial class MainWindow
             dialog.Closed += (_, _) => cleanup();
         }
         await dialog.ShowAsync();
+    }
+
+    private static void AddQuickLookMetadataRows(StackPanel panel, IEnumerable<InspectionDetailRow> rows)
+    {
+        foreach (var row in rows)
+        {
+            panel.Children.Add(QuickLookMetadataRow(row.Label, row.Value));
+        }
     }
 
     private static Grid QuickLookMetadataRow(string label, string value)
@@ -2273,17 +2255,10 @@ public sealed partial class MainWindow
             });
         }
 
-        AddRow("Name", row.Name);
-        AddRow("Type", row.TypeText);
-        AddRow("Location", PathRules.GetParentPath(row.Path) ?? row.Path);
-        AddRow("Path", row.Path);
-        if (!string.IsNullOrEmpty(row.SymlinkText))
+        foreach (var detail in InspectionDetails.PropertiesRows(row, workspace.Active.Path))
         {
-            AddRow(PathRules.IsRecycleBinPath(workspace.Active.Path) ? "Original location" : "Link target", row.SymlinkText);
+            AddRow(detail.Label, detail.Value);
         }
-
-        AddRow("Size", row.SizeText);
-        AddRow("Modified", row.ModifiedText);
 
         var checksumText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"), FontSize = 12 };
         var checksumButton = new Button { Content = "Compute checksums", HorizontalAlignment = HorizontalAlignment.Left };
@@ -2322,17 +2297,9 @@ public sealed partial class MainWindow
             try
             {
                 var metadata = await fileOps.GetFileMetadataAsync(row.Path, utilityCts.Token);
-                if (!string.IsNullOrEmpty(metadata.Summary))
+                foreach (var detail in InspectionDetails.MetadataRows(metadata, includeSummary: true))
                 {
-                    AddRow("Summary", metadata.Summary);
-                }
-
-                foreach (var field in metadata.Fields)
-                {
-                    if (field.Length >= 2)
-                    {
-                        AddRow(field[0], field[1]);
-                    }
+                    AddRow(detail.Label, detail.Value);
                 }
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
@@ -2361,7 +2328,7 @@ public sealed partial class MainWindow
             try
             {
                 var checksums = await fileOps.ComputeChecksumAsync(row.Path, hashCts.Token);
-                checksumText.Text = $"MD5    {checksums.Md5}{Environment.NewLine}SHA-1  {checksums.Sha1}{Environment.NewLine}SHA-256 {checksums.Sha256}";
+                checksumText.Text = InspectionDetails.ChecksumsText(checksums);
             }
             catch (Exception exception)
             {
@@ -2458,9 +2425,19 @@ public sealed partial class MainWindow
         }
 
         var folders = ActiveSelectedRows.Where(row => row.IsDir).ToArray();
-        var paths = folders.Length > 0
-            ? folders.Select(f => f.Path).ToArray()
-            : [workspace.Active.Path];
+        if (folders.Length == 1)
+        {
+            await ShowQuickLookAsync();
+            return;
+        }
+
+        if (folders.Length == 0)
+        {
+            SetStatusText("Select two or more folders to compare metrics.");
+            return;
+        }
+
+        var paths = folders.Select(f => f.Path).ToArray();
 
         var utilityCts = BeginUtilityOperation();
         try
@@ -2472,16 +2449,15 @@ public sealed partial class MainWindow
             foreach (var path in paths)
             {
                 SetStatusText($"Calculating metrics for {path}...");
-                var size = await fileOps.CalculateFolderSizeAsync(path, utilityCts.Token);
-                var count = await fileOps.CountFolderItemsAsync(path, utilityCts.Token);
+                var metrics = await fileOps.GetFolderMetricsAsync(path, utilityCts.Token);
                 if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
                 {
                     return;
                 }
 
-                lines.Add($"{path}{Environment.NewLine}{EntryPresentation.FormatFileSize(size)} · {count} item(s)");
-                totalSize += size;
-                totalCount += count;
+                lines.Add($"{path}{Environment.NewLine}{EntryPresentation.FormatFileSize(metrics.Size)} · {metrics.ItemCount} item(s)");
+                totalSize += metrics.Size;
+                totalCount += metrics.ItemCount;
             }
 
             if (paths.Length > 1)
@@ -2496,7 +2472,7 @@ public sealed partial class MainWindow
             SetStatusText("");
             var dialog = new ContentDialog
             {
-                Title = "Folder metrics",
+                Title = "Folder metrics comparison",
                 Content = new ScrollViewer
                 {
                     MaxHeight = 400,
