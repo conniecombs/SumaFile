@@ -19,9 +19,11 @@ use std::path::{Path, PathBuf};
 
 mod folder_metrics;
 mod metadata_preserve;
+mod shortcut;
 
 pub use folder_metrics::{calculate_folder_size, count_folder_items, get_folder_metrics};
 pub use metadata_preserve::preserve_basic_metadata;
+pub use shortcut::{create_shortcut, ShortcutRequest};
 
 // ============================================================================
 // Data types

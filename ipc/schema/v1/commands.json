@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 78,
+  "domainMethodCount": 79,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -43,6 +43,17 @@
     "list_subdirectories": { "params": { "path": "string" }, "result": "TreeNode[]" },
     "create_directory": { "params": { "path": "string", "name": "string" }, "result": "string" },
     "create_file": { "params": { "path": "string", "name": "string" }, "result": "string" },
+    "create_shortcut": {
+      "params": {
+        "path": "string",
+        "name": "string",
+        "targetPath": "string",
+        "arguments": "string?",
+        "workingDirectory": "string?",
+        "iconPath": "string?"
+      },
+      "result": "string"
+    },
     "delete_entry": { "params": { "path": "string" }, "result": "null" },
     "move_to_trash": { "params": { "paths": "string[]" }, "result": "string[]" },
     "restore_recycle_bin": { "params": { "paths": "string[]" }, "result": "string[]" },

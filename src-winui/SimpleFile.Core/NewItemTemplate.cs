@@ -5,10 +5,11 @@ namespace SimpleFile.Core;
 public sealed record NewItemTemplate(string Id, string Label, string DefaultName, bool IsDirectory)
 {
     public static NewItemTemplate Folder { get; } = new("folder", "Folder", "New Folder", IsDirectory: true);
-    public static NewItemTemplate TextFile { get; } = new("text", "Text file", "New Text Document.txt", IsDirectory: false);
-    public static NewItemTemplate MarkdownFile { get; } = new("markdown", "Markdown file", "New Markdown Document.md", IsDirectory: false);
-    public static NewItemTemplate JsonFile { get; } = new("json", "JSON file", "New JSON Document.json", IsDirectory: false);
-    public static NewItemTemplate EmptyFile { get; } = new("empty", "Empty file", "New File", IsDirectory: false);
+    public static NewItemTemplate TextFile { get; } = new("text", "Text document", "New Text Document.txt", IsDirectory: false);
+    public static NewItemTemplate EmptyFile { get; } = new("empty", "Blank file", "New File", IsDirectory: false);
+    public static NewItemTemplate Shortcut { get; } = new("shortcut", "Shortcut", "New Shortcut.lnk", IsDirectory: false);
+
+    public bool IsShortcut => string.Equals(Id, Shortcut.Id, StringComparison.Ordinal);
 
     public static NewItemTemplate? Find(string id)
     {
@@ -19,9 +20,8 @@ public sealed record NewItemTemplate(string Id, string Label, string DefaultName
         {
             "folder" => Folder,
             "text" => TextFile,
-            "markdown" => MarkdownFile,
-            "json" => JsonFile,
             "empty" => EmptyFile,
+            "shortcut" => Shortcut,
             _ => null,
         };
     }
@@ -33,6 +33,32 @@ public sealed record NewItemTemplate(string Id, string Label, string DefaultName
             .Select(entry => entry.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return UniqueName(DefaultName, used);
+    }
+
+    public static string SuggestedShortcutName(string targetPath, IEnumerable<FileEntry> entries)
+    {
+        var used = entries
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Name))
+            .Select(entry => entry.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var trimmed = targetPath.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var targetName = Path.GetFileName(trimmed);
+        if (string.IsNullOrWhiteSpace(targetName))
+        {
+            return UniqueName(Shortcut.DefaultName, used);
+        }
+
+        if (!Directory.Exists(trimmed))
+        {
+            var stem = Path.GetFileNameWithoutExtension(targetName);
+            if (!string.IsNullOrWhiteSpace(stem))
+            {
+                targetName = stem;
+            }
+        }
+
+        return UniqueName($"{targetName}.lnk", used);
     }
 
     public static int RenameSelectionLength(string name, bool isDirectory)

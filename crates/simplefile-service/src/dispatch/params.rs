@@ -76,6 +76,8 @@ pub(super) struct NameParams {
     pub(super) name: String,
 }
 
+pub(super) type ShortcutParams = simplefile_core::file_ops::ShortcutRequest;
+
 #[derive(Debug, Deserialize)]
 pub(super) struct PathsParams {
     pub(super) paths: Vec<String>,

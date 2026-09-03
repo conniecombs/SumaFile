@@ -56,6 +56,15 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<string> CreateShortcutAsync(
+        string path,
+        string name,
+        string targetPath,
+        string? arguments = null,
+        string? workingDirectory = null,
+        string? iconPath = null,
+        CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task DeleteEntryAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<string[]> MoveToTrashAsync(string[] paths, CancellationToken ct = default) => throw NotConfigured();

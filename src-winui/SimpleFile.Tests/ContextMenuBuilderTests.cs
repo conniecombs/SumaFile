@@ -281,10 +281,9 @@ public class ContextMenuBuilderTests
         Assert.Equal("overflow-new", newMenu.Id);
         Assert.Equal("New", newMenu.Label);
         Assert.Contains(newMenu.Children, child => child.Id == "new:folder" && child.Shortcut == "Ctrl+Shift+N");
-        Assert.Contains(newMenu.Children, child => child.Id == "new:text" && child.Shortcut == "Ctrl+N");
-        Assert.Contains(newMenu.Children, child => child.Id == "new:markdown");
-        Assert.Contains(newMenu.Children, child => child.Id == "new:json");
-        Assert.Contains(newMenu.Children, child => child.Id == "new:empty");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:text" && child.Label == "Text document" && child.Shortcut == "Ctrl+N");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:empty" && child.Label == "Blank file...");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:shortcut" && child.Label == "Shortcut...");
         Assert.Equal("overflow-dual-pane", overflowed[3].Id);
         Assert.Equal("Open second pane", overflowed[3].Label);
         Assert.Equal("overflow-profiles", overflowed[4].Id);

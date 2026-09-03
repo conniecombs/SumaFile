@@ -1538,11 +1538,28 @@ public sealed class ExplorerWorkspace
         return template.SuggestedName(entries);
     }
 
+    public string SuggestedShortcutNameForTarget(string targetPath, PaneId? pane = null)
+    {
+        var target = Normalize(pane.GetValueOrDefault(ActivePane));
+        List<FileEntry> entries;
+        lock (_gate)
+        {
+            entries = [.. Pane(target).Entries];
+        }
+
+        return NewItemTemplate.SuggestedShortcutName(targetPath, entries);
+    }
+
     public Task<string> CreateNewItemInCurrentPaneAsync(
         NewItemTemplate template,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(template);
+        if (template.IsShortcut)
+        {
+            throw new InvalidOperationException("Shortcut creation requires a target path.");
+        }
+
         var name = SuggestedNameForNewItem(template, ActivePane);
         return template.IsDirectory
             ? CreateFolderInCurrentPaneAsync(name, cancellationToken)
@@ -1554,6 +1571,33 @@ public sealed class ExplorerWorkspace
 
     public async Task<string> CreateFileInCurrentPaneAsync(string name, CancellationToken cancellationToken = default)
         => await CreateEntryInCurrentPaneAsync(name, isDirectory: false, cancellationToken).ConfigureAwait(false);
+
+    public async Task<string> CreateShortcutInCurrentPaneAsync(
+        string name,
+        string targetPath,
+        string? arguments = null,
+        string? workingDirectory = null,
+        string? iconPath = null,
+        CancellationToken cancellationToken = default)
+    {
+        var ops = RequireFileOps();
+        var target = Normalize(ActivePane);
+        var path = Pane(target).Path;
+        var result = await ops.CreateShortcutAsync(
+            path,
+            name,
+            targetPath,
+            arguments,
+            workingDirectory,
+            iconPath,
+            cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        Undo.PushCreateShortcut(path, name, targetPath, arguments, workingDirectory, iconPath, result, ops);
+        SelectPathForRefresh(target, result);
+        await RefreshAsync(target, cancellationToken).ConfigureAwait(false);
+        MarkPathSelectedAfterRefresh(target, result, $"Created {PathRules.Basename(result)}");
+        return result;
+    }
 
     private async Task<string> CreateEntryInCurrentPaneAsync(
         string name,

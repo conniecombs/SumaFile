@@ -53,7 +53,7 @@ static methods for prefix detection.
 | Shortcut | Action |
 |----------|--------|
 | Ctrl+Shift+N | New folder |
-| Ctrl+N | New text file |
+| Ctrl+N | New text document |
 | F2 | Rename |
 | Delete | Move to trash |
 | Shift+Delete | Permanent delete |

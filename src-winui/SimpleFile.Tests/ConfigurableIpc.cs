@@ -16,6 +16,7 @@ internal sealed class ConfigurableIpc : NullIpc
 
     public Func<string, string, CancellationToken, Task<string>>? CreateDirectoryHandler { get; set; }
     public Func<string, string, CancellationToken, Task<string>>? CreateFileHandler { get; set; }
+    public Func<string, string, string, string?, string?, string?, CancellationToken, Task<string>>? CreateShortcutHandler { get; set; }
     public Func<string, string, CancellationToken, Task<string>>? RenameEntryHandler { get; set; }
     public Func<RenameRequest[], CancellationToken, Task<string[]>>? BatchRenameHandler { get; set; }
     public Func<string, CancellationToken, Task<string?>>? GetDbSettingHandler { get; set; }
@@ -116,6 +117,17 @@ internal sealed class ConfigurableIpc : NullIpc
 
     public override Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default)
         => CreateFileHandler?.Invoke(path, name, ct) ?? throw NotConfigured();
+
+    public override Task<string> CreateShortcutAsync(
+        string path,
+        string name,
+        string targetPath,
+        string? arguments = null,
+        string? workingDirectory = null,
+        string? iconPath = null,
+        CancellationToken ct = default)
+        => CreateShortcutHandler?.Invoke(path, name, targetPath, arguments, workingDirectory, iconPath, ct)
+            ?? throw NotConfigured();
 
     public override Task<string[]> MoveToTrashAsync(string[] paths, CancellationToken ct = default)
         => MoveToTrashHandler?.Invoke(paths, ct) ?? throw NotConfigured();

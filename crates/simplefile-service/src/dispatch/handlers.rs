@@ -3,8 +3,8 @@ use super::params::{
     CreateArchiveParams, ExternalUrlParams, ExtractArchiveParams, GetFilesWithTagParams,
     HandshakeParams, NameParams, OpenWithParams, PathParams, PathsParams, PreviewParams,
     RenameParams, ResolvedCopyMoveParams, SetTagsForPathParams, SettingKeyParams,
-    SettingValueParams, SmartFolderIdParams, SmartFolderParams, TagCreateParams, TagForPathParams,
-    TagIdParams, TagUpdateParams,
+    SettingValueParams, ShortcutParams, SmartFolderIdParams, SmartFolderParams, TagCreateParams,
+    TagForPathParams, TagIdParams, TagUpdateParams,
 };
 use super::{async_ops, Dispatch, SessionState, APP_VERSION};
 use serde::Serialize;
@@ -101,6 +101,15 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_CREATE_FILE => match parse_params::<NameParams>(request) {
             Ok(p) => match simplefile_core::file_ops::create_file(&p.path, &p.name) {
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Err(m) => {
+                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                }
+            },
+            Err(r) => Dispatch::Reply(r),
+        },
+        METHOD_CREATE_SHORTCUT => match parse_params::<ShortcutParams>(request) {
+            Ok(p) => match simplefile_core::file_ops::create_shortcut(p) {
                 Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))

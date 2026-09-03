@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 78;
+    public const int DomainMethodCount = 79;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -27,6 +27,7 @@ public static partial class Protocol
     public const string ListSubdirectoriesMethod = "list_subdirectories";
     public const string CreateDirectoryMethod = "create_directory";
     public const string CreateFileMethod = "create_file";
+    public const string CreateShortcutMethod = "create_shortcut";
     public const string DeleteEntryMethod = "delete_entry";
     public const string MoveToTrashMethod = "move_to_trash";
     public const string RestoreRecycleBinMethod = "restore_recycle_bin";
@@ -115,6 +116,7 @@ public static partial class Protocol
         "list_subdirectories",
         "create_directory",
         "create_file",
+        "create_shortcut",
         "delete_entry",
         "move_to_trash",
         "restore_recycle_bin",

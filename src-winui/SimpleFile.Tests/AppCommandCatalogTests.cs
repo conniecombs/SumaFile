@@ -38,6 +38,7 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "empty-recycle-bin");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "profile-manage");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "profile-transfer");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "new-shortcut");
         Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
         Assert.Equal("Alt+Enter", AppCommandCatalog.Find("properties")?.Shortcut);
         Assert.Equal("Disk cleanup", AppCommandCatalog.Find("disk-cleanup")?.Label);

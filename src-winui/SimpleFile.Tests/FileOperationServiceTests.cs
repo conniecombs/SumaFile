@@ -42,6 +42,47 @@ public class FileOperationServiceTests
     }
 
     [Fact]
+    public async Task CreateShortcutAsync_ForwardsShortcutDetailsToIpc()
+    {
+        string? receivedPath = null;
+        string? receivedName = null;
+        string? receivedTarget = null;
+        string? receivedArguments = null;
+        string? receivedWorkingDirectory = null;
+        string? receivedIconPath = null;
+        var stub = new ConfigurableIpc
+        {
+            CreateShortcutHandler = (path, name, targetPath, arguments, workingDirectory, iconPath, ct) =>
+            {
+                receivedPath = path;
+                receivedName = name;
+                receivedTarget = targetPath;
+                receivedArguments = arguments;
+                receivedWorkingDirectory = workingDirectory;
+                receivedIconPath = iconPath;
+                return Task.FromResult($@"{path}\{name}.lnk");
+            },
+        };
+        var service = new FileOperationService(stub);
+
+        var result = await service.CreateShortcutAsync(
+            @"C:\test",
+            "Notes",
+            @"C:\target\notes.txt",
+            "--safe",
+            @"C:\target",
+            @"C:\target\notes.ico");
+
+        Assert.Equal(@"C:\test\Notes.lnk", result);
+        Assert.Equal(@"C:\test", receivedPath);
+        Assert.Equal("Notes", receivedName);
+        Assert.Equal(@"C:\target\notes.txt", receivedTarget);
+        Assert.Equal("--safe", receivedArguments);
+        Assert.Equal(@"C:\target", receivedWorkingDirectory);
+        Assert.Equal(@"C:\target\notes.ico", receivedIconPath);
+    }
+
+    [Fact]
     public async Task ReplaceIpc_UsesNewClientForFutureCalls()
     {
         var first = new ConfigurableIpc

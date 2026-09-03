@@ -82,6 +82,48 @@ public sealed class UndoStack
         });
     }
 
+    public void PushCreateShortcut(
+        string parentPath,
+        string name,
+        string targetPath,
+        string? arguments,
+        string? workingDirectory,
+        string? iconPath,
+        string createdPath,
+        FileOperationService ops)
+    {
+        var currentPath = createdPath;
+        string? recyclePath = null;
+        Push(new UndoEntry
+        {
+            Description = "Create shortcut",
+            Undo = async ct =>
+            {
+                var recyclePaths = await ops.TrashAsync([currentPath], ct).ConfigureAwait(false);
+                recyclePath = recyclePaths.FirstOrDefault();
+            },
+            Redo = async ct =>
+            {
+                if (!string.IsNullOrEmpty(recyclePath))
+                {
+                    var restored = await ops.RestoreRecycleBinAsync([recyclePath], ct).ConfigureAwait(false);
+                    currentPath = restored.FirstOrDefault() ?? currentPath;
+                    recyclePath = null;
+                    return;
+                }
+
+                currentPath = await ops.CreateShortcutAsync(
+                    parentPath,
+                    name,
+                    targetPath,
+                    arguments,
+                    workingDirectory,
+                    iconPath,
+                    ct).ConfigureAwait(false);
+            },
+        });
+    }
+
     public void PushMove(IReadOnlyList<TransferResult> transferred, FileOperationService ops)
     {
         var items = transferred.ToArray();

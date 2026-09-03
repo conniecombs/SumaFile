@@ -178,14 +178,16 @@ public class WinUiSourceShapeTests
         Assert.Contains("PrimaryNewButton", toolbar);
         Assert.Contains("Tag=\"new:folder\"", toolbar);
         Assert.Contains("Tag=\"new:text\"", toolbar);
-        Assert.Contains("Tag=\"new:markdown\"", toolbar);
-        Assert.Contains("Tag=\"new:json\"", toolbar);
         Assert.Contains("Tag=\"new:empty\"", toolbar);
+        Assert.Contains("Tag=\"new:shortcut\"", toolbar);
+        Assert.DoesNotContain("Tag=\"new:markdown\"", toolbar);
+        Assert.DoesNotContain("Tag=\"new:json\"", toolbar);
         Assert.DoesNotContain("PrimaryNewFileButton", toolbar);
         Assert.DoesNotContain("PrimaryNewFolderButton", toolbar);
         Assert.Contains("PrimaryNewItemRequested", toolbarCode);
         Assert.Contains("RunNewItemCommandAsync", mainWindow);
         Assert.Contains("NewItemTemplate.TextFile", commandRouting);
+        Assert.Contains("PromptAndCreateShortcut", commandRouting);
         Assert.Contains("overflow-new", overflow);
     }
 

@@ -280,7 +280,7 @@ public sealed partial class MainWindow
                 break;
             case "file.newFile":
                 await RunUiActionAsync(
-                    "New Text File",
+                    "New Text Document",
                     () => CreateNewItem(_workspace?.ActivePane ?? PaneId.Primary, NewItemTemplate.TextFile));
                 break;
             case "quickLook.toggle":

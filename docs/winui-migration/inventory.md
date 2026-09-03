@@ -67,7 +67,8 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | `list_directory` | `fs_ops` → `dir_list` | `{ path, onChunk }` | `DirectoryListing` | Primary/secondary listing, progressive chunks |
 | `list_subdirectories` | `fs_ops` | `{ path }` | `TreeNode[]` | Sidebar tree expand |
 | `create_directory` | `fs_ops` | `{ path, name }` | `string` | New folder, pack-into-folder |
-| `create_file` | `fs_ops` | `{ path, name }` | `string` | New text/Markdown/JSON/empty file |
+| `create_file` | `fs_ops` | `{ path, name }` | `string` | New text/blank file |
+| `create_shortcut` | `fs_ops` | `{ path, name, targetPath, arguments, workingDirectory, iconPath }` | `string` | New shortcut |
 | `delete_entry` | `fs_ops` | `{ path }` | `void` | Permanent delete, undo of copy |
 | `move_to_trash` | `fs_ops` | `{ paths }` | `void` | Trash delete |
 | `rename_entry` | `fs_ops` | `{ path, newName }` | `string` | Rename |

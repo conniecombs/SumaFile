@@ -15,8 +15,8 @@ public class NewItemTemplateTests
         };
 
         Assert.Equal("New Text Document.txt", NewItemTemplate.TextFile.SuggestedName(entries));
-        Assert.Equal("New Markdown Document.md", NewItemTemplate.MarkdownFile.SuggestedName(entries));
-        Assert.Equal("New JSON Document.json", NewItemTemplate.JsonFile.SuggestedName(entries));
+        Assert.Equal("New File", NewItemTemplate.EmptyFile.SuggestedName(entries));
+        Assert.Equal("New Shortcut.lnk", NewItemTemplate.Shortcut.SuggestedName(entries));
     }
 
     [Fact]
@@ -36,5 +36,17 @@ public class NewItemTemplateTests
     {
         Assert.Equal("New Text Document".Length, NewItemTemplate.RenameSelectionLength("New Text Document.txt", isDirectory: false));
         Assert.Equal("New Folder".Length, NewItemTemplate.RenameSelectionLength("New Folder", isDirectory: true));
+    }
+
+    [Fact]
+    public void SuggestedShortcutName_UsesTargetNameAndAvoidsCollisions()
+    {
+        var entries = new[]
+        {
+            new FileEntry { Name = "notes.lnk", Path = @"C:\Users\test\notes.lnk" },
+            new FileEntry { Name = "notes (2).lnk", Path = @"C:\Users\test\notes (2).lnk" },
+        };
+
+        Assert.Equal("notes (3).lnk", NewItemTemplate.SuggestedShortcutName(@"C:\Users\test\notes.txt", entries));
     }
 }

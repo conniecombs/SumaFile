@@ -52,6 +52,7 @@ public sealed partial class MainWindow
             ["advanced-rename"] = PromptAdvancedRenameAsync,
             ["new-folder"] = () => CreateNewItem(_workspace!.ActivePane, NewItemTemplate.Folder),
             ["new-file"] = () => CreateNewItem(_workspace!.ActivePane, NewItemTemplate.TextFile),
+            ["new-shortcut"] = () => PromptAndCreateShortcut(_workspace!.ActivePane),
             ["create-archive"] = CreateArchiveAsync,
             ["terminal"] = OpenTerminalInActivePathAsync,
             ["powershell-admin"] = OpenPowershellAdminAsync,

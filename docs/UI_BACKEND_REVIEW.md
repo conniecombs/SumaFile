@@ -10,7 +10,7 @@ actions, and Windows installer support.
 
 ## Strengths
 
-- The 78-command IPC schema is checked by `npm run check:ipc-schema` against
+- The 79-command IPC schema is checked by `npm run check:ipc-schema` against
   `SimpleFile.Ipc.Protocol` and `crates/simplefile-service/src/dispatch/`.
 - WinUI parity-gate required rows stay `PASS` or `WAIVED`.
 - Windows drive display names use native volume and mapped-share lookups.

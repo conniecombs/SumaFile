@@ -18,6 +18,7 @@ internal sealed partial class FileOperationDialogService
     private readonly Func<CancellationTokenSource> _beginArchiveOperation;
     private readonly Action<CancellationTokenSource> _finishArchiveOperation;
     private readonly Func<string?, Task<string?>> _pickFolderAsync;
+    private readonly Func<string?, Task<string?>> _pickFileAsync;
     private readonly Func<string, Func<Task>, Task> _runUiActionAsync;
     private readonly Action<string, string, InfoBarSeverity> _showMessage;
     private readonly Action<FileRow> _queuePreview;
@@ -40,6 +41,7 @@ internal sealed partial class FileOperationDialogService
         Func<CancellationTokenSource> beginArchiveOperation,
         Action<CancellationTokenSource> finishArchiveOperation,
         Func<string?, Task<string?>> pickFolderAsync,
+        Func<string?, Task<string?>> pickFileAsync,
         Func<string, Func<Task>, Task> runUiActionAsync,
         Action<string, string, InfoBarSeverity> showMessage,
         Action<FileRow> queuePreview,
@@ -61,6 +63,7 @@ internal sealed partial class FileOperationDialogService
         _beginArchiveOperation = beginArchiveOperation;
         _finishArchiveOperation = finishArchiveOperation;
         _pickFolderAsync = pickFolderAsync;
+        _pickFileAsync = pickFileAsync;
         _runUiActionAsync = runUiActionAsync;
         _showMessage = showMessage;
         _queuePreview = queuePreview;
@@ -75,7 +78,7 @@ internal sealed partial class FileOperationDialogService
     public Task PromptAndCreateFileAsync(PaneId pane)
         => PromptForNameAndInvokeAsync(
             pane,
-            "Empty File",
+            "Blank File",
             "File name",
             NewItemTemplate.EmptyFile,
             static (workspace, name, cancellationToken) => workspace.CreateFileInCurrentPaneAsync(name, cancellationToken));
@@ -110,6 +113,169 @@ internal sealed partial class FileOperationDialogService
         if (createdPath is not null && ReferenceEquals(_workspace(), workspace))
         {
             await PromptRenameCreatedItemAsync(workspace, createdPath, template);
+        }
+    }
+
+    public async Task PromptAndCreateShortcutAsync(PaneId pane)
+    {
+        var workspace = _workspace();
+        if (workspace is null)
+        {
+            return;
+        }
+
+        var suggestedName = workspace.SuggestedNameForNewItem(NewItemTemplate.Shortcut, pane);
+        var nameBox = new TextBox
+        {
+            Header = "Name",
+            Text = suggestedName,
+            PlaceholderText = "Shortcut name",
+        };
+        nameBox.Select(0, NewItemTemplate.RenameSelectionLength(suggestedName, isDirectory: false));
+
+        var targetBox = new TextBox
+        {
+            Header = "Target",
+            PlaceholderText = "Path to a file or folder",
+        };
+        var argumentsBox = new TextBox
+        {
+            Header = "Arguments",
+            PlaceholderText = "Optional",
+        };
+        var workingDirectoryBox = new TextBox
+        {
+            Header = "Start in",
+            PlaceholderText = "Optional folder",
+        };
+        var iconBox = new TextBox
+        {
+            Header = "Icon",
+            PlaceholderText = "Optional file",
+        };
+
+        var autoName = true;
+        var updatingName = false;
+        nameBox.TextChanged += (_, _) =>
+        {
+            if (!updatingName)
+            {
+                autoName = false;
+            }
+        };
+
+        async Task PickTargetFileAsync()
+        {
+            var picked = await _pickFileAsync(targetBox.Text.Trim());
+            ApplyPickedTarget(picked);
+        }
+
+        async Task PickTargetFolderAsync()
+        {
+            var picked = await _pickFolderAsync(targetBox.Text.Trim());
+            ApplyPickedTarget(picked);
+        }
+
+        async Task PickWorkingDirectoryAsync()
+        {
+            var picked = await _pickFolderAsync(workingDirectoryBox.Text.Trim());
+            if (!string.IsNullOrWhiteSpace(picked))
+            {
+                workingDirectoryBox.Text = picked;
+            }
+        }
+
+        async Task PickIconAsync()
+        {
+            var picked = await _pickFileAsync(iconBox.Text.Trim());
+            if (!string.IsNullOrWhiteSpace(picked))
+            {
+                iconBox.Text = picked;
+            }
+        }
+
+        void ApplyPickedTarget(string? picked)
+        {
+            if (string.IsNullOrWhiteSpace(picked))
+            {
+                return;
+            }
+
+            targetBox.Text = picked;
+            if (autoName || string.IsNullOrWhiteSpace(nameBox.Text))
+            {
+                var nextName = workspace.SuggestedShortcutNameForTarget(picked, pane);
+                updatingName = true;
+                nameBox.Text = nextName;
+                nameBox.Select(0, NewItemTemplate.RenameSelectionLength(nextName, isDirectory: false));
+                updatingName = false;
+                autoName = true;
+            }
+        }
+
+        var panel = new StackPanel { Spacing = 12, MinWidth = 420 };
+        panel.Children.Add(nameBox);
+        panel.Children.Add(targetBox);
+        panel.Children.Add(ButtonRow(
+            ("Browse file", (_, _) => _ = PickTargetFileAsync()),
+            ("Browse folder", (_, _) => _ = PickTargetFolderAsync())));
+        panel.Children.Add(argumentsBox);
+        panel.Children.Add(workingDirectoryBox);
+        panel.Children.Add(ButtonRow(("Browse folder", (_, _) => _ = PickWorkingDirectoryAsync())));
+        panel.Children.Add(iconBox);
+        panel.Children.Add(ButtonRow(("Browse icon", (_, _) => _ = PickIconAsync())));
+
+        var dialog = new ContentDialog
+        {
+            Title = "Create Shortcut",
+            Content = panel,
+            PrimaryButtonText = "Create",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _xamlRoot(),
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var name = nameBox.Text.Trim();
+        var targetPath = targetBox.Text.Trim();
+        if (name.Length == 0 || targetPath.Length == 0)
+        {
+            _showMessage("Shortcut", "Shortcut name and target are required.", InfoBarSeverity.Warning);
+            return;
+        }
+
+        if (!ReferenceEquals(_workspace(), workspace))
+        {
+            return;
+        }
+
+        var utilityCts = _beginUtilityOperation();
+        try
+        {
+            workspace.ActivatePane(pane);
+            await workspace.CreateShortcutInCurrentPaneAsync(
+                name,
+                targetPath,
+                TrimToNull(argumentsBox.Text),
+                TrimToNull(workingDirectoryBox.Text),
+                TrimToNull(iconBox.Text),
+                utilityCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _showMessage("Shortcut", exception.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _finishUtilityOperation(utilityCts);
         }
     }
 
@@ -866,6 +1032,29 @@ internal sealed partial class FileOperationDialogService
 
     private static string FormatItemCount(int count) =>
         count == 1 ? "this item" : $"{count} items";
+
+    private static StackPanel ButtonRow(params (string Text, RoutedEventHandler Click)[] buttons)
+    {
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+        };
+        foreach (var (text, click) in buttons)
+        {
+            var button = new Button { Content = text };
+            button.Click += click;
+            row.Children.Add(button);
+        }
+
+        return row;
+    }
+
+    private static string? TrimToNull(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
 
     private static bool IsCancellationMessage(string? message)
     {

@@ -57,7 +57,7 @@ The Svelte/Tauri stack stays until retirement so existing 1.1.0 users, CI, and u
 - Keep `{app_data_dir}/metadata.db`, `{app_data_dir}/smart_folders.json`, and `%LOCALAPPDATA%\SumaFile\startup.log` on their current paths.
 - Migrate WebView `localStorage` keys listed in the inventory into WinUI-owned files without dropping workspace tabs, bookmarks, or color labels.
 - Dual-host during migration: Tauri remains the shipped UI until staged gates say otherwise.
-- Replace `check-api-parity.mjs` / `check-tauri-invokes.mjs` with an IPC contract parity check that covers the 78 service domain methods.
+- Replace `check-api-parity.mjs` / `check-tauri-invokes.mjs` with an IPC contract parity check that covers the 79 service domain methods.
 
 ### Non-Goals
 
@@ -267,7 +267,7 @@ Do this in **named PRs** so `src-tauri` keeps shipping and Gate 3 is not claimed
 
 **`Host` must live in `simplefile-core` before PRs 5–6.** Parking the trait in `src-tauri` would force a circular `simplefile-core` → `src-tauri` dependency the moment `dir_list` / `archive` / `rar_installer` / `progress` / `search` / `watcher` / `cleanup` move. PR 3 creates the crate and the trait; `src-tauri` implements `TauriHost` only.
 
-**Gate 3 is not done** until steps E-I have removed `Channel`, `AppHandle`, `tauri::State`, and plugin traits from domain modules, and PR 10's contract tests exercise all 78 methods against core. Do not skip to the service while those modules are still `mod` (private) inside `src-tauri`.
+**Gate 3 is not done** until steps E-I have removed `Channel`, `AppHandle`, `tauri::State`, and plugin traits from domain modules, and PR 10's contract tests exercise all 79 methods against core. Do not skip to the service while those modules are still `mod` (private) inside `src-tauri`.
 
 Modules and their Tauri coupling (from inventory §6, verified):
 
@@ -330,7 +330,7 @@ src-winui\
 | Project | TFM | References | Responsibility |
 | --- | --- | --- | --- |
 | `SimpleFile.App` | `net10.0-windows10.0.19041.0` | Core, Ipc, Windows App SDK | Window (1200x800, min 800x600, centered, title `SimpleFile - File Explorer`), XAML shells, `FolderPicker`, drag-drop, process/job lifetime, Activate |
-| `SimpleFile.Ipc` | `net10.0-windows` | none of WinUI | Named-pipe client, framing, 78 methods, event multicast, error mapping |
+| `SimpleFile.Ipc` | `net10.0-windows` | none of WinUI | Named-pipe client, framing, 79 methods, event multicast, error mapping |
 | `SimpleFile.Core` | `net10.0-windows` | Ipc | Port of `frontend/src/lib/app/*`, `appState.ts`, transfer/search/navigation workflows |
 | `SimpleFile.Tests` | `net10.0-windows` | Core, Ipc | **Required.** Serialization parity, client framing, workflow unit tests. `dotnet test` is part of `check:winui`. |
 
@@ -498,7 +498,7 @@ Result:
   "protocolVersion": 1,
   "appVersion": "1.0.0",
   "identifier": "com.simplefile.desktop",
-  "methodCount": 78
+  "methodCount": 79
 }
 ```
 
@@ -571,7 +571,7 @@ C# DTOs use `[JsonPropertyName]` per field. Do not set a global `PropertyNamingP
 
 1. **Behavioral contract:** [`docs/winui-migration/inventory.md`](inventory.md) plus `frontend/src/lib/types.ts` `TauriCommandMap` / `TauriEventMap`.
 2. **Serde models:** `src-tauri/src/models.rs` (later `simplefile-core`).
-3. **Handler table:** `simplefile-service` dispatch plus generated method metadata; service registry must match the 78 domain methods plus `ipc.handshake`.
+3. **Handler table:** `simplefile-service` dispatch plus generated method metadata; service registry must match the 79 domain methods plus `ipc.handshake`.
 
 ### C# DTOs
 
@@ -585,7 +585,7 @@ New script, e.g. `scripts/check-ipc-parity.mjs` (and a C# test), must assert:
 
 | Check | Sources |
 | --- | --- |
-| 78 domain method names ⊆ service registry | `commands.json` vs `simplefile-service` method table vs `SimpleFile.Ipc` client |
+| 79 domain method names subset of service registry | `commands.json` vs `simplefile-service` method table vs `SimpleFile.Ipc` client |
 | Compatibility-only wrappers have no live App/Core callers | `commands.json` `compatOnly` markers vs WinUI source scan |
 | Host-owned methods stay labeled | `commands.json` `hostOwned` markers |
 | Event names | emit sites vs C# event map vs `TauriEventMap` |
@@ -606,7 +606,7 @@ Check in JSON samples produced by Rust serde for: `FileEntry` (without `itemCoun
 
 ### Protocol versioning
 
-`ipc.handshake.protocolVersion = 1`. Additive optional fields are allowed. Renames or meaning changes require a version bump and a dual-stack compatibility decision. The 78 domain method names are frozen for v1.
+`ipc.handshake.protocolVersion = 1`. Additive optional fields are allowed. Renames or meaning changes require a version bump and a dual-stack compatibility decision. The 79 domain method names are frozen for v1.
 
 ---
 
@@ -1014,7 +1014,7 @@ Retired with Svelte/Tauri: `check:frontend`, `check:js`, `check:invokes`, `check
 
 Current WinUI-era checks:
 
-- `check:ipc-parity` — 78 domain commands + DTO fields + events.
+- `check:ipc-parity` - 79 domain commands + DTO fields + events.
 - `check:winui` — `dotnet test` + UI-layer boundary.
 - `check:rust` expands to the workspace (`simplefile-core`, `simplefile-ipc`, `simplefile-service`) with the same `fmt` / `test` / `clippy -D warnings`.
 
@@ -1030,7 +1030,7 @@ Gates are explicit. No gate implies code deletion.
 | --- | --- | --- | --- |
 | 1 | Inventory | Tauri | [`inventory.md`](inventory.md) exists and lists 74 commands, events, workflows, paths, checks. **Done.** |
 | 2 | Architecture | Tauri | This document reviewed; Key Decisions accepted. **This step.** |
-| 3 | IPC service + contract tests | Tauri | PRs 1–10: core extract finished (no Tauri types in domain modules), `simplefile-service` implements 78 methods + 5 events + `list_directory.chunk`. Updater commands return the unconfigured stub string. Golden JSON + parity script green. `src-tauri` still ships. Svelte still the UI. |
+| 3 | IPC service + contract tests | Tauri | PRs 1-10: core extract finished (no Tauri types in domain modules), `simplefile-service` implements 79 methods + 5 events + `list_directory.chunk`. Updater commands return the unconfigured stub string. Golden JSON + parity script green. `src-tauri` still ships. Svelte still the UI. |
 | 4 | WinUI shell lists/navigates | Tauri | `SimpleFile.App` starts the service, handshakes, `list_directory` + chunks, tree, drives, breadcrumbs. Svelte remains default. |
 | 5 | Feature parity | Tauri | Rewrite of frontend stage checks against WinUI/Core: dual-pane + tabs + watcher (`stage11`), transfer safety (`stage10`), search + smart folders (`stage7`), inspection (`stage8`), organization/cleanup (`stage9`), overlays/menus (`stage5`), settings/tools (`stage4`, About shows updater stub), huge-folder + marquee + fast listing, markdown/HTML sanitizer replacements. Manual pass of keyboard map and Escape order. Real `latest-winui.json` client is **not** required to exit Gate 5. |
 | 6 | WinUI default package | **WinUI** | NSIS/MSI/portable produce WinUI as the installed UI. `latest.json` points at the Tauri-compatible stub artifact (launches WinUI NSIS, removes Tauri exe). `latest-winui.json` serves already-on-WinUI clients. Tauri still `cargo tauri build`able. C# version matches Cargo. |
@@ -1243,7 +1243,7 @@ Ordered. Each PR is independently reviewable. None of these is this design-only 
 | 7 | `refactor: move preview + opener-free shell open into core` | `simplefile-core`, `ShellExecuteW` | PR 6 | No `tauri-plugin-opener` in core. |
 | 8 | `refactor: move db/tags/smart_folders into core` | `simplefile-core`, `Host::app_data_dir()` | PR 4 | Same `%APPDATA%\com.simplefile.desktop` paths. |
 | 9 | `refactor: move remaining domain modules into core` | `drives`, `git`, `terminal`, `checksum`, `compare`, `metadata`, `open_with` | PRs 6–8 | Updater **logic** not extracted yet. Domain modules have no Tauri types after this PR. |
-| 10 | `feat: simplefile-service named-pipe JSON-RPC` | `crates/simplefile-service/**`, panic logger, `init_db`, PID check | PRs 2, 5-9 | Implements 78 methods + notifications. `select_directory` -> `-32001` `HOST_OWNED: select_directory`. `show_main_window` no-op. `check_for_update` / `install_update` -> `Err("App updates are not configured for this build.")`. Parent-pid watcher + client-PID check. Contract tests vs goldens. Tauri still ships. **Gate 3 exit.** |
+| 10 | `feat: simplefile-service named-pipe JSON-RPC` | `crates/simplefile-service/**`, panic logger, `init_db`, PID check | PRs 2, 5-9 | Implements 79 methods + notifications. `select_directory` -> `-32001` `HOST_OWNED: select_directory`. `show_main_window` no-op. `check_for_update` / `install_update` -> `Err("App updates are not configured for this build.")`. Parent-pid watcher + client-PID check. Contract tests vs goldens. Tauri still ships. **Gate 3 exit.** |
 | 11 | `feat: src-winui SimpleFile.Ipc + Tests` | `src-winui/SimpleFile.Ipc/**`, `SimpleFile.Tests/**` | PR 10 | Required test project. C# client, mixed-case DTOs, framing, error mapping, `ListDirectoryAsync`. `dotnet test` in CI. |
 | 12 | `feat: WinUI shell can list and navigate` | `src-winui/SimpleFile.App/**`, `SimpleFile.Core` (nav subset) | PR 11 | Window chrome, job object spawn, inherited-pipe token, handshake, drives, `list_directory` chunks, breadcrumbs, tree. Svelte remains default. **Gate 4 exit.** |
 | 13 | `feat: persist UI settings + ui-export.json + LevelDB importer` | `SimpleFile.Core` persistence, Tauri dump helper, LevelDB fixture | PR 12 | Inventory localStorage keys. Do not move `metadata.db`. Dual-stack dump for testers; Gate 6 installer will reuse the helper. |
@@ -1268,7 +1268,7 @@ PRs 14–18 may be split further to match review bandwidth, but they cannot skip
 3. **UI is the parent.** Job object `KILL_ON_JOB_CLOSE` plus parent-pid poll. Service `main` runs panic hook, `AppState`, and `init_db` before accept. A respawn is a new process (empty cancels/watchers/RAR tokens).
 4. **`src-tauri` and `frontend/` are retired.** Dual-host migration kept `simplefile-core` as the reusable Rust domain crate, then removed the old host and renderer after parity gates passed.
 5. **C# split:** `SimpleFile.App` (WinUI), `SimpleFile.Ipc` (client), `SimpleFile.Core` (workflows), **required** `SimpleFile.Tests`. Unpackaged WinUI 3, WASDK self-contained, TFM **`net10.0-windows10.0.19041.0`**, min OS Windows 10 2004. Keep multi-instance (no mutex). Hand-sync DTOs + parity script (no typeshare). Cargo package version is canonical; MSBuild reads it.
-6. **Methods are the 78 existing command names.** Top-level params stay camelCase (`TauriCommandMap`); nested structs and results stay snake_case (`models.rs` / `types.ts`). `FileEntry.itemCount` is not on the wire.
+6. **Methods are the 79 existing command names.** Top-level params stay camelCase (`TauriCommandMap`); nested structs and results stay snake_case (`models.rs` / `types.ts`). `FileEntry.itemCount` is not on the wire.
 7. **`list_directory` Channel becomes notification `list_directory.chunk`** with `requestId`, same 96/256 sizes, `done: true` on the last (possibly non-empty) chunk, plus the existing full `DirectoryListing` result when it fits. If that result would exceed 80 MiB, return `RESULT_TOO_LARGE` and let Core concat+sort chunks; do not disconnect.
 8. **Cancellation stays named commands** (`cancel_operation`, `cancel_search`, folder-size/count/cleanup/duplicate cancels). No generic JSON-RPC cancel. `CancellationToken` only abandons the client await; no per-RPC idle timeout.
 9. **`Err(String)` maps to JSON-RPC `-32000` with the identical message**, including `CONFLICT:` and `TRASH_UNAVAILABLE:`. Live transfers probe + `conflictAction`; `CONFLICT:` is the residual backend error.

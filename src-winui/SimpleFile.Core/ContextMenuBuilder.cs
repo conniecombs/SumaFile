@@ -374,11 +374,9 @@ public static class ContextMenuBuilder
             [
                 Item("new:folder", "Folder", shortcut: "Ctrl+Shift+N", showIcon: false),
                 Divider(),
-                Item("new:text", "Text file", shortcut: "Ctrl+N", showIcon: false),
-                Item("new:markdown", "Markdown file", showIcon: false),
-                Item("new:json", "JSON file", showIcon: false),
-                Divider(),
-                Item("new:empty", "Empty file...", showIcon: false),
+                Item("new:text", "Text document", shortcut: "Ctrl+N", showIcon: false),
+                Item("new:empty", "Blank file...", showIcon: false),
+                Item("new:shortcut", "Shortcut...", showIcon: false),
             ],
         };
     }

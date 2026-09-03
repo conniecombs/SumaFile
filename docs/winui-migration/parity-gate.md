@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
-**Contract:** [`inventory.md`](inventory.md) (78 commands / emitted events / Svelte workflows)
+**Contract:** [`inventory.md`](inventory.md) (79 commands / emitted events / Svelte workflows)
 **Hosts:** WinUI 3 + `simplefile-service` is the shipping app. Svelte/Tauri UI and packaging glue have been retired.
 
 This is the **retirement lock**. Required `OPEN` rows are none. `MANUAL` rows stay as human smoke coverage. Retired `src-tauri/` domain now lives solely in `crates/simplefile-core`.
@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 78-command schema vs Rust/C#
+npm run check:ipc-schema      # 79-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (78)
+## 2. IPC commands (79)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -75,7 +75,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `list_directory` | Listing + chunks | `list_directory.chunk` then result | `ExplorerWorkspaceTests` huge-folder / `RESULT_TOO_LARGE` | First paint on large folder | `PASS` |
 | `list_subdirectories` | Sidebar tree children | `LoadTreeChildrenAsync` + Folders list | `ParityFeaturesTests` tree flatten | Expand a tree node | `PASS` |
 | `create_directory` | New folder | New menu template + rename + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+Shift+N | `PASS` |
-| `create_file` | New text/Markdown/JSON/empty file | New menu template + selection + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+N | `PASS` |
+| `create_file` | New text/blank file | New menu template + selection + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+N | `PASS` |
+| `create_shortcut` | New shortcut | New menu shortcut dialog + ShellLink IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` / core shortcut tests | New > Shortcut | `PASS` |
 | `delete_entry` | Permanent delete | Shift+Delete confirm | `FileOperationServiceTests` | Shift+Delete | `PASS` |
 | `move_to_trash` | Recycle Bin | Delete / setting | `FileOperationServiceTests` trash prefix | Delete; network `TRASH_UNAVAILABLE:` | `PASS` |
 | `restore_recycle_bin` | Restore Recycle Bin items | Context Restore | Core recycle_bin tests | Restore a deleted file | `PASS` |
@@ -251,7 +252,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
 | `ops.new-folder` | Template name + rename | New menu | NewItemTemplate / workspace tests | Ctrl+Shift+N | `PASS` |
-| `ops.new-file` | Text/Markdown/JSON/empty templates | New menu + optional empty-file prompt | NewItemTemplate / workspace tests | Ctrl+N | `PASS` |
+| `ops.new-file` | Text document / blank file | New menu + blank-file prompt | NewItemTemplate / workspace tests | Ctrl+N | `PASS` |
+| `ops.new-shortcut` | Windows shortcut | New menu shortcut dialog | Workspace + IPC + core shortcut tests | New > Shortcut | `PASS` |
 | `ops.rename` | F2 | Dialog | FileOps tests | F2 | `PASS` |
 | `ops.advanced-rename` | Full templates/filters/numbering | `AdvancedRename` find/replace/number | `ParityFeaturesTests` | Advanced rename | `PASS` |
 | `ops.delete-confirm` | Confirm setting | Settings + dialog | — | Toggle confirm | `MANUAL` |
@@ -291,7 +293,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `operation-history` | Palette | `OperationLog` retry | Catalog + workspace | — | `PASS` |
 | `clear-recent-history` | Palette clears recents | `ClearRecentHistoryAsync` | Catalog test | — | `PASS` |
 | `undo` `redo` | Palette | Undo stack | Tests | — | `PASS` |
-| `delete` `delete-permanent` `rename` `new-folder` `new-file` | Palette | Dialogs | Catalog | — | `PASS` |
+| `delete` `delete-permanent` `rename` `new-folder` `new-file` `new-shortcut` | Palette | Dialogs | Catalog | — | `PASS` |
 | `advanced-rename` | Palette | Find/replace/number | Catalog + rename tests | — | `PASS` |
 | `create-archive` | Palette | Dialog | Catalog | — | `MANUAL` |
 | `terminal` | Palette / F4 | IPC | Catalog | F4 | `MANUAL` |
@@ -395,7 +397,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 78 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 79 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |

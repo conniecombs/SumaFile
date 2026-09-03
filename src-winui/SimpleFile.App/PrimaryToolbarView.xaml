@@ -154,7 +154,7 @@
                                             </MenuFlyoutItem>
                                             <MenuFlyoutSeparator />
                                             <MenuFlyoutItem
-                                                Text="Text file"
+                                                Text="Text document"
                                                 Tag="new:text"
                                                 Click="OnNewMenuItemClick"
                                                 KeyboardAcceleratorTextOverride="Ctrl+N">
@@ -162,18 +162,12 @@
                                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
                                                 </MenuFlyoutItem.Icon>
                                             </MenuFlyoutItem>
-                                            <MenuFlyoutItem Text="Markdown file" Tag="new:markdown" Click="OnNewMenuItemClick">
+                                            <MenuFlyoutItem Text="Blank file..." Tag="new:empty" Click="OnNewMenuItemClick">
                                                 <MenuFlyoutItem.Icon>
                                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
                                                 </MenuFlyoutItem.Icon>
                                             </MenuFlyoutItem>
-                                            <MenuFlyoutItem Text="JSON file" Tag="new:json" Click="OnNewMenuItemClick">
-                                                <MenuFlyoutItem.Icon>
-                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
-                                                </MenuFlyoutItem.Icon>
-                                            </MenuFlyoutItem>
-                                            <MenuFlyoutSeparator />
-                                            <MenuFlyoutItem Text="Empty file..." Tag="new:empty" Click="OnNewMenuItemClick">
+                                            <MenuFlyoutItem Text="Shortcut..." Tag="new:shortcut" Click="OnNewMenuItemClick">
                                                 <MenuFlyoutItem.Icon>
                                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
                                                 </MenuFlyoutItem.Icon>

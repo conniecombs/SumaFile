@@ -46,6 +46,9 @@ public sealed partial class NamedPipeJsonClient
     public Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default)
         => InvokeAsync<string>(Protocol.CreateFileMethod, new { path, name }, ct);
 
+    public Task<string> CreateShortcutAsync(string path, string name, string targetPath, string? arguments = null, string? workingDirectory = null, string? iconPath = null, CancellationToken ct = default)
+        => InvokeAsync<string>(Protocol.CreateShortcutMethod, new { path, name, targetPath, arguments, workingDirectory, iconPath }, ct);
+
     public Task DeleteEntryAsync(string path, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.DeleteEntryMethod, new { path }, ct);
 

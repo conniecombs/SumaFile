@@ -123,6 +123,7 @@ public sealed partial class MainWindow : Window
             BeginArchiveOperation,
             FinishArchiveOperation,
             PickFolderAsync,
+            PickFileAsync,
             RunUiActionAsync,
             ShowMessage,
             QueuePreview,
@@ -2936,6 +2937,11 @@ public sealed partial class MainWindow : Window
         await _fileOperationDialogs.PromptAndCreateFileAsync(pane);
     }
 
+    private async Task PromptAndCreateShortcut(PaneId pane)
+    {
+        await _fileOperationDialogs.PromptAndCreateShortcutAsync(pane);
+    }
+
     private async Task CreateNewItem(PaneId pane, NewItemTemplate template)
     {
         await _fileOperationDialogs.CreateNewItemFromTemplateAsync(pane, template);
@@ -2951,6 +2957,12 @@ public sealed partial class MainWindow : Window
         if (ReferenceEquals(template, NewItemTemplate.EmptyFile))
         {
             await PromptAndCreateFile(pane);
+            return;
+        }
+
+        if (template.IsShortcut)
+        {
+            await PromptAndCreateShortcut(pane);
             return;
         }
 
@@ -3143,7 +3155,7 @@ public sealed partial class MainWindow : Window
         await RunUiActionAsync("New Folder", () => CreateNewItem(PaneId.Secondary, NewItemTemplate.Folder));
 
     private async void OnSecondaryNewFile(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("New Text File", () => CreateNewItem(PaneId.Secondary, NewItemTemplate.TextFile));
+        await RunUiActionAsync("New Text Document", () => CreateNewItem(PaneId.Secondary, NewItemTemplate.TextFile));
 
     private async void OnSecondaryRename(object sender, RoutedEventArgs e)
     {

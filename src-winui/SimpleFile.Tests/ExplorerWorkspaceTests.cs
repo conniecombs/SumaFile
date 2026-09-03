@@ -349,6 +349,54 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task CreateShortcut_SelectsCreatedEntryAndPushesShortcutUndo()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var targetPath = @"C:\Users\test\notes.txt";
+        string? receivedArguments = null;
+        string? receivedWorkingDirectory = null;
+        string? receivedIconPath = null;
+        var settingsIpc = new ConfigurableIpc
+        {
+            CreateShortcutHandler = (path, name, target, arguments, workingDirectory, iconPath, ct) =>
+            {
+                Assert.Equal(@"C:\Users\test", path);
+                Assert.Equal("Notes", name);
+                Assert.Equal(targetPath, target);
+                receivedArguments = arguments;
+                receivedWorkingDirectory = workingDirectory;
+                receivedIconPath = iconPath;
+                var created = $@"{path}\{name}.lnk";
+                backend.Listings[path].Entries.Add(new FileEntry
+                {
+                    Name = $"{name}.lnk",
+                    Path = created,
+                    Extension = "lnk",
+                });
+                return Task.FromResult(created);
+            },
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        var result = await workspace.CreateShortcutInCurrentPaneAsync(
+            "Notes",
+            targetPath,
+            "--safe",
+            @"C:\Users\test",
+            @"C:\Users\test\notes.ico");
+
+        Assert.Equal(@"C:\Users\test\Notes.lnk", result);
+        Assert.Equal(result, workspace.SelectedPath);
+        Assert.Equal("Created Notes.lnk", workspace.StatusMessage);
+        Assert.True(workspace.Undo.CanUndo);
+        Assert.Equal("Create shortcut", workspace.Undo.NextUndoDescription);
+        Assert.Equal("--safe", receivedArguments);
+        Assert.Equal(@"C:\Users\test", receivedWorkingDirectory);
+        Assert.Equal(@"C:\Users\test\notes.ico", receivedIconPath);
+    }
+
+    [Fact]
     public async Task RenameSelected_PushesUndoEntryAfterSuccess()
     {
         var backend = FakeExplorerBackend.Typical();

@@ -156,7 +156,7 @@ public static class KeyboardShortcutMap
         new("file.properties", ["Alt+Enter"], "Properties", "Inspection"),
         new("file.openTab", ["Ctrl+Enter"], "Open folder in new tab", "Tabs"),
         new("selection.all", ["Ctrl+A"], "Select all", "Selection"),
-        new("file.newFile", ["Ctrl+N"], "New text file", "File"),
+        new("file.newFile", ["Ctrl+N"], "New text document", "File"),
         new("file.newFolder", ["Ctrl+Shift+N"], "New folder", "File"),
         new("tabs.new", ["Ctrl+T"], "New tab", "Tabs"),
         new("tabs.close", ["Ctrl+W"], "Close tab", "Tabs"),

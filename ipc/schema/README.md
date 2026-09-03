@@ -6,7 +6,7 @@ Versioned request, response, and event schemas for the WinUI 3 ↔ Rust named-pi
 | --- | --- |
 | `v1/protocol.json` | Framing, versioning, error codes, handshake, cancellation, operation IDs |
 | `v1/types.json` | Shared DTO field maps (wire names) |
-| `v1/commands.json` | `ipc.handshake` plus the 78 domain command names |
+| `v1/commands.json` | `ipc.handshake` plus the 79 domain command names |
 | `v1/events.json` | Emitted events, typed-but-not-emitted names, host-only drag events |
 | `v1/goldens/` | Checked-in request/response/event samples |
 

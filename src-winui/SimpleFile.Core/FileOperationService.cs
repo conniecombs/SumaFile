@@ -33,6 +33,27 @@ public sealed class FileOperationService : ISettingsBackend
         return await _ipc.CreateFileAsync(parentPath, name, ct).ConfigureAwait(false);
     }
 
+    // Create a Windows shortcut in the given parent directory.
+    // Returns the full path of the created .lnk file.
+    public async Task<string> CreateShortcutAsync(
+        string parentPath,
+        string name,
+        string targetPath,
+        string? arguments = null,
+        string? workingDirectory = null,
+        string? iconPath = null,
+        CancellationToken ct = default)
+    {
+        return await _ipc.CreateShortcutAsync(
+            parentPath,
+            name,
+            targetPath,
+            arguments,
+            workingDirectory,
+            iconPath,
+            ct).ConfigureAwait(false);
+    }
+
     // Permanently delete a file or directory.
     public async Task DeleteAsync(string path, CancellationToken ct = default)
     {
