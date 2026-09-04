@@ -204,15 +204,12 @@ public sealed partial class MainWindow
             return TransferRunStatus.NoOp;
         }
 
-        // One transfer at a time: cancel any in-flight operation, then start fresh.
+        // One transfer at a time: await backend cancel completion (or timeout), then start fresh.
         // BeginTransfer clears CurrentOperationId so stale terminal progress cannot
         // CompleteTransfer the new transfer during prepare.
-        if (_transfer?.HasActiveTransfer == true)
-        {
-            await _transfer.CancelAsync();
-        }
-
-        var transferCts = _transfer?.BeginTransfer() ?? new CancellationTokenSource();
+        var transferCts = _transfer is not null
+            ? await _transfer.BeginTransferAsync()
+            : new CancellationTokenSource();
         StartPreparingTransfer(move, sources, destination);
         var conflictSession = new TransferConflictSession();
         var finalStatus = TransferRunStatus.NoOp;

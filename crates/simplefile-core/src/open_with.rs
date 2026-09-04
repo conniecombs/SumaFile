@@ -1,7 +1,9 @@
 use crate::open_with_policy_generated::{DENIED_EXECUTABLE_NAMES, DENIED_TARGET_EXTENSIONS};
 use crate::utils::resolve_readable_path;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
+use std::time::{Duration, SystemTime};
 
 fn executable_stem(path: &Path) -> String {
     path.file_stem()
@@ -164,22 +166,117 @@ pub fn open_file_with(path: String, application: String) -> Result<(), String> {
     }
 
     let application_path = resolve_allowed_application(&application)?;
-    // Keep materialized archive temps so the launched process can open them.
-    let launch_path = target_path.into_path();
-    Command::new(&application_path)
+    // Archive materializations need the temp work root kept until the launched app exits.
+    let (launch_path, cleanup_root) = target_path.into_open_with_handoff();
+    let child = Command::new(&application_path)
         .arg(&launch_path)
         .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("failed to launch {}: {}", application_path.display(), e))
+        .map_err(|e| format!("failed to launch {}: {}", application_path.display(), e))?;
+
+    if let Some(root) = cleanup_root {
+        // Best-effort orphan sweep for prior Open With temps left behind when the
+        // service exited before a wait thread finished (or delete was locked).
+        sweep_expired_archive_open_temps(ARCHIVE_OPEN_TEMP_MAX_AGE);
+        schedule_materialized_temp_cleanup(child, root);
+    }
+
+    Ok(())
+}
+
+/// Age after which leftover `%TEMP%\SimpleFile\archive-open-*` dirs may be swept.
+const ARCHIVE_OPEN_TEMP_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+const REMOVE_RETRY_ATTEMPTS: u32 = 8;
+const REMOVE_RETRY_BASE_DELAY_MS: u64 = 250;
+
+/// Wait for `child` to exit, then best-effort delete the archive materialization work root.
+fn schedule_materialized_temp_cleanup(mut child: Child, cleanup_root: PathBuf) {
+    let _ = std::thread::Builder::new()
+        .name("sf-archive-open-cleanup".into())
+        .spawn(move || {
+            let _ = child.wait();
+            remove_path_with_retry(&cleanup_root);
+        });
+}
+
+/// Best-effort recursive delete with short retries for sharing/lock races.
+fn remove_path_with_retry(path: &Path) {
+    for attempt in 1..=REMOVE_RETRY_ATTEMPTS {
+        if !path.exists() {
+            return;
+        }
+        match fs::remove_dir_all(path) {
+            Ok(()) => return,
+            Err(_) if attempt < REMOVE_RETRY_ATTEMPTS => {
+                let delay_ms = REMOVE_RETRY_BASE_DELAY_MS.saturating_mul(u64::from(attempt));
+                std::thread::sleep(Duration::from_millis(delay_ms));
+            }
+            Err(_) => return,
+        }
+    }
+}
+
+fn archive_open_temp_base() -> PathBuf {
+    std::env::temp_dir().join("SimpleFile")
+}
+
+fn is_archive_open_work_dir(name: &str) -> bool {
+    name.starts_with("archive-open-")
+}
+
+/// Delete aged `archive-open-*` work roots under `%TEMP%\SimpleFile` (best-effort).
+///
+/// Only removes directories older than `max_age` so concurrent Open With launches
+/// are not raced. Locked temps are left alone (`remove_dir_all` fails).
+pub(crate) fn sweep_expired_archive_open_temps(max_age: Duration) {
+    let base = archive_open_temp_base();
+    let entries = match fs::read_dir(&base) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !is_archive_open_work_dir(name) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(modified) = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .or_else(|_| fs::metadata(&path).and_then(|meta| meta.modified()))
+        else {
+            continue;
+        };
+        let Ok(age) = now.duration_since(modified) else {
+            continue;
+        };
+        if age >= max_age {
+            remove_path_with_retry(&path);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        contains_path_separator, executable_name_is_denied, path_is_under_root,
-        target_extension_is_denied,
+        contains_path_separator, executable_name_is_denied, is_archive_open_work_dir,
+        path_is_under_root, remove_path_with_retry, schedule_materialized_temp_cleanup,
+        sweep_expired_archive_open_temps, target_extension_is_denied,
     };
-    use std::path::Path;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn denied_executable_names_include_shells_and_interpreters() {
@@ -242,5 +339,104 @@ mod tests {
             Path::new(r"C:\Program Files Evil\app.exe"),
             Path::new(r"C:\Program Files"),
         ));
+    }
+
+    fn unique_test_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "simplefile-open-with-test-{label}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn archive_open_work_dir_prefix_matches_unique_work_dir_naming() {
+        assert!(is_archive_open_work_dir("archive-open-123-0"));
+        assert!(!is_archive_open_work_dir("archive-source-123-0"));
+        assert!(!is_archive_open_work_dir("other"));
+    }
+
+    #[test]
+    fn remove_path_with_retry_deletes_work_root() {
+        let root = unique_test_dir("remove-retry");
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("file.txt"), b"data").unwrap();
+        assert!(root.exists());
+        remove_path_with_retry(&root);
+        assert!(!root.exists(), "work root should be removed");
+    }
+
+    #[test]
+    fn schedule_cleanup_deletes_temp_after_child_exits() {
+        let root = unique_test_dir("cleanup-on-exit");
+        fs::write(root.join("payload.txt"), b"open-with").unwrap();
+
+        // Short-lived process we can wait on (not routed through Open With policy).
+        let child = if cfg!(windows) {
+            Command::new("cmd.exe")
+                .args(["/C", "exit", "0"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn cmd")
+        } else {
+            Command::new("true")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn true")
+        };
+
+        schedule_materialized_temp_cleanup(child, root.clone());
+
+        let deadline = SystemTime::now() + Duration::from_secs(5);
+        while root.exists() && SystemTime::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            !root.exists(),
+            "archive-open work root must be removed after child exit"
+        );
+    }
+
+    #[test]
+    fn sweep_expired_archive_open_temps_only_removes_aged_open_dirs() {
+        let base = std::env::temp_dir().join("SimpleFile");
+        fs::create_dir_all(&base).unwrap();
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let stale = base.join(format!("archive-open-stale-{unique}-0"));
+        let fresh = base.join(format!("archive-open-fresh-{unique}-0"));
+        let other = base.join(format!("archive-source-{unique}-0"));
+        fs::create_dir_all(&stale).unwrap();
+        fs::create_dir_all(&fresh).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        fs::write(stale.join("a.txt"), b"stale").unwrap();
+        fs::write(fresh.join("b.txt"), b"fresh").unwrap();
+        fs::write(other.join("c.txt"), b"other").unwrap();
+
+        // Force stale mtime into the past.
+        let old = filetime::FileTime::from_unix_time(1_600_000_000, 0);
+        filetime::set_file_mtime(&stale, old).expect("set stale mtime");
+
+        sweep_expired_archive_open_temps(Duration::from_secs(60));
+
+        assert!(!stale.exists(), "aged archive-open dir should be swept");
+        assert!(fresh.exists(), "recent archive-open dir must be kept");
+        assert!(other.exists(), "non-open work dirs must be untouched");
+
+        let _ = fs::remove_dir_all(&fresh);
+        let _ = fs::remove_dir_all(&other);
     }
 }

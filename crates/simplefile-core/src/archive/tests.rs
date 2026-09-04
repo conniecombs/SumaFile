@@ -2,11 +2,13 @@ use super::extract::{
     extract_archive_entry_to_directory, extract_archive_to_directory, extract_tar, extract_zip,
     ExtractLimits,
 };
-use super::mutate::materialize_archive_entry_to_temp_with_limits;
+use super::mutate::{
+    copy_archive_entry_to_local_with_limits, materialize_archive_entry_to_temp_with_limits,
+};
 use super::path::{
     archive_entry_relative_path, archive_format_for_path, build_virtual_archive_path,
-    ensure_extract_path_within_destination, path_is_within_prefix, zip_entry_relative_path,
-    ArchiveFormat,
+    ensure_extract_path_within_destination, path_is_within_prefix, split_archive_path,
+    zip_entry_relative_path, ArchiveFormat,
 };
 use super::seven_zip::{parse_seven_zip_list_output, resolve_seven_zip_binary};
 use super::*;
@@ -487,6 +489,23 @@ fn materialize_archive_entry_cleans_temp_on_drop() {
 }
 
 #[test]
+fn materialize_handoff_keeps_temp_until_caller_cleans() {
+    let root = unique_temp_dir("materialize-handoff");
+    let zip_path = root.join("sample.zip");
+    write_test_zip(&zip_path, &[("keep.txt", b"keep")]);
+    let virtual_path = build_virtual_archive_path(&zip_path, Path::new("keep.txt"));
+    let materialized = materialize_archive_entry_to_temp(&virtual_path).expect("materialize");
+    let (launch_path, cleanup_root) = materialized.into_open_with_handoff();
+    let cleanup_root = cleanup_root.expect("handoff should return work root");
+    assert!(launch_path.exists(), "launch path must remain after handoff");
+    assert!(cleanup_root.exists(), "work root must remain after handoff");
+    assert_eq!(fs::read(&launch_path).expect("read"), b"keep");
+    let _ = fs::remove_dir_all(&cleanup_root);
+    assert!(!cleanup_root.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn materialize_archive_entry_rejects_oversized_extract() {
     let root = unique_temp_dir("materialize-oversize");
     let zip_path = root.join("sample.zip");
@@ -542,3 +561,114 @@ fn extract_archive_entry_rejects_too_many_entries() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn copy_archive_entry_to_local_selective_extract_and_cleanup() {
+    let root = unique_temp_dir("copy-out-selective");
+    let zip_path = root.join("sample.zip");
+    // Sibling is larger than the limit; selective extract of keep.txt must still succeed.
+    write_test_zip(
+        &zip_path,
+        &[
+            ("keep.txt", b"keep"),
+            ("folder/other.txt", b"0123456789abcdef"),
+        ],
+    );
+    let out = root.join("out");
+    fs::create_dir_all(&out).expect("create out dir");
+
+    let parsed = split_archive_path(&build_virtual_archive_path(
+        &zip_path,
+        Path::new("keep.txt"),
+    ))
+    .expect("split")
+    .expect("archive path");
+
+    let result = copy_archive_entry_to_local_with_limits(
+        &parsed,
+        &out.to_string_lossy(),
+        "error",
+        ExtractLimits {
+            max_uncompressed_bytes: 8,
+            max_entries: 4_096,
+        },
+    )
+    .expect("selective transfer extract should only budget the selected entry");
+
+    assert_eq!(PathBuf::from(&result), out.join("keep.txt"));
+    assert_eq!(fs::read(out.join("keep.txt")).expect("read"), b"keep");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn copy_archive_entry_to_local_rejects_oversized_and_cleans_temp() {
+    let root = unique_temp_dir("copy-out-oversize");
+    let zip_path = root.join("sample.zip");
+    write_test_zip(&zip_path, &[("big.txt", b"0123456789abcdef")]);
+    let out = root.join("out");
+    fs::create_dir_all(&out).expect("create out dir");
+
+    let parsed = split_archive_path(&build_virtual_archive_path(
+        &zip_path,
+        Path::new("big.txt"),
+    ))
+    .expect("split")
+    .expect("archive path");
+
+    let err = copy_archive_entry_to_local_with_limits(
+        &parsed,
+        &out.to_string_lossy(),
+        "error",
+        ExtractLimits {
+            max_uncompressed_bytes: 8,
+            max_entries: 4_096,
+        },
+    )
+    .expect_err("oversized transfer extract should fail");
+    assert!(err.contains("size limit"), "unexpected error: {err}");
+    assert!(!out.join("big.txt").exists(), "oversize reject must not write dest");
+
+    // WorkRootGuard drops on Err (same RAII as open/preview MaterializedSource).
+
+    let _ = fs::remove_dir_all(root);
+}
+#[test]
+fn copy_archive_entry_into_archive_uses_selective_materialize() {
+    let root = unique_temp_dir("copy-into-selective");
+    let src_zip = root.join("src.zip");
+    let dst_zip = root.join("dst.zip");
+    write_test_zip(
+        &src_zip,
+        &[
+            ("keep.txt", b"keep"),
+            ("folder/other.txt", b"other"),
+        ],
+    );
+    write_test_zip(&dst_zip, &[("existing.txt", b"existing")]);
+
+    let source = build_virtual_archive_path(&src_zip, Path::new("keep.txt"));
+    let result = copy_entry_resolved(
+        source,
+        dst_zip.to_string_lossy().to_string(),
+        "error".to_string(),
+    )
+    .expect("copy archive entry into archive");
+
+    assert_eq!(
+        result,
+        build_virtual_archive_path(&dst_zip, Path::new("keep.txt"))
+    );
+
+    let out = root.join("out");
+    fs::create_dir_all(&out).expect("out");
+    extract_archive_to_directory(&dst_zip, &out).expect("extract dst");
+    assert_eq!(fs::read(out.join("keep.txt")).expect("keep"), b"keep");
+    assert_eq!(
+        fs::read(out.join("existing.txt")).expect("existing"),
+        b"existing"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+

@@ -285,10 +285,12 @@ impl MaterializedSource {
         }
     }
 
-    /// Keep the materialized path on disk (e.g. Open With handed off to another process).
-    pub fn into_path(mut self) -> PathBuf {
-        self.cleanup_root = None;
-        std::mem::take(&mut self.path)
+    /// Hand off for Open With: keep the file on disk and return the optional work root
+    /// that the caller must delete after the launched process exits.
+    pub fn into_open_with_handoff(mut self) -> (PathBuf, Option<PathBuf>) {
+        let cleanup_root = self.cleanup_root.take();
+        let path = std::mem::take(&mut self.path);
+        (path, cleanup_root)
     }
 }
 
@@ -316,18 +318,9 @@ fn materialize_transfer_source(
     source: &str,
     parsed: Option<&ArchivePath>,
 ) -> Result<MaterializedSource, String> {
-    if let Some(parsed) = parsed {
-        let work_root = unique_work_dir("source")?;
-        extract_archive_to_directory(&parsed.archive_path, &work_root)?;
-        let path = work_root.join(&parsed.inner_path);
-        if !path.exists() {
-            let _ = fs::remove_dir_all(&work_root);
-            return Err(format!("Archive entry not found: {source}"));
-        }
-        Ok(MaterializedSource {
-            path,
-            cleanup_root: Some(work_root),
-        })
+    if parsed.is_some() {
+        // Same selective extract + size/entry caps + WorkRootGuard cleanup as open/preview.
+        materialize_archive_entry_to_temp(source)
     } else {
         Ok(MaterializedSource::local(crate::utils::validate_path_no_follow(
             source,
@@ -340,28 +333,43 @@ fn copy_archive_entry_to_local(
     destination: &str,
     conflict_action: &str,
 ) -> Result<String, String> {
+    copy_archive_entry_to_local_with_limits(
+        parsed,
+        destination,
+        conflict_action,
+        ExtractLimits::materialize_defaults(),
+    )
+}
+
+pub(super) fn copy_archive_entry_to_local_with_limits(
+    parsed: &ArchivePath,
+    destination: &str,
+    conflict_action: &str,
+    limits: ExtractLimits,
+) -> Result<String, String> {
     let dest_dir = crate::utils::validate_existing_path_no_resolve(destination)?;
     if !dest_dir.is_dir() {
         return Err(format!("Destination is not a directory: {destination}"));
     }
 
-    let work_root = unique_work_dir("extract-entry")?;
-    let result = (|| {
-        extract_archive_to_directory(&parsed.archive_path, &work_root)?;
-        let source_path = work_root.join(&parsed.inner_path);
-        if !source_path.exists() {
-            return Err(format!(
-                "Archive entry not found: {}",
-                build_virtual_archive_path(&parsed.archive_path, &parsed.inner_path)
-            ));
-        }
-        let final_dest = copy_with_conflict(&source_path, &dest_dir, conflict_action)?;
-        Ok(final_dest.map(|path| path.to_string_lossy().to_string()))
-    })();
-    let _ = fs::remove_dir_all(&work_root);
-
-    match result? {
-        Some(path) => Ok(path),
+    // Selective extract + caps; WorkRootGuard always deletes the temp root (success/fail).
+    let work_root = WorkRootGuard::create("extract-entry")?;
+    extract_archive_entry_to_directory(
+        &parsed.archive_path,
+        work_root.path(),
+        &parsed.inner_path,
+        limits,
+    )?;
+    let source_path = work_root.path().join(&parsed.inner_path);
+    if !source_path.exists() {
+        return Err(format!(
+            "Archive entry not found: {}",
+            build_virtual_archive_path(&parsed.archive_path, &parsed.inner_path)
+        ));
+    }
+    let final_dest = copy_with_conflict(&source_path, &dest_dir, conflict_action)?;
+    match final_dest {
+        Some(path) => Ok(path.to_string_lossy().to_string()),
         None => Ok(format!(
             "SKIPPED:{}",
             build_virtual_archive_path(&parsed.archive_path, &parsed.inner_path)

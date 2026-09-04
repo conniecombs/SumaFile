@@ -255,6 +255,83 @@ public class ViewModelCutoverTests
     }
 
     [Fact]
+    public async Task TransferViewModel_CancelThenStartWaitsForBackendCancel()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var ipc = new ConfigurableIpc();
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(ipc));
+        var viewModel = new TransferViewModel(workspace);
+
+        var cancelEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCancel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var order = new List<string>();
+
+        ipc.CancelOperationHandler = async (operationId, ct) =>
+        {
+            order.Add($"cancel:{operationId}");
+            cancelEntered.TrySetResult();
+            await releaseCancel.Task.WaitAsync(ct);
+            order.Add("cancel-done");
+        };
+
+        var firstCts = viewModel.BeginTransfer();
+        viewModel.SetOperationId("op-old");
+
+        var beginTask = viewModel.BeginTransferAsync();
+        await cancelEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(beginTask.IsCompleted);
+        Assert.Equal(["cancel:op-old"], order);
+
+        releaseCancel.TrySetResult();
+        var secondCts = await beginTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(["cancel:op-old", "cancel-done"], order);
+        Assert.Equal("op-old", ipc.LastCancelledOperationId);
+        Assert.True(firstCts.IsCancellationRequested);
+        Assert.Null(viewModel.CurrentOperationId);
+        Assert.True(viewModel.IsTransferring);
+
+        viewModel.SetOperationId("op-new");
+        viewModel.OnProgress(new ProgressUpdate { OperationId = "op-old", Current = 10, Total = 10, Status = "cancelled" });
+        Assert.Equal("op-new", viewModel.CurrentOperationId);
+
+        Assert.True(viewModel.FinishTransfer(secondCts));
+        firstCts.Dispose();
+    }
+
+    [Fact]
+    public async Task TransferViewModel_CancelAsyncAwaitsBackendCancelCompletion()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var ipc = new ConfigurableIpc();
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(ipc));
+        var viewModel = new TransferViewModel(workspace);
+
+        var cancelEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCancel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        ipc.CancelOperationHandler = async (_, ct) =>
+        {
+            cancelEntered.TrySetResult();
+            await releaseCancel.Task.WaitAsync(ct);
+        };
+
+        var cts = viewModel.BeginTransfer();
+        viewModel.SetOperationId("op-slow");
+
+        var cancelTask = viewModel.CancelAsync();
+        await cancelEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(cancelTask.IsCompleted);
+
+        releaseCancel.TrySetResult();
+        await cancelTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("op-slow", ipc.LastCancelledOperationId);
+        Assert.True(cts.IsCancellationRequested);
+        Assert.True(viewModel.IsCancelling);
+
+        Assert.True(viewModel.FinishTransfer(cts));
+    }
+
+    [Fact]
     public void TransferViewModel_CompleteCurrentOperationFinishesWhenTerminalProgressIsMissing()
     {
         var backend = FakeExplorerBackend.Typical();

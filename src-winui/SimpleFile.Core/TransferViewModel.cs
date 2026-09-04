@@ -31,6 +31,14 @@ public sealed partial class TransferViewModel : ObservableObject
     private string _progressDetail = "";
 
     private CancellationTokenSource? _transferCts;
+    private Task? _backendCancelTask;
+    private readonly object _cancelSync = new();
+
+    /// <summary>
+    /// Max time to wait for backend <c>cancel_operation</c> before allowing a new transfer to start.
+    /// On timeout we proceed; stale progress is still ignored via CurrentOperationId filtering.
+    /// </summary>
+    public static readonly TimeSpan BackendCancelTimeout = TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// Raised when a transfer operation completes, fails, or is cancelled.
@@ -51,8 +59,20 @@ public sealed partial class TransferViewModel : ObservableObject
     public bool HasActiveTransfer => CurrentOperationId is not null || _transferCts is not null;
 
     /// <summary>
+    /// Cancels any active transfer (awaiting backend cancel completion or
+    /// <see cref="BackendCancelTimeout"/>), then creates a fresh CTS for the next transfer.
+    /// </summary>
+    public async Task<CancellationTokenSource> BeginTransferAsync()
+    {
+        await CancelActiveTransferAsync().ConfigureAwait(false);
+        return BeginTransfer();
+    }
+
+    /// <summary>
     /// Creates a new CancellationTokenSource for the current transfer.
     /// Returns the token for the caller to use.
+    /// Prefer <see cref="BeginTransferAsync"/> when replacing an in-flight transfer so backend
+    /// cancel is awaited before the next start.
     /// </summary>
     public CancellationTokenSource BeginTransfer()
     {
@@ -126,7 +146,34 @@ public sealed partial class TransferViewModel : ObservableObject
     }
 
     /// <summary>
+    /// If a transfer is active (or a backend cancel is already in flight), cancel and
+    /// <b>await</b> backend cancel completion (or <see cref="BackendCancelTimeout"/>).
+    /// Call this before starting a new transfer.
+    /// </summary>
+    public async Task CancelActiveTransferAsync()
+    {
+        Task? pending;
+        lock (_cancelSync)
+        {
+            pending = _backendCancelTask;
+        }
+
+        if (pending is not null)
+        {
+            await AwaitCancelTaskAsync(pending, BackendCancelTimeout).ConfigureAwait(false);
+        }
+
+        if (!HasActiveTransfer)
+        {
+            return;
+        }
+
+        await CancelAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Cancels the active transfer via both the local CTS and backend cancel.
+    /// Awaits backend <c>cancel_operation</c> completion (or <see cref="BackendCancelTimeout"/>).
     /// </summary>
     public async Task CancelAsync()
     {
@@ -136,17 +183,72 @@ public sealed partial class TransferViewModel : ObservableObject
 
         if (string.IsNullOrEmpty(operationId) || _workspace.FileOps is null)
         {
+            Task? pendingOnly;
+            lock (_cancelSync)
+            {
+                pendingOnly = _backendCancelTask;
+            }
+
+            if (pendingOnly is not null)
+            {
+                await AwaitCancelTaskAsync(pendingOnly, BackendCancelTimeout).ConfigureAwait(false);
+            }
+
             return;
+        }
+
+        Task cancelTask;
+        lock (_cancelSync)
+        {
+            cancelTask = CancelBackendAsync(operationId);
+            _backendCancelTask = cancelTask;
         }
 
         try
         {
-            await _workspace.FileOps.CancelOperationAsync(operationId);
+            await AwaitCancelTaskAsync(cancelTask, BackendCancelTimeout).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_cancelSync)
+            {
+                if (ReferenceEquals(_backendCancelTask, cancelTask))
+                {
+                    _backendCancelTask = null;
+                }
+            }
+        }
+    }
+
+    private async Task CancelBackendAsync(string operationId)
+    {
+        try
+        {
+            await _workspace.FileOps!.CancelOperationAsync(operationId).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             // Expected during teardown.
         }
+    }
+
+    private static async Task AwaitCancelTaskAsync(Task cancelTask, TimeSpan timeout)
+    {
+        if (cancelTask.IsCompleted)
+        {
+            await cancelTask.ConfigureAwait(false);
+            return;
+        }
+
+        var completed = await Task.WhenAny(cancelTask, Task.Delay(timeout)).ConfigureAwait(false);
+        if (completed == cancelTask)
+        {
+            await cancelTask.ConfigureAwait(false);
+            return;
+        }
+
+        // Timed out waiting for backend cancel ack: allow the next transfer to proceed.
+        // Stale terminal/progress events for the old operation id remain ignored.
     }
 
     public bool FinishTransfer(CancellationTokenSource transferCts)
@@ -170,6 +272,10 @@ public sealed partial class TransferViewModel : ObservableObject
     {
         _transferCts?.Cancel();
         _transferCts = null;
+        lock (_cancelSync)
+        {
+            _backendCancelTask = null;
+        }
         CurrentOperationId = null;
         IsTransferring = false;
         IsCancelling = false;
