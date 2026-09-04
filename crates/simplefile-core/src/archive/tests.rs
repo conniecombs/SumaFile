@@ -429,7 +429,6 @@ fn copy_zip_archive_entry_out_to_local_folder() {
     let _ = fs::remove_dir_all(root);
 }
 
-
 #[test]
 fn path_is_within_prefix_matches_exact_and_nested() {
     let prefix = PathBuf::from("folder").join("item.txt");
@@ -442,7 +441,10 @@ fn path_is_within_prefix_matches_exact_and_nested() {
         Path::new("folder2").join("a.txt").as_path(),
         Path::new("folder")
     ));
-    assert!(!path_is_within_prefix(Path::new("fold"), Path::new("folder")));
+    assert!(!path_is_within_prefix(
+        Path::new("fold"),
+        Path::new("folder")
+    ));
 }
 
 #[test]
@@ -451,10 +453,7 @@ fn materialize_archive_entry_cleans_temp_on_drop() {
     let zip_path = root.join("sample.zip");
     write_test_zip(
         &zip_path,
-        &[
-            ("keep.txt", b"keep"),
-            ("folder/other.txt", b"other"),
-        ],
+        &[("keep.txt", b"keep"), ("folder/other.txt", b"other")],
     );
 
     let virtual_path = build_virtual_archive_path(&zip_path, Path::new("keep.txt"));
@@ -463,7 +462,10 @@ fn materialize_archive_entry_cleans_temp_on_drop() {
         .cleanup_root()
         .expect("archive materialize should own a work root")
         .to_path_buf();
-    assert!(cleanup_root.exists(), "work root should exist while guard is alive");
+    assert!(
+        cleanup_root.exists(),
+        "work root should exist while guard is alive"
+    );
     assert!(
         cleanup_root
             .file_name()
@@ -497,7 +499,10 @@ fn materialize_handoff_keeps_temp_until_caller_cleans() {
     let materialized = materialize_archive_entry_to_temp(&virtual_path).expect("materialize");
     let (launch_path, cleanup_root) = materialized.into_open_with_handoff();
     let cleanup_root = cleanup_root.expect("handoff should return work root");
-    assert!(launch_path.exists(), "launch path must remain after handoff");
+    assert!(
+        launch_path.exists(),
+        "launch path must remain after handoff"
+    );
     assert!(cleanup_root.exists(), "work root must remain after handoff");
     assert_eq!(fs::read(&launch_path).expect("read"), b"keep");
     let _ = fs::remove_dir_all(&cleanup_root);
@@ -520,10 +525,7 @@ fn materialize_archive_entry_rejects_oversized_extract() {
         },
     )
     .expect_err("oversized extract should fail");
-    assert!(
-        err.contains("size limit"),
-        "unexpected error: {err}"
-    );
+    assert!(err.contains("size limit"), "unexpected error: {err}");
 
     // Failure path deletes the work root before returning (see materialize match arm).
     // Full residue coverage for the success path is in
@@ -609,12 +611,9 @@ fn copy_archive_entry_to_local_rejects_oversized_and_cleans_temp() {
     let out = root.join("out");
     fs::create_dir_all(&out).expect("create out dir");
 
-    let parsed = split_archive_path(&build_virtual_archive_path(
-        &zip_path,
-        Path::new("big.txt"),
-    ))
-    .expect("split")
-    .expect("archive path");
+    let parsed = split_archive_path(&build_virtual_archive_path(&zip_path, Path::new("big.txt")))
+        .expect("split")
+        .expect("archive path");
 
     let err = copy_archive_entry_to_local_with_limits(
         &parsed,
@@ -627,7 +626,10 @@ fn copy_archive_entry_to_local_rejects_oversized_and_cleans_temp() {
     )
     .expect_err("oversized transfer extract should fail");
     assert!(err.contains("size limit"), "unexpected error: {err}");
-    assert!(!out.join("big.txt").exists(), "oversize reject must not write dest");
+    assert!(
+        !out.join("big.txt").exists(),
+        "oversize reject must not write dest"
+    );
 
     // WorkRootGuard drops on Err (same RAII as open/preview MaterializedSource).
 
@@ -640,10 +642,7 @@ fn copy_archive_entry_into_archive_uses_selective_materialize() {
     let dst_zip = root.join("dst.zip");
     write_test_zip(
         &src_zip,
-        &[
-            ("keep.txt", b"keep"),
-            ("folder/other.txt", b"other"),
-        ],
+        &[("keep.txt", b"keep"), ("folder/other.txt", b"other")],
     );
     write_test_zip(&dst_zip, &[("existing.txt", b"existing")]);
 
@@ -671,4 +670,3 @@ fn copy_archive_entry_into_archive_uses_selective_materialize() {
 
     let _ = fs::remove_dir_all(root);
 }
-

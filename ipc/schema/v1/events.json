@@ -9,7 +9,7 @@
     "operation-progress": {
       "params": "ProgressUpdate",
       "source": ["crates/simplefile-service/src/progress.rs", "crates/simplefile-service/src/session.rs"],
-      "statusValues": ["running", "completed", "error", "cancelled"],
+      "statusValues": ["running", "finalizing", "completed", "error", "cancelled"],
       "binaryFrameTag": 5
     },
     "search-results-batch": {

@@ -38,10 +38,11 @@ public static class TransferProgressFormatter
     {
         var current = Math.Min(update.Current, update.Total > 0 ? update.Total : update.Current);
         var progressPercent = Percent(current, update.Total);
-        var isIndeterminate = update.Total == 0 && update.Status == "running";
+        var isFinalizing = IsFinalizing(update);
+        var isIndeterminate = update.Total == 0 && update.Status is "running" or "finalizing";
         var currentFiles = Math.Min(update.CurrentFiles, update.TotalFiles > 0 ? update.TotalFiles : update.CurrentFiles);
         var fileProgressPercent = Percent(currentFiles, update.TotalFiles);
-        var fileProgressIsIndeterminate = update.TotalFiles == 0 && update.Status == "running";
+        var fileProgressIsIndeterminate = update.TotalFiles == 0 && update.Status is "running" or "finalizing";
         var currentItemName = CurrentItemName(update.CurrentItem, update.Status);
         var summary = Summary(update, current);
         var speed = Speed(update, bytesPerSecond);
@@ -50,7 +51,7 @@ public static class TransferProgressFormatter
         return new TransferProgressDisplay(
             Title(context, update),
             summary,
-            update.Total > 0 ? $"{progressPercent:0}%" : "",
+            isFinalizing ? "Finalizing" : update.Total > 0 ? $"{progressPercent:0}%" : "",
             progressPercent,
             isIndeterminate,
             FileSummary(update, currentFiles),
@@ -83,6 +84,7 @@ public static class TransferProgressFormatter
         var noun = context.ItemCount == 1 ? "item" : "items";
         return update.Status switch
         {
+            "finalizing" => context.Move ? "Finishing move" : "Finishing copy",
             "completed" => context.Move ? "Move complete" : "Copy complete",
             "cancelled" => context.Move ? "Move cancelled" : "Copy cancelled",
             "error" => context.Move ? "Move failed" : "Copy failed",
@@ -102,6 +104,11 @@ public static class TransferProgressFormatter
             return $"{FormatBytes(current)} of {FormatBytes(update.Total)}";
         }
 
+        if (update.Status == "finalizing")
+        {
+            return current > 0 ? $"{FormatBytes(current)} transferred" : "Finalizing transfer";
+        }
+
         if (update.Status == "running")
         {
             return current > 0 ? $"{FormatBytes(current)} transferred" : "Calculating size";
@@ -112,6 +119,16 @@ public static class TransferProgressFormatter
 
     private static string FileSummary(ProgressUpdate update, ulong currentFiles)
     {
+        if (update.Status == "finalizing")
+        {
+            if (update.TotalFiles > 0)
+            {
+                return $"{Count(currentFiles)} of {Count(update.TotalFiles)} files";
+            }
+
+            return currentFiles > 0 ? $"{Count(currentFiles)} files transferred" : "Finishing current file";
+        }
+
         if (update.TotalFiles > 0)
         {
             return $"{Count(currentFiles)} of {Count(update.TotalFiles)} files";
@@ -119,7 +136,12 @@ public static class TransferProgressFormatter
 
         if (update.Status == "running")
         {
-            return currentFiles > 0 ? $"{Count(currentFiles)} files transferred" : "Counting files";
+            if (currentFiles > 0)
+            {
+                return $"{Count(currentFiles)} files transferred";
+            }
+
+            return HasActiveTransferItem(update.CurrentItem) ? "Transferring files" : "Counting files";
         }
 
         return $"{Count(currentFiles)} files";
@@ -131,6 +153,7 @@ public static class TransferProgressFormatter
         {
             return status switch
             {
+                "finalizing" => "Finishing transfer",
                 "completed" => "Transfer complete",
                 "cancelled" => "Transfer cancelled",
                 "error" => "Transfer failed",
@@ -145,6 +168,11 @@ public static class TransferProgressFormatter
 
     private static string Speed(ProgressUpdate update, double? bytesPerSecond)
     {
+        if (update.Status == "finalizing")
+        {
+            return "Finalizing";
+        }
+
         if (update.Status != "running")
         {
             return update.Status switch
@@ -163,6 +191,11 @@ public static class TransferProgressFormatter
 
     private static string FileRate(ProgressUpdate update, double? averageFilesPerSecond)
     {
+        if (update.Status == "finalizing")
+        {
+            return update.CurrentFiles > 0 ? "Finishing files" : "Finishing file";
+        }
+
         if (averageFilesPerSecond is > 0 && update.Status is "running" or "completed")
         {
             return $"{FormatRate(averageFilesPerSecond.Value)} files/s avg";
@@ -184,6 +217,11 @@ public static class TransferProgressFormatter
 
     private static string Eta(ProgressUpdate update, ulong current, double? bytesPerSecond)
     {
+        if (update.Status == "finalizing")
+        {
+            return "Almost done";
+        }
+
         if (update.Status != "running")
         {
             return update.Status switch
@@ -224,6 +262,14 @@ public static class TransferProgressFormatter
 
     private static string Count(ulong value) =>
         value.ToString("N0", CultureInfo.InvariantCulture);
+
+    private static bool IsFinalizing(ProgressUpdate update) =>
+        string.Equals(update.Status, "finalizing", StringComparison.Ordinal);
+
+    private static bool HasActiveTransferItem(string currentItem) =>
+        !string.IsNullOrWhiteSpace(currentItem)
+        && !string.Equals(currentItem, "Preparing transfer", StringComparison.Ordinal)
+        && !string.Equals(currentItem, "Preparing transfer...", StringComparison.Ordinal);
 
     private static string LabelValue(string label, string value) =>
         string.IsNullOrWhiteSpace(value) ? $"{label}: -" : $"{label}: {value}";

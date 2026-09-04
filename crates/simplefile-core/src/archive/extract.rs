@@ -224,7 +224,6 @@ fn extract_rar(path: &str, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-
 /// Caps for selective archive materialization (preview/open/checksum paths).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ExtractLimits {
@@ -317,10 +316,7 @@ fn extract_zip_entry(
     }
 
     if selected.is_empty() {
-        return Err(format!(
-            "Archive entry not found: {}",
-            inner_path.display()
-        ));
+        return Err(format!("Archive entry not found: {}", inner_path.display()));
     }
     reject_if_over_budget(declared_total, selected.len() as u32, limits)?;
 
@@ -422,10 +418,7 @@ fn extract_tar_entry(
         }
 
         if !found {
-            return Err(format!(
-                "Archive entry not found: {}",
-                inner_path.display()
-            ));
+            return Err(format!("Archive entry not found: {}", inner_path.display()));
         }
         Ok(())
     }
@@ -471,10 +464,7 @@ fn extract_seven_zip_entry_matching(
     }
 
     if selected.is_empty() {
-        return Err(format!(
-            "Archive entry not found: {}",
-            inner_path.display()
-        ));
+        return Err(format!("Archive entry not found: {}", inner_path.display()));
     }
     reject_if_over_budget(declared_total, selected.len() as u32, limits)?;
 
@@ -490,9 +480,7 @@ fn extract_seven_zip_entry_matching(
             }
             ensure_extract_path_within_destination(&dest_canonical, &outpath)?;
             extract_seven_zip_entry_to_file(&binary, path, &entry.path, &outpath)?;
-            let written = std::fs::metadata(&outpath)
-                .map(|m| m.len())
-                .unwrap_or(0);
+            let written = std::fs::metadata(&outpath).map(|m| m.len()).unwrap_or(0);
             written_total = written_total
                 .checked_add(written)
                 .ok_or_else(|| "Archive extract size overflow".to_string())?;
@@ -591,10 +579,7 @@ fn extract_rar_entry(
     }
 
     if !found {
-        return Err(format!(
-            "Archive entry not found: {}",
-            inner_path.display()
-        ));
+        return Err(format!("Archive entry not found: {}", inner_path.display()));
     }
     Ok(())
 }

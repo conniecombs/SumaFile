@@ -8,7 +8,7 @@
   "enums": {
     "ConflictAction": ["error", "skip", "replace", "rename", "keep-both", "keep_both"],
     "ListDirectoryMode": ["full", "light"],
-    "ProgressStatus": ["running", "completed", "error", "cancelled"],
+    "ProgressStatus": ["running", "finalizing", "completed", "error", "cancelled"],
     "FileChangeKind": ["create", "modify", "remove", "rename"],
     "ArchiveFormat": ["zip", "7z", "tar", "tar.gz", "tgz", "rar"]
   },

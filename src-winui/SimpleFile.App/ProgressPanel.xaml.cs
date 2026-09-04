@@ -72,7 +72,7 @@ public sealed partial class ProgressPanel : UserControl
 
         var speed = TrackSpeed(update);
         var display = TransferProgressFormatter.Format(_context, update, speed, AverageFilesPerSecond(update));
-        CancelButton.IsEnabled = update.Status == "running";
+        CancelButton.IsEnabled = update.Status is "running" or "finalizing";
         PauseButton.IsEnabled = false;
         ApplyDisplay(display);
     }

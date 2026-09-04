@@ -216,7 +216,7 @@ mod tests {
     use simplefile_core::models::ProgressUpdate;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -400,6 +400,20 @@ mod tests {
             .expect("completed progress update");
         assert_eq!(completed.current_files, 1);
         assert_eq!(completed.total_files, 1);
+        let finalizing_index = updates
+            .iter()
+            .position(|update| update.status == "finalizing")
+            .expect("finalizing progress update");
+        let completed_index = updates
+            .iter()
+            .position(|update| update.status == "completed")
+            .expect("completed progress update");
+        assert!(finalizing_index < completed_index);
+        assert_eq!(
+            updates[finalizing_index].current,
+            updates[finalizing_index].total
+        );
+        assert!(updates[finalizing_index].current_item.ends_with("done.txt"));
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);
@@ -583,6 +597,52 @@ mod tests {
                 .unwrap(),
             staged_existing_modified
         );
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    #[test]
+    fn directory_copy_cancel_during_finalizing_does_not_promote_staging() {
+        let src_root = unique_temp_path("finalizing_cancel_src");
+        let dst_root = unique_temp_path("finalizing_cancel_dst");
+        let source = src_root.join("Movie");
+        let final_destination = dst_root.join("Movie");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&dst_root).unwrap();
+        fs::write(source.join("feature.mkv"), b"feature").unwrap();
+
+        let staging = resumable_staging_path_for(&final_destination).unwrap();
+        let final_destination_text = final_destination.to_string_lossy().to_string();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_emit = cancel.clone();
+        let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
+        let updates_target = updates.clone();
+
+        let result = transfer_with_progress_blocking(
+            "copy",
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            "op_finalizing_cancel_test".to_string(),
+            "error".to_string(),
+            cancel,
+            &|update| {
+                if update.status == "finalizing" && update.current_item == final_destination_text {
+                    cancel_for_emit.store(true, Ordering::Relaxed);
+                }
+                updates_target.lock().unwrap().push(update);
+            },
+        )
+        .expect("cancelled directory copy should return partial results");
+
+        assert!(result.is_empty());
+        assert!(!final_destination.exists());
+        assert!(!staging.exists());
+        let updates = updates.lock().unwrap();
+        assert!(updates.iter().any(|update| {
+            update.status == "finalizing" && update.current_item == final_destination_text
+        }));
+        assert!(updates.iter().any(|update| update.status == "cancelled"));
 
         let _ = fs::remove_dir_all(&src_root);
         let _ = fs::remove_dir_all(&dst_root);

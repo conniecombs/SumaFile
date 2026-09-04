@@ -35,7 +35,13 @@ impl ProgressContext<'_> {
         check_cancelled(self.cancel)
     }
 
-    pub(crate) fn emit(&self, current: u64, current_item: String, status: &str, error: Option<String>) {
+    pub(crate) fn emit(
+        &self,
+        current: u64,
+        current_item: String,
+        status: &str,
+        error: Option<String>,
+    ) {
         self.emit_with_total(
             current,
             self.total_bytes.load(Ordering::Relaxed),
@@ -78,6 +84,11 @@ impl ProgressContext<'_> {
             status: status.to_string(),
             error,
         });
+    }
+
+    pub(crate) fn finalizing(&self, current: u64, current_item: String) {
+        let total = self.total_bytes.load(Ordering::Relaxed).max(current);
+        self.emit_with_total(current, total, current_item, "finalizing", None);
     }
 
     pub(crate) fn should_emit_running(&self) -> bool {

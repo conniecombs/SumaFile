@@ -30,7 +30,10 @@ pub(crate) struct TransferEstimate {
     pub(crate) files: u64,
 }
 
-pub(crate) fn ensure_not_copying_dir_into_itself(source_path: &Path, final_dest: &Path) -> Result<(), String> {
+pub(crate) fn ensure_not_copying_dir_into_itself(
+    source_path: &Path,
+    final_dest: &Path,
+) -> Result<(), String> {
     let source_meta = fs::symlink_metadata(source_path)
         .map_err(|error| format!("Failed to stat source: {error}"))?;
     if !source_meta.file_type().is_dir() {
@@ -199,7 +202,10 @@ pub(crate) fn choose_next_keep_both_destination(
     Ok(())
 }
 
-pub(crate) fn prime_path_transfer(path: &Path, cancel: &Arc<AtomicBool>) -> Result<TransferEstimate, String> {
+pub(crate) fn prime_path_transfer(
+    path: &Path,
+    cancel: &Arc<AtomicBool>,
+) -> Result<TransferEstimate, String> {
     check_cancelled(cancel)?;
     let meta = fs::symlink_metadata(path)
         .map_err(|error| format!("Failed to stat {}: {error}", path.display()))?;

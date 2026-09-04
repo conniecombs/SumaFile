@@ -333,9 +333,8 @@ pub(super) fn copy_entry_data_limited<R: std::io::Read, W: std::io::Write>(
 ) -> Result<(), String> {
     let mut buffer = [0u8; 65536];
     loop {
-        let n = std::io::Read::read(reader, &mut buffer).map_err(|e| {
-            format!("Failed to read archive entry for {}: {}", path.display(), e)
-        })?;
+        let n = std::io::Read::read(reader, &mut buffer)
+            .map_err(|e| format!("Failed to read archive entry for {}: {}", path.display(), e))?;
         if n == 0 {
             break;
         }
@@ -347,9 +346,8 @@ pub(super) fn copy_entry_data_limited<R: std::io::Read, W: std::io::Write>(
                 "Archive extract exceeds size limit of {max_uncompressed_bytes} bytes"
             ));
         }
-        std::io::Write::write_all(writer, &buffer[..n]).map_err(|e| {
-            format!("Failed to write extracted file {}: {}", path.display(), e)
-        })?;
+        std::io::Write::write_all(writer, &buffer[..n])
+            .map_err(|e| format!("Failed to write extracted file {}: {}", path.display(), e))?;
         *written_total = next;
     }
     Ok(())

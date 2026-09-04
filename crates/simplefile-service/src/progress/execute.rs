@@ -118,9 +118,15 @@ pub(crate) fn copy_file_attempt(
         }
     }
 
+    ctx.progress.finalizing(
+        completed_bytes.saturating_add(copied_this_attempt),
+        src.to_string_lossy().to_string(),
+    );
+    ctx.progress.check_cancelled()?;
     writer
         .flush()
         .map_err(|error| format!("Failed to flush destination file: {error}"))?;
+    ctx.progress.check_cancelled()?;
     simplefile_core::file_ops::preserve_basic_metadata(src, dst)?;
     Ok(copied_this_attempt)
 }
@@ -215,6 +221,14 @@ pub(crate) fn copy_file_with_progress(
 
     match copy_result {
         Ok(written) => {
+            ctx.progress.finalizing(
+                completed_bytes.saturating_add(written),
+                dst.to_string_lossy().to_string(),
+            );
+            if let Err(error) = ctx.progress.check_cancelled() {
+                let _ = fs::remove_file(&staged_path);
+                return Err(error);
+            }
             if let Err(error) = promote_staged_path(&staged_path, dst, replace_existing) {
                 let _ = fs::remove_file(&staged_path);
                 return Err(error);
@@ -315,7 +329,6 @@ pub(crate) fn copy_item_with_progress(
     Ok(())
 }
 
-
 pub(crate) fn copy_plan_with_progress(
     plan: &TransferPlan,
     ctx: &ProgressContext,
@@ -348,6 +361,14 @@ pub(crate) fn copy_plan_with_progress(
             false,
         );
         result?;
+        ctx.finalizing(
+            *completed_bytes,
+            plan.final_dest.to_string_lossy().to_string(),
+        );
+        if let Err(error) = ctx.check_cancelled() {
+            let _ = remove_path(&staged_dest, "partial destination directory");
+            return Err(error);
+        }
         promote_staged_path(&staged_dest, &plan.final_dest, false)?;
         Ok(())
     } else {
@@ -412,7 +433,14 @@ pub(crate) fn move_plan_with_progress(
             false,
         );
         result?;
-        ctx.check_cancelled()?;
+        ctx.finalizing(
+            *completed_bytes,
+            plan.final_dest.to_string_lossy().to_string(),
+        );
+        if let Err(error) = ctx.check_cancelled() {
+            let _ = remove_path(&staged_dest, "partial destination directory");
+            return Err(error);
+        }
         promote_staged_path(&staged_dest, &plan.final_dest, false)?;
     } else {
         copy_item_with_progress(

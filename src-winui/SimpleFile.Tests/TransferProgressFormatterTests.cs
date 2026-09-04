@@ -66,6 +66,52 @@ public class TransferProgressFormatterTests
         Assert.Equal(100, display.FileProgressPercent);
         Assert.Equal("3 of 3 files", display.FileSummary);
     }
+
+    [Fact]
+    public void TransferProgressFormatter_RunningCurrentItemDoesNotKeepCountingFiles()
+    {
+        var context = new TransferProgressContext(false, 1, @"V:\media\Movies", @"R:\");
+        var update = new ProgressUpdate
+        {
+            OperationType = "copy",
+            Current = 8UL * 1024 * 1024 * 1024,
+            Total = 16UL * 1024 * 1024 * 1024,
+            CurrentItem = @"V:\media\Movies\Forrest Gump (1994)\Forrest Gump (1994) Bluray-2160p Proper.mkv",
+            Status = "running",
+        };
+
+        var display = TransferProgressFormatter.Format(context, update, bytesPerSecond: null, averageFilesPerSecond: null);
+
+        Assert.Equal("Transferring files", display.FileSummary);
+        Assert.Equal("Forrest Gump (1994) Bluray-2160p Proper.mkv", display.CurrentItemName);
+    }
+
+    [Fact]
+    public void TransferProgressFormatter_FinalizingDoesNotLookStuckAtHundredPercent()
+    {
+        var context = new TransferProgressContext(false, 1, @"V:\media\Movies", @"R:\");
+        var update = new ProgressUpdate
+        {
+            OperationType = "copy",
+            Current = 17_955_743_243,
+            Total = 17_955_743_243,
+            CurrentItem = @"V:\media\Movies\Forrest Gump (1994)\Forrest Gump (1994) Bluray-2160p Proper.mkv",
+            Status = "finalizing",
+        };
+
+        var display = TransferProgressFormatter.Format(context, update, 92 * 1024 * 1024, averageFilesPerSecond: null);
+
+        Assert.Equal("Finishing copy", display.Title);
+        Assert.Equal("Finalizing", display.Percent);
+        Assert.Equal("Finishing current file", display.FileSummary);
+        Assert.Equal("Finishing file", display.FileRate);
+        Assert.Equal("Finalizing", display.Speed);
+        Assert.Equal("Almost done", display.Eta);
+        Assert.DoesNotContain("remaining", display.Eta, StringComparison.OrdinalIgnoreCase);
+        Assert.False(display.IsIndeterminate);
+        Assert.True(display.FileProgressIsIndeterminate);
+    }
+
     [Fact]
     public void TransferProgressFormatter_CompletedZeroTotals_DoNotLookStuck()
     {

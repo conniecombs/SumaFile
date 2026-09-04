@@ -6,7 +6,9 @@ use super::create::{
     create_rar_archive, create_seven_zip_archive, create_tar_archive, create_zip_archive,
     resolve_rar_binary,
 };
-use super::extract::{extract_archive_entry_to_directory, extract_archive_to_directory, ExtractLimits};
+use super::extract::{
+    extract_archive_entry_to_directory, extract_archive_to_directory, ExtractLimits,
+};
 use super::path::{
     build_virtual_archive_path, create_dir_all, replace_archive, same_archive_path,
     split_archive_path, unique_temp_archive_path, unique_work_dir, ArchiveFormat, ArchivePath,
@@ -322,9 +324,9 @@ fn materialize_transfer_source(
         // Same selective extract + size/entry caps + WorkRootGuard cleanup as open/preview.
         materialize_archive_entry_to_temp(source)
     } else {
-        Ok(MaterializedSource::local(crate::utils::validate_path_no_follow(
-            source,
-        )?))
+        Ok(MaterializedSource::local(
+            crate::utils::validate_path_no_follow(source)?,
+        ))
     }
 }
 
