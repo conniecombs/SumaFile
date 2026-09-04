@@ -323,6 +323,59 @@ pub(super) fn copy_entry_data<R: std::io::Read, W: std::io::Write>(
         .map_err(|e| format!("Failed to write extracted file {}: {}", path.display(), e))
 }
 
+/// Copy archive entry bytes while enforcing a running uncompressed-size budget.
+pub(super) fn copy_entry_data_limited<R: std::io::Read, W: std::io::Write>(
+    reader: &mut R,
+    writer: &mut W,
+    path: &Path,
+    max_uncompressed_bytes: u64,
+    written_total: &mut u64,
+) -> Result<(), String> {
+    let mut buffer = [0u8; 65536];
+    loop {
+        let n = std::io::Read::read(reader, &mut buffer).map_err(|e| {
+            format!("Failed to read archive entry for {}: {}", path.display(), e)
+        })?;
+        if n == 0 {
+            break;
+        }
+        let next = written_total
+            .checked_add(n as u64)
+            .ok_or_else(|| "Archive extract size overflow".to_string())?;
+        if next > max_uncompressed_bytes {
+            return Err(format!(
+                "Archive extract exceeds size limit of {max_uncompressed_bytes} bytes"
+            ));
+        }
+        std::io::Write::write_all(writer, &buffer[..n]).map_err(|e| {
+            format!("Failed to write extracted file {}: {}", path.display(), e)
+        })?;
+        *written_total = next;
+    }
+    Ok(())
+}
+
+/// True when `candidate` is exactly `prefix` or a nested path under it.
+pub(super) fn path_is_within_prefix(candidate: &Path, prefix: &Path) -> bool {
+    if candidate == prefix {
+        return true;
+    }
+    let mut prefix_iter = prefix.components();
+    let mut candidate_iter = candidate.components();
+    loop {
+        match (prefix_iter.next(), candidate_iter.next()) {
+            (None, None) => return true,
+            (None, Some(_)) => return true,
+            (Some(_), None) => return false,
+            (Some(left), Some(right)) => {
+                if left.as_os_str() != right.as_os_str() {
+                    return false;
+                }
+            }
+        }
+    }
+}
+
 pub(super) fn replace_archive(archive_path: &Path, new_archive_path: &Path) -> Result<(), String> {
     let backup_path = unique_backup_path(archive_path)?;
     fs::rename(archive_path, &backup_path)

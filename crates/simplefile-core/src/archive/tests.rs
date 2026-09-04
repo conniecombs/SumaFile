@@ -1,7 +1,12 @@
-use super::extract::{extract_archive_to_directory, extract_tar, extract_zip};
+use super::extract::{
+    extract_archive_entry_to_directory, extract_archive_to_directory, extract_tar, extract_zip,
+    ExtractLimits,
+};
+use super::mutate::materialize_archive_entry_to_temp_with_limits;
 use super::path::{
     archive_entry_relative_path, archive_format_for_path, build_virtual_archive_path,
-    ensure_extract_path_within_destination, zip_entry_relative_path, ArchiveFormat,
+    ensure_extract_path_within_destination, path_is_within_prefix, zip_entry_relative_path,
+    ArchiveFormat,
 };
 use super::seven_zip::{parse_seven_zip_list_output, resolve_seven_zip_binary};
 use super::*;
@@ -418,6 +423,122 @@ fn copy_zip_archive_entry_out_to_local_folder() {
         fs::read(out.join("source.txt")).expect("read copied file"),
         b"from-archive"
     );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+
+#[test]
+fn path_is_within_prefix_matches_exact_and_nested() {
+    let prefix = PathBuf::from("folder").join("item.txt");
+    assert!(path_is_within_prefix(&prefix, &prefix));
+    assert!(path_is_within_prefix(
+        &PathBuf::from("folder").join("nested").join("a.txt"),
+        Path::new("folder")
+    ));
+    assert!(!path_is_within_prefix(
+        Path::new("folder2").join("a.txt").as_path(),
+        Path::new("folder")
+    ));
+    assert!(!path_is_within_prefix(Path::new("fold"), Path::new("folder")));
+}
+
+#[test]
+fn materialize_archive_entry_cleans_temp_on_drop() {
+    let root = unique_temp_dir("materialize-cleanup");
+    let zip_path = root.join("sample.zip");
+    write_test_zip(
+        &zip_path,
+        &[
+            ("keep.txt", b"keep"),
+            ("folder/other.txt", b"other"),
+        ],
+    );
+
+    let virtual_path = build_virtual_archive_path(&zip_path, Path::new("keep.txt"));
+    let materialized = materialize_archive_entry_to_temp(&virtual_path).expect("materialize");
+    let cleanup_root = materialized
+        .cleanup_root()
+        .expect("archive materialize should own a work root")
+        .to_path_buf();
+    assert!(cleanup_root.exists(), "work root should exist while guard is alive");
+    assert!(
+        cleanup_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("archive-open-")),
+        "unexpected work dir name: {}",
+        cleanup_root.display()
+    );
+    assert_eq!(
+        fs::read(materialized.path()).expect("read materialized"),
+        b"keep"
+    );
+    // Sibling entries must not be extracted for open/materialize.
+    assert!(!cleanup_root.join("folder").join("other.txt").exists());
+
+    drop(materialized);
+    assert!(
+        !cleanup_root.exists(),
+        "archive-open work root must be removed on Drop"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn materialize_archive_entry_rejects_oversized_extract() {
+    let root = unique_temp_dir("materialize-oversize");
+    let zip_path = root.join("sample.zip");
+    write_test_zip(&zip_path, &[("big.txt", b"0123456789abcdef")]);
+    let virtual_path = build_virtual_archive_path(&zip_path, Path::new("big.txt"));
+
+    let err = materialize_archive_entry_to_temp_with_limits(
+        &virtual_path,
+        ExtractLimits {
+            max_uncompressed_bytes: 8,
+            max_entries: 4_096,
+        },
+    )
+    .expect_err("oversized extract should fail");
+    assert!(
+        err.contains("size limit"),
+        "unexpected error: {err}"
+    );
+
+    // Failure path deletes the work root before returning (see materialize match arm).
+    // Full residue coverage for the success path is in
+    // materialize_archive_entry_cleans_temp_on_drop.
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn extract_archive_entry_rejects_too_many_entries() {
+    let root = unique_temp_dir("materialize-entry-cap");
+    let zip_path = root.join("sample.zip");
+    write_test_zip(
+        &zip_path,
+        &[
+            ("dir/a.txt", b"a"),
+            ("dir/b.txt", b"b"),
+            ("dir/c.txt", b"c"),
+        ],
+    );
+    let dest = root.join("out");
+    fs::create_dir_all(&dest).expect("dest");
+
+    let err = extract_archive_entry_to_directory(
+        &zip_path,
+        &dest,
+        Path::new("dir"),
+        ExtractLimits {
+            max_uncompressed_bytes: 512 * 1024 * 1024,
+            max_entries: 2,
+        },
+    )
+    .expect_err("entry cap should fail");
+    assert!(err.contains("entry limit"), "unexpected error: {err}");
 
     let _ = fs::remove_dir_all(root);
 }

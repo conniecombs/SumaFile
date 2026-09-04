@@ -57,6 +57,9 @@ public sealed partial class TransferViewModel : ObservableObject
     public CancellationTokenSource BeginTransfer()
     {
         _transferCts?.Cancel();
+        // Drop the prior operation id immediately so a late completed/cancelled/error
+        // event for the old transfer cannot CompleteTransfer while a new one prepares.
+        CurrentOperationId = null;
         var cts = new CancellationTokenSource();
         _transferCts = cts;
         IsTransferring = true;
@@ -87,6 +90,8 @@ public sealed partial class TransferViewModel : ObservableObject
     /// </summary>
     public void OnProgress(ProgressUpdate update)
     {
+        // Ignore all events (including terminal) for non-active operation ids so a
+        // stale completed/cancelled/error cannot finish a newer transfer.
         if (!IsCurrentOperation(update.OperationId))
         {
             return;

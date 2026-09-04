@@ -159,13 +159,15 @@ pub fn open_file_with(path: String, application: String) -> Result<(), String> {
     if target_path.is_dir() {
         return Err("Open With is only supported for files".to_string());
     }
-    if target_extension_is_denied(&target_path) {
+    if target_extension_is_denied(target_path.as_ref()) {
         return Err("Open With does not allow executable or script payload files".to_string());
     }
 
     let application_path = resolve_allowed_application(&application)?;
+    // Keep materialized archive temps so the launched process can open them.
+    let launch_path = target_path.into_path();
     Command::new(&application_path)
-        .arg(&target_path)
+        .arg(&launch_path)
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("failed to launch {}: {}", application_path.display(), e))

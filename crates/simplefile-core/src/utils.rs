@@ -282,12 +282,16 @@ pub fn validate_existing_path_no_resolve(path: &str) -> Result<PathBuf, String> 
     Ok(path_buf)
 }
 
-pub(crate) fn resolve_readable_path(path: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_readable_path(
+    path: &str,
+) -> Result<crate::archive::MaterializedSource, String> {
     if crate::archive::is_archive_virtual_path(path) {
         return crate::archive::materialize_archive_entry_to_temp(path);
     }
 
-    validate_existing_path_no_resolve(path)
+    Ok(crate::archive::MaterializedSource::local(
+        validate_existing_path_no_resolve(path)?,
+    ))
 }
 
 pub(crate) fn hex_encode(bytes: impl AsRef<[u8]>) -> String {

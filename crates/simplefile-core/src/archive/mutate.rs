@@ -6,7 +6,7 @@ use super::create::{
     create_rar_archive, create_seven_zip_archive, create_tar_archive, create_zip_archive,
     resolve_rar_binary,
 };
-use super::extract::extract_archive_to_directory;
+use super::extract::{extract_archive_entry_to_directory, extract_archive_to_directory, ExtractLimits};
 use super::path::{
     build_virtual_archive_path, create_dir_all, replace_archive, same_archive_path,
     split_archive_path, unique_temp_archive_path, unique_work_dir, ArchiveFormat, ArchivePath,
@@ -45,6 +45,7 @@ pub fn copy_entry_resolved(
         }
         (source_parsed, Some(destination_parsed)) => {
             let materialized = materialize_transfer_source(&source, source_parsed.as_ref())?;
+            let mut materialized = materialized;
             let result = mutate_archive(
                 &destination_parsed.archive_path,
                 destination_parsed.format,
@@ -187,18 +188,61 @@ pub fn rename_archive_entry(path: String, new_name: String) -> Result<String, St
     result.ok_or_else(|| "Archive entry was not renamed".to_string())
 }
 
-pub fn materialize_archive_entry_to_temp(path: &str) -> Result<PathBuf, String> {
+pub fn materialize_archive_entry_to_temp(path: &str) -> Result<MaterializedSource, String> {
+    materialize_archive_entry_to_temp_with_limits(path, ExtractLimits::materialize_defaults())
+}
+
+pub(super) fn materialize_archive_entry_to_temp_with_limits(
+    path: &str,
+    limits: ExtractLimits,
+) -> Result<MaterializedSource, String> {
     let parsed = split_archive_path(path)?
         .filter(|parsed| !parsed.inner_path.as_os_str().is_empty())
         .ok_or_else(|| format!("Path is not an archive entry: {path}"))?;
-    let work_root = unique_work_dir("open")?;
-    extract_archive_to_directory(&parsed.archive_path, &work_root)?;
-    let materialized = work_root.join(&parsed.inner_path);
+    let mut work_root = WorkRootGuard::create("open")?;
+    extract_archive_entry_to_directory(
+        &parsed.archive_path,
+        work_root.path(),
+        &parsed.inner_path,
+        limits,
+    )?;
+    let materialized = work_root.path().join(&parsed.inner_path);
     if !materialized.exists() {
-        let _ = fs::remove_dir_all(&work_root);
         return Err(format!("Archive entry not found: {path}"));
     }
-    Ok(materialized)
+    Ok(MaterializedSource {
+        path: materialized,
+        cleanup_root: Some(work_root.take()),
+    })
+}
+
+/// Deletes `unique_work_dir` on drop unless `take()` transfers ownership.
+struct WorkRootGuard {
+    root: Option<PathBuf>,
+}
+
+impl WorkRootGuard {
+    fn create(label: &str) -> Result<Self, String> {
+        Ok(Self {
+            root: Some(unique_work_dir(label)?),
+        })
+    }
+
+    fn path(&self) -> &Path {
+        self.root.as_ref().expect("work root still owned")
+    }
+
+    fn take(&mut self) -> PathBuf {
+        self.root.take().expect("work root still owned")
+    }
+}
+
+impl Drop for WorkRootGuard {
+    fn drop(&mut self) {
+        if let Some(root) = self.root.take() {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
 }
 
 fn delete_archive_entry_parsed(parsed: &ArchivePath) -> Result<(), String> {
@@ -210,16 +254,61 @@ fn delete_archive_entry_parsed(parsed: &ArchivePath) -> Result<(), String> {
     Ok(())
 }
 
-struct MaterializedSource {
+/// Temp materialization of an archive entry (or a passthrough local path).
+///
+/// When `cleanup_root` is set, the work directory is deleted on `cleanup()` / Drop.
+#[derive(Debug)]
+pub struct MaterializedSource {
     path: PathBuf,
     cleanup_root: Option<PathBuf>,
 }
 
 impl MaterializedSource {
-    fn cleanup(&self) {
-        if let Some(root) = &self.cleanup_root {
+    pub fn local(path: PathBuf) -> Self {
+        Self {
+            path,
+            cleanup_root: None,
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn cleanup_root(&self) -> Option<&Path> {
+        self.cleanup_root.as_deref()
+    }
+
+    pub fn cleanup(&mut self) {
+        if let Some(root) = self.cleanup_root.take() {
             let _ = fs::remove_dir_all(root);
         }
+    }
+
+    /// Keep the materialized path on disk (e.g. Open With handed off to another process).
+    pub fn into_path(mut self) -> PathBuf {
+        self.cleanup_root = None;
+        std::mem::take(&mut self.path)
+    }
+}
+
+impl Drop for MaterializedSource {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
+impl AsRef<Path> for MaterializedSource {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl std::ops::Deref for MaterializedSource {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -240,10 +329,9 @@ fn materialize_transfer_source(
             cleanup_root: Some(work_root),
         })
     } else {
-        Ok(MaterializedSource {
-            path: crate::utils::validate_path_no_follow(source)?,
-            cleanup_root: None,
-        })
+        Ok(MaterializedSource::local(crate::utils::validate_path_no_follow(
+            source,
+        )?))
     }
 }
 

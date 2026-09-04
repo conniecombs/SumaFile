@@ -163,6 +163,97 @@ public class ViewModelCutoverTests
         Assert.False(viewModel.HasActiveTransfer);
     }
 
+
+    [Fact]
+    public void TransferViewModel_BeginTransferClearsPriorOperationId()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var ipc = new ConfigurableIpc();
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(ipc));
+        var viewModel = new TransferViewModel(workspace);
+
+        var firstCts = viewModel.BeginTransfer();
+        viewModel.SetOperationId("op-old");
+        Assert.Equal("op-old", viewModel.CurrentOperationId);
+
+        var secondCts = viewModel.BeginTransfer();
+        Assert.Null(viewModel.CurrentOperationId);
+        Assert.True(firstCts.IsCancellationRequested);
+        Assert.True(viewModel.IsTransferring);
+        Assert.True(viewModel.HasActiveTransfer);
+        Assert.True(viewModel.FinishTransfer(secondCts));
+        firstCts.Dispose();
+    }
+
+    [Fact]
+    public void TransferViewModel_StaleTerminalProgressDoesNotCompleteNewTransfer()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var ipc = new ConfigurableIpc();
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(ipc));
+        var viewModel = new TransferViewModel(workspace);
+        var completedStatuses = new List<string>();
+        viewModel.Completed += (_, args) => completedStatuses.Add(args.Status);
+
+        var firstCts = viewModel.BeginTransfer();
+        viewModel.SetOperationId("op-old");
+
+        var secondCts = viewModel.BeginTransfer();
+        Assert.Null(viewModel.CurrentOperationId);
+
+        // Stale terminal events for the cancelled transfer must not finish the new one.
+        viewModel.OnProgress(new ProgressUpdate { OperationId = "op-old", Current = 10, Total = 10, Status = "completed" });
+        viewModel.OnProgress(new ProgressUpdate { OperationId = "op-old", Current = 10, Total = 10, Status = "cancelled" });
+        viewModel.OnProgress(new ProgressUpdate { OperationId = "op-old", Current = 10, Total = 10, Status = "error" });
+
+        Assert.Empty(completedStatuses);
+        Assert.True(viewModel.IsTransferring);
+        Assert.True(viewModel.HasActiveTransfer);
+
+        viewModel.SetOperationId("op-new");
+        viewModel.OnProgress(new ProgressUpdate { OperationId = "op-old", Current = 10, Total = 10, Status = "completed" });
+        Assert.Empty(completedStatuses);
+        Assert.Equal("op-new", viewModel.CurrentOperationId);
+        Assert.True(viewModel.IsTransferring);
+
+        viewModel.OnProgress(new ProgressUpdate { OperationId = "op-new", Current = 10, Total = 10, Status = "completed" });
+        Assert.Equal(["completed"], completedStatuses);
+        Assert.Null(viewModel.CurrentOperationId);
+        Assert.False(viewModel.IsTransferring);
+
+        Assert.True(viewModel.FinishTransfer(secondCts));
+        firstCts.Dispose();
+    }
+
+    [Fact]
+    public async Task TransferViewModel_CancelThenStartNewIgnoresOldTerminalEvents()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var ipc = new ConfigurableIpc();
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(ipc));
+        var viewModel = new TransferViewModel(workspace);
+        var completedStatuses = new List<string>();
+        viewModel.Completed += (_, args) => completedStatuses.Add(args.Status);
+
+        var firstCts = viewModel.BeginTransfer();
+        viewModel.SetOperationId("op-old");
+        await viewModel.CancelAsync();
+
+        var secondCts = viewModel.BeginTransfer();
+        viewModel.SetOperationId("op-new");
+
+        viewModel.OnProgress(new ProgressUpdate { OperationId = "op-old", Current = 10, Total = 10, Status = "cancelled" });
+        Assert.Empty(completedStatuses);
+        Assert.Equal("op-new", viewModel.CurrentOperationId);
+        Assert.True(viewModel.IsTransferring);
+
+        viewModel.OnProgress(new ProgressUpdate { OperationId = "op-new", Current = 4, Total = 10, Status = "running" });
+        Assert.Equal(40, viewModel.ProgressPercent);
+
+        Assert.True(viewModel.FinishTransfer(secondCts));
+        firstCts.Dispose();
+    }
+
     [Fact]
     public void TransferViewModel_CompleteCurrentOperationFinishesWhenTerminalProgressIsMissing()
     {
