@@ -127,7 +127,7 @@ public sealed partial class MainWindow
 
     private void SizeColumnToFit(string columnId, PaneId pane, bool save)
     {
-        var columns = _workspace?.Columns ?? ColumnLayoutHost.Shared;
+        var columns = _workspace?.ColumnsFor(pane) ?? ColumnLayoutHost.For(pane);
         var column = columns.Find(columnId);
         if (column is null)
         {
@@ -154,7 +154,7 @@ public sealed partial class MainWindow
 
     private void SizeAllColumnsToFit(PaneId pane)
     {
-        var columns = _workspace?.Columns ?? ColumnLayoutHost.Shared;
+        var columns = _workspace?.ColumnsFor(pane) ?? ColumnLayoutHost.For(pane);
         foreach (var column in columns.VisibleColumns)
         {
             SizeColumnToFit(column.Id, pane, save: false);
@@ -283,34 +283,22 @@ public sealed partial class MainWindow
             return;
         }
 
-        var needsGit = _workspace.Columns.IsVisible("git") && _workspace.Settings.EnableGitIntegration;
-        var needsItems = _workspace.Columns.IsVisible("items");
-        var needsSizes = _workspace.Settings.ShowFolderSizes;
-
-        // Suppress expensive enrichment on network paths. Git operations and
-        // recursive folder size/item count walks are catastrophically slow over SMB.
-        if (_workspace.Active.PathIsNetwork)
-        {
-            needsGit = false;
-            needsSizes = false;
-            needsItems = false;
-        }
-        if (!needsGit && !needsItems && !needsSizes)
-        {
-            return;
-        }
-
         var panes = _workspace.DualPaneEnabled
             ? new[] { PaneId.Primary, PaneId.Secondary }
             : new[] { PaneId.Primary };
+        var needsSizes = _workspace.Settings.ShowFolderSizes;
         var signatureParts = new List<string>
         {
-            string.Join(',', _workspace.Columns.VisibleIds),
-            $"git={needsGit}",
-            $"items={needsItems}",
             $"sizes={needsSizes}",
+            $"gitIntegration={_workspace.Settings.EnableGitIntegration}",
         };
-        signatureParts.AddRange(panes.Select(ColumnEnrichmentSignatureFor));
+        foreach (var pane in panes)
+        {
+            var columns = _workspace.ColumnsFor(pane);
+            signatureParts.Add($"{pane}:visible={string.Join(',', columns.VisibleIds)}");
+            signatureParts.Add(ColumnEnrichmentSignatureFor(pane));
+        }
+
         var signature = string.Join('|', signatureParts);
         if (string.Equals(signature, _columnEnrichmentSignature, StringComparison.Ordinal))
         {
@@ -322,7 +310,7 @@ public sealed partial class MainWindow
         var cts = new CancellationTokenSource();
         _columnEnrichmentCts = cts;
         var token = Interlocked.Increment(ref _columnEnrichmentToken);
-        _ = EnrichColumnsAsync(panes, needsGit, needsSizes, needsItems, token, cts);
+        _ = EnrichColumnsAsync(panes, needsSizes, token, cts);
     }
 
     private string ColumnEnrichmentSignatureFor(PaneId pane)
@@ -341,9 +329,7 @@ public sealed partial class MainWindow
 
     private async Task EnrichColumnsAsync(
         IReadOnlyList<PaneId> panes,
-        bool needsGit,
         bool needsSizes,
-        bool needsItems,
         int token,
         CancellationTokenSource cts)
     {
@@ -371,6 +357,11 @@ public sealed partial class MainWindow
                     continue;
                 }
 
+                var columns = workspace.ColumnsFor(pane);
+                var needsGit = columns.IsVisible("git") && workspace.Settings.EnableGitIntegration;
+                var needsItems = columns.IsVisible("items");
+                var paneNeedsSizes = needsSizes;
+
                 if (needsGit)
                 {
                     await workspace.ApplyGitStatusesAsync(pane, cancellationToken).ConfigureAwait(true);
@@ -381,9 +372,9 @@ public sealed partial class MainWindow
                     return;
                 }
 
-                if (needsSizes || needsItems)
+                if (paneNeedsSizes || needsItems)
                 {
-                    await workspace.FillFolderMetricsAsync(pane, needsSizes, needsItems, cancellationToken).ConfigureAwait(true);
+                    await workspace.FillFolderMetricsAsync(pane, paneNeedsSizes, needsItems, cancellationToken).ConfigureAwait(true);
                 }
             }
         }

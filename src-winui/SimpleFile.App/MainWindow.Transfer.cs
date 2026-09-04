@@ -30,6 +30,7 @@ public sealed partial class MainWindow
     private bool _previewMoved;
     private bool _columnDragging;
     private string? _columnDragId;
+    private PaneId _columnDragPane = PaneId.Primary;
     private double _columnDragStartX;
     private double _columnDragStartWidth;
 
@@ -964,8 +965,9 @@ public sealed partial class MainWindow
 
         _columnDragging = true;
         _columnDragId = target.ColumnId;
+        _columnDragPane = target.Pane;
         _columnDragStartX = e.GetCurrentPoint(RootGrid).Position.X;
-        _columnDragStartWidth = ColumnLayoutHost.Shared.WidthOf(_columnDragId);
+        _columnDragStartWidth = ColumnLayoutHost.For(_columnDragPane).WidthOf(_columnDragId);
         element.CapturePointer(e.Pointer);
         e.Handled = true;
     }
@@ -978,7 +980,7 @@ public sealed partial class MainWindow
         }
 
         var delta = e.GetCurrentPoint(RootGrid).Position.X - _columnDragStartX;
-        var columns = _workspace?.Columns ?? ColumnLayoutHost.Shared;
+        var columns = _workspace?.ColumnsFor(_columnDragPane) ?? ColumnLayoutHost.For(_columnDragPane);
         columns.Resize(_columnDragId, _columnDragStartWidth + delta);
         ApplyColumnWidths();
         e.Handled = true;
@@ -1029,11 +1031,12 @@ public sealed partial class MainWindow
 
     private void ApplyColumnWidths()
     {
-        var columns = _workspace?.Columns ?? ColumnLayoutHost.Shared;
-        ApplyColumnHeader(PrimaryColumnHeader, columns, PaneId.Primary, ref _primaryColumnHeaderKey);
-        ApplyColumnHeader(SecondaryColumnHeader, columns, PaneId.Secondary, ref _secondaryColumnHeaderKey);
-        ApplyDetailsItemMinWidths(PrimaryFileList, columns.VisibleWidth);
-        ApplyDetailsItemMinWidths(SecondaryFileList, columns.VisibleWidth);
+        var primary = _workspace?.ColumnsFor(PaneId.Primary) ?? ColumnLayoutHost.For(PaneId.Primary);
+        var secondary = _workspace?.ColumnsFor(PaneId.Secondary) ?? ColumnLayoutHost.For(PaneId.Secondary);
+        ApplyColumnHeader(PrimaryColumnHeader, primary, PaneId.Primary, ref _primaryColumnHeaderKey);
+        ApplyColumnHeader(SecondaryColumnHeader, secondary, PaneId.Secondary, ref _secondaryColumnHeaderKey);
+        ApplyDetailsItemMinWidths(PrimaryFileList, primary.VisibleWidth);
+        ApplyDetailsItemMinWidths(SecondaryFileList, secondary.VisibleWidth);
     }
 
     private static void ApplyDetailsItemMinWidths(ListView list, double width)

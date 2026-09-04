@@ -192,6 +192,8 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.DefaultView = UiSettings.NormalizeDefaultView(DefaultView);
         settings.DefaultIconSize = UiSettings.NormalizeIconSize(DefaultIconSize);
         settings.ColumnPreset = UiSettings.NormalizeColumnPreset(ColumnPreset);
+        // Settings dialog is a global default: apply the chosen preset to both panes.
+        settings.SecondaryColumnPreset = settings.ColumnPreset;
         settings.ShowHidden = ShowHiddenSwitch.IsOn;
         settings.ConfirmDelete = ConfirmDeleteSwitch.IsOn;
         settings.KeepFoldersOnTop = KeepFoldersOnTopSwitch.IsOn;

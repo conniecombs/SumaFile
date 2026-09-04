@@ -45,8 +45,14 @@ public sealed class UiSettings
     public bool QuickAccessCollapsed { get; set; }
     public bool MyPcCollapsed { get; set; }
     public int PhotoFolderImageThreshold { get; set; } = 70;
+    /// <summary>Primary pane column preset. Settings dialog edits this and mirrors to secondary.</summary>
     public string ColumnPreset { get; set; } = "default";
+    /// <summary>Secondary pane column preset (independent of primary).</summary>
+    public string SecondaryColumnPreset { get; set; } = "default";
+    /// <summary>Primary pane column widths.</summary>
     public Dictionary<string, double> ColumnWidths { get; set; } = new(StringComparer.Ordinal);
+    /// <summary>Secondary pane column widths (independent of primary).</summary>
+    public Dictionary<string, double> SecondaryColumnWidths { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, List<string>> ShortcutOverrides { get; set; } = new(StringComparer.Ordinal);
     public FolderViewSettingsDocument FolderViewSettings { get; set; } = new();
 

@@ -55,6 +55,9 @@ public class WinUiSourceShapeTests
         Assert.Contains("Size Column to Fit", mainWindow);
         Assert.Contains("Size All Columns to Fit", mainWindow);
         Assert.Contains("OnColumnThumbDoubleTapped", mainWindow);
+        Assert.Contains("ColumnLayoutHost.For(", fileRowView);
+        Assert.Contains("ColumnLayoutHost.Attach(_workspace.PrimaryColumns, _workspace.SecondaryColumns)", mainWindow);
+        Assert.Contains("ColumnsFor(_columnDragPane)", mainWindow);
         Assert.DoesNotContain("resizeId = column.Id == \"name\"", mainWindow);
         Assert.DoesNotContain(
             "? new GridLength(1, GridUnitType.Star)",

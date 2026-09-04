@@ -1062,6 +1062,7 @@ public class ExplorerWorkspaceTests
         await first.InitializeAsync();
         var settings = UiSettings.CreateDefault();
         settings.ColumnPreset = "developer";
+        settings.SecondaryColumnPreset = "photo";
         settings.DefaultView = "tiles";
         settings.DefaultIconSize = 96;
         settings.ShowQuickAccess = false;
@@ -1077,19 +1078,24 @@ public class ExplorerWorkspaceTests
         settings.QuickAccessCollapsed = true;
         settings.MyPcCollapsed = true;
         first.ApplyUiSettings(settings);
-        first.Columns.Resize("path", 360);
+        first.PrimaryColumns.Resize("path", 360);
+        first.SecondaryColumns.Resize("name", 275);
         await first.SaveUiSettingsAsync();
 
         var second = new ExplorerWorkspace(backend, fileOps);
         await second.InitializeAsync();
 
         Assert.Equal("developer", second.Settings.ColumnPreset);
+        Assert.Equal("photo", second.Settings.SecondaryColumnPreset);
         Assert.Equal("tiles", second.Settings.DefaultView);
         Assert.Equal(96, second.Settings.DefaultIconSize);
         Assert.Equal("tiles", second.ViewFor(PaneId.Primary));
         Assert.Equal(96, second.IconSizeFor(PaneId.Primary));
-        Assert.Equal(["name", "size", "date", "extension", "git", "symlink", "path"], second.Columns.VisibleColumns.Select(column => column.Id));
-        Assert.Equal(360, second.Columns.WidthOf("path"));
+        Assert.Equal(["name", "size", "date", "extension", "git", "symlink", "path"], second.PrimaryColumns.VisibleColumns.Select(column => column.Id));
+        Assert.Equal(360, second.PrimaryColumns.WidthOf("path"));
+        Assert.Contains("date", second.SecondaryColumns.VisibleIds);
+        Assert.DoesNotContain("git", second.SecondaryColumns.VisibleIds);
+        Assert.Equal(275, second.SecondaryColumns.WidthOf("name"));
         Assert.False(second.Settings.ShowQuickAccess);
         Assert.True(second.Settings.ShowFolderTree);
         Assert.False(second.Settings.ShowBookmarks);
@@ -1213,6 +1219,35 @@ public class ExplorerWorkspaceTests
         Assert.Equal(96, workspace.Settings.DefaultIconSize);
         Assert.Equal("content", workspace.ViewFor(PaneId.Primary));
         Assert.Equal(48, workspace.IconSizeFor(PaneId.Primary));
+    }
+
+    [Fact]
+    public async Task ColumnLayouts_ResizingPrimaryDoesNotAffectSecondary()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var workspace = new ExplorerWorkspace(backend);
+        await workspace.InitializeAsync();
+
+        var secondaryName = workspace.SecondaryColumns.WidthOf("name");
+        var secondaryVisible = workspace.SecondaryColumns.SnapshotVisibleIds();
+
+        workspace.PrimaryColumns.Resize("name", 350);
+        workspace.PrimaryColumns.ApplyPreset("developer");
+        workspace.PrimaryColumns.RestoreVisibleIds(["name", "git", "path"]);
+
+        Assert.Equal(350, workspace.PrimaryColumns.WidthOf("name"));
+        Assert.Equal(["name", "git", "path"], workspace.PrimaryColumns.SnapshotVisibleIds());
+        Assert.Equal(secondaryName, workspace.SecondaryColumns.WidthOf("name"));
+        Assert.Equal(secondaryVisible, workspace.SecondaryColumns.SnapshotVisibleIds());
+
+        workspace.SecondaryColumns.Resize("size", 155);
+        workspace.SecondaryColumns.ApplyPreset("photo");
+
+        Assert.Equal(350, workspace.PrimaryColumns.WidthOf("name"));
+        Assert.Equal(["name", "git", "path"], workspace.PrimaryColumns.SnapshotVisibleIds());
+        Assert.Equal(155, workspace.SecondaryColumns.WidthOf("size"));
+        Assert.Contains("date", workspace.SecondaryColumns.VisibleIds);
+        Assert.DoesNotContain("git", workspace.SecondaryColumns.VisibleIds);
     }
 
     [Fact]

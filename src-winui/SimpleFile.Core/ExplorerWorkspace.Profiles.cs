@@ -41,7 +41,7 @@ public sealed partial class ExplorerWorkspace
         var profile = await _profiles.FindAsync(id, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException("Profile was not found.");
         var clone = profile.Clone();
-        (clone.Chrome ?? new WorkspaceChromeLayout()).Apply(Settings, Columns);
+        (clone.Chrome ?? new WorkspaceChromeLayout()).Apply(Settings, PrimaryColumns, SecondaryColumns);
         await ApplyLayoutAsync(clone.Layout, cancellationToken).ConfigureAwait(false);
         await _profiles.SetActiveAsync(clone.Id, cancellationToken).ConfigureAwait(false);
         await SaveWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false);

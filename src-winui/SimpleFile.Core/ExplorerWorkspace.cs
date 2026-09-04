@@ -62,7 +62,8 @@ public sealed partial class ExplorerWorkspace
             profileId => ActiveProfileId = profileId);
         Clipboard = new ClipboardState();
         Undo = new UndoStack();
-        Columns = new ColumnLayout();
+        PrimaryColumns = new ColumnLayout();
+        SecondaryColumns = new ColumnLayout();
         Settings = UiSettings.CreateDefault();
         Primary = new ExplorerPane(PaneId.Primary);
         Secondary = new ExplorerPane(PaneId.Secondary);
@@ -74,7 +75,12 @@ public sealed partial class ExplorerWorkspace
     public FileOperationService? FileOps { get; }
     public ClipboardState Clipboard { get; }
     public UndoStack Undo { get; }
-    public ColumnLayout Columns { get; }
+    /// <summary>Primary pane column layout. Prefer <see cref="ColumnsFor"/> for pane-specific access.</summary>
+    public ColumnLayout PrimaryColumns { get; }
+    /// <summary>Secondary pane column layout.</summary>
+    public ColumnLayout SecondaryColumns { get; }
+    /// <summary>Legacy alias for <see cref="PrimaryColumns"/>.</summary>
+    public ColumnLayout Columns => PrimaryColumns;
     public UiSettings Settings { get; private set; }
     public ExplorerPane Primary { get; }
     public ExplorerPane Secondary { get; }
@@ -125,6 +131,9 @@ public sealed partial class ExplorerWorkspace
 
     public ExplorerPane Pane(PaneId pane) =>
         Normalize(pane) == PaneId.Secondary ? Secondary : Primary;
+
+    public ColumnLayout ColumnsFor(PaneId pane) =>
+        Normalize(pane) == PaneId.Secondary ? SecondaryColumns : PrimaryColumns;
 
     public PaneId Normalize(PaneId pane) =>
         pane == PaneId.Secondary && DualPaneEnabled ? PaneId.Secondary : PaneId.Primary;
@@ -181,8 +190,7 @@ public sealed partial class ExplorerWorkspace
             ApplyDefaultViewOptionsToPanes();
         }
 
-        Columns.ApplyPreset(string.IsNullOrWhiteSpace(settings.ColumnPreset) ? "default" : settings.ColumnPreset);
-        Columns.RestoreWidths(settings.ColumnWidths);
+        ApplyColumnSettingsFromUiSettings();
         RaiseChanged();
     }
 
@@ -307,18 +315,21 @@ public sealed partial class ExplorerWorkspace
 
     private FolderViewOptions CaptureFolderViewOptions(ExplorerPane pane)
     {
+        // Folder-view column options are captured for the pane being saved (per-pane layouts).
+        var columns = ColumnsFor(pane.Id);
+        var preset = pane.Id == PaneId.Secondary ? Settings.SecondaryColumnPreset : Settings.ColumnPreset;
         return new FolderViewOptions
         {
             View = pane.View,
             IconSize = pane.IconSize,
-            VisibleColumnIds = Columns.SnapshotVisibleIds(),
-            ColumnWidths = Columns.SnapshotWidths(),
+            VisibleColumnIds = columns.SnapshotVisibleIds(),
+            ColumnWidths = columns.SnapshotWidths(),
             SortBy = pane.SortBy,
             SortAscending = pane.SortAscending,
             PreviewVisible = Settings.PreviewVisible,
             ShowHidden = ShowHiddenFiles,
             WorkspaceProfileId = ActiveProfileId,
-            ColumnPreset = Settings.ColumnPreset,
+            ColumnPreset = preset,
         };
     }
 
@@ -365,28 +376,48 @@ public sealed partial class ExplorerWorkspace
             }
         }
 
+        // Folder-view column options apply to the pane being viewed, not a shared layout.
+        var columns = ColumnsFor(pane.Id);
         if (!string.IsNullOrWhiteSpace(options.ColumnPreset))
         {
             var preset = UiSettings.NormalizeColumnPreset(options.ColumnPreset);
-            if (!string.Equals(Settings.ColumnPreset, preset, StringComparison.Ordinal))
+            if (pane.Id == PaneId.Secondary)
+            {
+                if (!string.Equals(Settings.SecondaryColumnPreset, preset, StringComparison.Ordinal))
+                {
+                    Settings.SecondaryColumnPreset = preset;
+                    changed = true;
+                }
+            }
+            else if (!string.Equals(Settings.ColumnPreset, preset, StringComparison.Ordinal))
             {
                 Settings.ColumnPreset = preset;
                 changed = true;
             }
 
-            Columns.ApplyPreset(preset);
+            columns.ApplyPreset(preset);
+            changed = true;
         }
 
         if (options.VisibleColumnIds is { Count: > 0 } visibleColumnIds)
         {
-            Columns.RestoreVisibleIds(visibleColumnIds);
+            columns.RestoreVisibleIds(visibleColumnIds);
             changed = true;
         }
 
         if (options.ColumnWidths is { Count: > 0 } columnWidths)
         {
-            Settings.ColumnWidths = new Dictionary<string, double>(columnWidths, StringComparer.Ordinal);
-            Columns.RestoreWidths(Settings.ColumnWidths);
+            var widths = new Dictionary<string, double>(columnWidths, StringComparer.Ordinal);
+            if (pane.Id == PaneId.Secondary)
+            {
+                Settings.SecondaryColumnWidths = widths;
+            }
+            else
+            {
+                Settings.ColumnWidths = widths;
+            }
+
+            columns.RestoreWidths(widths);
             changed = true;
         }
 
@@ -904,7 +935,7 @@ public sealed partial class ExplorerWorkspace
 
     public WorkspaceChromeLayout CaptureChromeLayout()
     {
-        return WorkspaceChromeLayout.Capture(Settings, Columns);
+        return WorkspaceChromeLayout.Capture(Settings, PrimaryColumns, SecondaryColumns);
     }
 
     public async Task ApplyLayoutAsync(WorkspaceLayout layout, CancellationToken cancellationToken = default)
@@ -1039,8 +1070,7 @@ public sealed partial class ExplorerWorkspace
             Settings.FolderViewSettings.Normalize();
             ShowHiddenFiles = Settings.ShowHidden;
             ApplyDefaultViewOptionsToPanes();
-            Columns.ApplyPreset(Settings.ColumnPreset);
-            Columns.RestoreWidths(Settings.ColumnWidths);
+            ApplyColumnSettingsFromUiSettings();
         }
         catch
         {
@@ -1107,6 +1137,17 @@ public sealed partial class ExplorerWorkspace
             }
         }
     }
+
+    private void ApplyColumnSettingsFromUiSettings()
+    {
+        PrimaryColumns.ApplyPreset(
+            string.IsNullOrWhiteSpace(Settings.ColumnPreset) ? "default" : Settings.ColumnPreset);
+        PrimaryColumns.RestoreWidths(Settings.ColumnWidths);
+        SecondaryColumns.ApplyPreset(
+            string.IsNullOrWhiteSpace(Settings.SecondaryColumnPreset) ? "default" : Settings.SecondaryColumnPreset);
+        SecondaryColumns.RestoreWidths(Settings.SecondaryColumnWidths);
+    }
+
     public async Task SaveUiSettingsAsync(CancellationToken cancellationToken = default)
     {
         if (FileOps is null)
@@ -1114,10 +1155,13 @@ public sealed partial class ExplorerWorkspace
             return;
         }
 
+        Settings.ColumnPreset = UiSettings.NormalizeColumnPreset(Settings.ColumnPreset);
+        Settings.SecondaryColumnPreset = UiSettings.NormalizeColumnPreset(Settings.SecondaryColumnPreset);
         await WorkspaceSettingsStore.SaveAsync(
             FileOps,
             Settings,
-            Columns,
+            PrimaryColumns,
+            SecondaryColumns,
             ShowHiddenFiles,
             Bookmarks,
             RecentPaths,

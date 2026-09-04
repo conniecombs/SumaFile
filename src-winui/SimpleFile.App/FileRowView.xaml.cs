@@ -54,7 +54,7 @@ public sealed partial class FileRowView : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        ColumnLayoutHost.Shared.Changed += OnColumnsChanged;
+        ColumnLayoutHost.Changed += OnColumnsChanged;
         FileListViewHost.Changed += OnViewSettingsChanged;
         FileListThumbnailHost.Changed += OnThumbnailsChanged;
         ApplyColumns();
@@ -63,7 +63,7 @@ public sealed partial class FileRowView : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        ColumnLayoutHost.Shared.Changed -= OnColumnsChanged;
+        ColumnLayoutHost.Changed -= OnColumnsChanged;
         FileListViewHost.Changed -= OnViewSettingsChanged;
         FileListThumbnailHost.Changed -= OnThumbnailsChanged;
         CancelThumbnailLoad();
@@ -132,9 +132,9 @@ public sealed partial class FileRowView : UserControl
 
     private void ApplyColumns()
     {
-        var columns = ColumnLayoutHost.Shared;
-        var visible = columns.VisibleColumns;
         var pane = Row?.Pane ?? PaneId.Primary;
+        var columns = ColumnLayoutHost.For(pane);
+        var visible = columns.VisibleColumns;
         var view = FileListViewHost.ViewFor(pane);
         var iconSize = FileListViewHost.IconSizeFor(pane);
         var columnKey = view == "details"
@@ -641,20 +641,50 @@ public sealed partial class FileRowView : UserControl
 
 public static class ColumnLayoutHost
 {
-    public static ColumnLayout Shared { get; private set; } = new();
+    public static event EventHandler? Changed;
 
-    public static void Attach(ColumnLayout layout)
+    private static ColumnLayout _primary = new();
+    private static ColumnLayout _secondary = new();
+
+    /// <summary>Legacy alias for the primary pane layout. Prefer <see cref="For"/>.</summary>
+    public static ColumnLayout Shared => _primary;
+
+    public static ColumnLayout For(PaneId pane) =>
+        pane == PaneId.Secondary ? _secondary : _primary;
+
+    public static void Attach(ColumnLayout primary, ColumnLayout secondary)
     {
-        Shared = layout;
+        Unhook(_primary);
+        Unhook(_secondary);
+        _primary = primary;
+        _secondary = secondary;
+        Hook(_primary);
+        Hook(_secondary);
+        Changed?.Invoke(null, EventArgs.Empty);
     }
 
-    public static void Detach(ColumnLayout layout)
+    public static void Detach(ColumnLayout primary, ColumnLayout secondary)
     {
-        if (ReferenceEquals(Shared, layout))
+        Unhook(primary);
+        Unhook(secondary);
+        if (ReferenceEquals(_primary, primary))
         {
-            Shared = new ColumnLayout();
+            _primary = new ColumnLayout();
         }
+
+        if (ReferenceEquals(_secondary, secondary))
+        {
+            _secondary = new ColumnLayout();
+        }
+
+        Changed?.Invoke(null, EventArgs.Empty);
     }
+
+    private static void Hook(ColumnLayout layout) => layout.Changed += OnLayoutChanged;
+
+    private static void Unhook(ColumnLayout layout) => layout.Changed -= OnLayoutChanged;
+
+    private static void OnLayoutChanged(object? sender, EventArgs e) => Changed?.Invoke(sender, e);
 }
 
 public static class FileListViewHost

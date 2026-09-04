@@ -517,7 +517,8 @@ public sealed partial class MainWindow
     {
         if (args.ItemContainer is ListViewItem item)
         {
-            item.MinWidth = ColumnLayoutHost.Shared.VisibleWidth;
+            var pane = ReferenceEquals(sender, SecondaryFileList) ? PaneId.Secondary : PaneId.Primary;
+            item.MinWidth = ColumnLayoutHost.For(pane).VisibleWidth;
             item.HorizontalAlignment = HorizontalAlignment.Left;
         }
     }

@@ -182,7 +182,7 @@ public sealed partial class MainWindow : Window
             _toolbar = AppServices.GetRequired<ToolbarViewModel>();
             AttachViewModels();
             FileListThumbnailHost.Configure(LoadFileListImageThumbnailAsync);
-            ColumnLayoutHost.Attach(_workspace.Columns);
+            ColumnLayoutHost.Attach(_workspace.PrimaryColumns, _workspace.SecondaryColumns);
             _workspace.Changed += OnWorkspaceChanged;
             _fileChangeSubscription = client.On<FileChangeEvent>(Protocol.FileChangeEvent, OnFileChange);
             await _workspace.InitializeAsync();
@@ -1182,7 +1182,7 @@ public sealed partial class MainWindow : Window
             }
 
             workspace.Changed -= OnWorkspaceChanged;
-            ColumnLayoutHost.Detach(workspace.Columns);
+            ColumnLayoutHost.Detach(workspace.PrimaryColumns, workspace.SecondaryColumns);
             FileListThumbnailHost.Configure(null);
             DetachViewModels();
             _search?.ClearState(notifyHost: false);

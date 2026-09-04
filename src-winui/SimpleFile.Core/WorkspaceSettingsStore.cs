@@ -41,9 +41,12 @@ internal static class WorkspaceSettingsStore
             await ReadDoubleSettingAsync(fileOps, "dualPane.primaryPercent", UiSettings.DualPaneDefaultPercent, cancellationToken).ConfigureAwait(false));
         settings.DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(
             await ReadDoubleSettingAsync(fileOps, "dualPane.primaryWidth", 0, cancellationToken).ConfigureAwait(false));
-        settings.ColumnPreset = UiSettings.NormalizeColumnPreset(
-            await fileOps.GetSettingAsync("columnPreset", cancellationToken).ConfigureAwait(false));
-        settings.ColumnWidths = await ReadColumnWidthsAsync(fileOps, cancellationToken).ConfigureAwait(false);
+        var columnPresets = await ReadColumnPresetsAsync(fileOps, cancellationToken).ConfigureAwait(false);
+        settings.ColumnPreset = columnPresets.Primary;
+        settings.SecondaryColumnPreset = columnPresets.Secondary;
+        var columnWidths = await ReadColumnWidthsAsync(fileOps, cancellationToken).ConfigureAwait(false);
+        settings.ColumnWidths = columnWidths.Primary;
+        settings.SecondaryColumnWidths = columnWidths.Secondary;
         settings.ShortcutOverrides = await ReadShortcutOverridesAsync(fileOps, cancellationToken).ConfigureAwait(false);
         settings.FolderViewSettings = FolderViewSettingsDocument.FromJson(
             await fileOps.GetSettingAsync(FolderViewSettingsDocument.SettingsKey, cancellationToken).ConfigureAwait(false));
@@ -69,7 +72,8 @@ internal static class WorkspaceSettingsStore
     public static async Task SaveAsync(
         ISettingsBackend fileOps,
         UiSettings settings,
-        ColumnLayout columns,
+        ColumnLayout primaryColumns,
+        ColumnLayout secondaryColumns,
         bool showHidden,
         IReadOnlyList<BookmarkItem> bookmarks,
         IReadOnlyList<string> recentPaths,
@@ -84,7 +88,9 @@ internal static class WorkspaceSettingsStore
         settings.DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(settings.DualPanePrimaryPercent);
         settings.DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(settings.DualPanePrimaryWidth);
         settings.ColumnPreset = UiSettings.NormalizeColumnPreset(settings.ColumnPreset);
-        settings.ColumnWidths = columns.SnapshotWidths();
+        settings.SecondaryColumnPreset = UiSettings.NormalizeColumnPreset(settings.SecondaryColumnPreset);
+        settings.ColumnWidths = primaryColumns.SnapshotWidths();
+        settings.SecondaryColumnWidths = secondaryColumns.SnapshotWidths();
         settings.FolderViewSettings.Normalize();
         await fileOps.SetSettingAsync("theme", settings.Theme, cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("defaultView", settings.DefaultView, cancellationToken).ConfigureAwait(false);
@@ -103,9 +109,14 @@ internal static class WorkspaceSettingsStore
         await fileOps.SetSettingAsync("dualPane.primaryPercent", settings.DualPanePrimaryPercent.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("dualPane.primaryWidth", settings.DualPanePrimaryWidth.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("columnPreset", settings.ColumnPreset, cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync("columnPreset.secondary", settings.SecondaryColumnPreset, cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync(
             "columnWidths",
-            JsonSerializer.Serialize(settings.ColumnWidths),
+            JsonSerializer.Serialize(new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal)
+            {
+                ["primary"] = settings.ColumnWidths,
+                ["secondary"] = settings.SecondaryColumnWidths,
+            }),
             cancellationToken).ConfigureAwait(false);
         settings.ShortcutOverrides = KeyboardShortcutMap.NormalizeOverrides(settings.ShortcutOverrides);
         await fileOps.SetSettingAsync(
@@ -136,26 +147,100 @@ internal static class WorkspaceSettingsStore
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task<Dictionary<string, double>> ReadColumnWidthsAsync(
+    private readonly record struct PaneColumnPresets(string Primary, string Secondary);
+
+    private readonly record struct PaneColumnWidths(
+        Dictionary<string, double> Primary,
+        Dictionary<string, double> Secondary);
+
+    private static async Task<PaneColumnPresets> ReadColumnPresetsAsync(
         ISettingsBackend fileOps,
         CancellationToken cancellationToken)
     {
+        var primary = UiSettings.NormalizeColumnPreset(
+            await fileOps.GetSettingAsync("columnPreset", cancellationToken).ConfigureAwait(false));
+        var secondaryRaw = await fileOps.GetSettingAsync("columnPreset.secondary", cancellationToken).ConfigureAwait(false);
+        var secondary = string.IsNullOrWhiteSpace(secondaryRaw)
+            ? primary
+            : UiSettings.NormalizeColumnPreset(secondaryRaw);
+        return new PaneColumnPresets(primary, secondary);
+    }
+
+    private static async Task<PaneColumnWidths> ReadColumnWidthsAsync(
+        ISettingsBackend fileOps,
+        CancellationToken cancellationToken)
+    {
+        var empty = () => new Dictionary<string, double>(StringComparer.Ordinal);
         var raw = await fileOps.GetSettingAsync("columnWidths", cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return new Dictionary<string, double>(StringComparer.Ordinal);
+            return new PaneColumnWidths(empty(), empty());
         }
 
         try
         {
-            return JsonSerializer.Deserialize<Dictionary<string, double>>(raw)
-                ?? new Dictionary<string, double>(StringComparer.Ordinal);
+            using var document = JsonDocument.Parse(raw);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return new PaneColumnWidths(empty(), empty());
+            }
+
+            // Nested { "primary": {...}, "secondary": {...} }.
+            if (LooksLikePaneColumnWidths(document.RootElement))
+            {
+                var primary = ReadWidthMap(document.RootElement, "primary") ?? empty();
+                var secondary = ReadWidthMap(document.RootElement, "secondary") ?? CloneWidths(primary);
+                return new PaneColumnWidths(primary, secondary);
+            }
+
+            // Legacy flat { "name": 240, ... } — seed both panes.
+            var flat = ReadWidthMap(document.RootElement) ?? empty();
+            return new PaneColumnWidths(flat, CloneWidths(flat));
         }
         catch
         {
-            return new Dictionary<string, double>(StringComparer.Ordinal);
+            return new PaneColumnWidths(empty(), empty());
         }
     }
+
+    private static bool LooksLikePaneColumnWidths(JsonElement root)
+    {
+        if (!root.TryGetProperty("primary", out var primary) && !root.TryGetProperty("secondary", out primary))
+        {
+            return false;
+        }
+
+        return primary.ValueKind == JsonValueKind.Object;
+    }
+
+    private static Dictionary<string, double>? ReadWidthMap(JsonElement root, string? property = null)
+    {
+        JsonElement target = root;
+        if (property is not null)
+        {
+            if (!root.TryGetProperty(property, out target) || target.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+        }
+
+        var result = new Dictionary<string, double>(StringComparer.Ordinal);
+        foreach (var propertyElement in target.EnumerateObject())
+        {
+            if (propertyElement.Value.ValueKind == JsonValueKind.Number
+                && propertyElement.Value.TryGetDouble(out var width)
+                && !double.IsNaN(width)
+                && !double.IsInfinity(width))
+            {
+                result[propertyElement.Name] = width;
+            }
+        }
+
+        return result;
+    }
+
+    private static Dictionary<string, double> CloneWidths(IReadOnlyDictionary<string, double> source) =>
+        new(source, StringComparer.Ordinal);
 
     private static async Task<Dictionary<string, List<string>>> ReadShortcutOverridesAsync(
         ISettingsBackend fileOps,

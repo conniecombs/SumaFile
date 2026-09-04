@@ -146,6 +146,7 @@ public class WorkspaceSettingsStoreTests
             DualPanePrimaryPercent = 5,
             DualPanePrimaryWidth = 40,
             ColumnPreset = "developer",
+            SecondaryColumnPreset = "developer",
             ShowQuickAccess = false,
             ShowFolderTree = true,
             ShowBookmarks = false,
@@ -186,10 +187,14 @@ public class WorkspaceSettingsStoreTests
                 WorkspaceProfileId = WorkspaceProfileTemplates.DeveloperId,
             });
 
+        var secondaryColumns = new ColumnLayout();
+        secondaryColumns.ApplyPreset("developer");
+        secondaryColumns.Resize("name", 321);
         await WorkspaceSettingsStore.SaveAsync(
             fileOps,
             settings,
             columns,
+            secondaryColumns,
             showHidden: true,
             bookmarks,
             recentPaths,
@@ -213,7 +218,11 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal(UiSettings.DualPaneMinPercent, state.Settings.DualPanePrimaryPercent);
         Assert.Equal(UiSettings.FilePaneMinWidth, state.Settings.DualPanePrimaryWidth);
         Assert.Equal("developer", state.Settings.ColumnPreset);
+        Assert.Equal("developer", state.Settings.SecondaryColumnPreset);
         Assert.Equal(321, state.Settings.ColumnWidths["name"]);
+        Assert.Equal(321, state.Settings.SecondaryColumnWidths["name"]);
+        Assert.Contains("primary", ipc.Settings["columnWidths"]);
+        Assert.Contains("secondary", ipc.Settings["columnWidths"]);
         Assert.False(state.Settings.ShowQuickAccess);
         Assert.True(state.Settings.ShowFolderTree);
         Assert.False(state.Settings.ShowBookmarks);
@@ -273,6 +282,7 @@ public class WorkspaceSettingsStoreTests
         var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
 
         Assert.Empty(state.Settings.ColumnWidths);
+        Assert.Empty(state.Settings.SecondaryColumnWidths);
         Assert.Equal(["Ctrl+K"], state.Settings.ShortcutOverrides["search.focus"]);
         Assert.Equal([], state.Settings.ShortcutOverrides["tabs.close"]);
         Assert.False(state.Settings.ShortcutOverrides.ContainsKey("directory.refresh"));
@@ -292,4 +302,54 @@ public class WorkspaceSettingsStoreTests
             ],
             state.RecentPaths);
     }
+
+    [Fact]
+    public async Task LoadAsync_MigratesFlatColumnWidthsToBothPanes()
+    {
+        var ipc = new ConfigurableIpc();
+        ipc.Settings["columnPreset"] = "details";
+        ipc.Settings["columnWidths"] = """{"name": 333, "size": 111}""";
+        var fileOps = new FileOperationService(ipc);
+
+        var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+
+        Assert.Equal("details", state.Settings.ColumnPreset);
+        Assert.Equal("details", state.Settings.SecondaryColumnPreset);
+        Assert.Equal(333, state.Settings.ColumnWidths["name"]);
+        Assert.Equal(111, state.Settings.ColumnWidths["size"]);
+        Assert.Equal(333, state.Settings.SecondaryColumnWidths["name"]);
+        Assert.Equal(111, state.Settings.SecondaryColumnWidths["size"]);
+    }
+
+    [Fact]
+    public async Task SaveAndLoadAsync_KeepsIndependentPaneColumnWidths()
+    {
+        var ipc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(ipc);
+        var primary = new ColumnLayout();
+        primary.Resize("name", 280);
+        var secondary = new ColumnLayout();
+        secondary.ApplyPreset("developer");
+        secondary.Resize("name", 410);
+        var settings = UiSettings.CreateDefault();
+        settings.ColumnPreset = "default";
+        settings.SecondaryColumnPreset = "developer";
+
+        await WorkspaceSettingsStore.SaveAsync(
+            fileOps,
+            settings,
+            primary,
+            secondary,
+            showHidden: false,
+            bookmarks: [],
+            recentPaths: [],
+            CancellationToken.None);
+        var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+
+        Assert.Equal("default", state.Settings.ColumnPreset);
+        Assert.Equal("developer", state.Settings.SecondaryColumnPreset);
+        Assert.Equal(280, state.Settings.ColumnWidths["name"]);
+        Assert.Equal(410, state.Settings.SecondaryColumnWidths["name"]);
+    }
+
 }

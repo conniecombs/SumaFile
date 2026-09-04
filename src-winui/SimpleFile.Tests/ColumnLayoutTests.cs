@@ -1,12 +1,7 @@
-using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using SimpleFile.Core;
-using SimpleFile.Ipc;
 using Xunit;
-using DriveInfo = SimpleFile.Ipc.DriveInfo;
 
 namespace SimpleFile.Tests;
 
@@ -45,5 +40,29 @@ public class ColumnLayoutTests
 
         columns.RestoreVisibleIds([]);
         Assert.Equal(["name", "git", "path"], columns.SnapshotVisibleIds());
+    }
+
+    [Fact]
+    public void PrimaryAndSecondaryColumnLayouts_AreIndependent()
+    {
+        var primary = new ColumnLayout();
+        var secondary = new ColumnLayout();
+
+        primary.Resize("name", 300);
+        primary.ApplyPreset("developer");
+        primary.RestoreVisibleIds(["name", "git"]);
+
+        Assert.Equal(240, secondary.WidthOf("name"));
+        Assert.Equal(ColumnLayout.DefaultVisible, secondary.SnapshotVisibleIds());
+        Assert.DoesNotContain("git", secondary.VisibleIds);
+
+        secondary.Resize("size", 180);
+        secondary.ApplyPreset("photo");
+
+        Assert.Equal(300, primary.WidthOf("name"));
+        Assert.Equal(["name", "git"], primary.SnapshotVisibleIds());
+        Assert.Equal(180, secondary.WidthOf("size"));
+        Assert.Contains("date", secondary.VisibleIds);
+        Assert.DoesNotContain("git", secondary.VisibleIds);
     }
 }
