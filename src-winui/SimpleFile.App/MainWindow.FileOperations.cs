@@ -147,7 +147,29 @@ public sealed partial class MainWindow
 
     private void OnTransferProgress(ProgressUpdate update)
     {
-        _transfer?.OnProgress(update);
+        if (DispatcherQueue.HasThreadAccess)
+        {
+            _transfer?.OnProgress(update);
+            return;
+        }
+
+        DispatcherQueue.TryEnqueue(() => _transfer?.OnProgress(update));
+    }
+
+    private void CompleteTransferProgress(bool move, int itemCount)
+    {
+        if (!DispatcherQueue.HasThreadAccess)
+        {
+            DispatcherQueue.TryEnqueue(() => CompleteTransferProgress(move, itemCount));
+            return;
+        }
+
+        _transfer?.CompleteCurrentOperation("completed");
+        _transferProgressWindow?.SetCompleted();
+
+        var verb = move ? "Moved" : "Copied";
+        var noun = itemCount == 1 ? "item" : "items";
+        SetStatusText($"{verb} {itemCount} {noun}");
     }
 
     private async void OnFileProgressCancelRequested(object? sender, EventArgs e)
@@ -198,7 +220,7 @@ public sealed partial class MainWindow
             _transferProgressWindow = null;
         }
 
-        if (_transfer?.HasActiveTransfer == true)
+        if (_transfer?.IsTransferring == true)
         {
             OnFileProgressCancelRequested(sender, EventArgs.Empty);
         }

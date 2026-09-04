@@ -160,10 +160,11 @@
                         Style="{StaticResource SfGhostButtonStyle}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon
+                                x:Name="CancelButtonIcon"
                                 FontFamily="{StaticResource SfIconFont}"
                                 FontSize="11"
                                 Glyph="&#xE711;" />
-                            <TextBlock Text="Cancel" />
+                            <TextBlock x:Name="CancelButtonLabel" Text="Cancel" />
                         </StackPanel>
                     </Button>
                 </StackPanel>

@@ -261,6 +261,7 @@ public sealed partial class MainWindow
 
                     if (ReferenceEquals(_workspace, workspace) && !transferCts.IsCancellationRequested)
                     {
+                        CompleteTransferProgress(move, sources.Length);
                         await workspace.RefreshAsync(transferCts.Token);
                     }
 

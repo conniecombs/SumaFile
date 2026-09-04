@@ -22,6 +22,7 @@ public sealed partial class TransferProgressWindow : Window
         }
 
         FileProgressPanel.CancelRequested += (_, _) => CancelRequested?.Invoke(this, EventArgs.Empty);
+        FileProgressPanel.CloseRequested += (_, _) => Close();
         Closed += (_, _) => IsClosed = true;
     }
 
@@ -49,6 +50,15 @@ public sealed partial class TransferProgressWindow : Window
         if (!IsClosed)
         {
             FileProgressPanel.SetCancelling();
+        }
+    }
+
+    public void SetCompleted()
+    {
+        if (!IsClosed)
+        {
+            Title = "Transfer complete";
+            FileProgressPanel.SetCompleted();
         }
     }
 }

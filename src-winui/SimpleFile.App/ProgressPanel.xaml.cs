@@ -14,13 +14,24 @@ public sealed partial class ProgressPanel : UserControl
     private double? _bytesPerSecond;
     private bool _hasSample;
     private string _lastCurrentItemPath = "";
+    private bool _isComplete;
 
     public event EventHandler? CancelRequested;
+    public event EventHandler? CloseRequested;
 
     public ProgressPanel()
     {
         InitializeComponent();
-        CancelButton.Click += (_, _) => CancelRequested?.Invoke(this, EventArgs.Empty);
+        CancelButton.Click += (_, _) =>
+        {
+            if (_isComplete)
+            {
+                CloseRequested?.Invoke(this, EventArgs.Empty);
+                return;
+            }
+
+            CancelRequested?.Invoke(this, EventArgs.Empty);
+        };
     }
 
     public void Start(TransferProgressContext context)
@@ -32,6 +43,9 @@ public sealed partial class ProgressPanel : UserControl
         Visibility = Visibility.Visible;
         CancelButton.IsEnabled = true;
         PauseButton.IsEnabled = false;
+        _isComplete = false;
+        CancelButtonIcon.Glyph = "\uE711";
+        CancelButtonLabel.Text = "Cancel";
 
         ApplyDisplay(TransferProgressFormatter.Format(
             _context,
@@ -65,6 +79,7 @@ public sealed partial class ProgressPanel : UserControl
 
     public void SetCancelling()
     {
+        _isComplete = false;
         OperationLabel.Text = _context.Move ? "Cancelling move" : "Cancelling copy";
         SummaryLabel.Text = "Stopping transfer safely";
         CancelButton.IsEnabled = false;
@@ -75,7 +90,9 @@ public sealed partial class ProgressPanel : UserControl
 
     public void SetCompleted()
     {
-        CancelButton.IsEnabled = false;
+        var itemCount = Math.Max(_context.ItemCount, 1);
+        _isComplete = true;
+        CancelButton.IsEnabled = true;
         PauseButton.IsEnabled = false;
         ProgressBar.Value = 100;
         ProgressBar.IsIndeterminate = false;
@@ -84,6 +101,14 @@ public sealed partial class ProgressPanel : UserControl
         OperationLabel.Text = _context.Move ? "Move complete" : "Copy complete";
         SummaryLabel.Text = "Transfer complete";
         PercentLabel.Text = "100%";
+        FileSummaryLabel.Text = itemCount == 1 ? "1 item complete" : $"{itemCount} items complete";
+        FileRateLabel.Text = "Files complete";
+        CurrentItemLabel.Text = "Transfer complete";
+        SpeedLabel.Text = "Complete";
+        EtaLabel.Text = "Done";
+        CancelButtonIcon.Glyph = "\uE8BB";
+        CancelButtonLabel.Text = "Close";
+        ToolTipService.SetToolTip(CurrentItemLabel, null);
     }
 
     private double? TrackSpeed(ProgressUpdate update)

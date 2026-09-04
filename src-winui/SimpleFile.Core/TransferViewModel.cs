@@ -87,8 +87,7 @@ public sealed partial class TransferViewModel : ObservableObject
     /// </summary>
     public void OnProgress(ProgressUpdate update)
     {
-        if (CurrentOperationId is not null
-            && !string.Equals(update.OperationId, CurrentOperationId, StringComparison.Ordinal))
+        if (!IsCurrentOperation(update.OperationId))
         {
             return;
         }
@@ -102,11 +101,23 @@ public sealed partial class TransferViewModel : ObservableObject
 
         if (update.Status is "completed" or "cancelled" or "error")
         {
-            CurrentOperationId = null;
-            IsTransferring = false;
-            IsCancelling = false;
-            Completed?.Invoke(this, new TransferCompletedEventArgs(update.Status));
+            CompleteTransfer(update.Status);
         }
+    }
+
+    public void CompleteCurrentOperation(string status)
+    {
+        if (CurrentOperationId is null)
+        {
+            return;
+        }
+
+        if (status == "completed")
+        {
+            ProgressPercent = 100;
+        }
+
+        CompleteTransfer(status);
     }
 
     /// <summary>
@@ -192,6 +203,18 @@ public sealed partial class TransferViewModel : ObservableObject
 
         var parent = System.IO.Path.GetDirectoryName(trimmed);
         return string.IsNullOrWhiteSpace(parent) ? source : parent;
+    }
+
+    private bool IsCurrentOperation(string operationId)
+        => CurrentOperationId is not null
+            && string.Equals(operationId, CurrentOperationId, StringComparison.Ordinal);
+
+    private void CompleteTransfer(string status)
+    {
+        CurrentOperationId = null;
+        IsTransferring = false;
+        IsCancelling = false;
+        Completed?.Invoke(this, new TransferCompletedEventArgs(status));
     }
 }
 
