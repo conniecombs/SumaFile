@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, 'C#']
+    branches: [main, 'C#', WorkingBranch]
   pull_request:
-    branches: [main, 'C#']
+    branches: [main, 'C#', WorkingBranch]
   workflow_dispatch:
 
 permissions:

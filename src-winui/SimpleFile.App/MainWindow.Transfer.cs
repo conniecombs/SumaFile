@@ -375,7 +375,7 @@ public sealed partial class MainWindow
                 () => DropDestination.ProbeConflictingTransferNames(
                     sources,
                     destination,
-                    path => File.Exists(path) || Directory.Exists(path),
+                    NativePath.ExistsNoFollow,
                     cancellationToken),
                 cancellationToken);
         }

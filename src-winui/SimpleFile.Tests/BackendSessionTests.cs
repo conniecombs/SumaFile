@@ -13,7 +13,7 @@ public class BackendSessionTests
             JobObject.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JobObject.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
             JobObject.DefaultLimitFlags);
 
-        using var job = JobObject.TryCreate();
+        using var job = JobObject.Create();
         Assert.NotNull(job);
         var flags = job.TryGetLimitFlags();
         Assert.NotNull(flags);
@@ -23,6 +23,18 @@ public class BackendSessionTests
         Assert.Equal(
             JobObject.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
             flags.Value & JobObject.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK);
+    }
+
+    [Fact]
+    public void JobObject_CreateAndAssignApisAreHardFail()
+    {
+        // Soft Try* helpers remain for diagnostics; session start must use Create/Assign.
+        Assert.NotNull(typeof(JobObject).GetMethod("Create"));
+        Assert.NotNull(typeof(JobObject).GetMethod("Assign", [typeof(System.Diagnostics.Process)]));
+        Assert.Contains("JobObject.Create()", File.ReadAllText(FindCoreSource("BackendSession.cs")));
+        Assert.Contains("_job!.Assign(_service)", File.ReadAllText(FindCoreSource("BackendSession.cs")));
+        Assert.DoesNotContain("_job?.TryAssign", File.ReadAllText(FindCoreSource("BackendSession.cs")));
+        Assert.DoesNotContain("JobObject.TryCreate()", File.ReadAllText(FindCoreSource("BackendSession.cs")));
     }
 
     [Fact]
@@ -131,5 +143,22 @@ public class BackendSessionTests
         }
 
         Assert.True(condition(), "Timed out waiting for IPC disconnect.");
+    }
+
+    private static string FindCoreSource(string fileName)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(directory.FullName, "SimpleFile.Core", fileName);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException($"Could not locate SimpleFile.Core/{fileName}.");
     }
 }

@@ -173,7 +173,9 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
             ? $"SumaFile.{sessionId}.{Environment.ProcessId}"
             : $"SumaFile.{sessionId}.{Environment.ProcessId}.{_generation}";
 
-        _job ??= JobObject.TryCreate();
+        // Job-object attach is required so the service dies with the host. Silent
+        // fallback to PID polling risks orphaned services if the PID is reused.
+        _job ??= JobObject.Create();
 
         var start = new ProcessStartInfo
         {
@@ -193,8 +195,30 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
         _service.ErrorDataReceived += OnServiceStderr;
         _service.BeginOutputReadLine();
         _service.BeginErrorReadLine();
-        _job?.TryAssign(_service);
-        
+        try
+        {
+            _job!.Assign(_service);
+        }
+        catch
+        {
+            try
+            {
+                if (!_service.HasExited)
+                {
+                    _service.Kill(entireProcessTree: false);
+                    _service.WaitForExit(1500);
+                }
+            }
+            catch
+            {
+                // Best-effort: do not mask the job-object failure.
+            }
+
+            _service.Dispose();
+            _service = null;
+            throw;
+        }
+
         _service.StandardInput.WriteLine(_authToken);
         _service.StandardInput.Close();
 

@@ -135,8 +135,8 @@ public class WinUiSourceShapeTests
         var appRoot = Path.Combine(root, "SimpleFile.App");
         var coreRoot = Path.Combine(root, "SimpleFile.Core");
         var toolbar = File.ReadAllText(Path.Combine(appRoot, "PrimaryToolbarView.xaml"));
-        var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
-        var workspace = File.ReadAllText(Path.Combine(coreRoot, "ExplorerWorkspace.cs"));
+        var commands = ReadMainWindowSource(appRoot);
+        var workspace = ReadExplorerWorkspaceSource(coreRoot);
         var profiles = File.ReadAllText(Path.Combine(coreRoot, "WorkspaceProfile.cs"));
 
         Assert.Contains("WorkspaceProfileButton", toolbar);
@@ -197,8 +197,8 @@ public class WinUiSourceShapeTests
         var appRoot = Path.Combine(root, "SimpleFile.App");
         var coreRoot = Path.Combine(root, "SimpleFile.Core");
         var toolbar = File.ReadAllText(Path.Combine(appRoot, "PrimaryToolbarView.xaml"));
-        var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
-        var workspace = File.ReadAllText(Path.Combine(coreRoot, "ExplorerWorkspace.cs"));
+        var commands = ReadMainWindowSource(appRoot);
+        var workspace = ReadExplorerWorkspaceSource(coreRoot);
         var settingsStore = File.ReadAllText(Path.Combine(coreRoot, "WorkspaceSettingsStore.cs"));
         var folderViews = File.ReadAllText(Path.Combine(coreRoot, "FolderViewSettings.cs"));
 
@@ -286,8 +286,8 @@ public class WinUiSourceShapeTests
         var appRoot = Path.Combine(root, "SimpleFile.App");
         var pane = File.ReadAllText(Path.Combine(appRoot, "PreviewPaneView.xaml"));
         var presenter = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.cs"));
-        var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
-        var mainWindow = ReadMainWindowSource(appRoot);
+        var commands = ReadMainWindowSource(appRoot);
+        var mainWindow = commands;
         var thumbnailHost = File.ReadAllText(Path.Combine(appRoot, "FileListThumbnailHost.cs"));
         var inspectionDetails = File.ReadAllText(Path.Combine(appRoot, "InspectionDetails.cs"));
         var backendPreview = File.ReadAllText(Path.Combine(root, "..", "crates", "simplefile-core", "src", "preview.rs"));
@@ -354,7 +354,13 @@ public class WinUiSourceShapeTests
         Assert.Contains("mod folder_metrics;", rustFileOps);
         Assert.Contains("mod metadata_preserve;", rustFileOps);
         Assert.Contains("mod registry;", rustProgress);
+        Assert.Contains("mod plan;", rustProgress);
+        Assert.Contains("mod reporting;", rustProgress);
+        Assert.Contains("mod execute;", rustProgress);
         Assert.Contains("pub use registry::OperationRegistry;", rustProgress);
+        Assert.True(File.Exists(Path.Combine(repoRoot, "crates", "simplefile-service", "src", "progress", "plan.rs")));
+        Assert.True(File.Exists(Path.Combine(repoRoot, "crates", "simplefile-service", "src", "progress", "reporting.rs")));
+        Assert.True(File.Exists(Path.Combine(repoRoot, "crates", "simplefile-service", "src", "progress", "execute.rs")));
     }
 
     [Fact]
@@ -414,6 +420,16 @@ public class WinUiSourceShapeTests
         var shellIconCount = CountOccurrences(sidebar, "<local:ShellIconImage");
         Assert.Equal(4, shellIconCount);
         Assert.Equal(shellIconCount, CountOccurrences(sidebar, "IsDirectory=\"True\""));
+    }
+
+
+    private static string ReadExplorerWorkspaceSource(string coreRoot)
+    {
+        return string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(coreRoot, "ExplorerWorkspace*.cs")
+                .OrderBy(Path.GetFileName)
+                .Select(File.ReadAllText));
     }
 
     private static string FindRepoRoot()

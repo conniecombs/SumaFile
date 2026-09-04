@@ -4,11 +4,8 @@ using System.Runtime.InteropServices;
 namespace SimpleFile.Core;
 
 /// <summary>
-/// Owns <c>simplefile-service</c> so the backend dies with the UI, like Explorer
-/// owning its shell extensions — without dragging opened documents with it.
-/// <c>KILL_ON_JOB_CLOSE</c> still kills the service when the last job handle
-/// closes. <c>SILENT_BREAKAWAY_OK</c> keeps ShellExecute/Open With children
-/// (Notepad, viewers, players) out of the job so they survive SumaFile exit.
+/// Windows job object that kills the backend service when the host exits, while allowing
+/// ShellExecute/Open With children (Notepad, viewers, players) out of the job so they survive SumaFile exit.
 /// </summary>
 internal sealed class JobObject : IDisposable
 {
@@ -25,6 +22,20 @@ internal sealed class JobObject : IDisposable
     private JobObject(IntPtr handle)
     {
         _handle = handle;
+    }
+
+    public static JobObject Create()
+    {
+        var job = TryCreate();
+        if (job is null)
+        {
+            var error = Marshal.GetLastWin32Error();
+            throw new InvalidOperationException(
+                $"Failed to create a Windows job object for the backend service (Win32 error {error}). " +
+                "Refusing to start an orphanable service process that would rely on PID polling.");
+        }
+
+        return job;
     }
 
     public static JobObject? TryCreate()
@@ -86,6 +97,20 @@ internal sealed class JobObject : IDisposable
         {
             Marshal.FreeHGlobal(buffer);
         }
+    }
+
+    public void Assign(Process process)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (TryAssign(process))
+        {
+            return;
+        }
+
+        var error = Marshal.GetLastWin32Error();
+        throw new InvalidOperationException(
+            $"Failed to assign backend service PID {process.Id} to the job object (Win32 error {error}). " +
+            "Refusing to leave an orphanable service process that would rely on PID polling.");
     }
 
     public bool TryAssign(Process process)
