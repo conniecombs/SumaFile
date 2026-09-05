@@ -260,7 +260,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ops.clipboard` | Copy/cut/paste | `ClipboardState` | `ClipboardStateTests` | Ctrl+C/X/V | `PASS` |
 | `ops.copy-path` | Ctrl+Shift+C | System clipboard | — | Paste path in Notepad | `MANUAL` |
 | `ops.conflict` | Probe + Skip/Replace/Keep Both | `ConflictDialog` + `DropDestination` | `DropDestination` tests + packaged file-op smoke | Paste onto existing name | `PASS` |
-| `ops.progress` | Modal + cancel | `ProgressPanel` | FileOps progress + packaged file-op smoke | Large copy | `PASS` |
+| `ops.progress` | Transfer manager + per-transfer cancel | `TransferManagerViewModel` + `TransferProgressWindow` | FileOps progress + manager tests + packaged file-op smoke | Multiple large copies | `PASS` |
 | `ops.escape-progress` | Escape hides UI, no cancel | Escape stack | — | Escape during copy | `MANUAL` |
 | `ops.copy-to-pane` | Ctrl+Alt+C | `CopyOrMoveToOtherPaneAsync` | Context ID test | Dual-pane copy | `MANUAL` |
 | `ops.move-to-pane` | Ctrl+Alt+M | Same | Context ID test | Dual-pane move | `MANUAL` |
@@ -291,6 +291,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `copy` `cut` `paste` | Palette clipboard | Handlers | Catalog + clipboard tests | — | `PASS` |
 | `clipboard-history` | Palette | `ClipboardHistory` | Catalog + tests | — | `PASS` |
 | `operation-history` | Palette | `OperationLog` retry | Catalog + workspace | — | `PASS` |
+| `transfers` | Palette opens transfer manager | `TransferProgressWindow` | Catalog + manager tests | Close and reopen while copying | `PASS` |
 | `clear-recent-history` | Palette clears recents | `ClearRecentHistoryAsync` | Catalog test | — | `PASS` |
 | `undo` `redo` | Palette | Undo stack | Tests | — | `PASS` |
 | `delete` `delete-permanent` `rename` `new-folder` `new-file` `new-shortcut` | Palette | Dialogs | Catalog | — | `PASS` |

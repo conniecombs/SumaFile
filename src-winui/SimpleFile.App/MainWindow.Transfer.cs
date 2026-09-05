@@ -143,8 +143,9 @@ public sealed partial class MainWindow
         var internalDrag = _dragPaths.Length > 0;
         var move = internalDrag
             && (e.Modifiers & Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Control) == 0;
-        await TransferWithConflictAsync(sources.ToArray(), target.Destination, move);
+        var transfer = TransferWithConflictAsync(sources.ToArray(), target.Destination, move);
         _dragPaths = [];
+        await transfer;
     }
 
     private FileRow? HoveredFileRow(DragEventArgs e, PaneId pane)
@@ -204,15 +205,51 @@ public sealed partial class MainWindow
             return TransferRunStatus.NoOp;
         }
 
-        // One transfer at a time: await backend cancel completion (or timeout), then start fresh.
-        // BeginTransfer clears CurrentOperationId so stale terminal progress cannot
-        // CompleteTransfer the new transfer during prepare.
-        var transferCts = _transfer is not null
-            ? await _transfer.BeginTransferAsync()
-            : new CancellationTokenSource();
-        StartPreparingTransfer(move, sources, destination);
+        if (_transfer is null)
+        {
+            return TransferRunStatus.NoOp;
+        }
+
+        var operation = _transfer.Enqueue(
+            sources,
+            destination,
+            move,
+            (queuedOperation, token) => RunTransferOperationAsync(
+                queuedOperation,
+                workspace,
+                fileOps,
+                sources,
+                destination,
+                move,
+                token));
+        ShowTransferProgressWindow();
+
+        var status = await operation.CompletionTask;
+        var finalStatus = TransferStatusToRunStatus(status);
+        if (finalStatus != TransferRunStatus.NoOp && ReferenceEquals(_workspace, workspace))
+        {
+            workspace.RememberOperation(
+                move ? "move" : "copy",
+                $"{(move ? "Move" : "Copy")} {sources.Length} item(s) to {destination}",
+                sources,
+                destination,
+                move,
+                finalStatus.ToString().ToLowerInvariant());
+        }
+
+        return finalStatus;
+    }
+
+    private async Task<TransferOperationStatus> RunTransferOperationAsync(
+        TransferOperationViewModel operation,
+        ExplorerWorkspace workspace,
+        FileOperationService fileOps,
+        string[] sources,
+        string destination,
+        bool move,
+        CancellationToken cancellationToken)
+    {
         var conflictSession = new TransferConflictSession();
-        var finalStatus = TransferRunStatus.NoOp;
 
         try
         {
@@ -220,20 +257,18 @@ public sealed partial class MainWindow
                 sources,
                 destination,
                 conflictSession,
-                transferCts.Token);
+                cancellationToken);
             if (action is null)
             {
-                CloseTransferProgressWindow();
-                finalStatus = transferCts.IsCancellationRequested
-                    ? TransferRunStatus.Cancelled
-                    : TransferRunStatus.NoOp;
-                return finalStatus;
+                return cancellationToken.IsCancellationRequested
+                    ? TransferOperationStatus.Cancelled
+                    : TransferOperationStatus.Skipped;
             }
 
-            var progress = new Progress<ProgressUpdate>(OnTransferProgress);
+            var progress = new Progress<ProgressUpdate>(update => OnTransferProgress(operation, update));
             while (true)
             {
-                transferCts.Token.ThrowIfCancellationRequested();
+                cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
                     if (move)
@@ -243,9 +278,9 @@ public sealed partial class MainWindow
                             destination,
                             action,
                             progress,
-                            operationId => StartTransferProgress(operationId, move: true, sources, destination),
-                            transferCts.Token);
-                        if (ReferenceEquals(_workspace, workspace) && !transferCts.IsCancellationRequested)
+                            operationId => StartTransferProgress(operation, operationId),
+                            cancellationToken);
+                        if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
                         {
                             workspace.Undo.PushMove(results, fileOps);
                         }
@@ -257,75 +292,63 @@ public sealed partial class MainWindow
                             destination,
                             action,
                             progress,
-                            operationId => StartTransferProgress(operationId, move: false, sources, destination),
-                            transferCts.Token);
-                        if (ReferenceEquals(_workspace, workspace) && !transferCts.IsCancellationRequested)
+                            operationId => StartTransferProgress(operation, operationId),
+                            cancellationToken);
+                        if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
                         {
                             workspace.Undo.PushCopy(results, fileOps);
                         }
                     }
 
-                    if (ReferenceEquals(_workspace, workspace) && !transferCts.IsCancellationRequested)
+                    if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
                     {
                         CompleteTransferProgress(move, sources.Length);
-                        await workspace.RefreshAsync(transferCts.Token);
+                        await workspace.RefreshAsync(cancellationToken);
                     }
 
                     break;
                 }
-                catch (IpcException exception) when (FileOperationService.IsConflict(exception) && !transferCts.IsCancellationRequested)
+                catch (IpcException exception) when (FileOperationService.IsConflict(exception) && !cancellationToken.IsCancellationRequested)
                 {
                     var retryAction = await ChooseConflictActionFromBackendConflictAsync(
                         exception.Message,
                         destination,
-                        conflictSession);
+                        conflictSession,
+                        cancellationToken);
                     if (retryAction is null)
                     {
-                        _transfer?.ClearCurrentOperation();
-                        CloseTransferProgressWindow();
-                        finalStatus = TransferRunStatus.NoOp;
-                        return finalStatus;
+                        return cancellationToken.IsCancellationRequested
+                            ? TransferOperationStatus.Cancelled
+                            : TransferOperationStatus.Skipped;
                     }
 
                     action = retryAction;
                 }
             }
 
-            finalStatus = transferCts.IsCancellationRequested
-                ? TransferRunStatus.Cancelled
-                : TransferRunStatus.Completed;
-            return finalStatus;
+            return cancellationToken.IsCancellationRequested
+                ? TransferOperationStatus.Cancelled
+                : TransferOperationStatus.Completed;
         }
         catch (OperationCanceledException)
         {
-            finalStatus = TransferRunStatus.Cancelled;
-            return finalStatus;
+            return TransferOperationStatus.Cancelled;
         }
         catch (Exception exception)
         {
+            operation.SetErrorMessage(exception.Message);
             ShowMessage(move ? "Move" : "Copy", exception.Message, InfoBarSeverity.Error);
-            finalStatus = TransferRunStatus.Failed;
-            return finalStatus;
-        }
-        finally
-        {
-            if (finalStatus != TransferRunStatus.NoOp && ReferenceEquals(_workspace, workspace))
-            {
-                workspace.RememberOperation(
-                    move ? "move" : "copy",
-                    $"{(move ? "Move" : "Copy")} {sources.Length} item(s) to {destination}",
-                    sources,
-                    destination,
-                    move,
-                    finalStatus.ToString().ToLowerInvariant());
-            }
-
-            if (_transfer?.FinishTransfer(transferCts) != true)
-            {
-                transferCts.Dispose();
-            }
+            return TransferOperationStatus.Failed;
         }
     }
+
+    private static TransferRunStatus TransferStatusToRunStatus(TransferOperationStatus status) => status switch
+    {
+        TransferOperationStatus.Completed => TransferRunStatus.Completed,
+        TransferOperationStatus.Cancelled => TransferRunStatus.Cancelled,
+        TransferOperationStatus.Failed => TransferRunStatus.Failed,
+        _ => TransferRunStatus.NoOp,
+    };
 
     private async Task<string?> ChooseConflictActionAsync(
         string[] sources,
@@ -349,17 +372,7 @@ public sealed partial class MainWindow
             return "error";
         }
 
-        return await PromptConflictActionAsync(destination, conflicts, session);
-    }
-
-    private void StartPreparingTransfer(bool move, IReadOnlyList<string> sources, string destination)
-    {
-        var window = EnsureTransferProgressWindow();
-        window.Start(new TransferProgressContext(
-            move,
-            sources.Count,
-            TransferViewModel.DescribeSource(sources),
-            destination));
+        return await PromptConflictActionAsync(destination, conflicts, session, cancellationToken);
     }
 
     private async Task<IReadOnlyList<string>?> ProbeDestinationConflictsAsync(
@@ -427,7 +440,8 @@ public sealed partial class MainWindow
     private async Task<string?> ChooseConflictActionFromBackendConflictAsync(
         string message,
         string destination,
-        TransferConflictSession session)
+        TransferConflictSession session,
+        CancellationToken cancellationToken)
     {
         if (session.TryGetSticky(out var sticky))
         {
@@ -441,7 +455,7 @@ public sealed partial class MainWindow
         IReadOnlyList<string> conflicts = string.IsNullOrWhiteSpace(conflictName)
             ? Array.Empty<string>()
             : [conflictName];
-        return await PromptConflictActionAsync(destination, conflicts, session);
+        return await PromptConflictActionAsync(destination, conflicts, session, cancellationToken);
     }
 
     private static string ConflictPathFromMessage(string message)
@@ -468,31 +482,42 @@ public sealed partial class MainWindow
     private async Task<string?> PromptConflictActionAsync(
         string destination,
         IReadOnlyList<string> conflicts,
-        TransferConflictSession session)
+        TransferConflictSession session,
+        CancellationToken cancellationToken)
     {
         if (session.TryGetSticky(out var sticky))
         {
             return sticky;
         }
 
-        var dialog = new ConflictDialog { XamlRoot = Content.XamlRoot };
-        dialog.SetConflict(destination, conflicts);
-        var result = await dialog.ShowAsync();
-        string? action = dialog.Result == ConflictResolution.KeepBoth
-            ? "keep-both"
-            : result switch
-            {
-                ContentDialogResult.Primary => "replace",
-                ContentDialogResult.Secondary => "skip",
-                _ => null,
-            };
-        if (action is null)
+        await _transferPromptGate.WaitAsync(cancellationToken);
+        try
         {
-            return null;
-        }
+            cancellationToken.ThrowIfCancellationRequested();
+            var dialog = new ConflictDialog { XamlRoot = Content.XamlRoot };
+            dialog.SetConflict(destination, conflicts);
+            var result = await dialog.ShowAsync();
+            cancellationToken.ThrowIfCancellationRequested();
+            string? action = dialog.Result == ConflictResolution.KeepBoth
+                ? "keep-both"
+                : result switch
+                {
+                    ContentDialogResult.Primary => "replace",
+                    ContentDialogResult.Secondary => "skip",
+                    _ => null,
+                };
+            if (action is null)
+            {
+                return null;
+            }
 
-        session.Remember(action, dialog.ApplyToAllChecked);
-        return action;
+            session.Remember(action, dialog.ApplyToAllChecked);
+            return action;
+        }
+        finally
+        {
+            _transferPromptGate.Release();
+        }
     }
 
     private async Task CopyOrMoveToOtherPaneAsync(bool move)

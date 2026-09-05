@@ -134,26 +134,38 @@ public sealed partial class MainWindow
         }
     }
 
-    private void StartTransferProgress(string operationId, bool move, IReadOnlyList<string> sources, string destination)
+    private void ShowTransferProgressWindow()
     {
-        _transfer?.SetOperationId(operationId);
-        var window = EnsureTransferProgressWindow();
-        window.Start(new TransferProgressContext(
-            move,
-            sources.Count,
-            TransferViewModel.DescribeSource(sources),
-            destination));
-    }
-
-    private void OnTransferProgress(ProgressUpdate update)
-    {
-        if (DispatcherQueue.HasThreadAccess)
+        if (_transfer is null)
         {
-            _transfer?.OnProgress(update);
             return;
         }
 
-        DispatcherQueue.TryEnqueue(() => _transfer?.OnProgress(update));
+        var window = EnsureTransferProgressWindow();
+        window.Start(_transfer);
+    }
+
+    private void StartTransferProgress(TransferOperationViewModel operation, string operationId)
+    {
+        if (!DispatcherQueue.HasThreadAccess)
+        {
+            DispatcherQueue.TryEnqueue(() => StartTransferProgress(operation, operationId));
+            return;
+        }
+
+        operation.SetOperationId(operationId);
+        ShowTransferProgressWindow();
+    }
+
+    private void OnTransferProgress(TransferOperationViewModel operation, ProgressUpdate update)
+    {
+        if (!DispatcherQueue.HasThreadAccess)
+        {
+            DispatcherQueue.TryEnqueue(() => OnTransferProgress(operation, update));
+            return;
+        }
+
+        operation.ApplyProgress(update);
     }
 
     private void CompleteTransferProgress(bool move, int itemCount)
@@ -164,33 +176,25 @@ public sealed partial class MainWindow
             return;
         }
 
-        _transfer?.CompleteCurrentOperation("completed");
-        _transferProgressWindow?.SetCompleted();
-
         var verb = move ? "Moved" : "Copied";
         var noun = itemCount == 1 ? "item" : "items";
         SetStatusText($"{verb} {itemCount} {noun}");
     }
 
-    private async void OnFileProgressCancelRequested(object? sender, EventArgs e)
+    private void OnFileProgressCancelRequested(TransferOperationViewModel operation)
     {
-        if (_transfer is null)
-        {
-            return;
-        }
+        _transfer?.Cancel(operation);
+        SetStatusText($"Cancelling {operation.Title.ToLowerInvariant()}");
+    }
 
-        _transferProgressWindow?.SetCancelling();
-        try
-        {
-            await _transfer.CancelAsync();
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            ShowMessage("Cancel operation", ex.Message, InfoBarSeverity.Error);
-        }
+    private void OnTransferClearCompletedRequested()
+    {
+        _transfer?.ClearCompleted();
+    }
+
+    private void OnTransferWindowCloseRequested()
+    {
+        CloseTransferProgressWindow();
     }
 
     private TransferProgressWindow EnsureTransferProgressWindow()
@@ -202,6 +206,8 @@ public sealed partial class MainWindow
 
         var window = new TransferProgressWindow();
         window.CancelRequested += OnFileProgressCancelRequested;
+        window.ClearCompletedRequested += OnTransferClearCompletedRequested;
+        window.CloseRequested += OnTransferWindowCloseRequested;
         window.Closed += OnTransferProgressWindowClosed;
         _transferProgressWindow = window;
         return window;
@@ -212,17 +218,14 @@ public sealed partial class MainWindow
         if (sender is TransferProgressWindow window)
         {
             window.CancelRequested -= OnFileProgressCancelRequested;
+            window.ClearCompletedRequested -= OnTransferClearCompletedRequested;
+            window.CloseRequested -= OnTransferWindowCloseRequested;
             window.Closed -= OnTransferProgressWindowClosed;
         }
 
         if (ReferenceEquals(_transferProgressWindow, sender))
         {
             _transferProgressWindow = null;
-        }
-
-        if (_transfer?.IsTransferring == true)
-        {
-            OnFileProgressCancelRequested(sender, EventArgs.Empty);
         }
     }
 
@@ -235,6 +238,8 @@ public sealed partial class MainWindow
         }
 
         window.CancelRequested -= OnFileProgressCancelRequested;
+        window.ClearCompletedRequested -= OnTransferClearCompletedRequested;
+        window.CloseRequested -= OnTransferWindowCloseRequested;
         window.Closed -= OnTransferProgressWindowClosed;
         _transferProgressWindow = null;
         if (!window.IsClosed)

@@ -25,7 +25,7 @@ public sealed partial class MainWindow : Window
     private readonly FileOperationDialogService _fileOperationDialogs;
     private int _backendReconnectToken;
     private SearchViewModel? _search;
-    private TransferViewModel? _transfer;
+    private TransferManagerViewModel? _transfer;
     private ToolbarViewModel? _toolbar;
     private bool _quickAccessCollapsed;
     private bool _myPcCollapsed;
@@ -41,6 +41,7 @@ public sealed partial class MainWindow : Window
     private string? _watchTargetPath;
     private string? _watchedPath;
     private readonly SemaphoreSlim _watchGate = new(1, 1);
+    private readonly SemaphoreSlim _transferPromptGate = new(1, 1);
     private int _watchRequestToken;
     private TransferProgressWindow? _transferProgressWindow;
     private CancellationTokenSource? _archiveCts;
@@ -178,7 +179,7 @@ public sealed partial class MainWindow : Window
             _workspace = new ExplorerWorkspace(_backend, fileOps);
             AppServices.Configure(_workspace);
             _search = AppServices.GetRequired<SearchViewModel>();
-            _transfer = AppServices.GetRequired<TransferViewModel>();
+            _transfer = AppServices.GetRequired<TransferManagerViewModel>();
             _toolbar = AppServices.GetRequired<ToolbarViewModel>();
             AttachViewModels();
             FileListThumbnailHost.Configure(LoadFileListImageThumbnailAsync);
@@ -221,10 +222,6 @@ public sealed partial class MainWindow : Window
             _search.PropertyChanged += OnSearchPropertyChanged;
         }
 
-        if (_transfer is not null)
-        {
-            _transfer.ProgressReceived += OnTransferProgressReceived;
-        }
     }
 
     private void DetachViewModels()
@@ -237,15 +234,6 @@ public sealed partial class MainWindow : Window
             _search.PropertyChanged -= OnSearchPropertyChanged;
         }
 
-        if (_transfer is not null)
-        {
-            _transfer.ProgressReceived -= OnTransferProgressReceived;
-        }
-    }
-
-    private void OnTransferProgressReceived(object? sender, ProgressUpdate update)
-    {
-        _transferProgressWindow?.UpdateProgress(update);
     }
 
     private void OnBackendDisconnected(object? sender, Exception? error)

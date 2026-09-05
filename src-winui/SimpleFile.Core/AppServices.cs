@@ -32,6 +32,7 @@ public static class AppServices
         // but in practice these are resolved once and held by the MainWindow.
         services.AddTransient<SearchViewModel>();
         services.AddTransient<TransferViewModel>();
+        services.AddSingleton<TransferManagerViewModel>();
         services.AddTransient<ToolbarViewModel>();
 
         _provider = services.BuildServiceProvider();

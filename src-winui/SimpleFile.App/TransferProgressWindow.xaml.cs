@@ -1,7 +1,7 @@
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using SimpleFile.Core;
-using SimpleFile.Ipc;
 using Windows.Graphics;
 
 namespace SimpleFile.App;
@@ -11,9 +11,9 @@ public sealed partial class TransferProgressWindow : Window
     public TransferProgressWindow()
     {
         InitializeComponent();
-        Title = "File transfer";
+        Title = "Transfers";
         AppIcon.ApplyTo(this);
-        AppWindow.Resize(new SizeInt32(620, 360));
+        AppWindow.Resize(new SizeInt32(700, 460));
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.IsResizable = true;
@@ -21,44 +21,37 @@ public sealed partial class TransferProgressWindow : Window
             presenter.IsMinimizable = true;
         }
 
-        FileProgressPanel.CancelRequested += (_, _) => CancelRequested?.Invoke(this, EventArgs.Empty);
-        FileProgressPanel.CloseRequested += (_, _) => Close();
         Closed += (_, _) => IsClosed = true;
     }
 
     public bool IsClosed { get; private set; }
 
-    public event EventHandler? CancelRequested;
+    public event Action<TransferOperationViewModel>? CancelRequested;
+    public event Action? ClearCompletedRequested;
+    public event Action? CloseRequested;
 
-    public void Start(TransferProgressContext context)
+    public void Start(TransferManagerViewModel manager)
     {
-        Title = context.Move ? "Moving files" : "Copying files";
-        FileProgressPanel.Start(context);
+        Root.DataContext = manager;
+        TransferList.ItemsSource = manager.Operations;
         Activate();
     }
 
-    public void UpdateProgress(ProgressUpdate update)
+    private void OnCancelOperationClicked(object sender, RoutedEventArgs e)
     {
-        if (!IsClosed)
+        if (sender is Button { Tag: TransferOperationViewModel operation })
         {
-            FileProgressPanel.UpdateProgress(update);
+            CancelRequested?.Invoke(operation);
         }
     }
 
-    public void SetCancelling()
+    private void OnClearCompletedClicked(object sender, RoutedEventArgs e)
     {
-        if (!IsClosed)
-        {
-            FileProgressPanel.SetCancelling();
-        }
+        ClearCompletedRequested?.Invoke();
     }
 
-    public void SetCompleted()
+    private void OnCloseClicked(object sender, RoutedEventArgs e)
     {
-        if (!IsClosed)
-        {
-            Title = "Transfer complete";
-            FileProgressPanel.SetCompleted();
-        }
+        CloseRequested?.Invoke();
     }
 }

@@ -43,6 +43,7 @@ public sealed partial class MainWindow
             ["copy-path"] = () => RunSyncCommand(CopySelectedPathsToClipboard),
             ["clipboard-history"] = ShowClipboardHistoryAsync,
             ["operation-history"] = ShowOperationHistoryAsync,
+            ["transfers"] = () => RunSyncCommand(ShowTransferProgressWindow),
             ["clear-recent-history"] = () => ClearRecentHistoryAsync(),
             ["undo"] = UndoLastAsync,
             ["redo"] = RedoLastAsync,

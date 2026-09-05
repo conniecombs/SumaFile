@@ -22,6 +22,7 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "icon-size-extra-large");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "icon-size-maximum");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "clear-recent-history");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "transfers");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-side-menu");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-hidden");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "focus-path");
@@ -42,6 +43,7 @@ public class AppCommandCatalogTests
         Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
         Assert.Equal("Alt+Enter", AppCommandCatalog.Find("properties")?.Shortcut);
         Assert.Equal("Disk cleanup", AppCommandCatalog.Find("disk-cleanup")?.Label);
+        Assert.Equal("Transfers", AppCommandCatalog.Find("transfers")?.Label);
         Assert.Equal("Open or close second pane", AppCommandCatalog.Find("dual-pane")?.Label);
         Assert.Equal("Manage workspace profiles", AppCommandCatalog.Find("profile-manage")?.Label);
         Assert.Equal("Ctrl+Alt+C", AppCommandCatalog.Find("copy-to-pane")?.Shortcut);

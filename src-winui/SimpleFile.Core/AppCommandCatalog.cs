@@ -38,6 +38,7 @@ public static class AppCommandCatalog
         new("copy-path", "Copy path", "Clipboard", "Ctrl+Shift+C"),
         new("clipboard-history", "Clipboard history", "Clipboard", "Ctrl+Shift+V"),
         new("operation-history", "Operation history", "History"),
+        new("transfers", "Transfers", "History"),
         new("clear-recent-history", "Clear recent history", "History"),
         new("undo", "Undo", "History", "Ctrl+Z"),
         new("redo", "Redo", "History", "Ctrl+Y"),
