@@ -61,6 +61,12 @@ public sealed partial class ProgressPanel : UserControl
 
     public void UpdateProgress(ProgressUpdate update)
     {
+        if (update.Status == "completed")
+        {
+            SetCompleted();
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(update.CurrentItem))
         {
             update.CurrentItem = _lastCurrentItemPath;
