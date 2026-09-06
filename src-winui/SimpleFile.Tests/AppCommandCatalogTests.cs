@@ -40,6 +40,9 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "profile-manage");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "profile-transfer");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "new-shortcut");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-panel");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-stage-selected");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-discard-selected");
         Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
         Assert.Equal("Alt+Enter", AppCommandCatalog.Find("properties")?.Shortcut);
         Assert.Equal("Disk cleanup", AppCommandCatalog.Find("disk-cleanup")?.Label);
@@ -51,7 +54,7 @@ public class AppCommandCatalogTests
         Assert.Equal("Delete Permanently", AppCommandCatalog.Find("delete-permanent")?.Label);
         Assert.Equal(AppCommandCatalog.All.Count, AppCommandCatalog.Filter("").Count);
         var git = AppCommandCatalog.Filter("git");
-        Assert.Equal(2, git.Count);
+        Assert.Equal(10, git.Count);
         Assert.All(git, command => Assert.StartsWith("git-", command.Id, StringComparison.Ordinal));
         Assert.Equal(7, AppCommandCatalog.Filter("icon size").Count);
         Assert.Equal(7, AppCommandCatalog.Filter("profile").Count);
@@ -68,8 +71,13 @@ public class AppCommandCatalogTests
     [InlineData("ctx-open-other-pane", "open-other-pane")]
     [InlineData("overflow-filter", "filter")]
     [InlineData("overflow-profiles", "profile-manage")]
+    [InlineData("overflow-copy", "copy")]
+    [InlineData("overflow-terminal", "terminal")]
     [InlineData("ctx-restore", "restore-selected")]
     [InlineData("ctx-empty-recycle-bin", "empty-recycle-bin")]
+    [InlineData("ctx-git-stage", "git-stage-selected")]
+    [InlineData("ctx-git-discard", "git-discard-selected")]
+    [InlineData("ctx-git-panel", "git-panel")]
     [InlineData("view:details", "view:details")]
     public void CommandAliases_NormalizeSharedRouterIds(string id, string expected)
     {

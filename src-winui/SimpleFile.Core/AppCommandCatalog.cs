@@ -92,8 +92,16 @@ public static class AppCommandCatalog
         new("settings", "Settings", "App", "Ctrl+Shift+S"),
         new("command-palette", "Command palette", "App", "Ctrl+Shift+P"),
         new("keyboard-help", "Keyboard shortcuts", "App", "F1"),
-        new("git-pull", "Git: pull current directory", "Git"),
-        new("git-push", "Git: push current directory", "Git"),
+        new("git-panel", "Git: show panel", "Git"),
+        new("git-refresh", "Git: refresh status", "Git"),
+        new("git-fetch", "Git: fetch", "Git"),
+        new("git-pull", "Git: pull", "Git"),
+        new("git-push", "Git: push", "Git"),
+        new("git-commit", "Git: commit staged changes", "Git"),
+        new("git-stage-selected", "Git: stage selected paths", "Git"),
+        new("git-unstage-selected", "Git: unstage selected paths", "Git"),
+        new("git-discard-selected", "Git: discard selected changes", "Git"),
+        new("git-diff-selected", "Git: show selected diff", "Git"),
     ];
 
     public static IReadOnlyList<AppCommand> Filter(string? query)

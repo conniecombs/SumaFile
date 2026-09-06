@@ -1,6 +1,6 @@
 [package]
 name = "simplefile-ipc"
-version = "1.0.0"
+version = "1.0.1"
 description = "SumaFile IPC protocol constants and schema tests"
 authors = ["SumaFile Team"]
 license = "MIT"

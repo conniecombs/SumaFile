@@ -100,8 +100,16 @@ public sealed partial class MainWindow
             ["profile-transfer"] = () => ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.TransferId),
             ["profile-minimal"] = () => ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.MinimalId),
             ["keyboard-help"] = ShowKeyboardHelpAsync,
-            ["git-pull"] = () => RunGitAsync(pull: true),
-            ["git-push"] = () => RunGitAsync(pull: false),
+            ["git-panel"] = OpenGitPanelAsync,
+            ["git-refresh"] = () => RefreshGitPanelAsync(),
+            ["git-fetch"] = GitFetchAsync,
+            ["git-pull"] = GitPullAsync,
+            ["git-push"] = GitPushAsync,
+            ["git-commit"] = PromptGitCommitAsync,
+            ["git-stage-selected"] = GitStageSelectedAsync,
+            ["git-unstage-selected"] = GitUnstageSelectedAsync,
+            ["git-discard-selected"] = GitDiscardSelectedAsync,
+            ["git-diff-selected"] = GitDiffSelectedAsync,
         };
     }
 

@@ -557,7 +557,7 @@ public sealed partial class MainWindow
         return MediaFolder.IsMediaFolder(entries, _workspace.Settings.PhotoFolderImageThreshold);
     }
 
-    private Task<string> LoadFileListImageThumbnailAsync(string path, uint size, CancellationToken cancellationToken)
+    private Task<byte[]> LoadFileListImageThumbnailAsync(string path, uint size, CancellationToken cancellationToken)
     {
         var fileOps = _workspace?.FileOps
             ?? throw new InvalidOperationException("File operations are not available.");

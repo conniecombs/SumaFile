@@ -365,6 +365,10 @@ public sealed partial class MainWindow
                 if (needsGit)
                 {
                     await workspace.ApplyGitStatusesAsync(pane, cancellationToken).ConfigureAwait(true);
+                    if (_gitPanelOpen && pane == workspace.ActivePane)
+                    {
+                        await RefreshGitPanelAsync(silent: true).ConfigureAwait(true);
+                    }
                 }
 
                 if (cancellationToken.IsCancellationRequested || token != _columnEnrichmentToken)

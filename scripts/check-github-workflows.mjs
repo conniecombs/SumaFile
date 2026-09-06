@@ -94,7 +94,7 @@ const releaseSnippets = [
     'workflow_dispatch:',
     'contents: write',
     'Validate release version',
-    'Version must look like v1.0.0 or v1.0.0-beta.1',
+    'Version must look like v1.0.1 or v1.0.1-beta.1',
     'Directory.Build.props',
     'crates/simplefile-core/Cargo.toml',
     'crates/simplefile-ipc/Cargo.toml',

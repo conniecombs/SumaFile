@@ -222,6 +222,38 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task ApplyGitStatuses_ClearsStaleEntryStatusesWhenClean()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.Listings[@"C:\Users\test"].Entries.Single(entry => entry.Name == "notes.txt").GitStatus = "modified";
+        var settingsIpc = new ConfigurableIpc();
+        settingsIpc.GitFileStatuses[@"C:\Users\test"] = [];
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        await workspace.ApplyGitStatusesAsync(PaneId.Primary);
+
+        Assert.Equal(1, settingsIpc.GitStatusCalls);
+        Assert.Null(workspace.VisibleEntries.Single(entry => entry.Name == "notes.txt").GitStatus);
+    }
+
+    [Fact]
+    public async Task ApplyGitStatuses_DisabledClearsEntriesAndDoesNotCallBackend()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.Listings[@"C:\Users\test"].Entries.Single(entry => entry.Name == "notes.txt").GitStatus = "modified";
+        var settingsIpc = new ConfigurableIpc();
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+        workspace.Settings.EnableGitIntegration = false;
+
+        await workspace.ApplyGitStatusesAsync(PaneId.Primary);
+
+        Assert.Equal(0, settingsIpc.GitStatusCalls);
+        Assert.Null(workspace.VisibleEntries.Single(entry => entry.Name == "notes.txt").GitStatus);
+    }
+
+    [Fact]
     public async Task FillFolderMetrics_StaleNavigationDoesNotUpdateOldEntries()
     {
         var backend = FakeExplorerBackend.Typical();

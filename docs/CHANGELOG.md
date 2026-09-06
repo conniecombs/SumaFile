@@ -18,6 +18,35 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
+## [1.0.1] - 2026-09-06
+
+### Added
+- Settings now opens as a standalone, resizable WinUI window with `NavigationView`
+  categories, a scrollable workspace, explicit Save/Cancel commands, and normal
+  title-bar close behavior.
+- Toolbar customization is available from Settings -> Toolbar. Users can choose
+  icon-only or labeled buttons, reorder the primary toolbar, insert separators,
+  remove commands, and reset the command surface.
+- Git integration now has a bottom panel with repository summary, changed-path
+  rows, diff, stage, unstage, discard, fetch, pull, push, and commit actions.
+  Settings -> Behavior can completely disable the Git UI and backend calls.
+
+### Changed
+- Version identity is now **1.0.1**. About, Settings, handshake `appVersion`,
+  README badge, artifact names, Cargo package versions, MSBuild `<Version>`,
+  assembly identity, installer DisplayVersion, WiX Product Version, and NSIS
+  VIProductVersion all use `1.0.1`.
+- Toolbar overflow and context menu labels now resolve through the shared app
+  command catalog so customized command surfaces keep consistent naming.
+
+### Fixed
+- Removed stale merge-conflict markers from the WinUI settings branch.
+- Restored WinUI thumbnail preview loading to the byte-backed image pipeline.
+- Release builds now report MSI/package lock holders without failing on
+  singleton PowerShell pipeline output.
+
+---
+
 ## [1.0.0] - 2026-09-01
 
 ### Added
@@ -167,7 +196,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
-## [1.0.1] - 2026-05-25
+## [SimpleFile 1.0.1] - 2026-05-25
 
 ### Added
 - GitHub-hosted Tauri updater configuration with a signed updater public key,
@@ -419,12 +448,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
-[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/conniecombs/SumaFile/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/conniecombs/SumaFile/releases/tag/v1.0.0
 [1.1.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.1...v1.0.2
-[1.0.1]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.0...v1.0.1
+[SimpleFile 1.0.1]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.0...v1.0.1
 [SimpleFile 1.0.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v0.2.1...v1.0.0
 [0.2.1]: https://github.com/conniecombs/SimpleFile-Windows/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v0.1.0...v0.2.0

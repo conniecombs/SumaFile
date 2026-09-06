@@ -501,12 +501,9 @@ pub(super) fn spawn_search_files(
                 result
             })
             .await;
-        
+
         let run_ms = start.elapsed().as_secs_f64() * 1000.0;
-        log::debug!(
-            "job.timing method=SearchFiles run_ms={:.2}",
-            run_ms
-        );
+        log::debug!("job.timing method=SearchFiles run_ms={:.2}", run_ms);
 
         let response = match result {
             Ok(Ok(results)) => {

@@ -183,6 +183,7 @@ public sealed partial class ExplorerWorkspace
         Settings.DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(settings.DualPanePrimaryPercent);
         Settings.DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(settings.DualPanePrimaryWidth);
         Settings.ShortcutOverrides = KeyboardShortcutMap.NormalizeOverrides(Settings.ShortcutOverrides);
+        Settings.CommandSurface.Normalize();
         Settings.FolderViewSettings.Normalize();
         ShowHiddenFiles = settings.ShowHidden;
         if (applyViewDefaultsToPanes)
@@ -680,13 +681,23 @@ public sealed partial class ExplorerWorkspace
 
     public async Task ApplyGitStatusesAsync(PaneId pane, CancellationToken cancellationToken = default)
     {
-        if (FileOps is null || !Settings.EnableGitIntegration)
+        var target = Normalize(pane);
+        var state = Pane(target);
+        if (!Settings.EnableGitIntegration)
+        {
+            if (ClearGitStatuses(state))
+            {
+                RaiseChanged();
+            }
+
+            return;
+        }
+
+        if (FileOps is null)
         {
             return;
         }
 
-        var target = Normalize(pane);
-        var state = Pane(target);
         if (state.PathIsNetwork)
         {
             return;
@@ -705,10 +716,7 @@ public sealed partial class ExplorerWorkspace
 
             foreach (var entry in state.Entries)
             {
-                if (map.TryGetValue(entry.Path, out var status))
-                {
-                    entry.GitStatus = status;
-                }
+                entry.GitStatus = map.TryGetValue(entry.Path, out var status) ? status : null;
             }
 
             RaiseChanged();
@@ -717,6 +725,29 @@ public sealed partial class ExplorerWorkspace
         {
             // Git is optional.
         }
+    }
+
+    public void ClearGitStatuses()
+    {
+        if (ClearGitStatuses(Primary) || ClearGitStatuses(Secondary))
+        {
+            RaiseChanged();
+        }
+    }
+
+    private static bool ClearGitStatuses(ExplorerPane state)
+    {
+        var changed = false;
+        foreach (var entry in state.Entries)
+        {
+            if (entry.GitStatus is not null)
+            {
+                entry.GitStatus = null;
+                changed = true;
+            }
+        }
+
+        return changed;
     }
 
     public async Task FillFolderSizesAsync(CancellationToken cancellationToken = default)

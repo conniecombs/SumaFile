@@ -254,6 +254,45 @@ pub struct GitStatus {
     pub behind: u32,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GitFileStatus {
+    pub path: String,
+    pub absolute_path: String,
+    pub original_path: Option<String>,
+    pub status: String,
+    pub index_status: String,
+    pub worktree_status: String,
+    pub staged: bool,
+    pub unstaged: bool,
+    pub untracked: bool,
+    pub conflicted: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GitRepositoryStatus {
+    pub is_repo: bool,
+    pub root: Option<String>,
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub head: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub staged: u32,
+    pub unstaged: u32,
+    pub untracked: u32,
+    pub conflicted: u32,
+    pub changes: Vec<GitFileStatus>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GitCommandResult {
+    pub command: String,
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub summary: String,
+}
+
 // ============================================================================
 // App / Installer Types
 // ============================================================================

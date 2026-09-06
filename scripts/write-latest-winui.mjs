@@ -32,10 +32,10 @@ const requireInstallable = named['require-installable'] === 'true';
 const notes = named.notes ?? 'SumaFile WinUI 3 host + Rust IPC service.';
 
 if (!version) {
-  fail('Pass --version=1.0.0');
+  fail('Pass --version=1.0.1');
 }
 if (!setupName) {
-  fail('Pass --setup=SumaFile_1.0.0_x64-winui-setup.exe');
+  fail('Pass --setup=SumaFile_1.0.1_x64-winui-setup.exe');
 }
 if (!/^SumaFile_[^/\\\s]+_x64-winui-setup\.exe$/u.test(setupName)) {
   fail('--setup must be a SumaFile x64 WinUI setup executable name.');

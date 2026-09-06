@@ -1,10 +1,11 @@
 use super::params::{
     parse_params, BatchRenameParams, CompareParams, ConfirmationTokenParams, CopyMoveParams,
     CreateArchiveParams, ExternalUrlParams, ExtractArchiveParams, GetFilesWithTagParams,
-    HandshakeParams, NameParams, OpenWithParams, PathParams, PathsParams, PreviewParams,
-    RenameParams, ResolvedCopyMoveParams, SetTagsForPathParams, SettingKeyParams,
-    SettingValueParams, ShortcutParams, SmartFolderIdParams, SmartFolderParams, TagCreateParams,
-    TagForPathParams, TagIdParams, TagUpdateParams,
+    GitCommitParams, GitDiffPathParams, GitPathsParams, HandshakeParams, NameParams,
+    OpenWithParams, PathParams, PathsParams, PreviewParams, RenameParams, ResolvedCopyMoveParams,
+    SetTagsForPathParams, SettingKeyParams, SettingValueParams, ShortcutParams,
+    SmartFolderIdParams, SmartFolderParams, TagCreateParams, TagForPathParams, TagIdParams,
+    TagUpdateParams,
 };
 use super::{async_ops, Dispatch, SessionState, APP_VERSION};
 use serde::Serialize;
@@ -291,6 +292,18 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             },
             Err(r) => Dispatch::Reply(r),
         },
+        METHOD_GET_GIT_REPOSITORY_STATUS => match parse_params::<PathParams>(request) {
+            Ok(p) => match simplefile_core::git::get_git_repository_status(p.path) {
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
+                    request.id.clone(),
+                    serde_json::to_value(r).unwrap_or(Value::Null),
+                )),
+                Err(m) => {
+                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                }
+            },
+            Err(r) => Dispatch::Reply(r),
+        },
         METHOD_GET_GIT_FILE_STATUSES => match parse_params::<PathParams>(request) {
             Ok(p) => match simplefile_core::git::get_git_file_statuses(p.path) {
                 Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
@@ -303,9 +316,81 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             },
             Err(r) => Dispatch::Reply(r),
         },
+        METHOD_GIT_STAGE_PATHS => match parse_params::<GitPathsParams>(request) {
+            Ok(p) => match simplefile_core::git::git_stage_paths(p.path, p.paths) {
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
+                    request.id.clone(),
+                    serde_json::to_value(r).unwrap_or(Value::Null),
+                )),
+                Err(m) => {
+                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                }
+            },
+            Err(r) => Dispatch::Reply(r),
+        },
+        METHOD_GIT_UNSTAGE_PATHS => match parse_params::<GitPathsParams>(request) {
+            Ok(p) => match simplefile_core::git::git_unstage_paths(p.path, p.paths) {
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
+                    request.id.clone(),
+                    serde_json::to_value(r).unwrap_or(Value::Null),
+                )),
+                Err(m) => {
+                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                }
+            },
+            Err(r) => Dispatch::Reply(r),
+        },
+        METHOD_GIT_DISCARD_PATHS => match parse_params::<GitPathsParams>(request) {
+            Ok(p) => match simplefile_core::git::git_discard_paths(p.path, p.paths) {
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
+                    request.id.clone(),
+                    serde_json::to_value(r).unwrap_or(Value::Null),
+                )),
+                Err(m) => {
+                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                }
+            },
+            Err(r) => Dispatch::Reply(r),
+        },
+        METHOD_GIT_DIFF_PATH => match parse_params::<GitDiffPathParams>(request) {
+            Ok(p) => match simplefile_core::git::git_diff_path(p.path, p.file_path) {
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Err(m) => {
+                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                }
+            },
+            Err(r) => Dispatch::Reply(r),
+        },
+        METHOD_GIT_COMMIT => match parse_params::<GitCommitParams>(request) {
+            Ok(p) => match simplefile_core::git::git_commit(p.path, p.message) {
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
+                    request.id.clone(),
+                    serde_json::to_value(r).unwrap_or(Value::Null),
+                )),
+                Err(m) => {
+                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                }
+            },
+            Err(r) => Dispatch::Reply(r),
+        },
+        METHOD_GIT_FETCH => match parse_params::<PathParams>(request) {
+            Ok(p) => match simplefile_core::git::git_fetch(p.path) {
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
+                    request.id.clone(),
+                    serde_json::to_value(r).unwrap_or(Value::Null),
+                )),
+                Err(m) => {
+                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                }
+            },
+            Err(r) => Dispatch::Reply(r),
+        },
         METHOD_GIT_PULL => match parse_params::<PathParams>(request) {
             Ok(p) => match simplefile_core::git::git_pull(p.path) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
+                    request.id.clone(),
+                    serde_json::to_value(r).unwrap_or(Value::Null),
+                )),
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -314,7 +399,10 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_GIT_PUSH => match parse_params::<PathParams>(request) {
             Ok(p) => match simplefile_core::git::git_push(p.path) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
+                    request.id.clone(),
+                    serde_json::to_value(r).unwrap_or(Value::Null),
+                )),
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }

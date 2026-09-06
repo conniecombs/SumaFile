@@ -5,12 +5,15 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Input;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
+using Windows.Graphics;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.System;
@@ -97,39 +100,79 @@ public sealed class ShortcutEditorRow : INotifyPropertyChanged
     }
 }
 
-public sealed partial class SettingsDialog : ContentDialog
+public sealed partial class SettingsWindow : Window
 {
     private const string RepositoryUrl = "https://github.com/conniecombs/SumaFile";
+    private readonly TaskCompletionSource<ContentDialogResult> _resultSource =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private FileOperationService? _fileOps;
     private bool _checkedUpdateIsInstallable;
     private readonly List<ShortcutEditorRow> _shortcutRows;
+    private ContentDialogResult _result = ContentDialogResult.None;
 
-    public SettingsDialog()
+    public SettingsWindow()
     {
         InitializeComponent();
-        CategoryList.SelectedIndex = 0;
+        Title = "Settings";
+        AppIcon.ApplyTo(this);
+        SystemBackdrop = new MicaBackdrop();
+        AppWindow.Resize(new SizeInt32(1120, 760));
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.IsResizable = true;
+            presenter.IsMaximizable = true;
+            presenter.IsMinimizable = true;
+        }
+
+        Closed += OnClosed;
+        SelectInitialCategory();
         UpdateDefaultIconSizeValueText(DefaultIconSize);
         _shortcutRows = KeyboardShortcutMap.Defaults
             .Select(definition => new ShortcutEditorRow(definition))
             .ToList();
+        InitializeToolbarEditor();
         RefreshShortcutList(selectFirst: true);
         RefreshShortcutValidation();
     }
 
-    private void OnCategorySelectionChanged(object sender, SelectionChangedEventArgs e)
+    public Task<ContentDialogResult> ShowAsync()
+    {
+        Activate();
+        OwnerHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        return _resultSource.Task;
+    }
+
+    private void SelectInitialCategory()
+    {
+        var first = SettingsNavigation.MenuItems.OfType<NavigationViewItem>().FirstOrDefault();
+        SettingsNavigation.SelectedItem = first;
+        ShowCategory(CategoryName(first));
+    }
+
+    private void OnCategorySelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        ShowCategory(CategoryName(args.SelectedItemContainer as NavigationViewItem));
+    }
+
+    private static string CategoryName(NavigationViewItem? item)
+    {
+        return item?.Tag?.ToString()
+            ?? item?.Content?.ToString()
+            ?? "";
+    }
+
+    private void ShowCategory(string category)
     {
         HideCategoryPanels();
 
-        var selected = CategoryList.SelectedItem as ListViewItem;
-        if (selected == null) return;
-
-        switch (selected.Content.ToString())
+        switch (category)
         {
             case "Appearance": AppearancePanel.Visibility = Visibility.Visible; break;
             case "Navigation": NavigationPanel.Visibility = Visibility.Visible; break;
             case "Behavior": BehaviorPanel.Visibility = Visibility.Visible; break;
             case "Storage & Cache": StoragePanel.Visibility = Visibility.Visible; break;
             case "Shortcuts": ShortcutsPanel.Visibility = Visibility.Visible; break;
+            case "Toolbar": ToolbarPanel.Visibility = Visibility.Visible; break;
             case "Tools": ToolsPanel.Visibility = Visibility.Visible; break;
             case "Updates": UpdatesPanel.Visibility = Visibility.Visible; break;
             case "About": AboutPanel.Visibility = Visibility.Visible; break;
@@ -139,8 +182,8 @@ public sealed partial class SettingsDialog : ContentDialog
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
     {
         var query = SearchBox.Text.Trim();
-        ListViewItem? firstVisible = null;
-        foreach (var item in CategoryList.Items.OfType<ListViewItem>())
+        NavigationViewItem? firstVisible = null;
+        foreach (var item in SettingsNavigation.MenuItems.OfType<NavigationViewItem>())
         {
             var label = item.Content?.ToString() ?? "";
             var visible = query.Length == 0 || label.Contains(query, StringComparison.OrdinalIgnoreCase);
@@ -151,13 +194,17 @@ public sealed partial class SettingsDialog : ContentDialog
             }
         }
 
-        if (CategoryList.SelectedItem is not ListViewItem selected
+        if (SettingsNavigation.SelectedItem is not NavigationViewItem selected
             || selected.Visibility != Visibility.Visible)
         {
-            CategoryList.SelectedItem = firstVisible;
+            SettingsNavigation.SelectedItem = firstVisible;
             if (firstVisible is null)
             {
                 HideCategoryPanels();
+            }
+            else
+            {
+                ShowCategory(CategoryName(firstVisible));
             }
         }
     }
@@ -169,6 +216,7 @@ public sealed partial class SettingsDialog : ContentDialog
         BehaviorPanel.Visibility = Visibility.Collapsed;
         StoragePanel.Visibility = Visibility.Collapsed;
         ShortcutsPanel.Visibility = Visibility.Collapsed;
+        ToolbarPanel.Visibility = Visibility.Collapsed;
         ToolsPanel.Visibility = Visibility.Collapsed;
         UpdatesPanel.Visibility = Visibility.Collapsed;
         AboutPanel.Visibility = Visibility.Collapsed;
@@ -194,7 +242,7 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.DefaultView = UiSettings.NormalizeDefaultView(DefaultView);
         settings.DefaultIconSize = UiSettings.NormalizeIconSize(DefaultIconSize);
         settings.ColumnPreset = UiSettings.NormalizeColumnPreset(ColumnPreset);
-        // Settings dialog is a global default: apply the chosen preset to both panes.
+        // Settings is a global default: apply the chosen preset to both panes.
         settings.SecondaryColumnPreset = settings.ColumnPreset;
         settings.ShowHidden = ShowHiddenSwitch.IsOn;
         settings.ConfirmDelete = ConfirmDeleteSwitch.IsOn;
@@ -211,12 +259,10 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.ShowSmartFolders = ShowSmartFoldersSwitch.IsOn;
         settings.EnableGitIntegration = EnableGitSwitch.IsOn;
         settings.ShowFolderSizes = ShowFolderSizesSwitch.IsOn;
-<<<<<<< Updated upstream
         settings.ShortcutOverrides = CurrentShortcutOverrides();
-=======
+        settings.CommandSurface = CurrentCommandSurfaceLayout();
         settings.ThumbnailCacheMaxMb = EnableThumbnailCacheSwitch.IsOn ? (uint)Math.Round(CacheSizeSlider.Value) : 0;
         settings.ThumbnailCachePath = ThumbnailCachePathBox.Text.Trim();
->>>>>>> Stashed changes
     }
 
     public async Task LoadSettingsAsync(FileOperationService fileOps, CancellationToken cancellationToken = default)
@@ -255,6 +301,8 @@ public sealed partial class SettingsDialog : ContentDialog
         ShowFolderSizesSwitch.IsOn = await ReadBoolSettingAsync(fileOps, "showFolderSizes", defaults.ShowFolderSizes, cancellationToken).ConfigureAwait(true);
         ApplyShortcutOverrides(KeyboardShortcutMap.ReadOverridesJson(
             await GetSettingOrDefaultAsync(fileOps, KeyboardShortcutMap.SettingsKey, "", cancellationToken).ConfigureAwait(true)));
+        ApplyCommandSurfaceLayout(CommandSurfaceLayout.FromJson(
+            await GetSettingOrDefaultAsync(fileOps, CommandSurfaceLayout.SettingsKey, "", cancellationToken).ConfigureAwait(true)));
 
         var cacheMaxMb = await ReadUIntSettingAsync(fileOps, "thumbnailCacheMaxMb", 500, cancellationToken).ConfigureAwait(true);
         EnableThumbnailCacheSwitch.IsOn = cacheMaxMb > 0;
@@ -840,7 +888,7 @@ public sealed partial class SettingsDialog : ContentDialog
                     Content = "This will download and install third-party components to support RAR extraction. Do you agree to their terms?",
                     PrimaryButtonText = "Install",
                     CloseButtonText = "Cancel",
-                    XamlRoot = this.XamlRoot
+                    XamlRoot = Content.XamlRoot
                 };
 
                 if (await dialog.ShowAsync() == ContentDialogResult.Primary)
@@ -1094,6 +1142,27 @@ public sealed partial class SettingsDialog : ContentDialog
     {
         ThumbnailCachePathBox.Text = "";
         ThumbnailCachePathStatusText.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnSaveClicked(object sender, RoutedEventArgs e)
+    {
+        CloseWithResult(ContentDialogResult.Primary);
+    }
+
+    private void OnCancelClicked(object sender, RoutedEventArgs e)
+    {
+        CloseWithResult(ContentDialogResult.None);
+    }
+
+    private void CloseWithResult(ContentDialogResult result)
+    {
+        _result = result;
+        Close();
+    }
+
+    private void OnClosed(object sender, WindowEventArgs args)
+    {
+        _resultSource.TrySetResult(_result);
     }
 
     private static async Task<uint> ReadUIntSettingAsync(

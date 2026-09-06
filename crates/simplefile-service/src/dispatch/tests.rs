@@ -521,15 +521,22 @@ fn leftover_domain_methods_are_wired() {
         (46, "save_smart_folder"),
         (47, "delete_smart_folder"),
         (48, "get_git_status"),
-        (49, "get_git_file_statuses"),
-        (50, "git_pull"),
-        (51, "git_push"),
-        (52, "disk_cleanup"),
-        (53, "duplicate_check"),
-        (54, "discard_rar_install"),
-        (55, "install_rar"),
-        (56, "open_terminal"),
-        (57, "open_powershell_admin"),
+        (49, "get_git_repository_status"),
+        (50, "get_git_file_statuses"),
+        (51, "git_stage_paths"),
+        (52, "git_unstage_paths"),
+        (53, "git_discard_paths"),
+        (54, "git_diff_path"),
+        (55, "git_commit"),
+        (56, "git_fetch"),
+        (57, "git_pull"),
+        (58, "git_push"),
+        (59, "disk_cleanup"),
+        (60, "duplicate_check"),
+        (61, "discard_rar_install"),
+        (62, "install_rar"),
+        (63, "open_terminal"),
+        (64, "open_powershell_admin"),
     ] {
         assert_domain_method_is_wired(&mut state, method, id, json!({}));
     }
@@ -537,7 +544,7 @@ fn leftover_domain_methods_are_wired() {
     assert_domain_method_is_wired(
         &mut state,
         "restore_recycle_bin",
-        58,
+        65,
         json!({ "paths": [] }),
     );
 

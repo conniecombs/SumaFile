@@ -8,7 +8,7 @@
 | **Status** | Historical design (Svelte/Tauri UI retired 2026-08-15) |
 | **Source tree** | `R:\Repos\SimpleFile-Windows` |
 | **Contract source** | [`docs/winui-migration/inventory.md`](inventory.md) |
-| **Current product** | SumaFile 1.0.0 (`com.simplefile.desktop`) |
+| **Current product** | SumaFile 1.0.1 (`com.simplefile.desktop`) |
 
 This is a historical design document from before the Svelte/Tauri UI was retired. The original 74-command / 5-event inventory remains migration context; the current parity gate is authoritative for the live service command count.
 
@@ -57,7 +57,7 @@ The Svelte/Tauri stack stays until retirement so existing 1.1.0 users, CI, and u
 - Keep `{app_data_dir}/metadata.db`, `{app_data_dir}/smart_folders.json`, and `%LOCALAPPDATA%\SumaFile\startup.log` on their current paths.
 - Migrate WebView `localStorage` keys listed in the inventory into WinUI-owned files without dropping workspace tabs, bookmarks, or color labels.
 - Dual-host during migration: Tauri remains the shipped UI until staged gates say otherwise.
-- Replace `check-api-parity.mjs` / `check-tauri-invokes.mjs` with an IPC contract parity check that covers the 79 service domain methods.
+- Replace `check-api-parity.mjs` / `check-tauri-invokes.mjs` with an IPC contract parity check that covers the 86 service domain methods.
 
 ### Non-Goals
 
@@ -496,7 +496,7 @@ Result:
 ```json
 {
   "protocolVersion": 1,
-  "appVersion": "1.0.0",
+  "appVersion": "1.0.1",
   "identifier": "com.simplefile.desktop",
   "methodCount": 79
 }
@@ -513,7 +513,7 @@ Rules:
 
 The v1 WinUI service method names are frozen in `ipc/schema/v1/commands.json`:
 
-`get_home_dir`, `select_directory`, `list_drives`, `list_directory`, `create_directory`, `create_file`, `delete_entry`, `move_to_trash`, `rename_entry`, `batch_rename`, `copy_entry`, `move_entry`, `copy_entry_resolved`, `move_entry_resolved`, `get_entry_info`, `watch_directory`, `unwatch_directory`, `copy_with_progress`, `move_with_progress`, `cancel_operation`, `open_file`, `open_external_url`, `reveal_in_folder`, `list_subdirectories`, `calculate_folder_size`, `count_folder_items`, `cancel_folder_size`, `cancel_folder_item_count`, `cancel_count_items`, `read_file_preview`, `generate_thumbnail`, `generate_thumbnails`, `search_files`, `cancel_search`, `get_git_status`, `get_git_file_statuses`, `git_pull`, `git_push`, `list_archive`, `extract_archive`, `create_archive`, `open_terminal`, `open_powershell_admin`, `compute_checksum`, `check_rar_installed`, `prepare_rar_install`, `discard_rar_install`, `install_rar`, `get_app_version`, `get_app_about_info`, `check_for_update`, `install_update`, `open_file_with`, `compare_files`, `disk_cleanup`, `cancel_disk_cleanup`, `duplicate_check`, `cancel_duplicate_check`, `get_image_metadata`, `get_file_metadata`, `show_main_window`, `load_smart_folders`, `save_smart_folder`, `delete_smart_folder`, `get_db_setting`, `set_db_setting`, `get_all_tags`, `create_tag`, `update_tag`, `delete_tag`, `get_tags_for_path`, `set_tags_for_path`, `get_files_with_tag`, `get_all_file_tags`.
+`get_home_dir`, `select_directory`, `list_drives`, `list_directory`, `create_directory`, `create_file`, `delete_entry`, `move_to_trash`, `rename_entry`, `batch_rename`, `copy_entry`, `move_entry`, `copy_entry_resolved`, `move_entry_resolved`, `get_entry_info`, `watch_directory`, `unwatch_directory`, `copy_with_progress`, `move_with_progress`, `cancel_operation`, `open_file`, `open_external_url`, `reveal_in_folder`, `list_subdirectories`, `calculate_folder_size`, `count_folder_items`, `cancel_folder_size`, `cancel_folder_item_count`, `cancel_count_items`, `read_file_preview`, `generate_thumbnail`, `generate_thumbnails`, `search_files`, `cancel_search`, `get_git_status`, `get_git_repository_status`, `get_git_file_statuses`, `git_stage_paths`, `git_unstage_paths`, `git_discard_paths`, `git_diff_path`, `git_commit`, `git_fetch`, `git_pull`, `git_push`, `list_archive`, `extract_archive`, `create_archive`, `open_terminal`, `open_powershell_admin`, `compute_checksum`, `check_rar_installed`, `prepare_rar_install`, `discard_rar_install`, `install_rar`, `get_app_version`, `get_app_about_info`, `check_for_update`, `install_update`, `open_file_with`, `compare_files`, `disk_cleanup`, `cancel_disk_cleanup`, `duplicate_check`, `cancel_duplicate_check`, `get_image_metadata`, `get_file_metadata`, `show_main_window`, `load_smart_folders`, `save_smart_folder`, `delete_smart_folder`, `get_db_setting`, `set_db_setting`, `get_all_tags`, `create_tag`, `update_tag`, `delete_tag`, `get_tags_for_path`, `set_tags_for_path`, `get_files_with_tag`, `get_all_file_tags`.
 
 Compatibility-only or host-owned wrappers (`copy_entry`, `move_entry`, `get_git_status`, `cancel_count_items`, `show_main_window`) are marked in `commands.json`. Do not add new live App/Core callers for those wrappers.
 

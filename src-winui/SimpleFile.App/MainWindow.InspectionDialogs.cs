@@ -266,8 +266,10 @@ public sealed partial class MainWindow
         FileOperationService fileOps,
         CancellationToken cancellationToken)
     {
-        var imageData = preview.Content;
-        if (string.IsNullOrWhiteSpace(imageData))
+        byte[]? imageData = string.IsNullOrWhiteSpace(preview.Content)
+            ? null
+            : Convert.FromBase64String(preview.Content);
+        if (imageData is null || imageData.Length == 0)
         {
             try
             {
@@ -281,7 +283,7 @@ public sealed partial class MainWindow
 
         try
         {
-            var source = await PreviewImageSourceFactory.FromBase64Async(imageData, row.Path);
+            var source = await PreviewImageSourceFactory.FromBytesAsync(imageData, row.Path);
             body.Children.Add(new Image
             {
                 Source = source,

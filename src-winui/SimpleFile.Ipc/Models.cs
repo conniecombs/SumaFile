@@ -616,3 +616,42 @@ public sealed class GitStatus
     [JsonPropertyName("ahead")] public int Ahead { get; set; }
     [JsonPropertyName("behind")] public int Behind { get; set; }
 }
+
+public sealed class GitFileStatus
+{
+    [JsonPropertyName("path")] public string Path { get; set; } = "";
+    [JsonPropertyName("absolute_path")] public string AbsolutePath { get; set; } = "";
+    [JsonPropertyName("original_path")] public string? OriginalPath { get; set; }
+    [JsonPropertyName("status")] public string Status { get; set; } = "";
+    [JsonPropertyName("index_status")] public string IndexStatus { get; set; } = "";
+    [JsonPropertyName("worktree_status")] public string WorktreeStatus { get; set; } = "";
+    [JsonPropertyName("staged")] public bool Staged { get; set; }
+    [JsonPropertyName("unstaged")] public bool Unstaged { get; set; }
+    [JsonPropertyName("untracked")] public bool Untracked { get; set; }
+    [JsonPropertyName("conflicted")] public bool Conflicted { get; set; }
+}
+
+public sealed class GitRepositoryStatus
+{
+    [JsonPropertyName("is_repo")] public bool IsRepo { get; set; }
+    [JsonPropertyName("root")] public string? Root { get; set; }
+    [JsonPropertyName("branch")] public string? Branch { get; set; }
+    [JsonPropertyName("upstream")] public string? Upstream { get; set; }
+    [JsonPropertyName("head")] public string? Head { get; set; }
+    [JsonPropertyName("ahead")] public int Ahead { get; set; }
+    [JsonPropertyName("behind")] public int Behind { get; set; }
+    [JsonPropertyName("staged")] public int Staged { get; set; }
+    [JsonPropertyName("unstaged")] public int Unstaged { get; set; }
+    [JsonPropertyName("untracked")] public int Untracked { get; set; }
+    [JsonPropertyName("conflicted")] public int Conflicted { get; set; }
+    [JsonPropertyName("changes")] public List<GitFileStatus> Changes { get; set; } = [];
+}
+
+public sealed class GitCommandResult
+{
+    [JsonPropertyName("command")] public string Command { get; set; } = "";
+    [JsonPropertyName("exit_code")] public int ExitCode { get; set; }
+    [JsonPropertyName("stdout")] public string Stdout { get; set; } = "";
+    [JsonPropertyName("stderr")] public string Stderr { get; set; } = "";
+    [JsonPropertyName("summary")] public string Summary { get; set; } = "";
+}

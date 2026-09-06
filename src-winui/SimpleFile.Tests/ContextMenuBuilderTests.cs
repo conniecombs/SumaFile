@@ -134,6 +134,47 @@ public class ContextMenuBuilderTests
         });
         Assert.Contains(twoFiles, entry => entry.Id == "ctx-compare");
     }
+
+    [Fact]
+    public void ContextMenu_GitMenuRespectsSettingAndSelection()
+    {
+        var disabled = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            SelectionCount = 1,
+            GitEnabled = false,
+            InGitRepository = true,
+            SelectionHasGitStatus = true,
+        });
+        Assert.DoesNotContain(disabled, entry => entry.Id == "ctx-git-menu");
+
+        var noRepo = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            GitEnabled = true,
+            InGitRepository = false,
+        });
+        var noRepoGit = Assert.Single(noRepo, entry => entry.Id == "ctx-git-menu");
+        Assert.Contains(noRepoGit.Children, entry => entry.Id == "ctx-git-panel");
+        Assert.DoesNotContain(noRepoGit.Children, entry => entry.Id == "ctx-git-pull");
+
+        var changedSelection = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            SelectionCount = 1,
+            AllSelectedAreFiles = true,
+            GitEnabled = true,
+            InGitRepository = true,
+            SelectionHasGitStatus = true,
+        });
+        var git = Assert.Single(changedSelection, entry => entry.Id == "ctx-git-menu");
+        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-diff");
+        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-stage");
+        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-unstage");
+        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-discard");
+        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-fetch");
+        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-pull");
+        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-push");
+        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-commit");
+    }
+
     [Fact]
     public void ContextMenu_FolderActionsForSingleDirectory()
     {
@@ -307,5 +348,23 @@ public class ContextMenuBuilderTests
         });
         Assert.DoesNotContain(dualOpen, entry => entry.Id == "overflow-dual-pane");
         Assert.Contains(dualOpen, entry => entry.Id == "ctx-close-dual-pane");
+    }
+
+    [Fact]
+    public void PaneMoreMenu_PrependsCustomOverflowedToolbarCommandsInLayoutOrder()
+    {
+        var overflowed = ContextMenuBuilder.BuildPaneMoreMenu(new ContextMenuRequest
+        {
+            OverflowedToolbarIds = ["copy", "terminal", ToolbarOverflowPlanner.Settings],
+            ToolbarActionOrder = ["terminal", "copy", ToolbarOverflowPlanner.Settings],
+        });
+
+        Assert.Equal("overflow-terminal", overflowed[0].Id);
+        Assert.Equal("Open terminal", overflowed[0].Label);
+        Assert.Equal("F4", overflowed[0].Shortcut);
+        Assert.Equal("overflow-copy", overflowed[1].Id);
+        Assert.Equal("Copy", overflowed[1].Label);
+        Assert.Equal("Ctrl+C", overflowed[1].Shortcut);
+        Assert.Equal("overflow-settings", overflowed[2].Id);
     }
 }

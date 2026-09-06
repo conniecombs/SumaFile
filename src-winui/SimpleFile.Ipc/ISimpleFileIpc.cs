@@ -115,7 +115,14 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task OpenTerminalAsync(string path, CancellationToken ct = default);
     Task OpenPowershellAdminAsync(string path, CancellationToken ct = default);
     Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default);
+    Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default);
     Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default);
-    Task GitPullAsync(string path, CancellationToken ct = default);
-    Task GitPushAsync(string path, CancellationToken ct = default);
+    Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default);
+    Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default);
+    Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default);
+    Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default);
+    Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default);
+    Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default);
+    Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default);
+    Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default);
 }

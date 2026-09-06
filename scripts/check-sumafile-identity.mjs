@@ -81,15 +81,15 @@ for (const relativePath of trackedFiles) {
 
 const readme = readText('README.md');
 const packageJson = readText('package.json');
-const release100 = readText('docs/RELEASE_1.0.0.md');
+const release101 = readText('docs/RELEASE_1.0.1.md');
 const upgradeFromRef = readText('scripts/smoke-winui-upgrade-from-ref.ps1');
 const ipcLib = readText('crates/simplefile-ipc/src/lib.rs');
 const settingsStore = readText('crates/simplefile-core/src/settings_store.rs');
 const updater = readText('crates/simplefile-core/src/updater.rs');
 
 for (const snippet of [
-  'SumaFile 1.0.0',
-  'docs/RELEASE_1.0.0.md',
+  'SumaFile 1.0.1',
+  'docs/RELEASE_1.0.1.md',
   '## Known Limitations',
   'No manual import is needed for normal SimpleFile-to-SumaFile use.',
 ]) {
@@ -97,10 +97,10 @@ for (const snippet of [
 }
 
 for (const snippet of [
-  '# SumaFile 1.0.0 Release Checklist',
-  'SumaFile_1.0.0_x64-winui-setup.exe',
-  'SumaFile_1.0.0_x64-winui.msi',
-  'SumaFile_1.0.0_x64-winui-portable.zip',
+  '# SumaFile 1.0.1 Release Checklist',
+  'SumaFile_1.0.1_x64-winui-setup.exe',
+  'SumaFile_1.0.1_x64-winui.msi',
+  'SumaFile_1.0.1_x64-winui-portable.zip',
   'latest-winui.json',
   '## Dogfood 10-Step Script',
   'smoke:winui-upgrade-from-ref',
@@ -108,7 +108,7 @@ for (const snippet of [
   '## Known Limitations',
   'signed test release before claiming in-app updater installation is proven',
 ]) {
-  requireSnippet(release100, 'docs/RELEASE_1.0.0.md', snippet);
+  requireSnippet(release101, 'docs/RELEASE_1.0.1.md', snippet);
 }
 
 requireSnippet(packageJson, 'package.json', 'smoke:winui-upgrade-from-ref');

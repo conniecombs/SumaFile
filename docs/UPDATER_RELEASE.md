@@ -38,7 +38,7 @@ after the user-facing product name changed to SumaFile.
    `crates/simplefile-service/Cargo.toml`, `Cargo.lock`, the
    `APP_DISPLAY_VERSION` constant, and the README badge.
 2. Commit the version bump and release notes.
-3. Create a tag matching `Directory.Build.props` `<Version>` (currently `v1.0.0`), or run the `Release` GitHub Actions workflow
+3. Create a tag matching `Directory.Build.props` `<Version>` (currently `v1.0.1`), or run the `Release` GitHub Actions workflow
    manually with that version.
 4. The release workflow runs quality gates, builds the WinUI host and Rust IPC
    service, signs the NSIS setup executable, uploads NSIS/MSI/portable

@@ -36,7 +36,11 @@ public sealed class ContextMenuRequest
     public string? SelectedExtension { get; init; }
     public IReadOnlyList<OpenWithApplication> OpenWithApplications { get; init; } = [];
     public IReadOnlyCollection<string> OverflowedToolbarIds { get; init; } = [];
+    public IReadOnlyList<string> ToolbarActionOrder { get; init; } = [];
     public bool InRecycleBin { get; init; }
+    public bool GitEnabled { get; init; }
+    public bool InGitRepository { get; init; }
+    public bool SelectionHasGitStatus { get; init; }
 }
 
 /// <summary>
@@ -80,6 +84,7 @@ public static class ContextMenuBuilder
             Item("ctx-compare", "Compare files", !canCompare),
             Item("ctx-terminal", "Open terminal here", false, "F4"),
             Item("ctx-powershell-admin", "Open PowerShell as administrator"),
+            GitMenu(request),
             Divider(),
             Item("ctx-color-label", "Set color label...", request.SelectionCount == 0),
             Item("ctx-folder-metrics", "Compare folder metrics", !canCompareFolders),
@@ -163,6 +168,7 @@ public static class ContextMenuBuilder
             Item("ctx-cleanup", "Disk cleanup here..."),
             Divider(),
             Item("ctx-terminal", "Open terminal here", false, "F4"),
+            GitMenu(request),
         ]);
 
         return VisibleEntries(entries);
@@ -190,59 +196,80 @@ public static class ContextMenuBuilder
             items.Add(Item("overflow-filter", "Filter list"));
         }
 
-        if (Has(ToolbarOverflowPlanner.New))
+        var actionOrder = request.ToolbarActionOrder.Count == 0
+            ? CommandSurfaceLayout.DefaultPrimaryActionIds
+            : request.ToolbarActionOrder;
+        foreach (var id in actionOrder)
         {
-            items.Add(NewItemMenu());
-        }
-
-        if (Has(ToolbarOverflowPlanner.DualPane) && !request.DualPaneEnabled)
-        {
-            items.Add(Item("overflow-dual-pane", "Open second pane", shortcut: "F6"));
-        }
-
-        if (Has(ToolbarOverflowPlanner.Profiles))
-        {
-            items.Add(new ContextMenuEntry
+            if (!Has(id))
             {
-                Id = "overflow-profiles",
-                Label = "Profiles",
-                IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-profiles"),
-                Children =
-                [
-                    Item("profile:save", "Save current profile..."),
-                    Item("profile:manage", "Manage profiles..."),
-                ],
-            });
-        }
+                continue;
+            }
 
-        if (Has(ToolbarOverflowPlanner.ViewOptions))
-        {
-            items.Add(new ContextMenuEntry
+            switch (id)
             {
-                Id = "overflow-view",
-                Label = "View options",
-                IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-view"),
-                Children =
-                [
-                    Item("view:details", "Details"),
-                    Item("view:list", "List"),
-                    Item("view:tiles", "Tiles"),
-                    Item("view:content", "Content"),
-                    Divider(),
-                    Item("icon:16", "Small icons"),
-                    Item("icon:32", "Medium icons"),
-                    Item("icon:48", "Large icons"),
-                    Item("icon:96", "Extra large icons"),
-                    Item("icon:128", "Jumbo icons"),
-                    Item("icon:192", "Huge icons"),
-                    Item("icon:256", "Maximum icons"),
-                ],
-            });
-        }
+                case ToolbarOverflowPlanner.New:
+                    items.Add(NewItemMenu());
+                    break;
+                case ToolbarOverflowPlanner.DualPane:
+                    if (!request.DualPaneEnabled)
+                    {
+                        items.Add(Item("overflow-dual-pane", "Open second pane", shortcut: "F6"));
+                    }
 
-        if (Has(ToolbarOverflowPlanner.Settings))
-        {
-            items.Add(Item("overflow-settings", "Settings", shortcut: "Ctrl+Shift+S"));
+                    break;
+                case ToolbarOverflowPlanner.Profiles:
+                    items.Add(new ContextMenuEntry
+                    {
+                        Id = "overflow-profiles",
+                        Label = "Profiles",
+                        IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-profiles"),
+                        Children =
+                        [
+                            Item("profile:save", "Save current profile..."),
+                            Item("profile:manage", "Manage profiles..."),
+                        ],
+                    });
+                    break;
+                case ToolbarOverflowPlanner.ViewOptions:
+                    items.Add(new ContextMenuEntry
+                    {
+                        Id = "overflow-view",
+                        Label = "View options",
+                        IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-view"),
+                        Children =
+                        [
+                            Item("view:details", "Details"),
+                            Item("view:list", "List"),
+                            Item("view:tiles", "Tiles"),
+                            Item("view:content", "Content"),
+                            Divider(),
+                            Item("icon:16", "Small icons"),
+                            Item("icon:32", "Medium icons"),
+                            Item("icon:48", "Large icons"),
+                            Item("icon:96", "Extra large icons"),
+                            Item("icon:128", "Jumbo icons"),
+                            Item("icon:192", "Huge icons"),
+                            Item("icon:256", "Maximum icons"),
+                        ],
+                    });
+                    break;
+                case ToolbarOverflowPlanner.Settings:
+                    items.Add(Item("overflow-settings", "Settings", shortcut: "Ctrl+Shift+S"));
+                    break;
+                default:
+                    if (ToolbarActionCatalog.Find(id) is { CommandId: not null } action)
+                    {
+                        if (string.Equals(action.Group, "Git", StringComparison.Ordinal) && !request.GitEnabled)
+                        {
+                            break;
+                        }
+
+                        items.Add(Item($"overflow-{id}", action.Label, shortcut: action.Shortcut, iconGlyph: action.IconGlyph));
+                    }
+
+                    break;
+            }
         }
 
         return items;
@@ -355,6 +382,37 @@ public static class ContextMenuBuilder
             Label = "Open with",
             IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-open-with"),
             Children = children,
+        };
+    }
+
+    private static ContextMenuEntry GitMenu(ContextMenuRequest request)
+    {
+        if (!request.GitEnabled)
+        {
+            return Item("ctx-git-menu", "Git", disabled: true);
+        }
+
+        var hasSelection = request.SelectionCount > 0;
+        return new ContextMenuEntry
+        {
+            Id = "ctx-git-menu",
+            Label = "Git",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-git-menu"),
+            Children =
+            [
+                Item("ctx-git-panel", "Show Git panel", showIcon: false),
+                Item("ctx-git-refresh", "Refresh status", !request.InGitRepository, showIcon: false),
+                Divider(),
+                Item("ctx-git-diff", "Show diff", request.SelectionCount != 1 || !request.SelectionHasGitStatus, showIcon: false),
+                Item("ctx-git-stage", "Stage selected", !hasSelection || !request.SelectionHasGitStatus, showIcon: false),
+                Item("ctx-git-unstage", "Unstage selected", !hasSelection || !request.SelectionHasGitStatus, showIcon: false),
+                Item("ctx-git-discard", "Discard selected changes", !hasSelection || !request.SelectionHasGitStatus, showIcon: false),
+                Divider(),
+                Item("ctx-git-fetch", "Fetch", !request.InGitRepository, showIcon: false),
+                Item("ctx-git-pull", "Pull", !request.InGitRepository, showIcon: false),
+                Item("ctx-git-push", "Push", !request.InGitRepository, showIcon: false),
+                Item("ctx-git-commit", "Commit", !request.InGitRepository, showIcon: false),
+            ],
         };
     }
 

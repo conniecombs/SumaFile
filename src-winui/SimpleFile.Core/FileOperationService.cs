@@ -353,12 +353,33 @@ public sealed class FileOperationService : ISettingsBackend
         }
     }
 
-    public Task GitPullAsync(string path, CancellationToken ct = default) => _ipc.GitPullAsync(path, ct);
+    public Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default) => _ipc.GitPullAsync(path, ct);
 
     public Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)
         => _ipc.GetGitFileStatusesAsync(path, ct);
 
-    public Task GitPushAsync(string path, CancellationToken ct = default) => _ipc.GitPushAsync(path, ct);
+    public Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default)
+        => _ipc.GetGitRepositoryStatusAsync(path, ct);
+
+    public Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => _ipc.GitStagePathsAsync(path, paths, ct);
+
+    public Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => _ipc.GitUnstagePathsAsync(path, paths, ct);
+
+    public Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => _ipc.GitDiscardPathsAsync(path, paths, ct);
+
+    public Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default)
+        => _ipc.GitDiffPathAsync(path, filePath, ct);
+
+    public Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default)
+        => _ipc.GitCommitAsync(path, message, ct);
+
+    public Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default)
+        => _ipc.GitFetchAsync(path, ct);
+
+    public Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default) => _ipc.GitPushAsync(path, ct);
 
     public Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default) => _ipc.GetGitStatusAsync(path, ct);
 

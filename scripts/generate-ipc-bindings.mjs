@@ -242,9 +242,16 @@ const wrappers = [
   { method: 'open_terminal', signature: 'public Task OpenTerminalAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.OpenTerminalMethod, new { path }, ct)' },
   { method: 'open_powershell_admin', signature: 'public Task OpenPowershellAdminAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.OpenPowershellAdminMethod, new { path }, ct)' },
   { method: 'get_git_status', signature: 'public Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<GitStatus>(Protocol.GetGitStatusMethod, new { path }, ct)' },
+  { method: 'get_git_repository_status', signature: 'public Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<GitRepositoryStatus>(Protocol.GetGitRepositoryStatusMethod, new { path }, ct)' },
   { method: 'get_git_file_statuses', signature: 'public Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<FileEntry[]>(Protocol.GetGitFileStatusesMethod, new { path }, ct)' },
-  { method: 'git_pull', signature: 'public Task GitPullAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.GitPullMethod, new { path }, ct)' },
-  { method: 'git_push', signature: 'public Task GitPushAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.GitPushMethod, new { path }, ct)' },
+  { method: 'git_stage_paths', signature: 'public Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitStagePathsMethod, new { path, paths }, ct)' },
+  { method: 'git_unstage_paths', signature: 'public Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitUnstagePathsMethod, new { path, paths }, ct)' },
+  { method: 'git_discard_paths', signature: 'public Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitDiscardPathsMethod, new { path, paths }, ct)' },
+  { method: 'git_diff_path', signature: 'public Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default)', body: 'InvokeAsync<string>(Protocol.GitDiffPathMethod, new { path, filePath }, ct)' },
+  { method: 'git_commit', signature: 'public Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitCommitMethod, new { path, message }, ct)' },
+  { method: 'git_fetch', signature: 'public Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitFetchMethod, new { path }, ct)' },
+  { method: 'git_pull', signature: 'public Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitPullMethod, new { path }, ct)' },
+  { method: 'git_push', signature: 'public Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitPushMethod, new { path }, ct)' },
 ];
 
 const generatedWrapperMethods = new Set(wrappers.map((wrapper) => wrapper.method));

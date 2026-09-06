@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 79,
+  "domainMethodCount": 86,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -140,8 +140,15 @@
     "install_rar": { "params": { "confirmationToken": "string" }, "result": "string" },
     "get_db_setting": { "params": { "key": "string" }, "result": "string?" },
     "set_db_setting": { "params": { "key": "string", "value": "string" }, "result": "null" },
-    "git_pull": { "params": { "path": "string" }, "result": "string" },
-    "git_push": { "params": { "path": "string" }, "result": "string" },
+    "get_git_repository_status": { "params": { "path": "string" }, "result": "GitRepositoryStatus" },
+    "git_stage_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
+    "git_unstage_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
+    "git_discard_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
+    "git_diff_path": { "params": { "path": "string", "filePath": "string" }, "result": "string" },
+    "git_commit": { "params": { "path": "string", "message": "string" }, "result": "GitCommandResult" },
+    "git_fetch": { "params": { "path": "string" }, "result": "GitCommandResult" },
+    "git_pull": { "params": { "path": "string" }, "result": "GitCommandResult" },
+    "git_push": { "params": { "path": "string" }, "result": "GitCommandResult" },
     "open_terminal": { "params": { "path": "string" }, "result": "null" },
     "open_powershell_admin": { "params": { "path": "string" }, "result": "null" },
     "search_files": { "params": { "options": "SearchOptions" }, "result": "SearchResult[]", "binaryFrameTags": { "batch": 3, "result": 4 } },

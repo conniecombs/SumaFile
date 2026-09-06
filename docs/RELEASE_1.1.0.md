@@ -8,7 +8,7 @@ Release date: 2026-05-29
 > terms under which SimpleFile 1.1.0 was originally published.
 > This file is a historical SimpleFile 1.1.0 snapshot. Current SumaFile
 > release validation, packaging, and runtime behavior use the WinUI host plus
-> Rust IPC service documented in `README.md` and `docs/RELEASE_1.0.0.md`.
+> Rust IPC service documented in `README.md` and `docs/RELEASE_1.0.1.md`.
 
 ## Summary
 

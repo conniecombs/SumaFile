@@ -137,10 +137,17 @@ Formats that must remain: `zip`, `tar`, `tar.gz` / `tgz`, `rar`. Archive paths c
 
 | Command | Rust module | JS args | Result | Used by |
 | --- | --- | --- | --- | --- |
-| `get_git_status` | `git` | `{ path }` | `GitStatus` | `compatOnly`; live UI uses `get_git_file_statuses` |
-| `get_git_file_statuses` | `git` | `{ path }` | `Record<string, string>` | Optional git column when `enableGitIntegration` |
-| `git_pull` | `git` | `{ path }` | `string \| void` | Command palette |
-| `git_push` | `git` | `{ path }` | `string \| void` | Command palette |
+| `get_git_status` | `git` | `{ path }` | `GitStatus` | `compatOnly`; live UI uses repository/file status methods |
+| `get_git_repository_status` | `git` | `{ path }` | `GitRepositoryStatus` | Optional Git panel when `enableGitIntegration` |
+| `get_git_file_statuses` | `git` | `{ path }` | `FileEntry[]` | Optional Git column when `enableGitIntegration` |
+| `git_stage_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git panel/context menu |
+| `git_unstage_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git panel/context menu |
+| `git_discard_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git panel/context menu with UI confirmation |
+| `git_diff_path` | `git` | `{ path, filePath }` | `string` | Git panel/context menu diff viewer |
+| `git_commit` | `git` | `{ path, message }` | `GitCommandResult` | Git panel commit prompt |
+| `git_fetch` | `git` | `{ path }` | `GitCommandResult` | Git panel/context menu |
+| `git_pull` | `git` | `{ path }` | `GitCommandResult` | Git panel/context menu/command palette |
+| `git_push` | `git` | `{ path }` | `GitCommandResult` | Git panel/context menu/command palette |
 | `open_terminal` | `terminal` | `{ path }` | `void` | F4, context menu, toolbar |
 | `open_powershell_admin` | `terminal` | `{ path }` | `void` | Context menu / command workflow |
 | `get_all_tags` | `tags` | none | `ColorLabelTag[]` | Color labels |
@@ -309,7 +316,7 @@ Workflows live in `frontend/src/lib/app/` plus host-style modules under `fronten
 | About | `showAboutFlow` | Version/platform + repo link |
 | Updater | `checkForUpdatesFlow`, `installUpdateFlow` | Passive Windows install, then restart |
 | WinRAR tool | `updateToolStatus`, `installRarFlow` | Confirm token, hash, publisher |
-| Command palette | `CommandPalette.svelte` | Ctrl+Shift+P; includes Git pull/push |
+| Command palette | `CommandPalette.svelte` | Ctrl+Shift+P; includes Git panel/actions when integration is enabled |
 
 ### 4.7 Settings keys that must persist
 
@@ -340,7 +347,7 @@ Workspace layout snapshot (tabs, dual-pane, paths, histories, preview, columns, 
 | `ToolbarShell.svelte` | Search, nav buttons, file actions, view/theme/preview/dual-pane, more-actions, icon size |
 | `ContentShell.svelte` | Dual tabs, breadcrumbs, path editors, file lists, pane splitter (20–80%) |
 | `FileListHeader.svelte` / `FileListHeaderCells.svelte` | Sortable/resizable columns |
-| `CommandPalette.svelte` | Fuzzy command list + git pull/push |
+| `CommandPalette.svelte` | Fuzzy command list + Git panel/actions |
 
 ### 5.2 Document custom events (`simplefile:*`)
 
@@ -460,7 +467,7 @@ Keep these as the IPC service. Only the Tauri glue (`#[tauri::command]`, `AppHan
 | `search.rs` | Name/glob/content search + cancel registry | `search-results-batch`, `search-complete` | Medium |
 | `archive.rs` | zip/tar/tgz/rar list/create/extract + in-archive VFS | Uses `rar_installer` | Light |
 | `rar_installer.rs` | Detect/download/verify/install WinRAR | `reqwest` + confirmation token | Light |
-| `git.rs` | status / file statuses / pull / push | `CREATE_NO_WINDOW` on Windows | None |
+| `git.rs` | repository status, file statuses, diff, stage, unstage, discard, commit, fetch, pull, push | `CREATE_NO_WINDOW` on Windows | None |
 | `terminal.rs` | PowerShell / elevated PowerShell | Process spawn | None |
 | `checksum.rs` | MD5/SHA1/SHA256 | None | None |
 | `compare.rs` | Line-oriented file diff | None | None |
@@ -537,7 +544,7 @@ From `src-tauri/tauri.conf.json`:
 | Item | Current value |
 | --- | --- |
 | Product | SimpleFile |
-| Version | 1.0.0 |
+| Version | 1.0.1 |
 | Identifier | `com.simplefile.desktop` |
 | Window label | `main` |
 | Title | `SimpleFile - File Explorer` |

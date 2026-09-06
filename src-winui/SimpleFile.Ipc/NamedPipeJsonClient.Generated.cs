@@ -241,12 +241,33 @@ public sealed partial class NamedPipeJsonClient
     public Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default)
         => InvokeAsync<GitStatus>(Protocol.GetGitStatusMethod, new { path }, ct);
 
+    public Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default)
+        => InvokeAsync<GitRepositoryStatus>(Protocol.GetGitRepositoryStatusMethod, new { path }, ct);
+
     public Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)
         => InvokeAsync<FileEntry[]>(Protocol.GetGitFileStatusesMethod, new { path }, ct);
 
-    public Task GitPullAsync(string path, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.GitPullMethod, new { path }, ct);
+    public Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitStagePathsMethod, new { path, paths }, ct);
 
-    public Task GitPushAsync(string path, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.GitPushMethod, new { path }, ct);
+    public Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitUnstagePathsMethod, new { path, paths }, ct);
+
+    public Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitDiscardPathsMethod, new { path, paths }, ct);
+
+    public Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default)
+        => InvokeAsync<string>(Protocol.GitDiffPathMethod, new { path, filePath }, ct);
+
+    public Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitCommitMethod, new { path, message }, ct);
+
+    public Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitFetchMethod, new { path }, ct);
+
+    public Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitPullMethod, new { path }, ct);
+
+    public Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitPushMethod, new { path }, ct);
 }

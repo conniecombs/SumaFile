@@ -38,6 +38,40 @@ public static class ToolbarOverflowPlanner
         New,
     ];
 
+    public static IReadOnlyList<string> PrimaryHideOrderFor(CommandSurfaceLayout layout)
+    {
+        var actionIds = layout.VisiblePrimaryActionIds();
+        if (actionIds.SequenceEqual(CommandSurfaceLayout.DefaultPrimaryActionIds, StringComparer.Ordinal))
+        {
+            return PrimaryHideOrder;
+        }
+
+        return
+        [
+            Filter,
+            Search,
+            .. actionIds.Reverse(),
+        ];
+    }
+
+    public static IReadOnlyDictionary<string, double> PrimaryItemWidthsFor(
+        double availableWidth,
+        CommandSurfaceLayout layout)
+    {
+        var widths = new Dictionary<string, double>(StringComparer.Ordinal)
+        {
+            [Filter] = FilterOverflowWidthFor(availableWidth),
+            [Search] = SearchOverflowWidthFor(availableWidth),
+        };
+
+        foreach (var id in layout.VisiblePrimaryActionIds())
+        {
+            widths[id] = ToolbarActionCatalog.WidthFor(id, layout.ToolbarDisplayMode);
+        }
+
+        return widths;
+    }
+
     public static HashSet<string> OverflowIds(
         double availableWidth,
         double reservedWidth,

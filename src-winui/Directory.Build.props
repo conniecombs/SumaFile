@@ -1,9 +1,9 @@
 <Project>
   <PropertyGroup>
     <!-- Numeric identity for AssemblyVersion / FileVersion / WiX / NSIS VIProductVersion. -->
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <!-- User-facing product version (About, Settings, installer DisplayVersion, artifact names). -->
-    <InformationalVersion>1.0.0</InformationalVersion>
+    <InformationalVersion>1.0.1</InformationalVersion>
     <Authors>SumaFile Team</Authors>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

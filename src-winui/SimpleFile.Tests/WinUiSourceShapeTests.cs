@@ -224,8 +224,9 @@ public class WinUiSourceShapeTests
         var root = FindRepoRoot();
         var appRoot = Path.Combine(root, "SimpleFile.App");
         var coreRoot = Path.Combine(root, "SimpleFile.Core");
-        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsDialog.xaml"));
-        var settingsCode = File.ReadAllText(Path.Combine(appRoot, "SettingsDialog.xaml.cs"));
+        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml"));
+        var settingsCode = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml.cs"));
+        var dialogService = File.ReadAllText(Path.Combine(appRoot, "FileOperationDialogService.cs"));
         var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
         var mainWindowCode = ReadMainWindowSource(appRoot);
         var shortcutBinder = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Shortcuts.cs"));
@@ -241,7 +242,14 @@ public class WinUiSourceShapeTests
         Assert.Contains("KeyboardShortcutMap.EffectiveShortcuts", shortcutBinder);
         Assert.Contains("KeyboardShortcutMap.SettingsKey", settingsStore);
         Assert.Contains("TryGetReservedWindowsWarning", shortcutMap);
-        Assert.Contains("<x:Double x:Key=\"ContentDialogMaxWidth\">820</x:Double>", settingsXaml);
+        Assert.Contains("<Window", settingsXaml);
+        Assert.Contains("x:Class=\"SimpleFile.App.SettingsWindow\"", settingsXaml);
+        Assert.Contains("<NavigationView", settingsXaml);
+        Assert.Contains("SettingsNavigation", settingsCode);
+        Assert.Contains("presenter.IsResizable = true;", settingsCode);
+        Assert.Contains("new SettingsWindow", dialogService);
+        Assert.DoesNotContain("ContentDialogMaxWidth", settingsXaml);
+        Assert.DoesNotContain("Width=\"760\"", settingsXaml);
         Assert.Contains("HorizontalScrollMode=\"Disabled\"", settingsXaml);
         Assert.Contains("<ColumnDefinition Width=\"300\" />", settingsXaml);
         Assert.DoesNotContain("Remapping is not available yet", settingsXaml);
@@ -249,11 +257,38 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
+    public void GitIntegration_UsesPanelAndCompleteDisableSwitch()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var coreRoot = Path.Combine(root, "SimpleFile.Core");
+        var ipcRoot = Path.Combine(root, "SimpleFile.Ipc");
+        var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var mainWindowCode = ReadMainWindowSource(appRoot);
+        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml"));
+        var workspace = ReadExplorerWorkspaceSource(coreRoot);
+        var ipc = File.ReadAllText(Path.Combine(ipcRoot, "ISimpleFileIpc.cs"));
+
+        Assert.Contains("GitPanel", mainWindowXaml);
+        Assert.Contains("GitToggleButton", mainWindowXaml);
+        Assert.Contains("GitChangesList", mainWindowXaml);
+        Assert.Contains("OnGitStageSelected", mainWindowCode);
+        Assert.Contains("GetGitRepositoryStatusAsync", mainWindowCode);
+        Assert.Contains("EnsureGitIntegrationEnabled", mainWindowCode);
+        Assert.Contains("Git integration is disabled in Settings.", mainWindowCode);
+        Assert.Contains("command.Group, \"Git\"", mainWindowCode);
+        Assert.Contains("ClearGitStatuses()", workspace);
+        Assert.Contains("EnableGitSwitch", settingsXaml);
+        Assert.Contains("Task<GitCommandResult> GitStagePathsAsync", ipc);
+        Assert.Contains("Task<GitCommandResult> GitPullAsync", ipc);
+    }
+
+    [Fact]
     public void ThemeChrome_FollowsWindowsDefaultAndAvoidsStaticSfBrushes()
     {
         var root = FindRepoRoot();
         var appRoot = Path.Combine(root, "SimpleFile.App");
-        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsDialog.xaml"));
+        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml"));
         var mainWindowCode = ReadMainWindowSource(appRoot);
         var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
         var fileRows = File.ReadAllText(Path.Combine(appRoot, "FileRowView.xaml.cs"));

@@ -258,7 +258,7 @@ function Remove-PathWithRetry {
                 continue
             }
 
-            $lockHolders = Get-LikelyWinUILockHolder -Path $Path
+            $lockHolders = @(Get-LikelyWinUILockHolder -Path $Path)
             if ($lockHolders.Count -gt 0) {
                 Write-Warning "Possible WinUI payload lock holders:"
                 $lockHolders | ForEach-Object {

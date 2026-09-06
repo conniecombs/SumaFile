@@ -162,6 +162,16 @@ public class WorkspaceSettingsStoreTests
                 ["search.focus"] = ["Ctrl+K", "F3"],
                 ["tabs.close"] = [],
             },
+            CommandSurface = new CommandSurfaceLayout
+            {
+                ToolbarDisplayMode = ToolbarActionCatalog.IconAndLabelDisplayMode,
+                PrimaryToolbar =
+                [
+                    CommandSurfaceItem.Command(ToolbarOverflowPlanner.Settings),
+                    CommandSurfaceItem.Separator(),
+                    CommandSurfaceItem.Command("copy"),
+                ],
+            },
         };
         var bookmarks = new List<BookmarkItem>
         {
@@ -235,6 +245,8 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal(@"C:\Last", state.Settings.LastPath);
         Assert.Equal(["Ctrl+K", "F3"], state.Settings.ShortcutOverrides["search.focus"]);
         Assert.Equal([], state.Settings.ShortcutOverrides["tabs.close"]);
+        Assert.Equal(ToolbarActionCatalog.IconAndLabelDisplayMode, state.Settings.CommandSurface.ToolbarDisplayMode);
+        Assert.Equal([ToolbarOverflowPlanner.Settings, "copy"], state.Settings.CommandSurface.VisiblePrimaryActionIds());
         var folderRule = Assert.Single(state.Settings.FolderViewSettings.Rules);
         Assert.Equal(FolderViewRuleScope.Descendants, folderRule.Scope);
         Assert.Equal("content", folderRule.Options.View);
@@ -244,6 +256,7 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal("true", ipc.Settings["progressQueue.visible"]);
         Assert.Equal("system", ipc.Settings["theme"]);
         Assert.Contains("\"search.focus\"", ipc.Settings[KeyboardShortcutMap.SettingsKey], StringComparison.Ordinal);
+        Assert.Contains("\"copy\"", ipc.Settings[CommandSurfaceLayout.SettingsKey], StringComparison.Ordinal);
         Assert.Contains("\"scope\": \"descendants\"", ipc.Settings[FolderViewSettingsDocument.SettingsKey], StringComparison.Ordinal);
         Assert.Equal(bookmarks.Single().Path, state.Bookmarks.Single().Path);
         Assert.Equal(recentPaths, state.RecentPaths);

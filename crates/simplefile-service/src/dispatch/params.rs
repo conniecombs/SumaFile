@@ -84,6 +84,25 @@ pub(super) struct PathsParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitPathsParams {
+    pub(super) path: String,
+    pub(super) paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitDiffPathParams {
+    pub(super) path: String,
+    #[serde(rename = "filePath")]
+    pub(super) file_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitCommitParams {
+    pub(super) path: String,
+    pub(super) message: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct RenameParams {
     pub(super) path: String,
     #[serde(rename = "newName")]

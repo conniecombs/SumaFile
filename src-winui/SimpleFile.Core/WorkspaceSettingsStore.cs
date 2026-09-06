@@ -48,6 +48,8 @@ internal static class WorkspaceSettingsStore
         settings.ColumnWidths = columnWidths.Primary;
         settings.SecondaryColumnWidths = columnWidths.Secondary;
         settings.ShortcutOverrides = await ReadShortcutOverridesAsync(fileOps, cancellationToken).ConfigureAwait(false);
+        settings.CommandSurface = CommandSurfaceLayout.FromJson(
+            await fileOps.GetSettingAsync(CommandSurfaceLayout.SettingsKey, cancellationToken).ConfigureAwait(false));
         settings.FolderViewSettings = FolderViewSettingsDocument.FromJson(
             await fileOps.GetSettingAsync(FolderViewSettingsDocument.SettingsKey, cancellationToken).ConfigureAwait(false));
         settings.ShowQuickAccess = await ReadBoolSettingAsync(fileOps, "sidebar.showQuickAccess", true, cancellationToken).ConfigureAwait(false);
@@ -124,6 +126,11 @@ internal static class WorkspaceSettingsStore
         await fileOps.SetSettingAsync(
             KeyboardShortcutMap.SettingsKey,
             KeyboardShortcutMap.WriteOverridesJson(settings.ShortcutOverrides),
+            cancellationToken).ConfigureAwait(false);
+        settings.CommandSurface.Normalize();
+        await fileOps.SetSettingAsync(
+            CommandSurfaceLayout.SettingsKey,
+            settings.CommandSurface.ToJson(),
             cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync(
             FolderViewSettingsDocument.SettingsKey,
@@ -374,7 +381,7 @@ internal static class WorkspaceSettingsStore
     }
 
     private static async Task<uint> ReadUIntSettingAsync(
-        FileOperationService fileOps,
+        ISettingsBackend fileOps,
         string key,
         uint fallback,
         CancellationToken cancellationToken)

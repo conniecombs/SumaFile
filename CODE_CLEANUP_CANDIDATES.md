@@ -347,13 +347,13 @@ The same actions used to be mapped three times (`rename` / `ctx-rename` / F2; `d
 - **A:** Split emitters (Rust vs C#).
 - **B:** Leave; it works.
 
-### 11.15 `SettingsDialog.xaml.cs` (~470–510 lines)
+### 11.15 `SettingsWindow.xaml.cs` (~470–510 lines)
 
 **Mix:** category/search UI, bind/apply `UiSettings`, RAR installer, updater, GitHub link. `LoadSettingsAsync` re-reads the same IPC keys as `ExplorerWorkspace.LoadUiSettingsAsync`.
 
 **Options**
 
-- **A:** Split `SettingsDialog.Tools.cs` (RAR/updates), or child UserControls per category panel.
+- **A:** Split `SettingsWindow.Tools.cs` (RAR/updates), or child UserControls per category panel.
 - **B:** Bind already-loaded `UiSettings` instead of a second IPC read (keep defaults/fallbacks).
 
 ### 11.16 `BackendSession.cs` (~320 lines)

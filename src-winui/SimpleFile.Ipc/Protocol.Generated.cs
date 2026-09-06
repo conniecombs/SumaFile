@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 79;
+    public const int DomainMethodCount = 86;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -66,6 +66,13 @@ public static partial class Protocol
     public const string InstallRarMethod = "install_rar";
     public const string GetDbSettingMethod = "get_db_setting";
     public const string SetDbSettingMethod = "set_db_setting";
+    public const string GetGitRepositoryStatusMethod = "get_git_repository_status";
+    public const string GitStagePathsMethod = "git_stage_paths";
+    public const string GitUnstagePathsMethod = "git_unstage_paths";
+    public const string GitDiscardPathsMethod = "git_discard_paths";
+    public const string GitDiffPathMethod = "git_diff_path";
+    public const string GitCommitMethod = "git_commit";
+    public const string GitFetchMethod = "git_fetch";
     public const string GitPullMethod = "git_pull";
     public const string GitPushMethod = "git_push";
     public const string OpenTerminalMethod = "open_terminal";
@@ -155,6 +162,13 @@ public static partial class Protocol
         "install_rar",
         "get_db_setting",
         "set_db_setting",
+        "get_git_repository_status",
+        "git_stage_paths",
+        "git_unstage_paths",
+        "git_discard_paths",
+        "git_diff_path",
+        "git_commit",
+        "git_fetch",
         "git_pull",
         "git_push",
         "open_terminal",

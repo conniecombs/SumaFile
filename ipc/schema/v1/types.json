@@ -101,6 +101,20 @@
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["is_repo", "branch", "modified", "staged", "untracked", "ahead", "behind"]
     },
+    "GitFileStatus": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["path", "absolute_path", "original_path", "status", "index_status", "worktree_status", "staged", "unstaged", "untracked", "conflicted"],
+      "optional": ["original_path"]
+    },
+    "GitRepositoryStatus": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["is_repo", "root", "branch", "upstream", "head", "ahead", "behind", "staged", "unstaged", "untracked", "conflicted", "changes"],
+      "optional": ["root", "branch", "upstream", "head"]
+    },
+    "GitCommandResult": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["command", "exit_code", "stdout", "stderr", "summary"]
+    },
     "FilePreview": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["file_type", "mime_type", "size", "content", "encoding"]

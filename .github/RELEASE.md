@@ -16,7 +16,7 @@ runners provide the Windows SDK.
 
 ### 1. Update Version Numbers
 
-The user-facing version is 1.0.0. Keep display and numeric identities in sync:
+The user-facing version is 1.0.1. Keep display and numeric identities in sync:
 
 - `src-winui/Directory.Build.props` — `<InformationalVersion>` and `<Version>`
 - `crates/simplefile-core/Cargo.toml` — package `version` field (must match `<Version>`)
@@ -46,11 +46,11 @@ git pull origin main
 
 ### 3. Create a Git Tag
 
-Tags must use `vMAJOR.MINOR.PATCH` format, for example `v1.0.0`.
+Tags must use `vMAJOR.MINOR.PATCH` format, for example `v1.0.1`.
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 ### 4. Automated Build Process
@@ -80,7 +80,7 @@ You can also trigger a release manually:
 
 1. Go to Actions → Release.
 2. Click **Run workflow**.
-3. Enter the version, for example `v1.0.0`.
+3. Enter the version, for example `v1.0.1`.
 4. Choose whether to create a draft release.
 
 If `draft` is set to `false`, the workflow publishes the release after the
@@ -90,9 +90,9 @@ Windows build succeeds.
 
 | Platform | Installer Type | Example File |
 |----------|----------------|--------------|
-| Windows x64 | NSIS setup executable | `SumaFile_1.0.0_x64-winui-setup.exe` |
-| Windows x64 | MSI installer | `SumaFile_1.0.0_x64-winui.msi` |
-| Windows x64 | Portable zip | `SumaFile_1.0.0_x64-winui-portable.zip` |
+| Windows x64 | NSIS setup executable | `SumaFile_1.0.1_x64-winui-setup.exe` |
+| Windows x64 | MSI installer | `SumaFile_1.0.1_x64-winui.msi` |
+| Windows x64 | Portable zip | `SumaFile_1.0.1_x64-winui-portable.zip` |
 | Windows updater | Static JSON / signatures | `latest-winui.json`, SHA-256, size, and `.sig` files |
 
 ## Auto-Update
@@ -136,10 +136,10 @@ Add these secrets for Windows code signing when ready:
 
 ## Versioning
 
-The current user-facing version is **1.0.0**. Technical packaging fields that require x.y.z also use `1.0.0`. Future numbered releases can follow Semantic Versioning:
+The current user-facing version is **1.0.1**. Technical packaging fields that require x.y.z also use `1.0.1`. Future numbered releases can follow Semantic Versioning:
 
 - **MAJOR**: breaking changes
 - **MINOR**: backward-compatible features
 - **PATCH**: backward-compatible fixes and release/process improvements
 
-Pre-release examples: `v1.0.0-beta.1`, `v1.0.0-rc.1`.
+Pre-release examples: `v1.0.1-beta.1`, `v1.0.1-rc.1`.

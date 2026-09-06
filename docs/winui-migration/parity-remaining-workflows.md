@@ -12,14 +12,14 @@ for the 9 remaining workflow areas.
 | Archive Listing/Viewer | ✅ `ArchiveViewerModal.svelte` | ✅ `ArchiveViewerDialog.xaml` | Same IPC: `list_archive` |
 | Archive Extraction Preflight | ✅ `renderExtractArchivePreflight` | ✅ `ExtractArchiveDialog.xaml` | Unsafe entry warnings preserved |
 | Archive Creation | ✅ `CreateArchiveModal.svelte` | ✅ `CreateArchiveDialog.xaml` | Format selection: zip/tar/tar.gz/rar |
-| RAR Install Flow | ✅ Settings → Tools tab | ✅ `SettingsDialog.xaml` Tools panel | Full prepare → confirm → install flow |
+| RAR Install Flow | ✅ Settings → Tools tab | ✅ `SettingsWindow.xaml` Tools panel | Full prepare → confirm → install flow |
 | Disk Cleanup | ✅ `showDiskCleanupFlow` | ✅ `DiskCleanupDialog.xaml` | Read-only analysis, no deletes |
 | Duplicate Checker | ✅ `DuplicateCheckerModal.svelte` | ✅ `DuplicateCheckerDialog.xaml` | Safety invariant preserved |
 | Tags / Color Labels | ✅ `showSetColorLabelFlow` | ✅ `TagPickerDialog.xaml` | Default palette seeded from DB |
 | Smart Folders | ✅ `SmartFoldersList.svelte` | ✅ Sidebar smart folders section | Save/open/delete via IPC |
-| DB-backed Settings | ✅ `SettingsBody.svelte` | ✅ `SettingsDialog.xaml` | 6 categories + search filter |
+| DB-backed Settings | ✅ `SettingsBody.svelte` | ✅ `SettingsWindow.xaml` | 6 categories + search filter |
 | App About/Version | ✅ `AboutModal.svelte` | ✅ `AboutDialog.xaml` | Version + OS + GitHub link |
-| Update Check + Install | ✅ Settings → Updates tab | ✅ `SettingsDialog.xaml` Updates panel | Check → download → install |
+| Update Check + Install | ✅ Settings → Updates tab | ✅ `SettingsWindow.xaml` Updates panel | Check → download → install |
 | Open Terminal | ✅ `openTerminal` | ✅ F4 keyboard shortcut | IPC `open_terminal` |
 
 ## Tauri Plugin Replacements
@@ -94,6 +94,13 @@ Seeded on first load if DB tags table is empty:
 | `open_terminal` | void | |
 | `open_powershell_admin` | void | |
 | `get_git_status` | `GitStatus` | |
+| `get_git_repository_status` | `GitRepositoryStatus` | |
 | `get_git_file_statuses` | `FileEntry[]` | |
-| `git_pull` | void | |
-| `git_push` | void | |
+| `git_stage_paths` | `GitCommandResult` | |
+| `git_unstage_paths` | `GitCommandResult` | |
+| `git_discard_paths` | `GitCommandResult` | |
+| `git_diff_path` | `string` | |
+| `git_commit` | `GitCommandResult` | |
+| `git_fetch` | `GitCommandResult` | |
+| `git_pull` | `GitCommandResult` | |
+| `git_push` | `GitCommandResult` | |

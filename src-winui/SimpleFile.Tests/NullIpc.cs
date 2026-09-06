@@ -230,11 +230,25 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task GitPullAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task GitPushAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
 

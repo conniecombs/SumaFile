@@ -290,6 +290,7 @@ public sealed partial class MainWindow
     private async Task ShowSettingsAsync()
     {
         await _fileOperationDialogs.ShowSettingsAsync();
+        RefreshGitUiVisibility();
     }
 
     private async void OnViewArchiveClicked(object sender, RoutedEventArgs e) =>

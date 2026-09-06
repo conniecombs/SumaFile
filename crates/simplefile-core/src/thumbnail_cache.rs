@@ -42,11 +42,8 @@ pub fn is_enabled() -> bool {
 
 /// Returns the default cache root directory.
 fn default_cache_root() -> PathBuf {
-    let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
-        std::env::temp_dir()
-            .to_string_lossy()
-            .to_string()
-    });
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
     PathBuf::from(local_app_data)
         .join("SumaFile")
         .join("thumbnail-cache")
@@ -205,14 +202,14 @@ pub fn clear() {
 // A simple inline hex encoder to avoid adding the `hex` crate.
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .fold(String::with_capacity(bytes.as_ref().len() * 2), |mut s, b| {
+        bytes.as_ref().iter().fold(
+            String::with_capacity(bytes.as_ref().len() * 2),
+            |mut s, b| {
                 use std::fmt::Write;
                 let _ = write!(s, "{b:02x}");
                 s
-            })
+            },
+        )
     }
 }
 
@@ -254,7 +251,12 @@ mod tests {
         let filename = path.file_name().unwrap().to_string_lossy();
         assert!(filename.ends_with(".jpg"));
         assert!(filename.starts_with("ab"));
-        let parent = path.parent().unwrap().file_name().unwrap().to_string_lossy();
+        let parent = path
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
         assert_eq!(parent, "cd");
     }
 

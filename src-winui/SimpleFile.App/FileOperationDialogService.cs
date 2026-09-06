@@ -26,6 +26,7 @@ internal sealed partial class FileOperationDialogService
     private readonly Action _refreshView;
     private readonly Action<string?> _applyTheme;
     private readonly Action _applyKeyboardShortcuts;
+    private readonly Action _applyCommandSurfaceLayout;
     private readonly Func<CancellationToken, Task> _clearRecentHistoryAsync;
     private readonly Action<Action> _dispatchToUi;
 
@@ -49,6 +50,7 @@ internal sealed partial class FileOperationDialogService
         Action refreshView,
         Action<string?> applyTheme,
         Action applyKeyboardShortcuts,
+        Action applyCommandSurfaceLayout,
         Func<CancellationToken, Task> clearRecentHistoryAsync,
         Action<Action> dispatchToUi)
     {
@@ -71,6 +73,7 @@ internal sealed partial class FileOperationDialogService
         _refreshView = refreshView;
         _applyTheme = applyTheme;
         _applyKeyboardShortcuts = applyKeyboardShortcuts;
+        _applyCommandSurfaceLayout = applyCommandSurfaceLayout;
         _clearRecentHistoryAsync = clearRecentHistoryAsync;
         _dispatchToUi = dispatchToUi;
     }
@@ -584,9 +587,8 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var dialog = new SettingsDialog
+        var dialog = new SettingsWindow
         {
-            XamlRoot = _xamlRoot(),
             OwnerHwnd = _ownerHwnd(),
         };
 
@@ -626,6 +628,7 @@ internal sealed partial class FileOperationDialogService
                 workspace.ApplyUiSettings(workspace.Settings, applyViewDefaultsToPanes: false);
                 _applyTheme(workspace.Settings.Theme);
                 _applyKeyboardShortcuts();
+                _applyCommandSurfaceLayout();
                 await workspace.SaveUiSettingsAsync(utilityCts.Token);
             }
             catch (OperationCanceledException)

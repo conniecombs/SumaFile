@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
-**Contract:** [`inventory.md`](inventory.md) (79 commands / emitted events / Svelte workflows)
+**Contract:** [`inventory.md`](inventory.md) (86 commands / emitted events / Svelte workflows)
 **Hosts:** WinUI 3 + `simplefile-service` is the shipping app. Svelte/Tauri UI and packaging glue have been retired.
 
 This is the **retirement lock**. Required `OPEN` rows are none. `MANUAL` rows stay as human smoke coverage. Retired `src-tauri/` domain now lives solely in `crates/simplefile-core`.
@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 79-command schema vs Rust/C#
+npm run check:ipc-schema      # 86-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (79)
+## 2. IPC commands (86)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -147,10 +147,17 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `get_git_status` | Repo status | Schema `compatOnly`; no live App/Core caller | Schema/client | — | `WAIVED` | Live UI uses `get_git_file_statuses` |
+| `get_git_status` | Legacy repo status | Schema `compatOnly`; no live App/Core caller | Schema/client | — | `WAIVED` | Live UI uses repository/file status methods |
+| `get_git_repository_status` | Repo summary + changes | Git panel | Schema/client/source-shape | Open Git panel in a repo | `PASS` |
 | `get_git_file_statuses` | Git column | `ApplyGitStatusesAsync` + `FileRow.GitText` | Workspace + FileRow | Enable Git; open a repo | `PASS` |
-| `git_pull` | Palette Git pull | Command palette | Catalog test | Git pull in a repo | `MANUAL` |
-| `git_push` | Palette Git push | Command palette | Catalog test | Git push | `MANUAL` |
+| `git_stage_paths` | Stage changed paths | Git panel/context menu | Schema/client/source-shape | Stage a changed file | `MANUAL` |
+| `git_unstage_paths` | Unstage paths | Git panel/context menu | Schema/client/source-shape | Unstage a staged file | `MANUAL` |
+| `git_discard_paths` | Discard selected changes | Git panel/context menu confirmation | Schema/client/source-shape | Discard a scratch change | `MANUAL` |
+| `git_diff_path` | Show file diff | Git diff dialog | Schema/client/source-shape | Open diff for a changed file | `MANUAL` |
+| `git_commit` | Commit staged changes | Commit prompt | Schema/client/source-shape | Commit staged scratch change | `MANUAL` |
+| `git_fetch` | Fetch remotes | Git panel/context menu | Schema/client/source-shape | Fetch in a repo | `MANUAL` |
+| `git_pull` | Pull current repo | Git panel/context menu/command palette | Catalog test | Git pull in a repo | `MANUAL` |
+| `git_push` | Push current repo | Git panel/context menu/command palette | Catalog test | Git push | `MANUAL` |
 | `open_terminal` | F4 / context | IPC | — | F4 | `MANUAL` |
 | `open_powershell_admin` | Context | IPC | Context menu ID | Elevate PS | `MANUAL` |
 | `get_all_tags` | Color labels | Tag picker | Workspace seed | Set label | `MANUAL` |
@@ -322,7 +329,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `settings` | Settings | Dialog | Catalog | Ctrl+Shift+S | `MANUAL` |
 | `command-palette` | Open command palette | Handler | Catalog test | Ctrl+Shift+P | `PASS` |
 | `keyboard-help` | F1 | Dialog | Catalog + shortcut map | F1 | `PASS` |
-| `git-pull` `git-push` | Palette | IPC | Catalog | — | `MANUAL` |
+| `git-panel` `git-refresh` `git-fetch` `git-pull` `git-push` `git-commit` `git-stage-selected` `git-unstage-selected` `git-discard-selected` `git-diff-selected` | Palette | Git panel + IPC | Catalog + source-shape | Open panel; stage, diff, commit, sync | `MANUAL` |
 | `ctx-open` | Context Open | `ContextMenuBuilder` | `DesktopPolishTests` | Right-click | `PASS` |
 | `ctx-open-tab` `ctx-open-other-pane` | Context folder navigation | `ContextMenuBuilder` + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-open-with` `ctx-open-with-app-` `ctx-open-with-choose` | Open With | Builder | Same | — | `PASS` |
@@ -350,6 +357,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-info` | Properties | Builder | Same | — | `PASS` |
 | `ctx-restore` | Restore Recycle Bin item | Recycle context menu | Context menu tests | Restore | `PASS` |
 | `ctx-empty-recycle-bin` | Empty Recycle Bin | Recycle context / more menu | Context menu tests | Empty Bin | `PASS` |
+| `ctx-git-menu` `ctx-git-panel` `ctx-git-refresh` `ctx-git-diff` `ctx-git-stage` `ctx-git-unstage` `ctx-git-discard` `ctx-git-fetch` `ctx-git-pull` `ctx-git-push` `ctx-git-commit` | Git context menu | `ContextMenuBuilder` + Git panel handlers | Context menu tests | Right-click changed file in repo | `PASS` |
 | `keys.path.focus` | Ctrl+L / Alt+D | Accelerators | `KeyboardShortcutMap` | Focus path | `PASS` |
 | `keys.nav` | Alt+arrows, Backspace, F5 | Accelerators | Shortcut map | — | `PASS` |
 | `keys.file` | F2 Del Shift+Del Ctrl+C/X/V/N | Accelerators | Shortcut map | — | `PASS` |
@@ -376,7 +384,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `set.keepFoldersOnTop` | Folders on top vs mixed sort | Settings Behavior | `EntryPresentationTests` | Toggle; sort by name | `PASS` |
 | `set.startLocation` | home/last/custom | Settings Navigation | `ResolveStartPath` | — | `PASS` |
 | `set.openInNewTab` | Open in tab | `OpenPathAsync` opens a tab | Workspace | Toggle; open folder | `PASS` |
-| `set.enableGit` | Git integration | `ApplyGitStatusesAsync` | Workspace | Enable Git in a repo | `PASS` |
+| `set.enableGit` | Git integration | `ApplyGitStatusesAsync` + `RefreshGitUiVisibility` | Workspace + source-shape | Disable Git; panel/actions disappear and no status calls run | `PASS` |
 | `set.showFolderSizes` | Folder sizes | `FillFolderSizesAsync` | Workspace | Enable folder sizes | `PASS` |
 | `set.columnPreset` | Column preset | `ApplyPreset` | `ColumnLayout` | Change preset | `PASS` |
 | `persist.workspace` | Tabs/dual/sort | `workspace-layout` | Restore test | Relaunch | `PASS` |
@@ -398,7 +406,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 79 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 86 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |
