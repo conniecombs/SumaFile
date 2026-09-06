@@ -9,43 +9,115 @@ public sealed partial class MainWindow
 {
     private bool IsGitIntegrationEnabled => _workspace?.Settings.EnableGitIntegration == true;
 
+    private bool IsGitWorkbenchDetached => _gitWorkbenchWindow is { IsClosed: false };
+
+    private GitWorkbenchView ActiveGitWorkbenchView =>
+        IsGitWorkbenchDetached ? _gitWorkbenchWindow!.WorkbenchView : GitWorkbench;
+
     private async void OnToggleGitPanel(object sender, RoutedEventArgs e) =>
         await RunUiActionAsync("Git", ToggleGitPanelAsync);
 
     private void OnCloseGitPanel(object sender, RoutedEventArgs e) => CloseGitPanel();
 
-    private async void OnGitRefresh(object sender, RoutedEventArgs e) =>
+    private void AttachGitWorkbenchView(GitWorkbenchView view)
+    {
+        view.RefreshRequested += OnGitRefreshRequested;
+        view.FetchRequested += OnGitFetchRequested;
+        view.PullRequested += OnGitPullRequested;
+        view.PushRequested += OnGitPushRequested;
+        view.CommitRequested += OnGitCommitRequested;
+        view.StageRequested += OnGitStageRequested;
+        view.UnstageRequested += OnGitUnstageRequested;
+        view.DiscardRequested += OnGitDiscardRequested;
+        view.DiffRequested += OnGitDiffRequested;
+        view.HostToggleRequested += OnGitHostToggleRequested;
+        view.CloseRequested += OnGitCloseRequested;
+        view.SelectionChanged += OnGitWorkbenchSelectionChanged;
+    }
+
+    private void DetachGitWorkbenchView(GitWorkbenchView view)
+    {
+        view.RefreshRequested -= OnGitRefreshRequested;
+        view.FetchRequested -= OnGitFetchRequested;
+        view.PullRequested -= OnGitPullRequested;
+        view.PushRequested -= OnGitPushRequested;
+        view.CommitRequested -= OnGitCommitRequested;
+        view.StageRequested -= OnGitStageRequested;
+        view.UnstageRequested -= OnGitUnstageRequested;
+        view.DiscardRequested -= OnGitDiscardRequested;
+        view.DiffRequested -= OnGitDiffRequested;
+        view.HostToggleRequested -= OnGitHostToggleRequested;
+        view.CloseRequested -= OnGitCloseRequested;
+        view.SelectionChanged -= OnGitWorkbenchSelectionChanged;
+    }
+
+    private async void OnGitRefreshRequested(object? sender, EventArgs e) =>
         await RunUiActionAsync("Git", () => RefreshGitPanelAsync());
 
-    private async void OnGitFetch(object sender, RoutedEventArgs e) =>
+    private async void OnGitFetchRequested(object? sender, EventArgs e) =>
         await RunUiActionAsync("Git fetch", GitFetchAsync);
 
-    private async void OnGitPull(object sender, RoutedEventArgs e) =>
+    private async void OnGitPullRequested(object? sender, EventArgs e) =>
         await RunUiActionAsync("Git pull", GitPullAsync);
 
-    private async void OnGitPush(object sender, RoutedEventArgs e) =>
+    private async void OnGitPushRequested(object? sender, EventArgs e) =>
         await RunUiActionAsync("Git push", GitPushAsync);
 
-    private async void OnGitCommit(object sender, RoutedEventArgs e) =>
+    private async void OnGitCommitRequested(object? sender, EventArgs e) =>
         await RunUiActionAsync("Git commit", PromptGitCommitAsync);
 
-    private async void OnGitStageSelected(object sender, RoutedEventArgs e) =>
+    private async void OnGitStageRequested(object? sender, EventArgs e) =>
         await RunUiActionAsync("Git stage", GitStageSelectedAsync);
 
-    private async void OnGitUnstageSelected(object sender, RoutedEventArgs e) =>
+    private async void OnGitUnstageRequested(object? sender, EventArgs e) =>
         await RunUiActionAsync("Git unstage", GitUnstageSelectedAsync);
 
-    private async void OnGitDiscardSelected(object sender, RoutedEventArgs e) =>
+    private async void OnGitDiscardRequested(object? sender, EventArgs e) =>
         await RunUiActionAsync("Git discard", GitDiscardSelectedAsync);
 
-    private async void OnGitDiffSelected(object sender, RoutedEventArgs e) =>
+    private async void OnGitDiffRequested(object? sender, EventArgs e) =>
         await RunUiActionAsync("Git diff", GitDiffSelectedAsync);
 
-    private void OnGitChangesSelectionChanged(object sender, SelectionChangedEventArgs e) =>
+    private async void OnGitHostToggleRequested(object? sender, EventArgs e)
+    {
+        if (_gitWorkbenchModel.IsDetached)
+        {
+            await RunUiActionAsync("Git dock", DockGitWorkbenchAsync);
+        }
+        else
+        {
+            await RunUiActionAsync("Git detach", DetachGitWorkbenchAsync);
+        }
+    }
+
+    private void OnGitCloseRequested(object? sender, EventArgs e)
+    {
+        if (sender is GitWorkbenchView view && IsGitWorkbenchDetached && ReferenceEquals(view, _gitWorkbenchWindow!.WorkbenchView))
+        {
+            CloseGitPanel();
+            return;
+        }
+
+        CloseGitPanel();
+    }
+
+    private async void OnGitWorkbenchSelectionChanged(object? sender, EventArgs e)
+    {
         RefreshGitActionButtons();
+        if (sender is GitWorkbenchView view && ReferenceEquals(view, ActiveGitWorkbenchView))
+        {
+            await PreviewSelectedGitDiffAsync(showMessages: false);
+        }
+    }
 
     private async Task ToggleGitPanelAsync()
     {
+        if (IsGitWorkbenchDetached)
+        {
+            _gitWorkbenchWindow!.Activate();
+            return;
+        }
+
         if (_gitPanelOpen)
         {
             CloseGitPanel();
@@ -63,16 +135,114 @@ public sealed partial class MainWindow
         }
 
         _gitPanelOpen = true;
-        GitPanel.Visibility = Visibility.Visible;
+        if (IsGitWorkbenchDetached)
+        {
+            _gitWorkbenchWindow!.Activate();
+        }
+        else
+        {
+            _gitWorkbenchModel.SetHostMode(detached: false);
+            GitPanel.Visibility = Visibility.Visible;
+        }
+
         await RefreshGitPanelAsync();
+    }
+
+    private async Task DetachGitWorkbenchAsync()
+    {
+        if (!EnsureGitIntegrationEnabled(showMessage: true))
+        {
+            return;
+        }
+
+        _gitPanelOpen = true;
+        GitPanel.Visibility = Visibility.Collapsed;
+        _gitWorkbenchModel.SetHostMode(detached: true);
+
+        if (!IsGitWorkbenchDetached)
+        {
+            _gitWorkbenchWindow = new GitWorkbenchWindow(_gitWorkbenchModel);
+            AttachGitWorkbenchView(_gitWorkbenchWindow.WorkbenchView);
+            _gitWorkbenchWindow.Closed += OnGitWorkbenchWindowClosed;
+        }
+
+        _gitWorkbenchWindow!.Activate();
+        await RefreshGitPanelAsync(silent: true);
+    }
+
+    private async Task DockGitWorkbenchAsync()
+    {
+        if (!EnsureGitIntegrationEnabled(showMessage: true))
+        {
+            return;
+        }
+
+        _gitPanelOpen = true;
+        _gitWorkbenchModel.SetHostMode(detached: false);
+        CloseGitWorkbenchWindow(forDock: true);
+        GitPanel.Visibility = Visibility.Visible;
+        await RefreshGitPanelAsync(silent: true);
     }
 
     private void CloseGitPanel()
     {
         _gitPanelOpen = false;
         GitPanel.Visibility = Visibility.Collapsed;
+        CloseGitWorkbenchWindow(forDock: false);
         _gitCts?.Cancel();
         _gitCts = null;
+        _gitDiffCts?.Cancel();
+        _gitDiffCts = null;
+        _gitStatusPath = null;
+        GitWorkbench.ClearSelection();
+        _gitWorkbenchModel.SetHostMode(detached: false);
+        _gitWorkbenchModel.ClearDiff();
+        RefreshGitActionButtons();
+    }
+
+    private void CloseGitWorkbenchWindow(bool forDock)
+    {
+        var window = _gitWorkbenchWindow;
+        if (window is null)
+        {
+            return;
+        }
+
+        if (window.IsClosed)
+        {
+            _gitWorkbenchWindow = null;
+            return;
+        }
+
+        _closingGitWorkbenchWindowForDock = forDock;
+        try
+        {
+            window.Close();
+        }
+        finally
+        {
+            _closingGitWorkbenchWindowForDock = false;
+        }
+    }
+
+    private void OnGitWorkbenchWindowClosed(object sender, WindowEventArgs args)
+    {
+        if (sender is GitWorkbenchWindow window)
+        {
+            DetachGitWorkbenchView(window.WorkbenchView);
+        }
+
+        _gitWorkbenchWindow = null;
+        if (!_closingGitWorkbenchWindowForDock)
+        {
+            _gitPanelOpen = false;
+            _gitWorkbenchModel.SetHostMode(detached: false);
+            _gitDiffCts?.Cancel();
+            _gitDiffCts = null;
+            _gitWorkbenchModel.ClearDiff();
+        }
+
+        RefreshGitActionButtons();
     }
 
     private async Task RefreshGitPanelAsync(bool silent = false)
@@ -92,9 +262,8 @@ public sealed partial class MainWindow
         if (PathRules.IsRecycleBinPath(workspace.Active.Path) || workspace.Active.PathIsNetwork)
         {
             _gitStatus = new GitRepositoryStatus();
-            Replace(GitChanges, []);
-            GitBranchText.Text = "Git";
-            GitSummaryText.Text = "Git status is not available for this location.";
+            _gitStatusPath = workspace.Active.Path;
+            _gitWorkbenchModel.SetUnavailable("Git status is not available for this location.");
             RefreshGitActionButtons();
             return;
         }
@@ -106,7 +275,7 @@ public sealed partial class MainWindow
         {
             if (!silent)
             {
-                GitSummaryText.Text = "Checking Git status...";
+                _gitWorkbenchModel.SetLoading();
             }
 
             var status = await fileOps.GetGitRepositoryStatusAsync(workspace.Active.Path, cts.Token);
@@ -116,13 +285,15 @@ public sealed partial class MainWindow
             }
 
             _gitStatus = status;
-            Replace(GitChanges, status.Changes.Select(GitChangeRow.From));
-            UpdateGitSummary(status);
+            _gitStatusPath = workspace.Active.Path;
+            _gitWorkbenchModel.SetStatus(status, GitStatusSummary(status));
             RefreshGitActionButtons();
             if (!silent)
             {
                 SetStatusText(status.IsRepo ? GitStatusSummary(status) : "Current folder is not inside a Git repository.");
             }
+
+            await PreviewSelectedGitDiffAsync(showMessages: false);
         }
         catch (OperationCanceledException)
         {
@@ -130,9 +301,8 @@ public sealed partial class MainWindow
         catch (Exception exception) when (silent)
         {
             _gitStatus = null;
-            Replace(GitChanges, []);
-            GitBranchText.Text = "Git";
-            GitSummaryText.Text = exception.Message;
+            _gitStatusPath = workspace.Active.Path;
+            _gitWorkbenchModel.SetUnavailable(exception.Message);
             RefreshGitActionButtons();
         }
         finally
@@ -154,40 +324,26 @@ public sealed partial class MainWindow
         {
             CloseGitPanel();
             _gitStatus = null;
-            Replace(GitChanges, []);
-            GitBranchText.Text = "Git";
-            GitSummaryText.Text = "Git integration is disabled.";
+            _gitWorkbenchModel.SetDisabled();
             _workspace?.ClearGitStatuses();
-        }
-
-        RefreshGitActionButtons();
-    }
-
-    private void UpdateGitSummary(GitRepositoryStatus status)
-    {
-        if (!status.IsRepo)
-        {
-            GitBranchText.Text = "Git";
-            GitSummaryText.Text = "Current folder is not inside a Git repository.";
             return;
         }
 
-        var branch = !string.IsNullOrWhiteSpace(status.Branch)
-            ? status.Branch
-            : !string.IsNullOrWhiteSpace(status.Head)
-                ? $"detached at {status.Head}"
-                : "unknown branch";
-        GitBranchText.Text = string.IsNullOrWhiteSpace(status.Upstream)
-            ? branch
-            : $"{branch} -> {status.Upstream}";
-        GitSummaryText.Text = GitStatusSummary(status);
+        RefreshGitActionButtons();
+        var activePath = _workspace?.Active.Path;
+        if (_gitPanelOpen
+            && !string.IsNullOrWhiteSpace(activePath)
+            && (_gitStatusPath is null || !PathRules.PathsEqual(_gitStatusPath, activePath)))
+        {
+            _ = RefreshGitPanelAsync(silent: true);
+        }
     }
 
     private static string GitStatusSummary(GitRepositoryStatus status)
     {
         if (!status.IsRepo)
         {
-            return "Not a Git repository.";
+            return "Current folder is not inside a Git repository.";
         }
 
         var parts = new List<string>();
@@ -228,20 +384,13 @@ public sealed partial class MainWindow
     {
         var enabled = IsGitIntegrationEnabled;
         var isRepo = enabled && _gitStatus?.IsRepo == true;
-        var selectedChanges = GitChangesList.SelectedItems.OfType<GitChangeRow>().ToArray();
+        var selectedChanges = ActiveGitWorkbenchView.SelectedChanges;
         var selectedPaths = SelectedGitActionPaths();
-        var hasSelection = selectedPaths.Length > 0;
-
-        GitRefreshButton.IsEnabled = enabled;
-        GitFetchButton.IsEnabled = isRepo;
-        GitPullButton.IsEnabled = isRepo;
-        GitPushButton.IsEnabled = isRepo;
-        GitCommitButton.IsEnabled = isRepo && (_gitStatus?.Staged ?? 0) > 0;
-        GitStageButton.IsEnabled = isRepo && hasSelection && (selectedChanges.Length == 0 || selectedChanges.Any(row => row.CanStage));
-        GitUnstageButton.IsEnabled = isRepo && hasSelection && (selectedChanges.Length == 0 || selectedChanges.Any(row => row.CanUnstage));
-        GitDiscardButton.IsEnabled = isRepo && hasSelection && (selectedChanges.Length == 0 || selectedChanges.Any(row => row.CanDiscard));
-        GitDiffButton.IsEnabled = isRepo && selectedPaths.Length == 1
-            && (selectedChanges.Length == 0 || selectedChanges.Any(row => row.CanDiff));
+        _gitWorkbenchModel.UpdateSelection(selectedChanges, selectedPaths);
+        if (!enabled || !isRepo)
+        {
+            _gitWorkbenchModel.UpdateSelection([], []);
+        }
     }
 
     private bool EnsureGitIntegrationEnabled(bool showMessage)
@@ -304,34 +453,96 @@ public sealed partial class MainWindow
 
     private async Task GitDiffSelectedAsync()
     {
+        if (!_gitPanelOpen)
+        {
+            await OpenGitPanelAsync();
+        }
+
+        await PreviewSelectedGitDiffAsync(showMessages: true);
+    }
+
+    private async Task PreviewSelectedGitDiffAsync(bool showMessages)
+    {
         var workspace = _workspace;
         var fileOps = workspace?.FileOps;
-        if (workspace is null || fileOps is null || !EnsureGitIntegrationEnabled(showMessage: true))
+        if (workspace is null || fileOps is null || !EnsureGitIntegrationEnabled(showMessage: showMessages))
         {
             return;
         }
 
-        var paths = SelectedGitActionPaths();
-        if (paths.Length != 1)
+        var selectedChanges = ActiveGitWorkbenchView.SelectedChanges;
+        var selectedPaths = SelectedGitActionPaths();
+        if (selectedPaths.Length != 1)
         {
-            ShowMessage("Git diff", "Select exactly one changed path.", InfoBarSeverity.Informational);
+            if (showMessages)
+            {
+                ShowMessage("Git diff", "Select exactly one changed path.", InfoBarSeverity.Informational);
+            }
+
+            _gitWorkbenchModel.ClearDiff();
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        if (selectedChanges.Length > 0 && selectedChanges.All(row => !row.CanDiff))
+        {
+            _gitWorkbenchModel.SetDiff(
+                PathRules.Basename(selectedPaths[0]),
+                "No Git diff is available for untracked files until they are staged.");
+            return;
+        }
+
+        _gitDiffCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _gitDiffCts = cts;
+        var selectedPath = selectedPaths[0];
+        var selectedTitle = PathRules.Basename(selectedPath);
+        _gitWorkbenchModel.SetDiffLoading(selectedTitle);
         try
         {
-            SetStatusText("Loading Git diff...");
-            var diff = await fileOps.GitDiffPathAsync(workspace.Active.Path, paths[0], utilityCts.Token);
-            if (!utilityCts.IsCancellationRequested)
+            if (showMessages)
             {
-                await ShowGitDiffDialogAsync(paths[0], diff);
+                SetStatusText("Loading Git diff...");
+            }
+
+            var diff = await fileOps.GitDiffPathAsync(workspace.Active.Path, selectedPath, cts.Token);
+            var currentSelection = SelectedGitActionPaths();
+            if (!ReferenceEquals(_workspace, workspace)
+                || cts.IsCancellationRequested
+                || currentSelection.Length != 1
+                || !PathRules.PathsEqual(selectedPath, currentSelection[0]))
+            {
+                return;
+            }
+
+            _gitWorkbenchModel.SetDiff(selectedTitle, diff);
+            if (showMessages)
+            {
                 SetStatusText("Git diff loaded.");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (ReferenceEquals(_gitDiffCts, cts))
+            {
+                _gitWorkbenchModel.SetDiff(selectedTitle, exception.Message);
+            }
+
+            if (showMessages)
+            {
+                ShowMessage("Git diff", exception.Message, InfoBarSeverity.Error);
             }
         }
         finally
         {
-            FinishUtilityOperation(utilityCts);
+            if (ReferenceEquals(_gitDiffCts, cts))
+            {
+                _gitDiffCts = null;
+            }
+
+            cts.Dispose();
         }
     }
 
@@ -422,7 +633,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var selectedChanges = GitChangesList.SelectedItems.OfType<GitChangeRow>().ToArray();
+        var selectedChanges = ActiveGitWorkbenchView.SelectedChanges;
         if (!canRun(selectedChanges))
         {
             ShowMessage("Git", "The selected Git changes do not support that action.", InfoBarSeverity.Informational);
@@ -478,7 +689,7 @@ public sealed partial class MainWindow
 
     private string[] SelectedGitActionPaths()
     {
-        var panelRows = GitChangesList.SelectedItems.OfType<GitChangeRow>().ToArray();
+        var panelRows = ActiveGitWorkbenchView.SelectedChanges;
         if (panelRows.Length > 0)
         {
             return panelRows
@@ -523,30 +734,5 @@ public sealed partial class MainWindow
         };
 
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
-    }
-
-    private async Task ShowGitDiffDialogAsync(string path, string diff)
-    {
-        var box = new TextBox
-        {
-            Text = diff,
-            AcceptsReturn = true,
-            IsReadOnly = true,
-            TextWrapping = TextWrapping.NoWrap,
-            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
-            FontSize = 12,
-            MinWidth = 680,
-            MinHeight = 420,
-        };
-        var dialog = new ContentDialog
-        {
-            XamlRoot = Content.XamlRoot,
-            Title = PathRules.Basename(path),
-            Content = box,
-            CloseButtonText = "Close",
-            DefaultButton = ContentDialogButton.Close,
-        };
-
-        await dialog.ShowAsync();
     }
 }

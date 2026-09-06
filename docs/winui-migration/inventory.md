@@ -138,16 +138,16 @@ Formats that must remain: `zip`, `tar`, `tar.gz` / `tgz`, `rar`. Archive paths c
 | Command | Rust module | JS args | Result | Used by |
 | --- | --- | --- | --- | --- |
 | `get_git_status` | `git` | `{ path }` | `GitStatus` | `compatOnly`; live UI uses repository/file status methods |
-| `get_git_repository_status` | `git` | `{ path }` | `GitRepositoryStatus` | Optional Git panel when `enableGitIntegration` |
+| `get_git_repository_status` | `git` | `{ path }` | `GitRepositoryStatus` | Optional Git workbench when `enableGitIntegration` |
 | `get_git_file_statuses` | `git` | `{ path }` | `FileEntry[]` | Optional Git column when `enableGitIntegration` |
-| `git_stage_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git panel/context menu |
-| `git_unstage_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git panel/context menu |
-| `git_discard_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git panel/context menu with UI confirmation |
-| `git_diff_path` | `git` | `{ path, filePath }` | `string` | Git panel/context menu diff viewer |
-| `git_commit` | `git` | `{ path, message }` | `GitCommandResult` | Git panel commit prompt |
-| `git_fetch` | `git` | `{ path }` | `GitCommandResult` | Git panel/context menu |
-| `git_pull` | `git` | `{ path }` | `GitCommandResult` | Git panel/context menu/command palette |
-| `git_push` | `git` | `{ path }` | `GitCommandResult` | Git panel/context menu/command palette |
+| `git_stage_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git workbench/context menu |
+| `git_unstage_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git workbench/context menu |
+| `git_discard_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git workbench/context menu with UI confirmation |
+| `git_diff_path` | `git` | `{ path, filePath }` | `string` | Git workbench diff preview |
+| `git_commit` | `git` | `{ path, message }` | `GitCommandResult` | Git workbench commit prompt |
+| `git_fetch` | `git` | `{ path }` | `GitCommandResult` | Git workbench/context menu |
+| `git_pull` | `git` | `{ path }` | `GitCommandResult` | Git workbench/context menu/command palette |
+| `git_push` | `git` | `{ path }` | `GitCommandResult` | Git workbench/context menu/command palette |
 | `open_terminal` | `terminal` | `{ path }` | `void` | F4, context menu, toolbar |
 | `open_powershell_admin` | `terminal` | `{ path }` | `void` | Context menu / command workflow |
 | `get_all_tags` | `tags` | none | `ColorLabelTag[]` | Color labels |
@@ -316,7 +316,7 @@ Workflows live in `frontend/src/lib/app/` plus host-style modules under `fronten
 | About | `showAboutFlow` | Version/platform + repo link |
 | Updater | `checkForUpdatesFlow`, `installUpdateFlow` | Passive Windows install, then restart |
 | WinRAR tool | `updateToolStatus`, `installRarFlow` | Confirm token, hash, publisher |
-| Command palette | `CommandPalette.svelte` | Ctrl+Shift+P; includes Git panel/actions when integration is enabled |
+| Command palette | `CommandPalette.svelte` | Ctrl+Shift+P; includes Git workbench/actions when integration is enabled |
 
 ### 4.7 Settings keys that must persist
 
@@ -347,7 +347,7 @@ Workspace layout snapshot (tabs, dual-pane, paths, histories, preview, columns, 
 | `ToolbarShell.svelte` | Search, nav buttons, file actions, view/theme/preview/dual-pane, more-actions, icon size |
 | `ContentShell.svelte` | Dual tabs, breadcrumbs, path editors, file lists, pane splitter (20–80%) |
 | `FileListHeader.svelte` / `FileListHeaderCells.svelte` | Sortable/resizable columns |
-| `CommandPalette.svelte` | Fuzzy command list + Git panel/actions |
+| `CommandPalette.svelte` | Fuzzy command list + Git workbench/actions |
 
 ### 5.2 Document custom events (`simplefile:*`)
 

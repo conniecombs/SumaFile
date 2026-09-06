@@ -63,12 +63,16 @@ public sealed partial class MainWindow : Window
     private ListView? _pathSuggestList;
     private PaneId _pathSuggestPane;
     private GitRepositoryStatus? _gitStatus;
+    private readonly GitWorkbenchViewModel _gitWorkbenchModel = new();
+    private GitWorkbenchWindow? _gitWorkbenchWindow;
     private CancellationTokenSource? _gitCts;
+    private CancellationTokenSource? _gitDiffCts;
+    private string? _gitStatusPath;
     private bool _gitPanelOpen;
+    private bool _closingGitWorkbenchWindowForDock;
 
     public ObservableCollection<FileRow> PrimaryFiles { get; } = [];
     public ObservableCollection<FileRow> SecondaryFiles { get; } = [];
-    public ObservableCollection<GitChangeRow> GitChanges { get; } = [];
     public ObservableCollection<DriveRow> Drives { get; } = [];
     public ObservableCollection<QuickAccessRow> QuickAccess { get; } = [];
 
@@ -156,7 +160,8 @@ public sealed partial class MainWindow : Window
 
         PrimaryFileList.ItemsSource = PrimaryFiles;
         SecondaryFileList.ItemsSource = SecondaryFiles;
-        GitChangesList.ItemsSource = GitChanges;
+        GitWorkbench.Start(_gitWorkbenchModel);
+        AttachGitWorkbenchView(GitWorkbench);
         AttachPaneActivationHandlers();
         DriveList.ItemsSource = Drives;
         QuickAccessList.ItemsSource = QuickAccess;
@@ -1102,6 +1107,9 @@ public sealed partial class MainWindow : Window
         _folderRefreshCts = null;
         _gitCts?.Cancel();
         _gitCts = null;
+        _gitDiffCts?.Cancel();
+        _gitDiffCts = null;
+        CloseGitWorkbenchWindow(forDock: false);
         _previewPresenter.CancelPending();
         CancelNetworkReconnectPrompt();
         CancelUtilityOperation();

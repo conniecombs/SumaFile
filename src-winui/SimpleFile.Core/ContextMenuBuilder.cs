@@ -400,7 +400,7 @@ public static class ContextMenuBuilder
             IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-git-menu"),
             Children =
             [
-                Item("ctx-git-panel", "Show Git panel", showIcon: false),
+                Item("ctx-git-panel", "Show Git workbench", showIcon: false),
                 Item("ctx-git-refresh", "Refresh status", !request.InGitRepository, showIcon: false),
                 Divider(),
                 Item("ctx-git-diff", "Show diff", request.SelectionCount != 1 || !request.SelectionHasGitStatus, showIcon: false),

@@ -94,13 +94,13 @@ Seeded on first load if DB tags table is empty:
 | `open_terminal` | void | |
 | `open_powershell_admin` | void | |
 | `get_git_status` | `GitStatus` | |
-| `get_git_repository_status` | `GitRepositoryStatus` | |
-| `get_git_file_statuses` | `FileEntry[]` | |
-| `git_stage_paths` | `GitCommandResult` | |
-| `git_unstage_paths` | `GitCommandResult` | |
-| `git_discard_paths` | `GitCommandResult` | |
-| `git_diff_path` | `string` | |
-| `git_commit` | `GitCommandResult` | |
-| `git_fetch` | `GitCommandResult` | |
-| `git_pull` | `GitCommandResult` | |
-| `git_push` | `GitCommandResult` | |
+| `get_git_repository_status` | `GitRepositoryStatus` | Feeds the dockable/detachable Git workbench |
+| `get_git_file_statuses` | `FileEntry[]` | Git column enrichment when enabled |
+| `git_stage_paths` | `GitCommandResult` | Workbench/context menu action |
+| `git_unstage_paths` | `GitCommandResult` | Workbench/context menu action |
+| `git_discard_paths` | `GitCommandResult` | Workbench/context menu action with confirmation |
+| `git_diff_path` | `string` | Resizable workbench diff preview |
+| `git_commit` | `GitCommandResult` | Workbench commit prompt |
+| `git_fetch` | `GitCommandResult` | Workbench/context menu action |
+| `git_pull` | `GitCommandResult` | Workbench/context menu/command palette action |
+| `git_push` | `GitCommandResult` | Workbench/context menu/command palette action |

@@ -92,7 +92,7 @@ public static class AppCommandCatalog
         new("settings", "Settings", "App", "Ctrl+Shift+S"),
         new("command-palette", "Command palette", "App", "Ctrl+Shift+P"),
         new("keyboard-help", "Keyboard shortcuts", "App", "F1"),
-        new("git-panel", "Git: show panel", "Git"),
+        new("git-panel", "Git: show workbench", "Git"),
         new("git-refresh", "Git: refresh status", "Git"),
         new("git-fetch", "Git: fetch", "Git"),
         new("git-pull", "Git: pull", "Git"),

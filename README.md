@@ -112,7 +112,7 @@ but the Svelte/Tauri surface is not the shipping UI for this branch.
 | Inspect before opening | Persistent preview pane, Quick Look, metadata, checksums, properties, and compare |
 | Organize messy folders | Tags, bookmarks, recents, smart folders, duplicate finder, cleanup, and Advanced Rename |
 | Work with archives | Create, list, view, extract, pack, and unpack supported archives |
-| Handle developer folders | Git status column, Git panel/actions, terminal launch, and Open With preferences |
+| Handle developer folders | Git status column, dockable Git workbench, terminal launch, and Open With preferences |
 | Stay Windows-native | Drive labels, network-share status, shell icons, Windows installers, and Windows shortcuts |
 
 ## Install
@@ -248,8 +248,8 @@ links and special entries that could escape the destination.
 ### Git and Developer Tools
 
 - Developer column preset with Git status labels
-- Git panel with branch/upstream summary, changed paths, diff, stage, unstage,
-  discard, fetch, pull, push, and commit actions
+- Dockable Git workbench with branch/upstream summary, changed paths, resizable
+  diff preview, stage, unstage, discard, fetch, pull, push, and commit actions
 - Settings -> Behavior can completely disable Git integration, hiding Git UI
   and preventing Git status/command calls
 - Open terminal here with `F4`

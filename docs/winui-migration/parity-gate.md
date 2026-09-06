@@ -148,16 +148,16 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
 | `get_git_status` | Legacy repo status | Schema `compatOnly`; no live App/Core caller | Schema/client | — | `WAIVED` | Live UI uses repository/file status methods |
-| `get_git_repository_status` | Repo summary + changes | Git panel | Schema/client/source-shape | Open Git panel in a repo | `PASS` |
+| `get_git_repository_status` | Repo summary + changes | Git workbench | Schema/client/source-shape | Open Git workbench in a repo | `PASS` |
 | `get_git_file_statuses` | Git column | `ApplyGitStatusesAsync` + `FileRow.GitText` | Workspace + FileRow | Enable Git; open a repo | `PASS` |
-| `git_stage_paths` | Stage changed paths | Git panel/context menu | Schema/client/source-shape | Stage a changed file | `MANUAL` |
-| `git_unstage_paths` | Unstage paths | Git panel/context menu | Schema/client/source-shape | Unstage a staged file | `MANUAL` |
-| `git_discard_paths` | Discard selected changes | Git panel/context menu confirmation | Schema/client/source-shape | Discard a scratch change | `MANUAL` |
-| `git_diff_path` | Show file diff | Git diff dialog | Schema/client/source-shape | Open diff for a changed file | `MANUAL` |
-| `git_commit` | Commit staged changes | Commit prompt | Schema/client/source-shape | Commit staged scratch change | `MANUAL` |
-| `git_fetch` | Fetch remotes | Git panel/context menu | Schema/client/source-shape | Fetch in a repo | `MANUAL` |
-| `git_pull` | Pull current repo | Git panel/context menu/command palette | Catalog test | Git pull in a repo | `MANUAL` |
-| `git_push` | Push current repo | Git panel/context menu/command palette | Catalog test | Git push | `MANUAL` |
+| `git_stage_paths` | Stage changed paths | Git workbench/context menu | Schema/client/source-shape | Stage a changed file | `MANUAL` |
+| `git_unstage_paths` | Unstage paths | Git workbench/context menu | Schema/client/source-shape | Unstage a staged file | `MANUAL` |
+| `git_discard_paths` | Discard selected changes | Git workbench/context menu confirmation | Schema/client/source-shape | Discard a scratch change | `MANUAL` |
+| `git_diff_path` | Show file diff | Workbench diff preview | Schema/client/source-shape | Preview diff for a changed file | `MANUAL` |
+| `git_commit` | Commit staged changes | Workbench commit prompt | Schema/client/source-shape | Commit staged scratch change | `MANUAL` |
+| `git_fetch` | Fetch remotes | Git workbench/context menu | Schema/client/source-shape | Fetch in a repo | `MANUAL` |
+| `git_pull` | Pull current repo | Git workbench/context menu/command palette | Catalog test | Git pull in a repo | `MANUAL` |
+| `git_push` | Push current repo | Git workbench/context menu/command palette | Catalog test | Git push | `MANUAL` |
 | `open_terminal` | F4 / context | IPC | — | F4 | `MANUAL` |
 | `open_powershell_admin` | Context | IPC | Context menu ID | Elevate PS | `MANUAL` |
 | `get_all_tags` | Color labels | Tag picker | Workspace seed | Set label | `MANUAL` |
@@ -329,7 +329,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `settings` | Settings | Dialog | Catalog | Ctrl+Shift+S | `MANUAL` |
 | `command-palette` | Open command palette | Handler | Catalog test | Ctrl+Shift+P | `PASS` |
 | `keyboard-help` | F1 | Dialog | Catalog + shortcut map | F1 | `PASS` |
-| `git-panel` `git-refresh` `git-fetch` `git-pull` `git-push` `git-commit` `git-stage-selected` `git-unstage-selected` `git-discard-selected` `git-diff-selected` | Palette | Git panel + IPC | Catalog + source-shape | Open panel; stage, diff, commit, sync | `MANUAL` |
+| `git-panel` `git-refresh` `git-fetch` `git-pull` `git-push` `git-commit` `git-stage-selected` `git-unstage-selected` `git-discard-selected` `git-diff-selected` | Palette | Git workbench + IPC | Catalog + source-shape | Open workbench; stage, diff, commit, sync | `MANUAL` |
 | `ctx-open` | Context Open | `ContextMenuBuilder` | `DesktopPolishTests` | Right-click | `PASS` |
 | `ctx-open-tab` `ctx-open-other-pane` | Context folder navigation | `ContextMenuBuilder` + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-open-with` `ctx-open-with-app-` `ctx-open-with-choose` | Open With | Builder | Same | — | `PASS` |
@@ -357,7 +357,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-info` | Properties | Builder | Same | — | `PASS` |
 | `ctx-restore` | Restore Recycle Bin item | Recycle context menu | Context menu tests | Restore | `PASS` |
 | `ctx-empty-recycle-bin` | Empty Recycle Bin | Recycle context / more menu | Context menu tests | Empty Bin | `PASS` |
-| `ctx-git-menu` `ctx-git-panel` `ctx-git-refresh` `ctx-git-diff` `ctx-git-stage` `ctx-git-unstage` `ctx-git-discard` `ctx-git-fetch` `ctx-git-pull` `ctx-git-push` `ctx-git-commit` | Git context menu | `ContextMenuBuilder` + Git panel handlers | Context menu tests | Right-click changed file in repo | `PASS` |
+| `ctx-git-menu` `ctx-git-panel` `ctx-git-refresh` `ctx-git-diff` `ctx-git-stage` `ctx-git-unstage` `ctx-git-discard` `ctx-git-fetch` `ctx-git-pull` `ctx-git-push` `ctx-git-commit` | Git context menu | `ContextMenuBuilder` + Git workbench handlers | Context menu tests | Right-click changed file in repo | `PASS` |
 | `keys.path.focus` | Ctrl+L / Alt+D | Accelerators | `KeyboardShortcutMap` | Focus path | `PASS` |
 | `keys.nav` | Alt+arrows, Backspace, F5 | Accelerators | Shortcut map | — | `PASS` |
 | `keys.file` | F2 Del Shift+Del Ctrl+C/X/V/N | Accelerators | Shortcut map | — | `PASS` |

@@ -257,7 +257,7 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
-    public void GitIntegration_UsesPanelAndCompleteDisableSwitch()
+    public void GitIntegration_UsesDockableWorkbenchAndCompleteDisableSwitch()
     {
         var root = FindRepoRoot();
         var appRoot = Path.Combine(root, "SimpleFile.App");
@@ -265,14 +265,36 @@ public class WinUiSourceShapeTests
         var ipcRoot = Path.Combine(root, "SimpleFile.Ipc");
         var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
         var mainWindowCode = ReadMainWindowSource(appRoot);
+        var workbenchXaml = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchView.xaml"));
+        var workbenchCode = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchView.xaml.cs"));
+        var workbenchModel = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchViewModel.cs"));
+        var workbenchWindow = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchWindow.xaml.cs"));
         var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml"));
         var workspace = ReadExplorerWorkspaceSource(coreRoot);
         var ipc = File.ReadAllText(Path.Combine(ipcRoot, "ISimpleFileIpc.cs"));
 
         Assert.Contains("GitPanel", mainWindowXaml);
         Assert.Contains("GitToggleButton", mainWindowXaml);
-        Assert.Contains("GitChangesList", mainWindowXaml);
-        Assert.Contains("OnGitStageSelected", mainWindowCode);
+        Assert.Contains("GitWorkbench", mainWindowXaml);
+        Assert.Contains("GitWorkbenchViewModel", mainWindowCode);
+        Assert.Contains("GitWorkbenchWindow", mainWindowCode);
+        Assert.Contains("DetachGitWorkbenchAsync", mainWindowCode);
+        Assert.Contains("DockGitWorkbenchAsync", mainWindowCode);
+        Assert.Contains("PreviewSelectedGitDiffAsync", mainWindowCode);
+        Assert.Contains("CloseGitWorkbenchWindow", mainWindowCode);
+        Assert.Contains("SetHostMode(detached: true)", mainWindowCode);
+        Assert.Contains("SetHostMode(detached: false)", mainWindowCode);
+        Assert.Contains("AppWindow.Resize(new SizeInt32(1180, 740))", workbenchWindow);
+        Assert.Contains("presenter.IsResizable = true;", workbenchWindow);
+        Assert.Contains("DiffPreviewColumn", workbenchXaml);
+        Assert.Contains("Resize Git diff preview", workbenchXaml);
+        Assert.Contains("HostActionText", workbenchXaml);
+        Assert.Contains("SelectedChanges", workbenchCode);
+        Assert.Contains("CanDiff", workbenchModel);
+        Assert.Contains("SetDiffLoading", workbenchModel);
+        Assert.DoesNotContain("ShowGitDiffDialogAsync", mainWindowCode);
+        Assert.Contains("OnGitStageRequested", mainWindowCode);
+        Assert.Contains("GitStageSelectedAsync", mainWindowCode);
         Assert.Contains("GetGitRepositoryStatusAsync", mainWindowCode);
         Assert.Contains("EnsureGitIntegrationEnabled", mainWindowCode);
         Assert.Contains("Git integration is disabled in Settings.", mainWindowCode);

@@ -125,148 +125,13 @@
                         <Border
                             x:Name="GitPanel"
                             Grid.Row="2"
-                            MinHeight="176"
-                            MaxHeight="320"
-                            Padding="12"
+                            MinHeight="280"
+                            MaxHeight="520"
                             Background="{ThemeResource SfBgSecondaryBrush}"
                             BorderBrush="{ThemeResource SfBorderBrush}"
                             BorderThickness="0,1,0,0"
                             Visibility="Collapsed">
-                            <Grid RowSpacing="8">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <FontIcon
-                                        VerticalAlignment="Center"
-                                        FontFamily="{StaticResource SfIconFont}"
-                                        FontSize="16"
-                                        Foreground="{ThemeResource SfAccentBrush}"
-                                        Glyph="&#xE8EF;" />
-                                    <StackPanel Grid.Column="1" Spacing="1">
-                                        <TextBlock
-                                            x:Name="GitBranchText"
-                                            FontSize="13"
-                                            FontWeight="SemiBold"
-                                            Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                            Text="Git" />
-                                        <TextBlock
-                                            x:Name="GitSummaryText"
-                                            FontSize="12"
-                                            Foreground="{ThemeResource SfTextMutedBrush}"
-                                            TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                    <Button
-                                        x:Name="GitCloseButton"
-                                        Grid.Column="2"
-                                        Width="30"
-                                        Height="30"
-                                        MinWidth="30"
-                                        Padding="0"
-                                        Style="{StaticResource SfGhostButtonStyle}"
-                                        AutomationProperties.Name="Close Git panel"
-                                        Click="OnCloseGitPanel"
-                                        ToolTipService.ToolTip="Close Git panel">
-                                        <FontIcon
-                                            FontFamily="{StaticResource SfIconFont}"
-                                            FontSize="12"
-                                            Glyph="&#xE711;" />
-                                    </Button>
-                                </Grid>
-
-                                <ListView
-                                    x:Name="GitChangesList"
-                                    Grid.Row="1"
-                                    MinHeight="72"
-                                    AutomationProperties.Name="Git changes"
-                                    SelectionChanged="OnGitChangesSelectionChanged"
-                                    SelectionMode="Extended">
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid MinHeight="34" Padding="8,5" ColumnSpacing="10">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="92" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock
-                                                    VerticalAlignment="Center"
-                                                    FontSize="12"
-                                                    Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                                    Text="{Binding StatusText}" />
-                                                <StackPanel Grid.Column="1" Spacing="1">
-                                                    <TextBlock
-                                                        FontSize="12"
-                                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                                        Text="{Binding Path}"
-                                                        TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock
-                                                        FontSize="11"
-                                                        Foreground="{ThemeResource SfTextMutedBrush}"
-                                                        Text="{Binding DetailText}"
-                                                        TextTrimming="CharacterEllipsis" />
-                                                </StackPanel>
-                                                <TextBlock
-                                                    Grid.Column="2"
-                                                    VerticalAlignment="Center"
-                                                    FontSize="11"
-                                                    Foreground="{ThemeResource SfTextMutedBrush}"
-                                                    Text="{Binding StageText}" />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
-
-                                <Grid Grid.Row="2" ColumnSpacing="8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <Button x:Name="GitRefreshButton" Grid.Column="0" Style="{StaticResource SfGhostButtonStyle}" Click="OnGitRefresh" ToolTipService.ToolTip="Refresh Git status">
-                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE72C;" />
-                                    </Button>
-                                    <Button x:Name="GitFetchButton" Grid.Column="1" Style="{StaticResource SfGhostButtonStyle}" Click="OnGitFetch" ToolTipService.ToolTip="Fetch">
-                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE8B5;" />
-                                    </Button>
-                                    <Button x:Name="GitPullButton" Grid.Column="2" Style="{StaticResource SfGhostButtonStyle}" Click="OnGitPull" ToolTipService.ToolTip="Pull">
-                                        <TextBlock FontSize="12" Text="Pull" />
-                                    </Button>
-                                    <Button x:Name="GitPushButton" Grid.Column="3" Style="{StaticResource SfGhostButtonStyle}" Click="OnGitPush" ToolTipService.ToolTip="Push">
-                                        <TextBlock FontSize="12" Text="Push" />
-                                    </Button>
-                                    <Button x:Name="GitCommitButton" Grid.Column="4" Style="{StaticResource SfGhostButtonStyle}" Click="OnGitCommit" ToolTipService.ToolTip="Commit staged changes">
-                                        <TextBlock FontSize="12" Text="Commit" />
-                                    </Button>
-                                    <Button x:Name="GitStageButton" Grid.Column="6" Style="{StaticResource SfGhostButtonStyle}" Click="OnGitStageSelected" ToolTipService.ToolTip="Stage selected changes">
-                                        <TextBlock FontSize="12" Text="Stage" />
-                                    </Button>
-                                    <Button x:Name="GitUnstageButton" Grid.Column="7" Style="{StaticResource SfGhostButtonStyle}" Click="OnGitUnstageSelected" ToolTipService.ToolTip="Unstage selected changes">
-                                        <TextBlock FontSize="12" Text="Unstage" />
-                                    </Button>
-                                    <Button x:Name="GitDiscardButton" Grid.Column="8" Style="{StaticResource SfGhostButtonStyle}" Click="OnGitDiscardSelected" ToolTipService.ToolTip="Discard selected changes">
-                                        <TextBlock FontSize="12" Text="Discard" />
-                                    </Button>
-                                    <Button x:Name="GitDiffButton" Grid.Column="9" Style="{StaticResource SfGhostButtonStyle}" Click="OnGitDiffSelected" ToolTipService.ToolTip="Show selected diff">
-                                        <TextBlock FontSize="12" Text="Diff" />
-                                    </Button>
-                                </Grid>
-                            </Grid>
+                            <local:GitWorkbenchView x:Name="GitWorkbench" />
                         </Border>
                     </Grid>
 
@@ -314,9 +179,9 @@
                         Margin="8,0"
                         Padding="8,3"
                         HorizontalAlignment="Right"
-                        AutomationProperties.Name="Toggle Git panel"
+                        AutomationProperties.Name="Toggle Git workbench"
                         Click="OnToggleGitPanel"
-                        ToolTipService.ToolTip="Toggle Git panel">
+                        ToolTipService.ToolTip="Toggle Git workbench">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
