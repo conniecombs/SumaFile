@@ -241,6 +241,38 @@ public sealed class FileOperationService : ISettingsBackend
         await _ipc.CancelSearchAsync(searchId, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Returns true if the given folder path is included in the Windows Search
+    /// Indexer crawl scope. When true, <see cref="SearchIndexAsync"/> can
+    /// return near-instant results without a filesystem walk.
+    /// </summary>
+    public static bool IsPathIndexed(string folderPath)
+    {
+        return WindowsSearchService.IsPathIndexed(folderPath);
+    }
+
+    /// <summary>
+    /// Queries the Windows Search Indexer directly for files matching the given
+    /// criteria. This bypasses the Rust IPC backend and uses the OLE DB
+    /// Search.CollatorDSO provider for near-instant results on indexed locations.
+    /// </summary>
+    public async Task<SearchResult[]> SearchIndexAsync(
+        SearchOptions options,
+        Action<SearchResult[]>? onBatch = null,
+        Action<int>? onComplete = null,
+        CancellationToken ct = default)
+    {
+        var results = await WindowsSearchService.SearchIndexAsync(
+            options.Query,
+            options.SearchPath,
+            options,
+            onBatch,
+            ct).ConfigureAwait(false);
+
+        onComplete?.Invoke(results.Length);
+        return results;
+    }
+
     public async Task WatchDirectoryAsync(string path, CancellationToken ct = default)
     {
         await _ipc.WatchDirectoryAsync(path, ct).ConfigureAwait(false);
@@ -371,7 +403,7 @@ public sealed class FileOperationService : ISettingsBackend
         return _ipc.ReadFilePreviewAsync(path, maxSize, ct);
     }
 
-    public Task<string> GenerateThumbnailAsync(string path, uint size = 256, CancellationToken ct = default)
+    public Task<byte[]> GenerateThumbnailAsync(string path, uint size = 256, CancellationToken ct = default)
     {
         return _ipc.GenerateThumbnailAsync(path, size, ct);
     }

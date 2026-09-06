@@ -81,9 +81,10 @@ public sealed partial class MainWindow
             Replace(PrimaryFiles, _search.Results.Select(result => SearchRowFrom(result, PaneId.Primary)));
         }
 
+        var suffix = _search.UseIndex ? " (indexed)" : "";
         SetCountText(_search.ResultCount == 1
-            ? "1 search result"
-            : $"{_search.ResultCount} search results");
+            ? $"1 search result{suffix}"
+            : $"{_search.ResultCount} search results{suffix}");
     }
 
     private Task CancelActiveSearchAsync() =>

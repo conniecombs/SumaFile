@@ -184,7 +184,7 @@ pub fn search_files_blocking(
 
     let mut results: Vec<SearchResult> = Vec::new();
     let mut batch: Vec<SearchResult> = Vec::with_capacity(64);
-    let batch_size = 32;
+    let batch_size = 64;
     let batch_interval = Duration::from_millis(80);
     let mut last_batch_emit = Instant::now();
     let mut queue: VecDeque<(PathBuf, usize)> = VecDeque::new();

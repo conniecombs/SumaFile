@@ -304,10 +304,10 @@ pub struct FilePreview {
     pub encoding: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ThumbnailResult {
     pub path: String,
-    pub data: Option<String>,
+    pub data: Option<Vec<u8>>,
     pub error: Option<String>,
 }
 

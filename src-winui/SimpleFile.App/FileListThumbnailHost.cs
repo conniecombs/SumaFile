@@ -16,13 +16,13 @@ internal static class FileListThumbnailHost
     private static readonly ConcurrentDictionary<string, VideoThumbnailFrame> VideoFramePreferences = new(StringComparer.OrdinalIgnoreCase);
     private static readonly SemaphoreSlim LoadGate = new(4, 4);
 
-    private static Func<string, uint, CancellationToken, Task<string>>? _loadImageThumbnailAsync;
+    private static Func<string, uint, CancellationToken, Task<byte[]>>? _loadImageThumbnailAsync;
     private static bool _primaryEnabled;
     private static bool _secondaryEnabled;
 
     public static event EventHandler? Changed;
 
-    public static void Configure(Func<string, uint, CancellationToken, Task<string>>? loadImageThumbnailAsync)
+    public static void Configure(Func<string, uint, CancellationToken, Task<byte[]>>? loadImageThumbnailAsync)
     {
         _loadImageThumbnailAsync = loadImageThumbnailAsync;
         if (loadImageThumbnailAsync is null)
@@ -179,10 +179,10 @@ internal static class FileListThumbnailHost
         {
             try
             {
-                var base64 = await _loadImageThumbnailAsync(path, (uint)requestSize, CancellationToken.None);
-                if (!string.IsNullOrWhiteSpace(base64))
+                var bytes = await _loadImageThumbnailAsync(path, (uint)requestSize, CancellationToken.None);
+                if (bytes is not null && bytes.Length > 0)
                 {
-                    return await PreviewImageSourceFactory.FromBase64Async(base64, path);
+                    return await PreviewImageSourceFactory.FromBytesAsync(bytes, path);
                 }
             }
             catch

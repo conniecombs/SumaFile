@@ -337,7 +337,7 @@ public sealed class ThumbnailResult
     public string Path { get; set; } = "";
 
     [JsonPropertyName("data")]
-    public string? Data { get; set; }
+    public byte[]? Data { get; set; }
 
     [JsonPropertyName("error")]
     public string? Error { get; set; }

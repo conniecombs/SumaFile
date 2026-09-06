@@ -60,6 +60,8 @@ internal static class WorkspaceSettingsStore
             await ReadDoubleSettingAsync(fileOps, "sidebar.width", UiSettings.SidebarDefaultWidth, cancellationToken).ConfigureAwait(false));
         settings.QuickAccessCollapsed = await ReadBoolSettingAsync(fileOps, "sidebar.quickAccessCollapsed", false, cancellationToken).ConfigureAwait(false);
         settings.MyPcCollapsed = await ReadBoolSettingAsync(fileOps, "sidebar.myPcCollapsed", false, cancellationToken).ConfigureAwait(false);
+        settings.ThumbnailCacheMaxMb = await ReadUIntSettingAsync(fileOps, "thumbnailCacheMaxMb", 500, cancellationToken).ConfigureAwait(false);
+        settings.ThumbnailCachePath = await fileOps.GetSettingAsync("thumbnailCachePath", cancellationToken).ConfigureAwait(false) ?? "";
 
         return new WorkspaceSettingsState
         {
@@ -136,6 +138,8 @@ internal static class WorkspaceSettingsStore
         await fileOps.SetSettingAsync("sidebar.width", settings.SidebarWidth.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.quickAccessCollapsed", settings.QuickAccessCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.myPcCollapsed", settings.MyPcCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync("thumbnailCacheMaxMb", settings.ThumbnailCacheMaxMb.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync("thumbnailCachePath", settings.ThumbnailCachePath, cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("lastPath", settings.LastPath, cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync(
             BookmarksSettingsKey,
@@ -365,6 +369,23 @@ internal static class WorkspaceSettingsStore
         }
 
         return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
+    private static async Task<uint> ReadUIntSettingAsync(
+        FileOperationService fileOps,
+        string key,
+        uint fallback,
+        CancellationToken cancellationToken)
+    {
+        var raw = await fileOps.GetSettingAsync(key, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return fallback;
+        }
+
+        return uint.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : fallback;
     }

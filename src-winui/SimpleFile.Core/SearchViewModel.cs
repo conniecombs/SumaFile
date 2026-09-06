@@ -35,6 +35,7 @@ public sealed partial class SearchViewModel : ObservableObject
     private string? _searchRoot;
     private CancellationTokenSource? _searchCts;
     private int _searchCounter;
+    private bool _useIndex;
     private readonly List<SearchResult> _results = [];
 
     /// <summary>
@@ -61,12 +62,25 @@ public sealed partial class SearchViewModel : ObservableObject
 
     public string? Root => _searchRoot;
 
+    /// <summary>
+    /// True when the last search was served by the Windows Search Index
+    /// rather than the Rust backend filesystem traversal.
+    /// </summary>
+    public bool UseIndex => _useIndex;
+
     public int ResultCount => _results.Count;
 
     public SearchViewModel(ExplorerWorkspace workspace)
     {
         _workspace = workspace;
     }
+
+    /// <summary>
+    /// Overridable delegate for checking whether a path is indexed by the
+    /// Windows Search Indexer. Defaults to <see cref="FileOperationService.IsPathIndexed"/>.
+    /// Tests can replace this to control index routing.
+    /// </summary>
+    internal Func<string, bool> IsPathIndexedCheck { get; set; } = FileOperationService.IsPathIndexed;
 
     /// <summary>
     /// Returns true if the search is active on the given pane.
@@ -98,6 +112,10 @@ public sealed partial class SearchViewModel : ObservableObject
     /// <summary>
     /// Starts a search with the current query text. If the query is empty,
     /// cancels any active search and clears state.
+    ///
+    /// When the target folder is included in the Windows Search Index crawl scope,
+    /// the search runs against the indexer via OLE DB for near-instant results.
+    /// Otherwise, it falls back to the Rust backend BFS traversal.
     /// </summary>
     /// <param name="requestedPane">Which pane to search in; defaults to active pane.</param>
     /// <param name="dispatchToUi">Callback to dispatch batch updates to the UI thread.</param>
@@ -135,6 +153,14 @@ public sealed partial class SearchViewModel : ObservableObject
             ContentSearch = ContentSearch,
         };
 
+        // Check if the target path is in the Windows Search Index crawl scope.
+        // If so, use the fast OLE DB index query; otherwise, fall back to
+        // the Rust backend BFS traversal.
+        var useIndex = !ContentSearch && IsPathIndexedCheck(root);
+        _useIndex = useIndex;
+
+        var statusPrefix = useIndex ? "Searching index" : "Searching";
+
         await RunAsync(
             workspace,
             pane,
@@ -142,8 +168,9 @@ public sealed partial class SearchViewModel : ObservableObject
             root,
             options,
             "Search",
-            $"Searching {root}...",
-            dispatchToUi);
+            $"{statusPrefix} {root}...",
+            dispatchToUi,
+            useIndex);
     }
 
     /// <summary>
@@ -179,6 +206,9 @@ public sealed partial class SearchViewModel : ObservableObject
 
         var searchId = NextSearchId("search");
         var options = SearchOptionsFactory.ForRun(template, searchId, root);
+        var useIndex = !options.ContentSearch && IsPathIndexedCheck(options.SearchPath);
+        _useIndex = useIndex;
+        var statusPrefix = useIndex ? "Searching index" : "Searching";
         await RunAsync(
             workspace,
             pane,
@@ -186,8 +216,9 @@ public sealed partial class SearchViewModel : ObservableObject
             options.SearchPath,
             options,
             "Smart folder",
-            "Searching smart folder...",
-            dispatchToUi);
+            $"{statusPrefix} smart folder...",
+            dispatchToUi,
+            useIndex);
     }
 
     /// <summary>
@@ -232,6 +263,7 @@ public sealed partial class SearchViewModel : ObservableObject
         _searchCts?.Cancel();
         _searchCts = null;
         _activeSearchId = null;
+        _useIndex = false;
         _results.Clear();
         CanCancel = false;
         if (notifyHost)
@@ -248,7 +280,8 @@ public sealed partial class SearchViewModel : ObservableObject
         SearchOptions options,
         string errorTitle,
         string initialStatus,
-        Action<Action> dispatchToUi)
+        Action<Action> dispatchToUi,
+        bool useIndex = false)
     {
         await CancelActiveAsync();
         if (!ReferenceEquals(_workspace, workspace) || workspace.FileOps is null)
@@ -267,35 +300,71 @@ public sealed partial class SearchViewModel : ObservableObject
         StatusText = initialStatus;
         RaiseResultsChanged();
 
+        var searchingLabel = useIndex ? "Searching index..." : "Searching...";
+        var completeLabel = useIndex ? "Index search complete" : "Search complete";
+
         try
         {
-            var results = await workspace.FileOps.SearchAsync(
-                options,
-                batch => dispatchToUi(() =>
-                {
-                    if (!string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
-                    {
-                        return;
-                    }
+            SearchResult[] results;
 
-                    _results.AddRange(batch);
-                    StatusText = $"Searching... {_results.Count} result(s)";
-                    RaiseResultsChanged();
-                }),
-                count => dispatchToUi(() =>
-                {
-                    if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
+            if (useIndex)
+            {
+                // Fast path: query the Windows Search Indexer via OLE DB.
+                // This bypasses the Rust backend IPC and returns near-instant
+                // results for indexed locations.
+                results = await workspace.FileOps.SearchIndexAsync(
+                    options,
+                    batch => dispatchToUi(() =>
                     {
-                        StatusText = $"Search complete: {count} result(s)";
-                    }
-                }),
-                cts.Token);
+                        if (!string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
+                        {
+                            return;
+                        }
+
+                        _results.AddRange(batch);
+                        StatusText = $"{searchingLabel} {_results.Count} result(s)";
+                        RaiseResultsChanged();
+                    }),
+                    count => dispatchToUi(() =>
+                    {
+                        if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
+                        {
+                            StatusText = $"{completeLabel}: {count} result(s)";
+                        }
+                    }),
+                    cts.Token);
+            }
+            else
+            {
+                // Standard path: Rust backend BFS traversal via IPC.
+                results = await workspace.FileOps.SearchAsync(
+                    options,
+                    batch => dispatchToUi(() =>
+                    {
+                        if (!string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
+                        {
+                            return;
+                        }
+
+                        _results.AddRange(batch);
+                        StatusText = $"{searchingLabel} {_results.Count} result(s)";
+                        RaiseResultsChanged();
+                    }),
+                    count => dispatchToUi(() =>
+                    {
+                        if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
+                        {
+                            StatusText = $"{completeLabel}: {count} result(s)";
+                        }
+                    }),
+                    cts.Token);
+            }
 
             if (string.Equals(_activeSearchId, searchId, StringComparison.Ordinal))
             {
                 _results.Clear();
                 _results.AddRange(results);
-                StatusText = $"Search complete: {results.Length} result(s)";
+                StatusText = $"{completeLabel}: {results.Length} result(s)";
                 RaiseResultsChanged();
             }
         }

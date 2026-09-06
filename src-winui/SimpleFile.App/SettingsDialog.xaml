@@ -29,6 +29,7 @@
                 <ListViewItem Content="Appearance" />
                 <ListViewItem Content="Navigation" />
                 <ListViewItem Content="Behavior" />
+                <ListViewItem Content="Storage &amp; Cache" />
                 <ListViewItem Content="Shortcuts" />
                 <ListViewItem Content="Tools" />
                 <ListViewItem Content="Updates" />
@@ -152,6 +153,86 @@
                     <ToggleSwitch x:Name="KeepFoldersOnTopSwitch" Header="Keep folders on top when sorting" />
                     <ToggleSwitch x:Name="ShowFolderSizesSwitch" Header="Show folder sizes in file lists" />
                     <ToggleSwitch x:Name="EnableGitSwitch" Header="Enable Git integration" />
+                </StackPanel>
+
+                <StackPanel x:Name="StoragePanel" Spacing="16" Visibility="Collapsed">
+                    <TextBlock Text="Storage &amp; Cache" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock
+                        Foreground="{StaticResource SfTextMutedBrush}"
+                        TextWrapping="Wrap"
+                        Text="Configure disk caching for file thumbnails to improve navigation speed. When enabled, thumbnails are loaded instantly from disk on repeat visits." />
+                    
+                    <ToggleSwitch
+                        x:Name="EnableThumbnailCacheSwitch"
+                        Header="Enable thumbnail cache"
+                        Toggled="OnEnableThumbnailCacheToggled" />
+
+                    <StackPanel x:Name="CacheOptionsPanel" Spacing="16">
+                        <StackPanel Spacing="6">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Maximum cache size" />
+                                <TextBlock
+                                    x:Name="CacheSizeValueText"
+                                    Grid.Column="1"
+                                    Foreground="{StaticResource SfTextMutedBrush}" />
+                            </Grid>
+                            <Slider
+                                x:Name="CacheSizeSlider"
+                                HorizontalAlignment="Stretch"
+                                LargeChange="250"
+                                Maximum="5000"
+                                Minimum="50"
+                                SmallChange="50"
+                                StepFrequency="50"
+                                ValueChanged="OnCacheSizeSliderChanged" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    FontSize="11"
+                                    Foreground="{StaticResource SfTextMutedBrush}"
+                                    Text="50 MB" />
+                                <TextBlock
+                                    Grid.Column="1"
+                                    FontSize="11"
+                                    Foreground="{StaticResource SfTextMutedBrush}"
+                                    Text="5000 MB (5 GB)" />
+                            </Grid>
+                        </StackPanel>
+
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="ThumbnailCachePathBox"
+                                Header="Cache Location"
+                                PlaceholderText="Default: %LOCALAPPDATA%\SumaFile\thumbnail-cache" />
+                            <Button
+                                Grid.Column="1"
+                                Content="Browse..."
+                                VerticalAlignment="Bottom"
+                                Click="OnBrowseThumbnailCachePath" />
+                        </Grid>
+                        <TextBlock
+                            x:Name="ThumbnailCachePathStatusText"
+                            Foreground="{StaticResource SfTextMutedBrush}"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed" />
+
+                        <Button
+                            x:Name="ResetCachePathButton"
+                            HorizontalAlignment="Left"
+                            Content="Reset to default location"
+                            Click="OnResetCachePathClicked" />
+                    </StackPanel>
                 </StackPanel>
 
                 <StackPanel x:Name="ShortcutsPanel" Spacing="12" Visibility="Collapsed">

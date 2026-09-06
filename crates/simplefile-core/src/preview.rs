@@ -70,14 +70,9 @@ pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePrev
             }
         }
         "image" => {
-            if size > max_preview_size * 5 {
-                (None, None)
-            } else {
-                let bytes = fs::read(&path_buf).map_err(|e| format!("Failed to read file: {e}"))?;
-                use base64::{engine::general_purpose, Engine as _};
-                let base64 = general_purpose::STANDARD.encode(&bytes);
-                (Some(base64), Some("base64".to_string()))
-            }
+            // Let the frontend load the image directly by file path.
+            // This avoids transferring up to 13 MB of Base64 through the IPC pipe.
+            (None, Some("path".to_string()))
         }
         _ => (None, None),
     };
@@ -91,9 +86,7 @@ pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePrev
     })
 }
 
-pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<String, String> {
-    use base64::{engine::general_purpose, Engine as _};
-
+pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<Vec<u8>, String> {
     let path_buf = resolve_readable_path(&path)?;
     let extension = path_buf
         .extension()
@@ -108,6 +101,29 @@ pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<String, Str
     }
 
     let thumb_size = size.unwrap_or(128);
+
+    // Check the disk-backed thumbnail cache first (if enabled).
+    let metadata = std::fs::metadata(&path_buf).ok();
+    let (file_size, file_modified) = metadata
+        .as_ref()
+        .map(|m| {
+            (
+                m.len(),
+                m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+            )
+        })
+        .unwrap_or((0, std::time::SystemTime::UNIX_EPOCH));
+
+    let cache_enabled = crate::thumbnail_cache::is_enabled();
+
+    if cache_enabled {
+        if let Some(cached) =
+            crate::thumbnail_cache::get(&path, file_modified, file_size, thumb_size)
+        {
+            return Ok(cached);
+        }
+    }
+
     let img = image::open(&path_buf).map_err(|e| format!("Failed to open image: {e}"))?;
     // Let the image library handle aspect-ratio-preserving resize
     let thumbnail = img.thumbnail(thumb_size, thumb_size);
@@ -115,8 +131,21 @@ pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<String, Str
     thumbnail
         .write_to(&mut buffer, image::ImageFormat::Jpeg)
         .map_err(|e| format!("Failed to encode thumbnail: {e}"))?;
-    let base64_thumb = general_purpose::STANDARD.encode(buffer.into_inner());
-    Ok(base64_thumb)
+    let jpeg_bytes = buffer.into_inner();
+
+    if cache_enabled {
+        // Store in cache (fire-and-forget; errors are silently ignored).
+        crate::thumbnail_cache::put(&path, file_modified, file_size, thumb_size, &jpeg_bytes);
+
+        // Run eviction in the background — this is cheap when the cache is under
+        // the size limit and only does real work when it exceeds the configured max.
+        std::thread::Builder::new()
+            .name("thumb-cache-evict".into())
+            .spawn(crate::thumbnail_cache::evict_default)
+            .ok();
+    }
+
+    Ok(jpeg_bytes)
 }
 
 pub fn generate_thumbnails(paths: Vec<String>, size: Option<u32>) -> Vec<ThumbnailResult> {

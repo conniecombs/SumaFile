@@ -7,6 +7,7 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+    <PackageReference Include="System.Data.OleDb" Version="9.0.6" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SimpleFile.Ipc\SimpleFile.Ipc.csproj" />

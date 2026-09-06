@@ -411,6 +411,17 @@ internal sealed class PreviewPresenter
 
         if (preview.FileType == "image")
         {
+            if (preview.Content is null && PreviewPathSupport.CanUsePathBackedPreview(path, "image"))
+            {
+                var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+                bitmap.UriSource = new Uri(path);
+                _image.Source = bitmap;
+                _image.Visibility = Visibility.Visible;
+                ClearIcon();
+                _emptyText.Visibility = Visibility.Collapsed;
+                return;
+            }
+
             if (preview.Content is not null && await TrySetImageAsync(preview.Content, path, token, cancellationToken))
             {
                 ClearIcon();
@@ -512,6 +523,34 @@ internal sealed class PreviewPresenter
             }
 
             var source = await PreviewImageSourceFactory.FromBase64Async(base64, path);
+
+            if (!IsCurrent(path, token, cancellationToken))
+            {
+                return false;
+            }
+
+            _image.Source = source;
+            _image.Visibility = Visibility.Visible;
+            return true;
+        }
+        catch
+        {
+            _image.Source = null;
+            _image.Visibility = Visibility.Collapsed;
+            return false;
+        }
+    }
+
+    private async Task<bool> TrySetImageAsync(byte[] bytes, string path, int token, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!IsCurrent(path, token, cancellationToken))
+            {
+                return false;
+            }
+
+            var source = await PreviewImageSourceFactory.FromBytesAsync(bytes, path);
 
             if (!IsCurrent(path, token, cancellationToken))
             {

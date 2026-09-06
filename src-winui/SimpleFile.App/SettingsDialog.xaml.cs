@@ -128,6 +128,7 @@ public sealed partial class SettingsDialog : ContentDialog
             case "Appearance": AppearancePanel.Visibility = Visibility.Visible; break;
             case "Navigation": NavigationPanel.Visibility = Visibility.Visible; break;
             case "Behavior": BehaviorPanel.Visibility = Visibility.Visible; break;
+            case "Storage & Cache": StoragePanel.Visibility = Visibility.Visible; break;
             case "Shortcuts": ShortcutsPanel.Visibility = Visibility.Visible; break;
             case "Tools": ToolsPanel.Visibility = Visibility.Visible; break;
             case "Updates": UpdatesPanel.Visibility = Visibility.Visible; break;
@@ -166,6 +167,7 @@ public sealed partial class SettingsDialog : ContentDialog
         AppearancePanel.Visibility = Visibility.Collapsed;
         NavigationPanel.Visibility = Visibility.Collapsed;
         BehaviorPanel.Visibility = Visibility.Collapsed;
+        StoragePanel.Visibility = Visibility.Collapsed;
         ShortcutsPanel.Visibility = Visibility.Collapsed;
         ToolsPanel.Visibility = Visibility.Collapsed;
         UpdatesPanel.Visibility = Visibility.Collapsed;
@@ -209,7 +211,12 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.ShowSmartFolders = ShowSmartFoldersSwitch.IsOn;
         settings.EnableGitIntegration = EnableGitSwitch.IsOn;
         settings.ShowFolderSizes = ShowFolderSizesSwitch.IsOn;
+<<<<<<< Updated upstream
         settings.ShortcutOverrides = CurrentShortcutOverrides();
+=======
+        settings.ThumbnailCacheMaxMb = EnableThumbnailCacheSwitch.IsOn ? (uint)Math.Round(CacheSizeSlider.Value) : 0;
+        settings.ThumbnailCachePath = ThumbnailCachePathBox.Text.Trim();
+>>>>>>> Stashed changes
     }
 
     public async Task LoadSettingsAsync(FileOperationService fileOps, CancellationToken cancellationToken = default)
@@ -248,6 +255,13 @@ public sealed partial class SettingsDialog : ContentDialog
         ShowFolderSizesSwitch.IsOn = await ReadBoolSettingAsync(fileOps, "showFolderSizes", defaults.ShowFolderSizes, cancellationToken).ConfigureAwait(true);
         ApplyShortcutOverrides(KeyboardShortcutMap.ReadOverridesJson(
             await GetSettingOrDefaultAsync(fileOps, KeyboardShortcutMap.SettingsKey, "", cancellationToken).ConfigureAwait(true)));
+
+        var cacheMaxMb = await ReadUIntSettingAsync(fileOps, "thumbnailCacheMaxMb", 500, cancellationToken).ConfigureAwait(true);
+        EnableThumbnailCacheSwitch.IsOn = cacheMaxMb > 0;
+        CacheSizeSlider.Value = cacheMaxMb > 0 ? cacheMaxMb : 500;
+        UpdateCacheSizeValueText((int)CacheSizeSlider.Value);
+        CacheOptionsPanel.Visibility = EnableThumbnailCacheSwitch.IsOn ? Visibility.Visible : Visibility.Collapsed;
+        ThumbnailCachePathBox.Text = await GetSettingOrDefaultAsync(fileOps, "thumbnailCachePath", "", cancellationToken).ConfigureAwait(true) ?? "";
 
         await CheckRarInstalledAsync(cancellationToken).ConfigureAwait(true);
 
@@ -1018,5 +1032,83 @@ public sealed partial class SettingsDialog : ContentDialog
                 link.IsEnabled = true;
             }
         }
+    }
+
+    private void OnEnableThumbnailCacheToggled(object sender, RoutedEventArgs e)
+    {
+        CacheOptionsPanel.Visibility = EnableThumbnailCacheSwitch.IsOn ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnCacheSizeSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        UpdateCacheSizeValueText((int)Math.Round(e.NewValue));
+    }
+
+    private void UpdateCacheSizeValueText(int sizeMb)
+    {
+        CacheSizeValueText.Text = sizeMb >= 1000 ? $"{sizeMb / 1000.0:0.#} GB ({sizeMb} MB)" : $"{sizeMb} MB";
+    }
+
+    private async void OnBrowseThumbnailCachePath(object sender, RoutedEventArgs e)
+    {
+        var browseButton = sender as Button;
+        if (browseButton is not null)
+        {
+            browseButton.IsEnabled = false;
+        }
+
+        ThumbnailCachePathStatusText.Visibility = Visibility.Collapsed;
+        try
+        {
+            var picker = new FolderPicker();
+            picker.FileTypeFilter.Add("*");
+            if (OwnerHwnd != 0)
+            {
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, OwnerHwnd);
+            }
+
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is not null)
+            {
+                ThumbnailCachePathBox.Text = folder.Path;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            ThumbnailCachePathStatusText.Text = exception.Message;
+            ThumbnailCachePathStatusText.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            if (browseButton is not null)
+            {
+                browseButton.IsEnabled = true;
+            }
+        }
+    }
+
+    private void OnResetCachePathClicked(object sender, RoutedEventArgs e)
+    {
+        ThumbnailCachePathBox.Text = "";
+        ThumbnailCachePathStatusText.Visibility = Visibility.Collapsed;
+    }
+
+    private static async Task<uint> ReadUIntSettingAsync(
+        FileOperationService fileOps,
+        string key,
+        uint fallback,
+        CancellationToken cancellationToken)
+    {
+        var value = await GetSettingOrDefaultAsync(
+            fileOps,
+            key,
+            fallback.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            cancellationToken).ConfigureAwait(true);
+        return uint.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
     }
 }

@@ -68,7 +68,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default);
     Task CreateArchiveAsync(string[] paths, string archivePath, string format, CancellationToken ct = default);
     Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default);
-    Task<string> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default);
+    Task<byte[]> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default);
     Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default);
     Task OpenFileWithAsync(string path, string application, CancellationToken ct = default);
     Task<FileComparison> CompareFilesAsync(string pathA, string pathB, CancellationToken ct = default);

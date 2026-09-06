@@ -47,6 +47,7 @@ public class ViewModelCutoverTests
         var viewModel = new SearchViewModel(workspace)
         {
             Query = "  final  ",
+            IsPathIndexedCheck = _ => false,
         };
         var resultCounts = new List<int>();
         viewModel.ResultsChanged += (_, args) => resultCounts.Add(args.Results.Count);
@@ -93,6 +94,7 @@ public class ViewModelCutoverTests
         var viewModel = new SearchViewModel(workspace)
         {
             Query = "notes",
+            IsPathIndexedCheck = _ => false,
         };
 
         var searchTask = viewModel.StartAsync(PaneId.Primary, action => action());

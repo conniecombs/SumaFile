@@ -30,4 +30,28 @@ internal static class PreviewImageSourceFactory
         await bitmap.SetSourceAsync(stream);
         return bitmap;
     }
+
+    public static async Task<ImageSource> FromBytesAsync(byte[] bytes, string path)
+    {
+        using var stream = new InMemoryRandomAccessStream();
+        using (var writer = new DataWriter(stream.GetOutputStreamAt(0)))
+        {
+            writer.WriteBytes(bytes);
+            await writer.StoreAsync();
+            await writer.FlushAsync();
+            writer.DetachStream();
+        }
+
+        stream.Seek(0);
+        if (System.IO.Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase))
+        {
+            var svg = new SvgImageSource();
+            await svg.SetSourceAsync(stream);
+            return svg;
+        }
+
+        var bitmap = new BitmapImage();
+        await bitmap.SetSourceAsync(stream);
+        return bitmap;
+    }
 }

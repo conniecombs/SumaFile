@@ -221,6 +221,7 @@ pub(super) async fn list_directory_and_reply(
     path: String,
     options: Option<ListDirectoryOptions>,
 ) -> Result<(), String> {
+    let start = std::time::Instant::now();
     let binary_request_id = binary_response_id(&binary_hot_frames, &id);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let join = tokio::spawn(async move {
@@ -264,8 +265,16 @@ pub(super) async fn list_directory_and_reply(
         .map_err(|error| format!("listing task failed: {error}"))?
     {
         Ok(Ok(listing)) => {
+            let run_ms = start.elapsed().as_secs_f64() * 1000.0;
             if let Some(request_id) = binary_request_id {
+                let encode_start = std::time::Instant::now();
                 let payload = crate::binary::encode_directory_listing_result(request_id, &listing)?;
+                let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+                log::debug!(
+                    "job.timing method=ListDirectory run_ms={:.2} encode_ms={:.2}",
+                    run_ms,
+                    encode_ms
+                );
                 write_binary_response(writer, id, &payload).await
             } else {
                 let result = serde_json::to_value(&listing)
@@ -321,16 +330,28 @@ pub(super) async fn generate_thumbnail_and_reply(
     path: String,
     size: Option<u32>,
 ) -> Result<(), String> {
-    match scheduler
+    let start = std::time::Instant::now();
+    let result = scheduler
         .run_general(move || simplefile_core::preview::generate_thumbnail(path, size))
-        .await
-    {
+        .await;
+    let run_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    match result {
         Ok(Ok(result)) => {
             if let Some(request_id) = binary_response_id(&binary_hot_frames, &id) {
+                let encode_start = std::time::Instant::now();
                 let payload = crate::binary::encode_thumbnail_result(request_id, &result)?;
+                let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+                log::debug!(
+                    "job.timing method=GenerateThumbnail run_ms={:.2} encode_ms={:.2}",
+                    run_ms,
+                    encode_ms
+                );
                 write_binary_response(writer, id, &payload).await
             } else {
-                write_json(writer, &JsonRpcResponse::result(id, json!(result))).await
+                use base64::{engine::general_purpose, Engine as _};
+                let b64 = general_purpose::STANDARD.encode(&result);
+                write_json(writer, &JsonRpcResponse::result(id, json!(b64))).await
             }
         }
         Ok(Err(message)) => {
@@ -357,16 +378,35 @@ pub(super) async fn generate_thumbnails_and_reply(
     paths: Vec<String>,
     size: Option<u32>,
 ) -> Result<(), String> {
-    match scheduler
+    let start = std::time::Instant::now();
+    let result = scheduler
         .run_general(move || simplefile_core::preview::generate_thumbnails(paths, size))
-        .await
-    {
+        .await;
+    let run_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    match result {
         Ok(results) => {
             if let Some(request_id) = binary_response_id(&binary_hot_frames, &id) {
+                let encode_start = std::time::Instant::now();
                 let payload = crate::binary::encode_thumbnail_results_result(request_id, &results)?;
+                let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+                log::debug!(
+                    "job.timing method=GenerateThumbnails run_ms={:.2} encode_ms={:.2}",
+                    run_ms,
+                    encode_ms
+                );
                 write_binary_response(writer, id, &payload).await
             } else {
-                let result = serde_json::to_value(results).unwrap_or(Value::Null);
+                use base64::{engine::general_purpose, Engine as _};
+                let mut json_results = Vec::new();
+                for r in results {
+                    json_results.push(json!({
+                        "path": r.path,
+                        "data": r.data.as_ref().map(|d| general_purpose::STANDARD.encode(d)),
+                        "error": r.error
+                    }));
+                }
+                let result = serde_json::to_value(json_results).unwrap_or(Value::Null);
                 write_json(writer, &JsonRpcResponse::result(id, result)).await
             }
         }
@@ -440,6 +480,7 @@ pub(super) fn spawn_search_files(
     options: SearchOptions,
 ) {
     tokio::spawn(async move {
+        let start = std::time::Instant::now();
         let binary_request_id = binary_response_id(&events.binary_hot_frames, &id);
         let search_id = options.search_id.clone();
         let cancel = if let Some(search_id) = search_id.as_deref() {
@@ -460,6 +501,12 @@ pub(super) fn spawn_search_files(
                 result
             })
             .await;
+        
+        let run_ms = start.elapsed().as_secs_f64() * 1000.0;
+        log::debug!(
+            "job.timing method=SearchFiles run_ms={:.2}",
+            run_ms
+        );
 
         let response = match result {
             Ok(Ok(results)) => {

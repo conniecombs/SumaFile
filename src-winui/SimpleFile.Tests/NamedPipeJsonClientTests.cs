@@ -480,18 +480,19 @@ public class NamedPipeJsonClientTests
 
         var single = client.GenerateThumbnailAsync(@"C:\img\a.jpg", 128);
         var singleRequest = await server.ReadRequestAsync();
-        await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeThumbnailResult(singleRequest.Id, "abc123"));
-        Assert.Equal("abc123", await single);
+        var bytes = System.Text.Encoding.UTF8.GetBytes("abc123");
+        await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeThumbnailResult(singleRequest.Id, bytes));
+        Assert.Equal(bytes, await single);
 
         var batch = client.GenerateThumbnailsAsync([@"C:\img\a.jpg"], 128);
         var batchRequest = await server.ReadRequestAsync();
         await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeThumbnailResultsResult(
             batchRequest.Id,
-            [new ThumbnailResult { Path = @"C:\img\a.jpg", Data = "abc123" }]));
+            [new ThumbnailResult { Path = @"C:\img\a.jpg", Data = bytes }]));
 
         var results = await batch;
         Assert.Single(results);
-        Assert.Equal("abc123", results[0].Data);
+        Assert.Equal(bytes, results[0].Data);
     }
 
     [Fact]

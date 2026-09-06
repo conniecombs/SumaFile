@@ -1,6 +1,8 @@
 mod io;
 mod jobs;
 
+use std::time::Instant;
+
 use crate::dispatch::{dispatch, Dispatch, SessionState};
 use crate::progress::OperationRegistry;
 use crate::scheduler::BlockingScheduler;
@@ -48,7 +50,11 @@ where
         let request: JsonRpcRequest = serde_json::from_slice(&payload)
             .map_err(|error| format!("invalid JSON-RPC request: {error}"))?;
 
-        match dispatch(&mut state, &request) {
+        let dispatch_start = Instant::now();
+        let action = dispatch(&mut state, &request);
+        let dispatch_ms = dispatch_start.elapsed().as_secs_f64() * 1000.0;
+
+        match action {
             Dispatch::Reply(response) => write_json(&writer, &response).await?,
             Dispatch::ListDirectory { id, path, options } => {
                 spawn_list_directory(
@@ -204,6 +210,16 @@ where
                 state.shutdown = true;
                 return Ok(());
             }
+        }
+
+        let total_ms = dispatch_start.elapsed().as_secs_f64() * 1000.0;
+        if total_ms > 1.0 {
+            log::debug!(
+                "ipc.timing method={} dispatch_ms={:.2} total_ms={:.2}",
+                request.method,
+                dispatch_ms,
+                total_ms
+            );
         }
     }
 }

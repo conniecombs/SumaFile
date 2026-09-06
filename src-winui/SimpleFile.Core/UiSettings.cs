@@ -51,10 +51,16 @@ public sealed class UiSettings
     public string SecondaryColumnPreset { get; set; } = "default";
     /// <summary>Primary pane column widths.</summary>
     public Dictionary<string, double> ColumnWidths { get; set; } = new(StringComparer.Ordinal);
+<<<<<<< Updated upstream
     /// <summary>Secondary pane column widths (independent of primary).</summary>
     public Dictionary<string, double> SecondaryColumnWidths { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, List<string>> ShortcutOverrides { get; set; } = new(StringComparer.Ordinal);
     public FolderViewSettingsDocument FolderViewSettings { get; set; } = new();
+=======
+    public Dictionary<string, string> ShortcutOverrides { get; set; } = new(StringComparer.Ordinal);
+    public uint ThumbnailCacheMaxMb { get; set; } = 500;
+    public string ThumbnailCachePath { get; set; } = "";
+>>>>>>> Stashed changes
 
     public static UiSettings CreateDefault() => new();
 
