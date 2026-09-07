@@ -188,6 +188,10 @@ fn duplicate_check_and_cleanup_are_dispatched() {
             json!({
                 "directory": "C:\\",
                 "minSize": 1,
+                "partialHashBytes": 262144,
+                "maxDepth": 4,
+                "excludePatterns": ["@eaDir", "#recycle"],
+                "networkMode": true,
                 "operationId": "dup-1"
             }),
         ),
@@ -196,18 +200,42 @@ fn duplicate_check_and_cleanup_are_dispatched() {
         Dispatch::DuplicateCheck {
             directory,
             min_size,
+            partial_hash_bytes,
+            max_depth,
+            exclude_patterns,
+            network_mode,
             operation_id,
             ..
         } => {
             assert_eq!(directory, "C:\\");
             assert_eq!(min_size, Some(1));
+            assert_eq!(partial_hash_bytes, Some(262144));
+            assert_eq!(max_depth, Some(4));
+            assert_eq!(
+                exclude_patterns,
+                vec!["@eaDir".to_string(), "#recycle".to_string()]
+            );
+            assert_eq!(network_mode, Some(true));
             assert_eq!(operation_id.as_deref(), Some("dup-1"));
         }
         other => panic!("expected DuplicateCheck, got {other:?}"),
     }
 
-    let cancel = dispatch(&mut state, &request("cancel_duplicate_check", 5, json!({})));
-    assert!(matches!(cancel, Dispatch::CancelDuplicateCheck { .. }));
+    let cancel = dispatch(
+        &mut state,
+        &request(
+            "cancel_duplicate_check",
+            5,
+            json!({ "operationId": "dup-1" }),
+        ),
+    );
+    assert!(matches!(
+        cancel,
+        Dispatch::CancelDuplicateCheck {
+            operation_id: Some(id),
+            ..
+        } if id == "dup-1"
+    ));
 
     let cleanup = dispatch(
         &mut state,

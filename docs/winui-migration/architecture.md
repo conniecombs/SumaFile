@@ -523,7 +523,7 @@ Tauri remaps **top-level command args only**. Nested structs in `frontend/src/li
 
 **Rule:**
 
-1. **Top-level param keys** follow the camelCase `TauriCommandMap` args (`defaultPath`, `newName`, `conflictAction`, `operationId`, `maxSize`, `archivePath`, `sizeThreshold`, `minSize`, `partialHashBytes`, `pathA`, `pathB`, `tagIds`, `searchId`, `confirmationToken`).
+1. **Top-level param keys** follow the camelCase `TauriCommandMap` args (`defaultPath`, `newName`, `conflictAction`, `operationId`, `maxSize`, `archivePath`, `sizeThreshold`, `minSize`, `partialHashBytes`, `maxDepth`, `excludePatterns`, `networkMode`, `pathA`, `pathB`, `tagIds`, `searchId`, `confirmationToken`).
 2. **Nested structs and all results** use the exact field names in `types.ts` / `models.rs` (snake_case): `RenameRequest.new_name`, `SearchOptions.search_path` / `case_sensitive` / `include_hidden` / `file_types` / `max_results` / `max_depth` / `search_id` / `content_search` / `min_size` / `max_size` / `date_after` / `date_before`, `SmartFolder.search_options`, `RarInstallPlan.confirmation_token`, `FileEntry.is_dir`, `ProgressUpdate.operation_id`.
 3. **Frontend-only extras are not on the wire.** `FileEntry.itemCount` in `types.ts` is UI-computed. The service must not require it; C# must treat it as optional and never send it as a command field.
 
@@ -539,7 +539,7 @@ Tauri remaps **top-level command args only**. Nested structs in `frontend/src/li
 | `read_file_preview` | `{ path, maxSize? }` | result `file_type`, `mime_type` |
 | `extract_archive` | `{ archivePath, destination }` | — |
 | `disk_cleanup` | `{ directory, sizeThreshold? }` | — |
-| `duplicate_check` | `{ directory, minSize?, partialHashBytes? }` | — |
+| `duplicate_check` | `{ directory, minSize?, partialHashBytes?, maxDepth?, excludePatterns?, networkMode?, operationId? }` | — |
 | `compare_files` | `{ pathA, pathB }` | — |
 | `set_tags_for_path` | `{ path, tagIds }` | — |
 | `cancel_search` | `{ searchId }` | — |
@@ -700,7 +700,7 @@ Until PR 19 lands a real minisign client, `check_for_update` and `install_update
 | Method (notification name) | Payload | Source today |
 | --- | --- | --- |
 | `file-change` | `FileChangeEvent { path, kind }` | `watcher.rs` — kinds `create`, `modify`, `remove`, `rename`; 500 ms per-path debounce; ignore `tmp`/`part`/`crdownload`, `desktop.ini`, `thumbs.db`, `.ds_store`; non-recursive |
-| `operation-progress` | `ProgressUpdate` | `progress.rs` (copy/move); `cleanup.rs` with `operation_type: "cleanup"` and id `disk_cleanup`; duplicate check `"duplicate-check"` / id `duplicate_check` |
+| `operation-progress` | `ProgressUpdate` | `progress.rs` (copy/move); cleanup and duplicate scans emit generated operation ids with `operation_type: "cleanup"` / `"duplicate-check"` |
 | `search-results-batch` | `SearchResult[]` | `search.rs` — batch 32 or 80 ms; BFS; final set is the `search_files` result |
 | `search-complete` | `number` (result count) | `search.rs` — emitted even though Svelte mostly ignores the wrapper |
 | `update-chunk` | `[bytesDownloaded, totalBytes \| null]` | `updater.rs` |
@@ -771,8 +771,8 @@ Keep the **existing cancel commands**. Do not add JSON-RPC `$/cancel` unless tho
 | `cancel_folder_size` | none | `folder_size_cancel` + generation | Navigation abort |
 | `cancel_folder_item_count` | none | `folder_item_count_cancel` + generation | Passive list counts |
 | `cancel_count_items` | none | `item_count_cancel` | `compatOnly`; use `cancel_folder_item_count` |
-| `cancel_disk_cleanup` | none | `disk_cleanup_cancel` | |
-| `cancel_duplicate_check` | none | `duplicate_check_cancel` | |
+| `cancel_disk_cleanup` | `{ operationId? }` | cleanup operation registry | Cancels the matching cleanup scan; omitted id cancels active cleanup scans. |
+| `cancel_duplicate_check` | `{ operationId? }` | duplicate-check operation registry | Cancels the matching duplicate scan; omitted id cancels active duplicate scans. |
 
 `AppState` generation tokens (`folder_size_generation`, etc. in `state.rs`) stay inside the service. The UI does not see them.
 

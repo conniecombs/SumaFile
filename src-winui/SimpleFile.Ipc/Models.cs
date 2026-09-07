@@ -545,6 +545,15 @@ public sealed class CleanupResult
     [JsonPropertyName("scanned_files")] public ulong ScannedFiles { get; set; }
 }
 
+public sealed class DuplicateScanOptions
+{
+    [JsonPropertyName("minSize")] public ulong? MinSize { get; set; }
+    [JsonPropertyName("partialHashBytes")] public ulong? PartialHashBytes { get; set; }
+    [JsonPropertyName("maxDepth")] public int? MaxDepth { get; set; }
+    [JsonPropertyName("excludePatterns")] public string[]? ExcludePatterns { get; set; }
+    [JsonPropertyName("networkMode")] public bool? NetworkMode { get; set; }
+}
+
 public sealed class DuplicateCheckFile
 {
     [JsonPropertyName("path")] public string Path { get; set; } = "";

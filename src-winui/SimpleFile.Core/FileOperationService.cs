@@ -486,19 +486,20 @@ public sealed class FileOperationService : ISettingsBackend
             [directory],
             progress,
             (ipc, operationId, token) => ipc.DiskCleanupAsync(directory, sizeThreshold, operationId, token),
+            (ipc, operationId) => ipc.CancelDiskCleanupAsync(operationId, CancellationToken.None),
             ct);
 
     public Task<DuplicateCheckResult> DuplicateCheckAsync(
         string directory,
-        ulong? minSize = null,
-        ulong? partialHashBytes = null,
+        DuplicateScanOptions? options = null,
         IProgress<ProgressUpdate>? progress = null,
         CancellationToken ct = default) =>
         RunJournaledScanAsync(
             "duplicate-check",
             [directory],
             progress,
-            (ipc, operationId, token) => ipc.DuplicateCheckAsync(directory, minSize, partialHashBytes, operationId, token),
+            (ipc, operationId, token) => ipc.DuplicateCheckAsync(directory, options, operationId, token),
+            (ipc, operationId) => ipc.CancelDuplicateCheckAsync(operationId, CancellationToken.None),
             ct);
 
     private async Task<TResult> RunJournaledScanAsync<TResult>(
@@ -506,12 +507,40 @@ public sealed class FileOperationService : ISettingsBackend
         string[] sources,
         IProgress<ProgressUpdate>? progress,
         Func<ISimpleFileIpc, string, CancellationToken, Task<TResult>> invoke,
+        Func<ISimpleFileIpc, string, Task>? cancelBackend,
         CancellationToken ct)
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
         _journal?.Started(operationType, operationId, sources);
         IDisposable? subscription = null;
+        IDisposable? cancelRegistration = null;
+        var cancellationLock = new object();
+        Task? backendCancellation = null;
+
+        Task RequestBackendCancellationAsync()
+        {
+            if (cancelBackend is null)
+            {
+                return Task.CompletedTask;
+            }
+
+            lock (cancellationLock)
+            {
+                return backendCancellation ??= TryCancelBestEffortAsync(_ => cancelBackend(ipc, operationId));
+            }
+        }
+
+        progress?.Report(new ProgressUpdate
+        {
+            OperationId = operationId,
+            OperationType = operationType,
+            Current = 0,
+            Total = 0,
+            CurrentItem = sources.FirstOrDefault() ?? string.Empty,
+            Status = "queued",
+        });
+
         if (progress != null)
         {
             subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
@@ -523,6 +552,14 @@ public sealed class FileOperationService : ISettingsBackend
             });
         }
 
+        if (ct.CanBeCanceled && cancelBackend is not null)
+        {
+            cancelRegistration = ct.Register(() =>
+            {
+                _ = RequestBackendCancellationAsync();
+            });
+        }
+
         try
         {
             var result = await invoke(ipc, operationId, ct).ConfigureAwait(false);
@@ -531,6 +568,7 @@ public sealed class FileOperationService : ISettingsBackend
         }
         catch (OperationCanceledException)
         {
+            await RequestBackendCancellationAsync().ConfigureAwait(false);
             _journal?.Cancelled(operationType, operationId);
             throw;
         }
@@ -541,12 +579,13 @@ public sealed class FileOperationService : ISettingsBackend
         }
         finally
         {
+            cancelRegistration?.Dispose();
             subscription?.Dispose();
         }
     }
 
-    public Task CancelDiskCleanupAsync(CancellationToken ct = default) => _ipc.CancelDiskCleanupAsync(ct);
-    public Task CancelDuplicateCheckAsync(CancellationToken ct = default) => _ipc.CancelDuplicateCheckAsync(ct);
+    public Task CancelDiskCleanupAsync(CancellationToken ct = default) => _ipc.CancelDiskCleanupAsync(ct: ct);
+    public Task CancelDuplicateCheckAsync(CancellationToken ct = default) => _ipc.CancelDuplicateCheckAsync(ct: ct);
     public Task CancelFolderSizeAsync(CancellationToken ct = default) => _ipc.CancelFolderSizeAsync(ct);
     public Task CancelFolderItemCountAsync(CancellationToken ct = default) => _ipc.CancelFolderItemCountAsync(ct);
     public Task CancelFolderMetricsAsync(CancellationToken ct = default) => _ipc.CancelFolderMetricsAsync(ct);

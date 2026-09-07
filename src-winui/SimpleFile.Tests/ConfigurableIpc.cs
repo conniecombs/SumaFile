@@ -39,7 +39,9 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<string, string, CancellationToken, Task>? ExtractArchiveHandler { get; set; }
     public Func<string[], string, string, CancellationToken, Task>? CreateArchiveHandler { get; set; }
     public Func<string, ulong?, string?, CancellationToken, Task<CleanupResult>>? DiskCleanupHandler { get; set; }
-    public Func<string, ulong?, ulong?, string?, CancellationToken, Task<DuplicateCheckResult>>? DuplicateCheckHandler { get; set; }
+    public Func<string?, CancellationToken, Task>? CancelDiskCleanupHandler { get; set; }
+    public Func<string, DuplicateScanOptions?, string?, CancellationToken, Task<DuplicateCheckResult>>? DuplicateCheckHandler { get; set; }
+    public Func<string?, CancellationToken, Task>? CancelDuplicateCheckHandler { get; set; }
     public Func<CancellationToken, Task>? InstallUpdateHandler { get; set; }
     public Func<string, CancellationToken, Task<FileEntry>>? GetEntryInfoHandler { get; set; }
     public Func<string, CancellationToken, Task>? OpenFileHandler { get; set; }
@@ -56,9 +58,13 @@ internal sealed class ConfigurableIpc : NullIpc
     public int CancelFolderSizeCalls { get; private set; }
     public int CancelFolderItemCountCalls { get; private set; }
     public int CancelFolderMetricsCalls { get; private set; }
+    public int CancelDiskCleanupCalls { get; private set; }
+    public int CancelDuplicateCheckCalls { get; private set; }
     public SearchOptions? LastSearchOptions { get; private set; }
     public string? LastCancelledOperationId { get; private set; }
     public string? LastCancelledSearchId { get; private set; }
+    public string? LastDiskCleanupCancelOperationId { get; private set; }
+    public string? LastDuplicateCancelOperationId { get; private set; }
 
     public override bool IsConnected => true;
 
@@ -224,13 +230,26 @@ internal sealed class ConfigurableIpc : NullIpc
         CancellationToken ct = default)
         => DiskCleanupHandler?.Invoke(directory, sizeThreshold, operationId, ct) ?? throw NotConfigured();
 
+    public override Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default)
+    {
+        CancelDiskCleanupCalls += 1;
+        LastDiskCleanupCancelOperationId = operationId;
+        return CancelDiskCleanupHandler?.Invoke(operationId, ct) ?? Task.CompletedTask;
+    }
+
     public override Task<DuplicateCheckResult> DuplicateCheckAsync(
         string directory,
-        ulong? minSize,
-        ulong? partialHashBytes,
+        DuplicateScanOptions? options,
         string? operationId,
         CancellationToken ct = default)
-        => DuplicateCheckHandler?.Invoke(directory, minSize, partialHashBytes, operationId, ct) ?? throw NotConfigured();
+        => DuplicateCheckHandler?.Invoke(directory, options, operationId, ct) ?? throw NotConfigured();
+
+    public override Task CancelDuplicateCheckAsync(string? operationId = null, CancellationToken ct = default)
+    {
+        CancelDuplicateCheckCalls += 1;
+        LastDuplicateCancelOperationId = operationId;
+        return CancelDuplicateCheckHandler?.Invoke(operationId, ct) ?? Task.CompletedTask;
+    }
 
     public override Task InstallUpdateAsync(CancellationToken ct = default)
         => InstallUpdateHandler?.Invoke(ct) ?? throw NotConfigured();

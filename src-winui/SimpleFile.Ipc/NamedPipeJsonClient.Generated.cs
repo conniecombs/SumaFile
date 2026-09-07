@@ -181,14 +181,14 @@ public sealed partial class NamedPipeJsonClient
     public Task<CleanupResult> DiskCleanupAsync(string directory, ulong? sizeThreshold, string? operationId, CancellationToken ct = default)
         => InvokeAsync<CleanupResult>(Protocol.DiskCleanupMethod, new { directory, sizeThreshold, operationId }, ct);
 
-    public Task CancelDiskCleanupAsync(CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.CancelDiskCleanupMethod, new { }, ct);
+    public Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CancelDiskCleanupMethod, new { operationId }, ct);
 
-    public Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, ulong? minSize, ulong? partialHashBytes, string? operationId, CancellationToken ct = default)
-        => InvokeAsync<DuplicateCheckResult>(Protocol.DuplicateCheckMethod, new { directory, minSize, partialHashBytes, operationId }, ct);
+    public Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, DuplicateScanOptions? options, string? operationId, CancellationToken ct = default)
+        => InvokeAsync<DuplicateCheckResult>(Protocol.DuplicateCheckMethod, new { directory, minSize = options?.MinSize, partialHashBytes = options?.PartialHashBytes, maxDepth = options?.MaxDepth, excludePatterns = options?.ExcludePatterns, networkMode = options?.NetworkMode, operationId }, ct);
 
-    public Task CancelDuplicateCheckAsync(CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.CancelDuplicateCheckMethod, new { }, ct);
+    public Task CancelDuplicateCheckAsync(string? operationId = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CancelDuplicateCheckMethod, new { operationId }, ct);
 
     public Task<Tag[]> GetAllTagsAsync(CancellationToken ct = default)
         => InvokeAsync<Tag[]>(Protocol.GetAllTagsMethod, new { }, ct);

@@ -95,9 +95,9 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default);
     Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default);
     Task<CleanupResult> DiskCleanupAsync(string directory, ulong? sizeThreshold, string? operationId, CancellationToken ct = default);
-    Task CancelDiskCleanupAsync(CancellationToken ct = default);
-    Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, ulong? minSize, ulong? partialHashBytes, string? operationId, CancellationToken ct = default);
-    Task CancelDuplicateCheckAsync(CancellationToken ct = default);
+    Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default);
+    Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, DuplicateScanOptions? options, string? operationId, CancellationToken ct = default);
+    Task CancelDuplicateCheckAsync(string? operationId = null, CancellationToken ct = default);
     Task<Tag[]> GetAllTagsAsync(CancellationToken ct = default);
     Task<Tag> CreateTagAsync(string name, string color, CancellationToken ct = default);
     Task<Tag> UpdateTagAsync(long id, string name, string color, CancellationToken ct = default);

@@ -185,16 +185,15 @@ internal abstract class NullIpc : ISimpleFileIpc
         string? operationId,
         CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task CancelDiskCleanupAsync(CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<DuplicateCheckResult> DuplicateCheckAsync(
         string directory,
-        ulong? minSize,
-        ulong? partialHashBytes,
+        DuplicateScanOptions? options,
         string? operationId,
         CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task CancelDuplicateCheckAsync(CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task CancelDuplicateCheckAsync(string? operationId = null, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<Tag[]> GetAllTagsAsync(CancellationToken ct = default) => throw NotConfigured();
 

@@ -27,6 +27,12 @@ impl OperationRegistry {
         }
     }
 
+    pub async fn cancel_all(&self) {
+        for cancel in self.operations.lock().await.values() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
     pub async fn remove(&self, operation_id: &str) {
         self.operations.lock().await.remove(operation_id);
     }

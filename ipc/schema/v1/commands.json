@@ -159,12 +159,19 @@
     "open_file_with": { "params": { "path": "string", "application": "string" }, "result": "null" },
     "compare_files": { "params": { "pathA": "string", "pathB": "string" }, "result": "FileComparison" },
     "disk_cleanup": { "params": { "directory": "string", "sizeThreshold": "number?" }, "result": "CleanupResult" },
-    "cancel_disk_cleanup": { "params": null, "result": "null", "cancellation": true },
+    "cancel_disk_cleanup": { "params": { "operationId": "string?" }, "result": "null", "cancellation": true },
     "duplicate_check": {
-      "params": { "directory": "string", "minSize": "number?", "partialHashBytes": "number?" },
+      "params": {
+        "directory": "string",
+        "minSize": "number?",
+        "partialHashBytes": "number?",
+        "maxDepth": "number?",
+        "excludePatterns": "string[]?",
+        "networkMode": "bool?"
+      },
       "result": "DuplicateCheckResult"
     },
-    "cancel_duplicate_check": { "params": null, "result": "null", "cancellation": true },
+    "cancel_duplicate_check": { "params": { "operationId": "string?" }, "result": "null", "cancellation": true },
     "get_git_status": {
       "params": { "path": "string" },
       "result": "GitStatus",

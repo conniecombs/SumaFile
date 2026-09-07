@@ -125,6 +125,10 @@ public sealed partial class DiskCleanupDialog : ContentDialog, IScanDialog<Clean
         }
     }
 
+    public async Task<ContentDialogResult> ShowScanHostAsync() => await ShowAsync();
+
+    public void CloseScanHost() => Hide();
+
     private void OnLoaded(object sender, RoutedEventArgs e) => BindFolderPath();
 
     private void BindFolderPath()

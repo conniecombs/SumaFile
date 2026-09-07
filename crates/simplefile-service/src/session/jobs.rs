@@ -25,16 +25,17 @@ pub(super) struct EventSink {
 }
 
 pub(super) struct DuplicateCheckJob {
-    pub(super) cancel: Arc<AtomicBool>,
     pub(super) id: Option<Value>,
     pub(super) directory: String,
     pub(super) min_size: Option<u64>,
     pub(super) partial_hash_bytes: Option<u64>,
+    pub(super) max_depth: Option<usize>,
+    pub(super) exclude_patterns: Vec<String>,
+    pub(super) network_mode: Option<bool>,
     pub(super) operation_id: Option<String>,
 }
 
 pub(super) struct DiskCleanupJob {
-    pub(super) cancel: Arc<AtomicBool>,
     pub(super) id: Option<Value>,
     pub(super) directory: String,
     pub(super) size_threshold: Option<u64>,
@@ -540,23 +541,40 @@ pub(super) fn spawn_search_files(
 
 pub(super) fn spawn_duplicate_check(
     writer: OutboundSink,
+    registry: std::sync::Arc<OperationRegistry>,
     scheduler: BlockingScheduler,
     events: EventSink,
     job: DuplicateCheckJob,
 ) {
     let DuplicateCheckJob {
-        cancel,
         id,
         directory,
         min_size,
         partial_hash_bytes,
+        max_depth,
+        exclude_patterns,
+        network_mode,
         operation_id,
     } = job;
-    cancel.store(false, Ordering::Relaxed);
-    let operation_id = operation_id.unwrap_or_else(|| "duplicate_check".to_string());
     tokio::spawn(async move {
+        let operation_id =
+            operation_id.unwrap_or_else(simplefile_core::utils::generate_operation_id);
+        let cancel = registry.register(&operation_id).await;
         let events_for_task = events.clone();
         let operation_id_for_task = operation_id.clone();
+        let queued_directory = directory.clone();
+        events.emit_progress(&ProgressUpdate {
+            operation_id: operation_id.clone(),
+            operation_type: "duplicate-check".to_string(),
+            current: 0,
+            total: 0,
+            current_files: 0,
+            total_files: 0,
+            current_item: queued_directory,
+            status: "queued".to_string(),
+            error: None,
+        });
+        let start = std::time::Instant::now();
         let result = scheduler
             .run_general(move || {
                 let emit = |current, total, item: &str| {
@@ -574,12 +592,20 @@ pub(super) fn spawn_duplicate_check(
                 };
                 scan_duplicate_check(
                     &directory,
-                    DuplicateScanOptions::from_params(min_size, partial_hash_bytes),
+                    DuplicateScanOptions::from_params(
+                        min_size,
+                        partial_hash_bytes,
+                        max_depth,
+                        exclude_patterns,
+                        network_mode,
+                    ),
                     &cancel,
                     emit,
                 )
             })
             .await;
+        let run_ms = start.elapsed().as_secs_f64() * 1000.0;
+        log::debug!("job.timing method=DuplicateCheck total_ms={run_ms:.2}");
 
         let response = scheduled_result_response(
             id,
@@ -588,27 +614,41 @@ pub(super) fn spawn_duplicate_check(
             "failed to serialize duplicate check result",
         );
         let _ = write_json(&writer, &response).await;
+        registry.remove(&operation_id).await;
     });
 }
 
 pub(super) fn spawn_disk_cleanup(
     writer: OutboundSink,
+    registry: std::sync::Arc<OperationRegistry>,
     scheduler: BlockingScheduler,
     events: EventSink,
     job: DiskCleanupJob,
 ) {
     let DiskCleanupJob {
-        cancel,
         id,
         directory,
         size_threshold,
         operation_id,
     } = job;
-    cancel.store(false, Ordering::Relaxed);
-    let operation_id = operation_id.unwrap_or_else(|| "disk_cleanup".to_string());
     tokio::spawn(async move {
+        let operation_id =
+            operation_id.unwrap_or_else(simplefile_core::utils::generate_operation_id);
+        let cancel = registry.register(&operation_id).await;
         let events_for_task = events.clone();
         let operation_id_for_task = operation_id.clone();
+        let queued_directory = directory.clone();
+        events.emit_progress(&ProgressUpdate {
+            operation_id: operation_id.clone(),
+            operation_type: "cleanup".to_string(),
+            current: 0,
+            total: 0,
+            current_files: 0,
+            total_files: 0,
+            current_item: queued_directory,
+            status: "queued".to_string(),
+            error: None,
+        });
         let result = scheduler
             .run_general(move || {
                 let emit = |current, total, item: &str| {
@@ -635,5 +675,6 @@ pub(super) fn spawn_disk_cleanup(
             "failed to serialize cleanup result",
         );
         let _ = write_json(&writer, &response).await;
+        registry.remove(&operation_id).await;
     });
 }

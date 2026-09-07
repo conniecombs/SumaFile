@@ -14,6 +14,8 @@ public interface IScanDialog<TResult>
     void ShowScanning();
     void ShowResults(TResult result);
     void UpdateProgress(ProgressUpdate update);
+    Task<ContentDialogResult> ShowScanHostAsync();
+    void CloseScanHost();
 }
 
 internal sealed partial class FileOperationDialogService
@@ -24,13 +26,12 @@ internal sealed partial class FileOperationDialogService
         TDialog dialog,
         string title,
         Func<TDialog, IProgress<ProgressUpdate>, CancellationToken, Task<TResult>> scanAsync,
-        Func<Task> cancelAsync,
         Func<TDialog, TResult, CancellationToken, Task>? afterResultsAsync = null,
         Action<Exception>? showError = null)
-        where TDialog : ContentDialog, IScanDialog<TResult>
+        where TDialog : IScanDialog<TResult>
     {
         dialog.ShowConfiguration();
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await dialog.ShowScanHostAsync() != ContentDialogResult.Primary)
         {
             return;
         }
@@ -54,17 +55,16 @@ internal sealed partial class FileOperationDialogService
             });
         });
 
-        async void OnScanCancelled(object? sender, EventArgs args)
+        void OnScanCancelled(object? sender, EventArgs args)
         {
             scanCts.Cancel();
-            await _runUiActionAsync(title, cancelAsync);
         }
 
         dialog.ScanCancelled += OnScanCancelled;
         try
         {
             dialog.ShowScanning();
-            var scanUi = dialog.ShowAsync();
+            var scanUi = dialog.ShowScanHostAsync();
             var result = await scanAsync(dialog, progress, scanCts.Token);
             if (dialog.ScanWasCancelled
                 || !ReferenceEquals(_workspace(), workspace)
@@ -84,11 +84,11 @@ internal sealed partial class FileOperationDialogService
         }
         catch (OperationCanceledException)
         {
-            dialog.Hide();
+            dialog.CloseScanHost();
         }
         catch (Exception exception)
         {
-            dialog.Hide();
+            dialog.CloseScanHost();
             if (!IsCancellationMessage(exception.Message))
             {
                 if (showError is null)

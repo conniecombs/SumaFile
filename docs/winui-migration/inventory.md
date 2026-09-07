@@ -115,9 +115,9 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | `save_smart_folder` | `smart_folders` | `{ folder }` | `SmartFolder[]` | Save current search |
 | `delete_smart_folder` | `smart_folders` | `{ id }` | `SmartFolder[]` | Sidebar remove |
 | `disk_cleanup` | `cleanup` | `{ directory, sizeThreshold? }` | `CleanupResult` | Analyze cleanup |
-| `cancel_disk_cleanup` | `cleanup` | none | `void` | Wrapper exists; progress UI can cancel related work |
-| `duplicate_check` | `cleanup` | `{ directory, minSize?, partialHashBytes? }` | `DuplicateCheckResult` | Duplicate checker |
-| `cancel_duplicate_check` | `cleanup` | none | `void` | Duplicate checker cancel |
+| `cancel_disk_cleanup` | `cleanup` | `{ operationId? }` | `void` | Wrapper exists; progress UI can cancel related work |
+| `duplicate_check` | `cleanup` | `{ directory, minSize?, partialHashBytes?, maxDepth?, excludePatterns?, networkMode?, operationId? }` | `DuplicateCheckResult` | Duplicate checker |
+| `cancel_duplicate_check` | `cleanup` | `{ operationId? }` | `void` | Duplicate checker cancel |
 
 ### 2.4 Archives and WinRAR
 

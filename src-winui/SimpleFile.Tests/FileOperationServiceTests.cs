@@ -547,12 +547,15 @@ public class FileOperationServiceTests
                 new InlineProgress<ProgressUpdate>(seen.Add),
                 cts.Token));
 
-        Assert.Single(seen);
+        var seenAfterCancel = seen.Count;
+        Assert.True(seenAfterCancel >= 1);
+        Assert.Equal(1, stub.CancelDiskCleanupCalls);
+        Assert.Equal(seen[0].OperationId, stub.LastDiskCleanupCancelOperationId);
         Assert.Equal(0, stub.SubscriptionCount(Protocol.OperationProgressEvent));
         stub.Emit(
             Protocol.OperationProgressEvent,
             new ProgressUpdate { OperationId = seen[0].OperationId, OperationType = "cleanup" });
-        Assert.Single(seen);
+        Assert.Equal(seenAfterCancel, seen.Count);
     }
 
     [Fact]
@@ -561,7 +564,7 @@ public class FileOperationServiceTests
         var seen = new List<ProgressUpdate>();
         using var cts = new CancellationTokenSource();
         var stub = new ConfigurableIpc();
-        stub.DuplicateCheckHandler = (path, minSize, hashBytes, opId, ct) =>
+        stub.DuplicateCheckHandler = (path, options, opId, ct) =>
         {
             stub.Emit(
                 Protocol.OperationProgressEvent,
@@ -581,17 +584,19 @@ public class FileOperationServiceTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             service.DuplicateCheckAsync(
                 @"C:\test",
-                1024,
-                null,
+                new DuplicateScanOptions { MinSize = 1024 },
                 new InlineProgress<ProgressUpdate>(seen.Add),
                 cts.Token));
 
-        Assert.Single(seen);
+        var seenAfterCancel = seen.Count;
+        Assert.True(seenAfterCancel >= 1);
+        Assert.Equal(1, stub.CancelDuplicateCheckCalls);
+        Assert.Equal(seen[0].OperationId, stub.LastDuplicateCancelOperationId);
         Assert.Equal(0, stub.SubscriptionCount(Protocol.OperationProgressEvent));
         stub.Emit(
             Protocol.OperationProgressEvent,
             new ProgressUpdate { OperationId = seen[0].OperationId, OperationType = "duplicate-check" });
-        Assert.Single(seen);
+        Assert.Equal(seenAfterCancel, seen.Count);
     }
 
     [Fact]
@@ -656,11 +661,11 @@ public class FileOperationServiceTests
                 Assert.NotNull(operationId);
                 return Task.FromResult(new CleanupResult { ScannedFiles = 3 });
             },
-            DuplicateCheckHandler = (directory, minSize, partialHashBytes, operationId, ct) =>
+            DuplicateCheckHandler = (directory, options, operationId, ct) =>
             {
                 Assert.Equal(@"C:\temp", directory);
-                Assert.Equal(2048UL, minSize);
-                Assert.Equal(4096UL, partialHashBytes);
+                Assert.Equal(2048UL, options?.MinSize);
+                Assert.Equal(4096UL, options?.PartialHashBytes);
                 Assert.NotNull(operationId);
                 return Task.FromResult(new DuplicateCheckResult { ScannedFiles = 4 });
             },
@@ -668,7 +673,9 @@ public class FileOperationServiceTests
         var service = new FileOperationService(stub, journal);
 
         await service.DiskCleanupAsync(@"C:\temp", 1024);
-        await service.DuplicateCheckAsync(@"C:\temp", 2048, 4096);
+        await service.DuplicateCheckAsync(
+            @"C:\temp",
+            new DuplicateScanOptions { MinSize = 2048, PartialHashBytes = 4096 });
 
         var entries = journal.ReadEntries();
         var cleanup = entries.Where(entry => entry.OperationType == "cleanup").ToList();

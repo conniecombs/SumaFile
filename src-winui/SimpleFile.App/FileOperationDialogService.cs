@@ -777,7 +777,8 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var dialog = new DuplicateCheckerDialog { XamlRoot = _xamlRoot(), Directory = path };
+        var dialog = new DuplicateCheckerDialog();
+        dialog.ConfigureForPath(path, workspace.Active.PathIsNetwork);
         dialog.PreviewRequested += (_, filePath) =>
         {
             if (!ReferenceEquals(_workspace(), workspace))
@@ -815,11 +816,9 @@ internal sealed partial class FileOperationDialogService
             "Duplicate checker",
             (scanDialog, progress, token) => fileOps.DuplicateCheckAsync(
                 path,
-                scanDialog.MinSizeBytes,
-                partialHashBytes: null,
+                scanDialog.ScanOptions,
                 progress: progress,
                 ct: token),
-            () => fileOps.CancelDuplicateCheckAsync(),
             async (scanDialog, _, token) =>
             {
                 if (!scanDialog.DeleteRequested)
@@ -889,8 +888,7 @@ internal sealed partial class FileOperationDialogService
                 path,
                 scanDialog.ThresholdBytes,
                 progress,
-                token),
-            () => fileOps.CancelDiskCleanupAsync());
+                token));
     }
 
     public async Task SetColorLabelAsync()

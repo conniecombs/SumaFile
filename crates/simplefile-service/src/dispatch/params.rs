@@ -145,6 +145,12 @@ pub(super) struct OperationIdParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct OptionalOperationIdParams {
+    #[serde(rename = "operationId")]
+    pub(super) operation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct SearchFilesParams {
     pub(super) options: SearchOptions,
 }
@@ -226,6 +232,12 @@ pub(super) struct DuplicateCheckParams {
     pub(super) min_size: Option<u64>,
     #[serde(rename = "partialHashBytes")]
     pub(super) partial_hash_bytes: Option<u64>,
+    #[serde(rename = "maxDepth")]
+    pub(super) max_depth: Option<usize>,
+    #[serde(rename = "excludePatterns")]
+    pub(super) exclude_patterns: Option<Vec<String>>,
+    #[serde(rename = "networkMode")]
+    pub(super) network_mode: Option<bool>,
     #[serde(rename = "operationId")]
     pub(super) operation_id: Option<String>,
 }

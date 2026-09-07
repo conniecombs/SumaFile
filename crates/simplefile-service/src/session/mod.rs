@@ -17,7 +17,6 @@ use jobs::{
 use serde_json::Value;
 use simplefile_ipc::frame::FrameError;
 use simplefile_ipc::rpc::{JsonRpcRequest, JsonRpcResponse};
-use std::sync::atomic::Ordering;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 pub async fn serve_connection<R, W>(
@@ -32,6 +31,8 @@ where
     let writer = spawn_writer(writer);
     let operations = std::sync::Arc::new(OperationRegistry::default());
     let searches = std::sync::Arc::new(OperationRegistry::default());
+    let duplicate_scans = std::sync::Arc::new(OperationRegistry::default());
+    let cleanup_scans = std::sync::Arc::new(OperationRegistry::default());
     let scheduler = BlockingScheduler::default();
     let mut watcher_state = WatcherState::default();
     let binary_hot_frames = state.binary_hot_frames.clone();
@@ -127,24 +128,34 @@ where
                 directory,
                 min_size,
                 partial_hash_bytes,
+                max_depth,
+                exclude_patterns,
+                network_mode,
                 operation_id,
             } => {
                 spawn_duplicate_check(
                     writer.clone(),
+                    duplicate_scans.clone(),
                     scheduler.clone(),
                     events.clone(),
                     DuplicateCheckJob {
-                        cancel: state.duplicate_check_cancel.clone(),
                         id,
                         directory,
                         min_size,
                         partial_hash_bytes,
+                        max_depth,
+                        exclude_patterns,
+                        network_mode,
                         operation_id,
                     },
                 );
             }
-            Dispatch::CancelDuplicateCheck { id } => {
-                state.duplicate_check_cancel.store(true, Ordering::Relaxed);
+            Dispatch::CancelDuplicateCheck { id, operation_id } => {
+                if let Some(operation_id) = operation_id {
+                    duplicate_scans.cancel(&operation_id).await;
+                } else {
+                    duplicate_scans.cancel_all().await;
+                }
                 write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
             }
             Dispatch::DiskCleanup {
@@ -155,10 +166,10 @@ where
             } => {
                 spawn_disk_cleanup(
                     writer.clone(),
+                    cleanup_scans.clone(),
                     scheduler.clone(),
                     events.clone(),
                     DiskCleanupJob {
-                        cancel: state.disk_cleanup_cancel.clone(),
                         id,
                         directory,
                         size_threshold,
@@ -166,8 +177,12 @@ where
                     },
                 );
             }
-            Dispatch::CancelDiskCleanup { id } => {
-                state.disk_cleanup_cancel.store(true, Ordering::Relaxed);
+            Dispatch::CancelDiskCleanup { id, operation_id } => {
+                if let Some(operation_id) = operation_id {
+                    cleanup_scans.cancel(&operation_id).await;
+                } else {
+                    cleanup_scans.cancel_all().await;
+                }
                 write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
             }
             Dispatch::InstallUpdate { id } => {
