@@ -645,12 +645,15 @@ public static class ColumnLayoutHost
 
     private static ColumnLayout _primary = new();
     private static ColumnLayout _secondary = new();
+    private static ColumnLayout? _effectivePrimary;
+    private static ColumnLayout? _effectiveSecondary;
+    private static string _effectiveSignature = "";
 
     /// <summary>Legacy alias for the primary pane layout. Prefer <see cref="For"/>.</summary>
-    public static ColumnLayout Shared => _primary;
+    public static ColumnLayout Shared => _effectivePrimary ?? _primary;
 
     public static ColumnLayout For(PaneId pane) =>
-        pane == PaneId.Secondary ? _secondary : _primary;
+        pane == PaneId.Secondary ? _effectiveSecondary ?? _secondary : _effectivePrimary ?? _primary;
 
     public static void Attach(ColumnLayout primary, ColumnLayout secondary)
     {
@@ -658,6 +661,9 @@ public static class ColumnLayoutHost
         Unhook(_secondary);
         _primary = primary;
         _secondary = secondary;
+        _effectivePrimary = null;
+        _effectiveSecondary = null;
+        _effectiveSignature = "";
         Hook(_primary);
         Hook(_secondary);
         Changed?.Invoke(null, EventArgs.Empty);
@@ -677,6 +683,23 @@ public static class ColumnLayoutHost
             _secondary = new ColumnLayout();
         }
 
+        _effectivePrimary = null;
+        _effectiveSecondary = null;
+        _effectiveSignature = "";
+        Changed?.Invoke(null, EventArgs.Empty);
+    }
+
+    public static void ApplyEffective(ColumnLayout primary, ColumnLayout secondary)
+    {
+        var signature = Signature(primary) + "|" + Signature(secondary);
+        if (string.Equals(_effectiveSignature, signature, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _effectivePrimary = primary;
+        _effectiveSecondary = secondary;
+        _effectiveSignature = signature;
         Changed?.Invoke(null, EventArgs.Empty);
     }
 
@@ -685,6 +708,9 @@ public static class ColumnLayoutHost
     private static void Unhook(ColumnLayout layout) => layout.Changed -= OnLayoutChanged;
 
     private static void OnLayoutChanged(object? sender, EventArgs e) => Changed?.Invoke(sender, e);
+
+    private static string Signature(ColumnLayout layout) =>
+        string.Join('\u001f', layout.VisibleColumns.Select(column => $"{column.Id}:{column.Width:0.###}"));
 }
 
 public static class FileListViewHost

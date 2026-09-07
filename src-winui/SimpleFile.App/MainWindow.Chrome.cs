@@ -206,11 +206,14 @@ public sealed partial class MainWindow
             return;
         }
 
-        QuickAccessSection.Visibility = _workspace.Settings.ShowQuickAccess ? Visibility.Visible : Visibility.Collapsed;
-        FolderTreeSection.Visibility = _workspace.Settings.ShowFolderTree ? Visibility.Visible : Visibility.Collapsed;
-        BookmarksSection.Visibility = _workspace.Settings.ShowBookmarks ? Visibility.Visible : Visibility.Collapsed;
-        RecentSection.Visibility = _workspace.Settings.ShowRecentLocations ? Visibility.Visible : Visibility.Collapsed;
-        SmartFoldersSection.Visibility = _workspace.Settings.ShowSmartFolders ? Visibility.Visible : Visibility.Collapsed;
+        var settings = _workspace.Settings;
+        QuickAccessSection.Visibility = SidebarSectionVisibility.QuickAccess(settings) ? Visibility.Visible : Visibility.Collapsed;
+        FolderTreeSection.Visibility = SidebarSectionVisibility.FolderTree(settings, _workspace.FolderTreeRows.Count) ? Visibility.Visible : Visibility.Collapsed;
+        BookmarksSection.Visibility = SidebarSectionVisibility.Bookmarks(settings) ? Visibility.Visible : Visibility.Collapsed;
+        RecentSection.Visibility = SidebarSectionVisibility.Recent(settings, _workspace.RecentPaths.Count) ? Visibility.Visible : Visibility.Collapsed;
+        SmartFoldersSection.Visibility = SidebarSectionVisibility.SmartFolders(settings, _workspace.SmartFolders.Count, _search?.IsActive == true)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
         QuickAccessList.Visibility = _quickAccessCollapsed ? Visibility.Collapsed : Visibility.Visible;
         DriveList.Visibility = _myPcCollapsed ? Visibility.Collapsed : Visibility.Visible;

@@ -1053,12 +1053,24 @@ public sealed partial class MainWindow
 
     private void ApplyColumnWidths()
     {
-        var primary = _workspace?.ColumnsFor(PaneId.Primary) ?? ColumnLayoutHost.For(PaneId.Primary);
-        var secondary = _workspace?.ColumnsFor(PaneId.Secondary) ?? ColumnLayoutHost.For(PaneId.Secondary);
+        var primaryBase = _workspace?.ColumnsFor(PaneId.Primary) ?? ColumnLayoutHost.For(PaneId.Primary);
+        var secondaryBase = _workspace?.ColumnsFor(PaneId.Secondary) ?? ColumnLayoutHost.For(PaneId.Secondary);
+        var primary = EffectiveColumnsForPane(primaryBase, PaneId.Primary);
+        var secondary = EffectiveColumnsForPane(secondaryBase, PaneId.Secondary);
+        ColumnLayoutHost.ApplyEffective(primary, secondary);
         ApplyColumnHeader(PrimaryColumnHeader, primary, PaneId.Primary, ref _primaryColumnHeaderKey);
         ApplyColumnHeader(SecondaryColumnHeader, secondary, PaneId.Secondary, ref _secondaryColumnHeaderKey);
         ApplyDetailsItemMinWidths(PrimaryFileList, primary.VisibleWidth);
         ApplyDetailsItemMinWidths(SecondaryFileList, secondary.VisibleWidth);
+    }
+
+    private ColumnLayout EffectiveColumnsForPane(ColumnLayout columns, PaneId pane)
+    {
+        var paneWidth = pane == PaneId.Secondary ? SecondaryPaneRoot.ActualWidth : PrimaryPaneRoot.ActualWidth;
+        return columns.EffectiveForPaneWidth(
+            paneWidth,
+            _workspace?.DualPaneEnabled == true,
+            IsGitIntegrationEnabled);
     }
 
     private static void ApplyDetailsItemMinWidths(ListView list, double width)

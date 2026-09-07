@@ -103,6 +103,7 @@ public sealed class ShortcutEditorRow : INotifyPropertyChanged
 public sealed partial class SettingsWindow : Window
 {
     private const string RepositoryUrl = "https://github.com/conniecombs/SumaFile";
+    private readonly string _initialCategory;
     private readonly TaskCompletionSource<ContentDialogResult> _resultSource =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private FileOperationService? _fileOps;
@@ -110,8 +111,9 @@ public sealed partial class SettingsWindow : Window
     private readonly List<ShortcutEditorRow> _shortcutRows;
     private ContentDialogResult _result = ContentDialogResult.None;
 
-    public SettingsWindow()
+    public SettingsWindow(string? initialCategory = null)
     {
+        _initialCategory = NormalizeCategoryName(initialCategory);
         InitializeComponent();
         Title = "Settings";
         AppIcon.ApplyTo(this);
@@ -144,9 +146,12 @@ public sealed partial class SettingsWindow : Window
 
     private void SelectInitialCategory()
     {
-        var first = SettingsNavigation.MenuItems.OfType<NavigationViewItem>().FirstOrDefault();
-        SettingsNavigation.SelectedItem = first;
-        ShowCategory(CategoryName(first));
+        var selected = SettingsNavigation.MenuItems
+            .OfType<NavigationViewItem>()
+            .FirstOrDefault(item => string.Equals(CategoryName(item), _initialCategory, StringComparison.Ordinal))
+            ?? SettingsNavigation.MenuItems.OfType<NavigationViewItem>().FirstOrDefault();
+        SettingsNavigation.SelectedItem = selected;
+        ShowCategory(CategoryName(selected));
     }
 
     private void OnCategorySelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
@@ -159,6 +164,17 @@ public sealed partial class SettingsWindow : Window
         return item?.Tag?.ToString()
             ?? item?.Content?.ToString()
             ?? "";
+    }
+
+    private static string NormalizeCategoryName(string? category)
+    {
+        var value = (category ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "Appearance";
+        }
+
+        return value;
     }
 
     private void ShowCategory(string category)

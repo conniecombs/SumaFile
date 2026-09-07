@@ -99,6 +99,8 @@ public sealed partial class MainWindow
             ["profile-photos"] = () => ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.PhotosId),
             ["profile-transfer"] = () => ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.TransferId),
             ["profile-minimal"] = () => ApplyWorkspaceProfileByIdAsync(WorkspaceProfileTemplates.MinimalId),
+            ["customize-toolbar"] = () => _fileOperationDialogs.ShowSettingsAsync("Toolbar"),
+            ["toggle-toolbar-labels"] = ToggleToolbarLabelsAsync,
             ["keyboard-help"] = ShowKeyboardHelpAsync,
             ["git-panel"] = OpenGitPanelAsync,
             ["git-refresh"] = () => RefreshGitPanelAsync(),
@@ -130,5 +132,25 @@ public sealed partial class MainWindow
         }
 
         return Task.CompletedTask;
+    }
+
+    private async Task ToggleToolbarLabelsAsync()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var layout = _workspace.Settings.CommandSurface;
+        layout.Normalize();
+        layout.ToolbarDisplayMode = layout.ToolbarDisplayMode == ToolbarActionCatalog.IconAndLabelDisplayMode
+            ? ToolbarActionCatalog.IconOnlyDisplayMode
+            : ToolbarActionCatalog.IconAndLabelDisplayMode;
+        layout.Normalize();
+        ApplyCommandSurfaceLayout();
+        SetStatusText(layout.ToolbarDisplayMode == ToolbarActionCatalog.IconAndLabelDisplayMode
+            ? "Toolbar labels shown"
+            : "Toolbar labels hidden");
+        await _workspace.SaveUiSettingsAsync();
     }
 }

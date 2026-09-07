@@ -1,13 +1,18 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 
 namespace SimpleFile.App;
 
 public sealed partial class PreviewPaneView : UserControl
 {
+    private const double LabeledActionWidth = 360;
+
     public PreviewPaneView()
     {
         InitializeComponent();
+        Loaded += (_, _) => UpdateActionLayout();
+        SizeChanged += (_, _) => UpdateActionLayout();
     }
 
     public Border PaneRoot => PreviewPane;
@@ -18,6 +23,9 @@ public sealed partial class PreviewPaneView : UserControl
     public Button RevealButton => PreviewRevealButton;
     public Button CompareButton => PreviewCompareButton;
     public Button ChecksumButton => PreviewChecksumButton;
+    public Button MoreActionsButton => PreviewMoreActionsButton;
+    public MenuFlyoutItem CompareMenuItem => PreviewCompareMenuItem;
+    public MenuFlyoutItem ChecksumMenuItem => PreviewChecksumMenuItem;
     public StackPanel IconPanel => PreviewIconPanel;
     public Image IconImage => PreviewIconImage;
     public TextBlock IconLabel => PreviewIconLabel;
@@ -50,4 +58,54 @@ public sealed partial class PreviewPaneView : UserControl
     private void OnPreviewCompareClick(object sender, RoutedEventArgs e) => PreviewCompareClick?.Invoke(sender, e);
 
     private void OnPreviewChecksumClick(object sender, RoutedEventArgs e) => PreviewChecksumClick?.Invoke(sender, e);
+
+    private void UpdateActionLayout()
+    {
+        var showLabels = ActualWidth >= LabeledActionWidth;
+        ConfigureActionButton(PreviewOpenButton, "\uE8E5", "Open", showLabels);
+        ConfigureActionButton(PreviewOpenWithButton, "\uE7AC", "Open with", showLabels);
+        ConfigureActionButton(PreviewRevealButton, "\uE8DA", "Reveal", showLabels);
+        ConfigureActionButton(PreviewCompareButton, "\uE8AB", "Compare", showLabels);
+        ConfigureActionButton(PreviewChecksumButton, "\uE9D9", "Checksums", showLabels);
+        PreviewCompareButton.Visibility = showLabels ? Visibility.Visible : Visibility.Collapsed;
+        PreviewChecksumButton.Visibility = showLabels ? Visibility.Visible : Visibility.Collapsed;
+        PreviewMoreActionsButton.Visibility = showLabels ? Visibility.Collapsed : Visibility.Visible;
+        PreviewMoreActionsButton.Content = Icon("\uE712");
+    }
+
+    private static void ConfigureActionButton(Button button, string glyph, string label, bool showLabel)
+    {
+        button.Width = showLabel ? double.NaN : 30;
+        button.MinWidth = showLabel ? 74 : 30;
+        button.Padding = showLabel ? new Thickness(9, 0, 10, 0) : new Thickness(0);
+        button.Content = showLabel
+            ? new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                Children =
+                {
+                    Icon(glyph),
+                    new TextBlock
+                    {
+                        Text = label,
+                        FontSize = 12,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        MaxWidth = 82,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    },
+                },
+            }
+            : Icon(glyph);
+    }
+
+    private static FontIcon Icon(string glyph)
+    {
+        return new FontIcon
+        {
+            FontFamily = new FontFamily("Segoe Fluent Icons"),
+            FontSize = 14,
+            Glyph = glyph,
+        };
+    }
 }

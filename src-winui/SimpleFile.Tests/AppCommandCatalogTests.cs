@@ -40,6 +40,8 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "profile-manage");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "profile-transfer");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "new-shortcut");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "customize-toolbar");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-toolbar-labels");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-panel");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-stage-selected");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-discard-selected");
@@ -49,6 +51,8 @@ public class AppCommandCatalogTests
         Assert.Equal("Transfers", AppCommandCatalog.Find("transfers")?.Label);
         Assert.Equal("Open or close second pane", AppCommandCatalog.Find("dual-pane")?.Label);
         Assert.Equal("Manage workspace profiles", AppCommandCatalog.Find("profile-manage")?.Label);
+        Assert.Equal("Customize toolbar", AppCommandCatalog.Find("customize-toolbar")?.Label);
+        Assert.Equal("Show or hide toolbar labels", AppCommandCatalog.Find("toggle-toolbar-labels")?.Label);
         Assert.Equal("Ctrl+Alt+C", AppCommandCatalog.Find("copy-to-pane")?.Shortcut);
         Assert.Equal("Move to Recycle Bin", AppCommandCatalog.Find("delete")?.Label);
         Assert.Equal("Delete Permanently", AppCommandCatalog.Find("delete-permanent")?.Label);
@@ -73,6 +77,8 @@ public class AppCommandCatalogTests
     [InlineData("overflow-profiles", "profile-manage")]
     [InlineData("overflow-copy", "copy")]
     [InlineData("overflow-terminal", "terminal")]
+    [InlineData("ctx-customize-toolbar", "customize-toolbar")]
+    [InlineData("ctx-toggle-toolbar-labels", "toggle-toolbar-labels")]
     [InlineData("ctx-restore", "restore-selected")]
     [InlineData("ctx-empty-recycle-bin", "empty-recycle-bin")]
     [InlineData("ctx-git-stage", "git-stage-selected")]

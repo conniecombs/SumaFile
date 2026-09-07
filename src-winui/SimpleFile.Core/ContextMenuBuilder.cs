@@ -37,6 +37,7 @@ public sealed class ContextMenuRequest
     public IReadOnlyList<OpenWithApplication> OpenWithApplications { get; init; } = [];
     public IReadOnlyCollection<string> OverflowedToolbarIds { get; init; } = [];
     public IReadOnlyList<string> ToolbarActionOrder { get; init; } = [];
+    public string ToolbarDisplayMode { get; init; } = ToolbarActionCatalog.IconOnlyDisplayMode;
     public bool InRecycleBin { get; init; }
     public bool GitEnabled { get; init; }
     public bool InGitRepository { get; init; }
@@ -81,18 +82,7 @@ public static class ContextMenuBuilder
             Item("ctx-open-tab", "Open in new tab", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+Enter"),
             Item("ctx-open-other-pane", "Open in other pane", request.SelectionCount != 1 || !request.SelectedIsDirectory),
             Item("ctx-preview", "Quick Look", request.SelectionCount != 1, "Space"),
-            Item("ctx-compare", "Compare files", !canCompare),
-            Item("ctx-terminal", "Open terminal here", false, "F4"),
-            Item("ctx-powershell-admin", "Open PowerShell as administrator"),
-            GitMenu(request),
             Divider(),
-            Item("ctx-color-label", "Set color label...", request.SelectionCount == 0),
-            Item("ctx-folder-metrics", "Compare folder metrics", !canCompareFolders),
-            Item("ctx-cleanup", "Disk cleanup here..."),
-            Item("ctx-duplicates", "Find duplicates here..."),
-            Divider(),
-            Item("ctx-rename", "Rename", request.SelectionCount != 1, "F2"),
-            Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0),
             Item("ctx-copy", "Copy", request.SelectionCount == 0, "Ctrl+C"),
             Item("ctx-cut", "Cut", request.SelectionCount == 0, "Ctrl+X"),
             Item(
@@ -101,30 +91,14 @@ public static class ContextMenuBuilder
                 !request.HasClipboard,
                 "Ctrl+V",
                 commandParameter: request.SelectedIsDirectory ? request.SelectedDirectoryPath : null),
-            Item("ctx-copy-path", "Copy path", request.SelectionCount == 0, "Ctrl+Shift+C"),
-            Item("ctx-bookmark", "Bookmark folder", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+B"),
-            Item("ctx-copy-to-pane", "Copy to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+C"),
-            Item("ctx-move-to-pane", "Move to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+M"),
+            SendToMenu(request, hasOtherPane),
             Divider(),
-            Item("ctx-pack", "Pack into folder...", request.SelectionCount == 0),
-            Item("ctx-unpack", "Unpack folder here", !canUnpack),
-            Item("ctx-compress", "Create archive...", request.SelectionCount == 0),
-            new ContextMenuEntry
-            {
-                Kind = ContextMenuKind.Item,
-                Id = "ctx-extract-menu",
-                Label = "Extract",
-                Disabled = !request.SelectedIsArchive,
-                IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-extract-menu"),
-                Children =
-                [
-                    Item("ctx-extract-folder", extractFolder, !request.SelectedIsArchive, showIcon: false),
-                    Item("ctx-extract", "Extract here", !request.SelectedIsArchive, showIcon: false),
-                    Item("ctx-extract-to", "Extract to...", !request.SelectedIsArchive, showIcon: false),
-                ],
-            },
-            Divider(),
+            Item("ctx-rename", "Rename", request.SelectionCount != 1, "F2"),
             DeleteMenu(request.SelectionCount == 0),
+            Divider(),
+            ToolsMenu(request, canCompare, canCompareFolders),
+            ArchiveMenu(request, canUnpack, extractFolder),
+            GitMenu(request),
             Divider(),
             Item("ctx-info", "Properties", request.SelectionCount != 1, "Alt+Enter"),
         };
@@ -143,6 +117,9 @@ public static class ContextMenuBuilder
         {
             entries.Add(Divider());
         }
+
+        entries.Add(ToolbarMenu(request));
+        entries.Add(Divider());
 
         if (request.InRecycleBin)
         {
@@ -412,6 +389,84 @@ public static class ContextMenuBuilder
                 Item("ctx-git-pull", "Pull", !request.InGitRepository, showIcon: false),
                 Item("ctx-git-push", "Push", !request.InGitRepository, showIcon: false),
                 Item("ctx-git-commit", "Commit", !request.InGitRepository, showIcon: false),
+            ],
+        };
+    }
+
+    private static ContextMenuEntry SendToMenu(ContextMenuRequest request, bool hasOtherPane)
+    {
+        return new ContextMenuEntry
+        {
+            Id = "ctx-send-to-menu",
+            Label = "Send to",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-send-to-menu"),
+            Children =
+            [
+                Item("ctx-copy-path", "Copy path", request.SelectionCount == 0, "Ctrl+Shift+C", showIcon: false),
+                Item("ctx-bookmark", "Bookmark folder", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+B", showIcon: false),
+                Divider(),
+                Item("ctx-copy-to-pane", "Copy to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+C", showIcon: false),
+                Item("ctx-move-to-pane", "Move to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+M", showIcon: false),
+            ],
+        };
+    }
+
+    private static ContextMenuEntry ToolsMenu(ContextMenuRequest request, bool canCompare, bool canCompareFolders)
+    {
+        return new ContextMenuEntry
+        {
+            Id = "ctx-tools-menu",
+            Label = "Tools",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-tools-menu"),
+            Children =
+            [
+                Item("ctx-compare", "Compare files", !canCompare, showIcon: false),
+                Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0, showIcon: false),
+                Item("ctx-color-label", "Set color label...", request.SelectionCount == 0, showIcon: false),
+                Divider(),
+                Item("ctx-folder-metrics", "Compare folder metrics", !canCompareFolders, showIcon: false),
+                Item("ctx-cleanup", "Disk cleanup here...", showIcon: false),
+                Item("ctx-duplicates", "Find duplicates here...", showIcon: false),
+                Divider(),
+                Item("ctx-terminal", "Open terminal here", false, "F4", showIcon: false),
+                Item("ctx-powershell-admin", "Open PowerShell as administrator", showIcon: false),
+            ],
+        };
+    }
+
+    private static ContextMenuEntry ArchiveMenu(ContextMenuRequest request, bool canUnpack, string extractFolder)
+    {
+        return new ContextMenuEntry
+        {
+            Id = "ctx-archive-menu",
+            Label = "Archive",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-archive-menu"),
+            Children =
+            [
+                Item("ctx-pack", "Pack into folder...", request.SelectionCount == 0, showIcon: false),
+                Item("ctx-unpack", "Unpack folder here", !canUnpack, showIcon: false),
+                Item("ctx-compress", "Create archive...", request.SelectionCount == 0, showIcon: false),
+                Divider(),
+                Item("ctx-extract-folder", extractFolder, !request.SelectedIsArchive, showIcon: false),
+                Item("ctx-extract", "Extract here", !request.SelectedIsArchive, showIcon: false),
+                Item("ctx-extract-to", "Extract to...", !request.SelectedIsArchive, showIcon: false),
+            ],
+        };
+    }
+
+    private static ContextMenuEntry ToolbarMenu(ContextMenuRequest request)
+    {
+        var usesLabels = ToolbarActionCatalog.NormalizeDisplayMode(request.ToolbarDisplayMode)
+            == ToolbarActionCatalog.IconAndLabelDisplayMode;
+        return new ContextMenuEntry
+        {
+            Id = "ctx-toolbar-menu",
+            Label = "Toolbar",
+            IconGlyph = ContextMenuIconCatalog.Settings,
+            Children =
+            [
+                Item("ctx-toggle-toolbar-labels", usesLabels ? "Hide button labels" : "Show button labels", showIcon: false),
+                Item("ctx-customize-toolbar", "Customize toolbar...", showIcon: false),
             ],
         };
     }

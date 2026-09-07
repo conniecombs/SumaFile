@@ -66,6 +66,8 @@ public static class AppCommandCatalog
         new("profile-photos", "Profile: Photos", "Profiles"),
         new("profile-transfer", "Profile: Transfer", "Profiles"),
         new("profile-minimal", "Profile: Minimal", "Profiles"),
+        new("customize-toolbar", "Customize toolbar", "App"),
+        new("toggle-toolbar-labels", "Show or hide toolbar labels", "App"),
         new("view-details", "View: details", "View"),
         new("view-list", "View: list", "View"),
         new("view-tiles", "View: tiles", "View"),

@@ -27,6 +27,9 @@ internal sealed class PreviewPresenter
     private readonly Button _revealButton;
     private readonly Button _compareButton;
     private readonly Button _checksumButton;
+    private readonly Button _moreActionsButton;
+    private readonly MenuFlyoutItem _compareMenuItem;
+    private readonly MenuFlyoutItem _checksumMenuItem;
     private readonly StackPanel _iconPanel;
     private readonly Image _iconImage;
     private readonly TextBlock _iconLabel;
@@ -46,6 +49,7 @@ internal sealed class PreviewPresenter
     private string? _previewPath;
     private CancellationTokenSource? _previewCts;
     private bool _updatingVideoFrameSelection;
+    private readonly HashSet<string> _metadataKeys = new(StringComparer.OrdinalIgnoreCase);
 
     public PreviewPresenter(
         Func<ExplorerWorkspace?> workspace,
@@ -63,6 +67,9 @@ internal sealed class PreviewPresenter
         Button revealButton,
         Button compareButton,
         Button checksumButton,
+        Button moreActionsButton,
+        MenuFlyoutItem compareMenuItem,
+        MenuFlyoutItem checksumMenuItem,
         StackPanel iconPanel,
         Image iconImage,
         TextBlock iconLabel,
@@ -92,6 +99,9 @@ internal sealed class PreviewPresenter
         _revealButton = revealButton;
         _compareButton = compareButton;
         _checksumButton = checksumButton;
+        _moreActionsButton = moreActionsButton;
+        _compareMenuItem = compareMenuItem;
+        _checksumMenuItem = checksumMenuItem;
         _iconPanel = iconPanel;
         _iconImage = iconImage;
         _iconLabel = iconLabel;
@@ -154,7 +164,7 @@ internal sealed class PreviewPresenter
         _textBox.Visibility = Visibility.Collapsed;
         _emptyText.Text = "No preview loaded.";
         _emptyText.Visibility = Visibility.Visible;
-        _metadataRows.Children.Clear();
+        ClearMetadataRows();
         _checksumText.Text = "";
         UpdateButtons(null);
     }
@@ -179,6 +189,9 @@ internal sealed class PreviewPresenter
         _openWithButton.IsEnabled = canInspectFile;
         _checksumButton.IsEnabled = canInspectFile;
         _compareButton.IsEnabled = selected.Count == 2 && selected.All(item => !item.IsDir);
+        _checksumMenuItem.IsEnabled = canInspectFile;
+        _compareMenuItem.IsEnabled = _compareButton.IsEnabled;
+        _moreActionsButton.IsEnabled = _checksumMenuItem.IsEnabled || _compareMenuItem.IsEnabled;
     }
 
     public async Task OpenSelectedAsync()
@@ -345,8 +358,9 @@ internal sealed class PreviewPresenter
             _textBox.Visibility = Visibility.Collapsed;
             _emptyText.Text = row.IsDir ? "Folder selected." : "Loading preview...";
             _emptyText.Visibility = Visibility.Visible;
-            _metadataRows.Children.Clear();
+            ClearMetadataRows();
             _checksumText.Text = "";
+            AddMetadataSection("Selection");
             AddMetadataRows(InspectionDetails.PreviewSelectionRows(row));
 
             if (row.IsDir || _workspace()?.FileOps is null)
@@ -363,6 +377,7 @@ internal sealed class PreviewPresenter
                     return;
                 }
 
+                AddMetadataSection("Preview");
                 AddMetadataRows(InspectionDetails.PreviewRows(preview));
                 await RenderContentAsync(row, preview, token, cancellationToken);
             }
@@ -481,6 +496,7 @@ internal sealed class PreviewPresenter
                 return;
             }
 
+            AddMetadataSection("Metadata");
             AddMetadataRows(InspectionDetails.MetadataRows(metadata, includeSummary: true, includeKind: true));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -504,6 +520,7 @@ internal sealed class PreviewPresenter
                 return;
             }
 
+            AddMetadataSection("Image");
             AddMetadataRow("Dimensions", $"{image.Width} x {image.Height}");
             AddMetadataRows(InspectionDetails.RawRows(image.Exif.Take(12)));
         }
@@ -796,6 +813,30 @@ internal sealed class PreviewPresenter
         _iconPanel.Visibility = Visibility.Collapsed;
     }
 
+    private void ClearMetadataRows()
+    {
+        _metadataRows.Children.Clear();
+        _metadataKeys.Clear();
+    }
+
+    private void AddMetadataSection(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)
+            || _metadataRows.Children.OfType<TextBlock>().Any(block => string.Equals(block.Text, title, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        _metadataRows.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brush("SfTextPrimaryBrush"),
+            Margin = new Thickness(0, _metadataRows.Children.Count == 0 ? 0 : 6, 0, 1),
+        });
+    }
+
     private void AddMetadataRows(IEnumerable<InspectionDetailRow> rows)
     {
         foreach (var row in rows)
@@ -807,6 +848,12 @@ internal sealed class PreviewPresenter
     private void AddMetadataRow(string label, string value)
     {
         if (string.IsNullOrWhiteSpace(label) || string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        var key = $"{label.Trim()}\u001f{value.Trim()}";
+        if (!_metadataKeys.Add(key))
         {
             return;
         }
@@ -1084,6 +1131,11 @@ internal sealed class PreviewPresenter
             {
                 text.Foreground = Brush(Grid.GetColumn(text) == 0 ? "SfTextMutedBrush" : "SfTextPrimaryBrush");
             }
+        }
+
+        foreach (var section in _metadataRows.Children.OfType<TextBlock>())
+        {
+            section.Foreground = Brush("SfTextPrimaryBrush");
         }
     }
 

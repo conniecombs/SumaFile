@@ -327,6 +327,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `disk-cleanup` | Cleanup | Dialog | Catalog | — | `MANUAL` |
 | `duplicate-checker` | Duplicates | Dialog | Catalog | — | `MANUAL` |
 | `settings` | Settings | Dialog | Catalog | Ctrl+Shift+S | `MANUAL` |
+| `customize-toolbar` `toggle-toolbar-labels` | Toolbar customization | Pane More toolbar submenu + Settings Toolbar page | Catalog + context menu tests | More > Toolbar | `PASS` |
 | `command-palette` | Open command palette | Handler | Catalog test | Ctrl+Shift+P | `PASS` |
 | `keyboard-help` | F1 | Dialog | Catalog + shortcut map | F1 | `PASS` |
 | `git-panel` `git-refresh` `git-fetch` `git-pull` `git-push` `git-commit` `git-stage-selected` `git-unstage-selected` `git-discard-selected` `git-diff-selected` | Palette | Git workbench + IPC | Catalog + source-shape | Open workbench; stage, diff, commit, sync | `MANUAL` |
@@ -334,6 +335,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-open-tab` `ctx-open-other-pane` | Context folder navigation | `ContextMenuBuilder` + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-open-with` `ctx-open-with-app-` `ctx-open-with-choose` | Open With | Builder | Same | — | `PASS` |
 | `ctx-preview` | Quick Look | Builder | Same | — | `PASS` |
+| `ctx-send-to-menu` `ctx-tools-menu` `ctx-archive-menu` | Grouped context menu sections | Builder | Context menu tests | Right-click file/folder | `PASS` |
+| `ctx-toolbar-menu` `ctx-toggle-toolbar-labels` `ctx-customize-toolbar` | Pane More toolbar shortcuts | Builder + handlers | Context menu tests | More > Toolbar | `PASS` |
 | `ctx-compare` | Compare | Builder | Same | Two files | `PASS` |
 | `ctx-view-archive` | View archive contents | Builder + handler | `DesktopPolishTests` | Right-click archive | `PASS` |
 | `ctx-terminal` | Terminal | Builder | Same | — | `PASS` |

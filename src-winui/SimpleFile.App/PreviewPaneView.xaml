@@ -92,6 +92,27 @@
                                         ToolTipService.ToolTip="Checksums">
                                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE9D9;" />
                                     </Button>
+                                    <Button
+                                        x:Name="PreviewMoreActionsButton"
+                                        Style="{StaticResource SfToolbarButtonStyle}"
+                                        AutomationProperties.Name="More preview actions"
+                                        IsEnabled="False"
+                                        ToolTipService.ToolTip="More preview actions"
+                                        Visibility="Collapsed">
+                                        <Button.Flyout>
+                                            <MenuFlyout>
+                                                <MenuFlyoutItem
+                                                    x:Name="PreviewCompareMenuItem"
+                                                    Text="Compare selected files"
+                                                    Click="OnPreviewCompareClick" />
+                                                <MenuFlyoutItem
+                                                    x:Name="PreviewChecksumMenuItem"
+                                                    Text="Compute checksums"
+                                                    Click="OnPreviewChecksumClick" />
+                                            </MenuFlyout>
+                                        </Button.Flyout>
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE712;" />
+                                    </Button>
                                 </StackPanel>
                             </StackPanel>
 

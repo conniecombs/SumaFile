@@ -578,7 +578,7 @@ internal sealed partial class FileOperationDialogService
         }
     }
 
-    public async Task ShowSettingsAsync()
+    public async Task ShowSettingsAsync(string? initialCategory = null)
     {
         var workspace = _workspace();
         var fileOps = workspace?.FileOps;
@@ -587,7 +587,7 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var dialog = new SettingsWindow
+        var dialog = new SettingsWindow(initialCategory)
         {
             OwnerHwnd = _ownerHwnd(),
         };

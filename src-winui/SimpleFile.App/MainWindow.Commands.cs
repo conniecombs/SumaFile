@@ -907,6 +907,7 @@ public sealed partial class MainWindow
             OpenWithApplications = selectedFile is null ? [] : OpenWithApplicationsForPath(selectedFile.Path),
             OverflowedToolbarIds = overflowedToolbarIds ?? [],
             ToolbarActionOrder = CurrentPrimaryToolbarActionOrder(),
+            ToolbarDisplayMode = (_workspace?.Settings.CommandSurface ?? CommandSurfaceLayout.CreateDefault()).ToolbarDisplayMode,
             InRecycleBin = PathRules.IsRecycleBinPath(_workspace?.Active.Path),
             GitEnabled = IsGitIntegrationEnabled,
             InGitRepository = _gitStatus?.IsRepo == true || selected.Any(row => !string.IsNullOrWhiteSpace(row.GitText)),

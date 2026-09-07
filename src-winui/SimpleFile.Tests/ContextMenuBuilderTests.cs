@@ -16,7 +16,8 @@ public class ContextMenuBuilderTests
     public void ContextMenu_HidesDisabledItemsAndKeepsWinUiIds()
     {
         var empty = ContextMenuBuilder.Build(new ContextMenuRequest());
-        Assert.Contains(empty, entry => entry.Id == "ctx-terminal");
+        Assert.Contains(empty, entry => entry.Id == "ctx-tools-menu");
+        Assert.Contains(Flatten(empty), entry => entry.Id == "ctx-terminal");
         Assert.DoesNotContain(empty, entry => entry.Id == "ctx-open");
         Assert.DoesNotContain(empty, entry => entry.Id == "ctx-delete-menu");
         Assert.DoesNotContain(empty, entry => entry.Kind == ContextMenuKind.Divider && empty.Last() == entry);
@@ -34,21 +35,23 @@ public class ContextMenuBuilderTests
         });
 
         var open = Assert.Single(selected, entry => entry.Id == "ctx-open");
+        var selectedFlat = Flatten(selected);
         Assert.Equal("Enter", open.Shortcut);
         Assert.False(string.IsNullOrWhiteSpace(open.IconGlyph));
         Assert.Contains(selected, entry => entry.Id == "ctx-open-with");
-        Assert.Contains(selected, entry => entry.Id == "ctx-copy-to-pane");
-        Assert.Contains(selected, entry => entry.Id == "ctx-copy-path" && entry.Shortcut == "Ctrl+Shift+C");
-        Assert.DoesNotContain(selected, entry => entry.Id == "ctx-open-tab");
-        Assert.DoesNotContain(selected, entry => entry.Id == "ctx-open-other-pane");
-        Assert.DoesNotContain(selected, entry => entry.Id == "ctx-bookmark");
+        Assert.Contains(selected, entry => entry.Id == "ctx-send-to-menu");
+        Assert.Contains(selectedFlat, entry => entry.Id == "ctx-copy-to-pane");
+        Assert.Contains(selectedFlat, entry => entry.Id == "ctx-copy-path" && entry.Shortcut == "Ctrl+Shift+C");
+        Assert.DoesNotContain(selectedFlat, entry => entry.Id == "ctx-open-tab");
+        Assert.DoesNotContain(selectedFlat, entry => entry.Id == "ctx-open-other-pane");
+        Assert.DoesNotContain(selectedFlat, entry => entry.Id == "ctx-bookmark");
         var delete = Assert.Single(selected, entry => entry.Id == "ctx-delete-menu");
         Assert.Equal("Delete:", delete.Label);
         Assert.Contains(delete.Children, entry => entry.Id == "ctx-delete-recycle" && entry.Label == "Move to Recycle Bin" && entry.Shortcut == "Delete");
         Assert.Contains(delete.Children, entry => entry.Id == "ctx-delete-permanent" && entry.Label == "Delete Permanently" && entry.Shortcut == "Shift+Delete");
-        var extract = Assert.Single(selected, entry => entry.Id == "ctx-extract-menu");
-        Assert.False(string.IsNullOrWhiteSpace(extract.IconGlyph));
-        Assert.Contains(extract.Children, child => child.Id == "ctx-extract-folder" && child.Label.Contains("pack/", StringComparison.Ordinal));
+        var archive = Assert.Single(selected, entry => entry.Id == "ctx-archive-menu");
+        Assert.False(string.IsNullOrWhiteSpace(archive.IconGlyph));
+        Assert.Contains(archive.Children, child => child.Id == "ctx-extract-folder" && child.Label.Contains("pack/", StringComparison.Ordinal));
         Assert.Contains(selected, entry => entry.Id == "ctx-info");
     }
     [Fact]
@@ -64,23 +67,28 @@ public class ContextMenuBuilderTests
             HasClipboard = true,
         });
 
+        var selectedFlat = Flatten(selected);
         Assert.Equal(ContextMenuIconCatalog.OpenFile, Assert.Single(selected, entry => entry.Id == "ctx-open").IconGlyph);
         Assert.Equal(ContextMenuIconCatalog.OpenWith, Assert.Single(selected, entry => entry.Id == "ctx-open-with").IconGlyph);
         Assert.Equal(ContextMenuIconCatalog.Preview, Assert.Single(selected, entry => entry.Id == "ctx-preview").IconGlyph);
-        Assert.Equal(ContextMenuIconCatalog.SelectAll, Assert.Single(selected, entry => entry.Id == "ctx-duplicates").IconGlyph);
-        Assert.Equal(ContextMenuIconCatalog.Edit, Assert.Single(selected, entry => entry.Id == "ctx-advanced-rename").IconGlyph);
-        Assert.Equal(ContextMenuIconCatalog.MoveToFolder, Assert.Single(selected, entry => entry.Id == "ctx-move-to-pane").IconGlyph);
+        var sendTo = Assert.Single(selected, entry => entry.Id == "ctx-send-to-menu");
+        var tools = Assert.Single(selected, entry => entry.Id == "ctx-tools-menu");
+        Assert.Equal(ContextMenuIconCatalog.MoveToFolder, sendTo.IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.AreaChart, tools.IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.Package, Assert.Single(selected, entry => entry.Id == "ctx-archive-menu").IconGlyph);
+        Assert.All(sendTo.Children, entry => Assert.True(string.IsNullOrWhiteSpace(entry.IconGlyph)));
+        Assert.All(tools.Children, entry => Assert.True(string.IsNullOrWhiteSpace(entry.IconGlyph)));
 
         var rename = Assert.Single(selected, entry => entry.Id == "ctx-rename");
-        var advancedRename = Assert.Single(selected, entry => entry.Id == "ctx-advanced-rename");
+        var advancedRename = Assert.Single(selectedFlat, entry => entry.Id == "ctx-advanced-rename");
         var copy = Assert.Single(selected, entry => entry.Id == "ctx-copy");
-        var duplicates = Assert.Single(selected, entry => entry.Id == "ctx-duplicates");
+        var duplicates = Assert.Single(selectedFlat, entry => entry.Id == "ctx-duplicates");
         Assert.NotEqual(rename.IconGlyph, advancedRename.IconGlyph);
         Assert.NotEqual(copy.IconGlyph, duplicates.IconGlyph);
 
-        var extract = Assert.Single(selected, entry => entry.Id == "ctx-extract-menu");
-        Assert.Equal(ContextMenuIconCatalog.Import, extract.IconGlyph);
-        Assert.All(extract.Children, entry => Assert.True(string.IsNullOrWhiteSpace(entry.IconGlyph)));
+        var archive = Assert.Single(selected, entry => entry.Id == "ctx-archive-menu");
+        Assert.Equal(ContextMenuIconCatalog.Package, archive.IconGlyph);
+        Assert.All(archive.Children, entry => Assert.True(string.IsNullOrWhiteSpace(entry.IconGlyph)));
 
         var delete = Assert.Single(selected, entry => entry.Id == "ctx-delete-menu");
         Assert.Equal(ContextMenuIconCatalog.Delete, delete.IconGlyph);
@@ -125,14 +133,14 @@ public class ContextMenuBuilderTests
             SelectionCount = 1,
             AllSelectedAreFiles = true,
         });
-        Assert.DoesNotContain(oneFile, entry => entry.Id == "ctx-compare");
+        Assert.DoesNotContain(Flatten(oneFile), entry => entry.Id == "ctx-compare");
 
         var twoFiles = ContextMenuBuilder.Build(new ContextMenuRequest
         {
             SelectionCount = 2,
             AllSelectedAreFiles = true,
         });
-        Assert.Contains(twoFiles, entry => entry.Id == "ctx-compare");
+        Assert.Contains(Flatten(twoFiles), entry => entry.Id == "ctx-compare");
     }
 
     [Fact]
@@ -188,15 +196,17 @@ public class ContextMenuBuilderTests
         });
 
         var openTab = Assert.Single(folder, entry => entry.Id == "ctx-open-tab");
+        var folderFlat = Flatten(folder);
         Assert.Equal("Ctrl+Enter", openTab.Shortcut);
         Assert.Equal(ContextMenuIconCatalog.NewTab, openTab.IconGlyph);
         Assert.Contains(folder, entry => entry.Id == "ctx-open-other-pane");
-        Assert.Contains(folder, entry => entry.Id == "ctx-bookmark" && entry.Shortcut == "Ctrl+B");
-        Assert.Contains(folder, entry => entry.Id == "ctx-copy-path");
+        Assert.Contains(folder, entry => entry.Id == "ctx-send-to-menu");
+        Assert.Contains(folderFlat, entry => entry.Id == "ctx-bookmark" && entry.Shortcut == "Ctrl+B");
+        Assert.Contains(folderFlat, entry => entry.Id == "ctx-copy-path");
         var paste = Assert.Single(folder, entry => entry.Id == "ctx-paste");
         Assert.Equal("Paste into folder", paste.Label);
         Assert.Equal(@"C:\Users\test\Desktop", paste.CommandParameter);
-        Assert.DoesNotContain(folder, entry => entry.Id == "ctx-folder-metrics");
+        Assert.DoesNotContain(folderFlat, entry => entry.Id == "ctx-folder-metrics");
     }
 
     [Fact]
@@ -209,7 +219,7 @@ public class ContextMenuBuilderTests
             HasFolderSelection = true,
             FolderSelectionCount = 1,
         });
-        Assert.DoesNotContain(oneFolder, entry => entry.Id == "ctx-folder-metrics");
+        Assert.DoesNotContain(Flatten(oneFolder), entry => entry.Id == "ctx-folder-metrics");
 
         var twoFolders = ContextMenuBuilder.Build(new ContextMenuRequest
         {
@@ -217,7 +227,7 @@ public class ContextMenuBuilderTests
             HasFolderSelection = true,
             FolderSelectionCount = 2,
         });
-        Assert.Contains(twoFolders, entry => entry.Id == "ctx-folder-metrics" && entry.Label == "Compare folder metrics");
+        Assert.Contains(Flatten(twoFolders), entry => entry.Id == "ctx-folder-metrics" && entry.Label == "Compare folder metrics");
     }
 
     [Fact]
@@ -238,6 +248,10 @@ public class ContextMenuBuilderTests
     public void PaneMoreMenu_UsesPolishedLabelsAndSelectionGating()
     {
         var empty = ContextMenuBuilder.BuildPaneMoreMenu(new ContextMenuRequest());
+        var emptyFlat = Flatten(empty);
+        Assert.Contains(empty, entry => entry.Id == "ctx-toolbar-menu");
+        Assert.Contains(emptyFlat, entry => entry.Id == "ctx-toggle-toolbar-labels");
+        Assert.Contains(emptyFlat, entry => entry.Id == "ctx-customize-toolbar");
         Assert.DoesNotContain(empty, entry => entry.Id == "ctx-rename");
         Assert.DoesNotContain(empty, entry => entry.Id == "ctx-delete-menu");
         Assert.Contains(empty, entry => entry.Id == "ctx-duplicates");
@@ -275,6 +289,29 @@ public class ContextMenuBuilderTests
         Assert.Contains(archive, entry => entry.Id == "ctx-view-archive");
         Assert.Contains(archive, entry => entry.Id == "ctx-extract-to" && entry.Label == "Extract archive...");
         Assert.Contains(archive, entry => entry.Id == "ctx-compress" && entry.Label == "Create archive...");
+    }
+
+    [Fact]
+    public void PaneMoreMenu_OffersToolbarLabelToggleAndCustomizeShortcut()
+    {
+        var iconOnly = ContextMenuBuilder.BuildPaneMoreMenu(new ContextMenuRequest
+        {
+            ToolbarDisplayMode = ToolbarActionCatalog.IconOnlyDisplayMode,
+        });
+        var iconOnlyToolbar = Assert.Single(iconOnly, entry => entry.Id == "ctx-toolbar-menu");
+
+        Assert.Equal("Toolbar", iconOnlyToolbar.Label);
+        Assert.Equal(ContextMenuIconCatalog.Settings, iconOnlyToolbar.IconGlyph);
+        Assert.Contains(iconOnlyToolbar.Children, entry => entry.Id == "ctx-toggle-toolbar-labels" && entry.Label == "Show button labels");
+        Assert.Contains(iconOnlyToolbar.Children, entry => entry.Id == "ctx-customize-toolbar" && entry.Label == "Customize toolbar...");
+
+        var withLabels = ContextMenuBuilder.BuildPaneMoreMenu(new ContextMenuRequest
+        {
+            ToolbarDisplayMode = ToolbarActionCatalog.IconAndLabelDisplayMode,
+        });
+        var labeledToolbar = Assert.Single(withLabels, entry => entry.Id == "ctx-toolbar-menu");
+
+        Assert.Contains(labeledToolbar.Children, entry => entry.Id == "ctx-toggle-toolbar-labels" && entry.Label == "Hide button labels");
     }
     [Fact]
     public void PaneMoreMenu_UsesPaneAndArchiveGlyphsFromCatalog()
@@ -366,5 +403,17 @@ public class ContextMenuBuilderTests
         Assert.Equal("Copy", overflowed[1].Label);
         Assert.Equal("Ctrl+C", overflowed[1].Shortcut);
         Assert.Equal("overflow-settings", overflowed[2].Id);
+    }
+
+    private static IReadOnlyList<ContextMenuEntry> Flatten(IReadOnlyList<ContextMenuEntry> entries)
+    {
+        var result = new List<ContextMenuEntry>();
+        foreach (var entry in entries)
+        {
+            result.Add(entry);
+            result.AddRange(Flatten(entry.Children));
+        }
+
+        return result;
     }
 }

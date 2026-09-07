@@ -9,6 +9,8 @@ public static class CommandAliasCatalog
         ["overflow-dual-pane"] = "dual-pane",
         ["overflow-profiles"] = "profile-manage",
         ["overflow-settings"] = "settings",
+        ["ctx-customize-toolbar"] = "customize-toolbar",
+        ["ctx-toggle-toolbar-labels"] = "toggle-toolbar-labels",
         ["ctx-open-tab"] = "open-selected-tab",
         ["ctx-open-other-pane"] = "open-other-pane",
         ["ctx-preview"] = "quick-look",
