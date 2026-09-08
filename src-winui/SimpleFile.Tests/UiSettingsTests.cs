@@ -51,6 +51,10 @@ public class UiSettingsTests
         Assert.Equal(UiSettings.FilePaneMinWidth, UiSettings.ResolveDualPanePrimaryWidth(10, 50, 1000));
         Assert.Equal(1000 - UiSettings.FilePaneMinWidth - UiSettings.DualPaneDividerWidth,
             UiSettings.ResolveDualPanePrimaryWidth(9000, 50, 1000));
+
+        var defaults = UiSettings.CreateDefault();
+        Assert.False(defaults.PreviewRenderHtml);
+        Assert.False(defaults.PreviewVideoPlaybackEnabled);
     }
     [Fact]
     public void ResolveStartPath_UsesHomeLastAndCustom()

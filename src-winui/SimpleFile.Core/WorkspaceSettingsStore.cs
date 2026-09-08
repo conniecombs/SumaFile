@@ -37,6 +37,8 @@ internal static class WorkspaceSettingsStore
         settings.PreviewVisible = await ReadBoolSettingAsync(fileOps, "previewVisible", true, cancellationToken).ConfigureAwait(false);
         settings.PreviewWidth = UiSettings.NormalizePreviewWidth(
             await ReadDoubleSettingAsync(fileOps, "preview.width", UiSettings.PreviewDefaultWidth, cancellationToken).ConfigureAwait(false));
+        settings.PreviewRenderHtml = await ReadBoolSettingAsync(fileOps, "preview.renderHtml", false, cancellationToken).ConfigureAwait(false);
+        settings.PreviewVideoPlaybackEnabled = await ReadBoolSettingAsync(fileOps, "preview.videoPlayback", false, cancellationToken).ConfigureAwait(false);
         settings.DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(
             await ReadDoubleSettingAsync(fileOps, "dualPane.primaryPercent", UiSettings.DualPaneDefaultPercent, cancellationToken).ConfigureAwait(false));
         settings.DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(
@@ -110,6 +112,8 @@ internal static class WorkspaceSettingsStore
         await fileOps.SetSettingAsync("showFolderSizes", settings.ShowFolderSizes ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("previewVisible", settings.PreviewVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("preview.width", settings.PreviewWidth.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync("preview.renderHtml", settings.PreviewRenderHtml ? "true" : "false", cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync("preview.videoPlayback", settings.PreviewVideoPlaybackEnabled ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("dualPane.primaryPercent", settings.DualPanePrimaryPercent.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("dualPane.primaryWidth", settings.DualPanePrimaryWidth.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("columnPreset", settings.ColumnPreset, cancellationToken).ConfigureAwait(false);

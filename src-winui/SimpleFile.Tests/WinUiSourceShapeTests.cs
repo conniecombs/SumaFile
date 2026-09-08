@@ -225,7 +225,7 @@ public class WinUiSourceShapeTests
         var appRoot = Path.Combine(root, "SimpleFile.App");
         var coreRoot = Path.Combine(root, "SimpleFile.Core");
         var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml"));
-        var settingsCode = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml.cs"));
+        var settingsCode = ReadSettingsWindowSource(appRoot);
         var dialogService = File.ReadAllText(Path.Combine(appRoot, "FileOperationDialogService.cs"));
         var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
         var mainWindowCode = ReadMainWindowSource(appRoot);
@@ -248,6 +248,10 @@ public class WinUiSourceShapeTests
         Assert.Contains("SettingsNavigation", settingsCode);
         Assert.Contains("presenter.IsResizable = true;", settingsCode);
         Assert.Contains("new SettingsWindow", dialogService);
+        Assert.Contains("LoadSettingsAsync(fileOps, workspace.Settings", dialogService);
+        Assert.Contains("SettingsWindow.SettingsState.cs", Directory.EnumerateFiles(appRoot, "SettingsWindow*.cs").Select(Path.GetFileName));
+        Assert.Contains("SettingsWindow.Tools.cs", Directory.EnumerateFiles(appRoot, "SettingsWindow*.cs").Select(Path.GetFileName));
+        Assert.DoesNotContain("GetSettingOrDefaultAsync", settingsCode);
         Assert.DoesNotContain("ContentDialogMaxWidth", settingsXaml);
         Assert.DoesNotContain("Width=\"760\"", settingsXaml);
         Assert.Contains("HorizontalScrollMode=\"Disabled\"", settingsXaml);
@@ -314,7 +318,7 @@ public class WinUiSourceShapeTests
         var mainWindowCode = ReadMainWindowSource(appRoot);
         var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
         var fileRows = File.ReadAllText(Path.Combine(appRoot, "FileRowView.xaml.cs"));
-        var preview = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.cs"));
+        var preview = ReadPreviewPresenterSource(appRoot);
         var themeResources = File.ReadAllText(Path.Combine(appRoot, "ThemeResourceLookup.cs"));
 
         Assert.Contains("<ComboBoxItem Content=\"Windows default\" Tag=\"System\" />", settingsXaml);
@@ -344,22 +348,48 @@ public class WinUiSourceShapeTests
     {
         var root = FindRepoRoot();
         var appRoot = Path.Combine(root, "SimpleFile.App");
+        var coreRoot = Path.Combine(root, "SimpleFile.Core");
         var pane = File.ReadAllText(Path.Combine(appRoot, "PreviewPaneView.xaml"));
-        var presenter = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.cs"));
+        var presenter = ReadPreviewPresenterSource(appRoot);
         var commands = ReadMainWindowSource(appRoot);
         var mainWindow = commands;
         var thumbnailHost = File.ReadAllText(Path.Combine(appRoot, "FileListThumbnailHost.cs"));
-        var inspectionDetails = File.ReadAllText(Path.Combine(appRoot, "InspectionDetails.cs"));
+        var inspectionDetails = File.ReadAllText(Path.Combine(coreRoot, "InspectionDetails.cs"));
         var backendPreview = File.ReadAllText(Path.Combine(root, "..", "crates", "simplefile-core", "src", "preview.rs"));
+
+        foreach (var file in new[]
+        {
+            "PreviewPresenter.Rendering.cs",
+            "PreviewPresenter.Image.cs",
+            "PreviewPresenter.Media.cs",
+            "PreviewPresenter.Video.cs",
+            "PreviewPresenter.Html.cs",
+            "PreviewPresenter.Metadata.cs",
+            "PreviewPresenter.Comparison.cs",
+        })
+        {
+            Assert.True(File.Exists(Path.Combine(appRoot, file)), $"{file} should keep PreviewPresenter split by concern.");
+        }
 
         Assert.Contains("<WebView2", pane);
         Assert.Contains("<MediaPlayerElement", pane);
+        Assert.Contains("PreviewRenderHtmlCheckBox", pane);
+        Assert.Contains("PreviewVideoPlaybackCheckBox", pane);
         Assert.Contains("PreviewVideoFramePresetOptions", pane);
+        Assert.Contains("TryRenderTextPreview", presenter);
+        Assert.Contains("TryRenderImagePreviewAsync", presenter);
         Assert.Contains("TryRenderPdfPreview", presenter);
         Assert.Contains("TryRenderMediaPreview", presenter);
+        Assert.Contains("TryRenderHtmlPreview", presenter);
+        Assert.Contains("TryRenderVideoPosterPreview", presenter);
+        Assert.Contains("PreviewCapabilities.ShouldRenderHtml", presenter);
+        Assert.Contains("PreviewCapabilities.ShouldPreviewVideo", presenter);
         Assert.Contains("VideoThumbnailExtractor", presenter);
         Assert.Contains("SetVideoFramePreference", presenter);
+        Assert.Contains("MetadataSections", presenter);
         Assert.Contains("VideoThumbnailExtractor", thumbnailHost);
+        Assert.Contains("PhotoFolder.IsImage", thumbnailHost);
+        Assert.Contains("MediaFolder.IsVideo", thumbnailHost);
         Assert.Contains("MediaFolder.IsMediaFolder", mainWindow);
         Assert.Contains("TryCreatePathBackedPreview", commands);
         Assert.Contains("InspectionDetails", presenter);
@@ -367,6 +397,72 @@ public class WinUiSourceShapeTests
         Assert.Contains("FolderMetricRows", inspectionDetails);
         Assert.Contains("ChecksumsText", inspectionDetails);
         Assert.DoesNotContain("const PDF_MAX", backendPreview);
+
+        var renderer = File.ReadAllText(Path.Combine(appRoot, "PreviewHtmlRenderer.cs"));
+        var capabilities = File.ReadAllText(Path.Combine(coreRoot, "PreviewCapabilities.cs"));
+        var pathSupport = File.ReadAllText(Path.Combine(coreRoot, "PreviewPathSupport.cs"));
+
+        Assert.Contains("Content-Security-Policy", renderer);
+        Assert.Contains("RenderMarkdown", renderer);
+        Assert.Contains("SanitizeHtmlFragment", renderer);
+        Assert.Contains("RenderableHtml", capabilities);
+        Assert.Contains("PreviewVideoPlaybackEnabled", capabilities);
+        Assert.Contains("IsImagePreviewType", pathSupport);
+    }
+
+    [Fact]
+    public void ManualParityRows_HaveFocusedGuardsForPreviewPropertiesPathAndCancellation()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var testsRoot = Path.Combine(root, "SimpleFile.Tests");
+        var pathEdit = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Path.cs"));
+        var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
+        var commandRouting = File.ReadAllText(Path.Combine(appRoot, "MainWindow.CommandRouting.cs"));
+        var shortcuts = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Shortcuts.cs"));
+        var inspectionDialogs = File.ReadAllText(Path.Combine(appRoot, "MainWindow.InspectionDialogs.cs"));
+        var previewPane = File.ReadAllText(Path.Combine(appRoot, "PreviewPaneView.xaml"));
+        var previewPresenter = ReadPreviewPresenterSource(appRoot);
+        var fileOperationTests = File.ReadAllText(Path.Combine(testsRoot, "FileOperationServiceTests.cs"));
+        var viewModelTests = File.ReadAllText(Path.Combine(testsRoot, "ViewModelCutoverTests.cs"));
+        var pathTests = File.ReadAllText(Path.Combine(testsRoot, "PathCompletionTests.cs"));
+        var inspectionTests = File.ReadAllText(Path.Combine(testsRoot, "InspectionDetailsTests.cs"));
+
+        Assert.Contains("HandlePathKey", pathEdit);
+        Assert.Contains("VirtualKey.Escape", pathEdit);
+        Assert.Contains("VirtualKey.Enter", pathEdit);
+        Assert.Contains("NavigatePaneAsync(pane, path)", pathEdit);
+        Assert.Contains("Suggest_DeduplicatesAndCapsPathEditCandidates", pathTests);
+
+        Assert.Contains("ShowPropertiesAsync", inspectionDialogs);
+        Assert.Contains("GetEntryInfoAsync", inspectionDialogs);
+        Assert.Contains("GetFileMetadataAsync", inspectionDialogs);
+        Assert.Contains("ComputeChecksumAsync", inspectionDialogs);
+        Assert.Contains("PropertiesRows_LabelsRecycleBinSymlinkAsOriginalLocation", inspectionTests);
+
+        Assert.Contains("<WebView2", previewPane);
+        Assert.Contains("<MediaPlayerElement", previewPane);
+        Assert.Contains("PreviewRenderHtmlCheckBox", previewPane);
+        Assert.Contains("PreviewVideoPlaybackCheckBox", previewPane);
+        Assert.Contains("TryRenderTextPreview", previewPresenter);
+        Assert.Contains("TryRenderImagePreviewAsync", previewPresenter);
+        Assert.Contains("TryRenderPdfPreview", previewPresenter);
+        Assert.Contains("TryRenderMediaPreview", previewPresenter);
+        Assert.Contains("TryRenderHtmlPreview", previewPresenter);
+        Assert.Contains("MetadataSections", previewPresenter);
+        Assert.Contains("MetadataSections_GroupsAudioForPreviewPane", inspectionTests);
+        Assert.Contains("MetadataSections_GroupsDataAndArchiveDetails", inspectionTests);
+        Assert.Contains("MetadataSections_GroupsDocumentCountsAndTruncation", inspectionTests);
+        Assert.Contains("OnTogglePreview", commands);
+        Assert.Contains("TogglePreviewPaneAsync", shortcuts);
+        Assert.Contains("[\"preview\"]", commandRouting);
+        Assert.Contains("ShowQuickLookAsync", inspectionDialogs);
+        Assert.Contains("[\"quick-look\"]", commandRouting);
+
+        Assert.Contains("CancelOperationAsync_CallsNamedIpcCancel", fileOperationTests);
+        Assert.Contains("CalculateFolderSizeAsync_CancellationSendsBackendCancel", fileOperationTests);
+        Assert.Contains("SearchViewModel_CancelActiveAsyncCancelsBackendSearch", viewModelTests);
+        Assert.Contains("TransferViewModel_CancelAsyncAwaitsBackendCancelCompletion", viewModelTests);
     }
 
     [Fact]
@@ -451,7 +547,7 @@ public class WinUiSourceShapeTests
     public void CompareDialog_RendersBinaryComparisonRows()
     {
         var root = FindRepoRoot();
-        var presenter = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PreviewPresenter.cs"));
+        var presenter = ReadPreviewPresenterSource(Path.Combine(root, "SimpleFile.App"));
         var models = File.ReadAllText(Path.Combine(root, "SimpleFile.Ipc", "Models.cs"));
         var schema = File.ReadAllText(Path.Combine(root, "..", "ipc", "schema", "v1", "types.json"));
 
@@ -514,6 +610,24 @@ public class WinUiSourceShapeTests
         return string.Join(
             Environment.NewLine,
             Directory.EnumerateFiles(appRoot, "MainWindow*.cs")
+                .OrderBy(Path.GetFileName)
+                .Select(File.ReadAllText));
+    }
+
+    private static string ReadPreviewPresenterSource(string appRoot)
+    {
+        return string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(appRoot, "PreviewPresenter*.cs")
+                .OrderBy(Path.GetFileName)
+                .Select(File.ReadAllText));
+    }
+
+    private static string ReadSettingsWindowSource(string appRoot)
+    {
+        return string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(appRoot, "SettingsWindow*.cs")
                 .OrderBy(Path.GetFileName)
                 .Select(File.ReadAllText));
     }

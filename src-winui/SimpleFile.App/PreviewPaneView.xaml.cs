@@ -26,6 +26,9 @@ public sealed partial class PreviewPaneView : UserControl
     public Button MoreActionsButton => PreviewMoreActionsButton;
     public MenuFlyoutItem CompareMenuItem => PreviewCompareMenuItem;
     public MenuFlyoutItem ChecksumMenuItem => PreviewChecksumMenuItem;
+    public StackPanel OptionsPanel => PreviewOptionsPanel;
+    public CheckBox RenderHtmlCheckBox => PreviewRenderHtmlCheckBox;
+    public CheckBox VideoPlaybackCheckBox => PreviewVideoPlaybackCheckBox;
     public StackPanel IconPanel => PreviewIconPanel;
     public Image IconImage => PreviewIconImage;
     public TextBlock IconLabel => PreviewIconLabel;

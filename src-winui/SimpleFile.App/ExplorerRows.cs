@@ -5,7 +5,7 @@ using DriveInfo = SimpleFile.Ipc.DriveInfo;
 
 namespace SimpleFile.App;
 
-public sealed class FileRow
+public sealed class FileRow : IInspectionEntryPresentation
 {
     public string Name { get; set; } = "";
     public string Path { get; set; } = "";

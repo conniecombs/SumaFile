@@ -80,7 +80,6 @@ public sealed partial class ExplorerWorkspace
         }
 
         var token = state.NextNavigationToken();
-        List<FileEntry> progressive = [];
 
         lock (_gate)
         {
@@ -100,30 +99,14 @@ public sealed partial class ExplorerWorkspace
 
         try
         {
-            DirectoryListing listing;
-            try
+            var navigation = await _navigator.NavigateAsync(state, path, token, cancellationToken)
+                .ConfigureAwait(false);
+            if (navigation.IsAbandoned)
             {
-                listing = await _backend.ListDirectoryAsync(
-                        path,
-                        chunk =>
-                        {
-                            if (token != state.NavigationToken)
-                            {
-                                return;
-                            }
-
-                            lock (_gate)
-                            {
-                                WorkspaceNavigation.ApplyListingChunk(state, chunk, progressive);
-                            }
-
-                            RaiseChanged();
-                        },
-                        cancellationToken,
-                        WorkspaceNavigation.BuildStreamedListingOptions(state))
-                    .ConfigureAwait(false);
+                return;
             }
-            catch (IpcException exception) when (exception.IsResultTooLarge && progressive.Count > 0)
+
+            if (navigation.PartialResultMessage is not null)
             {
                 lock (_gate)
                 {
@@ -134,14 +117,15 @@ public sealed partial class ExplorerWorkspace
 
                     state.RecordHistory(state.Path, historyMode);
                     state.SyncActiveTab();
-                    StatusMessage = exception.Message;
+                    StatusMessage = navigation.PartialResultMessage;
                 }
 
                 RaiseChanged();
                 return;
             }
 
-            if (token != state.NavigationToken)
+            var listing = navigation.Listing;
+            if (listing is null || token != state.NavigationToken)
             {
                 return;
             }
@@ -326,9 +310,8 @@ public sealed partial class ExplorerWorkspace
             return;
         }
 
-        var token = state.NextNavigationToken();
         var selected = state.SelectedPath;
-        List<FileEntry> progressive = [];
+        var token = state.NextNavigationToken();
 
         lock (_gate)
         {
@@ -337,26 +320,18 @@ public sealed partial class ExplorerWorkspace
 
         try
         {
-            var listing = await _backend.ListDirectoryAsync(
-                    path,
-                    chunk =>
-                    {
-                        if (token != state.NavigationToken || !PathRules.PathsEqual(state.Path, path))
-                        {
-                            return;
-                        }
-
-                        lock (_gate)
-                        {
-                            progressive.AddRange(chunk.Entries);
-                            state.Entries = [.. progressive];
-                        }
-
-                        RaiseChanged();
-                    },
-                    cancellationToken,
-                    WorkspaceNavigation.BuildStreamedListingOptions(state))
+            var refresh = await _navigator.RefreshAsync(state, path, token, cancellationToken)
                 .ConfigureAwait(false);
+            if (refresh.IsAbandoned)
+            {
+                return;
+            }
+
+            var listing = refresh.Listing;
+            if (listing is null)
+            {
+                return;
+            }
 
             lock (_gate)
             {

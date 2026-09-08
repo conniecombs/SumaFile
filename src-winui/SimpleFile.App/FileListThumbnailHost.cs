@@ -248,12 +248,10 @@ internal static class FileListThumbnailHost
         VideoThumbnailExtractor.CanUseVideoThumbnail(extension);
 
     private static bool CanUseWindowsThumbnail(string extension) =>
-        extension is
-            "jpg" or "jpeg" or "png" or "gif" or "webp" or "bmp" or "tif" or "tiff"
-            or "svg" or "ico" or "cur" or "heic" or "heif" or "avif" or "jxl"
-            or "pdf"
-            or "mp4" or "m4v" or "mov" or "webm" or "mkv" or "avi" or "wmv" or "mpg" or "mpeg"
-            or "doc" or "docx" or "rtf" or "odt"
+        PhotoFolder.IsImage(extension)
+            || extension is "pdf"
+            || MediaFolder.IsVideo(extension)
+            || extension is "doc" or "docx" or "rtf" or "odt"
             or "xls" or "xlsx" or "xlsm" or "ods"
             or "ppt" or "pptx" or "pptm" or "odp"
             or "psd" or "ai" or "eps";

@@ -135,6 +135,14 @@ public sealed class ClipboardHistory
 
 public static class PhotoFolder
 {
+    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "jpg", "jpeg", "jpe", "jfif", "png", "gif", "webp", "bmp", "dib", "tif", "tiff",
+        "svg", "ico", "cur", "heic", "heif", "avif", "avifs", "jxl", "jp2", "j2k", "jpf",
+        "tga", "dds", "exr", "hdr", "qoi", "pnm", "pbm", "pgm", "ppm", "pam",
+        "dng", "arw", "cr2", "cr3", "nef", "orf", "rw2", "raf", "srw", "pef", "x3f",
+    };
+
     public static bool IsPhotoFolder(IEnumerable<FileEntry> entries, int thresholdPercent = 70)
     {
         var files = entries.Where(entry => !entry.IsDir).ToList();
@@ -149,19 +157,19 @@ public static class PhotoFolder
 
     public static bool IsImage(string? nameOrExtension)
     {
-        var value = (nameOrExtension ?? "").Trim().ToLowerInvariant();
-        return value is "png" or "jpg" or "jpeg" or "gif" or "webp" or "bmp" or "tif" or "tiff"
-            || value.EndsWith(".png", StringComparison.Ordinal)
-            || value.EndsWith(".jpg", StringComparison.Ordinal)
-            || value.EndsWith(".jpeg", StringComparison.Ordinal)
-            || value.EndsWith(".gif", StringComparison.Ordinal)
-            || value.EndsWith(".webp", StringComparison.Ordinal)
-            || value.EndsWith(".bmp", StringComparison.Ordinal);
+        return ExtensionCatalog.Contains(ImageExtensions, nameOrExtension);
     }
 }
 
 public static class MediaFolder
 {
+    private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "mp4", "m4v", "mov", "qt", "webm", "mkv", "mk3d", "avi", "wmv", "asf",
+        "mpg", "mpeg", "mpe", "m2v", "m2ts", "mts", "vob", "flv", "f4v",
+        "3gp", "3g2", "ogv", "divx", "mxf", "rm", "rmvb", "h264", "h265", "hevc", "y4m",
+    };
+
     public static bool IsMediaFolder(IEnumerable<FileEntry> entries, int thresholdPercent = 70)
     {
         var files = entries.Where(entry => !entry.IsDir).ToList();
@@ -180,19 +188,27 @@ public static class MediaFolder
 
     public static bool IsVideo(string? nameOrExtension)
     {
-        var value = (nameOrExtension ?? "").Trim().ToLowerInvariant();
-        return value is "mp4" or "m4v" or "mov" or "webm" or "mkv" or "avi" or "wmv" or "mpg" or "mpeg" or "flv" or "3gp"
-            || value.EndsWith(".mp4", StringComparison.Ordinal)
-            || value.EndsWith(".m4v", StringComparison.Ordinal)
-            || value.EndsWith(".mov", StringComparison.Ordinal)
-            || value.EndsWith(".webm", StringComparison.Ordinal)
-            || value.EndsWith(".mkv", StringComparison.Ordinal)
-            || value.EndsWith(".avi", StringComparison.Ordinal)
-            || value.EndsWith(".wmv", StringComparison.Ordinal)
-            || value.EndsWith(".mpg", StringComparison.Ordinal)
-            || value.EndsWith(".mpeg", StringComparison.Ordinal)
-            || value.EndsWith(".flv", StringComparison.Ordinal)
-            || value.EndsWith(".3gp", StringComparison.Ordinal);
+        return ExtensionCatalog.Contains(VideoExtensions, nameOrExtension);
+    }
+}
+
+internal static class ExtensionCatalog
+{
+    public static bool Contains(IReadOnlySet<string> extensions, string? nameOrExtension)
+    {
+        var value = (nameOrExtension ?? "").Trim().TrimStart('.').ToLowerInvariant();
+        if (value.Length == 0)
+        {
+            return false;
+        }
+
+        if (extensions.Contains(value))
+        {
+            return true;
+        }
+
+        var dot = value.LastIndexOf('.');
+        return dot >= 0 && dot < value.Length - 1 && extensions.Contains(value[(dot + 1)..]);
     }
 }
 

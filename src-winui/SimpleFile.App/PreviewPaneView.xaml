@@ -114,6 +114,22 @@
                                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE712;" />
                                     </Button>
                                 </StackPanel>
+                                <StackPanel
+                                    x:Name="PreviewOptionsPanel"
+                                    Orientation="Horizontal"
+                                    Spacing="12"
+                                    Visibility="Collapsed">
+                                    <CheckBox
+                                        x:Name="PreviewRenderHtmlCheckBox"
+                                        AutomationProperties.Name="Render preview"
+                                        Content="Rendered"
+                                        Visibility="Collapsed" />
+                                    <CheckBox
+                                        x:Name="PreviewVideoPlaybackCheckBox"
+                                        AutomationProperties.Name="Preview video playback"
+                                        Content="Preview video"
+                                        Visibility="Collapsed" />
+                                </StackPanel>
                             </StackPanel>
 
                             <ScrollViewer Grid.Row="1" Margin="0,12,0,0" VerticalScrollBarVisibility="Auto">

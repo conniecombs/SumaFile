@@ -142,6 +142,8 @@ public class WorkspaceSettingsStoreTests
             ProgressQueueVisible = true,
             ShowFolderSizes = true,
             PreviewVisible = false,
+            PreviewRenderHtml = true,
+            PreviewVideoPlaybackEnabled = true,
             PreviewWidth = 2000,
             DualPanePrimaryPercent = 5,
             DualPanePrimaryWidth = 40,
@@ -224,6 +226,8 @@ public class WorkspaceSettingsStoreTests
         Assert.True(state.Settings.ProgressQueueVisible);
         Assert.True(state.Settings.ShowFolderSizes);
         Assert.False(state.Settings.PreviewVisible);
+        Assert.True(state.Settings.PreviewRenderHtml);
+        Assert.True(state.Settings.PreviewVideoPlaybackEnabled);
         Assert.Equal(UiSettings.PreviewMaxWidth, state.Settings.PreviewWidth);
         Assert.Equal(UiSettings.DualPaneMinPercent, state.Settings.DualPanePrimaryPercent);
         Assert.Equal(UiSettings.FilePaneMinWidth, state.Settings.DualPanePrimaryWidth);
@@ -254,6 +258,8 @@ public class WorkspaceSettingsStoreTests
         Assert.True(folderRule.Options.ShowHidden);
         Assert.Equal(WorkspaceProfileTemplates.DeveloperId, folderRule.Options.WorkspaceProfileId);
         Assert.Equal("true", ipc.Settings["progressQueue.visible"]);
+        Assert.Equal("true", ipc.Settings["preview.renderHtml"]);
+        Assert.Equal("true", ipc.Settings["preview.videoPlayback"]);
         Assert.Equal("system", ipc.Settings["theme"]);
         Assert.Contains("\"search.focus\"", ipc.Settings[KeyboardShortcutMap.SettingsKey], StringComparison.Ordinal);
         Assert.Contains("\"copy\"", ipc.Settings[CommandSurfaceLayout.SettingsKey], StringComparison.Ordinal);

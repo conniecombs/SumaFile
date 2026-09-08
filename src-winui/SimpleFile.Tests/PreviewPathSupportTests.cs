@@ -8,13 +8,13 @@ namespace SimpleFile.Tests;
 public class PreviewPathSupportTests
 {
     [Fact]
-    public void IsPathBackedPreviewType_CoversPdfAudioAndVideoOnly()
+    public void IsPathBackedPreviewType_CoversImagesPdfAudioAndVideoOnly()
     {
+        Assert.True(PreviewPathSupport.IsPathBackedPreviewType("image"));
         Assert.True(PreviewPathSupport.IsPathBackedPreviewType("pdf"));
         Assert.True(PreviewPathSupport.IsPathBackedPreviewType("AUDIO"));
         Assert.True(PreviewPathSupport.IsPathBackedPreviewType("video"));
 
-        Assert.False(PreviewPathSupport.IsPathBackedPreviewType("image"));
         Assert.False(PreviewPathSupport.IsPathBackedPreviewType("text"));
         Assert.False(PreviewPathSupport.IsPathBackedPreviewType("archive"));
         Assert.False(PreviewPathSupport.IsPathBackedPreviewType(null));
@@ -29,7 +29,7 @@ public class PreviewPathSupportTests
         try
         {
             Assert.True(PreviewPathSupport.CanUsePathBackedPreview(path, "pdf"));
-            Assert.False(PreviewPathSupport.CanUsePathBackedPreview(path, "image"));
+            Assert.True(PreviewPathSupport.CanUsePathBackedPreview(path, "image"));
             Assert.False(PreviewPathSupport.CanUsePathBackedPreview(path + ".missing", "pdf"));
             Assert.False(PreviewPathSupport.CanUsePathBackedPreview("", "video"));
         }

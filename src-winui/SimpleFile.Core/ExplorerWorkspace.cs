@@ -31,6 +31,7 @@ public sealed partial class ExplorerWorkspace
 
     private const int ClosedTabLimit = 20;
     private readonly IExplorerBackend _backend;
+    private readonly PaneNavigator _navigator;
     private readonly WorkspaceProfileService _profiles;
     private readonly object _gate = new();
     private readonly List<ClosedFileTab> _closedTabs = [];
@@ -53,6 +54,7 @@ public sealed partial class ExplorerWorkspace
     public ExplorerWorkspace(IExplorerBackend backend, FileOperationService? fileOps = null)
     {
         _backend = backend;
+        _navigator = new PaneNavigator(_backend, _gate, RaiseChanged);
         FileOps = fileOps;
         _profiles = new WorkspaceProfileService(
             () => FileOps,

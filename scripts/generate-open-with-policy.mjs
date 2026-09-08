@@ -84,9 +84,12 @@ ${rustArray('DENIED_TARGET_EXTENSIONS', deniedTargetExtensions)}
 
 function writeOrCheck(relativePath, content) {
   const absolutePath = path.join(repoRoot, relativePath);
+  const normalized = `${content.replace(/\r\n/g, '\n').replace(/\s+$/u, '')}\n`;
   if (check) {
-    const current = fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath, 'utf8') : '';
-    if (current !== content) {
+    const current = fs.existsSync(absolutePath)
+      ? fs.readFileSync(absolutePath, 'utf8').replace(/\r\n/g, '\n')
+      : '';
+    if (current !== normalized) {
       console.error(`${relativePath} is out of date. Run npm run generate:open-with-policy.`);
       process.exitCode = 1;
     }
@@ -94,7 +97,7 @@ function writeOrCheck(relativePath, content) {
   }
 
   fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
-  fs.writeFileSync(absolutePath, content);
+  fs.writeFileSync(absolutePath, normalized);
 }
 
 writeOrCheck('src-winui/SimpleFile.Core/OpenWithPolicy.Generated.cs', csharpContent);

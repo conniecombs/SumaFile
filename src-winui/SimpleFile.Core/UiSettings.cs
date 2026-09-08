@@ -40,6 +40,8 @@ public sealed class UiSettings
     public string LastPath { get; set; } = "";
     public bool PreviewVisible { get; set; } = true;
     public double PreviewWidth { get; set; } = PreviewDefaultWidth;
+    public bool PreviewRenderHtml { get; set; }
+    public bool PreviewVideoPlaybackEnabled { get; set; }
     public double DualPanePrimaryPercent { get; set; } = DualPaneDefaultPercent;
     public double DualPanePrimaryWidth { get; set; }
     public bool QuickAccessCollapsed { get; set; }

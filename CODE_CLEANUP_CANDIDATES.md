@@ -32,7 +32,7 @@ For each finding, pick **A / B / C** before implementing.
 - `src-winui/SimpleFile.App/MainWindow.OpenWith.cs` (~380)
 - `src-winui/SimpleFile.App/MainWindow.xaml` (~1,490)
 
-The shell is smaller than it was: preview rendering now lives in `PreviewPresenter`, dialog-driven file operations in `FileOperationDialogService`, search state in `SearchViewModel`, and search event/result glue in `MainWindow.Search.cs`. The remaining partials still do not match concerns cleanly.
+The shell is smaller than it was: preview rendering now lives in the split `PreviewPresenter.*.cs` partials, dialog-driven file operations in `FileOperationDialogService`, search state in `SearchViewModel`, and search event/result glue in `MainWindow.Search.cs`. The remaining partials still do not match concerns cleanly.
 
 - `xaml.cs` still owns session/IPC, workspace sync, dual-pane, sidebar, tabs, columns, archives, tags, marquee, clipboard, and settings.
 - `Commands.cs` mixes shortcuts, command palette, context menus, Quick Look, properties, Git, and PowerShell.
@@ -73,7 +73,7 @@ Wired in `ConnectAsync` (`AppServices.Configure` then `_search` / `_transfer` / 
 
 **File:** `src-winui/SimpleFile.Core/ExplorerWorkspace.cs` (~2,100 lines)
 
-One type owns navigation streaming, dual-pane/tabs, settings persistence, bookmarks/recents, tags/smart folders, git, folder metrics, tree merge, clipboard/operation log, layout restore, pack/unpack, and cross-pane copy/move. Shared `_gate` + `RaiseChanged()` everywhere. `NavigatePaneAsync` and `OpenPathAsync` are large nested chunk-callback methods.
+One type owns dual-pane/tabs, settings persistence, bookmarks/recents, tags/smart folders, git, folder metrics, tree merge, clipboard/operation log, layout restore, pack/unpack, and cross-pane copy/move. Shared `_gate` + `RaiseChanged()` still appears across the workspace, but navigation listing fetch/stream application now lives in the owned `PaneNavigator` helper.
 
 **Options**
 
@@ -223,20 +223,20 @@ The same actions used to be mapped three times (`rename` / `ctx-rename` / F2; `d
 
 ### 11.1 `metadata.rs` (~900+ lines)
 
-**Mix:** EXIF, PDF, audio, MP4 atoms, Office ZIP+XML.
+**Mix:** EXIF, PDF, audio, MP4 atoms, Office ZIP+XML, data/archive/font/ebook/message summaries.
 
 **Options**
 
-- **A:** Split `metadata/{mod,image,pdf,audio,video,office}.rs`.
+- **A:** Split `metadata/{mod,image,pdf,audio,video,office,data,archive,font,ebook,message}.rs`.
 - **B:** Leave.
 
 ### 11.2 `preview.rs` (~370+ lines)
 
-**Mix:** text preview, thumbnails, ~120-arm MIME table. Also has its own `classify_extension` / `resolve_readable_path` copies.
+**Mix:** text preview, thumbnails, broad MIME/extension table, and path resolution. It still overlaps with WinUI `PreviewCapabilities` plus photo/media extension catalogs.
 
 **Options**
 
-- **A:** Split `classify` / `text_image` / `thumbnail`.
+- **A:** Split `classify` / `text` / `image_video` / `thumbnail` and keep extension catalogs generated or shared with the WinUI capability map.
 - **B:** Leave.
 
 ### 11.3 `progress.rs` (~1,000+ lines)
@@ -347,9 +347,9 @@ The same actions used to be mapped three times (`rename` / `ctx-rename` / F2; `d
 - **A:** Split emitters (Rust vs C#).
 - **B:** Leave; it works.
 
-### 11.15 `SettingsWindow.xaml.cs` (~470–510 lines)
+### 11.15 `SettingsWindow.xaml.cs` split
 
-**Mix:** category/search UI, bind/apply `UiSettings`, RAR installer, updater, GitHub link. `LoadSettingsAsync` re-reads the same IPC keys as `ExplorerWorkspace.LoadUiSettingsAsync`.
+The settings window now keeps category/search UI in `SettingsWindow.xaml.cs`, bind/apply/cache/path-picker logic in `SettingsWindow.SettingsState.cs`, and RAR/updater/GitHub actions in `SettingsWindow.Tools.cs`. `LoadSettingsAsync` binds the already-loaded `ExplorerWorkspace.Settings` snapshot and only performs the live RAR/version checks.
 
 **Options**
 
@@ -458,9 +458,9 @@ Record chosen options here when a cleanup pass starts.
 
 | Finding | Chosen option | Notes |
 | --- | --- | --- |
-| 1 MainWindow | C + A | Completed: extracted preview rendering/actions into `PreviewPresenter`, dialog-driven file operations into `FileOperationDialogService`, current search event/result glue into `MainWindow.Search.cs`, and app-command routing into `MainWindow.CommandRouting.cs`; `MainWindow` now delegates those workflows while preserving XAML event names. |
+| 1 MainWindow | C + A | Completed: extracted preview rendering/actions into split `PreviewPresenter.*.cs` partials, dialog-driven file operations into `FileOperationDialogService`, current search event/result glue into `MainWindow.Search.cs`, and app-command routing into `MainWindow.CommandRouting.cs`; `MainWindow` now delegates those workflows while preserving XAML event names. |
 | 2 Unused ViewModels | B | Completed: finished the ViewModel cutover so `SearchViewModel` owns live search state/results/cancellation, `TransferViewModel` owns transfer operation identity/progress/cancellation, and `ToolbarViewModel` owns toolbar/status snapshots; removed the app-side `SearchHost` duplicate. |
-| 3 ExplorerWorkspace | B | Completed for profiles/layouts: extracted workspace profile persistence and saved layout persistence into owned services while keeping the existing `ExplorerWorkspace` public API. |
+| 3 ExplorerWorkspace | B | Completed for profiles/layouts/navigation: extracted workspace profile persistence, saved layout persistence, and pane listing navigation into owned services while keeping the existing `ExplorerWorkspace` public API. |
 | 4 dispatch.rs | B | Completed: split the service dispatcher into `dispatch/{mod,params,handlers,async_ops,tests}.rs`, moved async arm construction behind `async_ops`, kept `dispatch()` re-exported from the module, replaced domain match arms with generated `METHOD_*` constants, and updated schema/parity checks for the split module. |
 | 5 archive.rs | A | Completed: split archive handling into `archive/{mod,path,list,extract,mutate,create,tests}.rs` with public functions re-exported from `archive/mod.rs`; kept `resolve_rar_binary` on the archive API and did not move RAR installer behavior in this pass. |
 | 6 Copy/conflict engines | B | Completed for matching helpers: added `simplefile-core::path_conflict` for no-follow existence, collision keys, same-entry checks, keep-both aliases, and exclusive directory creation; left divergent unique-name loops local. |
@@ -468,7 +468,8 @@ Record chosen options here when a cleanup pass starts.
 | 8 Dead AppState | A | Completed: removed dead core `state.rs`, unused helpers/deps, stale `src-tauri` service lookup, and live-code Tauri-era comments. |
 | 9 ISimpleFileIpc / tests | A | Completed: added shared `NullIpc` / `ConfigurableIpc` test doubles, removed the per-file `WorkspaceSettingsIpc` and `StubIpc` full-interface stubs, and moved `FakeExplorerBackend` into its own helper file. |
 | 10 Command routers | A | Completed: added `CommandAliasCatalog`, routed app/context/overflow aliases through `RunAppCommandAsync`, and added tests for shared alias normalization. |
-| 11 Other splits | A | Completed for the transfer/file-op pair: split `progress::OperationRegistry` into `progress/registry.rs`, and split folder metrics plus metadata preservation out of `file_ops.rs` while preserving public re-exports. |
+| 11 Other splits | A | Completed for the transfer/file-op pair and preview presenter: split `progress::OperationRegistry` into `progress/registry.rs`, split folder metrics plus metadata preservation out of `file_ops.rs`, and split preview text/image/media/video/metadata/comparison rendering into focused `PreviewPresenter.*.cs` partials while preserving public re-exports and caller behavior. |
 | 12 Tests / dialogs | A + D + B | Completed the test-file part: split `DesktopPolishTests.cs` and `ParityFeaturesTests.cs` into type-focused test classes, reused the shared IPC fake from Finding 9, replaced reachable job-object flag source checks with compiled assertions, and extracted the duplicate-checker/disk-cleanup scan skeleton into `FileOperationDialogService.Scans.cs`. |
 | 13 Small copy-pastes | | |
 | 14 IPC generated mix | A | Started Core-side facade cleanup: added small file/settings/tag/smart-folder operation interfaces over the generated IPC surface so Core consumers can depend on domain-sized contracts without editing generated files. |
+| 15 SettingsWindow | A + B | Completed: split settings state binding from RAR/update tools and load the dialog from the workspace `UiSettings` snapshot instead of re-reading settings through IPC. |

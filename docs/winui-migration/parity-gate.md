@@ -87,16 +87,16 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `move_entry` | Legacy single move | Schema `legacy`/`compatOnly`; no live App/Core caller | Schema | — | `PASS` |
 | `copy_entry_resolved` | Conflict-aware copy / undo | Undo stack redo | `UndoStack` tests | Undo a copy | `PASS` |
 | `move_entry_resolved` | Conflict-aware move / undo | Undo stack | `UndoStack` tests | Undo a move | `PASS` |
-| `get_entry_info` | Properties / type probe | Properties dialog | IPC wrapper | Properties on file | `MANUAL` |
+| `get_entry_info` | Properties / type probe | Properties dialog | IPC wrapper + properties source-shape guard | Properties on file | `PASS` |
 | `copy_with_progress` | Copy + progress | Paste / drop / pane copy | `FileOperationServiceTests` | Copy large folder; cancel | `PASS` |
 | `move_with_progress` | Move + progress | Cut-paste / drop | `FileOperationServiceTests` | Move across folders | `PASS` |
-| `cancel_operation` | Progress cancel | Progress panel | `FileOperationServiceTests` | Cancel mid-copy | `MANUAL` |
+| `cancel_operation` | Progress cancel | Progress panel | `FileOperationServiceTests` + transfer cancel guard | Cancel mid-copy | `PASS` |
 | `watch_directory` | Live refresh | After navigate | Client + MainWindow watch | Create file in Explorer; pane reloads | `MANUAL` |
 | `unwatch_directory` | Drop watch | Shutdown / navigate | Client | — | `PASS` |
 | `calculate_folder_size` | Folder metrics | Metrics dialog | IPC wrapper | Folder metrics on a folder | `MANUAL` |
 | `count_folder_items` | Folder metrics | Metrics dialog | IPC wrapper | Same dialog | `MANUAL` |
 | `get_folder_metrics` | Combined folder metrics | Metrics dialog | IPC service | Folder metrics on a folder | `PASS` |
-| `cancel_folder_size` | Abort size on nav | Wired on IPC | Schema/client | Navigate during metrics | `MANUAL` |
+| `cancel_folder_size` | Abort size on nav | Wired on IPC | `FileOperationServiceTests` | Navigate during metrics | `PASS` |
 | `cancel_folder_item_count` | Abort counts | IPC | Schema/client | — | `PASS` |
 | `cancel_count_items` | Unused wrapper | Schema `compatOnly`; no live App/Core caller | Schema | — | `WAIVED` | Use `cancel_folder_item_count` |
 | `cancel_folder_metrics` | Abort combined metrics | IPC service | Schema | Navigate during metrics | `PASS` |
@@ -105,8 +105,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `read_file_preview` | Preview pane / Quick Look | Preview + Space dialog | `FileOperationServiceTests` | Text + image files | `PASS` |
-| `generate_thumbnail` | Single thumb | Preview image fallback | IPC wrapper | Image without inline preview | `MANUAL` |
+| `read_file_preview` | Preview pane / Quick Look | Preview + Space dialog + rendered-data option | `FileOperationServiceTests` + preview capability guards | Text, Markdown/data, image, video files | `PASS` |
+| `generate_thumbnail` | Single thumb | Preview image fallback + automatic path-backed image preview | IPC wrapper + preview path support tests | Image without inline preview | `PASS` |
 | `generate_thumbnails` | Batch thumbs | `GenerateThumbnailsAsync` + preview thumbs | FileOps wrapper | Preview image folder | `PASS` |
 | `open_file` | Default app / archive materialize | Double-click file | `ExplorerWorkspace` + FileOps | Double-click `.txt` | `PASS` |
 | `reveal_in_folder` | Explorer select | Preview Reveal | IPC | Reveal selected | `MANUAL` |
@@ -114,15 +114,15 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `open_file_with` | Named app | Open With dialog | IPC | Open With notepad | `MANUAL` |
 | `compare_files` | Two-file diff | Compare dialog | IPC | Select two files → Compare | `MANUAL` |
 | `compute_checksum` | MD5/SHA1/SHA256 | Preview checksums | IPC | Checksums button | `MANUAL` |
-| `get_image_metadata` | EXIF | Preview metadata | IPC | JPEG with EXIF | `MANUAL` |
-| `get_file_metadata` | Unified metadata | Preview metadata | IPC | PDF / audio | `MANUAL` |
+| `get_image_metadata` | EXIF | Preview metadata | IPC + preview metadata source-shape guard | JPEG with EXIF | `PASS` |
+| `get_file_metadata` | Unified metadata | Preview metadata | Rust generated media/document/data/archive/font/ebook/message fixtures + grouped metadata tests | PDF / audio / MP4 / data / archive / font / ebook / message | `PASS` |
 
 ### 2.3 Search, smart folders, organization
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
 | `search_files` | Search + batches | Sidebar search box | Client batch callbacks | Search current folder | `MANUAL` |
-| `cancel_search` | Cancel / Escape | Cancel button + Escape | Client | Cancel long search | `MANUAL` |
+| `cancel_search` | Cancel / Escape | Cancel button + Escape | `SearchViewModel` cancel test | Cancel long search | `PASS` |
 | `load_smart_folders` | Sidebar list | Initialize load | Workspace init | Sidebar shows saved folders | `MANUAL` |
 | `save_smart_folder` | Save current search | Sidebar Save button | Workspace method | Save current query | `PASS` |
 | `delete_smart_folder` | Sidebar × | Delete button | Workspace method | Delete a smart folder | `MANUAL` |
@@ -204,7 +204,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `nav.drives` | My PC + refresh | Drive list + ↻ | `RefreshDrives` tests | Refresh; offline retry | `PASS` |
 | `nav.tree` | Expandable folder tree | Sidebar Folders list | `FolderTree` tests | Expand/open | `PASS` |
 | `nav.breadcrumbs` | Click segments | `BreadcrumbBuilder` | `BreadcrumbBuilderTests` | Click crumb | `PASS` |
-| `nav.path-edit` | Ctrl+L / Alt+D / Enter / Escape | Path box | — | Edit path | `MANUAL` |
+| `nav.path-edit` | Ctrl+L / Alt+D / Enter / Escape | Path box | `PathCompletionTests` + source-shape guard | Edit path | `PASS` |
 | `nav.history` | Back/forward per pane | History stack | `ExplorerWorkspaceTests` | Alt+Left/Right | `PASS` |
 | `nav.up` | Parent; no-op on root | `GoUpAsync` | `GoUp` test | Alt+Up at `C:\` | `PASS` |
 | `nav.open-folder` | Double-click / Enter folder | `OpenEntryAsync` | Workspace tests | Open folder | `PASS` |
@@ -246,10 +246,10 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `list.thumbs` | Grid/list thumbs | `generate_thumbnail(s)` + preview | FileOps | Open image folder | `PASS` |
 | `list.folder-sizes` | Passive sizes/counts | `FillFolderSizesAsync` | Workspace | Enable show folder sizes | `PASS` |
 | `list.grid-photo` | Auto grid for photo folders | `PhotoFolderActive` | `ParityFeaturesTests` | Open a photo folder | `PASS` |
-| `preview.pane` | Side preview | Preview column | — | Select file | `MANUAL` |
-| `preview.toggle` | Hide/show preview | Preview button | — | Toggle | `MANUAL` |
-| `preview.quicklook` | Space | `ShowQuickLookAsync` | — | Space | `MANUAL` |
-| `preview.markdown-html` | Sanitized markdown HTML | WinUI shows text/image, not HTML | Svelte `check:markdown-preview-safety` remains | — | `WAIVED` | Do not render unsanitized HTML; if HTML preview is added, this becomes `OPEN` |
+| `preview.pane` | Side preview | Preview column with rendered-data and video-playback options | `PreviewPane_UsesPathBackedPdfAndMediaControls` + metadata grouping tests + preview capability guards | Select file | `PASS` |
+| `preview.toggle` | Hide/show preview | Preview button | Source-shape guard | Toggle | `PASS` |
+| `preview.quicklook` | Space | `ShowQuickLookAsync` | Source-shape guard | Space | `PASS` |
+| `preview.markdown-html` | Sanitized markdown/data HTML | Persisted opt-in rendered preview in WinUI WebView2 | `PreviewCapabilitiesTests` + source-shape guard for CSP/sanitizer/renderer | Toggle Rendered on Markdown/data file | `PASS` | Rendering stays opt-in and sanitized; raw text remains the default |
 | `preview.modal-html` | Modal HTML sinks | Native XAML dialogs | Svelte `check:html-sink-safety` remains | — | `WAIVED` | No `innerHTML` in WinUI |
 
 ---
@@ -318,9 +318,9 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `icon-size-small` `icon-size-medium` `icon-size-large` `icon-size-extra-large` `icon-size-jumbo` `icon-size-huge` `icon-size-maximum` | Palette icon size commands | Handler updates file-list icon size | Catalog test | Change each icon size | `MANUAL` |
 | `search` | Focus find in folder | Handler | Catalog | Ctrl+F | `MANUAL` |
 | `filter` | Focus filter list | Handler | Catalog | Overflow filter | `MANUAL` |
-| `quick-look` | Space | Handler | Catalog | Space | `MANUAL` |
+| `quick-look` | Space | Handler | Catalog + source-shape guard | Space | `PASS` |
 | `open-selected-tab` `open-other-pane` `reopen-closed-tab` | Tab and pane open commands | Catalog + handlers | Tab workspace tests | Ctrl+Enter / reopen tab | `PASS` |
-| `properties` | Properties | Dialog | Catalog | — | `MANUAL` |
+| `properties` | Properties | Dialog | Catalog + properties source-shape guard | — | `PASS` |
 | `color-label` | Tag picker | Dialog | Catalog | — | `MANUAL` |
 | `bookmark-folder` | Bookmark current folder | Workspace places | Catalog + places tests | Ctrl+B | `PASS` |
 | `folder-metrics` | Metrics | Dialog | Catalog | — | `MANUAL` |

@@ -120,6 +120,9 @@ public sealed partial class MainWindow
     private Button PreviewMoreActionsButton => PreviewPanel.MoreActionsButton;
     private MenuFlyoutItem PreviewCompareMenuItem => PreviewPanel.CompareMenuItem;
     private MenuFlyoutItem PreviewChecksumMenuItem => PreviewPanel.ChecksumMenuItem;
+    private StackPanel PreviewOptionsPanel => PreviewPanel.OptionsPanel;
+    private CheckBox PreviewRenderHtmlCheckBox => PreviewPanel.RenderHtmlCheckBox;
+    private CheckBox PreviewVideoPlaybackCheckBox => PreviewPanel.VideoPlaybackCheckBox;
     private StackPanel PreviewIconPanel => PreviewPanel.IconPanel;
     private Image PreviewIconImage => PreviewPanel.IconImage;
     private TextBlock PreviewIconLabel => PreviewPanel.IconLabel;

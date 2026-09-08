@@ -186,14 +186,15 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
     let mime = |value: &'static str| value.to_string();
     match extension.as_str() {
         "txt" => Some(("text", mime("text/plain"))),
-        "md" | "markdown" => Some(("text", mime("text/markdown"))),
+        "md" | "markdown" | "mdx" => Some(("text", mime("text/markdown"))),
         "json" | "jsonc" | "map" => Some(("text", mime("application/json"))),
+        "jsonl" | "ndjson" => Some(("text", mime("application/x-ndjson"))),
         "xml" | "xaml" => Some(("text", mime("application/xml"))),
         "yaml" | "yml" => Some(("text", mime("application/yaml"))),
         "toml" | "ini" | "cfg" | "conf" | "config" | "properties" | "env" | "editorconfig"
-        | "gitignore" | "gitattributes" | "npmrc" | "log" | "srt" | "vtt" => {
-            Some(("text", mime("text/plain")))
-        }
+        | "gitignore" | "gitattributes" | "npmrc" | "log" | "srt" | "vtt" | "ass" | "ssa"
+        | "lrc" | "nfo" | "cue" | "m3u" | "m3u8" | "pls" | "diff" | "patch" | "reg" | "lock"
+        | "adoc" | "asciidoc" | "rst" | "tex" => Some(("text", mime("text/plain"))),
         "csv" => Some(("text", mime("text/csv"))),
         "tsv" => Some(("text", mime("text/tab-separated-values"))),
         "html" | "htm" => Some(("text", mime("text/html"))),
@@ -206,16 +207,26 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
         | "fsi" | "vb" | "clj" | "cljs" | "groovy" | "gradle" | "dart" | "vue" | "svelte"
         | "astro" => Some(("text", format!("text/x-{extension}"))),
         "png" => Some(("image", mime("image/png"))),
-        "jpg" | "jpeg" => Some(("image", mime("image/jpeg"))),
+        "jpg" | "jpeg" | "jpe" | "jfif" => Some(("image", mime("image/jpeg"))),
         "gif" => Some(("image", mime("image/gif"))),
         "webp" => Some(("image", mime("image/webp"))),
-        "bmp" => Some(("image", mime("image/bmp"))),
+        "bmp" | "dib" => Some(("image", mime("image/bmp"))),
         "svg" => Some(("image", mime("image/svg+xml"))),
         "ico" | "cur" => Some(("image", mime("image/x-icon"))),
         "tif" | "tiff" => Some(("image", mime("image/tiff"))),
         "heic" | "heif" => Some(("image", mime("image/heif"))),
-        "avif" => Some(("image", mime("image/avif"))),
+        "avif" | "avifs" => Some(("image", mime("image/avif"))),
         "jxl" => Some(("image", mime("image/jxl"))),
+        "jp2" | "j2k" | "jpf" => Some(("image", mime("image/jp2"))),
+        "tga" => Some(("image", mime("image/x-tga"))),
+        "dds" => Some(("image", mime("image/vnd-ms.dds"))),
+        "exr" => Some(("image", mime("image/aces"))),
+        "hdr" => Some(("image", mime("image/vnd.radiance"))),
+        "qoi" => Some(("image", mime("image/qoi"))),
+        "pnm" | "pbm" | "pgm" | "ppm" | "pam" => Some(("image", mime("image/x-portable-anymap"))),
+        "dng" | "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "raf" | "srw" | "pef" | "x3f" => {
+            Some(("image", mime("image/x-camera-raw")))
+        }
         "pdf" => Some(("pdf", mime("application/pdf"))),
         "mp3" => Some(("audio", mime("audio/mpeg"))),
         "wav" => Some(("audio", mime("audio/wav"))),
@@ -229,15 +240,27 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
         "mid" | "midi" => Some(("audio", mime("audio/midi"))),
         "wv" => Some(("audio", mime("audio/x-wavpack"))),
         "ape" => Some(("audio", mime("audio/ape"))),
-        "mp4" | "m4v" => Some(("video", mime("video/mp4"))),
-        "mov" => Some(("video", mime("video/quicktime"))),
+        "alac" => Some(("audio", mime("audio/alac"))),
+        "amr" => Some(("audio", mime("audio/amr"))),
+        "caf" => Some(("audio", mime("audio/x-caf"))),
+        "mka" => Some(("audio", mime("audio/x-matroska"))),
+        "ra" => Some(("audio", mime("audio/vnd.rn-realaudio"))),
+        "mp4" | "m4v" | "f4v" => Some(("video", mime("video/mp4"))),
+        "mov" | "qt" => Some(("video", mime("video/quicktime"))),
         "webm" => Some(("video", mime("video/webm"))),
-        "mkv" => Some(("video", mime("video/x-matroska"))),
-        "avi" => Some(("video", mime("video/x-msvideo"))),
-        "wmv" => Some(("video", mime("video/x-ms-wmv"))),
-        "mpg" | "mpeg" => Some(("video", mime("video/mpeg"))),
+        "mkv" | "mk3d" => Some(("video", mime("video/x-matroska"))),
+        "avi" | "divx" => Some(("video", mime("video/x-msvideo"))),
+        "wmv" | "asf" => Some(("video", mime("video/x-ms-wmv"))),
+        "mpg" | "mpeg" | "mpe" | "m2v" | "vob" => Some(("video", mime("video/mpeg"))),
+        "m2ts" | "mts" => Some(("video", mime("video/mp2t"))),
         "flv" => Some(("video", mime("video/x-flv"))),
-        "3gp" => Some(("video", mime("video/3gpp"))),
+        "3gp" | "3g2" => Some(("video", mime("video/3gpp"))),
+        "ogv" => Some(("video", mime("video/ogg"))),
+        "mxf" => Some(("video", mime("application/mxf"))),
+        "rm" | "rmvb" => Some(("video", mime("application/vnd.rn-realmedia"))),
+        "h264" => Some(("video", mime("video/h264"))),
+        "h265" | "hevc" => Some(("video", mime("video/h265"))),
+        "y4m" => Some(("video", mime("video/x-yuv4mpeg"))),
         "doc" => Some(("document", mime("application/msword"))),
         "docx" => Some((
             "document",
@@ -319,15 +342,21 @@ mod tests {
     fn classify_known_extension_keeps_inline_preview_types() {
         for (extension, expected_kind) in [
             ("txt", "text"),
+            ("mdx", "text"),
             ("json", "text"),
+            ("jsonl", "text"),
             ("rs", "text"),
             ("png", "image"),
+            ("avif", "image"),
+            ("cr2", "image"),
             ("svg", "image"),
             ("webp", "image"),
             ("pdf", "pdf"),
             ("mp3", "audio"),
             ("wv", "audio"),
             ("mp4", "video"),
+            ("m2ts", "video"),
+            ("ogv", "video"),
         ] {
             let (kind, _) = classify_known_extension(extension).expect("extension is known");
             assert_eq!(kind, expected_kind, "{extension}");

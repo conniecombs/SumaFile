@@ -598,7 +598,7 @@ internal sealed partial class FileOperationDialogService
         {
             try
             {
-                await dialog.LoadSettingsAsync(fileOps, utilityCts.Token);
+                await dialog.LoadSettingsAsync(fileOps, workspace.Settings, utilityCts.Token);
             }
             catch (OperationCanceledException)
             {

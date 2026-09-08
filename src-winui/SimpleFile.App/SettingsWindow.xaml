@@ -167,6 +167,8 @@
                     <ToggleSwitch x:Name="ConfirmDeleteSwitch" Header="Confirm before delete" />
                     <ToggleSwitch x:Name="KeepFoldersOnTopSwitch" Header="Keep folders on top when sorting" />
                     <ToggleSwitch x:Name="ShowFolderSizesSwitch" Header="Show folder sizes in file lists" />
+                    <ToggleSwitch x:Name="PreviewRenderHtmlSwitch" Header="Render Markdown and data previews" />
+                    <ToggleSwitch x:Name="PreviewVideoPlaybackSwitch" Header="Enable video playback previews" />
                     <ToggleSwitch x:Name="EnableGitSwitch" Header="Enable Git integration" />
                 </StackPanel>
 
