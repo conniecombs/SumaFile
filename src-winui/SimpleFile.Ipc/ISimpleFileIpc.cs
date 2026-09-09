@@ -30,6 +30,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<string> GetHomeDirAsync(CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<DriveInfo>> ListDrivesAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default);
 
     Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default);
 
@@ -38,6 +39,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task ShutdownAsync(CancellationToken cancellationToken = default);
 
     Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default);
+    Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default);
     Task SetDbSettingAsync(string key, string value, CancellationToken ct = default);
 
     Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default);
@@ -65,6 +67,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task RevealInFolderAsync(string path, CancellationToken ct = default);
     Task OpenExternalUrlAsync(string url, CancellationToken ct = default);
     Task<ArchiveInfo> ListArchiveAsync(string path, CancellationToken ct = default);
+    Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default);
     Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default);
     Task CreateArchiveAsync(string[] paths, string archivePath, string format, CancellationToken ct = default);
     Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default);
@@ -90,10 +93,6 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task CancelFolderItemCountAsync(CancellationToken ct = default);
     Task CancelCountItemsAsync(CancellationToken ct = default);
     Task CancelFolderMetricsAsync(CancellationToken ct = default);
-    Task<bool> CheckRarInstalledAsync(CancellationToken ct = default);
-    Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default);
-    Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default);
-    Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default);
     Task<CleanupResult> DiskCleanupAsync(string directory, ulong? sizeThreshold, string? operationId, CancellationToken ct = default);
     Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default);
     Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, DuplicateScanOptions? options, string? operationId, CancellationToken ct = default);

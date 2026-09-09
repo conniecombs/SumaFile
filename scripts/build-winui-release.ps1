@@ -18,6 +18,7 @@ $distRoot = Join-Path $root "dist\winui"
 $payloadDir = Join-Path $distRoot "payload"
 $iconPath = Join-Path $root "packaging\winui\icon.ico"
 $appProject = Join-Path $root "src-winui\SimpleFile.App\SimpleFile.App.csproj"
+$sevenZipBundleDir = Join-Path $root "third_party\7zip\win-x64"
 
 function Write-Step {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -155,6 +156,25 @@ function Assert-Payload {
             throw "WinUI payload is missing $required under $Directory."
         }
     }
+
+    foreach ($required in @("7za.exe", "7za.dll", "7zxa.dll", "License.txt")) {
+        $path = Join-Path (Join-Path $Directory "tools\7zip") $required
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "WinUI payload is missing bundled 7-Zip file $required under $Directory\tools\7zip."
+        }
+    }
+}
+
+function Copy-BundledArchiveTools {
+    param([Parameter(Mandatory = $true)][string]$Destination)
+
+    if (-not (Test-Path -LiteralPath $sevenZipBundleDir)) {
+        throw "Bundled 7-Zip directory is missing: $sevenZipBundleDir"
+    }
+
+    $destinationDir = Join-Path $Destination "tools\7zip"
+    New-Item -ItemType Directory -Force -Path $destinationDir | Out-Null
+    Copy-Item -Path (Join-Path $sevenZipBundleDir "*") -Destination $destinationDir -Recurse -Force
 }
 
 function Get-Sha256Hash {
@@ -294,6 +314,7 @@ function New-WinUIPayload {
     }
 
     Copy-Item -LiteralPath $ServiceExe -Destination (Join-Path $Destination "simplefile-service.exe") -Force
+    Copy-BundledArchiveTools -Destination $Destination
     Assert-Payload $Destination
 }
 

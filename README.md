@@ -131,8 +131,8 @@ Requirements:
 
 - Windows 10 version 2004 or newer, or Windows 11
 - x64 Windows
-- Optional: 7-Zip for `.7z` workflows, or set `SIMPLEFILE_7Z`
-- Optional: RAR tooling through Settings -> Tools, or set `SIMPLEFILE_RAR`
+- Bundled 7-Zip console tooling for `.7z` workflows
+- Built-in RAR listing and extraction; RAR creation is not supported
 
 After installing, open Settings -> Updates to check published releases. Builds
 with trusted updater metadata can download and launch the NSIS setup from inside
@@ -224,12 +224,13 @@ Inspection tools include:
 | ZIP | `.zip` | Built in |
 | TAR | `.tar` | Built in |
 | TAR.GZ | `.tar.gz`, `.tgz` | Built in |
-| RAR | `.rar` | Optional RAR tooling |
-| 7-Zip | `.7z` | Installed 7-Zip or `SIMPLEFILE_7Z` |
+| RAR | `.rar` | Built-in list/extract only |
+| 7-Zip | `.7z` | Bundled 7-Zip console tool |
 
 Archive commands can list contents, view archives, extract here, extract to a
 folder, extract to a chosen destination, create archives, pack selections into a
-folder, and unpack folders in place.
+folder, and unpack folders in place. RAR archives can be browsed and extracted,
+but SumaFile does not create or rewrite RAR archives.
 
 Extraction validates final output paths before writing. TAR extraction skips
 links and special entries that could escape the destination.
@@ -268,7 +269,7 @@ Settings is organized into:
 | Navigation | Start location, custom path, new-tab behavior, sidebar sections, recent history |
 | Behavior | Delete confirmation, folder sorting, folder sizes, Git integration |
 | Shortcuts | Live shortcut list |
-| Tools | Optional RAR tooling |
+| Tools | Archive support summary |
 | Updates | Version, update check, install action |
 | About | Product, version, repository, and build metadata |
 
@@ -373,8 +374,7 @@ Useful local-only overrides:
 | `SIMPLEFILE_SERVICE_PATH` | Use a specific `simplefile-service.exe` |
 | `SIMPLEFILE_APP_DATA_DIR` | Redirect app data for fixtures or tests |
 | `SIMPLEFILE_METADATA_DB` | Point settings/tags to a specific metadata database |
-| `SIMPLEFILE_7Z` | Use a specific `7z.exe` |
-| `SIMPLEFILE_RAR` | Use a specific RAR tool |
+| `SIMPLEFILE_7Z` | Development override for a specific 7-Zip executable |
 | `SIMPLEFILE_UPDATE_MANIFEST_PATH` | Test updater metadata from a local file |
 | `SIMPLEFILE_UPDATE_MANIFEST_JSON` | Test updater metadata from inline JSON |
 
@@ -567,8 +567,8 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 - SumaFile 1.0.1 is Windows-only.
 - Installing SumaFile for the first time is manual; in-app update installation requires a
   newer published release with signed `latest-winui.json` metadata.
-- `.7z` workflows require external 7-Zip support.
-- RAR creation/extraction depends on optional RAR tooling.
+- RAR archives can be listed and extracted, but RAR creation and in-place RAR
+  rewrites are not supported.
 - Account-backed storage integrations are intentionally out of scope for
   this branch.
 - Some Windows-reserved shortcuts may not be assignable; shortcut remapping,
@@ -597,4 +597,6 @@ SumaFile is open-source software licensed under the [MIT License](LICENSE).
 
 Copyright (c) 2024-2026 conniecombs.
 
-Third-party libraries remain governed by their own license terms.
+Third-party libraries remain governed by their own license terms. Bundled 7-Zip
+console files are distributed with their upstream license in
+[`third_party/7zip/win-x64/License.txt`](third_party/7zip/win-x64/License.txt).

@@ -240,6 +240,43 @@ public sealed partial class MainWindow
     private void OnSecondaryFileListViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
         => SyncHeaderScroll(SecondaryColumnHeaderScroller, sender as ScrollViewer);
 
+    private void OnPaneRootSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_workspace is null || e.NewSize.Width <= 0 || Math.Abs(e.NewSize.Width - e.PreviousSize.Width) <= 0.5)
+        {
+            return;
+        }
+
+        QueuePaneSizeColumnRefresh();
+    }
+
+    private void QueuePaneSizeColumnRefresh()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        _paneSizeColumnRefreshTimer ??= CreatePaneSizeColumnRefreshTimer();
+        _paneSizeColumnRefreshTimer.Stop();
+        _paneSizeColumnRefreshTimer.Start();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer CreatePaneSizeColumnRefreshTimer()
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(50);
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            if (_workspace is not null)
+            {
+                ApplyColumnWidths();
+            }
+        };
+        return timer;
+    }
+
     private static void SyncHeaderScroll(ScrollViewer header, ScrollViewer? list)
     {
         if (list is null)

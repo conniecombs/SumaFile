@@ -28,6 +28,13 @@ public sealed partial class NamedPipeJsonClient
         return drives;
     }
 
+    public async Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default)
+    {
+        var drives = await InvokeAsync<DriveInfo[]>(Protocol.ListDrivesMethod, new { mode = "light" }, cancellationToken)
+            .ConfigureAwait(false);
+        return drives;
+    }
+
     public Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default)
         => InvokeAsync(Protocol.SelectDirectoryMethod, new SelectDirectoryParams { DefaultPath = defaultPath }, cancellationToken);
 
@@ -36,6 +43,9 @@ public sealed partial class NamedPipeJsonClient
 
     public Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default)
         => InvokeAsync<string?>(Protocol.GetDbSettingMethod, new { key }, ct);
+
+    public Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default)
+        => InvokeAsync<Dictionary<string, string?>>(Protocol.GetDbSettingsMethod, new { keys }, ct);
 
     public Task SetDbSettingAsync(string key, string value, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.SetDbSettingMethod, new { key, value }, ct);
@@ -93,6 +103,9 @@ public sealed partial class NamedPipeJsonClient
 
     public Task<ArchiveInfo> ListArchiveAsync(string path, CancellationToken ct = default)
         => InvokeAsync<ArchiveInfo>(Protocol.ListArchiveMethod, new { path }, ct);
+
+    public Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)
+        => InvokeAsync<ArchiveCapabilities>(Protocol.GetArchiveCapabilitiesMethod, new { }, ct);
 
     public Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.ExtractArchiveMethod, new { archivePath, destination }, ct);
@@ -165,18 +178,6 @@ public sealed partial class NamedPipeJsonClient
 
     public Task CancelFolderMetricsAsync(CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.CancelFolderMetricsMethod, new { }, ct);
-
-    public Task<bool> CheckRarInstalledAsync(CancellationToken ct = default)
-        => InvokeAsync<bool>(Protocol.CheckRarInstalledMethod, new { }, ct);
-
-    public Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default)
-        => InvokeAsync<RarInstallPlan>(Protocol.PrepareRarInstallMethod, new { }, ct);
-
-    public Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.DiscardRarInstallMethod, new { confirmationToken }, ct);
-
-    public Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default)
-        => InvokeAsync<string>(Protocol.InstallRarMethod, new { confirmationToken }, ct);
 
     public Task<CleanupResult> DiskCleanupAsync(string directory, ulong? sizeThreshold, string? operationId, CancellationToken ct = default)
         => InvokeAsync<CleanupResult>(Protocol.DiskCleanupMethod, new { directory, sizeThreshold, operationId }, ct);

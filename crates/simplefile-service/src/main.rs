@@ -1,4 +1,5 @@
 use simplefile_service::{pipe_path, serve_connection, SessionState};
+use std::time::Instant;
 
 #[tokio::main]
 async fn main() {
@@ -9,14 +10,19 @@ async fn main() {
 }
 
 async fn run() -> Result<(), String> {
+    let startup = Instant::now();
     let args = Args::parse(std::env::args().skip(1))?;
     let pipe = pipe_path(&args.pipe_name);
     eprintln!(
-        "simplefile-service {} listening on {pipe}",
+        "simplefile-service {} starting for {pipe}",
         simplefile_core::APP_DISPLAY_VERSION
     );
 
     let auth_token = read_required_auth_token()?;
+    eprintln!(
+        "simplefile-service startup auth-token-read total_ms={:.1}",
+        startup.elapsed().as_secs_f64() * 1000.0
+    );
 
     #[cfg(windows)]
     {
@@ -51,17 +57,29 @@ async fn run() -> Result<(), String> {
                 std::io::Error::last_os_error()
             ));
         }
+        eprintln!(
+            "simplefile-service startup pipe-created total_ms={:.1}",
+            startup.elapsed().as_secs_f64() * 1000.0
+        );
         let server = unsafe {
             tokio::net::windows::named_pipe::NamedPipeServer::from_raw_handle(raw as RawHandle)
         }
         .map_err(|error| format!("failed to register named pipe with tokio: {error}"))?;
 
         apply_creator_only_dacl(&server)?;
+        eprintln!(
+            "simplefile-service startup pipe-ready total_ms={:.1}",
+            startup.elapsed().as_secs_f64() * 1000.0
+        );
 
         server
             .connect()
             .await
             .map_err(|error| format!("waiting for client failed: {error}"))?;
+        eprintln!(
+            "simplefile-service startup client-connected total_ms={:.1}",
+            startup.elapsed().as_secs_f64() * 1000.0
+        );
 
         // If parent-pid was specified, spawn a liveness monitor that exits
         // when the parent process is no longer alive.

@@ -3,14 +3,17 @@ use super::extract::{
     ExtractLimits,
 };
 use super::mutate::{
-    copy_archive_entry_to_local_with_limits, materialize_archive_entry_to_temp_with_limits,
+    copy_archive_entry_to_local_with_limits, create_archive_file, delete_archive_entry,
+    materialize_archive_entry_to_temp_with_limits, move_entry_resolved,
 };
 use super::path::{
     archive_entry_relative_path, archive_format_for_path, build_virtual_archive_path,
     ensure_extract_path_within_destination, path_is_within_prefix, split_archive_path,
     zip_entry_relative_path, ArchiveFormat,
 };
-use super::seven_zip::{parse_seven_zip_list_output, resolve_seven_zip_binary};
+use super::seven_zip::{
+    bundled_seven_zip_candidates, parse_seven_zip_list_output, resolve_seven_zip_binary,
+};
 use super::*;
 use std::fs;
 use std::io::Write;
@@ -66,6 +69,70 @@ fn archive_format_recognizes_7z_extension() {
         archive_format_for_path(Path::new("sample.7z")),
         Some(ArchiveFormat::SevenZip)
     );
+}
+
+#[test]
+fn bundled_seven_zip_candidates_prefer_payload_tool_directory() {
+    let app_dir = Path::new(r"C:\Apps\SumaFile");
+    let candidates = bundled_seven_zip_candidates(app_dir);
+
+    assert_eq!(
+        candidates[0],
+        PathBuf::from(r"C:\Apps\SumaFile\tools\7zip\7zz.exe")
+    );
+    assert!(candidates.contains(&PathBuf::from(r"C:\Apps\SumaFile\tools\7zip\7za.exe")));
+}
+
+#[test]
+fn archive_capabilities_do_not_offer_rar_creation() {
+    let capabilities = get_archive_capabilities();
+    let rar = capabilities
+        .formats
+        .iter()
+        .find(|format| format.format == "rar")
+        .expect("rar capability");
+
+    assert!(rar.can_list);
+    assert!(rar.can_extract);
+    assert!(!rar.can_create);
+    assert!(!rar.can_modify);
+}
+
+#[test]
+fn create_archive_rejects_rar_without_external_install_guidance() {
+    let err = create_archive(Vec::new(), "archive.rar".to_string(), "rar".to_string())
+        .expect_err("rar creation should not be supported");
+
+    assert!(err.contains("RAR creation is not supported"));
+    assert!(!err.contains("Install"));
+    assert!(!err.contains("WinRAR"));
+}
+
+#[test]
+fn rar_mutations_are_rejected_before_rebuild() {
+    let root = unique_temp_dir("rar-mutation-reject");
+    let archive_path = root.join("sample.rar");
+    fs::write(&archive_path, b"not a real rar").expect("write placeholder rar");
+
+    let archive_root = archive_path.to_string_lossy().to_string();
+    let err = create_archive_file(archive_root.clone(), "new.txt".to_string())
+        .expect_err("rar file creation should fail before extraction");
+    assert!(err.contains("does not rewrite RAR"));
+
+    let entry_path = format!("{archive_root}\\entry.txt");
+    let delete_err =
+        delete_archive_entry(&entry_path).expect_err("rar delete should fail before extraction");
+    assert!(delete_err.contains("does not rewrite RAR"));
+
+    let move_err = move_entry_resolved(
+        entry_path,
+        root.to_string_lossy().to_string(),
+        "replace".to_string(),
+    )
+    .expect_err("rar move should fail before copying out");
+    assert!(move_err.contains("does not rewrite RAR"));
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

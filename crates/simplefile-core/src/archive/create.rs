@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Stdio;
 
 pub fn create_archive(
@@ -11,12 +11,10 @@ pub fn create_archive(
         "zip" => create_zip_archive(&paths, &archive_path),
         "tar" => create_tar_archive(&paths, &archive_path, None),
         "tar.gz" | "tgz" => create_tar_archive(&paths, &archive_path, Some("gz")),
-        "rar" => {
-            let binary = resolve_rar_binary().ok_or_else(|| {
-                "RAR command not found. Install it from Settings -> RAR Tools.".to_string()
-            })?;
-            create_rar_archive(&paths, &archive_path, &binary)
-        }
+        "rar" => Err(
+            "RAR creation is not supported by SumaFile. Use ZIP, 7z, TAR, or TAR.GZ instead."
+                .to_string(),
+        ),
         "7z" => {
             let binary = super::seven_zip::require_seven_zip_binary()?;
             create_seven_zip_archive(&paths, &archive_path, &binary)
@@ -81,100 +79,6 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
     Ok(())
 }
 
-pub fn resolve_rar_binary() -> Option<String> {
-    if let Ok(path) = std::env::var("SIMPLEFILE_RAR") {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() && Path::new(trimmed).exists() {
-            return Some(trimmed.to_string());
-        }
-    }
-
-    if std::process::Command::new("rar")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .is_ok()
-    {
-        return Some("rar".to_string());
-    }
-
-    for path in [
-        r"C:\Program Files\WinRAR\rar.exe",
-        r"C:\Program Files (x86)\WinRAR\rar.exe",
-    ] {
-        if Path::new(path).exists() {
-            return Some(path.to_string());
-        }
-    }
-
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let path = PathBuf::from(local_app_data)
-            .join("Programs")
-            .join("WinRAR")
-            .join("rar.exe");
-        if path.exists() {
-            return Some(path.to_string_lossy().to_string());
-        }
-    }
-
-    None
-}
-
-pub(super) fn create_rar_archive(
-    paths: &[String],
-    archive_path: &str,
-    rar_binary: &str,
-) -> Result<(), String> {
-    if paths.is_empty() {
-        return Err("No files specified".to_string());
-    }
-
-    // Single invocation with absolute paths.
-    // -ep1 strips the leading path components so files appear as basenames inside the archive,
-    // consistent with ZIP/TAR behaviour.
-    // -r recurses into subdirectories.
-    // stdin is set to null to prevent the process from blocking on terminal input.
-
-    // Prevent argument injection: rar parses switches by position, so archive_path
-    // is consumed before the "--" end-of-options delimiter and can still be
-    // misinterpreted as a flag if it starts with '-'.  Prepend "./" to any
-    // path that begins with '-' so the rar binary always sees it as a filename.
-    let archive_arg: std::borrow::Cow<str> = if archive_path.starts_with('-') {
-        format!("./{archive_path}").into()
-    } else {
-        archive_path.into()
-    };
-
-    let output = std::process::Command::new(rar_binary)
-        .arg("a")
-        .arg("-r")
-        .arg("-ep1")
-        .arg(archive_arg.as_ref())
-        .arg("--") // POSIX end-of-options: prevents filenames starting with '-' being
-        // interpreted as flags by the rar binary (argument injection guard).
-        .args(paths)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| format!("Failed to run rar command: {e}"))?;
-
-    // Exit code 0 = success; 1 = warning (non-fatal, archive was still written).
-    // Treat anything above 1 as a hard failure.
-    let code = output.status.code().unwrap_or(2);
-    if code > 1 {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = format!("{stderr}{stdout}").trim().to_string();
-        return Err(if detail.is_empty() {
-            format!("RAR creation failed (exit code {code})")
-        } else {
-            format!("RAR creation failed: {detail}")
-        });
-    }
-
-    Ok(())
-}
-
 pub(super) fn create_seven_zip_archive(
     paths: &[String],
     archive_path: &str,
@@ -196,7 +100,7 @@ pub(super) fn create_seven_zip_archive(
         .arg("--")
         .arg(archive_path)
         .args(paths)
-        .stdin(std::process::Stdio::null())
+        .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("Failed to run 7-Zip command: {e}"))?;
 

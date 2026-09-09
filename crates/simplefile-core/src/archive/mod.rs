@@ -1,3 +1,4 @@
+mod capabilities;
 mod create;
 mod extract;
 mod list;
@@ -8,7 +9,8 @@ mod seven_zip;
 #[cfg(test)]
 mod tests;
 
-pub use create::{create_archive, resolve_rar_binary};
+pub use capabilities::get_archive_capabilities;
+pub use create::create_archive;
 pub use extract::extract_archive;
 pub use list::{list_archive, list_archive_directory};
 pub use mutate::{

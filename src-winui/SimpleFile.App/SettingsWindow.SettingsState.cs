@@ -63,7 +63,6 @@ public sealed partial class SettingsWindow
     {
         _fileOps = fileOps;
         ApplySettingsSnapshot(settings);
-        await CheckRarInstalledAsync(cancellationToken).ConfigureAwait(true);
         await LoadVersionAsync(fileOps, cancellationToken).ConfigureAwait(true);
     }
 

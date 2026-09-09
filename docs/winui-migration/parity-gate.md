@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
-**Contract:** [`inventory.md`](inventory.md) (86 commands / emitted events / Svelte workflows)
+**Contract:** [`inventory.md`](inventory.md) (84 commands / emitted events / Svelte workflows)
 **Hosts:** WinUI 3 + `simplefile-service` is the shipping app. Svelte/Tauri UI and packaging glue have been retired.
 
 This is the **retirement lock**. Required `OPEN` rows are none. `MANUAL` rows stay as human smoke coverage. Retired `src-tauri/` domain now lives solely in `crates/simplefile-core`.
@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 86-command schema vs Rust/C#
+npm run check:ipc-schema      # 84-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (86)
+## 2. IPC commands (84)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -131,17 +131,14 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `duplicate_check` | Duplicate groups | Duplicate checker dialog | IPC + progress | Find duplicates | `MANUAL` |
 | `cancel_duplicate_check` | Cancel scan | IPC | Schema/client | — | `PASS` |
 
-### 2.4 Archives and WinRAR
+### 2.4 Archives
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `list_archive` | Archive viewer | `ArchiveViewerDialog` | `ArchivePaths` tests | Open a zip | `MANUAL` |
-| `extract_archive` | Extract here / folder / to | Context extract + dialog | IPC | Extract zip | `MANUAL` |
-| `create_archive` | zip/tar/tar.gz/rar | Create archive dialog | IPC | Compress selection | `MANUAL` |
-| `check_rar_installed` | Tools badge | Settings → Tools | Settings load | Tools tab | `MANUAL` |
-| `prepare_rar_install` | Stage installer | Settings install flow | IPC | Install RAR (optional) | `MANUAL` |
-| `discard_rar_install` | Cancel staged | Settings cancel | IPC | Cancel confirm | `MANUAL` |
-| `install_rar` | Silent install | Settings confirm | IPC | — | `MANUAL` |
+| `list_archive` | Archive viewer | `ArchiveViewerDialog` | `ArchivePaths` tests | Open a zip / 7z / rar | `MANUAL` |
+| `get_archive_capabilities` | Creatable/extractable archive formats | Create archive dialog | IPC + source-shape guard | Tools tab / create dialog | `PASS` |
+| `extract_archive` | Extract here / folder / to | Context extract + dialog | IPC | Extract zip / 7z / rar | `MANUAL` |
+| `create_archive` | zip/7z/tar/tar.gz | Create archive dialog | IPC; RAR create rejected | Compress selection | `MANUAL` |
 
 ### 2.5 Git, terminals, tags, settings, updater
 
@@ -169,6 +166,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `get_files_with_tag` | Filter by label | `SetTagFilter` / `FilesWithTag` | Workspace filter | Click a tag | `PASS` |
 | `get_all_file_tags` | Color dots | `FileRow.TagColor` | ToFileRow maps tags | Labeled files show color | `PASS` |
 | `get_db_setting` | Settings KV | Settings dialog | Workspace restore test | Change theme; relaunch | `PASS` |
+| `get_db_settings` | Batched settings KV | Startup workspace settings load | Workspace settings tests / schema | Relaunch with saved layout | `PASS` |
 | `set_db_setting` | Persist settings | Settings save | Workspace save | Same | `PASS` |
 | `get_app_version` | Updates tab | Settings | Settings load | Settings → Updates | `MANUAL` |
 | `get_app_about_info` | About | Settings About + dialog | IPC | About panel | `MANUAL` |
@@ -409,7 +407,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 86 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 84 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |

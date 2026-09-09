@@ -40,6 +40,10 @@ const requiredFiles = [
   'docs/winui-migration/parity-gate.md',
   'src-winui/SimpleFile.App/SimpleFile.App.csproj',
   'crates/simplefile-service/Cargo.toml',
+  'third_party/7zip/win-x64/7za.exe',
+  'third_party/7zip/win-x64/7za.dll',
+  'third_party/7zip/win-x64/7zxa.dll',
+  'third_party/7zip/win-x64/License.txt',
 ];
 
 for (const relativePath of requiredFiles) {
@@ -99,6 +103,9 @@ const buildSnippets = [
   'latest-winui.json',
   'resources.pri',
   'MainWindow.xbf',
+  'third_party\\7zip\\win-x64',
+  'tools\\7zip',
+  '7za.exe',
   '-sice:ICE03',
   '-sice:ICE38',
   '-sice:ICE64',

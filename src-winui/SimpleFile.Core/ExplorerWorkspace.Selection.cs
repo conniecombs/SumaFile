@@ -11,22 +11,43 @@ public sealed partial class ExplorerWorkspace
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        HomePath = await _backend.GetHomeDirAsync(cancellationToken).ConfigureAwait(false);
-        await RefreshDrivesAsync(quiet: true, cancellationToken).ConfigureAwait(false);
+        var timer = new StartupTimer("ExplorerWorkspace.Initialize");
+        timer.Mark("begin");
+        cancellationToken.ThrowIfCancellationRequested();
+        HomePath = _backend.CachedHomeDir
+            ?? await _backend.GetHomeDirAsync(cancellationToken).ConfigureAwait(false);
+        timer.Mark(_backend.CachedHomeDir is null ? "home-ipc" : "home-cached", HomePath);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (_backend.CachedDrives is { Count: > 0 } cachedDrives)
+        {
+            SeedCachedDrives(cachedDrives, quiet: true);
+            timer.Mark("drives-cached", $"count={cachedDrives.Count}");
+        }
+        else
+        {
+            await RefreshDrivesAsync(quiet: true, cancellationToken, lightweight: true).ConfigureAwait(false);
+            timer.Mark("drives-light");
+        }
 
         await LoadSmartFoldersAsync(cancellationToken).ConfigureAwait(false);
+        timer.Mark("smart-folders", $"count={SmartFolders.Count}");
         await LoadTagsAsync(cancellationToken).ConfigureAwait(false);
+        timer.Mark("tags", $"count={AllTags.Count}");
         await LoadUiSettingsAsync(cancellationToken).ConfigureAwait(false);
+        timer.Mark("settings");
 
         var startMode = UiSettings.NormalizeStartLocation(Settings.StartLocation);
         if (startMode == "last" && await TryRestoreWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false))
         {
+            timer.Mark("restored-layout");
             return;
         }
 
         var startPath = ResolveStartPath();
         await NavigatePaneAsync(PaneId.Primary, startPath, HistoryMode.Push, activate: false, cancellationToken)
             .ConfigureAwait(false);
+        timer.Mark("navigated-start", startPath);
     }
 
     public void SelectPath(string? path)

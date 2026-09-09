@@ -23,6 +23,48 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task Initialize_UsesStartupCachedHomeAndDrives()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.ListDrivesHandler = _ => throw new InvalidOperationException("Initialize should use cached startup drives.");
+        var workspace = new ExplorerWorkspace(backend);
+
+        await workspace.InitializeAsync();
+
+        Assert.Equal(0, backend.GetHomeDirCalls);
+        Assert.Equal(0, backend.ListDrivesCalls);
+        Assert.Equal(0, backend.ListDrivesLightCalls);
+        Assert.Equal(@"C:\Users\test", workspace.HomePath);
+        Assert.Equal("Windows (C:)", Assert.Single(workspace.Drives).Name);
+    }
+
+    [Fact]
+    public async Task Initialize_UsesLightDriveRefreshWhenNoStartupCacheExists()
+    {
+        var backend = new FakeExplorerBackend();
+        backend.Listings[@"C:\Users\test"] = FakeExplorerBackend.Typical().Listings[@"C:\Users\test"];
+        backend.ListDrivesHandler = _ => throw new InvalidOperationException("Initialize should not use the full drive refresh.");
+        backend.ListDrivesLightHandler = _ => Task.FromResult<IReadOnlyList<DriveInfo>>(
+        [
+            new DriveInfo
+            {
+                Name = "Startup Light (Z:)",
+                Path = @"Z:\",
+                DriveType = "Network",
+                DriveStatus = "unknown",
+            },
+        ]);
+        var workspace = new ExplorerWorkspace(backend);
+
+        await workspace.InitializeAsync();
+
+        Assert.Equal(0, backend.GetHomeDirCalls);
+        Assert.Equal(0, backend.ListDrivesCalls);
+        Assert.Equal(1, backend.ListDrivesLightCalls);
+        Assert.Equal("Startup Light (Z:)", Assert.Single(workspace.Drives).Name);
+    }
+
+    [Fact]
     public void RememberOperation_StoresStatusNewestFirstAndCapsHistory()
     {
         var workspace = new ExplorerWorkspace(FakeExplorerBackend.Typical());
@@ -1322,12 +1364,45 @@ public class ExplorerWorkspaceTests
         Assert.Equal("date", workspace.SortByFor(PaneId.Primary));
         Assert.False(workspace.SortAscendingFor(PaneId.Primary));
         Assert.True(workspace.ShowHiddenFiles);
-        Assert.False(workspace.Settings.PreviewVisible);
+        Assert.True(workspace.Settings.PreviewVisible);
         Assert.Equal("developer", workspace.Settings.ColumnPreset);
         Assert.Equal(["name", "git", "path"], workspace.Columns.SnapshotVisibleIds());
         Assert.Equal(360, workspace.Columns.WidthOf("path"));
         Assert.Equal("date", backend.LastListDirectoryOptions?.SortBy);
         Assert.False(backend.LastListDirectoryOptions?.SortAscending);
+    }
+
+    [Fact]
+    public async Task FolderViewSettings_IgnoreLegacyPreviewVisibility()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc();
+        settingsIpc.Settings[FolderViewSettingsDocument.SettingsKey] = """
+            {
+              "version": 1,
+              "rules": [
+                {
+                  "id": "legacy-preview",
+                  "scope": "descendants",
+                  "path": "C:\\Users\\test",
+                  "options": {
+                    "view": "content",
+                    "previewVisible": false
+                  }
+                }
+              ]
+            }
+            """;
+        var fileOps = new FileOperationService(settingsIpc);
+        var workspace = new ExplorerWorkspace(backend, fileOps);
+        await workspace.InitializeAsync();
+
+        workspace.Settings.PreviewVisible = true;
+
+        await workspace.NavigateToAsync(@"C:\Users\test\Desktop");
+
+        Assert.Equal("content", workspace.ViewFor(PaneId.Primary));
+        Assert.True(workspace.Settings.PreviewVisible);
     }
 
     [Fact]

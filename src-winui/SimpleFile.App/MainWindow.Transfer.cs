@@ -1062,6 +1062,8 @@ public sealed partial class MainWindow
         ApplyColumnHeader(SecondaryColumnHeader, secondary, PaneId.Secondary, ref _secondaryColumnHeaderKey);
         ApplyDetailsItemMinWidths(PrimaryFileList, primary.VisibleWidth);
         ApplyDetailsItemMinWidths(SecondaryFileList, secondary.VisibleWidth);
+        ClampDetailsHorizontalScroll(PaneId.Primary);
+        ClampDetailsHorizontalScroll(PaneId.Secondary);
     }
 
     private ColumnLayout EffectiveColumnsForPane(ColumnLayout columns, PaneId pane)
@@ -1082,5 +1084,34 @@ public sealed partial class MainWindow
                 item.MinWidth = width;
             }
         }
+    }
+
+    private void ClampDetailsHorizontalScroll(PaneId pane)
+    {
+        var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
+        var header = pane == PaneId.Secondary ? SecondaryColumnHeaderScroller : PrimaryColumnHeaderScroller;
+        var scroller = pane == PaneId.Secondary ? _secondaryFileListScroller : _primaryFileListScroller;
+        if (scroller is null)
+        {
+            AttachFileListColumnScroll(list);
+            scroller = pane == PaneId.Secondary ? _secondaryFileListScroller : _primaryFileListScroller;
+        }
+
+        if (scroller is null)
+        {
+            return;
+        }
+
+        var reset = _workspace?.ViewFor(pane) != "details";
+        var maxOffset = reset ? 0 : Math.Max(0, scroller.ScrollableWidth);
+        var nextOffset = reset ? 0 : Math.Min(scroller.HorizontalOffset, maxOffset);
+        if (Math.Abs(scroller.HorizontalOffset - nextOffset) > 0.5)
+        {
+            scroller.ChangeView(nextOffset, null, null, disableAnimation: true);
+            header.ChangeView(nextOffset, null, null, disableAnimation: true);
+            return;
+        }
+
+        SyncHeaderScroll(header, scroller);
     }
 }

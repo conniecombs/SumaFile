@@ -53,6 +53,7 @@ public sealed partial class MainWindow : Window
     private string? _secondaryColumnHeaderKey;
     private ScrollViewer? _primaryFileListScroller;
     private ScrollViewer? _secondaryFileListScroller;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _paneSizeColumnRefreshTimer;
     private readonly Dictionary<int, Style> _tileItemStyles = new();
     private string? _columnEnrichmentSignature;
     private CancellationTokenSource? _columnEnrichmentCts;
@@ -183,6 +184,8 @@ public sealed partial class MainWindow : Window
 
     private async Task ConnectAsync()
     {
+        var timer = new StartupTimer("MainWindow.Connect");
+        timer.Mark("begin");
         try
         {
             SetStatusText("Starting SumaFile service...");
@@ -190,6 +193,7 @@ public sealed partial class MainWindow : Window
             backend.Disconnected += OnBackendDisconnected;
             _backend = backend;
             await backend.StartAsync();
+            timer.Mark("backend-started", backend.ServicePath);
             var client = backend.Client
                 ?? throw new InvalidOperationException("IPC service started without an active client.");
             var fileOps = new FileOperationService(client, OperationJournal.CreateDefault());
@@ -204,16 +208,22 @@ public sealed partial class MainWindow : Window
             _workspace.Changed += OnWorkspaceChanged;
             _fileChangeSubscription = client.On<FileChangeEvent>(Protocol.FileChangeEvent, OnFileChange);
             await _workspace.InitializeAsync();
+            timer.Mark("workspace-initialized");
             ApplyKeyboardShortcuts();
             await LoadOpenWithPreferencesAsync(fileOps, CancellationToken.None);
+            timer.Mark("open-with-preferences");
             ApplyTheme(_workspace.Settings.Theme);
             SyncSidebarCollapseStateFromSettings();
             ApplyPreviewVisibility();
             ApplyColumnWidths();
             SyncFromWorkspace();
+            timer.Mark("first-sync");
+            QueueStartupDriveRefresh(_workspace);
+            timer.Mark("ready");
         }
         catch (Exception exception)
         {
+            timer.Mark("failed", exception.Message);
             await CleanupSessionAsync(saveWorkspace: false, unwatchDirectory: true);
             ShowMessage(
                 "Could not start or reach the IPC service.",
@@ -226,6 +236,39 @@ public sealed partial class MainWindow : Window
                     + Environment.NewLine
                     + "or set SIMPLEFILE_SERVICE_PATH to simplefile-service.exe.",
                 InfoBarSeverity.Error);
+        }
+    }
+
+    private void QueueStartupDriveRefresh(ExplorerWorkspace workspace)
+    {
+        _ = RefreshStartupDrivesAsync(workspace);
+    }
+
+    private async Task RefreshStartupDrivesAsync(ExplorerWorkspace workspace)
+    {
+        var timer = new StartupTimer("MainWindow.StartupDriveRefresh");
+        timer.Mark("queued");
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(150));
+            if (!ReferenceEquals(_workspace, workspace))
+            {
+                timer.Mark("abandoned");
+                return;
+            }
+
+            if (!workspace.Drives.Any(drive => DrivePresentation.Status(drive) == "unknown"))
+            {
+                timer.Mark("skipped");
+                return;
+            }
+
+            await workspace.RefreshDrivesAsync(quiet: true);
+            timer.Mark("refreshed", $"count={workspace.Drives.Count}");
+        }
+        catch (Exception exception)
+        {
+            timer.Mark("failed", exception.Message);
         }
     }
 
@@ -1123,6 +1166,8 @@ public sealed partial class MainWindow : Window
         _transfer?.Reset();
         CloseTransferProgressWindow();
         _search?.ClearState(notifyHost: false);
+        _paneSizeColumnRefreshTimer?.Stop();
+        _paneSizeColumnRefreshTimer = null;
         Interlocked.Increment(ref _columnEnrichmentToken);
         _columnEnrichmentCts?.Cancel();
         _columnEnrichmentCts = null;

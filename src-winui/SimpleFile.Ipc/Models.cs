@@ -511,6 +511,39 @@ public sealed class ArchiveInfo
     public ulong CompressedSize { get; set; }
 }
 
+public sealed class ArchiveFormatCapability
+{
+    [JsonPropertyName("format")]
+    public string Format { get; set; } = "";
+
+    [JsonPropertyName("extension")]
+    public string Extension { get; set; } = "";
+
+    [JsonPropertyName("can_list")]
+    public bool CanList { get; set; }
+
+    [JsonPropertyName("can_extract")]
+    public bool CanExtract { get; set; }
+
+    [JsonPropertyName("can_create")]
+    public bool CanCreate { get; set; }
+
+    [JsonPropertyName("can_modify")]
+    public bool CanModify { get; set; }
+
+    [JsonPropertyName("engine")]
+    public string Engine { get; set; } = "";
+
+    [JsonPropertyName("note")]
+    public string? Note { get; set; }
+}
+
+public sealed class ArchiveCapabilities
+{
+    [JsonPropertyName("formats")]
+    public List<ArchiveFormatCapability> Formats { get; set; } = [];
+}
+
 public sealed class Tag
 {
     [JsonPropertyName("id")] public long Id { get; set; }
@@ -580,16 +613,6 @@ public sealed class DuplicateCheckResult
     [JsonPropertyName("skipped_files")] public ulong SkippedFiles { get; set; }
     [JsonPropertyName("errors")] public List<string> Errors { get; set; } = [];
     [JsonPropertyName("total_reclaimable_bytes")] public ulong TotalReclaimableBytes { get; set; }
-}
-
-public sealed class RarInstallPlan
-{
-    [JsonPropertyName("confirmation_token")] public string ConfirmationToken { get; set; } = "";
-    [JsonPropertyName("download_url")] public string DownloadUrl { get; set; } = "";
-    [JsonPropertyName("file_name")] public string FileName { get; set; } = "";
-    [JsonPropertyName("installer_path")] public string InstallerPath { get; set; } = "";
-    [JsonPropertyName("publisher")] public string Publisher { get; set; } = "";
-    [JsonPropertyName("sha256")] public string Sha256 { get; set; } = "";
 }
 
 public sealed class AppAboutInfo

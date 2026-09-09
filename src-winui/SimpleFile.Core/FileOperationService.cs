@@ -405,6 +405,11 @@ public sealed class FileOperationService : ISettingsBackend
         return _ipc.ListArchiveAsync(path, ct);
     }
 
+    public Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)
+    {
+        return _ipc.GetArchiveCapabilitiesAsync(ct);
+    }
+
     public async Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
     {
         await _ipc.ExtractArchiveAsync(archivePath, destination, ct).ConfigureAwait(false);
@@ -473,6 +478,12 @@ public sealed class FileOperationService : ISettingsBackend
     public Task<SmartFolder[]> DeleteSmartFolderAsync(string id, CancellationToken ct = default) => _ipc.DeleteSmartFolderAsync(id, ct);
 
     public Task<string?> GetSettingAsync(string key, CancellationToken ct = default) => _ipc.GetDbSettingAsync(key, ct);
+    public async Task<IReadOnlyDictionary<string, string?>> GetSettingsAsync(IReadOnlyList<string> keys, CancellationToken ct = default)
+    {
+        var result = await _ipc.GetDbSettingsAsync(keys.ToArray(), ct).ConfigureAwait(false);
+        return result;
+    }
+
     public Task SetSettingAsync(string key, string value, CancellationToken ct = default) => _ipc.SetDbSettingAsync(key, value, ct);
     public Task<string> GetAppVersionAsync(CancellationToken ct = default) => _ipc.GetAppVersionAsync(ct);
 
@@ -601,11 +612,6 @@ public sealed class FileOperationService : ISettingsBackend
             // Cancellation is opportunistic; preserve the original canceled operation.
         }
     }
-
-    public Task<bool> CheckRarInstalledAsync(CancellationToken ct = default) => _ipc.CheckRarInstalledAsync(ct);
-    public Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default) => _ipc.PrepareRarInstallAsync(ct);
-    public Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default) => _ipc.DiscardRarInstallAsync(confirmationToken, ct);
-    public Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default) => _ipc.InstallRarAsync(confirmationToken, ct);
 
     public Task<AppAboutInfo> GetAppAboutInfoAsync(CancellationToken ct = default) => _ipc.GetAppAboutInfoAsync(ct);
     public Task<UpdateInfo?> CheckForUpdateAsync(CancellationToken ct = default) => _ipc.CheckForUpdateAsync(ct);

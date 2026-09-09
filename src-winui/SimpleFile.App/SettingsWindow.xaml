@@ -516,9 +516,8 @@
                 <StackPanel x:Name="ToolsPanel" Spacing="16" Visibility="Collapsed">
                     <TextBlock Text="Tools" FontSize="18" FontWeight="SemiBold" />
                     <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
-                        <TextBlock Text="RAR Extraction Support" FontWeight="SemiBold" />
-                        <TextBlock x:Name="RarStatusText" Text="Checking status..." Foreground="{ThemeResource SfTextMutedBrush}" />
-                        <Button x:Name="InstallRarButton" Content="Install RAR Support" Click="OnInstallRarClicked" />
+                        <TextBlock Text="Archive Support" FontWeight="SemiBold" />
+                        <TextBlock Text="ZIP, TAR, TAR.GZ, 7z, and RAR extraction are handled by SumaFile. RAR creation is not supported." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
                     </StackPanel>
                 </StackPanel>
                 

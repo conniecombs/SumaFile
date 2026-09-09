@@ -8,6 +8,7 @@
   "enums": {
     "ConflictAction": ["error", "skip", "replace", "rename", "keep-both", "keep_both"],
     "ListDirectoryMode": ["full", "light"],
+    "DriveListMode": ["full", "light"],
     "ProgressStatus": ["running", "finalizing", "completed", "error", "cancelled"],
     "FileChangeKind": ["create", "modify", "remove", "rename"],
     "ArchiveFormat": ["zip", "7z", "tar", "tar.gz", "tgz", "rar"]
@@ -47,6 +48,11 @@
     "DriveInfo": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["name", "path", "drive_type", "total_space", "free_space", "remote_path", "drive_status", "status_detail"]
+    },
+    "SettingMap": {
+      "source": "crates/simplefile-core/src/settings_store.rs",
+      "fields": ["key", "value"],
+      "notes": "JSON object keyed by setting name; missing settings are present with null values."
     },
     "TreeNode": {
       "source": "crates/simplefile-core/src/models.rs",
@@ -139,6 +145,15 @@
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["path", "format", "entries", "unsafe_entries", "total_size", "compressed_size"]
     },
+    "ArchiveFormatCapability": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["format", "extension", "can_list", "can_extract", "can_create", "can_modify", "engine", "note"],
+      "optional": ["note"]
+    },
+    "ArchiveCapabilities": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["formats"]
+    },
     "RenameRequest": {
       "source": "crates/simplefile-core/src/file_ops.rs",
       "fields": ["path", "new_name"]
@@ -150,10 +165,6 @@
     "Checksums": {
       "source": "crates/simplefile-core/src/checksum.rs",
       "fields": ["md5", "sha1", "sha256"]
-    },
-    "RarInstallPlan": {
-      "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["confirmation_token", "download_url", "file_name", "installer_path", "publisher", "sha256"]
     },
     "DiffRow": {
       "source": "crates/simplefile-core/src/compare.rs",

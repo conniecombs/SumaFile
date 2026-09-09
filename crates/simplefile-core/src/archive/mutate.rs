@@ -2,10 +2,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::create::{
-    create_rar_archive, create_seven_zip_archive, create_tar_archive, create_zip_archive,
-    resolve_rar_binary,
-};
+use super::create::{create_seven_zip_archive, create_tar_archive, create_zip_archive};
 use super::extract::{
     extract_archive_entry_to_directory, extract_archive_to_directory, ExtractLimits,
 };
@@ -46,6 +43,7 @@ pub fn copy_entry_resolved(
             Ok(result.unwrap_or_else(|| format!("SKIPPED:{source}")))
         }
         (source_parsed, Some(destination_parsed)) => {
+            ensure_archive_can_modify(destination_parsed.format)?;
             let materialized = materialize_transfer_source(&source, source_parsed.as_ref())?;
             let mut materialized = materialized;
             let result = mutate_archive(
@@ -75,6 +73,13 @@ pub fn move_entry_resolved(
     let source_archive =
         split_archive_path(&source)?.filter(|parsed| !parsed.inner_path.as_os_str().is_empty());
     let destination_archive = split_archive_path(&destination)?;
+
+    if let Some(source_parsed) = &source_archive {
+        ensure_archive_can_modify(source_parsed.format)?;
+    }
+    if let Some(destination_parsed) = &destination_archive {
+        ensure_archive_can_modify(destination_parsed.format)?;
+    }
 
     match (source_archive, destination_archive) {
         (Some(source_parsed), Some(destination_parsed))
@@ -127,6 +132,7 @@ pub fn create_archive_directory(path: String, name: String) -> Result<String, St
     crate::utils::validate_name(&name)?;
     let parsed = split_archive_path(&path)?
         .ok_or_else(|| format!("Path is not inside an archive: {path}"))?;
+    ensure_archive_can_modify(parsed.format)?;
     let result = mutate_archive(&parsed.archive_path, parsed.format, |root| {
         let dir_path = root.join(&parsed.inner_path).join(&name);
         if dir_path.exists() {
@@ -142,6 +148,7 @@ pub fn create_archive_file(path: String, name: String) -> Result<String, String>
     crate::utils::validate_name(&name)?;
     let parsed = split_archive_path(&path)?
         .ok_or_else(|| format!("Path is not inside an archive: {path}"))?;
+    ensure_archive_can_modify(parsed.format)?;
     let result = mutate_archive(&parsed.archive_path, parsed.format, |root| {
         let file_path = root.join(&parsed.inner_path).join(&name);
         if let Some(parent) = file_path.parent() {
@@ -168,6 +175,7 @@ pub fn rename_archive_entry(path: String, new_name: String) -> Result<String, St
     let parsed = split_archive_path(&path)?
         .filter(|parsed| !parsed.inner_path.as_os_str().is_empty())
         .ok_or_else(|| format!("Path is not an archive entry: {path}"))?;
+    ensure_archive_can_modify(parsed.format)?;
     let result = mutate_archive(&parsed.archive_path, parsed.format, |root| {
         let source_path = root.join(&parsed.inner_path);
         if !source_path.exists() {
@@ -248,6 +256,7 @@ impl Drop for WorkRootGuard {
 }
 
 fn delete_archive_entry_parsed(parsed: &ArchivePath) -> Result<(), String> {
+    ensure_archive_can_modify(parsed.format)?;
     mutate_archive(&parsed.archive_path, parsed.format, |root| {
         let path = root.join(&parsed.inner_path);
         remove_local_path(&path)?;
@@ -387,6 +396,7 @@ fn mutate_archive<F>(
 where
     F: FnMut(&Path) -> Result<Option<PathBuf>, String>,
 {
+    ensure_archive_can_modify(format)?;
     let work_root = unique_work_dir("mutate")?;
     let new_archive = unique_temp_archive_path(archive_path)?;
     let result = (|| {
@@ -404,6 +414,17 @@ where
     let _ = fs::remove_file(&new_archive);
 
     result
+}
+
+fn ensure_archive_can_modify(format: ArchiveFormat) -> Result<(), String> {
+    if format == ArchiveFormat::Rar {
+        return Err(
+            "RAR archives can be listed and extracted, but SumaFile does not rewrite RAR archives."
+                .to_string(),
+        );
+    }
+
+    Ok(())
 }
 
 fn copy_with_conflict(
@@ -594,15 +615,10 @@ fn rebuild_archive_from_directory(
         ArchiveFormat::Zip => create_zip_archive(&child_paths, &archive_path),
         ArchiveFormat::Tar => create_tar_archive(&child_paths, &archive_path, None),
         ArchiveFormat::TarGz => create_tar_archive(&child_paths, &archive_path, Some("gz")),
-        ArchiveFormat::Rar => {
-            if child_paths.is_empty() {
-                return Err("RAR archives cannot be rewritten with no entries".to_string());
-            }
-            let binary = resolve_rar_binary().ok_or_else(|| {
-                "RAR command not found. Install it from Settings -> RAR Tools.".to_string()
-            })?;
-            create_rar_archive(&child_paths, &archive_path, &binary)
-        }
+        ArchiveFormat::Rar => Err(
+            "RAR archives can be listed and extracted, but SumaFile does not rewrite RAR archives."
+                .to_string(),
+        ),
         ArchiveFormat::SevenZip => {
             if child_paths.is_empty() {
                 return Err("7-Zip archives cannot be rewritten with no entries".to_string());

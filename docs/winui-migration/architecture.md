@@ -168,7 +168,7 @@ sequenceDiagram
   Svc->>Svc: GetNamedPipeClientProcessId == parent-pid
   UI->>Svc: ipc.handshake {protocolVersion:1, authToken via inherited pipe}
   Svc-->>UI: {protocolVersion:1, appVersion, identifier}
-  UI->>Svc: get_app_version / get_home_dir / list_drives
+  UI->>Svc: get_app_version / get_home_dir / list_drives(mode=light)
   UI->>UI: load settings, workspace, bookmarks
   UI->>Svc: load_smart_folders / get_all_tags
 ```
@@ -513,7 +513,7 @@ Rules:
 
 The v1 WinUI service method names are frozen in `ipc/schema/v1/commands.json`:
 
-`get_home_dir`, `select_directory`, `list_drives`, `list_directory`, `create_directory`, `create_file`, `delete_entry`, `move_to_trash`, `rename_entry`, `batch_rename`, `copy_entry`, `move_entry`, `copy_entry_resolved`, `move_entry_resolved`, `get_entry_info`, `watch_directory`, `unwatch_directory`, `copy_with_progress`, `move_with_progress`, `cancel_operation`, `open_file`, `open_external_url`, `reveal_in_folder`, `list_subdirectories`, `calculate_folder_size`, `count_folder_items`, `cancel_folder_size`, `cancel_folder_item_count`, `cancel_count_items`, `read_file_preview`, `generate_thumbnail`, `generate_thumbnails`, `search_files`, `cancel_search`, `get_git_status`, `get_git_repository_status`, `get_git_file_statuses`, `git_stage_paths`, `git_unstage_paths`, `git_discard_paths`, `git_diff_path`, `git_commit`, `git_fetch`, `git_pull`, `git_push`, `list_archive`, `extract_archive`, `create_archive`, `open_terminal`, `open_powershell_admin`, `compute_checksum`, `check_rar_installed`, `prepare_rar_install`, `discard_rar_install`, `install_rar`, `get_app_version`, `get_app_about_info`, `check_for_update`, `install_update`, `open_file_with`, `compare_files`, `disk_cleanup`, `cancel_disk_cleanup`, `duplicate_check`, `cancel_duplicate_check`, `get_image_metadata`, `get_file_metadata`, `show_main_window`, `load_smart_folders`, `save_smart_folder`, `delete_smart_folder`, `get_db_setting`, `set_db_setting`, `get_all_tags`, `create_tag`, `update_tag`, `delete_tag`, `get_tags_for_path`, `set_tags_for_path`, `get_files_with_tag`, `get_all_file_tags`.
+`get_home_dir`, `select_directory`, `list_drives`, `list_directory`, `create_directory`, `create_file`, `delete_entry`, `move_to_trash`, `rename_entry`, `batch_rename`, `copy_entry`, `move_entry`, `copy_entry_resolved`, `move_entry_resolved`, `get_entry_info`, `watch_directory`, `unwatch_directory`, `copy_with_progress`, `move_with_progress`, `cancel_operation`, `open_file`, `open_external_url`, `reveal_in_folder`, `list_subdirectories`, `calculate_folder_size`, `count_folder_items`, `cancel_folder_size`, `cancel_folder_item_count`, `cancel_count_items`, `read_file_preview`, `generate_thumbnail`, `generate_thumbnails`, `search_files`, `cancel_search`, `get_git_status`, `get_git_repository_status`, `get_git_file_statuses`, `git_stage_paths`, `git_unstage_paths`, `git_discard_paths`, `git_diff_path`, `git_commit`, `git_fetch`, `git_pull`, `git_push`, `list_archive`, `extract_archive`, `create_archive`, `open_terminal`, `open_powershell_admin`, `compute_checksum`, `check_rar_installed`, `prepare_rar_install`, `discard_rar_install`, `install_rar`, `get_app_version`, `get_app_about_info`, `check_for_update`, `install_update`, `open_file_with`, `compare_files`, `disk_cleanup`, `cancel_disk_cleanup`, `duplicate_check`, `cancel_duplicate_check`, `get_image_metadata`, `get_file_metadata`, `show_main_window`, `load_smart_folders`, `save_smart_folder`, `delete_smart_folder`, `get_db_setting`, `get_db_settings`, `set_db_setting`, `get_all_tags`, `create_tag`, `update_tag`, `delete_tag`, `get_tags_for_path`, `set_tags_for_path`, `get_files_with_tag`, `get_all_file_tags`.
 
 Compatibility-only or host-owned wrappers (`copy_entry`, `move_entry`, `get_git_status`, `cancel_count_items`, `show_main_window`) are marked in `commands.json`. Do not add new live App/Core callers for those wrappers.
 
@@ -621,7 +621,7 @@ Check in JSON samples produced by Rust serde for: `FileEntry` (without `itemCoun
 5. Service accepts only if `GetNamedPipeClientProcessId == --parent-pid`.
 6. `ipc.handshake` with the inherited-pipe token.
 7. `get_app_version` (contract) and compare to the UI file version (warn, do not refuse, if they drift during dev).
-8. Existing bootstrap: load WinUI settings/workspace/bookmarks/recents; `get_home_dir`; `list_drives`; `load_smart_folders`; `get_all_tags`; apply `startLocation` (`home` / `last` / `custom`); `list_directory` on the start path; `watch_directory`.
+8. Existing bootstrap: load WinUI settings/workspace/bookmarks/recents with `get_db_settings`; use cached `get_home_dir` and light `list_drives`; `load_smart_folders`; `get_all_tags`; apply `startLocation` (`home` / `last` / `custom`); `list_directory` on the start path; `watch_directory`.
 
 ### Service crash
 

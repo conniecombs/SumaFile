@@ -63,7 +63,7 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | --- | --- | --- | --- | --- |
 | `get_home_dir` | `fs_ops` | none | `string` | Startup location, Home navigation |
 | `select_directory` | `fs_ops` (Tauri dialog plugin) | `{ defaultPath }` | `string \| null` | Settings start path, extract-to picker |
-| `list_drives` | `drives` | none | `DriveInfo[]` | Sidebar “This PC”, drive status/retry |
+| `list_drives` | `drives` | `{ mode? }` | `DriveInfo[]` | Sidebar “This PC”, drive status/retry; `mode=light` is used for startup |
 | `list_directory` | `fs_ops` → `dir_list` | `{ path, onChunk }` | `DirectoryListing` | Primary/secondary listing, progressive chunks |
 | `list_subdirectories` | `fs_ops` | `{ path }` | `TreeNode[]` | Sidebar tree expand |
 | `create_directory` | `fs_ops` | `{ path, name }` | `string` | New folder, pack-into-folder |
@@ -119,19 +119,16 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | `duplicate_check` | `cleanup` | `{ directory, minSize?, partialHashBytes?, maxDepth?, excludePatterns?, networkMode?, operationId? }` | `DuplicateCheckResult` | Duplicate checker |
 | `cancel_duplicate_check` | `cleanup` | `{ operationId? }` | `void` | Duplicate checker cancel |
 
-### 2.4 Archives and WinRAR
+### 2.4 Archives
 
 | Command | Rust module | JS args | Result | Used by |
 | --- | --- | --- | --- | --- |
 | `list_archive` | `archive` | `{ path }` | `ArchiveInfo` | Archive viewer |
+| `get_archive_capabilities` | `archive` | none | `ArchiveCapabilities` | Create archive dialog |
 | `extract_archive` | `archive` | `{ archivePath, destination }` | `void` | Extract here / folder / to… |
 | `create_archive` | `archive` | `{ paths, archivePath, format }` | `void` | Compress… |
-| `check_rar_installed` | `rar_installer` | none | `boolean` | Settings tools status |
-| `prepare_rar_install` | `rar_installer` | none | `RarInstallPlan` | Confirm download/install |
-| `discard_rar_install` | `rar_installer` | `{ confirmationToken }` | `void` | Cancel staged installer |
-| `install_rar` | `rar_installer` | `{ confirmationToken }` | `string` | Settings “Install WinRAR” |
 
-Formats that must remain: `zip`, `tar`, `tar.gz` / `tgz`, `rar`. Archive paths can also be navigated as virtual folders through `list_directory` / create helpers.
+Formats that must remain: `zip`, `7z`, `tar`, `tar.gz` / `tgz`, `rar`. RAR is list/extract only. Archive paths can also be navigated as virtual folders through `list_directory` / create helpers.
 
 ### 2.5 Git, terminals, tags, settings, updater
 
@@ -159,6 +156,7 @@ Formats that must remain: `zip`, `tar`, `tar.gz` / `tgz`, `rar`. Archive paths c
 | `get_all_file_tags` | `tags` | none | `Record<string, ColorLabelTag>` | File list color dots |
 | `get_files_with_tag` | `tags` | `{ tagId }` | `string[]` | Filter by label |
 | `get_db_setting` | `db` | `{ key }` | `string \| null` | Wrapper only; no live UI caller |
+| `get_db_settings` | `db` | `{ keys }` | key/value map | Batched WinUI startup settings load |
 | `set_db_setting` | `db` | `{ key, value }` | `void` | Wrapper only; no live UI caller |
 | `get_app_version` | `updater` | none | `string` | Settings updates tab |
 | `get_app_about_info` | `updater` | none | `AppAboutInfo` | About dialog |
@@ -465,8 +463,7 @@ Keep these as the IPC service. Only the Tauri glue (`#[tauri::command]`, `AppHan
 | `watcher.rs` | `notify` watcher + debounce | `app.emit("file-change")` | Medium |
 | `preview.rs` | Preview, thumbs, open, reveal, URL | `tauri_plugin_opener` | Medium |
 | `search.rs` | Name/glob/content search + cancel registry | `search-results-batch`, `search-complete` | Medium |
-| `archive.rs` | zip/tar/tgz/rar list/create/extract + in-archive VFS | Uses `rar_installer` | Light |
-| `rar_installer.rs` | Detect/download/verify/install WinRAR | `reqwest` + confirmation token | Light |
+| `archive.rs` | zip/7z/tar/tgz list/create/extract, RAR list/extract, in-archive VFS, capabilities | Bundled 7-Zip payload for `.7z` | Light |
 | `git.rs` | repository status, file statuses, diff, stage, unstage, discard, commit, fetch, pull, push | `CREATE_NO_WINDOW` on Windows | None |
 | `terminal.rs` | PowerShell / elevated PowerShell | Process spawn | None |
 | `checksum.rs` | MD5/SHA1/SHA256 | None | None |

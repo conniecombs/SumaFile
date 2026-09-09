@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 86;
+    public const int DomainMethodCount = 84;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -58,13 +58,11 @@ public static partial class Protocol
     public const string RevealInFolderMethod = "reveal_in_folder";
     public const string OpenExternalUrlMethod = "open_external_url";
     public const string ListArchiveMethod = "list_archive";
+    public const string GetArchiveCapabilitiesMethod = "get_archive_capabilities";
     public const string ExtractArchiveMethod = "extract_archive";
     public const string CreateArchiveMethod = "create_archive";
-    public const string CheckRarInstalledMethod = "check_rar_installed";
-    public const string PrepareRarInstallMethod = "prepare_rar_install";
-    public const string DiscardRarInstallMethod = "discard_rar_install";
-    public const string InstallRarMethod = "install_rar";
     public const string GetDbSettingMethod = "get_db_setting";
+    public const string GetDbSettingsMethod = "get_db_settings";
     public const string SetDbSettingMethod = "set_db_setting";
     public const string GetGitRepositoryStatusMethod = "get_git_repository_status";
     public const string GitStagePathsMethod = "git_stage_paths";
@@ -154,13 +152,11 @@ public static partial class Protocol
         "reveal_in_folder",
         "open_external_url",
         "list_archive",
+        "get_archive_capabilities",
         "extract_archive",
         "create_archive",
-        "check_rar_installed",
-        "prepare_rar_install",
-        "discard_rar_install",
-        "install_rar",
         "get_db_setting",
+        "get_db_settings",
         "set_db_setting",
         "get_git_repository_status",
         "git_stage_paths",

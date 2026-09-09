@@ -194,7 +194,6 @@ public class WorkspaceSettingsStoreTests
                 IconSize = 48,
                 SortBy = "date",
                 SortAscending = false,
-                PreviewVisible = false,
                 ShowHidden = true,
                 WorkspaceProfileId = WorkspaceProfileTemplates.DeveloperId,
             });
@@ -261,9 +260,15 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal("true", ipc.Settings["preview.renderHtml"]);
         Assert.Equal("true", ipc.Settings["preview.videoPlayback"]);
         Assert.Equal("system", ipc.Settings["theme"]);
+        Assert.Equal(1, ipc.GetDbSettingsCalls);
+        Assert.Equal(0, ipc.GetDbSettingCalls);
+        Assert.Contains("theme", ipc.LastGetDbSettingsKeys);
+        Assert.Contains("previewVisible", ipc.LastGetDbSettingsKeys);
+        Assert.Contains("places.bookmarks", ipc.LastGetDbSettingsKeys);
         Assert.Contains("\"search.focus\"", ipc.Settings[KeyboardShortcutMap.SettingsKey], StringComparison.Ordinal);
         Assert.Contains("\"copy\"", ipc.Settings[CommandSurfaceLayout.SettingsKey], StringComparison.Ordinal);
         Assert.Contains("\"scope\": \"descendants\"", ipc.Settings[FolderViewSettingsDocument.SettingsKey], StringComparison.Ordinal);
+        Assert.DoesNotContain("\"previewVisible\"", ipc.Settings[FolderViewSettingsDocument.SettingsKey], StringComparison.Ordinal);
         Assert.Equal(bookmarks.Single().Path, state.Bookmarks.Single().Path);
         Assert.Equal(recentPaths, state.RecentPaths);
     }

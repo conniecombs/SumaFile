@@ -26,6 +26,8 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
     public string? ServicePath { get; private set; }
     public int ReconnectCount { get; private set; }
 
+    public string? CachedHomeDir => HomeDir;
+    public IReadOnlyList<DriveInfo>? CachedDrives => Drives;
     public ISimpleFileIpc? Client => _client;
 
     public event EventHandler<Exception?>? Disconnected;
@@ -86,6 +88,11 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
     public Task<IReadOnlyList<DriveInfo>> ListDrivesAsync(CancellationToken cancellationToken = default)
     {
         return UseClientAsync(client => client.ListDrivesAsync(cancellationToken), cancellationToken);
+    }
+
+    public Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default)
+    {
+        return UseClientAsync(client => client.ListDrivesLightAsync(cancellationToken), cancellationToken);
     }
 
     public Task<DirectoryListing> ListDirectoryAsync(
@@ -163,9 +170,12 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
 
     private async Task StartUnlockedAsync(CancellationToken cancellationToken)
     {
+        var timer = new StartupTimer("BackendSession.Start");
+        timer.Mark("begin");
         ServicePath = ServiceLocator.FindServiceExecutable()
             ?? throw new FileNotFoundException(
                 "simplefile-service.exe was not found. Build it with `cargo build -p simplefile-service`, or set SIMPLEFILE_SERVICE_PATH.");
+        timer.Mark("service-located", ServicePath);
 
         _authToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         ProcessIdToSessionId((uint)Environment.ProcessId, out var sessionId);
@@ -190,6 +200,7 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
 
         _service = Process.Start(start)
             ?? throw new InvalidOperationException("Failed to start simplefile-service.");
+        timer.Mark("process-started", $"pid={_service.Id}");
         _service.EnableRaisingEvents = true;
         _service.OutputDataReceived += (_, _) => { };
         _service.ErrorDataReceived += OnServiceStderr;
@@ -221,6 +232,7 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
 
         _service.StandardInput.WriteLine(_authToken);
         _service.StandardInput.Close();
+        timer.Mark("auth-token-written");
 
         try
         {
@@ -229,15 +241,23 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
                     Protocol.ConnectTimeout,
                     cancellationToken)
                 .ConfigureAwait(false);
+            timer.Mark("pipe-connected", PipeName);
             _client.Disconnected += OnClientDisconnected;
             Handshake = await _client.HandshakeAsync(_authToken, cancellationToken).ConfigureAwait(false);
+            timer.Mark("handshake", $"methods={Handshake.MethodCount}");
             Health = await _client.HealthAsync(cancellationToken).ConfigureAwait(false);
+            timer.Mark("health");
             AppVersion = await _client.GetAppVersionAsync(cancellationToken).ConfigureAwait(false);
+            timer.Mark("app-version", AppVersion);
             HomeDir = await _client.GetHomeDirAsync(cancellationToken).ConfigureAwait(false);
-            Drives = await _client.ListDrivesAsync(cancellationToken).ConfigureAwait(false);
+            timer.Mark("home-dir", HomeDir);
+            Drives = await _client.ListDrivesLightAsync(cancellationToken).ConfigureAwait(false);
+            timer.Mark("drives-light", $"count={Drives.Count}");
+            timer.Mark("ready");
         }
         catch
         {
+            timer.Mark("failed");
             await StopUnlockedAsync(sendShutdown: false).ConfigureAwait(false);
             throw;
         }

@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,9 +18,13 @@ struct SevenZipEntryBlock {
 }
 
 pub(super) fn resolve_seven_zip_binary() -> Option<String> {
+    if let Some(path) = resolve_bundled_seven_zip_binary() {
+        return Some(path);
+    }
+
     if let Ok(path) = std::env::var("SIMPLEFILE_7Z") {
         let trimmed = path.trim();
-        if !trimmed.is_empty() && std::path::Path::new(trimmed).exists() {
+        if !trimmed.is_empty() && Path::new(trimmed).exists() {
             return Some(trimmed.to_string());
         }
     }
@@ -40,7 +45,7 @@ pub(super) fn resolve_seven_zip_binary() -> Option<String> {
         r"C:\Program Files\7-Zip\7z.exe",
         r"C:\Program Files (x86)\7-Zip\7z.exe",
     ] {
-        if std::path::Path::new(path).exists() {
+        if Path::new(path).exists() {
             return Some(path.to_string());
         }
     }
@@ -50,8 +55,29 @@ pub(super) fn resolve_seven_zip_binary() -> Option<String> {
 
 pub(super) fn require_seven_zip_binary() -> Result<String, String> {
     resolve_seven_zip_binary().ok_or_else(|| {
-        "7-Zip command not found. Install 7-Zip or set SIMPLEFILE_7Z to 7z.exe.".to_string()
+        "7-Zip support is unavailable because the bundled 7z tool was not found. Reinstall SumaFile or set SIMPLEFILE_7Z for a development override.".to_string()
     })
+}
+
+fn resolve_bundled_seven_zip_binary() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    bundled_seven_zip_candidates(exe_dir)
+        .into_iter()
+        .find(|candidate| candidate.exists())
+        .map(|candidate| candidate.to_string_lossy().to_string())
+}
+
+pub(super) fn bundled_seven_zip_candidates(app_dir: &Path) -> Vec<PathBuf> {
+    [
+        app_dir.join("tools").join("7zip").join("7zz.exe"),
+        app_dir.join("tools").join("7zip").join("7z.exe"),
+        app_dir.join("tools").join("7zip").join("7za.exe"),
+        app_dir.join("7zz.exe"),
+        app_dir.join("7z.exe"),
+        app_dir.join("7za.exe"),
+    ]
+    .into()
 }
 
 pub(super) fn list_seven_zip_entries(path: &str) -> Result<Vec<SevenZipEntry>, String> {

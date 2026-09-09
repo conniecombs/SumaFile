@@ -329,7 +329,6 @@ public sealed partial class ExplorerWorkspace
             ColumnWidths = columns.SnapshotWidths(),
             SortBy = pane.SortBy,
             SortAscending = pane.SortAscending,
-            PreviewVisible = Settings.PreviewVisible,
             ShowHidden = ShowHiddenFiles,
             WorkspaceProfileId = ActiveProfileId,
             ColumnPreset = preset,
@@ -421,12 +420,6 @@ public sealed partial class ExplorerWorkspace
             }
 
             columns.RestoreWidths(widths);
-            changed = true;
-        }
-
-        if (options.PreviewVisible.HasValue && Settings.PreviewVisible != options.PreviewVisible.Value)
-        {
-            Settings.PreviewVisible = options.PreviewVisible.Value;
             changed = true;
         }
 

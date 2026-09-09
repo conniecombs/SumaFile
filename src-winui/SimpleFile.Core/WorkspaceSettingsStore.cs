@@ -14,64 +14,113 @@ internal static class WorkspaceSettingsStore
 {
     private const string BookmarksSettingsKey = "places.bookmarks";
     private const string RecentPathsSettingsKey = "places.recents";
+    private static readonly string[] LoadSettingKeys =
+    [
+        "theme",
+        "defaultView",
+        "defaultIconSize",
+        "showHidden",
+        "confirmDelete",
+        "keepFoldersOnTop",
+        "startLocation",
+        "customPath",
+        "lastPath",
+        "openInNewTab",
+        "enableGitIntegration",
+        "progressQueue.visible",
+        "showFolderSizes",
+        "previewVisible",
+        "preview.width",
+        "preview.renderHtml",
+        "preview.videoPlayback",
+        "dualPane.primaryPercent",
+        "dualPane.primaryWidth",
+        "columnPreset",
+        "columnPreset.secondary",
+        "columnWidths",
+        KeyboardShortcutMap.SettingsKey,
+        CommandSurfaceLayout.SettingsKey,
+        FolderViewSettingsDocument.SettingsKey,
+        "sidebar.showQuickAccess",
+        "sidebar.showFolders",
+        "sidebar.showBookmarks",
+        "sidebar.showRecent",
+        "sidebar.showSmartFolders",
+        "sidebar.visible",
+        "sidebar.width",
+        "sidebar.quickAccessCollapsed",
+        "sidebar.myPcCollapsed",
+        "thumbnailCacheMaxMb",
+        "thumbnailCachePath",
+        BookmarksSettingsKey,
+        RecentPathsSettingsKey,
+    ];
 
     public static async Task<WorkspaceSettingsState> LoadAsync(
         ISettingsBackend fileOps,
         CancellationToken cancellationToken)
     {
+        var timer = new StartupTimer("WorkspaceSettingsStore.Load");
+        timer.Mark("begin");
+        var values = await fileOps.GetSettingsAsync(LoadSettingKeys, cancellationToken).ConfigureAwait(false);
+        timer.Mark("settings-batch", $"keys={LoadSettingKeys.Length} returned={values.Count}");
+
         var settings = UiSettings.CreateDefault();
-        settings.Theme = UiSettings.NormalizeTheme(await fileOps.GetSettingAsync("theme", cancellationToken).ConfigureAwait(false));
-        settings.DefaultView = UiSettings.NormalizeDefaultView(await fileOps.GetSettingAsync("defaultView", cancellationToken).ConfigureAwait(false));
-        settings.DefaultIconSize = UiSettings.NormalizeIconSize(await fileOps.GetSettingAsync("defaultIconSize", cancellationToken).ConfigureAwait(false));
-        settings.ShowHidden = await ReadBoolSettingAsync(fileOps, "showHidden", false, cancellationToken).ConfigureAwait(false);
-        settings.ConfirmDelete = await ReadBoolSettingAsync(fileOps, "confirmDelete", true, cancellationToken).ConfigureAwait(false);
-        settings.KeepFoldersOnTop = await ReadBoolSettingAsync(fileOps, "keepFoldersOnTop", true, cancellationToken).ConfigureAwait(false);
+        settings.Theme = UiSettings.NormalizeTheme(ReadSetting(values, "theme"));
+        settings.DefaultView = UiSettings.NormalizeDefaultView(ReadSetting(values, "defaultView"));
+        settings.DefaultIconSize = UiSettings.NormalizeIconSize(ReadSetting(values, "defaultIconSize"));
+        settings.ShowHidden = ReadBoolSetting(values, "showHidden", false);
+        settings.ConfirmDelete = ReadBoolSetting(values, "confirmDelete", true);
+        settings.KeepFoldersOnTop = ReadBoolSetting(values, "keepFoldersOnTop", true);
         settings.StartLocation = UiSettings.NormalizeStartLocation(
-            await fileOps.GetSettingAsync("startLocation", cancellationToken).ConfigureAwait(false));
-        settings.CustomPath = await fileOps.GetSettingAsync("customPath", cancellationToken).ConfigureAwait(false) ?? "";
-        settings.LastPath = await fileOps.GetSettingAsync("lastPath", cancellationToken).ConfigureAwait(false) ?? "";
-        settings.OpenInNewTab = await ReadBoolSettingAsync(fileOps, "openInNewTab", false, cancellationToken).ConfigureAwait(false);
-        settings.EnableGitIntegration = await ReadBoolSettingAsync(fileOps, "enableGitIntegration", true, cancellationToken).ConfigureAwait(false);
-        settings.ProgressQueueVisible = await ReadBoolSettingAsync(fileOps, "progressQueue.visible", false, cancellationToken).ConfigureAwait(false);
-        settings.ShowFolderSizes = await ReadBoolSettingAsync(fileOps, "showFolderSizes", false, cancellationToken).ConfigureAwait(false);
-        settings.PreviewVisible = await ReadBoolSettingAsync(fileOps, "previewVisible", true, cancellationToken).ConfigureAwait(false);
+            ReadSetting(values, "startLocation"));
+        settings.CustomPath = ReadSetting(values, "customPath") ?? "";
+        settings.LastPath = ReadSetting(values, "lastPath") ?? "";
+        settings.OpenInNewTab = ReadBoolSetting(values, "openInNewTab", false);
+        settings.EnableGitIntegration = ReadBoolSetting(values, "enableGitIntegration", true);
+        settings.ProgressQueueVisible = ReadBoolSetting(values, "progressQueue.visible", false);
+        settings.ShowFolderSizes = ReadBoolSetting(values, "showFolderSizes", false);
+        settings.PreviewVisible = ReadBoolSetting(values, "previewVisible", true);
         settings.PreviewWidth = UiSettings.NormalizePreviewWidth(
-            await ReadDoubleSettingAsync(fileOps, "preview.width", UiSettings.PreviewDefaultWidth, cancellationToken).ConfigureAwait(false));
-        settings.PreviewRenderHtml = await ReadBoolSettingAsync(fileOps, "preview.renderHtml", false, cancellationToken).ConfigureAwait(false);
-        settings.PreviewVideoPlaybackEnabled = await ReadBoolSettingAsync(fileOps, "preview.videoPlayback", false, cancellationToken).ConfigureAwait(false);
+            ReadDoubleSetting(values, "preview.width", UiSettings.PreviewDefaultWidth));
+        settings.PreviewRenderHtml = ReadBoolSetting(values, "preview.renderHtml", false);
+        settings.PreviewVideoPlaybackEnabled = ReadBoolSetting(values, "preview.videoPlayback", false);
         settings.DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(
-            await ReadDoubleSettingAsync(fileOps, "dualPane.primaryPercent", UiSettings.DualPaneDefaultPercent, cancellationToken).ConfigureAwait(false));
+            ReadDoubleSetting(values, "dualPane.primaryPercent", UiSettings.DualPaneDefaultPercent));
         settings.DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(
-            await ReadDoubleSettingAsync(fileOps, "dualPane.primaryWidth", 0, cancellationToken).ConfigureAwait(false));
-        var columnPresets = await ReadColumnPresetsAsync(fileOps, cancellationToken).ConfigureAwait(false);
+            ReadDoubleSetting(values, "dualPane.primaryWidth", 0));
+        var columnPresets = ReadColumnPresets(values);
         settings.ColumnPreset = columnPresets.Primary;
         settings.SecondaryColumnPreset = columnPresets.Secondary;
-        var columnWidths = await ReadColumnWidthsAsync(fileOps, cancellationToken).ConfigureAwait(false);
+        var columnWidths = ReadColumnWidths(values);
         settings.ColumnWidths = columnWidths.Primary;
         settings.SecondaryColumnWidths = columnWidths.Secondary;
-        settings.ShortcutOverrides = await ReadShortcutOverridesAsync(fileOps, cancellationToken).ConfigureAwait(false);
+        settings.ShortcutOverrides = ReadShortcutOverrides(values);
         settings.CommandSurface = CommandSurfaceLayout.FromJson(
-            await fileOps.GetSettingAsync(CommandSurfaceLayout.SettingsKey, cancellationToken).ConfigureAwait(false));
+            ReadSetting(values, CommandSurfaceLayout.SettingsKey));
         settings.FolderViewSettings = FolderViewSettingsDocument.FromJson(
-            await fileOps.GetSettingAsync(FolderViewSettingsDocument.SettingsKey, cancellationToken).ConfigureAwait(false));
-        settings.ShowQuickAccess = await ReadBoolSettingAsync(fileOps, "sidebar.showQuickAccess", true, cancellationToken).ConfigureAwait(false);
-        settings.ShowFolderTree = await ReadBoolSettingAsync(fileOps, "sidebar.showFolders", false, cancellationToken).ConfigureAwait(false);
-        settings.ShowBookmarks = await ReadBoolSettingAsync(fileOps, "sidebar.showBookmarks", true, cancellationToken).ConfigureAwait(false);
-        settings.ShowRecentLocations = await ReadBoolSettingAsync(fileOps, "sidebar.showRecent", true, cancellationToken).ConfigureAwait(false);
-        settings.ShowSmartFolders = await ReadBoolSettingAsync(fileOps, "sidebar.showSmartFolders", true, cancellationToken).ConfigureAwait(false);
-        settings.SidebarVisible = await ReadBoolSettingAsync(fileOps, "sidebar.visible", true, cancellationToken).ConfigureAwait(false);
+            ReadSetting(values, FolderViewSettingsDocument.SettingsKey));
+        settings.ShowQuickAccess = ReadBoolSetting(values, "sidebar.showQuickAccess", true);
+        settings.ShowFolderTree = ReadBoolSetting(values, "sidebar.showFolders", false);
+        settings.ShowBookmarks = ReadBoolSetting(values, "sidebar.showBookmarks", true);
+        settings.ShowRecentLocations = ReadBoolSetting(values, "sidebar.showRecent", true);
+        settings.ShowSmartFolders = ReadBoolSetting(values, "sidebar.showSmartFolders", true);
+        settings.SidebarVisible = ReadBoolSetting(values, "sidebar.visible", true);
         settings.SidebarWidth = UiSettings.NormalizeSidebarWidth(
-            await ReadDoubleSettingAsync(fileOps, "sidebar.width", UiSettings.SidebarDefaultWidth, cancellationToken).ConfigureAwait(false));
-        settings.QuickAccessCollapsed = await ReadBoolSettingAsync(fileOps, "sidebar.quickAccessCollapsed", false, cancellationToken).ConfigureAwait(false);
-        settings.MyPcCollapsed = await ReadBoolSettingAsync(fileOps, "sidebar.myPcCollapsed", false, cancellationToken).ConfigureAwait(false);
-        settings.ThumbnailCacheMaxMb = await ReadUIntSettingAsync(fileOps, "thumbnailCacheMaxMb", 500, cancellationToken).ConfigureAwait(false);
-        settings.ThumbnailCachePath = await fileOps.GetSettingAsync("thumbnailCachePath", cancellationToken).ConfigureAwait(false) ?? "";
+            ReadDoubleSetting(values, "sidebar.width", UiSettings.SidebarDefaultWidth));
+        settings.QuickAccessCollapsed = ReadBoolSetting(values, "sidebar.quickAccessCollapsed", false);
+        settings.MyPcCollapsed = ReadBoolSetting(values, "sidebar.myPcCollapsed", false);
+        settings.ThumbnailCacheMaxMb = ReadUIntSetting(values, "thumbnailCacheMaxMb", 500);
+        settings.ThumbnailCachePath = ReadSetting(values, "thumbnailCachePath") ?? "";
+        var bookmarks = ReadBookmarks(values);
+        var recentPaths = ReadRecentPaths(values);
+        timer.Mark("parsed");
 
         return new WorkspaceSettingsState
         {
             Settings = settings,
-            Bookmarks = await ReadBookmarksAsync(fileOps, cancellationToken).ConfigureAwait(false),
-            RecentPaths = await ReadRecentPathsAsync(fileOps, cancellationToken).ConfigureAwait(false),
+            Bookmarks = bookmarks,
+            RecentPaths = recentPaths,
         };
     }
 
@@ -168,25 +217,24 @@ internal static class WorkspaceSettingsStore
         Dictionary<string, double> Primary,
         Dictionary<string, double> Secondary);
 
-    private static async Task<PaneColumnPresets> ReadColumnPresetsAsync(
-        ISettingsBackend fileOps,
-        CancellationToken cancellationToken)
+    private static string? ReadSetting(IReadOnlyDictionary<string, string?> values, string key) =>
+        values.TryGetValue(key, out var value) ? value : null;
+
+    private static PaneColumnPresets ReadColumnPresets(IReadOnlyDictionary<string, string?> values)
     {
         var primary = UiSettings.NormalizeColumnPreset(
-            await fileOps.GetSettingAsync("columnPreset", cancellationToken).ConfigureAwait(false));
-        var secondaryRaw = await fileOps.GetSettingAsync("columnPreset.secondary", cancellationToken).ConfigureAwait(false);
+            ReadSetting(values, "columnPreset"));
+        var secondaryRaw = ReadSetting(values, "columnPreset.secondary");
         var secondary = string.IsNullOrWhiteSpace(secondaryRaw)
             ? primary
             : UiSettings.NormalizeColumnPreset(secondaryRaw);
         return new PaneColumnPresets(primary, secondary);
     }
 
-    private static async Task<PaneColumnWidths> ReadColumnWidthsAsync(
-        ISettingsBackend fileOps,
-        CancellationToken cancellationToken)
+    private static PaneColumnWidths ReadColumnWidths(IReadOnlyDictionary<string, string?> values)
     {
         var empty = () => new Dictionary<string, double>(StringComparer.Ordinal);
-        var raw = await fileOps.GetSettingAsync("columnWidths", cancellationToken).ConfigureAwait(false);
+        var raw = ReadSetting(values, "columnWidths");
         if (string.IsNullOrWhiteSpace(raw))
         {
             return new PaneColumnWidths(empty(), empty());
@@ -257,19 +305,16 @@ internal static class WorkspaceSettingsStore
     private static Dictionary<string, double> CloneWidths(IReadOnlyDictionary<string, double> source) =>
         new(source, StringComparer.Ordinal);
 
-    private static async Task<Dictionary<string, List<string>>> ReadShortcutOverridesAsync(
-        ISettingsBackend fileOps,
-        CancellationToken cancellationToken)
+    private static Dictionary<string, List<string>> ReadShortcutOverrides(
+        IReadOnlyDictionary<string, string?> values)
     {
-        var raw = await fileOps.GetSettingAsync(KeyboardShortcutMap.SettingsKey, cancellationToken).ConfigureAwait(false);
+        var raw = ReadSetting(values, KeyboardShortcutMap.SettingsKey);
         return KeyboardShortcutMap.ReadOverridesJson(raw);
     }
 
-    private static async Task<List<BookmarkItem>> ReadBookmarksAsync(
-        ISettingsBackend fileOps,
-        CancellationToken cancellationToken)
+    private static List<BookmarkItem> ReadBookmarks(IReadOnlyDictionary<string, string?> values)
     {
-        var raw = await fileOps.GetSettingAsync(BookmarksSettingsKey, cancellationToken).ConfigureAwait(false);
+        var raw = ReadSetting(values, BookmarksSettingsKey);
         if (string.IsNullOrWhiteSpace(raw))
         {
             return [];
@@ -304,11 +349,9 @@ internal static class WorkspaceSettingsStore
         }
     }
 
-    private static async Task<List<string>> ReadRecentPathsAsync(
-        ISettingsBackend fileOps,
-        CancellationToken cancellationToken)
+    private static List<string> ReadRecentPaths(IReadOnlyDictionary<string, string?> values)
     {
-        var raw = await fileOps.GetSettingAsync(RecentPathsSettingsKey, cancellationToken).ConfigureAwait(false);
+        var raw = ReadSetting(values, RecentPathsSettingsKey);
         if (string.IsNullOrWhiteSpace(raw))
         {
             return [];
@@ -342,13 +385,12 @@ internal static class WorkspaceSettingsStore
         }
     }
 
-    private static async Task<bool> ReadBoolSettingAsync(
-        ISettingsBackend fileOps,
+    private static bool ReadBoolSetting(
+        IReadOnlyDictionary<string, string?> values,
         string key,
-        bool fallback,
-        CancellationToken cancellationToken)
+        bool fallback)
     {
-        var raw = await fileOps.GetSettingAsync(key, cancellationToken).ConfigureAwait(false);
+        var raw = ReadSetting(values, key);
         if (string.IsNullOrWhiteSpace(raw))
         {
             return fallback;
@@ -367,13 +409,12 @@ internal static class WorkspaceSettingsStore
         return fallback;
     }
 
-    private static async Task<double> ReadDoubleSettingAsync(
-        ISettingsBackend fileOps,
+    private static double ReadDoubleSetting(
+        IReadOnlyDictionary<string, string?> values,
         string key,
-        double fallback,
-        CancellationToken cancellationToken)
+        double fallback)
     {
-        var raw = await fileOps.GetSettingAsync(key, cancellationToken).ConfigureAwait(false);
+        var raw = ReadSetting(values, key);
         if (string.IsNullOrWhiteSpace(raw))
         {
             return fallback;
@@ -384,13 +425,12 @@ internal static class WorkspaceSettingsStore
             : fallback;
     }
 
-    private static async Task<uint> ReadUIntSettingAsync(
-        ISettingsBackend fileOps,
+    private static uint ReadUIntSetting(
+        IReadOnlyDictionary<string, string?> values,
         string key,
-        uint fallback,
-        CancellationToken cancellationToken)
+        uint fallback)
     {
-        var raw = await fileOps.GetSettingAsync(key, cancellationToken).ConfigureAwait(false);
+        var raw = ReadSetting(values, key);
         if (string.IsNullOrWhiteSpace(raw))
         {
             return fallback;

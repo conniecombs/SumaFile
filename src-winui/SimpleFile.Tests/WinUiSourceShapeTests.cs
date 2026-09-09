@@ -64,6 +64,23 @@ public class WinUiSourceShapeTests
             fileRowView.Replace("\r\n", "\n"));
         Assert.Contains("Width = new GridLength(column.Width)", fileRowView);
     }
+
+    [Fact]
+    public void DetailsColumns_RefreshAndClampAfterPaneResize()
+    {
+        var root = FindRepoRoot();
+        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
+
+        Assert.Contains("PrimaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
+        Assert.Contains("SecondaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
+        Assert.Contains("QueuePaneSizeColumnRefresh", mainWindow);
+        Assert.Contains("DispatcherQueue.CreateTimer()", mainWindow);
+        Assert.Contains("ClampDetailsHorizontalScroll(PaneId.Primary)", mainWindow);
+        Assert.Contains("ClampDetailsHorizontalScroll(PaneId.Secondary)", mainWindow);
+        Assert.Contains("scroller.ScrollableWidth", mainWindow);
+        Assert.Contains("header.ChangeView(nextOffset", mainWindow);
+    }
+
     [Fact]
     public void TileLayout_StacksLargeIconsAndKeepsContainerWidthDynamic()
     {
@@ -341,6 +358,21 @@ public class WinUiSourceShapeTests
             .Select(item => $"{Path.GetFileName(item.file)}:{item.index + 1}: {item.line.Trim()}")
             .ToList();
         Assert.Empty(staleBrushReferences);
+    }
+
+    [Fact]
+    public void CreateArchiveDialog_UsesCapabilitiesAndDoesNotOfferRarCreation()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var dialogXaml = File.ReadAllText(Path.Combine(appRoot, "CreateArchiveDialog.xaml"));
+        var dialogCode = File.ReadAllText(Path.Combine(appRoot, "CreateArchiveDialog.xaml.cs"));
+        var dialogService = File.ReadAllText(Path.Combine(appRoot, "FileOperationDialogService.cs"));
+
+        Assert.DoesNotContain("RAR (.rar)", dialogXaml);
+        Assert.Contains("SetArchiveFormats", dialogCode);
+        Assert.Contains("capabilities.Where(format => format.CanCreate)", dialogCode);
+        Assert.Contains("GetArchiveCapabilitiesAsync", dialogService);
     }
 
     [Fact]

@@ -325,6 +325,24 @@ fn settings_methods_round_trip_through_metadata_db() {
     };
     assert!(missing_response.result.unwrap().is_null());
 
+    let batch = dispatch(
+        &mut state,
+        &request(
+            "get_db_settings",
+            8,
+            json!({ "keys": ["winui.layout", "missing"] }),
+        ),
+    );
+    let Dispatch::Reply(batch_response) = batch else {
+        panic!("expected batch settings reply");
+    };
+    let batch_result = batch_response.result.unwrap();
+    assert_eq!(
+        batch_result["winui.layout"].as_str(),
+        Some("{\"dualPane\":true}")
+    );
+    assert!(batch_result["missing"].is_null());
+
     let _ = fs::remove_file(db_path);
 }
 
@@ -523,13 +541,13 @@ fn leftover_domain_methods_are_wired() {
         ..SessionState::default()
     };
 
-    // Methods with no required params. Skip prepare_rar_install (downloads)
-    // and check_for_update (hits the network unless a manifest is injected).
+    // Methods with no required params. Skip check_for_update (hits the network
+    // unless a manifest is injected).
     for (id, method) in [
         (20u64, "get_all_tags"),
         (21, "get_all_file_tags"),
         (22, "load_smart_folders"),
-        (23, "check_rar_installed"),
+        (23, "get_archive_capabilities"),
         (24, "get_app_version"),
         (25, "get_app_about_info"),
         (26, "cancel_disk_cleanup"),
@@ -561,8 +579,6 @@ fn leftover_domain_methods_are_wired() {
         (58, "git_push"),
         (59, "disk_cleanup"),
         (60, "duplicate_check"),
-        (61, "discard_rar_install"),
-        (62, "install_rar"),
         (63, "open_terminal"),
         (64, "open_powershell_admin"),
     ] {
@@ -703,11 +719,20 @@ fn tags_and_smart_folders_round_trip_through_core() {
     assert!(git_status_response.error.is_none());
     assert_eq!(git_status_response.result.unwrap()["is_repo"], false);
 
-    let rar = dispatch(&mut state, &request("check_rar_installed", 67, json!({})));
-    let Dispatch::Reply(rar_response) = rar else {
-        panic!("expected check_rar_installed reply");
+    let capabilities = dispatch(
+        &mut state,
+        &request("get_archive_capabilities", 67, json!({})),
+    );
+    let Dispatch::Reply(capabilities_response) = capabilities else {
+        panic!("expected get_archive_capabilities reply");
     };
-    assert!(rar_response.result.unwrap().is_boolean());
+    let formats = capabilities_response.result.unwrap()["formats"]
+        .as_array()
+        .expect("formats array")
+        .clone();
+    assert!(formats.iter().any(|format| {
+        format["format"] == "rar" && format["can_create"] == false && format["can_extract"] == true
+    }));
 
     let _ = fs::remove_file(db_path);
     let _ = fs::remove_dir_all(app_data);

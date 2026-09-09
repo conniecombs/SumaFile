@@ -294,18 +294,8 @@ pub struct GitCommandResult {
 }
 
 // ============================================================================
-// App / Installer Types
+// App Types
 // ============================================================================
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct RarInstallPlan {
-    pub confirmation_token: String,
-    pub download_url: String,
-    pub file_name: String,
-    pub installer_path: String,
-    pub publisher: String,
-    pub sha256: String,
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppAboutInfo {
@@ -398,4 +388,21 @@ pub struct ArchiveInfo {
     pub unsafe_entries: Vec<String>,
     pub total_size: u64,
     pub compressed_size: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArchiveFormatCapability {
+    pub format: String,
+    pub extension: String,
+    pub can_list: bool,
+    pub can_extract: bool,
+    pub can_create: bool,
+    pub can_modify: bool,
+    pub engine: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArchiveCapabilities {
+    pub formats: Vec<ArchiveFormatCapability>,
 }

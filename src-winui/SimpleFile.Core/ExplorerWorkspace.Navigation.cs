@@ -1,4 +1,5 @@
 using SimpleFile.Ipc;
+using DriveInfo = SimpleFile.Ipc.DriveInfo;
 
 namespace SimpleFile.Core;
 
@@ -7,35 +8,23 @@ public sealed partial class ExplorerWorkspace
 
     public async Task RefreshDrivesAsync(bool quiet = false, CancellationToken cancellationToken = default)
     {
+        await RefreshDrivesAsync(quiet, cancellationToken, lightweight: false).ConfigureAwait(false);
+    }
+
+    private async Task RefreshDrivesAsync(
+        bool quiet,
+        CancellationToken cancellationToken,
+        bool lightweight)
+    {
         try
         {
-            var drives = await _backend.ListDrivesAsync(cancellationToken).ConfigureAwait(false);
+            var drives = lightweight
+                ? await _backend.ListDrivesLightAsync(cancellationToken).ConfigureAwait(false)
+                : await _backend.ListDrivesAsync(cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             lock (_gate)
             {
-                if (drives.Count > 0)
-                {
-                    _drives = [.. drives];
-                }
-                else
-                {
-                    var fallback = PathRules.CreateFallbackDriveForPath(
-                        string.IsNullOrEmpty(HomePath) ? Primary.Path : HomePath);
-                    _drives = fallback is null ? [] : [fallback];
-                }
-
-                if (!quiet)
-                {
-                    var offline = _drives.Count(drive =>
-                    {
-                        var status = DrivePresentation.Status(drive);
-                        return status is "offline" or "stale";
-                    });
-                    StatusMessage = offline > 0
-                        ? $"Drives refreshed · {offline} network mapping{(offline == 1 ? "" : "s")} need attention"
-                        : "Drives refreshed";
-                    ErrorMessage = null;
-                }
+                ApplyDrivesLocked(drives, quiet);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -50,6 +39,43 @@ public sealed partial class ExplorerWorkspace
         }
 
         RaiseChanged();
+    }
+
+    private void SeedCachedDrives(IReadOnlyList<DriveInfo> drives, bool quiet)
+    {
+        lock (_gate)
+        {
+            ApplyDrivesLocked(drives, quiet);
+        }
+
+        RaiseChanged();
+    }
+
+    private void ApplyDrivesLocked(IReadOnlyList<DriveInfo> drives, bool quiet)
+    {
+        if (drives.Count > 0)
+        {
+            _drives = [.. drives];
+        }
+        else
+        {
+            var fallback = PathRules.CreateFallbackDriveForPath(
+                string.IsNullOrEmpty(HomePath) ? Primary.Path : HomePath);
+            _drives = fallback is null ? [] : [fallback];
+        }
+
+        if (!quiet)
+        {
+            var offline = _drives.Count(drive =>
+            {
+                var status = DrivePresentation.Status(drive);
+                return status is "offline" or "stale";
+            });
+            StatusMessage = offline > 0
+                ? $"Drives refreshed · {offline} network mapping{(offline == 1 ? "" : "s")} need attention"
+                : "Drives refreshed";
+            ErrorMessage = null;
+        }
     }
 
     public Task NavigateToAsync(

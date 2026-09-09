@@ -23,6 +23,12 @@ pub(super) struct PathParams {
     pub(super) path: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct DriveListParams {
+    #[serde(default)]
+    pub(super) mode: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ListDirectoryParams {
     pub(super) path: String,
@@ -191,6 +197,11 @@ pub(super) struct SettingKeyParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct SettingKeysParams {
+    pub(super) keys: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct SettingValueParams {
     pub(super) key: String,
     pub(super) value: String,
@@ -249,12 +260,6 @@ pub(super) struct DiskCleanupParams {
     pub(super) size_threshold: Option<u64>,
     #[serde(rename = "operationId")]
     pub(super) operation_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ConfirmationTokenParams {
-    #[serde(rename = "confirmationToken")]
-    pub(super) confirmation_token: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -321,4 +326,20 @@ pub(super) fn parse_params<T: for<'de> Deserialize<'de>>(
             format!("invalid params: {error}"),
         )
     })
+}
+
+pub(super) fn parse_nullable_params<T>(request: &JsonRpcRequest) -> Result<T, JsonRpcResponse>
+where
+    T: for<'de> Deserialize<'de> + Default,
+{
+    match request.params.clone() {
+        Some(Value::Null) | None => Ok(T::default()),
+        Some(params) => serde_json::from_value(params).map_err(|error| {
+            JsonRpcResponse::error(
+                request.id.clone(),
+                ERR_INVALID_PARAMS,
+                format!("invalid params: {error}"),
+            )
+        }),
+    }
 }

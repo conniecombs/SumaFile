@@ -191,6 +191,7 @@ public sealed partial class MainWindow
         PrimaryPane.PathLostFocus += OnPrimaryPathLostFocus;
         PrimaryPane.PathTextChanged += OnPrimaryPathTextChanged;
         PrimaryPane.EditPath += OnEditPrimaryPath;
+        PrimaryPaneRoot.SizeChanged += OnPaneRootSizeChanged;
         PrimaryPane.MarqueePressed += OnPrimaryMarqueePressed;
         PrimaryPane.MarqueePointerMoved += OnMarqueePointerMoved;
         PrimaryPane.MarqueePointerReleased += OnMarqueePointerReleased;
@@ -211,6 +212,7 @@ public sealed partial class MainWindow
         SecondaryPane.PathLostFocus += OnSecondaryPathLostFocus;
         SecondaryPane.PathTextChanged += OnSecondaryPathTextChanged;
         SecondaryPane.EditPath += OnEditSecondaryPath;
+        SecondaryPaneRoot.SizeChanged += OnPaneRootSizeChanged;
         SecondaryPane.MarqueePressed += OnSecondaryMarqueePressed;
         SecondaryPane.MarqueePointerMoved += OnMarqueePointerMoved;
         SecondaryPane.MarqueePointerReleased += OnMarqueePointerReleased;

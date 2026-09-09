@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 86,
+  "domainMethodCount": 84,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -23,7 +23,11 @@
       "result": "string?",
       "hostOwned": true
     },
-    "list_drives": { "params": null, "result": "DriveInfo[]" },
+    "list_drives": {
+      "params": { "mode": "DriveListMode optional" },
+      "result": "DriveInfo[]",
+      "notes": "mode=light skips mapped-network probes for startup; omit mode for a full refresh."
+    },
     "list_directory": {
       "params": {
         "path": "string",
@@ -129,16 +133,14 @@
     "reveal_in_folder": { "params": { "path": "string" }, "result": "null" },
     "open_external_url": { "params": { "url": "string" }, "result": "null" },
     "list_archive": { "params": { "path": "string" }, "result": "ArchiveInfo" },
+    "get_archive_capabilities": { "params": null, "result": "ArchiveCapabilities" },
     "extract_archive": { "params": { "archivePath": "string", "destination": "string" }, "result": "null" },
     "create_archive": {
       "params": { "paths": "string[]", "archivePath": "string", "format": "ArchiveFormat" },
       "result": "null"
     },
-    "check_rar_installed": { "params": null, "result": "boolean" },
-    "prepare_rar_install": { "params": null, "result": "RarInstallPlan" },
-    "discard_rar_install": { "params": { "confirmationToken": "string" }, "result": "null" },
-    "install_rar": { "params": { "confirmationToken": "string" }, "result": "string" },
     "get_db_setting": { "params": { "key": "string" }, "result": "string?" },
+    "get_db_settings": { "params": { "keys": "string[]" }, "result": "SettingMap" },
     "set_db_setting": { "params": { "key": "string", "value": "string" }, "result": "null" },
     "get_git_repository_status": { "params": { "path": "string" }, "result": "GitRepositoryStatus" },
     "git_stage_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },

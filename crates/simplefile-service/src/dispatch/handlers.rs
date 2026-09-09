@@ -1,9 +1,10 @@
+use super::params::parse_nullable_params;
 use super::params::{
-    parse_params, BatchRenameParams, CompareParams, ConfirmationTokenParams, CopyMoveParams,
-    CreateArchiveParams, ExternalUrlParams, ExtractArchiveParams, GetFilesWithTagParams,
+    parse_params, BatchRenameParams, CompareParams, CopyMoveParams, CreateArchiveParams,
+    DriveListParams, ExternalUrlParams, ExtractArchiveParams, GetFilesWithTagParams,
     GitCommitParams, GitDiffPathParams, GitPathsParams, HandshakeParams, NameParams,
     OpenWithParams, PathParams, PathsParams, PreviewParams, RenameParams, ResolvedCopyMoveParams,
-    SetTagsForPathParams, SettingKeyParams, SettingValueParams, ShortcutParams,
+    SetTagsForPathParams, SettingKeyParams, SettingKeysParams, SettingValueParams, ShortcutParams,
     SmartFolderIdParams, SmartFolderParams, TagCreateParams, TagForPathParams, TagIdParams,
     TagUpdateParams,
 };
@@ -55,11 +56,29 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         }
         METHOD_INSTALL_UPDATE => async_ops::install_update(request),
         METHOD_GET_HOME_DIR => reply_result(request, dirs_home()),
-        METHOD_LIST_DRIVES => reply_result(request, simplefile_core::drives::list_drives()),
+        METHOD_LIST_DRIVES => match parse_nullable_params::<DriveListParams>(request) {
+            Ok(p) if p.mode.as_deref() == Some("light") => {
+                reply_result(request, simplefile_core::drives::list_drives_light())
+            }
+            Ok(_) => reply_result(request, simplefile_core::drives::list_drives()),
+            Err(response) => Dispatch::Reply(response),
+        },
         METHOD_GET_DB_SETTING => match parse_params::<SettingKeyParams>(request) {
             Ok(p) => match simplefile_core::settings_store::get_db_setting(p.key) {
                 Ok(value) => {
                     Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(value)))
+                }
+                Err(message) => Dispatch::Reply(JsonRpcResponse::application_error(
+                    request.id.clone(),
+                    message,
+                )),
+            },
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_GET_DB_SETTINGS => match parse_params::<SettingKeysParams>(request) {
+            Ok(p) => match simplefile_core::settings_store::get_db_settings(p.keys) {
+                Ok(values) => {
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(values)))
                 }
                 Err(message) => Dispatch::Reply(JsonRpcResponse::application_error(
                     request.id.clone(),
@@ -421,6 +440,10 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             },
             Err(r) => Dispatch::Reply(r),
         },
+        METHOD_GET_ARCHIVE_CAPABILITIES => reply_ok(
+            request,
+            simplefile_core::archive::get_archive_capabilities(),
+        ),
         METHOD_EXTRACT_ARCHIVE => match parse_params::<ExtractArchiveParams>(request) {
             Ok(p) => match simplefile_core::archive::extract_archive(p.archive_path, p.destination)
             {
@@ -442,30 +465,6 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                     }
                 }
             }
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_CHECK_RAR_INSTALLED => {
-            reply_ok(request, simplefile_core::rar::check_rar_installed())
-        }
-        METHOD_PREPARE_RAR_INSTALL => {
-            reply_result(request, simplefile_core::rar::prepare_rar_install())
-        }
-        METHOD_DISCARD_RAR_INSTALL => match parse_params::<ConfirmationTokenParams>(request) {
-            Ok(p) => match simplefile_core::rar::discard_rar_install(p.confirmation_token) {
-                Ok(()) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null)),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
-                }
-            },
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_INSTALL_RAR => match parse_params::<ConfirmationTokenParams>(request) {
-            Ok(p) => match simplefile_core::rar::install_rar(p.confirmation_token) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
-                }
-            },
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_READ_FILE_PREVIEW => match parse_params::<PreviewParams>(request) {

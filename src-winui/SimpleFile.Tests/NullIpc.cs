@@ -42,6 +42,8 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<IReadOnlyList<DriveInfo>> ListDrivesAsync(CancellationToken cancellationToken = default) => throw NotConfigured();
 
+    public virtual Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default) => throw NotConfigured();
+
     public virtual Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default) => throw NotConfigured();
 
     public virtual Task ShowMainWindowAsync(CancellationToken cancellationToken = default) => throw NotConfigured();
@@ -49,6 +51,8 @@ internal abstract class NullIpc : ISimpleFileIpc
     public virtual Task ShutdownAsync(CancellationToken cancellationToken = default) => throw NotConfigured();
 
     public virtual Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task SetDbSettingAsync(string key, string value, CancellationToken ct = default) => throw NotConfigured();
 
@@ -102,6 +106,8 @@ internal abstract class NullIpc : ISimpleFileIpc
     public virtual Task OpenExternalUrlAsync(string url, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<ArchiveInfo> ListArchiveAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default) => throw NotConfigured();
 
@@ -170,14 +176,6 @@ internal abstract class NullIpc : ISimpleFileIpc
     public virtual Task CancelCountItemsAsync(CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task CancelFolderMetricsAsync(CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<bool> CheckRarInstalledAsync(CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<CleanupResult> DiskCleanupAsync(
         string directory,

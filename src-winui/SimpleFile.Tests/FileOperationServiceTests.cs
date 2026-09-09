@@ -768,6 +768,7 @@ public class FileOperationServiceTests
     public async Task ArchiveMethods_CallTypedIpc()
     {
         string? listed = null;
+        bool capabilitiesRequested = false;
         (string Archive, string Destination)? extracted = null;
         (string[] Paths, string Archive, string Format)? created = null;
         var stub = new ConfigurableIpc
@@ -787,6 +788,22 @@ public class FileOperationServiceTests
                     CompressedSize = 4,
                 });
             },
+            GetArchiveCapabilitiesHandler = ct =>
+            {
+                capabilitiesRequested = true;
+                return Task.FromResult(new ArchiveCapabilities
+                {
+                    Formats =
+                    [
+                        new ArchiveFormatCapability
+                        {
+                            Format = "zip",
+                            Extension = ".zip",
+                            CanCreate = true,
+                        },
+                    ],
+                });
+            },
             ExtractArchiveHandler = (archive, destination, ct) =>
             {
                 extracted = (archive, destination);
@@ -801,11 +818,14 @@ public class FileOperationServiceTests
         var service = new FileOperationService(stub);
 
         var info = await service.ListArchiveAsync(@"C:\pack.zip");
+        var capabilities = await service.GetArchiveCapabilitiesAsync();
         await service.ExtractArchiveAsync(@"C:\pack.zip", @"C:\out");
         await service.CreateArchiveAsync([@"C:\a.txt", @"C:\b.txt"], @"C:\pack.zip", "zip");
 
         Assert.Equal(@"C:\pack.zip", listed);
         Assert.Equal("notes.txt", info.Entries[0].Name);
+        Assert.True(capabilitiesRequested);
+        Assert.Equal("zip", capabilities.Formats[0].Format);
         Assert.Equal((@"C:\pack.zip", @"C:\out"), extracted);
         Assert.NotNull(created);
         Assert.Equal([@"C:\a.txt", @"C:\b.txt"], created.Value.Paths);

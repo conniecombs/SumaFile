@@ -307,9 +307,6 @@ public sealed class FolderViewOptions
     [JsonPropertyName("groupAscending")]
     public bool? GroupAscending { get; set; }
 
-    [JsonPropertyName("previewVisible")]
-    public bool? PreviewVisible { get; set; }
-
     [JsonPropertyName("showHidden")]
     public bool? ShowHidden { get; set; }
 

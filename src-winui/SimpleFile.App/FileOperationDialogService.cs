@@ -724,6 +724,15 @@ internal sealed partial class FileOperationDialogService
         }
 
         var dialog = new CreateArchiveDialog { XamlRoot = _xamlRoot() };
+        try
+        {
+            var capabilities = await fileOps.GetArchiveCapabilitiesAsync().ConfigureAwait(true);
+            dialog.SetArchiveFormats(capabilities.Formats);
+        }
+        catch
+        {
+            // Fall back to the built-in creatable formats; the backend still validates requests.
+        }
         dialog.SelectedPaths = selected.Select(entry => entry.Path).ToArray();
         dialog.SelectedNames = selected.Select(entry => entry.Name).ToArray();
         dialog.TargetDirectory = workspace.Active.Path;
