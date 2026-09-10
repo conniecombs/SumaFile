@@ -67,8 +67,13 @@ public sealed class DetailsFileListView : UserControl
     private readonly List<FileRow> _rows = [];
     private readonly List<FileRow> _selectedRows = [];
     private readonly Dictionary<FileRow, Border> _containers = new();
+    private readonly Dictionary<FileRow, FileRowView> _rowViews = new();
+    private IReadOnlyList<FileListColumn> _columns = [];
     private INotifyCollectionChanged? _observableItems;
     private IEnumerable? _itemsSource;
+    private int _iconSize = UiSettings.NormalizeIconSize((int?)null);
+    private double _horizontalOffset;
+    private double _viewportWidth = 1;
     private int _anchorIndex = -1;
     private bool _suppressSelectionChanged;
 
@@ -147,6 +152,40 @@ public sealed class DetailsFileListView : UserControl
 
     public int ItemCount => _rows.Count;
 
+    public void ApplyDetailsLayout(
+        ColumnLayout columns,
+        int iconSize,
+        double viewportWidth,
+        double horizontalOffset)
+    {
+        _columns = columns.VisibleColumns
+            .Select(column => new FileListColumn(
+                column.Id,
+                column.Label,
+                column.Sort,
+                column.Width,
+                column.MinWidth,
+                column.MaxWidth))
+            .ToArray();
+        _iconSize = UiSettings.NormalizeIconSize(iconSize);
+        _viewportWidth = Math.Max(1, viewportWidth);
+        _horizontalOffset = Math.Max(0, horizontalOffset);
+        _rowsHost.Width = _viewportWidth;
+
+        foreach (var (row, container) in _containers)
+        {
+            container.Width = _viewportWidth;
+            if (_rowViews.TryGetValue(row, out var rowView))
+            {
+                ApplyRowLayout(rowView);
+            }
+        }
+
+        _rowsHost.InvalidateMeasure();
+        _scrollViewer.InvalidateMeasure();
+        InvalidateMeasure();
+    }
+
     public void ClearSelection()
     {
         SetSelection([], notify: true);
@@ -209,6 +248,7 @@ public sealed class DetailsFileListView : UserControl
         var selectedPaths = _selectedRows.Select(row => row.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         _rows.Clear();
         _containers.Clear();
+        _rowViews.Clear();
         _rowsHost.Children.Clear();
 
         if (_itemsSource is not null)
@@ -238,6 +278,7 @@ public sealed class DetailsFileListView : UserControl
     private void AddRow(FileRow row)
     {
         var rowView = new FileRowView { Row = row };
+        ApplyRowLayout(rowView);
         rowView.ContextRequested += (_, args) => RaiseContextRequested(row, rowView, args);
 
         var container = new Border
@@ -245,6 +286,7 @@ public sealed class DetailsFileListView : UserControl
             Child = rowView,
             Tag = row,
             MinHeight = 30,
+            Width = _viewportWidth,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Background = TransparentBrush(),
             CanDrag = true,
@@ -254,8 +296,16 @@ public sealed class DetailsFileListView : UserControl
         container.RightTapped += OnRowRightTapped;
         container.DragStarting += OnRowDragStarting;
         container.DropCompleted += (_, _) => RowsDragCompleted?.Invoke(this, EventArgs.Empty);
+        _rowViews[row] = rowView;
         _containers[row] = container;
         _rowsHost.Children.Add(container);
+    }
+
+    private void ApplyRowLayout(FileRowView rowView)
+    {
+        rowView.Width = _viewportWidth;
+        rowView.HorizontalAlignment = HorizontalAlignment.Left;
+        rowView.ApplyDetailsPresentation(_columns, _iconSize, _horizontalOffset);
     }
 
     private void OnRowPointerPressed(object sender, PointerRoutedEventArgs e)

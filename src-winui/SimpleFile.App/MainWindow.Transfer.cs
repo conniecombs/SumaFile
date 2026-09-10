@@ -1099,18 +1099,6 @@ public sealed partial class MainWindow
             IsGitIntegrationEnabled);
     }
 
-    private static void ApplyDetailsItemWidths(ListView list, double width)
-    {
-        for (var index = 0; index < list.Items.Count; index++)
-        {
-            if (list.ContainerFromIndex(index) is ListViewItem item)
-            {
-                item.MinWidth = 0;
-                item.Width = width;
-            }
-        }
-    }
-
     private static void ClearDetailsItemWidths(ListView list)
     {
         for (var index = 0; index < list.Items.Count; index++)
@@ -1131,8 +1119,9 @@ public sealed partial class MainWindow
         var viewport = pane == PaneId.Secondary ? SecondaryFileViewport : PrimaryFileViewport;
         var header = pane == PaneId.Secondary ? SecondaryColumnHeader : PrimaryColumnHeader;
         var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
+        var detailsList = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
         var paneWidth = pane == PaneId.Secondary ? SecondaryPaneRoot.ActualWidth : PrimaryPaneRoot.ActualWidth;
-        var viewportWidth = Math.Max(1, viewport.ActualWidth > 0 ? viewport.ActualWidth : paneWidth);
+        var viewportWidth = Math.Max(1, FileViewportWidthForPane(pane, paneWidth));
 
         if (!details)
         {
@@ -1146,17 +1135,16 @@ public sealed partial class MainWindow
             return;
         }
 
-        var contentWidth = columns.VisibleWidth + list.Padding.Left + list.Padding.Right;
+        var contentWidth = DetailsContentWidth(columns);
         var maxOffset = Math.Max(0, contentWidth - viewportWidth);
         var nextOffset = Math.Min(scrollBar.Value, maxOffset);
         surface.HorizontalAlignment = HorizontalAlignment.Stretch;
-        SetWidthIfChanged(list, viewportWidth);
         ConfigureDetailsHorizontalScrollBar(scrollBar, viewportWidth, maxOffset, nextOffset);
-        ApplyDetailsItemWidths(list, viewportWidth);
         ApplyDetailsHorizontalOffset(pane, header, nextOffset);
+        detailsList.ApplyDetailsLayout(columns, FileListViewHost.IconSizeFor(pane), viewportWidth, nextOffset);
         surface.InvalidateMeasure();
         viewport.InvalidateMeasure();
-        list.InvalidateMeasure();
+        detailsList.InvalidateMeasure();
         ResetHiddenListHorizontalScroll(list);
     }
 
@@ -1212,8 +1200,8 @@ public sealed partial class MainWindow
         {
             PrimaryFileSurface.UpdateLayout();
             SecondaryFileSurface.UpdateLayout();
-            PrimaryFileList.UpdateLayout();
-            SecondaryFileList.UpdateLayout();
+            PrimaryDetailsFileList.UpdateLayout();
+            SecondaryDetailsFileList.UpdateLayout();
             ResetHiddenListHorizontalScroll(PrimaryFileList);
             ResetHiddenListHorizontalScroll(SecondaryFileList);
             ApplyColumnWidths();

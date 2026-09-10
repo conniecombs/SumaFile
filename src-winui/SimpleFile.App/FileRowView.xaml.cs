@@ -19,6 +19,11 @@ public sealed partial class FileRowView : UserControl
     private TextBlock? _metadataText;
     private TextBlock? _secondaryText;
     private CancellationTokenSource? _thumbnailCts;
+    private IReadOnlyList<FileListColumn>? _explicitColumns;
+    private string? _explicitView;
+    private int? _explicitIconSize;
+    private double _explicitHorizontalOffset;
+    private string _explicitPresentationKey = "";
 
     public static readonly DependencyProperty RowProperty = DependencyProperty.Register(
         nameof(Row),
@@ -44,6 +49,43 @@ public sealed partial class FileRowView : UserControl
     {
         get => (FileRow?)GetValue(RowProperty);
         set => SetValue(RowProperty, value);
+    }
+
+    public void ApplyDetailsPresentation(
+        IReadOnlyList<FileListColumn> columns,
+        int iconSize,
+        double horizontalOffset)
+    {
+        var normalizedIconSize = UiSettings.NormalizeIconSize(iconSize);
+        var normalizedOffset = Math.Max(0, horizontalOffset);
+        var nextColumns = columns
+            .Select(column => new FileListColumn(
+                column.Id,
+                column.Label,
+                column.Sort,
+                column.Width,
+                column.MinWidth,
+                column.MaxWidth))
+            .ToArray();
+        var nextKey = $"details:{normalizedIconSize}:{ColumnSignature(nextColumns)}";
+        var structureChanged = !string.Equals(_explicitView, "details", StringComparison.Ordinal)
+            || _explicitIconSize != normalizedIconSize
+            || !string.Equals(_explicitPresentationKey, nextKey, StringComparison.Ordinal);
+
+        _explicitView = "details";
+        _explicitIconSize = normalizedIconSize;
+        _explicitColumns = nextColumns;
+        _explicitHorizontalOffset = normalizedOffset;
+        _explicitPresentationKey = nextKey;
+
+        if (structureChanged)
+        {
+            _renderedColumnKey = "";
+            ApplyRow();
+            return;
+        }
+
+        ApplyHorizontalOffset();
     }
 
     private static void OnRowChanged(DependencyObject sender, DependencyPropertyChangedEventArgs args)
@@ -111,7 +153,7 @@ public sealed partial class FileRowView : UserControl
             ToolTipService.SetToolTip(_nameText, Row.Name);
         }
 
-        var isTileView = FileListViewHost.ViewFor(Row.Pane) == "tiles";
+        var isTileView = ViewFor(Row.Pane) == "tiles";
 
         if (_metadataText is not null)
         {
@@ -142,12 +184,11 @@ public sealed partial class FileRowView : UserControl
     private void ApplyColumns()
     {
         var pane = Row?.Pane ?? PaneId.Primary;
-        var columns = ColumnLayoutHost.For(pane);
-        var visible = columns.VisibleColumns;
-        var view = FileListViewHost.ViewFor(pane);
-        var iconSize = FileListViewHost.IconSizeFor(pane);
+        var visible = VisibleColumnsFor(pane);
+        var view = ViewFor(pane);
+        var iconSize = IconSizeFor(pane);
         var columnKey = view == "details"
-            ? string.Join('\u001f', visible.Select(column => column.Id))
+            ? ColumnSignature(visible)
             : "";
         var key = $"{view}:{iconSize}:{columnKey}";
         if (!string.Equals(_renderedColumnKey, key, StringComparison.Ordinal))
@@ -192,8 +233,8 @@ public sealed partial class FileRowView : UserControl
     private void ApplyHorizontalOffset()
     {
         var pane = Row?.Pane ?? PaneId.Primary;
-        var details = FileListViewHost.ViewFor(pane) == "details";
-        var offset = details ? FileListHorizontalScrollHost.OffsetFor(pane) : 0;
+        var details = ViewFor(pane) == "details";
+        var offset = details ? HorizontalOffsetFor(pane) : 0;
         _rowTransform.X = Math.Abs(offset) > 0.5 ? -offset : 0;
     }
 
@@ -206,7 +247,7 @@ public sealed partial class FileRowView : UserControl
         }
 
         var row = Row;
-        var iconSize = FileListViewHost.IconSizeFor(row.Pane);
+        var iconSize = IconSizeFor(row.Pane);
         _iconImage.Width = iconSize;
         _iconImage.Height = iconSize;
         CancelThumbnailLoad();
@@ -262,7 +303,7 @@ public sealed partial class FileRowView : UserControl
             && Row is not null
             && Row.Pane == row.Pane
             && string.Equals(Row.Path, row.Path, StringComparison.OrdinalIgnoreCase)
-            && FileListViewHost.IconSizeFor(Row.Pane) == iconSize;
+            && IconSizeFor(Row.Pane) == iconSize;
     }
 
     private void CancelThumbnailLoad()
@@ -631,6 +672,23 @@ public sealed partial class FileRowView : UserControl
     {
         return ThemeResourceLookup.Brush(this, key);
     }
+
+    private IReadOnlyList<FileListColumn> VisibleColumnsFor(PaneId pane) =>
+        _explicitColumns ?? ColumnLayoutHost.For(pane).VisibleColumns;
+
+    private string ViewFor(PaneId pane) =>
+        _explicitView ?? FileListViewHost.ViewFor(pane);
+
+    private int IconSizeFor(PaneId pane) =>
+        _explicitIconSize ?? FileListViewHost.IconSizeFor(pane);
+
+    private double HorizontalOffsetFor(PaneId pane) =>
+        _explicitView == "details"
+            ? _explicitHorizontalOffset
+            : FileListHorizontalScrollHost.OffsetFor(pane);
+
+    private static string ColumnSignature(IReadOnlyList<FileListColumn> columns) =>
+        string.Join('\u001f', columns.Select(column => $"{column.Id}:{column.Width:0.###}"));
 
     private static Brush? TryBrush(string color)
     {

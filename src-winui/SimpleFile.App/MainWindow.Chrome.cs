@@ -19,7 +19,8 @@ namespace SimpleFile.App;
 
 public sealed partial class MainWindow
 {
-    private const double DetailsPaneFallbackWidth = 360;
+    private const double DetailsPaneMinimumStableWidth = 720;
+    private const double DetailsPaneOverflowBuffer = 120;
 
     private void UpdateDualPaneButton(bool dualPaneEnabled)
     {
@@ -418,8 +419,34 @@ public sealed partial class MainWindow
         }
 
         var paneWidth = pane == PaneId.Secondary ? SecondaryPaneRoot.ActualWidth : PrimaryPaneRoot.ActualWidth;
-        return paneWidth > 0 && paneWidth < DetailsPaneFallbackWidth ? "list" : "details";
+        var viewportWidth = FileViewportWidthForPane(pane, paneWidth);
+        if (viewportWidth <= 0)
+        {
+            return "details";
+        }
+
+        var columns = EffectiveColumnsForPane(_workspace.ColumnsFor(pane), pane);
+        var stableDetailsWidth = Math.Max(
+            DetailsPaneMinimumStableWidth,
+            DetailsContentWidth(columns) + DetailsPaneOverflowBuffer);
+        return viewportWidth < stableDetailsWidth ? "list" : "details";
     }
+
+    private double FileViewportWidthForPane(PaneId pane, double fallbackWidth = 0)
+    {
+        var viewport = pane == PaneId.Secondary ? SecondaryFileViewport : PrimaryFileViewport;
+        var width = viewport.ActualWidth > 0 ? viewport.ActualWidth : fallbackWidth;
+        if (width > 0)
+        {
+            return width;
+        }
+
+        var root = pane == PaneId.Secondary ? SecondaryPaneRoot : PrimaryPaneRoot;
+        return root.ActualWidth;
+    }
+
+    private static double DetailsContentWidth(ColumnLayout columns) =>
+        columns.VisibleWidth + 10;
 
     private void ApplyFileListSurfaceVisibility(PaneId pane, string view)
     {
