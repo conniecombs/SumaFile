@@ -51,8 +51,6 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _folderRefreshCts;
     private string? _primaryColumnHeaderKey;
     private string? _secondaryColumnHeaderKey;
-    private ScrollViewer? _primaryFileListScroller;
-    private ScrollViewer? _secondaryFileListScroller;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _paneSizeColumnRefreshTimer;
     private readonly Dictionary<int, Style> _tileItemStyles = new();
     private string? _columnEnrichmentSignature;
@@ -447,13 +445,13 @@ public sealed partial class MainWindow : Window
         UpdateSidebarEmptyStates();
         ApplySidebarSectionVisibility();
         ApplyPreviewVisibility();
+        ApplyDualPaneLayout();
         ApplyFileListViewPresentation();
         ApplyFileListThumbnailPolicy();
         ApplyColumnWidths();
         ApplyTheme(_workspace.Settings.Theme);
         UpdateEmptyStates();
 
-        ApplyDualPaneLayout();
         SidebarTargetSwitch.Visibility = _workspace.DualPaneEnabled ? Visibility.Visible : Visibility.Collapsed;
         HighlightSidebarTarget();
         HighlightActivePane();
@@ -839,6 +837,7 @@ public sealed partial class MainWindow : Window
         _workspace.Settings.DualPanePrimaryWidth = width;
         _workspace.Settings.DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(width / available * 100);
         ApplyDualPaneLayout();
+        QueuePaneSizeColumnRefresh();
         e.Handled = true;
     }
 
@@ -851,6 +850,8 @@ public sealed partial class MainWindow : Window
         var workspace = _workspace;
         if (wasDragging && _dividerMoved && workspace is not null)
         {
+            ApplyColumnWidths();
+            QueueDetailsScrollRefresh();
             await RunUiActionAsync("Resize panes", () => workspace.SaveUiSettingsAsync());
         }
     }
@@ -866,6 +867,7 @@ public sealed partial class MainWindow : Window
         _workspace.Settings.DualPanePrimaryWidth = 0;
         _workspace.Settings.DualPanePrimaryPercent = UiSettings.DualPaneDefaultPercent;
         ApplyDualPaneLayout();
+        QueuePaneSizeColumnRefresh();
         await RunUiActionAsync("Reset pane split", () => _workspace.SaveUiSettingsAsync());
     }
 

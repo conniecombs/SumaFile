@@ -179,67 +179,6 @@ public sealed partial class MainWindow
         return block.DesiredSize.Width;
     }
 
-    private void HookFileListColumnScroll(ListView list)
-    {
-        list.Loaded -= OnFileListLoadedForColumnScroll;
-        list.Loaded += OnFileListLoadedForColumnScroll;
-        AttachFileListColumnScroll(list);
-    }
-
-    private void OnFileListLoadedForColumnScroll(object sender, RoutedEventArgs e)
-    {
-        if (sender is ListView list)
-        {
-            AttachFileListColumnScroll(list);
-        }
-    }
-
-    private void AttachFileListColumnScroll(ListView list)
-    {
-        var scroller = FindDescendantScrollViewer(list);
-        if (scroller is null)
-        {
-            return;
-        }
-
-        if (ReferenceEquals(list, PrimaryFileList))
-        {
-            if (!ReferenceEquals(_primaryFileListScroller, scroller))
-            {
-                if (_primaryFileListScroller is not null)
-                {
-                    _primaryFileListScroller.ViewChanged -= OnPrimaryFileListViewChanged;
-                }
-
-                _primaryFileListScroller = scroller;
-                scroller.ViewChanged += OnPrimaryFileListViewChanged;
-            }
-
-            SyncHeaderScroll(PrimaryColumnHeaderScroller, scroller);
-        }
-        else if (ReferenceEquals(list, SecondaryFileList))
-        {
-            if (!ReferenceEquals(_secondaryFileListScroller, scroller))
-            {
-                if (_secondaryFileListScroller is not null)
-                {
-                    _secondaryFileListScroller.ViewChanged -= OnSecondaryFileListViewChanged;
-                }
-
-                _secondaryFileListScroller = scroller;
-                scroller.ViewChanged += OnSecondaryFileListViewChanged;
-            }
-
-            SyncHeaderScroll(SecondaryColumnHeaderScroller, scroller);
-        }
-    }
-
-    private void OnPrimaryFileListViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
-        => SyncHeaderScroll(PrimaryColumnHeaderScroller, sender as ScrollViewer);
-
-    private void OnSecondaryFileListViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
-        => SyncHeaderScroll(SecondaryColumnHeaderScroller, sender as ScrollViewer);
-
     private void OnPaneRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (_workspace is null || e.NewSize.Width <= 0 || Math.Abs(e.NewSize.Width - e.PreviousSize.Width) <= 0.5)
@@ -272,22 +211,10 @@ public sealed partial class MainWindow
             if (_workspace is not null)
             {
                 ApplyColumnWidths();
+                QueueDetailsScrollRefresh();
             }
         };
         return timer;
-    }
-
-    private static void SyncHeaderScroll(ScrollViewer header, ScrollViewer? list)
-    {
-        if (list is null)
-        {
-            return;
-        }
-
-        if (Math.Abs(header.HorizontalOffset - list.HorizontalOffset) > 0.5)
-        {
-            header.ChangeView(list.HorizontalOffset, null, null, disableAnimation: true);
-        }
     }
 
     private static ScrollViewer? FindDescendantScrollViewer(DependencyObject root) =>

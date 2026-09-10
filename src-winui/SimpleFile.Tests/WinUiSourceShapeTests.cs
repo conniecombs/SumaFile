@@ -66,19 +66,35 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
-    public void DetailsColumns_RefreshAndClampAfterPaneResize()
+    public void DetailsColumns_UsePaneOwnedHorizontalScrollAndRefreshAfterPaneResize()
     {
         var root = FindRepoRoot();
         var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
+        var primaryPane = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PrimaryPaneView.xaml"));
+        var secondaryPane = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "SecondaryPaneView.xaml"));
 
+        Assert.Contains("x:Name=\"PrimaryDetailsScroller\"", primaryPane);
+        Assert.Contains("x:Name=\"PrimaryFileSurface\"", primaryPane);
+        Assert.Contains("x:Name=\"PrimaryColumnHeader\"", primaryPane);
+        Assert.Contains("x:Name=\"PrimaryFileList\"", primaryPane);
+        Assert.Contains("x:Name=\"SecondaryDetailsScroller\"", secondaryPane);
+        Assert.Contains("x:Name=\"SecondaryFileSurface\"", secondaryPane);
         Assert.Contains("PrimaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
         Assert.Contains("SecondaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
         Assert.Contains("QueuePaneSizeColumnRefresh", mainWindow);
         Assert.Contains("DispatcherQueue.CreateTimer()", mainWindow);
+        Assert.Contains("ApplyDetailsSurface(PaneId.Primary", mainWindow);
+        Assert.Contains("ApplyDetailsSurface(PaneId.Secondary", mainWindow);
         Assert.Contains("ClampDetailsHorizontalScroll(PaneId.Primary)", mainWindow);
         Assert.Contains("ClampDetailsHorizontalScroll(PaneId.Secondary)", mainWindow);
+        Assert.Contains("PrimaryDetailsScroller.UpdateLayout()", mainWindow);
+        Assert.Contains("SecondaryDetailsScroller.UpdateLayout()", mainWindow);
+        Assert.Contains("ScrollViewer.SetHorizontalScrollMode", mainWindow);
+        Assert.Contains("ScrollMode.Disabled", mainWindow);
         Assert.Contains("scroller.ScrollableWidth", mainWindow);
-        Assert.Contains("header.ChangeView(nextOffset", mainWindow);
+        Assert.DoesNotContain("HookFileListColumnScroll", mainWindow);
+        Assert.DoesNotContain("PrimaryColumnHeaderScroller", mainWindow);
+        Assert.DoesNotContain("SecondaryColumnHeaderScroller", mainWindow);
     }
 
     [Fact]

@@ -25,7 +25,9 @@ public sealed partial class SecondaryPaneView : UserControl
     public StackPanel BreadcrumbHost => SecondaryBreadcrumbHost;
     public TextBox PathInput => SecondaryPathInput;
     public Button EditPathButton => SecondaryEditPathButton;
-    public ScrollViewer ColumnHeaderScroller => SecondaryColumnHeaderScroller;
+    public ScrollViewer DetailsScroller => SecondaryDetailsScroller;
+    public Grid FileSurface => SecondaryFileSurface;
+    public Grid FileViewport => SecondaryFileViewport;
     public Grid ColumnHeader => SecondaryColumnHeader;
     public ListView FileList => SecondaryFileList;
     public Canvas MarqueeCanvas => SecondaryMarqueeCanvas;

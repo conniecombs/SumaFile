@@ -79,7 +79,9 @@ public sealed partial class MainWindow
     private StackPanel PrimaryBreadcrumbHost => PrimaryPane.BreadcrumbHost;
     private TextBox PrimaryPathInput => PrimaryPane.PathInput;
     private Button PrimaryEditPathButton => PrimaryPane.EditPathButton;
-    private ScrollViewer PrimaryColumnHeaderScroller => PrimaryPane.ColumnHeaderScroller;
+    private ScrollViewer PrimaryDetailsScroller => PrimaryPane.DetailsScroller;
+    private Grid PrimaryFileSurface => PrimaryPane.FileSurface;
+    private Grid PrimaryFileViewport => PrimaryPane.FileViewport;
     private Grid PrimaryColumnHeader => PrimaryPane.ColumnHeader;
     private ListView PrimaryFileList => PrimaryPane.FileList;
     private Canvas PrimaryMarqueeCanvas => PrimaryPane.MarqueeCanvas;
@@ -100,7 +102,9 @@ public sealed partial class MainWindow
     private StackPanel SecondaryBreadcrumbHost => SecondaryPane.BreadcrumbHost;
     private TextBox SecondaryPathInput => SecondaryPane.PathInput;
     private Button SecondaryEditPathButton => SecondaryPane.EditPathButton;
-    private ScrollViewer SecondaryColumnHeaderScroller => SecondaryPane.ColumnHeaderScroller;
+    private ScrollViewer SecondaryDetailsScroller => SecondaryPane.DetailsScroller;
+    private Grid SecondaryFileSurface => SecondaryPane.FileSurface;
+    private Grid SecondaryFileViewport => SecondaryPane.FileViewport;
     private Grid SecondaryColumnHeader => SecondaryPane.ColumnHeader;
     private ListView SecondaryFileList => SecondaryPane.FileList;
     private Canvas SecondaryMarqueeCanvas => SecondaryPane.MarqueeCanvas;

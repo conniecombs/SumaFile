@@ -1060,6 +1060,8 @@ public sealed partial class MainWindow
         ColumnLayoutHost.ApplyEffective(primary, secondary);
         ApplyColumnHeader(PrimaryColumnHeader, primary, PaneId.Primary, ref _primaryColumnHeaderKey);
         ApplyColumnHeader(SecondaryColumnHeader, secondary, PaneId.Secondary, ref _secondaryColumnHeaderKey);
+        ApplyDetailsSurface(PaneId.Primary, primary);
+        ApplyDetailsSurface(PaneId.Secondary, secondary);
         ApplyDetailsItemMinWidths(PrimaryFileList, primary.VisibleWidth);
         ApplyDetailsItemMinWidths(SecondaryFileList, secondary.VisibleWidth);
         ClampDetailsHorizontalScroll(PaneId.Primary);
@@ -1086,21 +1088,42 @@ public sealed partial class MainWindow
         }
     }
 
-    private void ClampDetailsHorizontalScroll(PaneId pane)
+    private void ApplyDetailsSurface(PaneId pane, ColumnLayout columns)
     {
+        var details = _workspace?.ViewFor(pane) == "details";
+        var scroller = pane == PaneId.Secondary ? SecondaryDetailsScroller : PrimaryDetailsScroller;
+        var surface = pane == PaneId.Secondary ? SecondaryFileSurface : PrimaryFileSurface;
+        var viewport = pane == PaneId.Secondary ? SecondaryFileViewport : PrimaryFileViewport;
         var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
-        var header = pane == PaneId.Secondary ? SecondaryColumnHeaderScroller : PrimaryColumnHeaderScroller;
-        var scroller = pane == PaneId.Secondary ? _secondaryFileListScroller : _primaryFileListScroller;
-        if (scroller is null)
-        {
-            AttachFileListColumnScroll(list);
-            scroller = pane == PaneId.Secondary ? _secondaryFileListScroller : _primaryFileListScroller;
-        }
+        var paneWidth = pane == PaneId.Secondary ? SecondaryPaneRoot.ActualWidth : PrimaryPaneRoot.ActualWidth;
 
-        if (scroller is null)
+        scroller.HorizontalScrollMode = details ? ScrollMode.Enabled : ScrollMode.Disabled;
+        scroller.HorizontalScrollBarVisibility = details ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+
+        if (!details)
         {
+            surface.Width = double.NaN;
+            viewport.Width = double.NaN;
+            list.Width = double.NaN;
+            surface.HorizontalAlignment = HorizontalAlignment.Stretch;
+            scroller.ChangeView(0, null, null, disableAnimation: true);
             return;
         }
+
+        var contentWidth = columns.VisibleWidth + list.Padding.Left + list.Padding.Right;
+        var width = Math.Max(Math.Max(1, paneWidth), contentWidth);
+        surface.HorizontalAlignment = HorizontalAlignment.Left;
+        SetWidthIfChanged(surface, width);
+        SetWidthIfChanged(viewport, width);
+        SetWidthIfChanged(list, width);
+        surface.InvalidateMeasure();
+        viewport.InvalidateMeasure();
+        list.InvalidateMeasure();
+    }
+
+    private void ClampDetailsHorizontalScroll(PaneId pane)
+    {
+        var scroller = pane == PaneId.Secondary ? SecondaryDetailsScroller : PrimaryDetailsScroller;
 
         var reset = _workspace?.ViewFor(pane) != "details";
         var maxOffset = reset ? 0 : Math.Max(0, scroller.ScrollableWidth);
@@ -1108,10 +1131,17 @@ public sealed partial class MainWindow
         if (Math.Abs(scroller.HorizontalOffset - nextOffset) > 0.5)
         {
             scroller.ChangeView(nextOffset, null, null, disableAnimation: true);
-            header.ChangeView(nextOffset, null, null, disableAnimation: true);
-            return;
         }
+    }
 
-        SyncHeaderScroll(header, scroller);
+    private void QueueDetailsScrollRefresh()
+    {
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            PrimaryDetailsScroller.UpdateLayout();
+            SecondaryDetailsScroller.UpdateLayout();
+            ClampDetailsHorizontalScroll(PaneId.Primary);
+            ClampDetailsHorizontalScroll(PaneId.Secondary);
+        });
     }
 }

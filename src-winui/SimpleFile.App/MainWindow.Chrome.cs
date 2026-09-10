@@ -394,8 +394,8 @@ public sealed partial class MainWindow
         FileListViewHost.Apply(PaneId.Primary, primaryView, primaryIconSize);
         FileListViewHost.Apply(PaneId.Secondary, secondaryView, secondaryIconSize);
 
-        PrimaryColumnHeaderScroller.Visibility = primaryView == "details" ? Visibility.Visible : Visibility.Collapsed;
-        SecondaryColumnHeaderScroller.Visibility = secondaryView == "details" ? Visibility.Visible : Visibility.Collapsed;
+        PrimaryColumnHeader.Visibility = primaryView == "details" ? Visibility.Visible : Visibility.Collapsed;
+        SecondaryColumnHeader.Visibility = secondaryView == "details" ? Visibility.Visible : Visibility.Collapsed;
 
         ApplyFileListPresentation(PrimaryFileList, primaryView, primaryIconSize);
         ApplyFileListPresentation(SecondaryFileList, secondaryView, secondaryIconSize);
@@ -438,16 +438,15 @@ public sealed partial class MainWindow
                 : new Thickness(2, 4, 2, 6);
         ScrollViewer.SetHorizontalScrollBarVisibility(
             list,
-            usesDetails ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled);
+            ScrollBarVisibility.Disabled);
         ScrollViewer.SetHorizontalScrollMode(
             list,
-            usesDetails ? ScrollMode.Enabled : ScrollMode.Disabled);
+            ScrollMode.Disabled);
         ScrollViewer.SetVerticalScrollBarVisibility(list, ScrollBarVisibility.Auto);
         list.ContainerContentChanging -= OnFileListContainerContentChanging;
         if (usesDetails)
         {
             list.ContainerContentChanging += OnFileListContainerContentChanging;
-            HookFileListColumnScroll(list);
         }
     }
 

@@ -25,7 +25,9 @@ public sealed partial class PrimaryPaneView : UserControl
     public StackPanel BreadcrumbHost => PrimaryBreadcrumbHost;
     public TextBox PathInput => PrimaryPathInput;
     public Button EditPathButton => PrimaryEditPathButton;
-    public ScrollViewer ColumnHeaderScroller => PrimaryColumnHeaderScroller;
+    public ScrollViewer DetailsScroller => PrimaryDetailsScroller;
+    public Grid FileSurface => PrimaryFileSurface;
+    public Grid FileViewport => PrimaryFileViewport;
     public Grid ColumnHeader => PrimaryColumnHeader;
     public ListView FileList => PrimaryFileList;
     public Canvas MarqueeCanvas => PrimaryMarqueeCanvas;
