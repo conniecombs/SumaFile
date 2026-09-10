@@ -11,6 +11,7 @@ namespace SimpleFile.App;
 public sealed partial class FileRowView : UserControl
 {
     private readonly Dictionary<string, TextBlock> _textCells = new(StringComparer.Ordinal);
+    private readonly TranslateTransform _rowTransform = new();
     private string _renderedColumnKey = "";
     private Ellipse? _tagPip;
     private Image? _iconImage;
@@ -28,6 +29,7 @@ public sealed partial class FileRowView : UserControl
     public FileRowView()
     {
         InitializeComponent();
+        RowGrid.RenderTransform = _rowTransform;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         ActualThemeChanged += OnActualThemeChanged;
@@ -56,6 +58,7 @@ public sealed partial class FileRowView : UserControl
     {
         ColumnLayoutHost.Changed += OnColumnsChanged;
         FileListViewHost.Changed += OnViewSettingsChanged;
+        FileListHorizontalScrollHost.Changed += OnHorizontalScrollChanged;
         FileListThumbnailHost.Changed += OnThumbnailsChanged;
         ApplyColumns();
         ApplyRow();
@@ -65,6 +68,7 @@ public sealed partial class FileRowView : UserControl
     {
         ColumnLayoutHost.Changed -= OnColumnsChanged;
         FileListViewHost.Changed -= OnViewSettingsChanged;
+        FileListHorizontalScrollHost.Changed -= OnHorizontalScrollChanged;
         FileListThumbnailHost.Changed -= OnThumbnailsChanged;
         CancelThumbnailLoad();
     }
@@ -78,6 +82,11 @@ public sealed partial class FileRowView : UserControl
     {
         ApplyColumns();
         ApplyRow();
+    }
+
+    private void OnHorizontalScrollChanged(object? sender, EventArgs e)
+    {
+        ApplyHorizontalOffset();
     }
 
     private void OnThumbnailsChanged(object? sender, EventArgs e)
@@ -153,6 +162,7 @@ public sealed partial class FileRowView : UserControl
             RowGrid.Width = tileWidth;
             RowGrid.HorizontalAlignment = HorizontalAlignment.Left;
             MinWidth = tileWidth;
+            ApplyHorizontalOffset();
             return;
         }
 
@@ -161,6 +171,7 @@ public sealed partial class FileRowView : UserControl
             MinWidth = 0;
             RowGrid.Width = double.NaN;
             RowGrid.HorizontalAlignment = HorizontalAlignment.Stretch;
+            ApplyHorizontalOffset();
             return;
         }
 
@@ -175,6 +186,15 @@ public sealed partial class FileRowView : UserControl
         RowGrid.Width = total;
         RowGrid.HorizontalAlignment = HorizontalAlignment.Left;
         MinWidth = total;
+        ApplyHorizontalOffset();
+    }
+
+    private void ApplyHorizontalOffset()
+    {
+        var pane = Row?.Pane ?? PaneId.Primary;
+        var details = FileListViewHost.ViewFor(pane) == "details";
+        var offset = details ? FileListHorizontalScrollHost.OffsetFor(pane) : 0;
+        _rowTransform.X = Math.Abs(offset) > 0.5 ? -offset : 0;
     }
 
     private void ApplyIcon()
@@ -754,5 +774,39 @@ public static class FileListViewHost
         }
 
         Changed?.Invoke(null, EventArgs.Empty);
+    }
+}
+
+public static class FileListHorizontalScrollHost
+{
+    public static event EventHandler? Changed;
+
+    private static double _primaryOffset;
+    private static double _secondaryOffset;
+
+    public static double OffsetFor(PaneId pane) =>
+        pane == PaneId.Secondary ? _secondaryOffset : _primaryOffset;
+
+    public static void Apply(PaneId pane, double offset)
+    {
+        var next = Math.Max(0, offset);
+        ref var current = ref OffsetRef(pane);
+        if (Math.Abs(current - next) <= 0.5)
+        {
+            return;
+        }
+
+        current = next;
+        Changed?.Invoke(null, EventArgs.Empty);
+    }
+
+    private static ref double OffsetRef(PaneId pane)
+    {
+        if (pane == PaneId.Secondary)
+        {
+            return ref _secondaryOffset;
+        }
+
+        return ref _primaryOffset;
     }
 }

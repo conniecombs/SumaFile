@@ -120,7 +120,7 @@ public sealed partial class MainWindow
             case "selection.all":
                 if (!IsEditingPath && !IsTextInputFocused())
                 {
-                    ActiveFileList.SelectAll();
+                    SelectAllActiveFileList();
                 }
 
                 break;
@@ -239,7 +239,7 @@ public sealed partial class MainWindow
             case "file.open":
                 if (!IsEditingPath && !IsTextInputFocused())
                 {
-                    await RunUiActionAsync("Open", () => OpenSelectedFile(ActiveFileList, _workspace?.ActivePane ?? PaneId.Primary));
+                    await RunUiActionAsync("Open", () => OpenSelectedFile(_workspace?.ActivePane ?? PaneId.Primary));
                 }
 
                 break;

@@ -1,7 +1,9 @@
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
 using Windows.ApplicationModel.DataTransfer;
@@ -36,20 +38,37 @@ public sealed partial class MainWindow
 
     private void OnFileDragItemsStarting(object sender, DragItemsStartingEventArgs e)
     {
-        _dragPaths = e.Items.OfType<FileRow>().Select(row => row.Path).ToArray();
-        if (_dragPaths.Length == 0)
+        if (!PopulateFileDragData(e.Items.OfType<FileRow>(), e.Data))
         {
             e.Cancel = true;
-            return;
+        }
+    }
+
+    private void OnDetailsRowsDragStarting(object? sender, DetailsFileRowsDragStartingEventArgs e)
+    {
+        e.Cancel = !PopulateFileDragData(e.Rows, e.Data);
+    }
+
+    private void OnDetailsRowsDragCompleted(object? sender, EventArgs e)
+    {
+        _dragPaths = [];
+    }
+
+    private bool PopulateFileDragData(IEnumerable<FileRow> rows, DataPackage data)
+    {
+        _dragPaths = rows.Select(row => row.Path).ToArray();
+        if (_dragPaths.Length == 0)
+        {
+            return false;
         }
 
-        e.Data.SetText($"{InternalDragFormat}|{string.Join('\n', _dragPaths)}");
-        e.Data.RequestedOperation = DataPackageOperation.Copy | DataPackageOperation.Move;
+        data.SetText($"{InternalDragFormat}|{string.Join('\n', _dragPaths)}");
+        data.RequestedOperation = DataPackageOperation.Copy | DataPackageOperation.Move;
 
         // Defer StorageItem resolution so we don't block the UI thread on slow/network paths.
         // The provider callback runs asynchronously when an external drop target requests the data.
         var paths = _dragPaths;
-        e.Data.SetDataProvider(StandardDataFormats.StorageItems, async request =>
+        data.SetDataProvider(StandardDataFormats.StorageItems, async request =>
         {
             var deferral = request.GetDeferral();
             try
@@ -81,6 +100,7 @@ public sealed partial class MainWindow
                 deferral.Complete();
             }
         });
+        return true;
     }
 
     private void OnFileDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs e)
@@ -150,6 +170,12 @@ public sealed partial class MainWindow
 
     private FileRow? HoveredFileRow(DragEventArgs e, PaneId pane)
     {
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            return details.RowFromPoint(e.GetPosition(details));
+        }
+
         var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
         var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
         var point = e.GetPosition(list);
@@ -1062,10 +1088,6 @@ public sealed partial class MainWindow
         ApplyColumnHeader(SecondaryColumnHeader, secondary, PaneId.Secondary, ref _secondaryColumnHeaderKey);
         ApplyDetailsSurface(PaneId.Primary, primary);
         ApplyDetailsSurface(PaneId.Secondary, secondary);
-        ApplyDetailsItemMinWidths(PrimaryFileList, primary.VisibleWidth);
-        ApplyDetailsItemMinWidths(SecondaryFileList, secondary.VisibleWidth);
-        ClampDetailsHorizontalScroll(PaneId.Primary);
-        ClampDetailsHorizontalScroll(PaneId.Secondary);
     }
 
     private ColumnLayout EffectiveColumnsForPane(ColumnLayout columns, PaneId pane)
@@ -1077,71 +1099,139 @@ public sealed partial class MainWindow
             IsGitIntegrationEnabled);
     }
 
-    private static void ApplyDetailsItemMinWidths(ListView list, double width)
+    private static void ApplyDetailsItemWidths(ListView list, double width)
     {
         for (var index = 0; index < list.Items.Count; index++)
         {
             if (list.ContainerFromIndex(index) is ListViewItem item)
             {
-                item.MinWidth = width;
+                item.MinWidth = 0;
+                item.Width = width;
+            }
+        }
+    }
+
+    private static void ClearDetailsItemWidths(ListView list)
+    {
+        for (var index = 0; index < list.Items.Count; index++)
+        {
+            if (list.ContainerFromIndex(index) is ListViewItem item)
+            {
+                item.MinWidth = 0;
+                item.Width = double.NaN;
             }
         }
     }
 
     private void ApplyDetailsSurface(PaneId pane, ColumnLayout columns)
     {
-        var details = _workspace?.ViewFor(pane) == "details";
-        var scroller = pane == PaneId.Secondary ? SecondaryDetailsScroller : PrimaryDetailsScroller;
+        var details = EffectiveFileListViewForPane(pane) == "details";
+        var scrollBar = pane == PaneId.Secondary ? SecondaryDetailsHorizontalScrollBar : PrimaryDetailsHorizontalScrollBar;
         var surface = pane == PaneId.Secondary ? SecondaryFileSurface : PrimaryFileSurface;
         var viewport = pane == PaneId.Secondary ? SecondaryFileViewport : PrimaryFileViewport;
+        var header = pane == PaneId.Secondary ? SecondaryColumnHeader : PrimaryColumnHeader;
         var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
         var paneWidth = pane == PaneId.Secondary ? SecondaryPaneRoot.ActualWidth : PrimaryPaneRoot.ActualWidth;
-
-        scroller.HorizontalScrollMode = details ? ScrollMode.Enabled : ScrollMode.Disabled;
-        scroller.HorizontalScrollBarVisibility = details ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+        var viewportWidth = Math.Max(1, viewport.ActualWidth > 0 ? viewport.ActualWidth : paneWidth);
 
         if (!details)
         {
-            surface.Width = double.NaN;
-            viewport.Width = double.NaN;
             list.Width = double.NaN;
             surface.HorizontalAlignment = HorizontalAlignment.Stretch;
-            scroller.ChangeView(0, null, null, disableAnimation: true);
+            scrollBar.Visibility = Visibility.Collapsed;
+            scrollBar.Value = 0;
+            ClearDetailsItemWidths(list);
+            ApplyDetailsHorizontalOffset(pane, header, 0);
+            ResetHiddenListHorizontalScroll(list);
             return;
         }
 
         var contentWidth = columns.VisibleWidth + list.Padding.Left + list.Padding.Right;
-        var width = Math.Max(Math.Max(1, paneWidth), contentWidth);
-        surface.HorizontalAlignment = HorizontalAlignment.Left;
-        SetWidthIfChanged(surface, width);
-        SetWidthIfChanged(viewport, width);
-        SetWidthIfChanged(list, width);
+        var maxOffset = Math.Max(0, contentWidth - viewportWidth);
+        var nextOffset = Math.Min(scrollBar.Value, maxOffset);
+        surface.HorizontalAlignment = HorizontalAlignment.Stretch;
+        SetWidthIfChanged(list, viewportWidth);
+        ConfigureDetailsHorizontalScrollBar(scrollBar, viewportWidth, maxOffset, nextOffset);
+        ApplyDetailsItemWidths(list, viewportWidth);
+        ApplyDetailsHorizontalOffset(pane, header, nextOffset);
         surface.InvalidateMeasure();
         viewport.InvalidateMeasure();
         list.InvalidateMeasure();
+        ResetHiddenListHorizontalScroll(list);
     }
 
-    private void ClampDetailsHorizontalScroll(PaneId pane)
+    private static void ConfigureDetailsHorizontalScrollBar(
+        ScrollBar scrollBar,
+        double viewportWidth,
+        double maxOffset,
+        double value)
     {
-        var scroller = pane == PaneId.Secondary ? SecondaryDetailsScroller : PrimaryDetailsScroller;
-
-        var reset = _workspace?.ViewFor(pane) != "details";
-        var maxOffset = reset ? 0 : Math.Max(0, scroller.ScrollableWidth);
-        var nextOffset = reset ? 0 : Math.Min(scroller.HorizontalOffset, maxOffset);
-        if (Math.Abs(scroller.HorizontalOffset - nextOffset) > 0.5)
+        scrollBar.Minimum = 0;
+        scrollBar.Maximum = maxOffset;
+        scrollBar.ViewportSize = viewportWidth;
+        scrollBar.SmallChange = 32;
+        scrollBar.LargeChange = Math.Max(32, viewportWidth * 0.85);
+        scrollBar.Visibility = maxOffset > 0.5 ? Visibility.Visible : Visibility.Collapsed;
+        if (Math.Abs(scrollBar.Value - value) > 0.5)
         {
-            scroller.ChangeView(nextOffset, null, null, disableAnimation: true);
+            scrollBar.Value = value;
         }
+    }
+
+    private void OnPrimaryDetailsHorizontalScrollChanged(object sender, RangeBaseValueChangedEventArgs e) =>
+        OnDetailsHorizontalScrollChanged(PaneId.Primary, e.NewValue);
+
+    private void OnSecondaryDetailsHorizontalScrollChanged(object sender, RangeBaseValueChangedEventArgs e) =>
+        OnDetailsHorizontalScrollChanged(PaneId.Secondary, e.NewValue);
+
+    private void OnDetailsHorizontalScrollChanged(PaneId pane, double offset)
+    {
+        var header = pane == PaneId.Secondary ? SecondaryColumnHeader : PrimaryColumnHeader;
+        var maxOffset = pane == PaneId.Secondary
+            ? SecondaryDetailsHorizontalScrollBar.Maximum
+            : PrimaryDetailsHorizontalScrollBar.Maximum;
+        ApplyDetailsHorizontalOffset(pane, header, Math.Min(offset, maxOffset));
+    }
+
+    private static void ApplyDetailsHorizontalOffset(PaneId pane, Grid header, double offset)
+    {
+        var nextOffset = Math.Max(0, offset);
+        if (header.RenderTransform is not TranslateTransform transform)
+        {
+            transform = new TranslateTransform();
+            header.RenderTransform = transform;
+        }
+
+        transform.X = Math.Abs(nextOffset) > 0.5 ? -nextOffset : 0;
+        FileListHorizontalScrollHost.Apply(pane, nextOffset);
     }
 
     private void QueueDetailsScrollRefresh()
     {
         _ = DispatcherQueue.TryEnqueue(() =>
         {
-            PrimaryDetailsScroller.UpdateLayout();
-            SecondaryDetailsScroller.UpdateLayout();
-            ClampDetailsHorizontalScroll(PaneId.Primary);
-            ClampDetailsHorizontalScroll(PaneId.Secondary);
+            PrimaryFileSurface.UpdateLayout();
+            SecondaryFileSurface.UpdateLayout();
+            PrimaryFileList.UpdateLayout();
+            SecondaryFileList.UpdateLayout();
+            ResetHiddenListHorizontalScroll(PrimaryFileList);
+            ResetHiddenListHorizontalScroll(SecondaryFileList);
+            ApplyColumnWidths();
         });
+    }
+
+    private static void ResetHiddenListHorizontalScroll(ListView list)
+    {
+        if (FindDescendantScrollViewer(list) is not { } scroller)
+        {
+            return;
+        }
+
+        scroller.HorizontalScrollMode = ScrollMode.Disabled;
+        scroller.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+        if (Math.Abs(scroller.HorizontalOffset) > 0.5)
+        {
+            scroller.ChangeView(0, null, null, disableAnimation: true);
+        }
     }
 }

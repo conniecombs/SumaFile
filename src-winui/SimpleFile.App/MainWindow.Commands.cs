@@ -558,6 +558,37 @@ public sealed partial class MainWindow
         e.Handled = true;
     }
 
+    private void OnPrimaryDetailsRowContextRequested(object? sender, DetailsFileRowContextEventArgs e) =>
+        ShowDetailsFileContextMenu(PrimaryDetailsFileList, PaneId.Primary, e);
+
+    private void OnSecondaryDetailsRowContextRequested(object? sender, DetailsFileRowContextEventArgs e) =>
+        ShowDetailsFileContextMenu(SecondaryDetailsFileList, PaneId.Secondary, e);
+
+    private void ShowDetailsFileContextMenu(DetailsFileListView list, PaneId pane, DetailsFileRowContextEventArgs e)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        _workspace.ActivatePane(pane);
+        if (!list.ContainsSelection(e.Row))
+        {
+            list.SelectPath(e.Row.Path);
+        }
+
+        var flyout = new MenuFlyout();
+        PopulateFileListContextFlyout(flyout, pane);
+        if (e.Position is { } position)
+        {
+            flyout.ShowAt(list, new FlyoutShowOptions { Position = position });
+        }
+        else
+        {
+            flyout.ShowAt(e.Anchor);
+        }
+    }
+
     private static T? FindAncestor<T>(DependencyObject start) where T : class
     {
         var current = VisualTreeHelper.GetParent(start);
@@ -880,8 +911,27 @@ public sealed partial class MainWindow
 
     private IReadOnlyList<FileRow> SelectedRowsForPane(PaneId pane)
     {
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            return details.SelectedRows;
+        }
+
         var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
         return list.SelectedItems.OfType<FileRow>().ToArray();
+    }
+
+    private FileRow? SelectedRowForPane(PaneId pane)
+    {
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            return details.SelectedRow;
+        }
+
+        var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
+        return list.SelectedItem as FileRow
+            ?? list.SelectedItems.OfType<FileRow>().LastOrDefault();
     }
 
     private ContextMenuRequest BuildContextMenuRequest(
@@ -1034,7 +1084,7 @@ public sealed partial class MainWindow
         switch (id)
         {
             case "ctx-open":
-                await OpenSelectedFile(ActiveFileList, _workspace?.ActivePane ?? PaneId.Primary);
+                await OpenSelectedFile(_workspace?.ActivePane ?? PaneId.Primary);
                 break;
             case "ctx-open-with":
             case "ctx-open-with-choose":
@@ -1100,10 +1150,10 @@ public sealed partial class MainWindow
                 return;
             }
 
-            if (ActiveFileList.SelectedItems.Count > 0)
+            if (ActiveSelectedRows.Count > 0)
             {
                 e.Handled = true;
-                ActiveFileList.SelectedItems.Clear();
+                ClearSelectionForPane(_workspace.ActivePane);
                 _workspace.SelectPath(null);
             }
 

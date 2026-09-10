@@ -215,6 +215,12 @@ public sealed partial class MainWindow
     private void OnSecondarySelectionChanged(object sender, SelectionChangedEventArgs e) =>
         HandleSelectionChanged(SecondaryFileList, PaneId.Secondary, e);
 
+    private void OnPrimaryDetailsSelectionChanged(object? sender, DetailsFileSelectionChangedEventArgs e) =>
+        HandleDetailsSelectionChanged(PrimaryDetailsFileList, PaneId.Primary, e);
+
+    private void OnSecondaryDetailsSelectionChanged(object? sender, DetailsFileSelectionChangedEventArgs e) =>
+        HandleDetailsSelectionChanged(SecondaryDetailsFileList, PaneId.Secondary, e);
+
     private void HandleSelectionChanged(ListView list, PaneId pane, SelectionChangedEventArgs e)
     {
         if (_applyingWorkspace || _workspace is null)
@@ -241,17 +247,54 @@ public sealed partial class MainWindow
         UpdateSelectionStatus();
     }
 
+    private void HandleDetailsSelectionChanged(DetailsFileListView list, PaneId pane, DetailsFileSelectionChangedEventArgs e)
+    {
+        if (_applyingWorkspace || _workspace is null)
+        {
+            return;
+        }
+
+        var row = e.AddedRows.LastOrDefault() ?? list.SelectedRow;
+        if (row is null)
+        {
+            if (pane == _workspace.ActivePane)
+            {
+                _workspace.SelectPath(null, pane);
+                ClearPreview();
+                UpdateSelectionStatus();
+            }
+
+            return;
+        }
+
+        _workspace.SelectPath(row.Path, pane);
+        QueuePreview(row);
+        UpdateSelectionStatus();
+    }
+
     private async void OnPrimaryFileDoubleTapped(object sender, DoubleTappedRoutedEventArgs e) =>
         await RunUiActionAsync("Open", () => OpenSelectedFile(PrimaryFileList, PaneId.Primary));
 
     private async void OnSecondaryFileDoubleTapped(object sender, DoubleTappedRoutedEventArgs e) =>
         await RunUiActionAsync("Open", () => OpenSelectedFile(SecondaryFileList, PaneId.Secondary));
 
+    private async void OnPrimaryDetailsRowInvoked(object? sender, DetailsFileRowEventArgs e) =>
+        await RunUiActionAsync("Open", () => OpenSelectedFile(PaneId.Primary));
+
+    private async void OnSecondaryDetailsRowInvoked(object? sender, DetailsFileRowEventArgs e) =>
+        await RunUiActionAsync("Open", () => OpenSelectedFile(PaneId.Secondary));
+
     private async void OnPrimaryFileKeyDown(object sender, KeyRoutedEventArgs e) =>
         await RunUiActionAsync("File list", () => HandleFileKey(e, PrimaryFileList, PaneId.Primary));
 
     private async void OnSecondaryFileKeyDown(object sender, KeyRoutedEventArgs e) =>
         await RunUiActionAsync("File list", () => HandleFileKey(e, SecondaryFileList, PaneId.Secondary));
+
+    private async void OnPrimaryDetailsFileKeyDown(object sender, KeyRoutedEventArgs e) =>
+        await RunUiActionAsync("File list", () => HandleFileKey(e, PaneId.Primary));
+
+    private async void OnSecondaryDetailsFileKeyDown(object sender, KeyRoutedEventArgs e) =>
+        await RunUiActionAsync("File list", () => HandleFileKey(e, PaneId.Secondary));
 
     private async Task HandleFileKey(KeyRoutedEventArgs e, ListView list, PaneId pane)
     {
@@ -284,6 +327,37 @@ public sealed partial class MainWindow
         }
     }
 
+    private async Task HandleFileKey(KeyRoutedEventArgs e, PaneId pane)
+    {
+        if (e.Key == VirtualKey.Enter)
+        {
+            e.Handled = true;
+            await OpenSelectedFile(pane);
+            return;
+        }
+
+        var letter = e.Key.ToString();
+        if (_workspace is not null && letter.Length == 1 && char.IsLetterOrDigit(letter[0]))
+        {
+            var match = _workspace.MatchTypeAhead(letter[0]);
+            if (match is not null)
+            {
+                e.Handled = true;
+                _workspace.SelectPath(match.Path, pane);
+                SelectRow(pane, match.Path);
+                var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
+                var row = rows.FirstOrDefault(item =>
+                    string.Equals(item.Path, match.Path, StringComparison.OrdinalIgnoreCase));
+                if (row is not null)
+                {
+                    QueuePreview(row);
+                }
+
+                UpdateSelectionStatus();
+            }
+        }
+    }
+
     private async Task OpenSelectedFile(ListView list, PaneId pane)
     {
         if (_workspace is not null && list.SelectedItem is FileRow row)
@@ -299,6 +373,49 @@ public sealed partial class MainWindow
                 new FileEntry { Name = row.Name, Path = row.Path, IsDir = row.IsDir },
                 pane);
         }
+    }
+
+    private async Task OpenSelectedFile(PaneId pane)
+    {
+        if (_workspace is not null && SelectedRowForPane(pane) is FileRow row)
+        {
+            await SaveViewIconSizeNowAsync();
+            if (PathRules.IsRecycleBinPath(_workspace.Pane(pane).Path) && row.IsDir)
+            {
+                await RestoreSelectedAsync();
+                return;
+            }
+
+            await _workspace.OpenEntryAsync(
+                new FileEntry { Name = row.Name, Path = row.Path, IsDir = row.IsDir },
+                pane);
+        }
+    }
+
+    private void SelectAllActiveFileList()
+    {
+        var pane = _workspace?.ActivePane ?? PaneId.Primary;
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            details.SelectAll();
+            return;
+        }
+
+        ActiveFileList.SelectAll();
+    }
+
+    private void ClearSelectionForPane(PaneId pane)
+    {
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            details.ClearSelection();
+            return;
+        }
+
+        var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
+        list.SelectedItems.Clear();
     }
 
     private void UpdateSelectionStatus()

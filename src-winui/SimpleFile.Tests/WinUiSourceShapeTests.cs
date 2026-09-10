@@ -66,35 +66,87 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
-    public void DetailsColumns_UsePaneOwnedHorizontalScrollAndRefreshAfterPaneResize()
+    public void FileListStackModes_AvoidVirtualizingPanelArrangeDrift()
+    {
+        var root = FindRepoRoot();
+        var app = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "App.xaml"));
+        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
+
+        Assert.Contains("<ItemsPanelTemplate x:Key=\"SfStackItemsPanelTemplate\">", app);
+        Assert.Contains("<StackPanel Orientation=\"Vertical\" />", app);
+        Assert.DoesNotContain("<ItemsStackPanel Orientation=\"Vertical\" />", app);
+        Assert.Contains("var itemsPanelKey = usesTiles ? \"SfWrapItemsPanelTemplate\" : \"SfStackItemsPanelTemplate\"", mainWindow);
+    }
+
+    [Fact]
+    public void DetailsColumns_UsePaneOwnedHorizontalScrollBarAndRefreshAfterPaneResize()
     {
         var root = FindRepoRoot();
         var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
         var primaryPane = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PrimaryPaneView.xaml"));
         var secondaryPane = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "SecondaryPaneView.xaml"));
 
-        Assert.Contains("x:Name=\"PrimaryDetailsScroller\"", primaryPane);
+        Assert.Contains("x:Name=\"PrimaryColumnHeaderViewport\"", primaryPane);
         Assert.Contains("x:Name=\"PrimaryFileSurface\"", primaryPane);
         Assert.Contains("x:Name=\"PrimaryColumnHeader\"", primaryPane);
+        Assert.Contains("x:Name=\"PrimaryDetailsFileList\"", primaryPane);
         Assert.Contains("x:Name=\"PrimaryFileList\"", primaryPane);
-        Assert.Contains("x:Name=\"SecondaryDetailsScroller\"", secondaryPane);
+        Assert.Contains("x:Name=\"PrimaryDetailsHorizontalScrollBar\"", primaryPane);
+        Assert.Contains("x:Name=\"SecondaryColumnHeaderViewport\"", secondaryPane);
         Assert.Contains("x:Name=\"SecondaryFileSurface\"", secondaryPane);
+        Assert.Contains("x:Name=\"SecondaryDetailsFileList\"", secondaryPane);
+        Assert.Contains("x:Name=\"SecondaryDetailsHorizontalScrollBar\"", secondaryPane);
         Assert.Contains("PrimaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
         Assert.Contains("SecondaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
+        Assert.Contains("PrimaryPane.DetailsHorizontalScrollChanged += OnPrimaryDetailsHorizontalScrollChanged", mainWindow);
+        Assert.Contains("SecondaryPane.DetailsHorizontalScrollChanged += OnSecondaryDetailsHorizontalScrollChanged", mainWindow);
+        Assert.Contains("DetailsPaneFallbackWidth = 360", mainWindow);
+        Assert.Contains("EffectiveFileListViewForPane", mainWindow);
+        Assert.Contains("paneWidth > 0 && paneWidth < DetailsPaneFallbackWidth ? \"list\" : \"details\"", mainWindow);
+        Assert.Contains("ApplyFileListSurfaceVisibility(PaneId.Primary", mainWindow);
+        Assert.Contains("ApplyFileListSurfaceVisibility(PaneId.Secondary", mainWindow);
         Assert.Contains("QueuePaneSizeColumnRefresh", mainWindow);
         Assert.Contains("DispatcherQueue.CreateTimer()", mainWindow);
+        Assert.Contains("ApplyFileListViewPresentation();", mainWindow);
         Assert.Contains("ApplyDetailsSurface(PaneId.Primary", mainWindow);
         Assert.Contains("ApplyDetailsSurface(PaneId.Secondary", mainWindow);
-        Assert.Contains("ClampDetailsHorizontalScroll(PaneId.Primary)", mainWindow);
-        Assert.Contains("ClampDetailsHorizontalScroll(PaneId.Secondary)", mainWindow);
-        Assert.Contains("PrimaryDetailsScroller.UpdateLayout()", mainWindow);
-        Assert.Contains("SecondaryDetailsScroller.UpdateLayout()", mainWindow);
+        Assert.Contains("ApplyDetailsHorizontalOffset", mainWindow);
+        Assert.Contains("FileListHorizontalScrollHost.Apply", mainWindow);
+        Assert.Contains("PrimaryFileSurface.UpdateLayout()", mainWindow);
+        Assert.Contains("SecondaryFileSurface.UpdateLayout()", mainWindow);
+        Assert.Contains("ResetHiddenListHorizontalScroll(PrimaryFileList)", mainWindow);
+        Assert.Contains("ResetHiddenListHorizontalScroll(SecondaryFileList)", mainWindow);
+        Assert.Contains("scroller.ChangeView(0, null, null, disableAnimation: true)", mainWindow);
         Assert.Contains("ScrollViewer.SetHorizontalScrollMode", mainWindow);
         Assert.Contains("ScrollMode.Disabled", mainWindow);
-        Assert.Contains("scroller.ScrollableWidth", mainWindow);
+        Assert.Contains("ScrollBar scrollBar", mainWindow);
         Assert.DoesNotContain("HookFileListColumnScroll", mainWindow);
+        Assert.DoesNotContain("PrimaryDetailsScroller", mainWindow);
+        Assert.DoesNotContain("SecondaryDetailsScroller", mainWindow);
         Assert.DoesNotContain("PrimaryColumnHeaderScroller", mainWindow);
         Assert.DoesNotContain("SecondaryColumnHeaderScroller", mainWindow);
+    }
+
+    [Fact]
+    public void DetailsFileList_UsesDeterministicCustomSurfaceForSelectionAndRows()
+    {
+        var root = FindRepoRoot();
+        var details = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "DetailsFileListView.cs"));
+        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
+
+        Assert.Contains("public sealed class DetailsFileListView : UserControl", details);
+        Assert.Contains("private readonly StackPanel _rowsHost", details);
+        Assert.Contains("new FileRowView { Row = row }", details);
+        Assert.Contains("RowFromPoint(Point point)", details);
+        Assert.Contains("SelectedRows => _selectedRows.ToArray()", details);
+        Assert.Contains("RowsDragStarting", details);
+        Assert.Contains("PrimaryDetailsFileList.ItemsSource = PrimaryFiles", mainWindow);
+        Assert.Contains("SecondaryDetailsFileList.ItemsSource = SecondaryFiles", mainWindow);
+        Assert.Contains("SelectedRowsForPane(PaneId pane)", mainWindow);
+        Assert.Contains("details.Visibility == Visibility.Visible", mainWindow);
+        Assert.Contains("OpenSelectedFile(PaneId pane)", mainWindow);
+        Assert.Contains("HoveredFileRow(DragEventArgs e, PaneId pane)", mainWindow);
+        Assert.Contains("details.RowFromPoint(e.GetPosition(details))", mainWindow);
     }
 
     [Fact]

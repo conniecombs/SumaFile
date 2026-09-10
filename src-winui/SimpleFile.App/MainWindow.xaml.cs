@@ -125,11 +125,11 @@ public sealed partial class MainWindow : Window
             PreviewEmptyText,
             PreviewMetadataRows,
             PreviewChecksumText);
-        _fileOperationDialogs = new FileOperationDialogService(
+            _fileOperationDialogs = new FileOperationDialogService(
             () => _workspace,
             () => Content.XamlRoot,
             () => WinRT.Interop.WindowNative.GetWindowHandle(this),
-            () => ActiveFileList.SelectedItem as FileRow,
+            () => ActiveSelectedRow,
             GetSelectedEntries,
             () => SelectedPaths,
             BeginUtilityOperation,
@@ -165,6 +165,8 @@ public sealed partial class MainWindow : Window
 
         PrimaryFileList.ItemsSource = PrimaryFiles;
         SecondaryFileList.ItemsSource = SecondaryFiles;
+        PrimaryDetailsFileList.ItemsSource = PrimaryFiles;
+        SecondaryDetailsFileList.ItemsSource = SecondaryFiles;
         GitWorkbench.Start(_gitWorkbenchModel);
         AttachGitWorkbenchView(GitWorkbench);
         AttachPaneActivationHandlers();
@@ -470,8 +472,8 @@ public sealed partial class MainWindow : Window
             SecondaryPathInput.Text = _toolbar?.SecondaryPath ?? _workspace.Secondary.Path;
         }
 
-        SelectRow(PrimaryFileList, PrimaryFiles, _workspace.Primary.SelectedPath);
-        SelectRow(SecondaryFileList, SecondaryFiles, _workspace.Secondary.SelectedPath);
+        SelectRow(PaneId.Primary, _workspace.Primary.SelectedPath);
+        SelectRow(PaneId.Secondary, _workspace.Secondary.SelectedPath);
         UpdateSelectionStatus();
 
         if (!string.IsNullOrEmpty(_workspace.ErrorMessage))
@@ -790,14 +792,15 @@ public sealed partial class MainWindow : Window
         SecondaryPaneRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnSecondaryPanePressed), true);
         PrimaryFileList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnPrimaryFileWheelChanged), true);
         SecondaryFileList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnSecondaryFileWheelChanged), true);
+        PrimaryDetailsFileList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnPrimaryFileWheelChanged), true);
+        SecondaryDetailsFileList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnSecondaryFileWheelChanged), true);
     }
 
     private FileRow? ActiveSelectedRow =>
-        ActiveFileList.SelectedItem as FileRow
-        ?? ActiveFileList.SelectedItems.OfType<FileRow>().LastOrDefault();
+        SelectedRowForPane(_workspace?.ActivePane ?? PaneId.Primary);
 
     private IReadOnlyList<FileRow> ActiveSelectedRows =>
-        ActiveFileList.SelectedItems.OfType<FileRow>().ToArray();
+        SelectedRowsForPane(_workspace?.ActivePane ?? PaneId.Primary);
 
     private void OnDividerPressed(object sender, PointerRoutedEventArgs e)
     {
@@ -850,6 +853,7 @@ public sealed partial class MainWindow : Window
         var workspace = _workspace;
         if (wasDragging && _dividerMoved && workspace is not null)
         {
+            ApplyFileListViewPresentation();
             ApplyColumnWidths();
             QueueDetailsScrollRefresh();
             await RunUiActionAsync("Resize panes", () => workspace.SaveUiSettingsAsync());

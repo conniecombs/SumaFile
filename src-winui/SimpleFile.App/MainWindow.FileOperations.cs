@@ -14,10 +14,8 @@ public sealed partial class MainWindow
     {
         get
         {
-            var list = ActiveFileList;
-            var items = list.SelectedItems;
-            if (items == null || items.Count == 0) return null;
-            return items.OfType<FileRow>().Select(r => r.Path).ToArray();
+            var rows = ActiveSelectedRows;
+            return rows.Count == 0 ? null : rows.Select(row => row.Path).ToArray();
         }
     }
 

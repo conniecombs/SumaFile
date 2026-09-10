@@ -21,6 +21,12 @@ public sealed partial class MainWindow
 
     private void BeginMarquee(object sender, PointerRoutedEventArgs e, PaneId pane, ListView list, Canvas canvas)
     {
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            return;
+        }
+
         var props = e.GetCurrentPoint((UIElement)sender).Properties;
         if (!props.IsLeftButtonPressed) return;
 

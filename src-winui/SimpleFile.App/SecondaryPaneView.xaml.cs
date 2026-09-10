@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
@@ -11,6 +12,12 @@ public sealed partial class SecondaryPaneView : UserControl
     public SecondaryPaneView()
     {
         InitializeComponent();
+        SecondaryDetailsFileList.Pane = SimpleFile.Core.PaneId.Secondary;
+        SecondaryDetailsFileList.SelectionChanged += (_, e) => DetailsSelectionChanged?.Invoke(this, e);
+        SecondaryDetailsFileList.RowInvoked += (_, e) => DetailsRowInvoked?.Invoke(this, e);
+        SecondaryDetailsFileList.RowContextRequested += (_, e) => DetailsRowContextRequested?.Invoke(this, e);
+        SecondaryDetailsFileList.RowsDragStarting += (_, e) => DetailsRowsDragStarting?.Invoke(this, e);
+        SecondaryDetailsFileList.RowsDragCompleted += (_, e) => DetailsRowsDragCompleted?.Invoke(this, e);
     }
 
     public Grid Root => SecondaryPaneRoot;
@@ -25,10 +32,11 @@ public sealed partial class SecondaryPaneView : UserControl
     public StackPanel BreadcrumbHost => SecondaryBreadcrumbHost;
     public TextBox PathInput => SecondaryPathInput;
     public Button EditPathButton => SecondaryEditPathButton;
-    public ScrollViewer DetailsScroller => SecondaryDetailsScroller;
+    public ScrollBar DetailsHorizontalScrollBar => SecondaryDetailsHorizontalScrollBar;
     public Grid FileSurface => SecondaryFileSurface;
     public Grid FileViewport => SecondaryFileViewport;
     public Grid ColumnHeader => SecondaryColumnHeader;
+    public DetailsFileListView DetailsFileList => SecondaryDetailsFileList;
     public ListView FileList => SecondaryFileList;
     public Canvas MarqueeCanvas => SecondaryMarqueeCanvas;
     public Rectangle MarqueeRect => SecondaryMarqueeRect;
@@ -55,6 +63,13 @@ public sealed partial class SecondaryPaneView : UserControl
     public event SelectionChangedEventHandler? FileSelectionChanged;
     public event EventHandler<object>? FileListContextOpening;
     public event EventHandler<ContextRequestedEventArgs>? FileRowContextRequested;
+    public event RangeBaseValueChangedEventHandler? DetailsHorizontalScrollChanged;
+    public event EventHandler<DetailsFileSelectionChangedEventArgs>? DetailsSelectionChanged;
+    public event EventHandler<DetailsFileRowEventArgs>? DetailsRowInvoked;
+    public event EventHandler<DetailsFileRowContextEventArgs>? DetailsRowContextRequested;
+    public event EventHandler<DetailsFileRowsDragStartingEventArgs>? DetailsRowsDragStarting;
+    public event EventHandler? DetailsRowsDragCompleted;
+    public event KeyEventHandler? DetailsFileKeyDown;
 
     private void OnSecondaryPathKeyDown(object sender, KeyRoutedEventArgs e) => PathKeyDown?.Invoke(sender, e);
 
@@ -63,6 +78,12 @@ public sealed partial class SecondaryPaneView : UserControl
     private void OnSecondaryPathTextChanged(object sender, TextChangedEventArgs e) => PathTextChanged?.Invoke(sender, e);
 
     private void OnEditSecondaryPath(object sender, RoutedEventArgs e) => EditPath?.Invoke(sender, e);
+
+    private void OnSecondaryDetailsHorizontalScrollChanged(object sender, RangeBaseValueChangedEventArgs e) =>
+        DetailsHorizontalScrollChanged?.Invoke(sender, e);
+
+    private void OnSecondaryDetailsFileKeyDown(object sender, KeyRoutedEventArgs e) =>
+        DetailsFileKeyDown?.Invoke(sender, e);
 
     private void OnSecondaryMarqueePressed(object sender, PointerRoutedEventArgs e) => MarqueePressed?.Invoke(sender, e);
 

@@ -210,6 +210,7 @@ public sealed partial class MainWindow
             timer.Stop();
             if (_workspace is not null)
             {
+                ApplyFileListViewPresentation();
                 ApplyColumnWidths();
                 QueueDetailsScrollRefresh();
             }

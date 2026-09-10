@@ -19,6 +19,7 @@ namespace SimpleFile.App;
 
 public sealed partial class MainWindow
 {
+    private const double DetailsPaneFallbackWidth = 360;
 
     private void UpdateDualPaneButton(bool dualPaneEnabled)
     {
@@ -387,9 +388,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        var primaryView = _workspace.ViewFor(PaneId.Primary);
+        var primaryView = EffectiveFileListViewForPane(PaneId.Primary);
         var primaryIconSize = _workspace.IconSizeFor(PaneId.Primary);
-        var secondaryView = _workspace.ViewFor(PaneId.Secondary);
+        var secondaryView = EffectiveFileListViewForPane(PaneId.Secondary);
         var secondaryIconSize = _workspace.IconSizeFor(PaneId.Secondary);
         FileListViewHost.Apply(PaneId.Primary, primaryView, primaryIconSize);
         FileListViewHost.Apply(PaneId.Secondary, secondaryView, secondaryIconSize);
@@ -399,6 +400,34 @@ public sealed partial class MainWindow
 
         ApplyFileListPresentation(PrimaryFileList, primaryView, primaryIconSize);
         ApplyFileListPresentation(SecondaryFileList, secondaryView, secondaryIconSize);
+        ApplyFileListSurfaceVisibility(PaneId.Primary, primaryView);
+        ApplyFileListSurfaceVisibility(PaneId.Secondary, secondaryView);
+    }
+
+    private string EffectiveFileListViewForPane(PaneId pane)
+    {
+        if (_workspace is null)
+        {
+            return UiSettings.NormalizeDefaultView(null);
+        }
+
+        var requested = _workspace.ViewFor(pane);
+        if (!string.Equals(requested, "details", StringComparison.Ordinal))
+        {
+            return requested;
+        }
+
+        var paneWidth = pane == PaneId.Secondary ? SecondaryPaneRoot.ActualWidth : PrimaryPaneRoot.ActualWidth;
+        return paneWidth > 0 && paneWidth < DetailsPaneFallbackWidth ? "list" : "details";
+    }
+
+    private void ApplyFileListSurfaceVisibility(PaneId pane, string view)
+    {
+        var details = string.Equals(view, "details", StringComparison.Ordinal);
+        var detailsList = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
+        detailsList.Visibility = details ? Visibility.Visible : Visibility.Collapsed;
+        list.Visibility = details ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void ApplyFileListPresentation(ListView list, string view, int iconSize)
@@ -443,10 +472,21 @@ public sealed partial class MainWindow
             list,
             ScrollMode.Disabled);
         ScrollViewer.SetVerticalScrollBarVisibility(list, ScrollBarVisibility.Auto);
+        list.Loaded -= OnFileListLoadedResetHiddenHorizontalScroll;
+        list.Loaded += OnFileListLoadedResetHiddenHorizontalScroll;
+        ResetHiddenListHorizontalScroll(list);
         list.ContainerContentChanging -= OnFileListContainerContentChanging;
         if (usesDetails)
         {
             list.ContainerContentChanging += OnFileListContainerContentChanging;
+        }
+    }
+
+    private void OnFileListLoadedResetHiddenHorizontalScroll(object sender, RoutedEventArgs e)
+    {
+        if (sender is ListView list)
+        {
+            ResetHiddenListHorizontalScroll(list);
         }
     }
 
@@ -520,7 +560,10 @@ public sealed partial class MainWindow
         if (args.ItemContainer is ListViewItem item)
         {
             var pane = ReferenceEquals(sender, SecondaryFileList) ? PaneId.Secondary : PaneId.Primary;
-            item.MinWidth = ColumnLayoutHost.For(pane).VisibleWidth;
+            var viewport = pane == PaneId.Secondary ? SecondaryFileViewport : PrimaryFileViewport;
+            var viewportWidth = Math.Max(1, viewport.ActualWidth > 0 ? viewport.ActualWidth : sender.ActualWidth);
+            item.Width = viewportWidth;
+            item.MinWidth = 0;
             item.HorizontalAlignment = HorizontalAlignment.Left;
         }
     }
@@ -574,6 +617,15 @@ public sealed partial class MainWindow
         }
 
         list.SelectedItem = path is null ? null : rows.FirstOrDefault(row => row.Path == path);
+    }
+
+    private void SelectRow(PaneId pane, string? path)
+    {
+        var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
+        var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        SelectRow(list, rows, path);
+        details.SelectPath(path);
     }
 
     private FileRow ToFileRow(FileEntry entry) =>
