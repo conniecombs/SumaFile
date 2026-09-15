@@ -23,6 +23,12 @@ pub(super) struct PathParams {
     pub(super) path: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct DriveListParams {
+    #[serde(default)]
+    pub(super) mode: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ListDirectoryParams {
     pub(super) path: String,
@@ -76,9 +82,30 @@ pub(super) struct NameParams {
     pub(super) name: String,
 }
 
+pub(super) type ShortcutParams = simplefile_core::file_ops::ShortcutRequest;
+
 #[derive(Debug, Deserialize)]
 pub(super) struct PathsParams {
     pub(super) paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitPathsParams {
+    pub(super) path: String,
+    pub(super) paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitDiffPathParams {
+    pub(super) path: String,
+    #[serde(rename = "filePath")]
+    pub(super) file_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitCommitParams {
+    pub(super) path: String,
+    pub(super) message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +151,12 @@ pub(super) struct OperationIdParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct OptionalOperationIdParams {
+    #[serde(rename = "operationId")]
+    pub(super) operation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct SearchFilesParams {
     pub(super) options: SearchOptions,
 }
@@ -161,6 +194,11 @@ pub(super) struct ExternalUrlParams {
 #[derive(Debug, Deserialize)]
 pub(super) struct SettingKeyParams {
     pub(super) key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SettingKeysParams {
+    pub(super) keys: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,6 +243,12 @@ pub(super) struct DuplicateCheckParams {
     pub(super) min_size: Option<u64>,
     #[serde(rename = "partialHashBytes")]
     pub(super) partial_hash_bytes: Option<u64>,
+    #[serde(rename = "maxDepth")]
+    pub(super) max_depth: Option<usize>,
+    #[serde(rename = "excludePatterns")]
+    pub(super) exclude_patterns: Option<Vec<String>>,
+    #[serde(rename = "networkMode")]
+    pub(super) network_mode: Option<bool>,
     #[serde(rename = "operationId")]
     pub(super) operation_id: Option<String>,
 }
@@ -216,12 +260,6 @@ pub(super) struct DiskCleanupParams {
     pub(super) size_threshold: Option<u64>,
     #[serde(rename = "operationId")]
     pub(super) operation_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ConfirmationTokenParams {
-    #[serde(rename = "confirmationToken")]
-    pub(super) confirmation_token: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -288,4 +326,20 @@ pub(super) fn parse_params<T: for<'de> Deserialize<'de>>(
             format!("invalid params: {error}"),
         )
     })
+}
+
+pub(super) fn parse_nullable_params<T>(request: &JsonRpcRequest) -> Result<T, JsonRpcResponse>
+where
+    T: for<'de> Deserialize<'de> + Default,
+{
+    match request.params.clone() {
+        Some(Value::Null) | None => Ok(T::default()),
+        Some(params) => serde_json::from_value(params).map_err(|error| {
+            JsonRpcResponse::error(
+                request.id.clone(),
+                ERR_INVALID_PARAMS,
+                format!("invalid params: {error}"),
+            )
+        }),
+    }
 }

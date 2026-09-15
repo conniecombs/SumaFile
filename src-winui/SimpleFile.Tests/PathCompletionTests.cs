@@ -25,4 +25,20 @@ public class PathCompletionTests
             "do");
         Assert.Equal([@"C:\Users\Documents"], matches);
     }
+
+    [Fact]
+    public void Suggest_DeduplicatesAndCapsPathEditCandidates()
+    {
+        var matches = PathCompletion.Suggest(
+            [
+                @"C:\Users\Desktop",
+                @"C:\Users\desktop",
+                @"C:\Users\Documents",
+                @"C:\Users\Downloads",
+            ],
+            "d",
+            max: 2);
+
+        Assert.Equal([@"C:\Users\Desktop", @"C:\Users\Documents"], matches);
+    }
 }

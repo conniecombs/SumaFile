@@ -25,16 +25,17 @@ pub(super) struct EventSink {
 }
 
 pub(super) struct DuplicateCheckJob {
-    pub(super) cancel: Arc<AtomicBool>,
     pub(super) id: Option<Value>,
     pub(super) directory: String,
     pub(super) min_size: Option<u64>,
     pub(super) partial_hash_bytes: Option<u64>,
+    pub(super) max_depth: Option<usize>,
+    pub(super) exclude_patterns: Vec<String>,
+    pub(super) network_mode: Option<bool>,
     pub(super) operation_id: Option<String>,
 }
 
 pub(super) struct DiskCleanupJob {
-    pub(super) cancel: Arc<AtomicBool>,
     pub(super) id: Option<Value>,
     pub(super) directory: String,
     pub(super) size_threshold: Option<u64>,
@@ -195,62 +196,19 @@ pub(super) fn spawn_folder_metrics(
     cancel: Arc<AtomicBool>,
 ) {
     tokio::spawn(async move {
-        let cancel2 = cancel.clone();
-        let cancel3 = cancel.clone();
-        let path2 = path.clone();
-        let path3 = path.clone();
+        let result = scheduler
+            .run_general(move || simplefile_core::file_ops::get_folder_metrics(&path, &cancel))
+            .await;
 
-        let size_scheduler = scheduler.clone();
-        let count_scheduler = scheduler.clone();
-        let subdirs_scheduler = scheduler;
-        let size_handle = async move {
-            size_scheduler
-                .run_general(move || {
-                    simplefile_core::file_ops::calculate_folder_size(&path, &cancel)
-                })
-                .await
-        };
-        let count_handle = async move {
-            count_scheduler
-                .run_general(move || {
-                    simplefile_core::file_ops::count_folder_items(&path2, &cancel2)
-                })
-                .await
-        };
-        let subdirs_handle = async move {
-            subdirs_scheduler
-                .run_general(move || {
-                    if cancel3.load(Ordering::Relaxed) {
-                        Err("cancelled".to_string())
-                    } else {
-                        simplefile_core::file_ops::list_subdirectories(&path3)
-                    }
-                })
-                .await
-        };
-
-        let (size_result, count_result, subdirs_result) =
-            tokio::join!(size_handle, count_handle, subdirs_handle);
-
-        let response = match (size_result, count_result, subdirs_result) {
-            (Ok(Some(size)), Ok(Some(count)), Ok(Ok(subdirs))) => JsonRpcResponse::result(
+        let response = match result {
+            Ok(Some(metrics)) => {
+                json_result_response(id, metrics, "failed to serialize folder metrics result")
+            }
+            Ok(None) => JsonRpcResponse::application_error(id, "cancelled".to_string()),
+            Err(error) => JsonRpcResponse::application_error(
                 id,
-                json!({
-                    "size": size,
-                    "itemCount": count,
-                    "subdirectories": subdirs,
-                }),
+                format!("folder metrics task failed: {error}"),
             ),
-            (Ok(None), _, _) | (_, Ok(None), _) => {
-                JsonRpcResponse::application_error(id, "cancelled".to_string())
-            }
-            (_, _, Ok(Err(message))) => JsonRpcResponse::application_error(id, message),
-            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
-                JsonRpcResponse::application_error(
-                    id,
-                    format!("folder metrics task failed: {error}"),
-                )
-            }
         };
         let _ = write_json(&writer, &response).await;
     });
@@ -264,6 +222,7 @@ pub(super) async fn list_directory_and_reply(
     path: String,
     options: Option<ListDirectoryOptions>,
 ) -> Result<(), String> {
+    let start = std::time::Instant::now();
     let binary_request_id = binary_response_id(&binary_hot_frames, &id);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let join = tokio::spawn(async move {
@@ -307,8 +266,16 @@ pub(super) async fn list_directory_and_reply(
         .map_err(|error| format!("listing task failed: {error}"))?
     {
         Ok(Ok(listing)) => {
+            let run_ms = start.elapsed().as_secs_f64() * 1000.0;
             if let Some(request_id) = binary_request_id {
+                let encode_start = std::time::Instant::now();
                 let payload = crate::binary::encode_directory_listing_result(request_id, &listing)?;
+                let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+                log::debug!(
+                    "job.timing method=ListDirectory run_ms={:.2} encode_ms={:.2}",
+                    run_ms,
+                    encode_ms
+                );
                 write_binary_response(writer, id, &payload).await
             } else {
                 let result = serde_json::to_value(&listing)
@@ -364,16 +331,28 @@ pub(super) async fn generate_thumbnail_and_reply(
     path: String,
     size: Option<u32>,
 ) -> Result<(), String> {
-    match scheduler
+    let start = std::time::Instant::now();
+    let result = scheduler
         .run_general(move || simplefile_core::preview::generate_thumbnail(path, size))
-        .await
-    {
+        .await;
+    let run_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    match result {
         Ok(Ok(result)) => {
             if let Some(request_id) = binary_response_id(&binary_hot_frames, &id) {
+                let encode_start = std::time::Instant::now();
                 let payload = crate::binary::encode_thumbnail_result(request_id, &result)?;
+                let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+                log::debug!(
+                    "job.timing method=GenerateThumbnail run_ms={:.2} encode_ms={:.2}",
+                    run_ms,
+                    encode_ms
+                );
                 write_binary_response(writer, id, &payload).await
             } else {
-                write_json(writer, &JsonRpcResponse::result(id, json!(result))).await
+                use base64::{engine::general_purpose, Engine as _};
+                let b64 = general_purpose::STANDARD.encode(&result);
+                write_json(writer, &JsonRpcResponse::result(id, json!(b64))).await
             }
         }
         Ok(Err(message)) => {
@@ -400,16 +379,35 @@ pub(super) async fn generate_thumbnails_and_reply(
     paths: Vec<String>,
     size: Option<u32>,
 ) -> Result<(), String> {
-    match scheduler
+    let start = std::time::Instant::now();
+    let result = scheduler
         .run_general(move || simplefile_core::preview::generate_thumbnails(paths, size))
-        .await
-    {
+        .await;
+    let run_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    match result {
         Ok(results) => {
             if let Some(request_id) = binary_response_id(&binary_hot_frames, &id) {
+                let encode_start = std::time::Instant::now();
                 let payload = crate::binary::encode_thumbnail_results_result(request_id, &results)?;
+                let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+                log::debug!(
+                    "job.timing method=GenerateThumbnails run_ms={:.2} encode_ms={:.2}",
+                    run_ms,
+                    encode_ms
+                );
                 write_binary_response(writer, id, &payload).await
             } else {
-                let result = serde_json::to_value(results).unwrap_or(Value::Null);
+                use base64::{engine::general_purpose, Engine as _};
+                let mut json_results = Vec::new();
+                for r in results {
+                    json_results.push(json!({
+                        "path": r.path,
+                        "data": r.data.as_ref().map(|d| general_purpose::STANDARD.encode(d)),
+                        "error": r.error
+                    }));
+                }
+                let result = serde_json::to_value(json_results).unwrap_or(Value::Null);
                 write_json(writer, &JsonRpcResponse::result(id, result)).await
             }
         }
@@ -483,6 +481,7 @@ pub(super) fn spawn_search_files(
     options: SearchOptions,
 ) {
     tokio::spawn(async move {
+        let start = std::time::Instant::now();
         let binary_request_id = binary_response_id(&events.binary_hot_frames, &id);
         let search_id = options.search_id.clone();
         let cancel = if let Some(search_id) = search_id.as_deref() {
@@ -503,6 +502,9 @@ pub(super) fn spawn_search_files(
                 result
             })
             .await;
+
+        let run_ms = start.elapsed().as_secs_f64() * 1000.0;
+        log::debug!("job.timing method=SearchFiles run_ms={:.2}", run_ms);
 
         let response = match result {
             Ok(Ok(results)) => {
@@ -539,23 +541,40 @@ pub(super) fn spawn_search_files(
 
 pub(super) fn spawn_duplicate_check(
     writer: OutboundSink,
+    registry: std::sync::Arc<OperationRegistry>,
     scheduler: BlockingScheduler,
     events: EventSink,
     job: DuplicateCheckJob,
 ) {
     let DuplicateCheckJob {
-        cancel,
         id,
         directory,
         min_size,
         partial_hash_bytes,
+        max_depth,
+        exclude_patterns,
+        network_mode,
         operation_id,
     } = job;
-    cancel.store(false, Ordering::Relaxed);
-    let operation_id = operation_id.unwrap_or_else(|| "duplicate_check".to_string());
     tokio::spawn(async move {
+        let operation_id =
+            operation_id.unwrap_or_else(simplefile_core::utils::generate_operation_id);
+        let cancel = registry.register(&operation_id).await;
         let events_for_task = events.clone();
         let operation_id_for_task = operation_id.clone();
+        let queued_directory = directory.clone();
+        events.emit_progress(&ProgressUpdate {
+            operation_id: operation_id.clone(),
+            operation_type: "duplicate-check".to_string(),
+            current: 0,
+            total: 0,
+            current_files: 0,
+            total_files: 0,
+            current_item: queued_directory,
+            status: "queued".to_string(),
+            error: None,
+        });
+        let start = std::time::Instant::now();
         let result = scheduler
             .run_general(move || {
                 let emit = |current, total, item: &str| {
@@ -573,12 +592,20 @@ pub(super) fn spawn_duplicate_check(
                 };
                 scan_duplicate_check(
                     &directory,
-                    DuplicateScanOptions::from_params(min_size, partial_hash_bytes),
+                    DuplicateScanOptions::from_params(
+                        min_size,
+                        partial_hash_bytes,
+                        max_depth,
+                        exclude_patterns,
+                        network_mode,
+                    ),
                     &cancel,
                     emit,
                 )
             })
             .await;
+        let run_ms = start.elapsed().as_secs_f64() * 1000.0;
+        log::debug!("job.timing method=DuplicateCheck total_ms={run_ms:.2}");
 
         let response = scheduled_result_response(
             id,
@@ -587,27 +614,41 @@ pub(super) fn spawn_duplicate_check(
             "failed to serialize duplicate check result",
         );
         let _ = write_json(&writer, &response).await;
+        registry.remove(&operation_id).await;
     });
 }
 
 pub(super) fn spawn_disk_cleanup(
     writer: OutboundSink,
+    registry: std::sync::Arc<OperationRegistry>,
     scheduler: BlockingScheduler,
     events: EventSink,
     job: DiskCleanupJob,
 ) {
     let DiskCleanupJob {
-        cancel,
         id,
         directory,
         size_threshold,
         operation_id,
     } = job;
-    cancel.store(false, Ordering::Relaxed);
-    let operation_id = operation_id.unwrap_or_else(|| "disk_cleanup".to_string());
     tokio::spawn(async move {
+        let operation_id =
+            operation_id.unwrap_or_else(simplefile_core::utils::generate_operation_id);
+        let cancel = registry.register(&operation_id).await;
         let events_for_task = events.clone();
         let operation_id_for_task = operation_id.clone();
+        let queued_directory = directory.clone();
+        events.emit_progress(&ProgressUpdate {
+            operation_id: operation_id.clone(),
+            operation_type: "cleanup".to_string(),
+            current: 0,
+            total: 0,
+            current_files: 0,
+            total_files: 0,
+            current_item: queued_directory,
+            status: "queued".to_string(),
+            error: None,
+        });
         let result = scheduler
             .run_general(move || {
                 let emit = |current, total, item: &str| {
@@ -634,5 +675,6 @@ pub(super) fn spawn_disk_cleanup(
             "failed to serialize cleanup result",
         );
         let _ = write_json(&writer, &response).await;
+        registry.remove(&operation_id).await;
     });
 }

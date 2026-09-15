@@ -16,7 +16,7 @@
 
         <StackPanel Spacing="4">
             <TextBlock Text="Contents:" FontWeight="SemiBold" />
-            <TextBlock x:Name="ContentsText" Foreground="{StaticResource SfTextMutedBrush}" />
+            <TextBlock x:Name="ContentsText" Foreground="{ThemeResource SfTextMutedBrush}" />
         </StackPanel>
 
         <InfoBar x:Name="WarningBar" Severity="Warning" IsOpen="False" IsClosable="False" />
@@ -29,7 +29,7 @@
                 <RadioButton x:Name="RadioCustom" Content="Extract to..." Tag="custom" Checked="OnRadioChecked" VerticalAlignment="Center" />
                 <Button x:Name="BrowseButton" Content="Browse" IsEnabled="False" Click="OnBrowseClicked" VerticalAlignment="Center" />
             </StackPanel>
-            <TextBlock x:Name="DestinationText" TextTrimming="CharacterEllipsis" Foreground="{StaticResource SfTextMutedBrush}" Margin="24,0,0,0" />
+            <TextBlock x:Name="DestinationText" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource SfTextMutedBrush}" Margin="24,0,0,0" />
         </StackPanel>
     </StackPanel>
 </ContentDialog>

@@ -63,17 +63,18 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | --- | --- | --- | --- | --- |
 | `get_home_dir` | `fs_ops` | none | `string` | Startup location, Home navigation |
 | `select_directory` | `fs_ops` (Tauri dialog plugin) | `{ defaultPath }` | `string \| null` | Settings start path, extract-to picker |
-| `list_drives` | `drives` | none | `DriveInfo[]` | Sidebar “This PC”, drive status/retry |
+| `list_drives` | `drives` | `{ mode? }` | `DriveInfo[]` | Sidebar “This PC”, drive status/retry; `mode=light` is used for startup |
 | `list_directory` | `fs_ops` → `dir_list` | `{ path, onChunk }` | `DirectoryListing` | Primary/secondary listing, progressive chunks |
 | `list_subdirectories` | `fs_ops` | `{ path }` | `TreeNode[]` | Sidebar tree expand |
 | `create_directory` | `fs_ops` | `{ path, name }` | `string` | New folder, pack-into-folder |
-| `create_file` | `fs_ops` | `{ path, name }` | `string` | New file |
+| `create_file` | `fs_ops` | `{ path, name }` | `string` | New text/blank file |
+| `create_shortcut` | `fs_ops` | `{ path, name, targetPath, arguments, workingDirectory, iconPath }` | `string` | New shortcut |
 | `delete_entry` | `fs_ops` | `{ path }` | `void` | Permanent delete, undo of copy |
 | `move_to_trash` | `fs_ops` | `{ paths }` | `void` | Trash delete |
 | `rename_entry` | `fs_ops` | `{ path, newName }` | `string` | Rename |
 | `batch_rename` | `fs_ops` | `{ entries: RenameRequest[] }` | `string[]` | Advanced rename apply |
-| `copy_entry` | `fs_ops` | `{ source, destination }` | `string` | Legacy single copy; conflict = error |
-| `move_entry` | `fs_ops` | `{ source, destination }` | `string` | Legacy single move; conflict = error |
+| `copy_entry` | `fs_ops` | `{ source, destination }` | `string` | `compatOnly` legacy single copy; use `copy_with_progress` for live UI |
+| `move_entry` | `fs_ops` | `{ source, destination }` | `string` | `compatOnly` legacy single move; use `move_with_progress` for live UI |
 | `copy_entry_resolved` | `fs_ops` | `{ source, destination, conflictAction }` | `string` | Conflict-aware single copy / undo |
 | `move_entry_resolved` | `fs_ops` | `{ source, destination, conflictAction }` | `string` | Conflict-aware single move / undo |
 | `get_entry_info` | `fs_ops` | `{ path }` | `FileEntry` | Properties, open-with, preview fallback |
@@ -86,7 +87,7 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | `count_folder_items` | `fs_ops` | `{ path }` | `number` | Folder metrics (recursive) |
 | `cancel_folder_size` | `fs_ops` | none | `void` | Cancel size work on navigation |
 | `cancel_folder_item_count` | `fs_ops` | none | `void` | Cancel passive child counts |
-| `cancel_count_items` | `fs_ops` | none | `void` | Wrapper exists; no live UI caller |
+| `cancel_count_items` | `fs_ops` | none | `void` | `compatOnly`; use `cancel_folder_item_count` |
 
 ### 2.2 Preview, open, and inspection
 
@@ -114,32 +115,36 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | `save_smart_folder` | `smart_folders` | `{ folder }` | `SmartFolder[]` | Save current search |
 | `delete_smart_folder` | `smart_folders` | `{ id }` | `SmartFolder[]` | Sidebar remove |
 | `disk_cleanup` | `cleanup` | `{ directory, sizeThreshold? }` | `CleanupResult` | Analyze cleanup |
-| `cancel_disk_cleanup` | `cleanup` | none | `void` | Wrapper exists; progress UI can cancel related work |
-| `duplicate_check` | `cleanup` | `{ directory, minSize?, partialHashBytes? }` | `DuplicateCheckResult` | Duplicate checker |
-| `cancel_duplicate_check` | `cleanup` | none | `void` | Duplicate checker cancel |
+| `cancel_disk_cleanup` | `cleanup` | `{ operationId? }` | `void` | Wrapper exists; progress UI can cancel related work |
+| `duplicate_check` | `cleanup` | `{ directory, minSize?, partialHashBytes?, maxDepth?, excludePatterns?, networkMode?, operationId? }` | `DuplicateCheckResult` | Duplicate checker |
+| `cancel_duplicate_check` | `cleanup` | `{ operationId? }` | `void` | Duplicate checker cancel |
 
-### 2.4 Archives and WinRAR
+### 2.4 Archives
 
 | Command | Rust module | JS args | Result | Used by |
 | --- | --- | --- | --- | --- |
 | `list_archive` | `archive` | `{ path }` | `ArchiveInfo` | Archive viewer |
+| `get_archive_capabilities` | `archive` | none | `ArchiveCapabilities` | Create archive dialog |
 | `extract_archive` | `archive` | `{ archivePath, destination }` | `void` | Extract here / folder / to… |
 | `create_archive` | `archive` | `{ paths, archivePath, format }` | `void` | Compress… |
-| `check_rar_installed` | `rar_installer` | none | `boolean` | Settings tools status |
-| `prepare_rar_install` | `rar_installer` | none | `RarInstallPlan` | Confirm download/install |
-| `discard_rar_install` | `rar_installer` | `{ confirmationToken }` | `void` | Cancel staged installer |
-| `install_rar` | `rar_installer` | `{ confirmationToken }` | `string` | Settings “Install WinRAR” |
 
-Formats that must remain: `zip`, `tar`, `tar.gz` / `tgz`, `rar`. Archive paths can also be navigated as virtual folders through `list_directory` / create helpers.
+Formats that must remain: `zip`, `7z`, `tar`, `tar.gz` / `tgz`, `rar`. RAR is list/extract only. Archive paths can also be navigated as virtual folders through `list_directory` / create helpers.
 
 ### 2.5 Git, terminals, tags, settings, updater
 
 | Command | Rust module | JS args | Result | Used by |
 | --- | --- | --- | --- | --- |
-| `get_git_status` | `git` | `{ path }` | `GitStatus` | Contract/wrapper only; no live UI caller |
-| `get_git_file_statuses` | `git` | `{ path }` | `Record<string, string>` | Optional git column when `enableGitIntegration` |
-| `git_pull` | `git` | `{ path }` | `string \| void` | Command palette |
-| `git_push` | `git` | `{ path }` | `string \| void` | Command palette |
+| `get_git_status` | `git` | `{ path }` | `GitStatus` | `compatOnly`; live UI uses repository/file status methods |
+| `get_git_repository_status` | `git` | `{ path }` | `GitRepositoryStatus` | Optional Git workbench when `enableGitIntegration` |
+| `get_git_file_statuses` | `git` | `{ path }` | `FileEntry[]` | Optional Git column when `enableGitIntegration` |
+| `git_stage_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git workbench/context menu |
+| `git_unstage_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git workbench/context menu |
+| `git_discard_paths` | `git` | `{ path, paths }` | `GitCommandResult` | Git workbench/context menu with UI confirmation |
+| `git_diff_path` | `git` | `{ path, filePath }` | `string` | Git workbench diff preview |
+| `git_commit` | `git` | `{ path, message }` | `GitCommandResult` | Git workbench commit prompt |
+| `git_fetch` | `git` | `{ path }` | `GitCommandResult` | Git workbench/context menu |
+| `git_pull` | `git` | `{ path }` | `GitCommandResult` | Git workbench/context menu/command palette |
+| `git_push` | `git` | `{ path }` | `GitCommandResult` | Git workbench/context menu/command palette |
 | `open_terminal` | `terminal` | `{ path }` | `void` | F4, context menu, toolbar |
 | `open_powershell_admin` | `terminal` | `{ path }` | `void` | Context menu / command workflow |
 | `get_all_tags` | `tags` | none | `ColorLabelTag[]` | Color labels |
@@ -151,12 +156,13 @@ Formats that must remain: `zip`, `tar`, `tar.gz` / `tgz`, `rar`. Archive paths c
 | `get_all_file_tags` | `tags` | none | `Record<string, ColorLabelTag>` | File list color dots |
 | `get_files_with_tag` | `tags` | `{ tagId }` | `string[]` | Filter by label |
 | `get_db_setting` | `db` | `{ key }` | `string \| null` | Wrapper only; no live UI caller |
+| `get_db_settings` | `db` | `{ keys }` | key/value map | Batched WinUI startup settings load |
 | `set_db_setting` | `db` | `{ key, value }` | `void` | Wrapper only; no live UI caller |
 | `get_app_version` | `updater` | none | `string` | Settings updates tab |
 | `get_app_about_info` | `updater` | none | `AppAboutInfo` | About dialog |
 | `check_for_update` | `updater` | none | `UpdateInfo \| null` | Settings check |
 | `install_update` | `updater` | none | `void` | Settings install; then `app.restart()` |
-| `show_main_window` | `lib.rs` | none | `void` | Wrapper only; shows/focuses window `main` |
+| `show_main_window` | `lib.rs` | none | `void` | `hostOwned`/`compatOnly`; WinUI activates locally |
 
 ### 2.6 Conflict actions and transfer semantics
 
@@ -265,7 +271,7 @@ Workflows live in `frontend/src/lib/app/` plus host-style modules under `fronten
 
 | Workflow | Source | Behavior to keep |
 | --- | --- | --- |
-| New folder / file | `createFolderFlow`, `createFileFlow` | Name prompt, validation, undo |
+| New folder / file | `New` menu templates | Unique default names, rename prompt, selection after refresh, validation, undo |
 | Rename | `renameSelectedFlow` | Inline/dialog, invalid-name rules |
 | Advanced rename | `advanced_rename.ts` | Preview, filters, numbering, templates, `batch_rename` |
 | Delete | `deleteSelectedFlow` | Trash vs permanent, confirm setting, Shift+Delete |
@@ -308,7 +314,7 @@ Workflows live in `frontend/src/lib/app/` plus host-style modules under `fronten
 | About | `showAboutFlow` | Version/platform + repo link |
 | Updater | `checkForUpdatesFlow`, `installUpdateFlow` | Passive Windows install, then restart |
 | WinRAR tool | `updateToolStatus`, `installRarFlow` | Confirm token, hash, publisher |
-| Command palette | `CommandPalette.svelte` | Ctrl+Shift+P; includes Git pull/push |
+| Command palette | `CommandPalette.svelte` | Ctrl+Shift+P; includes Git workbench/actions when integration is enabled |
 
 ### 4.7 Settings keys that must persist
 
@@ -339,7 +345,7 @@ Workspace layout snapshot (tabs, dual-pane, paths, histories, preview, columns, 
 | `ToolbarShell.svelte` | Search, nav buttons, file actions, view/theme/preview/dual-pane, more-actions, icon size |
 | `ContentShell.svelte` | Dual tabs, breadcrumbs, path editors, file lists, pane splitter (20–80%) |
 | `FileListHeader.svelte` / `FileListHeaderCells.svelte` | Sortable/resizable columns |
-| `CommandPalette.svelte` | Fuzzy command list + git pull/push |
+| `CommandPalette.svelte` | Fuzzy command list + Git workbench/actions |
 
 ### 5.2 Document custom events (`simplefile:*`)
 
@@ -355,7 +361,7 @@ These are the Svelte-to-workflow bus. WinUI should keep equivalent commands even
 
 **Inspection / tools:** `properties`, `quick-look`, `quick-look-open`, `quick-look-close`, `preview-close`, `create-archive`, `archive-extract`, `create-archive-confirm`, `advanced-rename`, `advanced-rename-close`, `advanced-rename-confirm`, `advanced-rename-input`, `keyboard-help`, `operation-history`, `set-color-label`, `folder-metrics`, `disk-cleanup`, `duplicate-checker`, `duplicate-checker-close`, `duplicate-checker-delete`, `duplicate-checker-open`, `duplicate-checker-preview`, `duplicate-checker-reveal`, `column-header-menu`, `column-autofit`, `tags-updated`
 
-**Toolbar command ids:** `back`, `forward`, `up`, `refresh`, `new-folder`, `new-file`, `rename`, `copy`, `cut`, `paste`, `delete`, `undo`, `redo`, `clipboard-history`, `operation-history`, `color-label`, `folder-metrics`, `disk-cleanup`, `duplicate-checker`, `view-toggle`, `preview-toggle`, `theme-toggle`, `dual-pane`, `terminal`, `navigateHome`, `navigateDesktop`, `navigateDocuments`, `navigateDownloads`, `navigatePictures`
+**Toolbar command ids:** `back`, `forward`, `up`, `refresh`, `new`, `rename`, `copy`, `cut`, `paste`, `delete`, `undo`, `redo`, `clipboard-history`, `operation-history`, `color-label`, `folder-metrics`, `disk-cleanup`, `duplicate-checker`, `view-toggle`, `preview-toggle`, `theme-toggle`, `dual-pane`, `terminal`, `navigateHome`, `navigateDesktop`, `navigateDocuments`, `navigateDownloads`, `navigatePictures`
 
 **Context menu ids:** `ctx-open`, `ctx-open-with`, `ctx-preview`, `ctx-compare`, `ctx-terminal`, `ctx-powershell-admin`, `ctx-color-label`, `ctx-folder-metrics`, `ctx-cleanup`, `ctx-duplicates`, `ctx-rename`, `ctx-advanced-rename`, `ctx-copy`, `ctx-cut`, `ctx-paste`, `ctx-copy-to-pane`, `ctx-move-to-pane`, `ctx-pack`, `ctx-unpack`, `ctx-compress`, `ctx-extract`, `ctx-extract-folder`, `ctx-extract-to`, `ctx-delete`, `ctx-info`
 
@@ -457,9 +463,8 @@ Keep these as the IPC service. Only the Tauri glue (`#[tauri::command]`, `AppHan
 | `watcher.rs` | `notify` watcher + debounce | `app.emit("file-change")` | Medium |
 | `preview.rs` | Preview, thumbs, open, reveal, URL | `tauri_plugin_opener` | Medium |
 | `search.rs` | Name/glob/content search + cancel registry | `search-results-batch`, `search-complete` | Medium |
-| `archive.rs` | zip/tar/tgz/rar list/create/extract + in-archive VFS | Uses `rar_installer` | Light |
-| `rar_installer.rs` | Detect/download/verify/install WinRAR | `reqwest` + confirmation token | Light |
-| `git.rs` | status / file statuses / pull / push | `CREATE_NO_WINDOW` on Windows | None |
+| `archive.rs` | zip/7z/tar/tgz list/create/extract, RAR list/extract, in-archive VFS, capabilities | Bundled 7-Zip payload for `.7z` | Light |
+| `git.rs` | repository status, file statuses, diff, stage, unstage, discard, commit, fetch, pull, push | `CREATE_NO_WINDOW` on Windows | None |
 | `terminal.rs` | PowerShell / elevated PowerShell | Process spawn | None |
 | `checksum.rs` | MD5/SHA1/SHA256 | None | None |
 | `compare.rs` | Line-oriented file diff | None | None |
@@ -536,7 +541,7 @@ From `src-tauri/tauri.conf.json`:
 | Item | Current value |
 | --- | --- |
 | Product | SimpleFile |
-| Version | 1.0.0 |
+| Version | 1.0.1 |
 | Identifier | `com.simplefile.desktop` |
 | Window label | `main` |
 | Title | `SimpleFile - File Explorer` |
@@ -649,7 +654,7 @@ Secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Any 
 
 These are real current-code facts, not extra features:
 
-1. `show_main_window`, `get_db_setting`, `set_db_setting`, `get_git_status`, `cancel_count_items`, `onOperationComplete`, `onOperationError`, `onSearchComplete`, and `onUpdateChunk` are part of the typed contract but have no live Svelte caller. Keep the Rust commands unless a later retirement step removes them.
+1. `show_main_window`, `get_git_status`, `cancel_count_items`, `copy_entry`, `move_entry`, `onOperationComplete`, and `onOperationError` are part of the compatibility contract and are marked in schema as host-owned, legacy, or typed-not-emitted where applicable. Keep them unless a later protocol version removes them.
 2. `search-complete` and `update-chunk` **are** emitted. Wire them in WinUI even if the Svelte UI currently ignores the wrappers.
 3. `operation-complete` / `operation-error` are **not** emitted. Do not invent them unless both sides agree.
 4. `list_directory` streaming is a Channel, not an event.

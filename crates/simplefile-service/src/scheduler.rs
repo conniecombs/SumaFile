@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const MIN_GENERAL_BLOCKING_PERMITS: usize = 2;
-const MAX_DEFAULT_TRANSFER_PERMITS: usize = 2;
+const DEFAULT_TRANSFER_PERMITS: usize = 2;
 
 #[derive(Clone)]
 pub(crate) struct BlockingScheduler {
@@ -21,8 +21,7 @@ impl Default for BlockingScheduler {
             .map(usize::from)
             .unwrap_or(MIN_GENERAL_BLOCKING_PERMITS);
         let general = cores.max(MIN_GENERAL_BLOCKING_PERMITS);
-        let transfer = (cores / 2).clamp(1, MAX_DEFAULT_TRANSFER_PERMITS);
-        Self::new(general, transfer)
+        Self::new(general, DEFAULT_TRANSFER_PERMITS)
     }
 }
 
@@ -100,7 +99,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::BlockingScheduler;
+    use super::{BlockingScheduler, DEFAULT_TRANSFER_PERMITS};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
@@ -111,6 +110,15 @@ mod tests {
         let scheduler = BlockingScheduler::default();
         assert!(scheduler.general.available_permits() >= 1);
         assert!(scheduler.transfer.available_permits() >= 1);
+    }
+
+    #[test]
+    fn default_allows_two_concurrent_transfer_jobs() {
+        let scheduler = BlockingScheduler::default();
+        assert_eq!(
+            scheduler.transfer.available_permits(),
+            DEFAULT_TRANSFER_PERMITS
+        );
     }
 
     #[tokio::test]

@@ -22,25 +22,46 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "icon-size-extra-large");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "icon-size-maximum");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "clear-recent-history");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "transfers");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-side-menu");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-hidden");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "focus-path");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "switch-pane");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "copy-to-pane");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "move-to-pane");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "reopen-closed-tab");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "command-palette");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "copy-path");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "bookmark-folder");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-back");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-recycle-bin");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "restore-selected");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "empty-recycle-bin");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "profile-manage");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "profile-transfer");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "new-shortcut");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "customize-toolbar");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-toolbar-labels");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-panel");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-stage-selected");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-discard-selected");
         Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
         Assert.Equal("Alt+Enter", AppCommandCatalog.Find("properties")?.Shortcut);
         Assert.Equal("Disk cleanup", AppCommandCatalog.Find("disk-cleanup")?.Label);
+        Assert.Equal("Transfers", AppCommandCatalog.Find("transfers")?.Label);
         Assert.Equal("Open or close second pane", AppCommandCatalog.Find("dual-pane")?.Label);
+        Assert.Equal("Manage workspace profiles", AppCommandCatalog.Find("profile-manage")?.Label);
+        Assert.Equal("Customize toolbar", AppCommandCatalog.Find("customize-toolbar")?.Label);
+        Assert.Equal("Show or hide toolbar labels", AppCommandCatalog.Find("toggle-toolbar-labels")?.Label);
+        Assert.Equal("Ctrl+Alt+C", AppCommandCatalog.Find("copy-to-pane")?.Shortcut);
         Assert.Equal("Move to Recycle Bin", AppCommandCatalog.Find("delete")?.Label);
         Assert.Equal("Delete Permanently", AppCommandCatalog.Find("delete-permanent")?.Label);
         Assert.Equal(AppCommandCatalog.All.Count, AppCommandCatalog.Filter("").Count);
         var git = AppCommandCatalog.Filter("git");
-        Assert.Equal(2, git.Count);
+        Assert.Equal(10, git.Count);
         Assert.All(git, command => Assert.StartsWith("git-", command.Id, StringComparison.Ordinal));
         Assert.Equal(7, AppCommandCatalog.Filter("icon size").Count);
+        Assert.Equal(7, AppCommandCatalog.Filter("profile").Count);
         Assert.Equal("toggle-side-menu", Assert.Single(AppCommandCatalog.Filter("side menu")).Id);
         Assert.Equal("settings", AppCommandCatalog.Find("settings")?.Id);
         Assert.Null(AppCommandCatalog.Find("missing"));
@@ -53,8 +74,16 @@ public class AppCommandCatalogTests
     [InlineData("ctx-open-tab", "open-selected-tab")]
     [InlineData("ctx-open-other-pane", "open-other-pane")]
     [InlineData("overflow-filter", "filter")]
+    [InlineData("overflow-profiles", "profile-manage")]
+    [InlineData("overflow-copy", "copy")]
+    [InlineData("overflow-terminal", "terminal")]
+    [InlineData("ctx-customize-toolbar", "customize-toolbar")]
+    [InlineData("ctx-toggle-toolbar-labels", "toggle-toolbar-labels")]
     [InlineData("ctx-restore", "restore-selected")]
     [InlineData("ctx-empty-recycle-bin", "empty-recycle-bin")]
+    [InlineData("ctx-git-stage", "git-stage-selected")]
+    [InlineData("ctx-git-discard", "git-discard-selected")]
+    [InlineData("ctx-git-panel", "git-panel")]
     [InlineData("view:details", "view:details")]
     public void CommandAliases_NormalizeSharedRouterIds(string id, string expected)
     {

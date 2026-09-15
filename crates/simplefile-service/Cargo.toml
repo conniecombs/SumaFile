@@ -1,6 +1,6 @@
 [package]
 name = "simplefile-service"
-version = "1.0.0"
+version = "1.0.1"
 description = "SumaFile named-pipe JSON-RPC IPC service"
 authors = ["SumaFile Team"]
 license = "MIT"
@@ -16,8 +16,10 @@ name = "simplefile-service"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.22"
 chrono = "0.4"
 glob = "0.3"
+log = "0.4"
 notify = { version = "8", features = ["serde"] }
 opener = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -25,7 +27,6 @@ serde_json = "1"
 simplefile-core = { path = "../simplefile-core" }
 simplefile-ipc = { path = "../simplefile-ipc" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

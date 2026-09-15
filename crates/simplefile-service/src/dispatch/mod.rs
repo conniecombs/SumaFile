@@ -66,10 +66,14 @@ pub(crate) enum Dispatch {
         directory: String,
         min_size: Option<u64>,
         partial_hash_bytes: Option<u64>,
+        max_depth: Option<usize>,
+        exclude_patterns: Vec<String>,
+        network_mode: Option<bool>,
         operation_id: Option<String>,
     },
     CancelDuplicateCheck {
         id: Option<Value>,
+        operation_id: Option<String>,
     },
     DiskCleanup {
         id: Option<Value>,
@@ -79,6 +83,7 @@ pub(crate) enum Dispatch {
     },
     CancelDiskCleanup {
         id: Option<Value>,
+        operation_id: Option<String>,
     },
     InstallUpdate {
         id: Option<Value>,

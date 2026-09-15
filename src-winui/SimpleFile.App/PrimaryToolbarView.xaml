@@ -62,10 +62,10 @@
                                     x:Name="SearchBox"
                                     Padding="30,4,56,4"
                                     VerticalAlignment="Center"
-                                    AutomationProperties.Name="Search active pane"
+                                    AutomationProperties.Name="Find in folder"
                                     CornerRadius="4"
                                     KeyDown="OnSearchKeyDown"
-                                    PlaceholderText="Search" />
+                                    PlaceholderText="Find in folder" />
                                 <Button
                                     Width="28"
                                     Height="28"
@@ -73,10 +73,10 @@
                                     Padding="0"
                                     HorizontalAlignment="Left"
                                     VerticalAlignment="Center"
-                                    AutomationProperties.Name="Search active pane"
+                                    AutomationProperties.Name="Find in folder"
                                     Click="OnSearchClick"
                                     Style="{StaticResource SfIconButtonStyle}"
-                                    ToolTipService.ToolTip="Search active pane">
+                                    ToolTipService.ToolTip="Find in folder">
                                     <FontIcon
                                         FontFamily="{StaticResource SfIconFont}"
                                         FontSize="12"
@@ -132,25 +132,49 @@
                                     MaxWidth="200"
                                     Margin="4,0,6,0"
                                     VerticalAlignment="Center"
-                                    AutomationProperties.Name="Quick filter active pane"
+                                    AutomationProperties.Name="Filter current list"
                                     Style="{StaticResource SfTextBoxStyle}"
-                                    PlaceholderText="Filter"
+                                    PlaceholderText="Filter list"
                                     TextChanged="OnQuickFilterChanged" />
                                 <Button
-                                    x:Name="PrimaryNewFolderButton"
+                                    x:Name="PrimaryNewButton"
                                     Style="{StaticResource SfToolbarButtonStyle}"
-                                    AutomationProperties.Name="New folder"
-                                    Click="OnPrimaryNewFolder"
-                                    ToolTipService.ToolTip="New Folder (Ctrl+Shift+N)">
+                                    AutomationProperties.Name="New"
+                                    ToolTipService.ToolTip="New">
+                                    <Button.Flyout>
+                                        <MenuFlyout>
+                                            <MenuFlyoutItem
+                                                Text="Folder"
+                                                Tag="new:folder"
+                                                Click="OnNewMenuItemClick"
+                                                KeyboardAcceleratorTextOverride="Ctrl+Shift+N">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8F4;" />
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutSeparator />
+                                            <MenuFlyoutItem
+                                                Text="Text document"
+                                                Tag="new:text"
+                                                Click="OnNewMenuItemClick"
+                                                KeyboardAcceleratorTextOverride="Ctrl+N">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutItem Text="Blank file..." Tag="new:empty" Click="OnNewMenuItemClick">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutItem Text="Shortcut..." Tag="new:shortcut" Click="OnNewMenuItemClick">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                        </MenuFlyout>
+                                    </Button.Flyout>
                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8F4;" />
-                                </Button>
-                                <Button
-                                    x:Name="PrimaryNewFileButton"
-                                    Style="{StaticResource SfToolbarButtonStyle}"
-                                    AutomationProperties.Name="New file"
-                                    Click="OnPrimaryNewFile"
-                                    ToolTipService.ToolTip="New File (Ctrl+N)">
-                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
                                 </Button>
                                 <Button
                                     x:Name="DualPaneButton"
@@ -170,10 +194,65 @@
                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE89F;" />
                                 </Button>
                                 <Button
+                                    x:Name="WorkspaceProfileButton"
+                                    Style="{StaticResource SfToolbarButtonStyle}"
+                                    AutomationProperties.Name="Workspace profiles"
+                                    ToolTipService.ToolTip="Workspace profiles">
+                                    <Button.Flyout>
+                                        <Flyout Opening="OnWorkspaceProfilesFlyoutOpening">
+                                            <StackPanel
+                                                MinWidth="300"
+                                                Padding="4"
+                                                Spacing="8">
+                                                <Grid ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock
+                                                        VerticalAlignment="Center"
+                                                        FontWeight="SemiBold"
+                                                        Text="Profiles" />
+                                                    <Button
+                                                        x:Name="WorkspaceProfileSaveButton"
+                                                        Grid.Column="1"
+                                                        Style="{StaticResource SfGhostButtonStyle}"
+                                                        Click="OnWorkspaceProfileSaveClicked"
+                                                        ToolTipService.ToolTip="Save current profile">
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <FontIcon
+                                                                FontFamily="{StaticResource SfIconFont}"
+                                                                FontSize="13"
+                                                                Glyph="&#xE74E;" />
+                                                            <TextBlock Text="Save" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                </Grid>
+                                                <StackPanel x:Name="WorkspaceProfilesHost" Spacing="2" />
+                                                <Button
+                                                    x:Name="WorkspaceProfileManageButton"
+                                                    Style="{StaticResource SfGhostButtonStyle}"
+                                                    HorizontalAlignment="Stretch"
+                                                    HorizontalContentAlignment="Left"
+                                                    Click="OnWorkspaceProfileManageClicked">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <FontIcon
+                                                            FontFamily="{StaticResource SfIconFont}"
+                                                            FontSize="13"
+                                                            Glyph="&#xE713;" />
+                                                        <TextBlock Text="Manage profiles..." />
+                                                    </StackPanel>
+                                                </Button>
+                                            </StackPanel>
+                                        </Flyout>
+                                    </Button.Flyout>
+                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8AB;" />
+                                </Button>
+                                <Button
                                     x:Name="PrimaryViewButton"
                                     Style="{StaticResource SfToolbarButtonStyle}"
-                                    AutomationProperties.Name="View options"
-                                    ToolTipService.ToolTip="View options">
+                                    AutomationProperties.Name="Current view options"
+                                    ToolTipService.ToolTip="Current view options">
                                     <Button.Flyout>
                                         <Flyout Opening="OnViewOptionsFlyoutOpening">
                                             <StackPanel
@@ -196,7 +275,7 @@
                                                 </Button>
                                                 <RadioButtons
                                                     x:Name="ViewStyleRadioButtons"
-                                                    Header="Display style"
+                                                    Header="Current display style"
                                                     MaxColumns="2"
                                                     SelectionChanged="OnViewStyleSelectionChanged">
                                                     <RadioButton Content="Details" Tag="details" />
@@ -210,7 +289,7 @@
                                                             <ColumnDefinition Width="*" />
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
-                                                        <TextBlock Text="Icon size" />
+                                                        <TextBlock Text="Current icon size" />
                                                         <TextBlock
                                                             x:Name="ViewIconSizeValueText"
                                                             Grid.Column="1"
@@ -247,11 +326,63 @@
                                                     HorizontalAlignment="Stretch"
                                                     HorizontalContentAlignment="Left"
                                                     Click="OnViewApplyBothClicked"
-                                                    Content="Apply view options to both panes" />
+                                                    Content="Apply current view to both panes" />
+                                                <StackPanel Spacing="6">
+                                                    <TextBlock
+                                                        FontWeight="SemiBold"
+                                                        Text="Save view defaults" />
+                                                    <Button
+                                                        x:Name="ViewUseGloballyButton"
+                                                        Style="{StaticResource SfGhostButtonStyle}"
+                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Left"
+                                                        Click="OnViewUseGloballyClicked">
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <FontIcon
+                                                                FontFamily="{StaticResource SfIconFont}"
+                                                                FontSize="13"
+                                                                Glyph="&#xE774;" />
+                                                            <TextBlock Text="Use globally" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button
+                                                        x:Name="ViewUseForFolderButton"
+                                                        Style="{StaticResource SfGhostButtonStyle}"
+                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Left"
+                                                        Click="OnViewUseForFolderClicked">
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <FontIcon
+                                                                FontFamily="{StaticResource SfIconFont}"
+                                                                FontSize="13"
+                                                                Glyph="&#xE8B7;" />
+                                                            <TextBlock Text="Use for this folder" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button
+                                                        x:Name="ViewUseForDescendantsButton"
+                                                        Style="{StaticResource SfGhostButtonStyle}"
+                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Left"
+                                                        Click="OnViewUseForDescendantsClicked">
+                                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                                            <FontIcon
+                                                                FontFamily="{StaticResource SfIconFont}"
+                                                                FontSize="13"
+                                                                Glyph="&#xE8B7;" />
+                                                            <TextBlock Text="Use for this folder and descendants" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <TextBlock
+                                                        x:Name="ViewFolderRuleStatusText"
+                                                        FontSize="12"
+                                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                                        TextWrapping="Wrap" />
+                                                </StackPanel>
                                                 <Border
                                                     Height="1"
                                                     Margin="0,2,0,0"
-                                                    Background="{StaticResource SfBorderBrush}" />
+                                                    Background="{ThemeResource SfBorderBrush}" />
                                                 <StackPanel Spacing="6">
                                                     <Grid ColumnSpacing="8">
                                                         <Grid.ColumnDefinitions>
@@ -261,13 +392,13 @@
                                                         <TextBlock
                                                             VerticalAlignment="Center"
                                                             FontWeight="SemiBold"
-                                                            Text="Layouts" />
+                                                            Text="Profiles" />
                                                         <Button
-                                                            x:Name="ViewSaveLayoutButton"
+                                                            x:Name="ViewSaveProfileButton"
                                                             Grid.Column="1"
                                                             Style="{StaticResource SfGhostButtonStyle}"
-                                                            Click="OnViewSaveLayoutClicked"
-                                                            ToolTipService.ToolTip="Save current layout">
+                                                            Click="OnViewSaveProfileClicked"
+                                                            ToolTipService.ToolTip="Save current profile">
                                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                                 <FontIcon
                                                                     FontFamily="{StaticResource SfIconFont}"
@@ -277,7 +408,7 @@
                                                             </StackPanel>
                                                         </Button>
                                                     </Grid>
-                                                    <StackPanel x:Name="SavedLayoutsHost" Spacing="2" />
+                                                    <StackPanel x:Name="ViewProfilesHost" Spacing="2" />
                                                 </StackPanel>
                                             </StackPanel>
                                         </Flyout>

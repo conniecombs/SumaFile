@@ -63,7 +63,7 @@ pub struct ProgressUpdate {
     pub current_files: u64,
     pub total_files: u64,
     pub current_item: String,
-    pub status: String, // "running", "completed", "error", "cancelled"
+    pub status: String, // "running", "finalizing", "completed", "error", "cancelled"
     pub error: Option<String>,
 }
 
@@ -102,6 +102,13 @@ pub struct TreeNode {
     pub path: String,
     pub has_children: bool,
     pub children: Vec<TreeNode>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FolderMetrics {
+    pub size: u64,
+    pub item_count: u64,
+    pub subdirectories: Vec<TreeNode>,
 }
 
 // ============================================================================
@@ -247,19 +254,48 @@ pub struct GitStatus {
     pub behind: u32,
 }
 
-// ============================================================================
-// App / Installer Types
-// ============================================================================
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GitFileStatus {
+    pub path: String,
+    pub absolute_path: String,
+    pub original_path: Option<String>,
+    pub status: String,
+    pub index_status: String,
+    pub worktree_status: String,
+    pub staged: bool,
+    pub unstaged: bool,
+    pub untracked: bool,
+    pub conflicted: bool,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct RarInstallPlan {
-    pub confirmation_token: String,
-    pub download_url: String,
-    pub file_name: String,
-    pub installer_path: String,
-    pub publisher: String,
-    pub sha256: String,
+pub struct GitRepositoryStatus {
+    pub is_repo: bool,
+    pub root: Option<String>,
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub head: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub staged: u32,
+    pub unstaged: u32,
+    pub untracked: u32,
+    pub conflicted: u32,
+    pub changes: Vec<GitFileStatus>,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GitCommandResult {
+    pub command: String,
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub summary: String,
+}
+
+// ============================================================================
+// App Types
+// ============================================================================
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppAboutInfo {
@@ -297,10 +333,10 @@ pub struct FilePreview {
     pub encoding: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ThumbnailResult {
     pub path: String,
-    pub data: Option<String>,
+    pub data: Option<Vec<u8>>,
     pub error: Option<String>,
 }
 
@@ -352,4 +388,21 @@ pub struct ArchiveInfo {
     pub unsafe_entries: Vec<String>,
     pub total_size: u64,
     pub compressed_size: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArchiveFormatCapability {
+    pub format: String,
+    pub extension: String,
+    pub can_list: bool,
+    pub can_extract: bool,
+    pub can_create: bool,
+    pub can_modify: bool,
+    pub engine: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ArchiveCapabilities {
+    pub formats: Vec<ArchiveFormatCapability>,
 }

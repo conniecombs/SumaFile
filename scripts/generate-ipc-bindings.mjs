@@ -154,7 +154,7 @@ for (const tag of binaryTags) {
 }
 
 const manualClientMethods = new Set(['ipc.handshake', 'list_directory', 'search_files']);
-const intentionallyUnexposedClientMethods = new Set(['get_folder_metrics', 'cancel_folder_metrics']);
+const intentionallyUnexposedClientMethods = new Set();
 const wrappers = [
   { method: 'ipc.health', signature: 'public Task<HealthResult> HealthAsync(CancellationToken cancellationToken = default)', body: 'InvokeAsync<HealthResult>(Protocol.HealthMethod, new { }, cancellationToken)' },
   { method: 'ipc.shutdown', signature: 'public Task ShutdownAsync(CancellationToken cancellationToken = default)', body: 'InvokeAsync(Protocol.ShutdownMethod, new { }, cancellationToken)' },
@@ -169,14 +169,23 @@ const wrappers = [
       '        .ConfigureAwait(false);',
       '    return drives;',
       '}',
+      '',
+      'public async Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default)',
+      '{',
+      '    var drives = await InvokeAsync<DriveInfo[]>(Protocol.ListDrivesMethod, new { mode = "light" }, cancellationToken)',
+      '        .ConfigureAwait(false);',
+      '    return drives;',
+      '}',
     ],
   },
   { method: 'select_directory', signature: 'public Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default)', body: 'InvokeAsync(Protocol.SelectDirectoryMethod, new SelectDirectoryParams { DefaultPath = defaultPath }, cancellationToken)' },
   { method: 'show_main_window', signature: 'public Task ShowMainWindowAsync(CancellationToken cancellationToken = default)', body: 'InvokeAsync(Protocol.ShowMainWindowMethod, new { }, cancellationToken)' },
   { method: 'get_db_setting', signature: 'public Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default)', body: 'InvokeAsync<string?>(Protocol.GetDbSettingMethod, new { key }, ct)' },
+  { method: 'get_db_settings', signature: 'public Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default)', body: 'InvokeAsync<Dictionary<string, string?>>(Protocol.GetDbSettingsMethod, new { keys }, ct)' },
   { method: 'set_db_setting', signature: 'public Task SetDbSettingAsync(string key, string value, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.SetDbSettingMethod, new { key, value }, ct)' },
   { method: 'create_directory', signature: 'public Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default)', body: 'InvokeAsync<string>(Protocol.CreateDirectoryMethod, new { path, name }, ct)' },
   { method: 'create_file', signature: 'public Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default)', body: 'InvokeAsync<string>(Protocol.CreateFileMethod, new { path, name }, ct)' },
+  { method: 'create_shortcut', signature: 'public Task<string> CreateShortcutAsync(string path, string name, string targetPath, string? arguments = null, string? workingDirectory = null, string? iconPath = null, CancellationToken ct = default)', body: 'InvokeAsync<string>(Protocol.CreateShortcutMethod, new { path, name, targetPath, arguments, workingDirectory, iconPath }, ct)' },
   { method: 'delete_entry', signature: 'public Task DeleteEntryAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.DeleteEntryMethod, new { path }, ct)' },
   { method: 'move_to_trash', signature: 'public Task<string[]> MoveToTrashAsync(string[] paths, CancellationToken ct = default)', body: 'InvokeAsync<string[]>(Protocol.MoveToTrashMethod, new { paths }, ct)' },
   { method: 'restore_recycle_bin', signature: 'public Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default)', body: 'InvokeAsync<string[]>(Protocol.RestoreRecycleBinMethod, new { paths }, ct)' },
@@ -192,10 +201,11 @@ const wrappers = [
   { method: 'reveal_in_folder', signature: 'public Task RevealInFolderAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.RevealInFolderMethod, new { path }, ct)' },
   { method: 'open_external_url', signature: 'public Task OpenExternalUrlAsync(string url, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.OpenExternalUrlMethod, new { url }, ct)' },
   { method: 'list_archive', signature: 'public Task<ArchiveInfo> ListArchiveAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<ArchiveInfo>(Protocol.ListArchiveMethod, new { path }, ct)' },
+  { method: 'get_archive_capabilities', signature: 'public Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)', body: 'InvokeAsync<ArchiveCapabilities>(Protocol.GetArchiveCapabilitiesMethod, new { }, ct)' },
   { method: 'extract_archive', signature: 'public Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.ExtractArchiveMethod, new { archivePath, destination }, ct)' },
   { method: 'create_archive', signature: 'public Task CreateArchiveAsync(string[] paths, string archivePath, string format, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CreateArchiveMethod, new { paths, archivePath, format }, ct)' },
   { method: 'read_file_preview', signature: 'public Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default)', body: 'InvokeAsync<FilePreview>(Protocol.ReadFilePreviewMethod, new { path, maxSize }, ct)' },
-  { method: 'generate_thumbnail', signature: 'public Task<string> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default)', body: 'InvokeAsync<string>(Protocol.GenerateThumbnailMethod, new { path, size }, ct)' },
+  { method: 'generate_thumbnail', signature: 'public Task<byte[]> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default)', body: 'InvokeAsync<byte[]>(Protocol.GenerateThumbnailMethod, new { path, size }, ct)' },
   { method: 'generate_thumbnails', signature: 'public Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default)', body: 'InvokeAsync<ThumbnailResult[]>(Protocol.GenerateThumbnailsMethod, new { paths, size }, ct)' },
   { method: 'open_file_with', signature: 'public Task OpenFileWithAsync(string path, string application, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.OpenFileWithMethod, new { path, application }, ct)' },
   { method: 'compare_files', signature: 'public Task<FileComparison> CompareFilesAsync(string pathA, string pathB, CancellationToken ct = default)', body: 'InvokeAsync<FileComparison>(Protocol.CompareFilesMethod, new { pathA, pathB }, ct)' },
@@ -203,6 +213,7 @@ const wrappers = [
   { method: 'get_image_metadata', signature: 'public Task<ImageMetadata> GetImageMetadataAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<ImageMetadata>(Protocol.GetImageMetadataMethod, new { path }, ct)' },
   { method: 'get_file_metadata', signature: 'public Task<FileMetadata> GetFileMetadataAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<FileMetadata>(Protocol.GetFileMetadataMethod, new { path }, ct)' },
   { method: 'list_subdirectories', signature: 'public Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<TreeNode[]>(Protocol.ListSubdirectoriesMethod, new { path }, ct)' },
+  { method: 'get_folder_metrics', signature: 'public Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<FolderMetrics>(Protocol.GetFolderMetricsMethod, new { path }, ct)' },
   { method: 'calculate_folder_size', signature: 'public Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<ulong>(Protocol.CalculateFolderSizeMethod, new { path }, ct)' },
   { method: 'count_folder_items', signature: 'public Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<ulong>(Protocol.CountFolderItemsMethod, new { path }, ct)' },
   { method: 'copy_with_progress', signature: 'public Task<TransferResult[]> CopyWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default)', body: 'InvokeAsync<TransferResult[]>(Protocol.CopyWithProgressMethod, new { sources, destination, operationId, conflictAction }, ct)' },
@@ -214,14 +225,11 @@ const wrappers = [
   { method: 'cancel_folder_size', signature: 'public Task CancelFolderSizeAsync(CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelFolderSizeMethod, new { }, ct)' },
   { method: 'cancel_folder_item_count', signature: 'public Task CancelFolderItemCountAsync(CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelFolderItemCountMethod, new { }, ct)' },
   { method: 'cancel_count_items', signature: 'public Task CancelCountItemsAsync(CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelCountItemsMethod, new { }, ct)' },
-  { method: 'check_rar_installed', signature: 'public Task<bool> CheckRarInstalledAsync(CancellationToken ct = default)', body: 'InvokeAsync<bool>(Protocol.CheckRarInstalledMethod, new { }, ct)' },
-  { method: 'prepare_rar_install', signature: 'public Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default)', body: 'InvokeAsync<RarInstallPlan>(Protocol.PrepareRarInstallMethod, new { }, ct)' },
-  { method: 'discard_rar_install', signature: 'public Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.DiscardRarInstallMethod, new { confirmationToken }, ct)' },
-  { method: 'install_rar', signature: 'public Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default)', body: 'InvokeAsync<string>(Protocol.InstallRarMethod, new { confirmationToken }, ct)' },
+  { method: 'cancel_folder_metrics', signature: 'public Task CancelFolderMetricsAsync(CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelFolderMetricsMethod, new { }, ct)' },
   { method: 'disk_cleanup', signature: 'public Task<CleanupResult> DiskCleanupAsync(string directory, ulong? sizeThreshold, string? operationId, CancellationToken ct = default)', body: 'InvokeAsync<CleanupResult>(Protocol.DiskCleanupMethod, new { directory, sizeThreshold, operationId }, ct)' },
-  { method: 'cancel_disk_cleanup', signature: 'public Task CancelDiskCleanupAsync(CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelDiskCleanupMethod, new { }, ct)' },
-  { method: 'duplicate_check', signature: 'public Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, ulong? minSize, ulong? partialHashBytes, string? operationId, CancellationToken ct = default)', body: 'InvokeAsync<DuplicateCheckResult>(Protocol.DuplicateCheckMethod, new { directory, minSize, partialHashBytes, operationId }, ct)' },
-  { method: 'cancel_duplicate_check', signature: 'public Task CancelDuplicateCheckAsync(CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelDuplicateCheckMethod, new { }, ct)' },
+  { method: 'cancel_disk_cleanup', signature: 'public Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelDiskCleanupMethod, new { operationId }, ct)' },
+  { method: 'duplicate_check', signature: 'public Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, DuplicateScanOptions? options, string? operationId, CancellationToken ct = default)', body: 'InvokeAsync<DuplicateCheckResult>(Protocol.DuplicateCheckMethod, new { directory, minSize = options?.MinSize, partialHashBytes = options?.PartialHashBytes, maxDepth = options?.MaxDepth, excludePatterns = options?.ExcludePatterns, networkMode = options?.NetworkMode, operationId }, ct)' },
+  { method: 'cancel_duplicate_check', signature: 'public Task CancelDuplicateCheckAsync(string? operationId = null, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CancelDuplicateCheckMethod, new { operationId }, ct)' },
   { method: 'get_all_tags', signature: 'public Task<Tag[]> GetAllTagsAsync(CancellationToken ct = default)', body: 'InvokeAsync<Tag[]>(Protocol.GetAllTagsMethod, new { }, ct)' },
   { method: 'create_tag', signature: 'public Task<Tag> CreateTagAsync(string name, string color, CancellationToken ct = default)', body: 'InvokeAsync<Tag>(Protocol.CreateTagMethod, new { name, color }, ct)' },
   { method: 'update_tag', signature: 'public Task<Tag> UpdateTagAsync(long id, string name, string color, CancellationToken ct = default)', body: 'InvokeAsync<Tag>(Protocol.UpdateTagMethod, new { id, name, color }, ct)' },
@@ -239,9 +247,16 @@ const wrappers = [
   { method: 'open_terminal', signature: 'public Task OpenTerminalAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.OpenTerminalMethod, new { path }, ct)' },
   { method: 'open_powershell_admin', signature: 'public Task OpenPowershellAdminAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.OpenPowershellAdminMethod, new { path }, ct)' },
   { method: 'get_git_status', signature: 'public Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<GitStatus>(Protocol.GetGitStatusMethod, new { path }, ct)' },
+  { method: 'get_git_repository_status', signature: 'public Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<GitRepositoryStatus>(Protocol.GetGitRepositoryStatusMethod, new { path }, ct)' },
   { method: 'get_git_file_statuses', signature: 'public Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<FileEntry[]>(Protocol.GetGitFileStatusesMethod, new { path }, ct)' },
-  { method: 'git_pull', signature: 'public Task GitPullAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.GitPullMethod, new { path }, ct)' },
-  { method: 'git_push', signature: 'public Task GitPushAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.GitPushMethod, new { path }, ct)' },
+  { method: 'git_stage_paths', signature: 'public Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitStagePathsMethod, new { path, paths }, ct)' },
+  { method: 'git_unstage_paths', signature: 'public Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitUnstagePathsMethod, new { path, paths }, ct)' },
+  { method: 'git_discard_paths', signature: 'public Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitDiscardPathsMethod, new { path, paths }, ct)' },
+  { method: 'git_diff_path', signature: 'public Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default)', body: 'InvokeAsync<string>(Protocol.GitDiffPathMethod, new { path, filePath }, ct)' },
+  { method: 'git_commit', signature: 'public Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitCommitMethod, new { path, message }, ct)' },
+  { method: 'git_fetch', signature: 'public Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitFetchMethod, new { path }, ct)' },
+  { method: 'git_pull', signature: 'public Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitPullMethod, new { path }, ct)' },
+  { method: 'git_push', signature: 'public Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<GitCommandResult>(Protocol.GitPushMethod, new { path }, ct)' },
 ];
 
 const generatedWrapperMethods = new Set(wrappers.map((wrapper) => wrapper.method));
@@ -346,7 +361,7 @@ function renderCsharpProtocol() {
 
 function renderWrapper(wrapper) {
   if (wrapper.block) {
-    return wrapper.block.map((line) => `    ${line}`).join('\n');
+    return wrapper.block.map((line) => line.length === 0 ? '' : `    ${line}`).join('\n');
   }
 
   return `    ${wrapper.signature}\n        => ${wrapper.body};`;

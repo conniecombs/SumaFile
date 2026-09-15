@@ -1,6 +1,6 @@
 use crate::models::{FilePreview, ThumbnailResult};
 
-use crate::utils::validate_existing_path_no_resolve;
+use crate::utils::resolve_readable_path;
 use std::fs;
 
 pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePreview, String> {
@@ -70,14 +70,9 @@ pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePrev
             }
         }
         "image" => {
-            if size > max_preview_size * 5 {
-                (None, None)
-            } else {
-                let bytes = fs::read(&path_buf).map_err(|e| format!("Failed to read file: {e}"))?;
-                use base64::{engine::general_purpose, Engine as _};
-                let base64 = general_purpose::STANDARD.encode(&bytes);
-                (Some(base64), Some("base64".to_string()))
-            }
+            // Let the frontend load the image directly by file path.
+            // This avoids transferring up to 13 MB of Base64 through the IPC pipe.
+            (None, Some("path".to_string()))
         }
         _ => (None, None),
     };
@@ -91,9 +86,7 @@ pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePrev
     })
 }
 
-pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<String, String> {
-    use base64::{engine::general_purpose, Engine as _};
-
+pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<Vec<u8>, String> {
     let path_buf = resolve_readable_path(&path)?;
     let extension = path_buf
         .extension()
@@ -108,6 +101,29 @@ pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<String, Str
     }
 
     let thumb_size = size.unwrap_or(128);
+
+    // Check the disk-backed thumbnail cache first (if enabled).
+    let metadata = std::fs::metadata(&path_buf).ok();
+    let (file_size, file_modified) = metadata
+        .as_ref()
+        .map(|m| {
+            (
+                m.len(),
+                m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+            )
+        })
+        .unwrap_or((0, std::time::SystemTime::UNIX_EPOCH));
+
+    let cache_enabled = crate::thumbnail_cache::is_enabled();
+
+    if cache_enabled {
+        if let Some(cached) =
+            crate::thumbnail_cache::get(&path, file_modified, file_size, thumb_size)
+        {
+            return Ok(cached);
+        }
+    }
+
     let img = image::open(&path_buf).map_err(|e| format!("Failed to open image: {e}"))?;
     // Let the image library handle aspect-ratio-preserving resize
     let thumbnail = img.thumbnail(thumb_size, thumb_size);
@@ -115,8 +131,21 @@ pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<String, Str
     thumbnail
         .write_to(&mut buffer, image::ImageFormat::Jpeg)
         .map_err(|e| format!("Failed to encode thumbnail: {e}"))?;
-    let base64_thumb = general_purpose::STANDARD.encode(buffer.into_inner());
-    Ok(base64_thumb)
+    let jpeg_bytes = buffer.into_inner();
+
+    if cache_enabled {
+        // Store in cache (fire-and-forget; errors are silently ignored).
+        crate::thumbnail_cache::put(&path, file_modified, file_size, thumb_size, &jpeg_bytes);
+
+        // Run eviction in the background — this is cheap when the cache is under
+        // the size limit and only does real work when it exceeds the configured max.
+        std::thread::Builder::new()
+            .name("thumb-cache-evict".into())
+            .spawn(crate::thumbnail_cache::evict_default)
+            .ok();
+    }
+
+    Ok(jpeg_bytes)
 }
 
 pub fn generate_thumbnails(paths: Vec<String>, size: Option<u32>) -> Vec<ThumbnailResult> {
@@ -157,14 +186,15 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
     let mime = |value: &'static str| value.to_string();
     match extension.as_str() {
         "txt" => Some(("text", mime("text/plain"))),
-        "md" | "markdown" => Some(("text", mime("text/markdown"))),
+        "md" | "markdown" | "mdx" => Some(("text", mime("text/markdown"))),
         "json" | "jsonc" | "map" => Some(("text", mime("application/json"))),
+        "jsonl" | "ndjson" => Some(("text", mime("application/x-ndjson"))),
         "xml" | "xaml" => Some(("text", mime("application/xml"))),
         "yaml" | "yml" => Some(("text", mime("application/yaml"))),
         "toml" | "ini" | "cfg" | "conf" | "config" | "properties" | "env" | "editorconfig"
-        | "gitignore" | "gitattributes" | "npmrc" | "log" | "srt" | "vtt" => {
-            Some(("text", mime("text/plain")))
-        }
+        | "gitignore" | "gitattributes" | "npmrc" | "log" | "srt" | "vtt" | "ass" | "ssa"
+        | "lrc" | "nfo" | "cue" | "m3u" | "m3u8" | "pls" | "diff" | "patch" | "reg" | "lock"
+        | "adoc" | "asciidoc" | "rst" | "tex" => Some(("text", mime("text/plain"))),
         "csv" => Some(("text", mime("text/csv"))),
         "tsv" => Some(("text", mime("text/tab-separated-values"))),
         "html" | "htm" => Some(("text", mime("text/html"))),
@@ -177,16 +207,26 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
         | "fsi" | "vb" | "clj" | "cljs" | "groovy" | "gradle" | "dart" | "vue" | "svelte"
         | "astro" => Some(("text", format!("text/x-{extension}"))),
         "png" => Some(("image", mime("image/png"))),
-        "jpg" | "jpeg" => Some(("image", mime("image/jpeg"))),
+        "jpg" | "jpeg" | "jpe" | "jfif" => Some(("image", mime("image/jpeg"))),
         "gif" => Some(("image", mime("image/gif"))),
         "webp" => Some(("image", mime("image/webp"))),
-        "bmp" => Some(("image", mime("image/bmp"))),
+        "bmp" | "dib" => Some(("image", mime("image/bmp"))),
         "svg" => Some(("image", mime("image/svg+xml"))),
         "ico" | "cur" => Some(("image", mime("image/x-icon"))),
         "tif" | "tiff" => Some(("image", mime("image/tiff"))),
         "heic" | "heif" => Some(("image", mime("image/heif"))),
-        "avif" => Some(("image", mime("image/avif"))),
+        "avif" | "avifs" => Some(("image", mime("image/avif"))),
         "jxl" => Some(("image", mime("image/jxl"))),
+        "jp2" | "j2k" | "jpf" => Some(("image", mime("image/jp2"))),
+        "tga" => Some(("image", mime("image/x-tga"))),
+        "dds" => Some(("image", mime("image/vnd-ms.dds"))),
+        "exr" => Some(("image", mime("image/aces"))),
+        "hdr" => Some(("image", mime("image/vnd.radiance"))),
+        "qoi" => Some(("image", mime("image/qoi"))),
+        "pnm" | "pbm" | "pgm" | "ppm" | "pam" => Some(("image", mime("image/x-portable-anymap"))),
+        "dng" | "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "raf" | "srw" | "pef" | "x3f" => {
+            Some(("image", mime("image/x-camera-raw")))
+        }
         "pdf" => Some(("pdf", mime("application/pdf"))),
         "mp3" => Some(("audio", mime("audio/mpeg"))),
         "wav" => Some(("audio", mime("audio/wav"))),
@@ -200,15 +240,27 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
         "mid" | "midi" => Some(("audio", mime("audio/midi"))),
         "wv" => Some(("audio", mime("audio/x-wavpack"))),
         "ape" => Some(("audio", mime("audio/ape"))),
-        "mp4" | "m4v" => Some(("video", mime("video/mp4"))),
-        "mov" => Some(("video", mime("video/quicktime"))),
+        "alac" => Some(("audio", mime("audio/alac"))),
+        "amr" => Some(("audio", mime("audio/amr"))),
+        "caf" => Some(("audio", mime("audio/x-caf"))),
+        "mka" => Some(("audio", mime("audio/x-matroska"))),
+        "ra" => Some(("audio", mime("audio/vnd.rn-realaudio"))),
+        "mp4" | "m4v" | "f4v" => Some(("video", mime("video/mp4"))),
+        "mov" | "qt" => Some(("video", mime("video/quicktime"))),
         "webm" => Some(("video", mime("video/webm"))),
-        "mkv" => Some(("video", mime("video/x-matroska"))),
-        "avi" => Some(("video", mime("video/x-msvideo"))),
-        "wmv" => Some(("video", mime("video/x-ms-wmv"))),
-        "mpg" | "mpeg" => Some(("video", mime("video/mpeg"))),
+        "mkv" | "mk3d" => Some(("video", mime("video/x-matroska"))),
+        "avi" | "divx" => Some(("video", mime("video/x-msvideo"))),
+        "wmv" | "asf" => Some(("video", mime("video/x-ms-wmv"))),
+        "mpg" | "mpeg" | "mpe" | "m2v" | "vob" => Some(("video", mime("video/mpeg"))),
+        "m2ts" | "mts" => Some(("video", mime("video/mp2t"))),
         "flv" => Some(("video", mime("video/x-flv"))),
-        "3gp" => Some(("video", mime("video/3gpp"))),
+        "3gp" | "3g2" => Some(("video", mime("video/3gpp"))),
+        "ogv" => Some(("video", mime("video/ogg"))),
+        "mxf" => Some(("video", mime("application/mxf"))),
+        "rm" | "rmvb" => Some(("video", mime("application/vnd.rn-realmedia"))),
+        "h264" => Some(("video", mime("video/h264"))),
+        "h265" | "hevc" => Some(("video", mime("video/h265"))),
+        "y4m" => Some(("video", mime("video/x-yuv4mpeg"))),
         "doc" => Some(("document", mime("application/msword"))),
         "docx" => Some((
             "document",
@@ -281,14 +333,6 @@ fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
     }
 }
 
-fn resolve_readable_path(path: &str) -> Result<std::path::PathBuf, String> {
-    if crate::archive::is_archive_virtual_path(path) {
-        return crate::archive::materialize_archive_entry_to_temp(path);
-    }
-
-    validate_existing_path_no_resolve(path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{classify_known_extension, read_file_preview};
@@ -298,15 +342,21 @@ mod tests {
     fn classify_known_extension_keeps_inline_preview_types() {
         for (extension, expected_kind) in [
             ("txt", "text"),
+            ("mdx", "text"),
             ("json", "text"),
+            ("jsonl", "text"),
             ("rs", "text"),
             ("png", "image"),
+            ("avif", "image"),
+            ("cr2", "image"),
             ("svg", "image"),
             ("webp", "image"),
             ("pdf", "pdf"),
             ("mp3", "audio"),
             ("wv", "audio"),
             ("mp4", "video"),
+            ("m2ts", "video"),
+            ("ogv", "video"),
         ] {
             let (kind, _) = classify_known_extension(extension).expect("extension is known");
             assert_eq!(kind, expected_kind, "{extension}");

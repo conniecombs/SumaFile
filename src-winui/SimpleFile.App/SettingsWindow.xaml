@@ -1,0 +1,570 @@
+<Window
+    x:Class="SimpleFile.App.SettingsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:SimpleFile.App"
+    Title="Settings">
+
+    <Grid
+        MinWidth="920"
+        MinHeight="640"
+        Background="{ThemeResource SfBgPrimaryBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid
+            Padding="24,18,24,12"
+            BorderBrush="{ThemeResource SfBorderBrush}"
+            BorderThickness="0,0,0,1">
+            <TextBlock
+                Text="Settings"
+                FontSize="22"
+                FontWeight="SemiBold" />
+        </Grid>
+
+        <NavigationView
+            x:Name="SettingsNavigation"
+            Grid.Row="1"
+            CompactPaneLength="52"
+            IsBackButtonVisible="Collapsed"
+            IsSettingsVisible="False"
+            OpenPaneLength="230"
+            PaneDisplayMode="Left"
+            SelectionChanged="OnCategorySelectionChanged">
+            <NavigationView.PaneHeader>
+                <TextBox
+                    x:Name="SearchBox"
+                    Margin="12,12,12,8"
+                    PlaceholderText="Search settings..."
+                    TextChanged="OnSearchTextChanged" />
+            </NavigationView.PaneHeader>
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="Appearance" Tag="Appearance" />
+                <NavigationViewItem Content="Navigation" Tag="Navigation" />
+                <NavigationViewItem Content="Behavior" Tag="Behavior" />
+                <NavigationViewItem Content="Storage &amp; Cache" Tag="Storage &amp; Cache" />
+                <NavigationViewItem Content="Shortcuts" Tag="Shortcuts" />
+                <NavigationViewItem Content="Toolbar" Tag="Toolbar" />
+                <NavigationViewItem Content="Tools" Tag="Tools" />
+                <NavigationViewItem Content="Updates" Tag="Updates" />
+                <NavigationViewItem Content="About" Tag="About" />
+            </NavigationView.MenuItems>
+
+            <ScrollViewer
+                Padding="24,18,28,24"
+                HorizontalScrollBarVisibility="Disabled"
+                HorizontalScrollMode="Disabled"
+                VerticalScrollBarVisibility="Auto"
+                VerticalScrollMode="Auto">
+                <Grid x:Name="SettingsContentGrid" HorizontalAlignment="Stretch">
+                
+                <StackPanel x:Name="AppearancePanel" Spacing="16" Visibility="Visible">
+                    <TextBlock Text="Appearance" FontSize="18" FontWeight="SemiBold" />
+                    <ComboBox x:Name="ThemeComboBox" Header="Theme" HorizontalAlignment="Stretch">
+                        <ComboBoxItem Content="Windows default" Tag="System" />
+                        <ComboBoxItem Content="Dark" Tag="Dark" />
+                    </ComboBox>
+                    <ComboBox x:Name="DefaultViewComboBox" Header="Default display style" HorizontalAlignment="Stretch">
+                        <ComboBoxItem Content="Details" Tag="details" />
+                        <ComboBoxItem Content="List" Tag="list" />
+                        <ComboBoxItem Content="Tiles" Tag="tiles" />
+                        <ComboBoxItem Content="Content" Tag="content" />
+                    </ComboBox>
+                    <StackPanel Spacing="6">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Default icon size" />
+                            <TextBlock
+                                x:Name="DefaultIconSizeValueText"
+                                Grid.Column="1"
+                                Foreground="{ThemeResource SfTextMutedBrush}" />
+                        </Grid>
+                        <Slider
+                            x:Name="DefaultIconSizeSlider"
+                            HorizontalAlignment="Stretch"
+                            LargeChange="16"
+                            Maximum="256"
+                            Minimum="16"
+                            SmallChange="8"
+                            StepFrequency="8"
+                            ValueChanged="OnDefaultIconSizeSliderChanged" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock
+                                FontSize="11"
+                                Foreground="{ThemeResource SfTextMutedBrush}"
+                                Text="16 px" />
+                            <TextBlock
+                                Grid.Column="1"
+                                FontSize="11"
+                                Foreground="{ThemeResource SfTextMutedBrush}"
+                                Text="256 px" />
+                        </Grid>
+                    </StackPanel>
+                    <ComboBox x:Name="ColumnPresetComboBox" Header="Default file list columns" HorizontalAlignment="Stretch">
+                        <ComboBoxItem Content="Default" Tag="default" />
+                        <ComboBoxItem Content="Details" Tag="details" />
+                        <ComboBoxItem Content="Media" Tag="media" />
+                        <ComboBoxItem Content="Developer" Tag="developer" />
+                        <ComboBoxItem Content="Photo" Tag="photo" />
+                    </ComboBox>
+                    <ToggleSwitch x:Name="ShowHiddenSwitch" Header="Show Hidden Files" />
+                </StackPanel>
+                
+                <StackPanel x:Name="NavigationPanel" Spacing="16" Visibility="Collapsed">
+                    <TextBlock Text="Navigation" FontSize="18" FontWeight="SemiBold" />
+                    <ComboBox x:Name="StartLocationComboBox" Header="Start Location" HorizontalAlignment="Stretch">
+                        <ComboBoxItem Content="Home" Tag="Home" />
+                        <ComboBoxItem Content="Last" Tag="Last" />
+                        <ComboBoxItem Content="Custom" Tag="Custom" />
+                    </ComboBox>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="CustomPathBox" Header="Custom Path" />
+                        <Button Grid.Column="1" Content="Browse..." VerticalAlignment="Bottom" Click="OnBrowseCustomPath" />
+                    </Grid>
+                    <TextBlock x:Name="CustomPathStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
+                    <ToggleSwitch x:Name="OpenInNewTabSwitch" Header="Open folders in new tab" />
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Side menu" FontWeight="SemiBold" />
+                        <ToggleSwitch x:Name="ShowSideMenuSwitch" Header="Show side menu" />
+                        <ToggleSwitch x:Name="ShowQuickAccessSwitch" Header="Show Quick access" />
+                        <ToggleSwitch x:Name="ShowFolderTreeSwitch" Header="Show Folders" />
+                        <ToggleSwitch x:Name="ShowBookmarksSwitch" Header="Show Bookmarks" />
+                        <ToggleSwitch x:Name="ShowRecentSwitch" Header="Show Recent" />
+                        <ToggleSwitch x:Name="ShowSmartFoldersSwitch" Header="Show Smart folders" />
+                        <Button
+                            x:Name="ClearRecentHistoryButton"
+                            HorizontalAlignment="Left"
+                            Click="OnClearRecentHistoryClicked">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE74D;" />
+                                <TextBlock Text="Clear recent history" />
+                            </StackPanel>
+                        </Button>
+                        <TextBlock
+                            x:Name="RecentHistoryStatusText"
+                            Foreground="{ThemeResource SfTextMutedBrush}"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed" />
+                    </StackPanel>
+                </StackPanel>
+                
+                <StackPanel x:Name="BehaviorPanel" Spacing="16" Visibility="Collapsed">
+                    <TextBlock Text="Behavior" FontSize="18" FontWeight="SemiBold" />
+                    <ToggleSwitch x:Name="ConfirmDeleteSwitch" Header="Confirm before delete" />
+                    <ToggleSwitch x:Name="KeepFoldersOnTopSwitch" Header="Keep folders on top when sorting" />
+                    <ToggleSwitch x:Name="ShowFolderSizesSwitch" Header="Show folder sizes in file lists" />
+                    <ToggleSwitch x:Name="PreviewRenderHtmlSwitch" Header="Render Markdown and data previews" />
+                    <ToggleSwitch x:Name="PreviewVideoPlaybackSwitch" Header="Enable video playback previews" />
+                    <ToggleSwitch x:Name="EnableGitSwitch" Header="Enable Git integration" />
+                </StackPanel>
+
+                <StackPanel x:Name="StoragePanel" Spacing="16" Visibility="Collapsed">
+                    <TextBlock Text="Storage &amp; Cache" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock
+                        Foreground="{ThemeResource SfTextMutedBrush}"
+                        TextWrapping="Wrap"
+                        Text="Configure disk caching for file thumbnails to improve navigation speed. When enabled, thumbnails are loaded instantly from disk on repeat visits." />
+                    
+                    <ToggleSwitch
+                        x:Name="EnableThumbnailCacheSwitch"
+                        Header="Enable thumbnail cache"
+                        Toggled="OnEnableThumbnailCacheToggled" />
+
+                    <StackPanel x:Name="CacheOptionsPanel" Spacing="16">
+                        <StackPanel Spacing="6">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Maximum cache size" />
+                                <TextBlock
+                                    x:Name="CacheSizeValueText"
+                                    Grid.Column="1"
+                                    Foreground="{ThemeResource SfTextMutedBrush}" />
+                            </Grid>
+                            <Slider
+                                x:Name="CacheSizeSlider"
+                                HorizontalAlignment="Stretch"
+                                LargeChange="250"
+                                Maximum="5000"
+                                Minimum="50"
+                                SmallChange="50"
+                                StepFrequency="50"
+                                ValueChanged="OnCacheSizeSliderChanged" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    FontSize="11"
+                                    Foreground="{ThemeResource SfTextMutedBrush}"
+                                    Text="50 MB" />
+                                <TextBlock
+                                    Grid.Column="1"
+                                    FontSize="11"
+                                    Foreground="{ThemeResource SfTextMutedBrush}"
+                                    Text="5000 MB (5 GB)" />
+                            </Grid>
+                        </StackPanel>
+
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="ThumbnailCachePathBox"
+                                Header="Cache Location"
+                                PlaceholderText="Default: %LOCALAPPDATA%\SumaFile\thumbnail-cache" />
+                            <Button
+                                Grid.Column="1"
+                                Content="Browse..."
+                                VerticalAlignment="Bottom"
+                                Click="OnBrowseThumbnailCachePath" />
+                        </Grid>
+                        <TextBlock
+                            x:Name="ThumbnailCachePathStatusText"
+                            Foreground="{ThemeResource SfTextMutedBrush}"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed" />
+
+                        <Button
+                            x:Name="ResetCachePathButton"
+                            HorizontalAlignment="Left"
+                            Content="Reset to default location"
+                            Click="OnResetCachePathClicked" />
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel x:Name="ShortcutsPanel" Spacing="12" Visibility="Collapsed">
+                    <TextBlock Text="Shortcuts" FontSize="18" FontWeight="SemiBold" />
+                    <TextBox
+                        x:Name="ShortcutSearchBox"
+                        Header="Search"
+                        PlaceholderText="Command or shortcut"
+                        TextChanged="OnShortcutSearchTextChanged" />
+                    <Grid ColumnSpacing="12" MinWidth="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="300" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ListView
+                            x:Name="ShortcutsList"
+                            MaxHeight="340"
+                            SelectionChanged="OnShortcutSelectionChanged"
+                            SelectionMode="Single">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="local:ShortcutEditorRow">
+                                    <Grid Padding="0,6">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock
+                                                FontWeight="SemiBold"
+                                                Text="{x:Bind Label, Mode=OneWay}"
+                                                TextTrimming="CharacterEllipsis" />
+                                            <TextBlock
+                                                Grid.Column="1"
+                                                Foreground="{ThemeResource SfTextMutedBrush}"
+                                                Text="{x:Bind Group, Mode=OneWay}" />
+                                        </Grid>
+                                        <TextBlock
+                                            Grid.Row="1"
+                                            FontFamily="Consolas"
+                                            Foreground="{ThemeResource SfTextMutedBrush}"
+                                            Text="{x:Bind ShortcutText, Mode=OneWay}"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            Grid.Row="2"
+                                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                            Text="{x:Bind IssueText, Mode=OneWay}"
+                                            TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <StackPanel Grid.Column="1" Spacing="10" MinWidth="0">
+                            <TextBlock
+                                x:Name="SelectedShortcutTitle"
+                                FontSize="16"
+                                FontWeight="SemiBold"
+                                Text="Select a command" />
+                            <TextBlock
+                                x:Name="SelectedShortcutDefaultText"
+                                Foreground="{ThemeResource SfTextMutedBrush}"
+                                TextWrapping="Wrap" />
+                            <ListView
+                                x:Name="SelectedShortcutList"
+                                MaxHeight="100"
+                                SelectionMode="Single">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid ColumnSpacing="8" Padding="0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock
+                                                FontFamily="Consolas"
+                                                Text="{Binding}" />
+                                            <Button
+                                                Grid.Column="1"
+                                                Click="OnRemoveShortcutClicked"
+                                                Content="Remove"
+                                                Tag="{Binding}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox
+                                    x:Name="ShortcutRecorderBox"
+                                    Header="Shortcut"
+                                    KeyDown="OnShortcutRecorderKeyDown"
+                                    PlaceholderText="Press keys"
+                                    TextChanged="OnShortcutRecorderTextChanged" />
+                                <Button
+                                    x:Name="ShortcutAddButton"
+                                    Grid.Column="1"
+                                    VerticalAlignment="Bottom"
+                                    Click="OnAddShortcutClicked"
+                                    Content="Add" />
+                            </Grid>
+                            <TextBlock
+                                x:Name="ShortcutRecorderStatusText"
+                                Foreground="{ThemeResource SfTextMutedBrush}"
+                                TextWrapping="Wrap" />
+                            <TextBlock
+                                x:Name="ShortcutIssueText"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                TextWrapping="Wrap" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button
+                                    x:Name="ShortcutResetButton"
+                                    Click="OnResetShortcutClicked"
+                                    Content="Reset command" />
+                                <Button
+                                    x:Name="ShortcutClearButton"
+                                    Click="OnClearShortcutClicked"
+                                    Content="Clear command" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock
+                            x:Name="ShortcutSummaryText"
+                            VerticalAlignment="Center"
+                            Foreground="{ThemeResource SfTextMutedBrush}"
+                            TextWrapping="Wrap" />
+                        <Button
+                            x:Name="ShortcutResetAllButton"
+                            Grid.Column="1"
+                            Click="OnResetAllShortcutsClicked"
+                            Content="Reset all" />
+                        <Button
+                            x:Name="ShortcutImportButton"
+                            Grid.Column="2"
+                            Click="OnImportShortcutsClicked"
+                            Content="Import" />
+                        <Button
+                            x:Name="ShortcutExportButton"
+                            Grid.Column="3"
+                            Click="OnExportShortcutsClicked"
+                            Content="Export" />
+                    </Grid>
+                </StackPanel>
+
+                <StackPanel x:Name="ToolbarPanel" Spacing="12" Visibility="Collapsed">
+                    <TextBlock Text="Toolbar" FontSize="18" FontWeight="SemiBold" />
+                    <ComboBox
+                        x:Name="ToolbarDisplayModeComboBox"
+                        Header="Button labels"
+                        HorizontalAlignment="Stretch">
+                        <ComboBoxItem Content="Icons only" Tag="icons" />
+                        <ComboBoxItem Content="Icons and labels" Tag="labels" />
+                    </ComboBox>
+                    <ListView
+                        x:Name="ToolbarLayoutList"
+                        MinHeight="250"
+                        SelectionMode="Single">
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="local:ToolbarEditorRow">
+                                <Grid Padding="0,4" ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="32" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon
+                                        FontFamily="{StaticResource SfIconFont}"
+                                        FontSize="14"
+                                        Glyph="{x:Bind IconGlyph}" />
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="{x:Bind Label}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            FontSize="11"
+                                            Foreground="{ThemeResource SfTextMutedBrush}"
+                                            Text="{x:Bind Detail}"
+                                            TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <Button
+                                        Grid.Column="2"
+                                        Width="30"
+                                        Height="30"
+                                        MinWidth="30"
+                                        Padding="0"
+                                        AutomationProperties.Name="Move toolbar action up"
+                                        Click="OnToolbarMoveUpClicked"
+                                        Tag="{Binding}"
+                                        ToolTipService.ToolTip="Move up">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE70E;" />
+                                    </Button>
+                                    <Button
+                                        Grid.Column="3"
+                                        Width="30"
+                                        Height="30"
+                                        MinWidth="30"
+                                        Padding="0"
+                                        AutomationProperties.Name="Move toolbar action down"
+                                        Click="OnToolbarMoveDownClicked"
+                                        Tag="{Binding}"
+                                        ToolTipService.ToolTip="Move down">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE70D;" />
+                                    </Button>
+                                    <Button
+                                        Grid.Column="4"
+                                        Width="30"
+                                        Height="30"
+                                        MinWidth="30"
+                                        Padding="0"
+                                        AutomationProperties.Name="Remove toolbar action"
+                                        Click="OnToolbarRemoveClicked"
+                                        Tag="{Binding}"
+                                        ToolTipService.ToolTip="Remove">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE711;" />
+                                    </Button>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox
+                            x:Name="ToolbarAvailableCommandsComboBox"
+                            Header="Add command"
+                            DisplayMemberPath="DisplayText"
+                            HorizontalAlignment="Stretch" />
+                        <Button
+                            x:Name="ToolbarAddCommandButton"
+                            Grid.Column="1"
+                            VerticalAlignment="Bottom"
+                            Content="Add"
+                            Click="OnToolbarAddCommandClicked" />
+                        <Button
+                            Grid.Column="2"
+                            VerticalAlignment="Bottom"
+                            Content="Separator"
+                            Click="OnToolbarAddSeparatorClicked" />
+                        <Button
+                            Grid.Column="3"
+                            VerticalAlignment="Bottom"
+                            Content="Reset"
+                            Click="OnToolbarResetClicked" />
+                    </Grid>
+                </StackPanel>
+                
+                <StackPanel x:Name="ToolsPanel" Spacing="16" Visibility="Collapsed">
+                    <TextBlock Text="Tools" FontSize="18" FontWeight="SemiBold" />
+                    <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
+                        <TextBlock Text="Archive Support" FontWeight="SemiBold" />
+                        <TextBlock Text="ZIP, TAR, TAR.GZ, 7z, and RAR extraction are handled by SumaFile. RAR creation is not supported." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </StackPanel>
+                
+                <StackPanel x:Name="UpdatesPanel" Spacing="16" Visibility="Collapsed">
+                    <TextBlock Text="Updates" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock x:Name="CurrentVersionText" Text="Current Version: " />
+                    <Button x:Name="CheckUpdatesButton" Content="Check for Updates" Click="OnCheckUpdatesClicked" />
+                    <Button x:Name="InstallUpdateButton" Content="Open GitHub Releases" Visibility="Collapsed" Click="OnInstallUpdateClicked" />
+                    <TextBlock Text="Signed SumaFile updates can install in-app. Unsigned or incomplete update metadata falls back to GitHub Releases." TextWrapping="Wrap" Foreground="{ThemeResource SfTextMutedBrush}" />
+                    <TextBlock x:Name="UpdateStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                
+                <StackPanel x:Name="AboutPanel" Spacing="16" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="📁" FontSize="64" HorizontalAlignment="Center" />
+                    <TextBlock Text="SumaFile" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="AboutVersionText" Text="Version info" HorizontalAlignment="Center" Foreground="{ThemeResource SfTextMutedBrush}" />
+                    <HyperlinkButton Content="View on GitHub" Click="OnGitHubClicked" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="AboutStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
+                </StackPanel>
+                
+                </Grid>
+            </ScrollViewer>
+        </NavigationView>
+
+        <Grid
+            Grid.Row="2"
+            Padding="24,14,24,20"
+            BorderBrush="{ThemeResource SfBorderBrush}"
+            BorderThickness="0,1,0,0"
+            ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Button
+                x:Name="SaveButton"
+                Grid.Column="1"
+                MinWidth="120"
+                Content="Save"
+                Click="OnSaveClicked" />
+            <Button
+                x:Name="CancelButton"
+                Grid.Column="2"
+                MinWidth="120"
+                Content="Cancel"
+                Click="OnCancelClicked" />
+        </Grid>
+    </Grid>
+</Window>

@@ -5,9 +5,24 @@ use std::time::Duration;
 /// Bound network probe time so one dead mapped drive cannot hang listing.
 const NETWORK_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DriveListMode {
+    Full,
+    Light,
+}
+
 /// Enumerate fixed, removable, and mapped drives. Blocking.
 pub fn list_drives() -> Result<Vec<DriveInfo>, String> {
-    list_drives_blocking()
+    list_drives_with_mode(DriveListMode::Full)
+}
+
+/// Enumerate drives without probing mapped network roots.
+pub fn list_drives_light() -> Result<Vec<DriveInfo>, String> {
+    list_drives_with_mode(DriveListMode::Light)
+}
+
+pub fn list_drives_with_mode(mode: DriveListMode) -> Result<Vec<DriveInfo>, String> {
+    list_drives_blocking(mode)
 }
 
 fn string_from_wide_buffer(buffer: &[u16]) -> Option<String> {
@@ -202,7 +217,7 @@ fn windows_drive_display_name(
     .unwrap_or_else(|| fallback_name.to_string())
 }
 
-fn list_drives_blocking() -> Result<Vec<DriveInfo>, String> {
+fn list_drives_blocking(mode: DriveListMode) -> Result<Vec<DriveInfo>, String> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
 
@@ -248,7 +263,7 @@ fn list_drives_blocking() -> Result<Vec<DriveInfo>, String> {
             6 => "RAM Disk",
             _ => "Drive",
         };
-        let remote_path = if dt == 4 {
+        let remote_path = if dt == 4 && mode == DriveListMode::Full {
             mapped_network_remote_path(&drive_path)
         } else {
             None
@@ -270,7 +285,7 @@ fn list_drives_blocking() -> Result<Vec<DriveInfo>, String> {
         let handles: Vec<_> = pending
             .iter()
             .map(|drive| {
-                if drive.dt == 4 {
+                if drive.dt == 4 && mode == DriveListMode::Full {
                     let wide = drive.wide_path.clone();
                     let remote = drive.remote_path.as_deref().map(|s| s.to_string());
                     Some(scope.spawn(move || network_drive_status(&wide, remote.as_deref())))
@@ -288,8 +303,14 @@ fn list_drives_blocking() -> Result<Vec<DriveInfo>, String> {
 
     let mut drives = Vec::new();
     for (drive, probe) in pending.iter().zip(probe_results) {
-        let (drive_status, status_detail) =
-            probe.unwrap_or_else(|| ("available".to_string(), None));
+        let (drive_status, status_detail) = if drive.dt == 4 && mode == DriveListMode::Light {
+            (
+                "unknown".to_string(),
+                Some("Network drive details will refresh after startup.".to_string()),
+            )
+        } else {
+            probe.unwrap_or_else(|| ("available".to_string(), None))
+        };
         let (volume_label, file_system) = if drive.dt == 3 {
             windows_volume_details(&drive.wide_path)
         } else {

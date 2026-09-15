@@ -13,12 +13,11 @@
                             BorderThickness="0">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <Border
                                 x:Name="PrimaryActivePaneRail"
-                                Grid.RowSpan="3"
+                                Grid.RowSpan="2"
                                 Width="3"
                                 HorizontalAlignment="Left"
                                 Background="{ThemeResource SfAccentBrush}"
@@ -114,94 +113,122 @@
                                     </Button>
                                 </Grid>
                             </Grid>
-                            <ScrollViewer
-                                x:Name="PrimaryColumnHeaderScroller"
-                                Grid.Row="1"
-                                HorizontalScrollBarVisibility="Hidden"
-                                HorizontalScrollMode="Disabled"
-                                VerticalScrollBarVisibility="Disabled"
-                                VerticalScrollMode="Disabled">
-                                <Grid
-                                    x:Name="PrimaryColumnHeader"
-                                    Padding="10,0,0,0"
-                                    HorizontalAlignment="Left"
-                                    Background="Transparent"
-                                    BorderBrush="{ThemeResource SfBorderBrush}"
-                                    BorderThickness="0,0,0,1" />
-                            </ScrollViewer>
                             <Grid
-                                Grid.Row="2"
-                                Background="Transparent"
-                                PointerPressed="OnPrimaryMarqueePressed"
-                                PointerMoved="OnMarqueePointerMoved"
-                                PointerReleased="OnMarqueePointerReleased"
-                                PointerCanceled="OnMarqueePointerCanceled">
-                                <ListView
-                                    x:Name="PrimaryFileList"
-                                    Padding="2,4,2,6"
-                                    AllowDrop="True"
-                                    CanDragItems="True"
-                                    AutomationProperties.Name="Left pane files"
-                                    DoubleTapped="OnPrimaryFileDoubleTapped"
-                                    DragItemsStarting="OnFileDragItemsStarting"
-                                    DragItemsCompleted="OnFileDragItemsCompleted"
-                                    DragLeave="OnFileDragLeave"
-                                    DragOver="OnPrimaryFileDragOver"
-                                    Drop="OnPrimaryFileDrop"
-                                    IsItemClickEnabled="False"
-                                    IsMultiSelectCheckBoxEnabled="False"
-                                    KeyDown="OnPrimaryFileKeyDown"
-                                    RightTapped="OnPrimaryFileRightTapped"
-                                    SelectionChanged="OnPrimarySelectionChanged"
-                                    SelectionMode="Extended"
-                                    SingleSelectionFollowsFocus="False">
-                                    <ListView.ItemContainerStyle>
-                                        <Style BasedOn="{StaticResource SfFileListItemStyle}" TargetType="ListViewItem" />
-                                    </ListView.ItemContainerStyle>
-                                    <ListView.ContextFlyout>
-                                        <MenuFlyout Opening="OnPrimaryFileListContextOpening" />
-                                    </ListView.ContextFlyout>
-                                    <ListView.ItemTemplate>
-                                        <DataTemplate x:DataType="local:FileRow">
-                                            <local:FileRowView Row="{x:Bind}" ContextRequested="OnFileRowContextRequested" />
-                                        </DataTemplate>
-                                    </ListView.ItemTemplate>
-                                </ListView>
-                                <Canvas x:Name="PrimaryMarqueeCanvas" IsHitTestVisible="False">
-                                    <Rectangle
-                                        x:Name="PrimaryMarqueeRect"
-                                        Visibility="Collapsed"
-                                        Stroke="{ThemeResource SfAccentBrush}"
-                                        StrokeThickness="1"
-                                        Fill="{ThemeResource SfAccentSoftBrush}"
-                                        RadiusX="2"
-                                        RadiusY="2" />
-                                </Canvas>
-                                <StackPanel
-                                    x:Name="PrimaryEmptyState"
-                                    MaxWidth="360"
-                                    HorizontalAlignment="Center"
-                                    VerticalAlignment="Center"
-                                    IsHitTestVisible="False"
-                                    Spacing="6"
-                                    Visibility="Collapsed">
-                                    <TextBlock
-                                        x:Name="PrimaryEmptyTitle"
+                                x:Name="PrimaryFileSurface"
+                                Grid.Row="1"
+                                MinHeight="0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <ScrollViewer
+                                    x:Name="PrimaryColumnHeaderViewport"
+                                    Grid.Row="0"
+                                    HorizontalScrollBarVisibility="Disabled"
+                                    HorizontalScrollMode="Disabled"
+                                    VerticalScrollBarVisibility="Disabled"
+                                    VerticalScrollMode="Disabled"
+                                    ZoomMode="Disabled">
+                                    <Grid
+                                        x:Name="PrimaryColumnHeader"
+                                        Padding="10,0,0,0"
+                                        HorizontalAlignment="Left"
+                                        Background="Transparent"
+                                        BorderBrush="{ThemeResource SfBorderBrush}"
+                                        BorderThickness="0,0,0,1" />
+                                </ScrollViewer>
+                                <Grid
+                                    x:Name="PrimaryFileViewport"
+                                    Grid.Row="1"
+                                    Background="Transparent"
+                                    PointerPressed="OnPrimaryMarqueePressed"
+                                    PointerMoved="OnMarqueePointerMoved"
+                                    PointerReleased="OnMarqueePointerReleased"
+                                    PointerCanceled="OnMarqueePointerCanceled">
+                                    <local:DetailsFileListView
+                                        x:Name="PrimaryDetailsFileList"
+                                        AllowDrop="True"
+                                        AutomationProperties.Name="Left pane detail files"
+                                        DragLeave="OnFileDragLeave"
+                                        DragOver="OnPrimaryFileDragOver"
+                                        Drop="OnPrimaryFileDrop"
+                                        KeyDown="OnPrimaryDetailsFileKeyDown"
+                                        Visibility="Collapsed" />
+                                    <ListView
+                                        x:Name="PrimaryFileList"
+                                        Padding="2,4,2,6"
+                                        AllowDrop="True"
+                                        CanDragItems="True"
+                                        AutomationProperties.Name="Left pane files"
+                                        DoubleTapped="OnPrimaryFileDoubleTapped"
+                                        DragItemsStarting="OnFileDragItemsStarting"
+                                        DragItemsCompleted="OnFileDragItemsCompleted"
+                                        DragLeave="OnFileDragLeave"
+                                        DragOver="OnPrimaryFileDragOver"
+                                        Drop="OnPrimaryFileDrop"
+                                        IsItemClickEnabled="False"
+                                        IsMultiSelectCheckBoxEnabled="False"
+                                        KeyDown="OnPrimaryFileKeyDown"
+                                        RightTapped="OnPrimaryFileRightTapped"
+                                        SelectionChanged="OnPrimarySelectionChanged"
+                                        SelectionMode="Extended"
+                                        SingleSelectionFollowsFocus="False">
+                                        <ListView.ItemContainerStyle>
+                                            <Style BasedOn="{StaticResource SfFileListItemStyle}" TargetType="ListViewItem" />
+                                        </ListView.ItemContainerStyle>
+                                        <ListView.ContextFlyout>
+                                            <MenuFlyout Opening="OnPrimaryFileListContextOpening" />
+                                        </ListView.ContextFlyout>
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate x:DataType="local:FileRow">
+                                                <local:FileRowView Row="{x:Bind}" ContextRequested="OnFileRowContextRequested" />
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                    <Canvas x:Name="PrimaryMarqueeCanvas" IsHitTestVisible="False">
+                                        <Rectangle
+                                            x:Name="PrimaryMarqueeRect"
+                                            Visibility="Collapsed"
+                                            Stroke="{ThemeResource SfAccentBrush}"
+                                            StrokeThickness="1"
+                                            Fill="{ThemeResource SfAccentSoftBrush}"
+                                            RadiusX="2"
+                                            RadiusY="2" />
+                                    </Canvas>
+                                    <StackPanel
+                                        x:Name="PrimaryEmptyState"
+                                        MaxWidth="360"
                                         HorizontalAlignment="Center"
-                                        FontSize="16"
-                                        FontWeight="SemiBold"
-                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                        Text="This folder is empty"
-                                        TextAlignment="Center" />
-                                    <TextBlock
-                                        x:Name="PrimaryEmptyHint"
-                                        HorizontalAlignment="Center"
-                                        FontSize="12"
-                                        Foreground="{ThemeResource SfTextMutedBrush}"
-                                        Text="Drop files here, or press Ctrl+Shift+N to create a folder"
-                                        TextAlignment="Center"
-                                        TextWrapping="Wrap" />
-                                </StackPanel>
+                                        VerticalAlignment="Center"
+                                        IsHitTestVisible="False"
+                                        Spacing="6"
+                                        Visibility="Collapsed">
+                                        <TextBlock
+                                            x:Name="PrimaryEmptyTitle"
+                                            HorizontalAlignment="Center"
+                                            FontSize="16"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                            Text="This folder is empty"
+                                            TextAlignment="Center" />
+                                        <TextBlock
+                                            x:Name="PrimaryEmptyHint"
+                                            HorizontalAlignment="Center"
+                                            FontSize="12"
+                                            Foreground="{ThemeResource SfTextMutedBrush}"
+                                            Text="Drop files here, or press Ctrl+Shift+N to create a folder"
+                                            TextAlignment="Center"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Grid>
+                                <ScrollBar
+                                    x:Name="PrimaryDetailsHorizontalScrollBar"
+                                    Grid.Row="2"
+                                    Height="12"
+                                    Orientation="Horizontal"
+                                    Visibility="Collapsed"
+                                    ValueChanged="OnPrimaryDetailsHorizontalScrollChanged" />
                             </Grid>
                         </Grid>
 </UserControl>

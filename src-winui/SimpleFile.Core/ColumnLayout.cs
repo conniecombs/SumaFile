@@ -26,8 +26,10 @@ public sealed class FileListColumn
 public sealed class ColumnLayout
 {
     public const double UnboundedMaxWidth = 10000;
+    public const double CompactPaneWidth = 560;
 
     public static readonly string[] DefaultVisible = ["name", "size", "date", "type"];
+    public static readonly string[] CompactVisible = ["name", "size", "date"];
 
     public static readonly IReadOnlyDictionary<string, string[]> Presets = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
@@ -115,6 +117,35 @@ public sealed class ColumnLayout
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
+    public List<string> SnapshotVisibleIds()
+    {
+        return VisibleIds
+            .Where(id => Find(id) is not null)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    public void RestoreVisibleIds(IReadOnlyList<string>? ids)
+    {
+        if (ids is null || ids.Count == 0)
+        {
+            return;
+        }
+
+        var visible = ids
+            .Where(id => !string.IsNullOrWhiteSpace(id) && Find(id) is not null)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (visible.Count == 0)
+        {
+            return;
+        }
+
+        VisibleIds.Clear();
+        VisibleIds.AddRange(visible);
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
     public Dictionary<string, double> SnapshotWidths()
     {
         return Columns.ToDictionary(column => column.Id, column => column.Width, StringComparer.Ordinal);
@@ -138,4 +169,79 @@ public sealed class ColumnLayout
 
         Changed?.Invoke(this, EventArgs.Empty);
     }
+
+    public ColumnLayout EffectiveForPaneWidth(double paneWidth, bool dualPane, bool gitEnabled)
+    {
+        var effective = Clone();
+        if (!ShouldUseCompactColumns(paneWidth, dualPane))
+        {
+            return effective;
+        }
+
+        var compactIds = CompactVisible
+            .Where(IsVisible)
+            .ToList();
+        if (gitEnabled && IsVisible("git"))
+        {
+            compactIds.Add("git");
+        }
+
+        if (compactIds.Count == 0)
+        {
+            compactIds.Add("name");
+        }
+
+        effective.RestoreVisibleIds(compactIds);
+        ApplyCompactWidths(effective, paneWidth);
+        return effective;
+    }
+
+    public static bool ShouldUseCompactColumns(double paneWidth, bool dualPane)
+    {
+        if (double.IsNaN(paneWidth) || paneWidth <= 0)
+        {
+            return false;
+        }
+
+        return paneWidth < CompactPaneWidth || (dualPane && paneWidth < CompactPaneWidth + 120);
+    }
+
+    private ColumnLayout Clone()
+    {
+        var clone = new ColumnLayout();
+        clone.RestoreVisibleIds(SnapshotVisibleIds());
+        clone.RestoreWidths(SnapshotWidths());
+        return clone;
+    }
+
+    private static void ApplyCompactWidths(ColumnLayout columns, double paneWidth)
+    {
+        columns.Resize("size", Math.Min(columns.WidthOf("size"), 86));
+        columns.Resize("date", Math.Min(columns.WidthOf("date"), 136));
+        columns.Resize("git", Math.Min(columns.WidthOf("git"), 82));
+
+        var supportingWidth = columns.VisibleColumns
+            .Where(column => !string.Equals(column.Id, "name", StringComparison.Ordinal))
+            .Sum(column => column.Width);
+        var availableNameWidth = double.IsNaN(paneWidth) || paneWidth <= 0
+            ? 220
+            : paneWidth - supportingWidth - 36;
+        columns.Resize("name", Math.Clamp(availableNameWidth, 160, 260));
+    }
+}
+
+public static class SidebarSectionVisibility
+{
+    public static bool QuickAccess(UiSettings settings) => settings.ShowQuickAccess;
+
+    public static bool FolderTree(UiSettings settings, int rowCount) =>
+        settings.ShowFolderTree && rowCount > 0;
+
+    public static bool Bookmarks(UiSettings settings) => settings.ShowBookmarks;
+
+    public static bool Recent(UiSettings settings, int rowCount) =>
+        settings.ShowRecentLocations && rowCount > 0;
+
+    public static bool SmartFolders(UiSettings settings, int rowCount, bool searchActive) =>
+        settings.ShowSmartFolders && (rowCount > 0 || searchActive);
 }

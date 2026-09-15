@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 78,
+  "domainMethodCount": 84,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -23,7 +23,11 @@
       "result": "string?",
       "hostOwned": true
     },
-    "list_drives": { "params": null, "result": "DriveInfo[]" },
+    "list_drives": {
+      "params": { "mode": "DriveListMode optional" },
+      "result": "DriveInfo[]",
+      "notes": "mode=light skips mapped-network probes for startup; omit mode for a full refresh."
+    },
     "list_directory": {
       "params": {
         "path": "string",
@@ -43,14 +47,37 @@
     "list_subdirectories": { "params": { "path": "string" }, "result": "TreeNode[]" },
     "create_directory": { "params": { "path": "string", "name": "string" }, "result": "string" },
     "create_file": { "params": { "path": "string", "name": "string" }, "result": "string" },
+    "create_shortcut": {
+      "params": {
+        "path": "string",
+        "name": "string",
+        "targetPath": "string",
+        "arguments": "string?",
+        "workingDirectory": "string?",
+        "iconPath": "string?"
+      },
+      "result": "string"
+    },
     "delete_entry": { "params": { "path": "string" }, "result": "null" },
     "move_to_trash": { "params": { "paths": "string[]" }, "result": "string[]" },
     "restore_recycle_bin": { "params": { "paths": "string[]" }, "result": "string[]" },
     "empty_recycle_bin": { "params": null, "result": "null" },
     "rename_entry": { "params": { "path": "string", "newName": "string" }, "result": "string" },
     "batch_rename": { "params": { "entries": "RenameRequest[]" }, "result": "string[]" },
-    "copy_entry": { "params": { "source": "string", "destination": "string" }, "result": "string" },
-    "move_entry": { "params": { "source": "string", "destination": "string" }, "result": "string" },
+    "copy_entry": {
+      "params": { "source": "string", "destination": "string" },
+      "result": "string",
+      "legacy": true,
+      "compatOnly": true,
+      "replacement": "copy_with_progress"
+    },
+    "move_entry": {
+      "params": { "source": "string", "destination": "string" },
+      "result": "string",
+      "legacy": true,
+      "compatOnly": true,
+      "replacement": "move_with_progress"
+    },
     "copy_entry_resolved": {
       "params": { "source": "string", "destination": "string", "conflictAction": "ConflictAction" },
       "result": "string"
@@ -90,29 +117,40 @@
     "count_folder_items": { "params": { "path": "string" }, "result": "number" },
     "get_folder_metrics": {
       "params": { "path": "string" },
-      "result": { "size": "number", "itemCount": "number", "subdirectories": "TreeNode[]" }
+      "result": "FolderMetrics"
     },
     "cancel_folder_size": { "params": null, "result": "null", "cancellation": true },
     "cancel_folder_item_count": { "params": null, "result": "null", "cancellation": true },
-    "cancel_count_items": { "params": null, "result": "null", "cancellation": true },
+    "cancel_count_items": {
+      "params": null,
+      "result": "null",
+      "cancellation": true,
+      "compatOnly": true,
+      "replacement": "cancel_folder_item_count"
+    },
     "cancel_folder_metrics": { "params": null, "result": "null", "cancellation": true },
     "open_file": { "params": { "path": "string" }, "result": "null" },
     "reveal_in_folder": { "params": { "path": "string" }, "result": "null" },
     "open_external_url": { "params": { "url": "string" }, "result": "null" },
     "list_archive": { "params": { "path": "string" }, "result": "ArchiveInfo" },
+    "get_archive_capabilities": { "params": null, "result": "ArchiveCapabilities" },
     "extract_archive": { "params": { "archivePath": "string", "destination": "string" }, "result": "null" },
     "create_archive": {
       "params": { "paths": "string[]", "archivePath": "string", "format": "ArchiveFormat" },
       "result": "null"
     },
-    "check_rar_installed": { "params": null, "result": "boolean" },
-    "prepare_rar_install": { "params": null, "result": "RarInstallPlan" },
-    "discard_rar_install": { "params": { "confirmationToken": "string" }, "result": "null" },
-    "install_rar": { "params": { "confirmationToken": "string" }, "result": "string" },
     "get_db_setting": { "params": { "key": "string" }, "result": "string?" },
+    "get_db_settings": { "params": { "keys": "string[]" }, "result": "SettingMap" },
     "set_db_setting": { "params": { "key": "string", "value": "string" }, "result": "null" },
-    "git_pull": { "params": { "path": "string" }, "result": "string" },
-    "git_push": { "params": { "path": "string" }, "result": "string" },
+    "get_git_repository_status": { "params": { "path": "string" }, "result": "GitRepositoryStatus" },
+    "git_stage_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
+    "git_unstage_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
+    "git_discard_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
+    "git_diff_path": { "params": { "path": "string", "filePath": "string" }, "result": "string" },
+    "git_commit": { "params": { "path": "string", "message": "string" }, "result": "GitCommandResult" },
+    "git_fetch": { "params": { "path": "string" }, "result": "GitCommandResult" },
+    "git_pull": { "params": { "path": "string" }, "result": "GitCommandResult" },
+    "git_push": { "params": { "path": "string" }, "result": "GitCommandResult" },
     "open_terminal": { "params": { "path": "string" }, "result": "null" },
     "open_powershell_admin": { "params": { "path": "string" }, "result": "null" },
     "search_files": { "params": { "options": "SearchOptions" }, "result": "SearchResult[]", "binaryFrameTags": { "batch": 3, "result": 4 } },
@@ -123,13 +161,25 @@
     "open_file_with": { "params": { "path": "string", "application": "string" }, "result": "null" },
     "compare_files": { "params": { "pathA": "string", "pathB": "string" }, "result": "FileComparison" },
     "disk_cleanup": { "params": { "directory": "string", "sizeThreshold": "number?" }, "result": "CleanupResult" },
-    "cancel_disk_cleanup": { "params": null, "result": "null", "cancellation": true },
+    "cancel_disk_cleanup": { "params": { "operationId": "string?" }, "result": "null", "cancellation": true },
     "duplicate_check": {
-      "params": { "directory": "string", "minSize": "number?", "partialHashBytes": "number?" },
+      "params": {
+        "directory": "string",
+        "minSize": "number?",
+        "partialHashBytes": "number?",
+        "maxDepth": "number?",
+        "excludePatterns": "string[]?",
+        "networkMode": "bool?"
+      },
       "result": "DuplicateCheckResult"
     },
-    "cancel_duplicate_check": { "params": null, "result": "null", "cancellation": true },
-    "get_git_status": { "params": { "path": "string" }, "result": "GitStatus" },
+    "cancel_duplicate_check": { "params": { "operationId": "string?" }, "result": "null", "cancellation": true },
+    "get_git_status": {
+      "params": { "path": "string" },
+      "result": "GitStatus",
+      "compatOnly": true,
+      "replacement": "get_git_file_statuses"
+    },
     "compute_checksum": { "params": { "path": "string" }, "result": "Checksums" },
     "get_image_metadata": { "params": { "path": "string" }, "result": "ImageMetadata" },
     "get_file_metadata": { "params": { "path": "string" }, "result": "FileMetadata" },
@@ -137,7 +187,13 @@
     "get_app_about_info": { "params": null, "result": "AppAboutInfo" },
     "check_for_update": { "params": null, "result": "UpdateInfo?" },
     "install_update": { "params": null, "result": "null" },
-    "show_main_window": { "params": null, "result": "null", "hostOwned": true },
+    "show_main_window": {
+      "params": null,
+      "result": "null",
+      "hostOwned": true,
+      "compatOnly": true,
+      "replacement": "WinUI AppWindow.Show/Activate"
+    },
     "get_git_file_statuses": { "params": { "path": "string" }, "result": "FileEntry[]" },
     "get_all_tags": { "params": null, "result": "Tag[]" },
     "create_tag": { "params": { "name": "string", "color": "string" }, "result": "Tag" },

@@ -26,10 +26,13 @@ public sealed partial class PrimaryToolbarView : UserControl
     public Button SearchCancel => SearchCancelButton;
     public StackPanel ActionsHost => PrimaryActionsHost;
     public TextBox QuickFilterTextBox => QuickFilterBox;
-    public Button NewFolderButton => PrimaryNewFolderButton;
-    public Button NewFileButton => PrimaryNewFileButton;
+    public Button NewButton => PrimaryNewButton;
     public Button DualPaneToggleButton => DualPaneButton;
     public Button ClosePaneButton => ClosePrimaryPaneButton;
+    public Button ProfileButton => WorkspaceProfileButton;
+    public StackPanel WorkspaceProfilesList => WorkspaceProfilesHost;
+    public Button WorkspaceProfileSave => WorkspaceProfileSaveButton;
+    public Button WorkspaceProfileManage => WorkspaceProfileManageButton;
     public Button ViewButton => PrimaryViewButton;
     public Button ViewDualPaneToggleButton => ViewDualPaneButton;
     public FontIcon ViewDualPaneGlyph => ViewDualPaneIcon;
@@ -38,8 +41,12 @@ public sealed partial class PrimaryToolbarView : UserControl
     public TextBlock ViewIconSizeValue => ViewIconSizeValueText;
     public Slider ViewIconSize => ViewIconSizeSlider;
     public Button ViewApplyBoth => ViewApplyBothButton;
-    public Button ViewSaveLayout => ViewSaveLayoutButton;
-    public StackPanel SavedLayoutsList => SavedLayoutsHost;
+    public Button ViewUseGlobally => ViewUseGloballyButton;
+    public Button ViewUseForFolder => ViewUseForFolderButton;
+    public Button ViewUseForDescendants => ViewUseForDescendantsButton;
+    public TextBlock ViewFolderRuleStatus => ViewFolderRuleStatusText;
+    public Button ViewSaveProfile => ViewSaveProfileButton;
+    public StackPanel ViewProfilesList => ViewProfilesHost;
     public Button SettingsButton => PrimarySettingsButton;
     public Button MoreButton => PrimaryMoreButton;
 
@@ -53,16 +60,21 @@ public sealed partial class PrimaryToolbarView : UserControl
     public event RoutedEventHandler? ContentSearchToggleClick;
     public event RoutedEventHandler? CancelSearchClick;
     public event TextChangedEventHandler? QuickFilterChanged;
-    public event RoutedEventHandler? PrimaryNewFolder;
-    public event RoutedEventHandler? PrimaryNewFile;
+    public event EventHandler<string>? PrimaryNewItemRequested;
     public event RoutedEventHandler? ToggleDualPane;
     public event RoutedEventHandler? ClosePrimaryPane;
+    public event EventHandler<object>? WorkspaceProfilesFlyoutOpening;
+    public event RoutedEventHandler? WorkspaceProfileSaveClicked;
+    public event RoutedEventHandler? WorkspaceProfileManageClicked;
     public event EventHandler<object>? ViewOptionsFlyoutOpening;
     public event RoutedEventHandler? ViewDualPaneClicked;
     public event SelectionChangedEventHandler? ViewStyleSelectionChanged;
     public event RangeBaseValueChangedEventHandler? ViewIconSizeSliderChanged;
     public event RoutedEventHandler? ViewApplyBothClicked;
-    public event RoutedEventHandler? ViewSaveLayoutClicked;
+    public event RoutedEventHandler? ViewUseGloballyClicked;
+    public event RoutedEventHandler? ViewUseForFolderClicked;
+    public event RoutedEventHandler? ViewUseForDescendantsClicked;
+    public event RoutedEventHandler? ViewSaveProfileClicked;
     public event RoutedEventHandler? SettingsClicked;
     public event EventHandler<object>? PrimaryMoreMenuOpening;
 
@@ -87,13 +99,26 @@ public sealed partial class PrimaryToolbarView : UserControl
 
     private void OnQuickFilterChanged(object sender, TextChangedEventArgs e) => QuickFilterChanged?.Invoke(sender, e);
 
-    private void OnPrimaryNewFolder(object sender, RoutedEventArgs e) => PrimaryNewFolder?.Invoke(sender, e);
-
-    private void OnPrimaryNewFile(object sender, RoutedEventArgs e) => PrimaryNewFile?.Invoke(sender, e);
+    private void OnNewMenuItemClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuFlyoutItem { Tag: string id })
+        {
+            PrimaryNewItemRequested?.Invoke(this, id);
+        }
+    }
 
     private void OnToggleDualPane(object sender, RoutedEventArgs e) => ToggleDualPane?.Invoke(sender, e);
 
     private void OnClosePrimaryPane(object sender, RoutedEventArgs e) => ClosePrimaryPane?.Invoke(sender, e);
+
+    private void OnWorkspaceProfilesFlyoutOpening(object sender, object e) =>
+        WorkspaceProfilesFlyoutOpening?.Invoke(sender, e);
+
+    private void OnWorkspaceProfileSaveClicked(object sender, RoutedEventArgs e) =>
+        WorkspaceProfileSaveClicked?.Invoke(sender, e);
+
+    private void OnWorkspaceProfileManageClicked(object sender, RoutedEventArgs e) =>
+        WorkspaceProfileManageClicked?.Invoke(sender, e);
 
     private void OnViewOptionsFlyoutOpening(object sender, object e) => ViewOptionsFlyoutOpening?.Invoke(sender, e);
 
@@ -107,7 +132,13 @@ public sealed partial class PrimaryToolbarView : UserControl
 
     private void OnViewApplyBothClicked(object sender, RoutedEventArgs e) => ViewApplyBothClicked?.Invoke(sender, e);
 
-    private void OnViewSaveLayoutClicked(object sender, RoutedEventArgs e) => ViewSaveLayoutClicked?.Invoke(sender, e);
+    private void OnViewUseGloballyClicked(object sender, RoutedEventArgs e) => ViewUseGloballyClicked?.Invoke(sender, e);
+
+    private void OnViewUseForFolderClicked(object sender, RoutedEventArgs e) => ViewUseForFolderClicked?.Invoke(sender, e);
+
+    private void OnViewUseForDescendantsClicked(object sender, RoutedEventArgs e) => ViewUseForDescendantsClicked?.Invoke(sender, e);
+
+    private void OnViewSaveProfileClicked(object sender, RoutedEventArgs e) => ViewSaveProfileClicked?.Invoke(sender, e);
 
     private void OnSettingsClicked(object sender, RoutedEventArgs e) => SettingsClicked?.Invoke(sender, e);
 

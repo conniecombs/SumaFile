@@ -7,7 +7,7 @@ This file tracks current Windows-focused follow-up areas.
 | Area | Notes |
 | --- | --- |
 | Drive listing | Preserve volume labels and mapped network share names. |
-| Folder navigation | Directory clicks should stay inside SimpleFile. |
+| Folder navigation | Directory clicks should stay inside SumaFile. |
 | Transfers | Conflict handling must preserve skip, replace, keep-both, and cancellation behavior. |
 | Archives | Virtual archive paths must not bypass destination validation. |
 | Preview | Large files should respect preview limits and avoid blocking the UI. |

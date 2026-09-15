@@ -29,13 +29,19 @@ public sealed class ContextMenuRequest
     public bool SelectedIsDirectory { get; init; }
     public string? SelectedDirectoryPath { get; init; }
     public bool HasFolderSelection { get; init; }
+    public int FolderSelectionCount { get; init; }
     public bool AllSelectedAreFiles { get; init; }
     public bool SelectedIsArchive { get; init; }
     public string? ArchiveExtractFolderName { get; init; }
     public string? SelectedExtension { get; init; }
     public IReadOnlyList<OpenWithApplication> OpenWithApplications { get; init; } = [];
     public IReadOnlyCollection<string> OverflowedToolbarIds { get; init; } = [];
+    public IReadOnlyList<string> ToolbarActionOrder { get; init; } = [];
+    public string ToolbarDisplayMode { get; init; } = ToolbarActionCatalog.IconOnlyDisplayMode;
     public bool InRecycleBin { get; init; }
+    public bool GitEnabled { get; init; }
+    public bool InGitRepository { get; init; }
+    public bool SelectionHasGitStatus { get; init; }
 }
 
 /// <summary>
@@ -47,6 +53,7 @@ public static class ContextMenuBuilder
     {
         var hasOtherPane = request.DualPaneEnabled && request.OtherPaneHasPath;
         var canCompare = request.SelectionCount == 2 && request.AllSelectedAreFiles;
+        var canCompareFolders = request.FolderSelectionCount > 1;
         var canUnpack = request.SelectionCount == 1 && request.SelectedIsDirectory;
         var extractFolder = string.IsNullOrEmpty(request.ArchiveExtractFolderName)
             ? "Extract to Folder"
@@ -75,17 +82,7 @@ public static class ContextMenuBuilder
             Item("ctx-open-tab", "Open in new tab", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+Enter"),
             Item("ctx-open-other-pane", "Open in other pane", request.SelectionCount != 1 || !request.SelectedIsDirectory),
             Item("ctx-preview", "Quick Look", request.SelectionCount != 1, "Space"),
-            Item("ctx-compare", "Compare files", !canCompare),
-            Item("ctx-terminal", "Open terminal here", false, "F4"),
-            Item("ctx-powershell-admin", "Open PowerShell as administrator"),
             Divider(),
-            Item("ctx-color-label", "Set color label...", request.SelectionCount == 0),
-            Item("ctx-folder-metrics", "Folder metrics", !request.HasFolderSelection),
-            Item("ctx-cleanup", "Disk cleanup here..."),
-            Item("ctx-duplicates", "Find duplicates here..."),
-            Divider(),
-            Item("ctx-rename", "Rename", request.SelectionCount != 1, "F2"),
-            Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0),
             Item("ctx-copy", "Copy", request.SelectionCount == 0, "Ctrl+C"),
             Item("ctx-cut", "Cut", request.SelectionCount == 0, "Ctrl+X"),
             Item(
@@ -94,30 +91,14 @@ public static class ContextMenuBuilder
                 !request.HasClipboard,
                 "Ctrl+V",
                 commandParameter: request.SelectedIsDirectory ? request.SelectedDirectoryPath : null),
-            Item("ctx-copy-path", "Copy path", request.SelectionCount == 0, "Ctrl+Shift+C"),
-            Item("ctx-bookmark", "Bookmark folder", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+B"),
-            Item("ctx-copy-to-pane", "Copy to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+C"),
-            Item("ctx-move-to-pane", "Move to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+M"),
+            SendToMenu(request, hasOtherPane),
             Divider(),
-            Item("ctx-pack", "Pack into folder...", request.SelectionCount == 0),
-            Item("ctx-unpack", "Unpack folder here", !canUnpack),
-            Item("ctx-compress", "Create archive...", request.SelectionCount == 0),
-            new ContextMenuEntry
-            {
-                Kind = ContextMenuKind.Item,
-                Id = "ctx-extract-menu",
-                Label = "Extract",
-                Disabled = !request.SelectedIsArchive,
-                IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-extract-menu"),
-                Children =
-                [
-                    Item("ctx-extract-folder", extractFolder, !request.SelectedIsArchive, showIcon: false),
-                    Item("ctx-extract", "Extract here", !request.SelectedIsArchive, showIcon: false),
-                    Item("ctx-extract-to", "Extract to...", !request.SelectedIsArchive, showIcon: false),
-                ],
-            },
-            Divider(),
+            Item("ctx-rename", "Rename", request.SelectionCount != 1, "F2"),
             DeleteMenu(request.SelectionCount == 0),
+            Divider(),
+            ToolsMenu(request, canCompare, canCompareFolders),
+            ArchiveMenu(request, canUnpack, extractFolder),
+            GitMenu(request),
             Divider(),
             Item("ctx-info", "Properties", request.SelectionCount != 1, "Alt+Enter"),
         };
@@ -136,6 +117,9 @@ public static class ContextMenuBuilder
         {
             entries.Add(Divider());
         }
+
+        entries.Add(ToolbarMenu(request));
+        entries.Add(Divider());
 
         if (request.InRecycleBin)
         {
@@ -156,11 +140,12 @@ public static class ContextMenuBuilder
             Item("ctx-extract-to", "Extract archive...", !request.SelectedIsArchive),
             Item("ctx-compress", "Create archive...", !hasSelection),
             Divider(),
-            Item("ctx-folder-metrics", "Folder metrics", !request.HasFolderSelection),
+            Item("ctx-folder-metrics", "Compare folder metrics", request.FolderSelectionCount < 2),
             Item("ctx-duplicates", "Find duplicates here..."),
             Item("ctx-cleanup", "Disk cleanup here..."),
             Divider(),
             Item("ctx-terminal", "Open terminal here", false, "F4"),
+            GitMenu(request),
         ]);
 
         return VisibleEntries(entries);
@@ -180,57 +165,88 @@ public static class ContextMenuBuilder
         var items = new List<ContextMenuEntry>();
         if (Has(ToolbarOverflowPlanner.Search))
         {
-            items.Add(Item("overflow-search", "Search", shortcut: "Ctrl+F"));
+            items.Add(Item("overflow-search", "Find in folder", shortcut: "Ctrl+F"));
         }
 
         if (Has(ToolbarOverflowPlanner.Filter))
         {
-            items.Add(Item("overflow-filter", "Filter"));
+            items.Add(Item("overflow-filter", "Filter list"));
         }
 
-        if (Has(ToolbarOverflowPlanner.NewFolder))
+        var actionOrder = request.ToolbarActionOrder.Count == 0
+            ? CommandSurfaceLayout.DefaultPrimaryActionIds
+            : request.ToolbarActionOrder;
+        foreach (var id in actionOrder)
         {
-            items.Add(Item("overflow-new-folder", "New folder", shortcut: "Ctrl+Shift+N"));
-        }
-
-        if (Has(ToolbarOverflowPlanner.NewFile))
-        {
-            items.Add(Item("overflow-new-file", "New file", shortcut: "Ctrl+N"));
-        }
-
-        if (Has(ToolbarOverflowPlanner.DualPane) && !request.DualPaneEnabled)
-        {
-            items.Add(Item("overflow-dual-pane", "Open second pane", shortcut: "F6"));
-        }
-
-        if (Has(ToolbarOverflowPlanner.ViewOptions))
-        {
-            items.Add(new ContextMenuEntry
+            if (!Has(id))
             {
-                Id = "overflow-view",
-                Label = "View options",
-                IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-view"),
-                Children =
-                [
-                    Item("view:details", "Details"),
-                    Item("view:list", "List"),
-                    Item("view:tiles", "Tiles"),
-                    Item("view:content", "Content"),
-                    Divider(),
-                    Item("icon:16", "Small icons"),
-                    Item("icon:32", "Medium icons"),
-                    Item("icon:48", "Large icons"),
-                    Item("icon:96", "Extra large icons"),
-                    Item("icon:128", "Jumbo icons"),
-                    Item("icon:192", "Huge icons"),
-                    Item("icon:256", "Maximum icons"),
-                ],
-            });
-        }
+                continue;
+            }
 
-        if (Has(ToolbarOverflowPlanner.Settings))
-        {
-            items.Add(Item("overflow-settings", "Settings", shortcut: "Ctrl+Shift+S"));
+            switch (id)
+            {
+                case ToolbarOverflowPlanner.New:
+                    items.Add(NewItemMenu());
+                    break;
+                case ToolbarOverflowPlanner.DualPane:
+                    if (!request.DualPaneEnabled)
+                    {
+                        items.Add(Item("overflow-dual-pane", "Open second pane", shortcut: "F6"));
+                    }
+
+                    break;
+                case ToolbarOverflowPlanner.Profiles:
+                    items.Add(new ContextMenuEntry
+                    {
+                        Id = "overflow-profiles",
+                        Label = "Profiles",
+                        IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-profiles"),
+                        Children =
+                        [
+                            Item("profile:save", "Save current profile..."),
+                            Item("profile:manage", "Manage profiles..."),
+                        ],
+                    });
+                    break;
+                case ToolbarOverflowPlanner.ViewOptions:
+                    items.Add(new ContextMenuEntry
+                    {
+                        Id = "overflow-view",
+                        Label = "View options",
+                        IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-view"),
+                        Children =
+                        [
+                            Item("view:details", "Details"),
+                            Item("view:list", "List"),
+                            Item("view:tiles", "Tiles"),
+                            Item("view:content", "Content"),
+                            Divider(),
+                            Item("icon:16", "Small icons"),
+                            Item("icon:32", "Medium icons"),
+                            Item("icon:48", "Large icons"),
+                            Item("icon:96", "Extra large icons"),
+                            Item("icon:128", "Jumbo icons"),
+                            Item("icon:192", "Huge icons"),
+                            Item("icon:256", "Maximum icons"),
+                        ],
+                    });
+                    break;
+                case ToolbarOverflowPlanner.Settings:
+                    items.Add(Item("overflow-settings", "Settings", shortcut: "Ctrl+Shift+S"));
+                    break;
+                default:
+                    if (ToolbarActionCatalog.Find(id) is { CommandId: not null } action)
+                    {
+                        if (string.Equals(action.Group, "Git", StringComparison.Ordinal) && !request.GitEnabled)
+                        {
+                            break;
+                        }
+
+                        items.Add(Item($"overflow-{id}", action.Label, shortcut: action.Shortcut, iconGlyph: action.IconGlyph));
+                    }
+
+                    break;
+            }
         }
 
         return items;
@@ -346,9 +362,136 @@ public static class ContextMenuBuilder
         };
     }
 
+    private static ContextMenuEntry GitMenu(ContextMenuRequest request)
+    {
+        if (!request.GitEnabled)
+        {
+            return Item("ctx-git-menu", "Git", disabled: true);
+        }
+
+        var hasSelection = request.SelectionCount > 0;
+        return new ContextMenuEntry
+        {
+            Id = "ctx-git-menu",
+            Label = "Git",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-git-menu"),
+            Children =
+            [
+                Item("ctx-git-panel", "Show Git workbench", showIcon: false),
+                Item("ctx-git-refresh", "Refresh status", !request.InGitRepository, showIcon: false),
+                Divider(),
+                Item("ctx-git-diff", "Show diff", request.SelectionCount != 1 || !request.SelectionHasGitStatus, showIcon: false),
+                Item("ctx-git-stage", "Stage selected", !hasSelection || !request.SelectionHasGitStatus, showIcon: false),
+                Item("ctx-git-unstage", "Unstage selected", !hasSelection || !request.SelectionHasGitStatus, showIcon: false),
+                Item("ctx-git-discard", "Discard selected changes", !hasSelection || !request.SelectionHasGitStatus, showIcon: false),
+                Divider(),
+                Item("ctx-git-fetch", "Fetch", !request.InGitRepository, showIcon: false),
+                Item("ctx-git-pull", "Pull", !request.InGitRepository, showIcon: false),
+                Item("ctx-git-push", "Push", !request.InGitRepository, showIcon: false),
+                Item("ctx-git-commit", "Commit", !request.InGitRepository, showIcon: false),
+            ],
+        };
+    }
+
+    private static ContextMenuEntry SendToMenu(ContextMenuRequest request, bool hasOtherPane)
+    {
+        return new ContextMenuEntry
+        {
+            Id = "ctx-send-to-menu",
+            Label = "Send to",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-send-to-menu"),
+            Children =
+            [
+                Item("ctx-copy-path", "Copy path", request.SelectionCount == 0, "Ctrl+Shift+C", showIcon: false),
+                Item("ctx-bookmark", "Bookmark folder", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+B", showIcon: false),
+                Divider(),
+                Item("ctx-copy-to-pane", "Copy to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+C", showIcon: false),
+                Item("ctx-move-to-pane", "Move to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+M", showIcon: false),
+            ],
+        };
+    }
+
+    private static ContextMenuEntry ToolsMenu(ContextMenuRequest request, bool canCompare, bool canCompareFolders)
+    {
+        return new ContextMenuEntry
+        {
+            Id = "ctx-tools-menu",
+            Label = "Tools",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-tools-menu"),
+            Children =
+            [
+                Item("ctx-compare", "Compare files", !canCompare, showIcon: false),
+                Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0, showIcon: false),
+                Item("ctx-color-label", "Set color label...", request.SelectionCount == 0, showIcon: false),
+                Divider(),
+                Item("ctx-folder-metrics", "Compare folder metrics", !canCompareFolders, showIcon: false),
+                Item("ctx-cleanup", "Disk cleanup here...", showIcon: false),
+                Item("ctx-duplicates", "Find duplicates here...", showIcon: false),
+                Divider(),
+                Item("ctx-terminal", "Open terminal here", false, "F4", showIcon: false),
+                Item("ctx-powershell-admin", "Open PowerShell as administrator", showIcon: false),
+            ],
+        };
+    }
+
+    private static ContextMenuEntry ArchiveMenu(ContextMenuRequest request, bool canUnpack, string extractFolder)
+    {
+        return new ContextMenuEntry
+        {
+            Id = "ctx-archive-menu",
+            Label = "Archive",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-archive-menu"),
+            Children =
+            [
+                Item("ctx-pack", "Pack into folder...", request.SelectionCount == 0, showIcon: false),
+                Item("ctx-unpack", "Unpack folder here", !canUnpack, showIcon: false),
+                Item("ctx-compress", "Create archive...", request.SelectionCount == 0, showIcon: false),
+                Divider(),
+                Item("ctx-extract-folder", extractFolder, !request.SelectedIsArchive, showIcon: false),
+                Item("ctx-extract", "Extract here", !request.SelectedIsArchive, showIcon: false),
+                Item("ctx-extract-to", "Extract to...", !request.SelectedIsArchive, showIcon: false),
+            ],
+        };
+    }
+
+    private static ContextMenuEntry ToolbarMenu(ContextMenuRequest request)
+    {
+        var usesLabels = ToolbarActionCatalog.NormalizeDisplayMode(request.ToolbarDisplayMode)
+            == ToolbarActionCatalog.IconAndLabelDisplayMode;
+        return new ContextMenuEntry
+        {
+            Id = "ctx-toolbar-menu",
+            Label = "Toolbar",
+            IconGlyph = ContextMenuIconCatalog.Settings,
+            Children =
+            [
+                Item("ctx-toggle-toolbar-labels", usesLabels ? "Hide button labels" : "Show button labels", showIcon: false),
+                Item("ctx-customize-toolbar", "Customize toolbar...", showIcon: false),
+            ],
+        };
+    }
+
     private static ContextMenuEntry Divider()
     {
         return new ContextMenuEntry { Kind = ContextMenuKind.Divider };
+    }
+
+    private static ContextMenuEntry NewItemMenu()
+    {
+        return new ContextMenuEntry
+        {
+            Id = "overflow-new",
+            Label = "New",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-new"),
+            Children =
+            [
+                Item("new:folder", "Folder", shortcut: "Ctrl+Shift+N", showIcon: false),
+                Divider(),
+                Item("new:text", "Text document", shortcut: "Ctrl+N", showIcon: false),
+                Item("new:empty", "Blank file...", showIcon: false),
+                Item("new:shortcut", "Shortcut...", showIcon: false),
+            ],
+        };
     }
 
     private static ContextMenuEntry DeleteMenu(bool disabled)

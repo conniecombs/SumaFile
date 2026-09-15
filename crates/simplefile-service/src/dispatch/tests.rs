@@ -188,6 +188,10 @@ fn duplicate_check_and_cleanup_are_dispatched() {
             json!({
                 "directory": "C:\\",
                 "minSize": 1,
+                "partialHashBytes": 262144,
+                "maxDepth": 4,
+                "excludePatterns": ["@eaDir", "#recycle"],
+                "networkMode": true,
                 "operationId": "dup-1"
             }),
         ),
@@ -196,18 +200,42 @@ fn duplicate_check_and_cleanup_are_dispatched() {
         Dispatch::DuplicateCheck {
             directory,
             min_size,
+            partial_hash_bytes,
+            max_depth,
+            exclude_patterns,
+            network_mode,
             operation_id,
             ..
         } => {
             assert_eq!(directory, "C:\\");
             assert_eq!(min_size, Some(1));
+            assert_eq!(partial_hash_bytes, Some(262144));
+            assert_eq!(max_depth, Some(4));
+            assert_eq!(
+                exclude_patterns,
+                vec!["@eaDir".to_string(), "#recycle".to_string()]
+            );
+            assert_eq!(network_mode, Some(true));
             assert_eq!(operation_id.as_deref(), Some("dup-1"));
         }
         other => panic!("expected DuplicateCheck, got {other:?}"),
     }
 
-    let cancel = dispatch(&mut state, &request("cancel_duplicate_check", 5, json!({})));
-    assert!(matches!(cancel, Dispatch::CancelDuplicateCheck { .. }));
+    let cancel = dispatch(
+        &mut state,
+        &request(
+            "cancel_duplicate_check",
+            5,
+            json!({ "operationId": "dup-1" }),
+        ),
+    );
+    assert!(matches!(
+        cancel,
+        Dispatch::CancelDuplicateCheck {
+            operation_id: Some(id),
+            ..
+        } if id == "dup-1"
+    ));
 
     let cleanup = dispatch(
         &mut state,
@@ -296,6 +324,24 @@ fn settings_methods_round_trip_through_metadata_db() {
         panic!("expected missing settings reply");
     };
     assert!(missing_response.result.unwrap().is_null());
+
+    let batch = dispatch(
+        &mut state,
+        &request(
+            "get_db_settings",
+            8,
+            json!({ "keys": ["winui.layout", "missing"] }),
+        ),
+    );
+    let Dispatch::Reply(batch_response) = batch else {
+        panic!("expected batch settings reply");
+    };
+    let batch_result = batch_response.result.unwrap();
+    assert_eq!(
+        batch_result["winui.layout"].as_str(),
+        Some("{\"dualPane\":true}")
+    );
+    assert!(batch_result["missing"].is_null());
 
     let _ = fs::remove_file(db_path);
 }
@@ -495,13 +541,13 @@ fn leftover_domain_methods_are_wired() {
         ..SessionState::default()
     };
 
-    // Methods with no required params. Skip prepare_rar_install (downloads)
-    // and check_for_update (hits the network unless a manifest is injected).
+    // Methods with no required params. Skip check_for_update (hits the network
+    // unless a manifest is injected).
     for (id, method) in [
         (20u64, "get_all_tags"),
         (21, "get_all_file_tags"),
         (22, "load_smart_folders"),
-        (23, "check_rar_installed"),
+        (23, "get_archive_capabilities"),
         (24, "get_app_version"),
         (25, "get_app_about_info"),
         (26, "cancel_disk_cleanup"),
@@ -521,15 +567,20 @@ fn leftover_domain_methods_are_wired() {
         (46, "save_smart_folder"),
         (47, "delete_smart_folder"),
         (48, "get_git_status"),
-        (49, "get_git_file_statuses"),
-        (50, "git_pull"),
-        (51, "git_push"),
-        (52, "disk_cleanup"),
-        (53, "duplicate_check"),
-        (54, "discard_rar_install"),
-        (55, "install_rar"),
-        (56, "open_terminal"),
-        (57, "open_powershell_admin"),
+        (49, "get_git_repository_status"),
+        (50, "get_git_file_statuses"),
+        (51, "git_stage_paths"),
+        (52, "git_unstage_paths"),
+        (53, "git_discard_paths"),
+        (54, "git_diff_path"),
+        (55, "git_commit"),
+        (56, "git_fetch"),
+        (57, "git_pull"),
+        (58, "git_push"),
+        (59, "disk_cleanup"),
+        (60, "duplicate_check"),
+        (63, "open_terminal"),
+        (64, "open_powershell_admin"),
     ] {
         assert_domain_method_is_wired(&mut state, method, id, json!({}));
     }
@@ -537,7 +588,7 @@ fn leftover_domain_methods_are_wired() {
     assert_domain_method_is_wired(
         &mut state,
         "restore_recycle_bin",
-        58,
+        65,
         json!({ "paths": [] }),
     );
 
@@ -668,11 +719,20 @@ fn tags_and_smart_folders_round_trip_through_core() {
     assert!(git_status_response.error.is_none());
     assert_eq!(git_status_response.result.unwrap()["is_repo"], false);
 
-    let rar = dispatch(&mut state, &request("check_rar_installed", 67, json!({})));
-    let Dispatch::Reply(rar_response) = rar else {
-        panic!("expected check_rar_installed reply");
+    let capabilities = dispatch(
+        &mut state,
+        &request("get_archive_capabilities", 67, json!({})),
+    );
+    let Dispatch::Reply(capabilities_response) = capabilities else {
+        panic!("expected get_archive_capabilities reply");
     };
-    assert!(rar_response.result.unwrap().is_boolean());
+    let formats = capabilities_response.result.unwrap()["formats"]
+        .as_array()
+        .expect("formats array")
+        .clone();
+    assert!(formats.iter().any(|format| {
+        format["format"] == "rar" && format["can_create"] == false && format["can_extract"] == true
+    }));
 
     let _ = fs::remove_file(db_path);
     let _ = fs::remove_dir_all(app_data);

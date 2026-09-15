@@ -5,7 +5,7 @@ using SimpleFile.Ipc;
 
 namespace SimpleFile.App;
 
-internal sealed class FileOperationDialogService
+internal sealed partial class FileOperationDialogService
 {
     private readonly Func<ExplorerWorkspace?> _workspace;
     private readonly Func<XamlRoot> _xamlRoot;
@@ -18,12 +18,15 @@ internal sealed class FileOperationDialogService
     private readonly Func<CancellationTokenSource> _beginArchiveOperation;
     private readonly Action<CancellationTokenSource> _finishArchiveOperation;
     private readonly Func<string?, Task<string?>> _pickFolderAsync;
+    private readonly Func<string?, Task<string?>> _pickFileAsync;
     private readonly Func<string, Func<Task>, Task> _runUiActionAsync;
     private readonly Action<string, string, InfoBarSeverity> _showMessage;
     private readonly Action<FileRow> _queuePreview;
     private readonly Func<FileEntry, FileRow> _toFileRow;
     private readonly Action _refreshView;
     private readonly Action<string?> _applyTheme;
+    private readonly Action _applyKeyboardShortcuts;
+    private readonly Action _applyCommandSurfaceLayout;
     private readonly Func<CancellationToken, Task> _clearRecentHistoryAsync;
     private readonly Action<Action> _dispatchToUi;
 
@@ -39,12 +42,15 @@ internal sealed class FileOperationDialogService
         Func<CancellationTokenSource> beginArchiveOperation,
         Action<CancellationTokenSource> finishArchiveOperation,
         Func<string?, Task<string?>> pickFolderAsync,
+        Func<string?, Task<string?>> pickFileAsync,
         Func<string, Func<Task>, Task> runUiActionAsync,
         Action<string, string, InfoBarSeverity> showMessage,
         Action<FileRow> queuePreview,
         Func<FileEntry, FileRow> toFileRow,
         Action refreshView,
         Action<string?> applyTheme,
+        Action applyKeyboardShortcuts,
+        Action applyCommandSurfaceLayout,
         Func<CancellationToken, Task> clearRecentHistoryAsync,
         Action<Action> dispatchToUi)
     {
@@ -59,17 +65,28 @@ internal sealed class FileOperationDialogService
         _beginArchiveOperation = beginArchiveOperation;
         _finishArchiveOperation = finishArchiveOperation;
         _pickFolderAsync = pickFolderAsync;
+        _pickFileAsync = pickFileAsync;
         _runUiActionAsync = runUiActionAsync;
         _showMessage = showMessage;
         _queuePreview = queuePreview;
         _toFileRow = toFileRow;
         _refreshView = refreshView;
         _applyTheme = applyTheme;
+        _applyKeyboardShortcuts = applyKeyboardShortcuts;
+        _applyCommandSurfaceLayout = applyCommandSurfaceLayout;
         _clearRecentHistoryAsync = clearRecentHistoryAsync;
         _dispatchToUi = dispatchToUi;
     }
 
-    public async Task PromptAndCreateFolderAsync(PaneId pane)
+    public Task PromptAndCreateFileAsync(PaneId pane)
+        => PromptForNameAndInvokeAsync(
+            pane,
+            "Blank File",
+            "File name",
+            NewItemTemplate.EmptyFile,
+            static (workspace, name, cancellationToken) => workspace.CreateFileInCurrentPaneAsync(name, cancellationToken));
+
+    public async Task CreateNewItemFromTemplateAsync(PaneId pane, NewItemTemplate template)
     {
         var workspace = _workspace();
         if (workspace is null)
@@ -77,45 +94,32 @@ internal sealed class FileOperationDialogService
             return;
         }
 
-        var dialog = new ContentDialog
+        string? createdPath = null;
+        var utilityCts = _beginUtilityOperation();
+        try
         {
-            Title = "New Folder",
-            Content = new TextBox { PlaceholderText = "Folder name" },
-            PrimaryButtonText = "Create",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = _xamlRoot(),
-        };
-
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary && dialog.Content is TextBox tb && !string.IsNullOrWhiteSpace(tb.Text))
+            workspace.ActivatePane(pane);
+            createdPath = await workspace.CreateNewItemInCurrentPaneAsync(template, utilityCts.Token);
+        }
+        catch (OperationCanceledException)
         {
-            if (!ReferenceEquals(_workspace(), workspace))
-            {
-                return;
-            }
+        }
+        catch (Exception exception)
+        {
+            _showMessage("New", exception.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _finishUtilityOperation(utilityCts);
+        }
 
-            var utilityCts = _beginUtilityOperation();
-            try
-            {
-                workspace.ActivatePane(pane);
-                await workspace.CreateFolderInCurrentPaneAsync(tb.Text.Trim(), utilityCts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception exception)
-            {
-                _showMessage("New Folder", exception.Message, InfoBarSeverity.Error);
-            }
-            finally
-            {
-                _finishUtilityOperation(utilityCts);
-            }
+        if (createdPath is not null && ReferenceEquals(_workspace(), workspace))
+        {
+            await PromptRenameCreatedItemAsync(workspace, createdPath, template);
         }
     }
 
-    public async Task PromptAndCreateFileAsync(PaneId pane)
+    public async Task PromptAndCreateShortcutAsync(PaneId pane)
     {
         var workspace = _workspace();
         if (workspace is null)
@@ -123,10 +127,111 @@ internal sealed class FileOperationDialogService
             return;
         }
 
+        var suggestedName = workspace.SuggestedNameForNewItem(NewItemTemplate.Shortcut, pane);
+        var nameBox = new TextBox
+        {
+            Header = "Name",
+            Text = suggestedName,
+            PlaceholderText = "Shortcut name",
+        };
+        nameBox.Select(0, NewItemTemplate.RenameSelectionLength(suggestedName, isDirectory: false));
+
+        var targetBox = new TextBox
+        {
+            Header = "Target",
+            PlaceholderText = "Path to a file or folder",
+        };
+        var argumentsBox = new TextBox
+        {
+            Header = "Arguments",
+            PlaceholderText = "Optional",
+        };
+        var workingDirectoryBox = new TextBox
+        {
+            Header = "Start in",
+            PlaceholderText = "Optional folder",
+        };
+        var iconBox = new TextBox
+        {
+            Header = "Icon",
+            PlaceholderText = "Optional file",
+        };
+
+        var autoName = true;
+        var updatingName = false;
+        nameBox.TextChanged += (_, _) =>
+        {
+            if (!updatingName)
+            {
+                autoName = false;
+            }
+        };
+
+        async Task PickTargetFileAsync()
+        {
+            var picked = await _pickFileAsync(targetBox.Text.Trim());
+            ApplyPickedTarget(picked);
+        }
+
+        async Task PickTargetFolderAsync()
+        {
+            var picked = await _pickFolderAsync(targetBox.Text.Trim());
+            ApplyPickedTarget(picked);
+        }
+
+        async Task PickWorkingDirectoryAsync()
+        {
+            var picked = await _pickFolderAsync(workingDirectoryBox.Text.Trim());
+            if (!string.IsNullOrWhiteSpace(picked))
+            {
+                workingDirectoryBox.Text = picked;
+            }
+        }
+
+        async Task PickIconAsync()
+        {
+            var picked = await _pickFileAsync(iconBox.Text.Trim());
+            if (!string.IsNullOrWhiteSpace(picked))
+            {
+                iconBox.Text = picked;
+            }
+        }
+
+        void ApplyPickedTarget(string? picked)
+        {
+            if (string.IsNullOrWhiteSpace(picked))
+            {
+                return;
+            }
+
+            targetBox.Text = picked;
+            if (autoName || string.IsNullOrWhiteSpace(nameBox.Text))
+            {
+                var nextName = workspace.SuggestedShortcutNameForTarget(picked, pane);
+                updatingName = true;
+                nameBox.Text = nextName;
+                nameBox.Select(0, NewItemTemplate.RenameSelectionLength(nextName, isDirectory: false));
+                updatingName = false;
+                autoName = true;
+            }
+        }
+
+        var panel = new StackPanel { Spacing = 12, MinWidth = 420 };
+        panel.Children.Add(nameBox);
+        panel.Children.Add(targetBox);
+        panel.Children.Add(ButtonRow(
+            ("Browse file", (_, _) => _ = PickTargetFileAsync()),
+            ("Browse folder", (_, _) => _ = PickTargetFolderAsync())));
+        panel.Children.Add(argumentsBox);
+        panel.Children.Add(workingDirectoryBox);
+        panel.Children.Add(ButtonRow(("Browse folder", (_, _) => _ = PickWorkingDirectoryAsync())));
+        panel.Children.Add(iconBox);
+        panel.Children.Add(ButtonRow(("Browse icon", (_, _) => _ = PickIconAsync())));
+
         var dialog = new ContentDialog
         {
-            Title = "New File",
-            Content = new TextBox { PlaceholderText = "File name" },
+            Title = "Create Shortcut",
+            Content = panel,
             PrimaryButtonText = "Create",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
@@ -134,30 +239,168 @@ internal sealed class FileOperationDialogService
         };
 
         var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary && dialog.Content is TextBox tb && !string.IsNullOrWhiteSpace(tb.Text))
+        if (result != ContentDialogResult.Primary)
         {
-            if (!ReferenceEquals(_workspace(), workspace))
-            {
-                return;
-            }
+            return;
+        }
 
-            var utilityCts = _beginUtilityOperation();
-            try
-            {
-                workspace.ActivatePane(pane);
-                await workspace.CreateFileInCurrentPaneAsync(tb.Text.Trim(), utilityCts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception exception)
-            {
-                _showMessage("New File", exception.Message, InfoBarSeverity.Error);
-            }
-            finally
-            {
-                _finishUtilityOperation(utilityCts);
-            }
+        var name = nameBox.Text.Trim();
+        var targetPath = targetBox.Text.Trim();
+        if (name.Length == 0 || targetPath.Length == 0)
+        {
+            _showMessage("Shortcut", "Shortcut name and target are required.", InfoBarSeverity.Warning);
+            return;
+        }
+
+        if (!ReferenceEquals(_workspace(), workspace))
+        {
+            return;
+        }
+
+        var utilityCts = _beginUtilityOperation();
+        try
+        {
+            workspace.ActivatePane(pane);
+            await workspace.CreateShortcutInCurrentPaneAsync(
+                name,
+                targetPath,
+                TrimToNull(argumentsBox.Text),
+                TrimToNull(workingDirectoryBox.Text),
+                TrimToNull(iconBox.Text),
+                utilityCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _showMessage("Shortcut", exception.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _finishUtilityOperation(utilityCts);
+        }
+    }
+
+    private async Task PromptForNameAndInvokeAsync(
+        PaneId pane,
+        string title,
+        string placeholderText,
+        NewItemTemplate template,
+        Func<ExplorerWorkspace, string, CancellationToken, Task<string>> invokeAsync)
+    {
+        var workspace = _workspace();
+        if (workspace is null)
+        {
+            return;
+        }
+
+        var suggestedName = workspace.SuggestedNameForNewItem(template, pane);
+        var textBox = new TextBox { Text = suggestedName, PlaceholderText = placeholderText };
+        textBox.Select(0, NewItemTemplate.RenameSelectionLength(suggestedName, template.IsDirectory));
+
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = textBox,
+            PrimaryButtonText = "Create",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _xamlRoot(),
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary || dialog.Content is not TextBox tb)
+        {
+            return;
+        }
+
+        var name = tb.Text.Trim();
+        if (name.Length == 0)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(_workspace(), workspace))
+        {
+            return;
+        }
+
+        var utilityCts = _beginUtilityOperation();
+        try
+        {
+            workspace.ActivatePane(pane);
+            await invokeAsync(workspace, name, utilityCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _showMessage(title, exception.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _finishUtilityOperation(utilityCts);
+        }
+    }
+
+    private async Task PromptRenameCreatedItemAsync(
+        ExplorerWorkspace workspace,
+        string path,
+        NewItemTemplate template)
+    {
+        var currentName = Path.GetFileName(path);
+        if (string.IsNullOrWhiteSpace(currentName))
+        {
+            return;
+        }
+
+        var tb = new TextBox { Text = currentName };
+        tb.Select(0, NewItemTemplate.RenameSelectionLength(currentName, template.IsDirectory));
+
+        var dialog = new ContentDialog
+        {
+            Title = template.IsDirectory ? "Name Folder" : "Name File",
+            Content = tb,
+            PrimaryButtonText = "Rename",
+            CloseButtonText = "Keep Name",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _xamlRoot(),
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var newName = tb.Text.Trim();
+        if (newName.Length == 0 || string.Equals(newName, currentName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(_workspace(), workspace))
+        {
+            return;
+        }
+
+        var utilityCts = _beginUtilityOperation();
+        try
+        {
+            await workspace.RenameSelectedAsync(path, newName, utilityCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _showMessage("Rename", exception.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _finishUtilityOperation(utilityCts);
         }
     }
 
@@ -335,7 +578,7 @@ internal sealed class FileOperationDialogService
         }
     }
 
-    public async Task ShowSettingsAsync()
+    public async Task ShowSettingsAsync(string? initialCategory = null)
     {
         var workspace = _workspace();
         var fileOps = workspace?.FileOps;
@@ -344,9 +587,8 @@ internal sealed class FileOperationDialogService
             return;
         }
 
-        var dialog = new SettingsDialog
+        var dialog = new SettingsWindow(initialCategory)
         {
-            XamlRoot = _xamlRoot(),
             OwnerHwnd = _ownerHwnd(),
         };
 
@@ -356,7 +598,7 @@ internal sealed class FileOperationDialogService
         {
             try
             {
-                await dialog.LoadSettingsAsync(fileOps, utilityCts.Token);
+                await dialog.LoadSettingsAsync(fileOps, workspace.Settings, utilityCts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -385,6 +627,8 @@ internal sealed class FileOperationDialogService
                 dialog.ApplyTo(workspace.Settings);
                 workspace.ApplyUiSettings(workspace.Settings, applyViewDefaultsToPanes: false);
                 _applyTheme(workspace.Settings.Theme);
+                _applyKeyboardShortcuts();
+                _applyCommandSurfaceLayout();
                 await workspace.SaveUiSettingsAsync(utilityCts.Token);
             }
             catch (OperationCanceledException)
@@ -480,6 +724,15 @@ internal sealed class FileOperationDialogService
         }
 
         var dialog = new CreateArchiveDialog { XamlRoot = _xamlRoot() };
+        try
+        {
+            var capabilities = await fileOps.GetArchiveCapabilitiesAsync().ConfigureAwait(true);
+            dialog.SetArchiveFormats(capabilities.Formats);
+        }
+        catch
+        {
+            // Fall back to the built-in creatable formats; the backend still validates requests.
+        }
         dialog.SelectedPaths = selected.Select(entry => entry.Path).ToArray();
         dialog.SelectedNames = selected.Select(entry => entry.Name).ToArray();
         dialog.TargetDirectory = workspace.Active.Path;
@@ -533,39 +786,8 @@ internal sealed class FileOperationDialogService
             return;
         }
 
-        var dialog = new DuplicateCheckerDialog { XamlRoot = _xamlRoot(), Directory = path };
-        dialog.ShowConfiguration();
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-        {
-            return;
-        }
-
-        if (!ReferenceEquals(_workspace(), workspace))
-        {
-            return;
-        }
-
-        var utilityCts = _beginUtilityOperation();
-        using var scanCts = CancellationTokenSource.CreateLinkedTokenSource(utilityCts.Token);
-        var scanToken = scanCts.Token;
-        var progress = new Progress<ProgressUpdate>(update =>
-        {
-            _dispatchToUi(() =>
-            {
-                if (ReferenceEquals(_workspace(), workspace) && !scanToken.IsCancellationRequested)
-                {
-                    dialog.UpdateProgress(update);
-                }
-            });
-        });
-
-        dialog.ScanCancelled += async (_, _) =>
-        {
-            scanCts.Cancel();
-            await _runUiActionAsync(
-                "Duplicate checker",
-                () => fileOps.CancelDuplicateCheckAsync());
-        };
+        var dialog = new DuplicateCheckerDialog();
+        dialog.ConfigureForPath(path, workspace.Active.PathIsNetwork);
         dialog.PreviewRequested += (_, filePath) =>
         {
             if (!ReferenceEquals(_workspace(), workspace))
@@ -596,42 +818,45 @@ internal sealed class FileOperationDialogService
                     : Task.CompletedTask);
         };
 
-        try
-        {
-            dialog.ShowScanning();
-            var scanUi = dialog.ShowAsync();
-            var result = await fileOps.DuplicateCheckAsync(
-                path, dialog.MinSizeBytes, null, progress, scanCts.Token);
-            if (dialog.ScanWasCancelled
-                || !ReferenceEquals(_workspace(), workspace)
-                || scanCts.IsCancellationRequested)
+        await RunScanDialogAsync(
+            workspace,
+            fileOps,
+            dialog,
+            "Duplicate checker",
+            (scanDialog, progress, token) => fileOps.DuplicateCheckAsync(
+                path,
+                scanDialog.ScanOptions,
+                progress: progress,
+                ct: token),
+            async (scanDialog, _, token) =>
             {
-                return;
-            }
-
-            dialog.ShowResults(result);
-            await scanUi;
-            if (dialog.DeleteRequested && ReferenceEquals(_workspace(), workspace))
-            {
-                var trash = dialog.PathsToDelete;
-                if (trash.Length > 0)
+                if (!scanDialog.DeleteRequested)
                 {
-                    await fileOps.TrashAsync(trash, scanCts.Token);
-                    if (ReferenceEquals(_workspace(), workspace) && !scanCts.IsCancellationRequested)
-                    {
-                        await workspace.RefreshAsync(scanCts.Token);
-                    }
+                    return;
                 }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            dialog.Hide();
-        }
-        catch (Exception exception)
-        {
-            dialog.Hide();
-            if (!IsCancellationMessage(exception.Message))
+
+                var trash = scanDialog.PathsToDelete;
+                if (trash.Length == 0)
+                {
+                    return;
+                }
+
+                try
+                {
+                    await fileOps.TrashAsync(trash, token);
+                }
+                catch (IpcException ipcException) when (FileOperationService.IsTrashUnavailable(ipcException))
+                {
+                    await PromptPermanentDeleteAfterTrashUnavailableAsync(trash, workspace, ipcException, token);
+                    return;
+                }
+
+                if (ReferenceEquals(_workspace(), workspace) && !token.IsCancellationRequested)
+                {
+                    await workspace.RefreshAsync(token);
+                }
+            },
+            exception =>
             {
                 if (exception is IpcException ipcException && FileOperationService.IsTrashUnavailable(ipcException))
                 {
@@ -644,12 +869,7 @@ internal sealed class FileOperationDialogService
                 {
                     _showMessage("Duplicate checker", exception.Message, InfoBarSeverity.Error);
                 }
-            }
-        }
-        finally
-        {
-            _finishUtilityOperation(utilityCts);
-        }
+            });
     }
 
     public async Task ShowDiskCleanupAsync()
@@ -668,70 +888,16 @@ internal sealed class FileOperationDialogService
         }
 
         var dialog = new DiskCleanupDialog { XamlRoot = _xamlRoot(), Directory = path };
-        dialog.ShowConfiguration();
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-        {
-            return;
-        }
-
-        if (!ReferenceEquals(_workspace(), workspace))
-        {
-            return;
-        }
-
-        var utilityCts = _beginUtilityOperation();
-        using var scanCts = CancellationTokenSource.CreateLinkedTokenSource(utilityCts.Token);
-        var scanToken = scanCts.Token;
-        var progress = new Progress<ProgressUpdate>(update =>
-        {
-            _dispatchToUi(() =>
-            {
-                if (ReferenceEquals(_workspace(), workspace) && !scanToken.IsCancellationRequested)
-                {
-                    dialog.UpdateProgress(update);
-                }
-            });
-        });
-
-        dialog.ScanCancelled += async (_, _) =>
-        {
-            scanCts.Cancel();
-            await _runUiActionAsync(
-                "Disk cleanup",
-                () => fileOps.CancelDiskCleanupAsync());
-        };
-
-        try
-        {
-            dialog.ShowScanning();
-            var scanUi = dialog.ShowAsync();
-            var result = await fileOps.DiskCleanupAsync(path, dialog.ThresholdBytes, progress, scanCts.Token);
-            if (dialog.ScanWasCancelled
-                || !ReferenceEquals(_workspace(), workspace)
-                || scanCts.IsCancellationRequested)
-            {
-                return;
-            }
-
-            dialog.ShowResults(result);
-            await scanUi;
-        }
-        catch (OperationCanceledException)
-        {
-            dialog.Hide();
-        }
-        catch (Exception exception)
-        {
-            dialog.Hide();
-            if (!IsCancellationMessage(exception.Message))
-            {
-                _showMessage("Disk cleanup", exception.Message, InfoBarSeverity.Error);
-            }
-        }
-        finally
-        {
-            _finishUtilityOperation(utilityCts);
-        }
+        await RunScanDialogAsync(
+            workspace,
+            fileOps,
+            dialog,
+            "Disk cleanup",
+            (scanDialog, progress, token) => fileOps.DiskCleanupAsync(
+                path,
+                scanDialog.ThresholdBytes,
+                progress,
+                token));
     }
 
     public async Task SetColorLabelAsync()
@@ -885,6 +1051,29 @@ internal sealed class FileOperationDialogService
 
     private static string FormatItemCount(int count) =>
         count == 1 ? "this item" : $"{count} items";
+
+    private static StackPanel ButtonRow(params (string Text, RoutedEventHandler Click)[] buttons)
+    {
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+        };
+        foreach (var (text, click) in buttons)
+        {
+            var button = new Button { Content = text };
+            button.Click += click;
+            row.Children.Add(button);
+        }
+
+        return row;
+    }
+
+    private static string? TrimToNull(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
 
     private static bool IsCancellationMessage(string? message)
     {

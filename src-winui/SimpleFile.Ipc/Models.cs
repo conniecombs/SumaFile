@@ -285,6 +285,18 @@ public sealed class TreeNode
     public List<TreeNode> Children { get; set; } = [];
 }
 
+public sealed class FolderMetrics
+{
+    [JsonPropertyName("size")]
+    public ulong Size { get; set; }
+
+    [JsonPropertyName("item_count")]
+    public ulong ItemCount { get; set; }
+
+    [JsonPropertyName("subdirectories")]
+    public List<TreeNode> Subdirectories { get; set; } = [];
+}
+
 public sealed class RenameRequest
 {
     [JsonPropertyName("path")]
@@ -325,7 +337,7 @@ public sealed class ThumbnailResult
     public string Path { get; set; } = "";
 
     [JsonPropertyName("data")]
-    public string? Data { get; set; }
+    public byte[]? Data { get; set; }
 
     [JsonPropertyName("error")]
     public string? Error { get; set; }
@@ -499,6 +511,39 @@ public sealed class ArchiveInfo
     public ulong CompressedSize { get; set; }
 }
 
+public sealed class ArchiveFormatCapability
+{
+    [JsonPropertyName("format")]
+    public string Format { get; set; } = "";
+
+    [JsonPropertyName("extension")]
+    public string Extension { get; set; } = "";
+
+    [JsonPropertyName("can_list")]
+    public bool CanList { get; set; }
+
+    [JsonPropertyName("can_extract")]
+    public bool CanExtract { get; set; }
+
+    [JsonPropertyName("can_create")]
+    public bool CanCreate { get; set; }
+
+    [JsonPropertyName("can_modify")]
+    public bool CanModify { get; set; }
+
+    [JsonPropertyName("engine")]
+    public string Engine { get; set; } = "";
+
+    [JsonPropertyName("note")]
+    public string? Note { get; set; }
+}
+
+public sealed class ArchiveCapabilities
+{
+    [JsonPropertyName("formats")]
+    public List<ArchiveFormatCapability> Formats { get; set; } = [];
+}
+
 public sealed class Tag
 {
     [JsonPropertyName("id")] public long Id { get; set; }
@@ -533,6 +578,15 @@ public sealed class CleanupResult
     [JsonPropertyName("scanned_files")] public ulong ScannedFiles { get; set; }
 }
 
+public sealed class DuplicateScanOptions
+{
+    [JsonPropertyName("minSize")] public ulong? MinSize { get; set; }
+    [JsonPropertyName("partialHashBytes")] public ulong? PartialHashBytes { get; set; }
+    [JsonPropertyName("maxDepth")] public int? MaxDepth { get; set; }
+    [JsonPropertyName("excludePatterns")] public string[]? ExcludePatterns { get; set; }
+    [JsonPropertyName("networkMode")] public bool? NetworkMode { get; set; }
+}
+
 public sealed class DuplicateCheckFile
 {
     [JsonPropertyName("path")] public string Path { get; set; } = "";
@@ -559,16 +613,6 @@ public sealed class DuplicateCheckResult
     [JsonPropertyName("skipped_files")] public ulong SkippedFiles { get; set; }
     [JsonPropertyName("errors")] public List<string> Errors { get; set; } = [];
     [JsonPropertyName("total_reclaimable_bytes")] public ulong TotalReclaimableBytes { get; set; }
-}
-
-public sealed class RarInstallPlan
-{
-    [JsonPropertyName("confirmation_token")] public string ConfirmationToken { get; set; } = "";
-    [JsonPropertyName("download_url")] public string DownloadUrl { get; set; } = "";
-    [JsonPropertyName("file_name")] public string FileName { get; set; } = "";
-    [JsonPropertyName("installer_path")] public string InstallerPath { get; set; } = "";
-    [JsonPropertyName("publisher")] public string Publisher { get; set; } = "";
-    [JsonPropertyName("sha256")] public string Sha256 { get; set; } = "";
 }
 
 public sealed class AppAboutInfo
@@ -603,4 +647,43 @@ public sealed class GitStatus
     [JsonPropertyName("untracked")] public int Untracked { get; set; }
     [JsonPropertyName("ahead")] public int Ahead { get; set; }
     [JsonPropertyName("behind")] public int Behind { get; set; }
+}
+
+public sealed class GitFileStatus
+{
+    [JsonPropertyName("path")] public string Path { get; set; } = "";
+    [JsonPropertyName("absolute_path")] public string AbsolutePath { get; set; } = "";
+    [JsonPropertyName("original_path")] public string? OriginalPath { get; set; }
+    [JsonPropertyName("status")] public string Status { get; set; } = "";
+    [JsonPropertyName("index_status")] public string IndexStatus { get; set; } = "";
+    [JsonPropertyName("worktree_status")] public string WorktreeStatus { get; set; } = "";
+    [JsonPropertyName("staged")] public bool Staged { get; set; }
+    [JsonPropertyName("unstaged")] public bool Unstaged { get; set; }
+    [JsonPropertyName("untracked")] public bool Untracked { get; set; }
+    [JsonPropertyName("conflicted")] public bool Conflicted { get; set; }
+}
+
+public sealed class GitRepositoryStatus
+{
+    [JsonPropertyName("is_repo")] public bool IsRepo { get; set; }
+    [JsonPropertyName("root")] public string? Root { get; set; }
+    [JsonPropertyName("branch")] public string? Branch { get; set; }
+    [JsonPropertyName("upstream")] public string? Upstream { get; set; }
+    [JsonPropertyName("head")] public string? Head { get; set; }
+    [JsonPropertyName("ahead")] public int Ahead { get; set; }
+    [JsonPropertyName("behind")] public int Behind { get; set; }
+    [JsonPropertyName("staged")] public int Staged { get; set; }
+    [JsonPropertyName("unstaged")] public int Unstaged { get; set; }
+    [JsonPropertyName("untracked")] public int Untracked { get; set; }
+    [JsonPropertyName("conflicted")] public int Conflicted { get; set; }
+    [JsonPropertyName("changes")] public List<GitFileStatus> Changes { get; set; } = [];
+}
+
+public sealed class GitCommandResult
+{
+    [JsonPropertyName("command")] public string Command { get; set; } = "";
+    [JsonPropertyName("exit_code")] public int ExitCode { get; set; }
+    [JsonPropertyName("stdout")] public string Stdout { get; set; } = "";
+    [JsonPropertyName("stderr")] public string Stderr { get; set; } = "";
+    [JsonPropertyName("summary")] public string Summary { get; set; } = "";
 }

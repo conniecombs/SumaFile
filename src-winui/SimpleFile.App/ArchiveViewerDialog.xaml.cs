@@ -24,7 +24,7 @@ public sealed partial class ArchiveViewerDialog : ContentDialog
     public ArchiveViewerDialog()
     {
         InitializeComponent();
-        
+
         PrimaryButtonClick += (_, _) => ExtractRequested = true;
     }
 
@@ -36,8 +36,8 @@ public sealed partial class ArchiveViewerDialog : ContentDialog
         FormatBadgeText.Text = _archiveData.Format.ToUpperInvariant();
 
         EntryCountText.Text = _archiveData.Entries.Count.ToString();
-        TotalSizeText.Text = FormatSize((long)_archiveData.TotalSize);
-        CompressedSizeText.Text = FormatSize((long)_archiveData.CompressedSize);
+        TotalSizeText.Text = EntryPresentation.FormatFileSize(_archiveData.TotalSize);
+        CompressedSizeText.Text = EntryPresentation.FormatFileSize(_archiveData.CompressedSize);
 
         if (_archiveData.UnsafeEntries.Count > 0)
         {
@@ -51,14 +51,6 @@ public sealed partial class ArchiveViewerDialog : ContentDialog
 
         EntriesList.ItemsSource = _archiveData.Entries.Select(e => new ArchiveEntryViewModel(e)).ToList();
     }
-
-    private string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024.0):F1} MB";
-        return $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB";
-    }
 }
 
 public class ArchiveEntryViewModel
@@ -71,14 +63,6 @@ public class ArchiveEntryViewModel
     {
         Icon = entry.IsDir ? "📁" : "📄";
         Name = entry.Name;
-        SizeFormatted = FormatSize((long)entry.Size);
-    }
-
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024.0):F1} MB";
-        return $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB";
+        SizeFormatted = EntryPresentation.FormatFileSize(entry.Size);
     }
 }

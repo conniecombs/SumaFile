@@ -34,7 +34,7 @@ public sealed partial class ExtractArchiveDialog : ContentDialog
     public string SelectedExtractMode { get; private set; } = "here";
 
     public Func<string?, Task<string?>>? BrowseFolderAsync { get; set; }
-    
+
     public void SetBaseDirectory(string dir)
     {
         _baseDirectory = dir;
@@ -51,9 +51,9 @@ public sealed partial class ExtractArchiveDialog : ContentDialog
         if (_archiveData == null) return;
 
         ArchiveNameText.Text = System.IO.Path.GetFileName(_archiveData.Path);
-        
+
         long safeCount = _archiveData.Entries.Count - _archiveData.UnsafeEntries.Count;
-        ContentsText.Text = $"{safeCount} safe entries, {FormatSize((long)_archiveData.TotalSize)} total size";
+        ContentsText.Text = $"{safeCount} safe entries, {EntryPresentation.FormatFileSize(_archiveData.TotalSize)} total size";
 
         if (_archiveData.UnsafeEntries.Count > 0)
         {
@@ -76,7 +76,7 @@ public sealed partial class ExtractArchiveDialog : ContentDialog
             SelectedExtractMode = rb.Tag.ToString()!;
             if (BrowseButton != null)
                 BrowseButton.IsEnabled = SelectedExtractMode == "custom";
-            
+
             UpdateDestinationPreview();
         }
     }
@@ -127,11 +127,4 @@ public sealed partial class ExtractArchiveDialog : ContentDialog
         }
     }
 
-    private string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024.0):F1} MB";
-        return $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB";
-    }
 }

@@ -11,6 +11,7 @@ namespace SimpleFile.App;
 public sealed partial class FileRowView : UserControl
 {
     private readonly Dictionary<string, TextBlock> _textCells = new(StringComparer.Ordinal);
+    private readonly TranslateTransform _rowTransform = new();
     private string _renderedColumnKey = "";
     private Ellipse? _tagPip;
     private Image? _iconImage;
@@ -18,6 +19,11 @@ public sealed partial class FileRowView : UserControl
     private TextBlock? _metadataText;
     private TextBlock? _secondaryText;
     private CancellationTokenSource? _thumbnailCts;
+    private IReadOnlyList<FileListColumn>? _explicitColumns;
+    private string? _explicitView;
+    private int? _explicitIconSize;
+    private double _explicitHorizontalOffset;
+    private string _explicitPresentationKey = "";
 
     public static readonly DependencyProperty RowProperty = DependencyProperty.Register(
         nameof(Row),
@@ -28,14 +34,58 @@ public sealed partial class FileRowView : UserControl
     public FileRowView()
     {
         InitializeComponent();
+        RowGrid.RenderTransform = _rowTransform;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        ActualThemeChanged += OnActualThemeChanged;
+    }
+
+    private void OnActualThemeChanged(FrameworkElement sender, object args)
+    {
+        ApplyThemeResources();
     }
 
     public FileRow? Row
     {
         get => (FileRow?)GetValue(RowProperty);
         set => SetValue(RowProperty, value);
+    }
+
+    public void ApplyDetailsPresentation(
+        IReadOnlyList<FileListColumn> columns,
+        int iconSize,
+        double horizontalOffset)
+    {
+        var normalizedIconSize = UiSettings.NormalizeIconSize(iconSize);
+        var normalizedOffset = Math.Max(0, horizontalOffset);
+        var nextColumns = columns
+            .Select(column => new FileListColumn(
+                column.Id,
+                column.Label,
+                column.Sort,
+                column.Width,
+                column.MinWidth,
+                column.MaxWidth))
+            .ToArray();
+        var nextKey = $"details:{normalizedIconSize}:{ColumnSignature(nextColumns)}";
+        var structureChanged = !string.Equals(_explicitView, "details", StringComparison.Ordinal)
+            || _explicitIconSize != normalizedIconSize
+            || !string.Equals(_explicitPresentationKey, nextKey, StringComparison.Ordinal);
+
+        _explicitView = "details";
+        _explicitIconSize = normalizedIconSize;
+        _explicitColumns = nextColumns;
+        _explicitHorizontalOffset = normalizedOffset;
+        _explicitPresentationKey = nextKey;
+
+        if (structureChanged)
+        {
+            _renderedColumnKey = "";
+            ApplyRow();
+            return;
+        }
+
+        ApplyHorizontalOffset();
     }
 
     private static void OnRowChanged(DependencyObject sender, DependencyPropertyChangedEventArgs args)
@@ -48,8 +98,9 @@ public sealed partial class FileRowView : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        ColumnLayoutHost.Shared.Changed += OnColumnsChanged;
+        ColumnLayoutHost.Changed += OnColumnsChanged;
         FileListViewHost.Changed += OnViewSettingsChanged;
+        FileListHorizontalScrollHost.Changed += OnHorizontalScrollChanged;
         FileListThumbnailHost.Changed += OnThumbnailsChanged;
         ApplyColumns();
         ApplyRow();
@@ -57,8 +108,9 @@ public sealed partial class FileRowView : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        ColumnLayoutHost.Shared.Changed -= OnColumnsChanged;
+        ColumnLayoutHost.Changed -= OnColumnsChanged;
         FileListViewHost.Changed -= OnViewSettingsChanged;
+        FileListHorizontalScrollHost.Changed -= OnHorizontalScrollChanged;
         FileListThumbnailHost.Changed -= OnThumbnailsChanged;
         CancelThumbnailLoad();
     }
@@ -72,6 +124,11 @@ public sealed partial class FileRowView : UserControl
     {
         ApplyColumns();
         ApplyRow();
+    }
+
+    private void OnHorizontalScrollChanged(object? sender, EventArgs e)
+    {
+        ApplyHorizontalOffset();
     }
 
     private void OnThumbnailsChanged(object? sender, EventArgs e)
@@ -96,7 +153,7 @@ public sealed partial class FileRowView : UserControl
             ToolTipService.SetToolTip(_nameText, Row.Name);
         }
 
-        var isTileView = FileListViewHost.ViewFor(Row.Pane) == "tiles";
+        var isTileView = ViewFor(Row.Pane) == "tiles";
 
         if (_metadataText is not null)
         {
@@ -126,13 +183,12 @@ public sealed partial class FileRowView : UserControl
 
     private void ApplyColumns()
     {
-        var columns = ColumnLayoutHost.Shared;
-        var visible = columns.VisibleColumns;
         var pane = Row?.Pane ?? PaneId.Primary;
-        var view = FileListViewHost.ViewFor(pane);
-        var iconSize = FileListViewHost.IconSizeFor(pane);
+        var visible = VisibleColumnsFor(pane);
+        var view = ViewFor(pane);
+        var iconSize = IconSizeFor(pane);
         var columnKey = view == "details"
-            ? string.Join('\u001f', visible.Select(column => column.Id))
+            ? ColumnSignature(visible)
             : "";
         var key = $"{view}:{iconSize}:{columnKey}";
         if (!string.Equals(_renderedColumnKey, key, StringComparison.Ordinal))
@@ -147,6 +203,7 @@ public sealed partial class FileRowView : UserControl
             RowGrid.Width = tileWidth;
             RowGrid.HorizontalAlignment = HorizontalAlignment.Left;
             MinWidth = tileWidth;
+            ApplyHorizontalOffset();
             return;
         }
 
@@ -155,6 +212,7 @@ public sealed partial class FileRowView : UserControl
             MinWidth = 0;
             RowGrid.Width = double.NaN;
             RowGrid.HorizontalAlignment = HorizontalAlignment.Stretch;
+            ApplyHorizontalOffset();
             return;
         }
 
@@ -169,6 +227,15 @@ public sealed partial class FileRowView : UserControl
         RowGrid.Width = total;
         RowGrid.HorizontalAlignment = HorizontalAlignment.Left;
         MinWidth = total;
+        ApplyHorizontalOffset();
+    }
+
+    private void ApplyHorizontalOffset()
+    {
+        var pane = Row?.Pane ?? PaneId.Primary;
+        var details = ViewFor(pane) == "details";
+        var offset = details ? HorizontalOffsetFor(pane) : 0;
+        _rowTransform.X = Math.Abs(offset) > 0.5 ? -offset : 0;
     }
 
     private void ApplyIcon()
@@ -180,7 +247,7 @@ public sealed partial class FileRowView : UserControl
         }
 
         var row = Row;
-        var iconSize = FileListViewHost.IconSizeFor(row.Pane);
+        var iconSize = IconSizeFor(row.Pane);
         _iconImage.Width = iconSize;
         _iconImage.Height = iconSize;
         CancelThumbnailLoad();
@@ -236,7 +303,7 @@ public sealed partial class FileRowView : UserControl
             && Row is not null
             && Row.Pane == row.Pane
             && string.Equals(Row.Path, row.Path, StringComparison.OrdinalIgnoreCase)
-            && FileListViewHost.IconSizeFor(Row.Pane) == iconSize;
+            && IconSizeFor(Row.Pane) == iconSize;
     }
 
     private void CancelThumbnailLoad()
@@ -578,12 +645,50 @@ public sealed partial class FileRowView : UserControl
         _tagPip.Visibility = Visibility.Visible;
     }
 
-    private static Brush Brush(string key)
+    private void ApplyThemeResources()
     {
-        return Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush
-            ? brush
-            : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        if (_nameText is not null)
+        {
+            _nameText.Foreground = Brush("SfTextPrimaryBrush");
+        }
+
+        if (_metadataText is not null)
+        {
+            _metadataText.Foreground = Brush("SfTextMutedBrush");
+        }
+
+        if (_secondaryText is not null)
+        {
+            _secondaryText.Foreground = Brush("SfTextMutedBrush");
+        }
+
+        foreach (var text in _textCells.Values)
+        {
+            text.Foreground = Brush("SfTextMutedBrush");
+        }
     }
+
+    private Brush Brush(string key)
+    {
+        return ThemeResourceLookup.Brush(this, key);
+    }
+
+    private IReadOnlyList<FileListColumn> VisibleColumnsFor(PaneId pane) =>
+        _explicitColumns ?? ColumnLayoutHost.For(pane).VisibleColumns;
+
+    private string ViewFor(PaneId pane) =>
+        _explicitView ?? FileListViewHost.ViewFor(pane);
+
+    private int IconSizeFor(PaneId pane) =>
+        _explicitIconSize ?? FileListViewHost.IconSizeFor(pane);
+
+    private double HorizontalOffsetFor(PaneId pane) =>
+        _explicitView == "details"
+            ? _explicitHorizontalOffset
+            : FileListHorizontalScrollHost.OffsetFor(pane);
+
+    private static string ColumnSignature(IReadOnlyList<FileListColumn> columns) =>
+        string.Join('\u001f', columns.Select(column => $"{column.Id}:{column.Width:0.###}"));
 
     private static Brush? TryBrush(string color)
     {
@@ -614,20 +719,76 @@ public sealed partial class FileRowView : UserControl
 
 public static class ColumnLayoutHost
 {
-    public static ColumnLayout Shared { get; private set; } = new();
+    public static event EventHandler? Changed;
 
-    public static void Attach(ColumnLayout layout)
+    private static ColumnLayout _primary = new();
+    private static ColumnLayout _secondary = new();
+    private static ColumnLayout? _effectivePrimary;
+    private static ColumnLayout? _effectiveSecondary;
+    private static string _effectiveSignature = "";
+
+    /// <summary>Legacy alias for the primary pane layout. Prefer <see cref="For"/>.</summary>
+    public static ColumnLayout Shared => _effectivePrimary ?? _primary;
+
+    public static ColumnLayout For(PaneId pane) =>
+        pane == PaneId.Secondary ? _effectiveSecondary ?? _secondary : _effectivePrimary ?? _primary;
+
+    public static void Attach(ColumnLayout primary, ColumnLayout secondary)
     {
-        Shared = layout;
+        Unhook(_primary);
+        Unhook(_secondary);
+        _primary = primary;
+        _secondary = secondary;
+        _effectivePrimary = null;
+        _effectiveSecondary = null;
+        _effectiveSignature = "";
+        Hook(_primary);
+        Hook(_secondary);
+        Changed?.Invoke(null, EventArgs.Empty);
     }
 
-    public static void Detach(ColumnLayout layout)
+    public static void Detach(ColumnLayout primary, ColumnLayout secondary)
     {
-        if (ReferenceEquals(Shared, layout))
+        Unhook(primary);
+        Unhook(secondary);
+        if (ReferenceEquals(_primary, primary))
         {
-            Shared = new ColumnLayout();
+            _primary = new ColumnLayout();
         }
+
+        if (ReferenceEquals(_secondary, secondary))
+        {
+            _secondary = new ColumnLayout();
+        }
+
+        _effectivePrimary = null;
+        _effectiveSecondary = null;
+        _effectiveSignature = "";
+        Changed?.Invoke(null, EventArgs.Empty);
     }
+
+    public static void ApplyEffective(ColumnLayout primary, ColumnLayout secondary)
+    {
+        var signature = Signature(primary) + "|" + Signature(secondary);
+        if (string.Equals(_effectiveSignature, signature, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _effectivePrimary = primary;
+        _effectiveSecondary = secondary;
+        _effectiveSignature = signature;
+        Changed?.Invoke(null, EventArgs.Empty);
+    }
+
+    private static void Hook(ColumnLayout layout) => layout.Changed += OnLayoutChanged;
+
+    private static void Unhook(ColumnLayout layout) => layout.Changed -= OnLayoutChanged;
+
+    private static void OnLayoutChanged(object? sender, EventArgs e) => Changed?.Invoke(sender, e);
+
+    private static string Signature(ColumnLayout layout) =>
+        string.Join('\u001f', layout.VisibleColumns.Select(column => $"{column.Id}:{column.Width:0.###}"));
 }
 
 public static class FileListViewHost
@@ -671,5 +832,39 @@ public static class FileListViewHost
         }
 
         Changed?.Invoke(null, EventArgs.Empty);
+    }
+}
+
+public static class FileListHorizontalScrollHost
+{
+    public static event EventHandler? Changed;
+
+    private static double _primaryOffset;
+    private static double _secondaryOffset;
+
+    public static double OffsetFor(PaneId pane) =>
+        pane == PaneId.Secondary ? _secondaryOffset : _primaryOffset;
+
+    public static void Apply(PaneId pane, double offset)
+    {
+        var next = Math.Max(0, offset);
+        ref var current = ref OffsetRef(pane);
+        if (Math.Abs(current - next) <= 0.5)
+        {
+            return;
+        }
+
+        current = next;
+        Changed?.Invoke(null, EventArgs.Empty);
+    }
+
+    private static ref double OffsetRef(PaneId pane)
+    {
+        if (pane == PaneId.Secondary)
+        {
+            return ref _secondaryOffset;
+        }
+
+        return ref _primaryOffset;
     }
 }

@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 78;
+    public const int DomainMethodCount = 84;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -27,6 +27,7 @@ public static partial class Protocol
     public const string ListSubdirectoriesMethod = "list_subdirectories";
     public const string CreateDirectoryMethod = "create_directory";
     public const string CreateFileMethod = "create_file";
+    public const string CreateShortcutMethod = "create_shortcut";
     public const string DeleteEntryMethod = "delete_entry";
     public const string MoveToTrashMethod = "move_to_trash";
     public const string RestoreRecycleBinMethod = "restore_recycle_bin";
@@ -57,14 +58,19 @@ public static partial class Protocol
     public const string RevealInFolderMethod = "reveal_in_folder";
     public const string OpenExternalUrlMethod = "open_external_url";
     public const string ListArchiveMethod = "list_archive";
+    public const string GetArchiveCapabilitiesMethod = "get_archive_capabilities";
     public const string ExtractArchiveMethod = "extract_archive";
     public const string CreateArchiveMethod = "create_archive";
-    public const string CheckRarInstalledMethod = "check_rar_installed";
-    public const string PrepareRarInstallMethod = "prepare_rar_install";
-    public const string DiscardRarInstallMethod = "discard_rar_install";
-    public const string InstallRarMethod = "install_rar";
     public const string GetDbSettingMethod = "get_db_setting";
+    public const string GetDbSettingsMethod = "get_db_settings";
     public const string SetDbSettingMethod = "set_db_setting";
+    public const string GetGitRepositoryStatusMethod = "get_git_repository_status";
+    public const string GitStagePathsMethod = "git_stage_paths";
+    public const string GitUnstagePathsMethod = "git_unstage_paths";
+    public const string GitDiscardPathsMethod = "git_discard_paths";
+    public const string GitDiffPathMethod = "git_diff_path";
+    public const string GitCommitMethod = "git_commit";
+    public const string GitFetchMethod = "git_fetch";
     public const string GitPullMethod = "git_pull";
     public const string GitPushMethod = "git_push";
     public const string OpenTerminalMethod = "open_terminal";
@@ -115,6 +121,7 @@ public static partial class Protocol
         "list_subdirectories",
         "create_directory",
         "create_file",
+        "create_shortcut",
         "delete_entry",
         "move_to_trash",
         "restore_recycle_bin",
@@ -145,14 +152,19 @@ public static partial class Protocol
         "reveal_in_folder",
         "open_external_url",
         "list_archive",
+        "get_archive_capabilities",
         "extract_archive",
         "create_archive",
-        "check_rar_installed",
-        "prepare_rar_install",
-        "discard_rar_install",
-        "install_rar",
         "get_db_setting",
+        "get_db_settings",
         "set_db_setting",
+        "get_git_repository_status",
+        "git_stage_paths",
+        "git_unstage_paths",
+        "git_discard_paths",
+        "git_diff_path",
+        "git_commit",
+        "git_fetch",
         "git_pull",
         "git_push",
         "open_terminal",

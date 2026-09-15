@@ -1,12 +1,14 @@
+using System.Buffers;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text.Json;
 
 namespace SimpleFile.Ipc;
 
-internal readonly record struct IpcResultPayload(string? Json, object? TypedValue, bool HasTypedValue)
+internal readonly record struct IpcResultPayload(JsonElement? JsonElement, object? TypedValue, bool HasTypedValue)
 {
-    public static IpcResultPayload FromJson(string json) => new(json, null, false);
+    public static IpcResultPayload FromJson(JsonElement element) => new(element, null, false);
 
     public static IpcResultPayload FromTyped(object? value) => new(null, value, true);
 }
@@ -20,6 +22,7 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
     private readonly Dictionary<string, List<Subscription>> _handlers = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _loopCts = new();
     private readonly Task _receiveLoop;
+    private readonly byte[] _headerBuffer = new byte[4];
 
     private int _nextId;
     private int _disposed;
@@ -224,6 +227,8 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
         object? args,
         CancellationToken cancellationToken)
     {
+        var sw = Stopwatch.StartNew();
+
         ObjectDisposedException.ThrowIf(_disposed != 0, this);
         if (!IsConnected)
         {
@@ -289,6 +294,10 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
             throw;
         }
 
+        sw.Stop();
+        if (sw.ElapsedMilliseconds > 5)
+            System.Diagnostics.Debug.WriteLine($"[IPC] {method} round-trip={sw.ElapsedMilliseconds}ms");
+
         return DeserializeResult<TResult>(method, resultPayload);
     }
 
@@ -311,10 +320,8 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
                 $"IPC method '{method}' returned binary {payload.TypedValue?.GetType().Name ?? "null"}, not {typeof(TResult).Name}.");
         }
 
-        var raw = payload.Json ?? "null";
-        using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(raw) ? "null" : raw);
-        var element = document.RootElement;
-        if (element.ValueKind == JsonValueKind.Null)
+        var element = payload.JsonElement ?? default;
+        if (element.ValueKind == JsonValueKind.Undefined || element.ValueKind == JsonValueKind.Null)
         {
             if (default(TResult) is null)
             {
@@ -448,51 +455,64 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
 
     private void HandlePayload(byte[] payload)
     {
-        if (BinaryFrameCodec.TryDecode(payload, out var binaryMessage))
+        var sw = Stopwatch.StartNew();
+        var isBinary = false;
+
+        try
         {
-            HandleBinaryPayload(binaryMessage!);
-            return;
+            if (BinaryFrameCodec.TryDecode(payload, out var binaryMessage))
+            {
+                isBinary = true;
+                HandleBinaryPayload(binaryMessage!);
+                return;
+            }
+
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+
+            if (IsNotification(root))
+            {
+                DispatchNotification(root);
+                return;
+            }
+
+            if (!root.TryGetProperty("id", out var idElement)
+                || idElement.ValueKind != JsonValueKind.Number
+                || !idElement.TryGetInt32(out var id))
+            {
+                return;
+            }
+
+            if (!_pending.TryRemove(id, out var pending))
+            {
+                return;
+            }
+
+            if (root.TryGetProperty("error", out var errorElement)
+                && errorElement.ValueKind == JsonValueKind.Object)
+            {
+                var code = errorElement.TryGetProperty("code", out var codeElement)
+                    && codeElement.TryGetInt32(out var parsed)
+                        ? parsed
+                        : Protocol.ErrInternal;
+                var message = errorElement.TryGetProperty("message", out var messageElement)
+                    ? messageElement.GetString() ?? ""
+                    : "";
+                pending.TrySetException(new IpcException(code, message));
+                return;
+            }
+
+            var resultElement = root.TryGetProperty("result", out var resElement)
+                ? resElement.Clone()
+                : default;
+            pending.TrySetResult(IpcResultPayload.FromJson(resultElement));
         }
-
-        using var document = JsonDocument.Parse(payload);
-        var root = document.RootElement;
-
-        if (IsNotification(root))
+        finally
         {
-            DispatchNotification(root);
-            return;
+            sw.Stop();
+            if (sw.ElapsedMilliseconds > 2)
+                System.Diagnostics.Debug.WriteLine($"[IPC] deserialize time={sw.ElapsedMilliseconds}ms binary={isBinary}");
         }
-
-        if (!root.TryGetProperty("id", out var idElement)
-            || idElement.ValueKind != JsonValueKind.Number
-            || !idElement.TryGetInt32(out var id))
-        {
-            return;
-        }
-
-        if (!_pending.TryRemove(id, out var pending))
-        {
-            return;
-        }
-
-        if (root.TryGetProperty("error", out var errorElement)
-            && errorElement.ValueKind == JsonValueKind.Object)
-        {
-            var code = errorElement.TryGetProperty("code", out var codeElement)
-                && codeElement.TryGetInt32(out var parsed)
-                    ? parsed
-                    : Protocol.ErrInternal;
-            var message = errorElement.TryGetProperty("message", out var messageElement)
-                ? messageElement.GetString() ?? ""
-                : "";
-            pending.TrySetException(new IpcException(code, message));
-            return;
-        }
-
-        var raw = root.TryGetProperty("result", out var resultElement)
-            ? resultElement.GetRawText()
-            : "null";
-        pending.TrySetResult(IpcResultPayload.FromJson(raw));
     }
 
     private void HandleBinaryPayload(BinaryFrameMessage message)
@@ -620,9 +640,8 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
 
     private async Task<byte[]> ReadFrameAsync(CancellationToken cancellationToken)
     {
-        var header = new byte[4];
-        await ReadExactAsync(header, cancellationToken).ConfigureAwait(false);
-        var length = FrameCodec.DecodeLength(header);
+        await ReadExactAsync(_headerBuffer, cancellationToken).ConfigureAwait(false);
+        var length = FrameCodec.DecodeLength(_headerBuffer);
         var payload = new byte[length];
         await ReadExactAsync(payload, cancellationToken).ConfigureAwait(false);
         return payload;

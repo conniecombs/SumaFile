@@ -3,7 +3,7 @@
 [![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
 [![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
 [![Installer Smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
-![Version](https://img.shields.io/badge/version-1.0.0-2563eb)
+![Version](https://img.shields.io/badge/version-1.0.1-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%7C%20Windows%2011-0078D4?logo=windows)
 ![UI](https://img.shields.io/badge/UI-WinUI%203-5b8def)
 ![Backend](https://img.shields.io/badge/backend-Rust%20IPC-b7410e?logo=rust)
@@ -90,7 +90,7 @@ repositories can be reviewed without jumping between Explorer and a terminal.
 
 | Area | Current state |
 | --- | --- |
-| Product version | `1.0.0` |
+| Product version | `1.0.1` |
 | Platform | Windows 10 2004+ / Windows 11, x64 |
 | UI | Unpackaged WinUI 3 desktop app |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
@@ -112,7 +112,7 @@ but the Svelte/Tauri surface is not the shipping UI for this branch.
 | Inspect before opening | Persistent preview pane, Quick Look, metadata, checksums, properties, and compare |
 | Organize messy folders | Tags, bookmarks, recents, smart folders, duplicate finder, cleanup, and Advanced Rename |
 | Work with archives | Create, list, view, extract, pack, and unpack supported archives |
-| Handle developer folders | Git status column, Git pull/push commands, terminal launch, and Open With preferences |
+| Handle developer folders | Git status column, dockable Git workbench, terminal launch, and Open With preferences |
 | Stay Windows-native | Drive labels, network-share status, shell icons, Windows installers, and Windows shortcuts |
 
 ## Install
@@ -122,17 +122,17 @@ Download the latest Windows release from
 
 | Artifact | Recommended use |
 | --- | --- |
-| `SumaFile_1.0.0_x64-winui-setup.exe` | Normal per-user installation |
-| `SumaFile_1.0.0_x64-winui.msi` | MSI deployment or installer validation |
-| `SumaFile_1.0.0_x64-winui-portable.zip` | Portable, extracted-folder usage |
+| `SumaFile_1.0.1_x64-winui-setup.exe` | Normal per-user installation |
+| `SumaFile_1.0.1_x64-winui.msi` | MSI deployment or installer validation |
+| `SumaFile_1.0.1_x64-winui-portable.zip` | Portable, extracted-folder usage |
 | `latest-winui.json` | Signed updater metadata for published releases |
 
 Requirements:
 
 - Windows 10 version 2004 or newer, or Windows 11
 - x64 Windows
-- Optional: 7-Zip for `.7z` workflows, or set `SIMPLEFILE_7Z`
-- Optional: RAR tooling through Settings -> Tools, or set `SIMPLEFILE_RAR`
+- Bundled 7-Zip console tooling for `.7z` workflows
+- Built-in RAR listing and extraction; RAR creation is not supported
 
 After installing, open Settings -> Updates to check published releases. Builds
 with trusted updater metadata can download and launch the NSIS setup from inside
@@ -149,7 +149,7 @@ the app. Builds without complete trusted metadata fall back to the release page.
    Look on the selected item.
 6. Use right-click menus, toolbar buttons, or `Ctrl+Shift+P` for command
    palette access.
-7. Save repeatable pane/tab/column setups from View options -> Layouts.
+7. Save repeatable pane/tab/column setups from View options -> Profiles.
 
 ## Feature Reference
 
@@ -224,12 +224,13 @@ Inspection tools include:
 | ZIP | `.zip` | Built in |
 | TAR | `.tar` | Built in |
 | TAR.GZ | `.tar.gz`, `.tgz` | Built in |
-| RAR | `.rar` | Optional RAR tooling |
-| 7-Zip | `.7z` | Installed 7-Zip or `SIMPLEFILE_7Z` |
+| RAR | `.rar` | Built-in list/extract only |
+| 7-Zip | `.7z` | Bundled 7-Zip console tool |
 
 Archive commands can list contents, view archives, extract here, extract to a
 folder, extract to a chosen destination, create archives, pack selections into a
-folder, and unpack folders in place.
+folder, and unpack folders in place. RAR archives can be browsed and extracted,
+but SumaFile does not create or rewrite RAR archives.
 
 Extraction validates final output paths before writing. TAR extraction skips
 links and special entries that could escape the destination.
@@ -248,7 +249,10 @@ links and special entries that could escape the destination.
 ### Git and Developer Tools
 
 - Developer column preset with Git status labels
-- Git pull and Git push commands for the current directory
+- Dockable Git workbench with branch/upstream summary, changed paths, resizable
+  diff preview, stage, unstage, discard, fetch, pull, push, and commit actions
+- Settings -> Behavior can completely disable Git integration, hiding Git UI
+  and preventing Git status/command calls
 - Open terminal here with `F4`
 - Elevated PowerShell launch
 - Open With menu and chooser
@@ -265,7 +269,7 @@ Settings is organized into:
 | Navigation | Start location, custom path, new-tab behavior, sidebar sections, recent history |
 | Behavior | Delete confirmation, folder sorting, folder sizes, Git integration |
 | Shortcuts | Live shortcut list |
-| Tools | Optional RAR tooling |
+| Tools | Archive support summary |
 | Updates | Version, update check, install action |
 | About | Product, version, repository, and build metadata |
 
@@ -327,7 +331,7 @@ Press `F1` or `Ctrl+?` in SumaFile for the live shortcut list.
 | `Ctrl+H` | Show or hide hidden/system files |
 | `Ctrl+B` | Bookmark current folder |
 | `Ctrl+Mouse wheel` | Change icon size |
-| `Ctrl+F` / `F3` | Focus search |
+| `Ctrl+F` / `F3` | Focus find in folder |
 | `Ctrl+Shift+P` | Command palette |
 | `F4` | Open terminal here |
 | `Escape` | Close transient UI, clear filter, or clear selection |
@@ -370,8 +374,7 @@ Useful local-only overrides:
 | `SIMPLEFILE_SERVICE_PATH` | Use a specific `simplefile-service.exe` |
 | `SIMPLEFILE_APP_DATA_DIR` | Redirect app data for fixtures or tests |
 | `SIMPLEFILE_METADATA_DB` | Point settings/tags to a specific metadata database |
-| `SIMPLEFILE_7Z` | Use a specific `7z.exe` |
-| `SIMPLEFILE_RAR` | Use a specific RAR tool |
+| `SIMPLEFILE_7Z` | Development override for a specific 7-Zip executable |
 | `SIMPLEFILE_UPDATE_MANIFEST_PATH` | Test updater metadata from a local file |
 | `SIMPLEFILE_UPDATE_MANIFEST_JSON` | Test updater metadata from inline JSON |
 
@@ -448,7 +451,7 @@ SumaFile/
 |-- .github/workflows/        CI, release, release-build, installer smoke
 |-- package.json              Root command runner
 |-- Cargo.toml                Rust workspace
-`-- LICENSE                   Proprietary license
+`-- LICENSE                   MIT License
 ```
 
 ## Testing and Verification
@@ -518,13 +521,13 @@ Version fields that must stay synchronized:
 - README badges and install artifact names
 - `docs/CHANGELOG.md`
 
-Git release tags use `vMAJOR.MINOR.PATCH`, for example `v1.0.0`.
+Git release tags use `vMAJOR.MINOR.PATCH`, for example `v1.0.1`.
 
 Before creating a release tag:
 
 1. Confirm the version fields above match.
 2. Run `npm run check:release`.
-3. Run the WinUI smoke commands required by `docs/RELEASE_1.0.0.md`.
+3. Run the WinUI smoke commands required by `docs/RELEASE_1.0.1.md`.
 4. Confirm the Installer Smoke workflow succeeds on the release commit.
 5. Dispatch or create the GitHub release for the matching tag.
 
@@ -542,7 +545,8 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 | [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
 | [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
 | [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | Signed updater releases |
-| [docs/RELEASE_1.0.0.md](docs/RELEASE_1.0.0.md) | 1.0.0 release checklist and dogfood plan |
+| [docs/RELEASE_1.0.1.md](docs/RELEASE_1.0.1.md) | 1.0.1 release checklist and dogfood plan |
+| [docs/RELEASE_1.0.0.md](docs/RELEASE_1.0.0.md) | Historical 1.0.0 release checklist and dogfood plan |
 | [.github/RELEASE.md](.github/RELEASE.md) | Release process |
 | [src-winui/README.md](src-winui/README.md) | WinUI host build/run notes |
 | [docs/winui-migration/](docs/winui-migration/) | Historical migration architecture and parity records |
@@ -560,15 +564,15 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 
 ## Known Limitations
 
-- SumaFile 1.0.0 is Windows-only.
-- The first 1.0.0 install is manual; in-app update installation requires a
+- SumaFile 1.0.1 is Windows-only.
+- Installing SumaFile for the first time is manual; in-app update installation requires a
   newer published release with signed `latest-winui.json` metadata.
-- `.7z` workflows require external 7-Zip support.
-- RAR creation/extraction depends on optional RAR tooling.
+- RAR archives can be listed and extracted, but RAR creation and in-place RAR
+  rewrites are not supported.
 - Account-backed storage integrations are intentionally out of scope for
   this branch.
-- Shortcut remapping is not implemented yet; Settings -> Shortcuts lists the
-  live shortcuts.
+- Some Windows-reserved shortcuts may not be assignable; shortcut remapping,
+  import, and export live in Settings -> Shortcuts.
 
 ## Support
 
@@ -593,4 +597,6 @@ SumaFile is open-source software licensed under the [MIT License](LICENSE).
 
 Copyright (c) 2024-2026 conniecombs.
 
-Third-party libraries remain governed by their own license terms.
+Third-party libraries remain governed by their own license terms. Bundled 7-Zip
+console files are distributed with their upstream license in
+[`third_party/7zip/win-x64/License.txt`](third_party/7zip/win-x64/License.txt).

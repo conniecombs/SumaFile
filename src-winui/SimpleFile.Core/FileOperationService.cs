@@ -2,7 +2,7 @@ using SimpleFile.Ipc;
 
 namespace SimpleFile.Core;
 
-public sealed class FileOperationService
+public sealed class FileOperationService : ISettingsBackend
 {
     private ISimpleFileIpc _ipc;
     private readonly OperationJournal? _journal;
@@ -31,6 +31,27 @@ public sealed class FileOperationService
     public async Task<string> CreateFileAsync(string parentPath, string name, CancellationToken ct = default)
     {
         return await _ipc.CreateFileAsync(parentPath, name, ct).ConfigureAwait(false);
+    }
+
+    // Create a Windows shortcut in the given parent directory.
+    // Returns the full path of the created .lnk file.
+    public async Task<string> CreateShortcutAsync(
+        string parentPath,
+        string name,
+        string targetPath,
+        string? arguments = null,
+        string? workingDirectory = null,
+        string? iconPath = null,
+        CancellationToken ct = default)
+    {
+        return await _ipc.CreateShortcutAsync(
+            parentPath,
+            name,
+            targetPath,
+            arguments,
+            workingDirectory,
+            iconPath,
+            ct).ConfigureAwait(false);
     }
 
     // Permanently delete a file or directory.
@@ -220,6 +241,38 @@ public sealed class FileOperationService
         await _ipc.CancelSearchAsync(searchId, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Returns true if the given folder path is included in the Windows Search
+    /// Indexer crawl scope. When true, <see cref="SearchIndexAsync"/> can
+    /// return near-instant results without a filesystem walk.
+    /// </summary>
+    public static bool IsPathIndexed(string folderPath)
+    {
+        return WindowsSearchService.IsPathIndexed(folderPath);
+    }
+
+    /// <summary>
+    /// Queries the Windows Search Indexer directly for files matching the given
+    /// criteria. This bypasses the Rust IPC backend and uses the OLE DB
+    /// Search.CollatorDSO provider for near-instant results on indexed locations.
+    /// </summary>
+    public async Task<SearchResult[]> SearchIndexAsync(
+        SearchOptions options,
+        Action<SearchResult[]>? onBatch = null,
+        Action<int>? onComplete = null,
+        CancellationToken ct = default)
+    {
+        var results = await WindowsSearchService.SearchIndexAsync(
+            options.Query,
+            options.SearchPath,
+            options,
+            onBatch,
+            ct).ConfigureAwait(false);
+
+        onComplete?.Invoke(results.Length);
+        return results;
+    }
+
     public async Task WatchDirectoryAsync(string path, CancellationToken ct = default)
     {
         await _ipc.WatchDirectoryAsync(path, ct).ConfigureAwait(false);
@@ -272,6 +325,20 @@ public sealed class FileOperationService
         }
     }
 
+    public async Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default)
+    {
+        var ipc = _ipc;
+        try
+        {
+            return await ipc.GetFolderMetricsAsync(path, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderMetricsAsync(cancelCt)).ConfigureAwait(false);
+            throw;
+        }
+    }
+
     public async Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default)
     {
         var ipc = _ipc;
@@ -286,12 +353,33 @@ public sealed class FileOperationService
         }
     }
 
-    public Task GitPullAsync(string path, CancellationToken ct = default) => _ipc.GitPullAsync(path, ct);
+    public Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default) => _ipc.GitPullAsync(path, ct);
 
     public Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)
         => _ipc.GetGitFileStatusesAsync(path, ct);
 
-    public Task GitPushAsync(string path, CancellationToken ct = default) => _ipc.GitPushAsync(path, ct);
+    public Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default)
+        => _ipc.GetGitRepositoryStatusAsync(path, ct);
+
+    public Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => _ipc.GitStagePathsAsync(path, paths, ct);
+
+    public Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => _ipc.GitUnstagePathsAsync(path, paths, ct);
+
+    public Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => _ipc.GitDiscardPathsAsync(path, paths, ct);
+
+    public Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default)
+        => _ipc.GitDiffPathAsync(path, filePath, ct);
+
+    public Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default)
+        => _ipc.GitCommitAsync(path, message, ct);
+
+    public Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default)
+        => _ipc.GitFetchAsync(path, ct);
+
+    public Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default) => _ipc.GitPushAsync(path, ct);
 
     public Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default) => _ipc.GetGitStatusAsync(path, ct);
 
@@ -317,6 +405,11 @@ public sealed class FileOperationService
         return _ipc.ListArchiveAsync(path, ct);
     }
 
+    public Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)
+    {
+        return _ipc.GetArchiveCapabilitiesAsync(ct);
+    }
+
     public async Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
     {
         await _ipc.ExtractArchiveAsync(archivePath, destination, ct).ConfigureAwait(false);
@@ -336,7 +429,7 @@ public sealed class FileOperationService
         return _ipc.ReadFilePreviewAsync(path, maxSize, ct);
     }
 
-    public Task<string> GenerateThumbnailAsync(string path, uint size = 256, CancellationToken ct = default)
+    public Task<byte[]> GenerateThumbnailAsync(string path, uint size = 256, CancellationToken ct = default)
     {
         return _ipc.GenerateThumbnailAsync(path, size, ct);
     }
@@ -385,94 +478,128 @@ public sealed class FileOperationService
     public Task<SmartFolder[]> DeleteSmartFolderAsync(string id, CancellationToken ct = default) => _ipc.DeleteSmartFolderAsync(id, ct);
 
     public Task<string?> GetSettingAsync(string key, CancellationToken ct = default) => _ipc.GetDbSettingAsync(key, ct);
+    public async Task<IReadOnlyDictionary<string, string?>> GetSettingsAsync(IReadOnlyList<string> keys, CancellationToken ct = default)
+    {
+        var result = await _ipc.GetDbSettingsAsync(keys.ToArray(), ct).ConfigureAwait(false);
+        return result;
+    }
+
     public Task SetSettingAsync(string key, string value, CancellationToken ct = default) => _ipc.SetDbSettingAsync(key, value, ct);
     public Task<string> GetAppVersionAsync(CancellationToken ct = default) => _ipc.GetAppVersionAsync(ct);
 
-    public async Task<CleanupResult> DiskCleanupAsync(
+    public Task<CleanupResult> DiskCleanupAsync(
         string directory,
         ulong? sizeThreshold = null,
         IProgress<ProgressUpdate>? progress = null,
-        CancellationToken ct = default)
-    {
-        var ipc = _ipc;
-        var operationId = GenerateOperationId();
-        _journal?.Started("cleanup", operationId, [directory]);
-        IDisposable? subscription = null;
-        if (progress != null)
-        {
-            subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
-            {
-                if (update.OperationId == operationId && update.OperationType == "cleanup")
-                    progress.Report(update);
-            });
-        }
-        try
-        {
-            var result = await ipc.DiskCleanupAsync(directory, sizeThreshold, operationId, ct).ConfigureAwait(false);
-            _journal?.Completed("cleanup", operationId);
-            return result;
-        }
-        catch (OperationCanceledException)
-        {
-            _journal?.Cancelled("cleanup", operationId);
-            throw;
-        }
-        catch (Exception exception)
-        {
-            _journal?.Failed("cleanup", operationId, exception);
-            throw;
-        }
-        finally
-        {
-            subscription?.Dispose();
-        }
-    }
+        CancellationToken ct = default) =>
+        RunJournaledScanAsync(
+            "cleanup",
+            [directory],
+            progress,
+            (ipc, operationId, token) => ipc.DiskCleanupAsync(directory, sizeThreshold, operationId, token),
+            (ipc, operationId) => ipc.CancelDiskCleanupAsync(operationId, CancellationToken.None),
+            ct);
 
-    public async Task<DuplicateCheckResult> DuplicateCheckAsync(
+    public Task<DuplicateCheckResult> DuplicateCheckAsync(
         string directory,
-        ulong? minSize = null,
-        ulong? partialHashBytes = null,
+        DuplicateScanOptions? options = null,
         IProgress<ProgressUpdate>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        RunJournaledScanAsync(
+            "duplicate-check",
+            [directory],
+            progress,
+            (ipc, operationId, token) => ipc.DuplicateCheckAsync(directory, options, operationId, token),
+            (ipc, operationId) => ipc.CancelDuplicateCheckAsync(operationId, CancellationToken.None),
+            ct);
+
+    private async Task<TResult> RunJournaledScanAsync<TResult>(
+        string operationType,
+        string[] sources,
+        IProgress<ProgressUpdate>? progress,
+        Func<ISimpleFileIpc, string, CancellationToken, Task<TResult>> invoke,
+        Func<ISimpleFileIpc, string, Task>? cancelBackend,
+        CancellationToken ct)
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
-        _journal?.Started("duplicate-check", operationId, [directory]);
+        _journal?.Started(operationType, operationId, sources);
         IDisposable? subscription = null;
+        IDisposable? cancelRegistration = null;
+        var cancellationLock = new object();
+        Task? backendCancellation = null;
+
+        Task RequestBackendCancellationAsync()
+        {
+            if (cancelBackend is null)
+            {
+                return Task.CompletedTask;
+            }
+
+            lock (cancellationLock)
+            {
+                return backendCancellation ??= TryCancelBestEffortAsync(_ => cancelBackend(ipc, operationId));
+            }
+        }
+
+        progress?.Report(new ProgressUpdate
+        {
+            OperationId = operationId,
+            OperationType = operationType,
+            Current = 0,
+            Total = 0,
+            CurrentItem = sources.FirstOrDefault() ?? string.Empty,
+            Status = "queued",
+        });
+
         if (progress != null)
         {
             subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
             {
-                if (update.OperationId == operationId && update.OperationType == "duplicate-check")
+                if (update.OperationId == operationId && update.OperationType == operationType)
+                {
                     progress.Report(update);
+                }
             });
         }
+
+        if (ct.CanBeCanceled && cancelBackend is not null)
+        {
+            cancelRegistration = ct.Register(() =>
+            {
+                _ = RequestBackendCancellationAsync();
+            });
+        }
+
         try
         {
-            var result = await ipc.DuplicateCheckAsync(directory, minSize, partialHashBytes, operationId, ct).ConfigureAwait(false);
-            _journal?.Completed("duplicate-check", operationId);
+            var result = await invoke(ipc, operationId, ct).ConfigureAwait(false);
+            _journal?.Completed(operationType, operationId);
             return result;
         }
         catch (OperationCanceledException)
         {
-            _journal?.Cancelled("duplicate-check", operationId);
+            await RequestBackendCancellationAsync().ConfigureAwait(false);
+            _journal?.Cancelled(operationType, operationId);
             throw;
         }
         catch (Exception exception)
         {
-            _journal?.Failed("duplicate-check", operationId, exception);
+            _journal?.Failed(operationType, operationId, exception);
             throw;
         }
         finally
         {
+            cancelRegistration?.Dispose();
             subscription?.Dispose();
         }
     }
 
-    public Task CancelDiskCleanupAsync(CancellationToken ct = default) => _ipc.CancelDiskCleanupAsync(ct);
-    public Task CancelDuplicateCheckAsync(CancellationToken ct = default) => _ipc.CancelDuplicateCheckAsync(ct);
+    public Task CancelDiskCleanupAsync(CancellationToken ct = default) => _ipc.CancelDiskCleanupAsync(ct: ct);
+    public Task CancelDuplicateCheckAsync(CancellationToken ct = default) => _ipc.CancelDuplicateCheckAsync(ct: ct);
     public Task CancelFolderSizeAsync(CancellationToken ct = default) => _ipc.CancelFolderSizeAsync(ct);
     public Task CancelFolderItemCountAsync(CancellationToken ct = default) => _ipc.CancelFolderItemCountAsync(ct);
+    public Task CancelFolderMetricsAsync(CancellationToken ct = default) => _ipc.CancelFolderMetricsAsync(ct);
 
     private static async Task TryCancelBestEffortAsync(Func<CancellationToken, Task> cancel)
     {
@@ -485,11 +612,6 @@ public sealed class FileOperationService
             // Cancellation is opportunistic; preserve the original canceled operation.
         }
     }
-
-    public Task<bool> CheckRarInstalledAsync(CancellationToken ct = default) => _ipc.CheckRarInstalledAsync(ct);
-    public Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default) => _ipc.PrepareRarInstallAsync(ct);
-    public Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default) => _ipc.DiscardRarInstallAsync(confirmationToken, ct);
-    public Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default) => _ipc.InstallRarAsync(confirmationToken, ct);
 
     public Task<AppAboutInfo> GetAppAboutInfoAsync(CancellationToken ct = default) => _ipc.GetAppAboutInfoAsync(ct);
     public Task<UpdateInfo?> CheckForUpdateAsync(CancellationToken ct = default) => _ipc.CheckForUpdateAsync(ct);

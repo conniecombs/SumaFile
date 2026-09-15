@@ -50,8 +50,8 @@ public sealed partial class MainWindow
 
         _search.ContentSearch = ContentSearchButton.IsChecked == true;
         SetStatusText(_search.ContentSearch
-            ? "Search will include file contents"
-            : "Search filenames only");
+            ? "Find in folder will include file contents"
+            : "Find in folder matches filenames only");
     }
 
     private Task StartSearchAsync(PaneId? requestedPane = null)
@@ -61,8 +61,7 @@ public sealed partial class MainWindow
             return Task.CompletedTask;
         }
 
-        var pane = _workspace?.Normalize(requestedPane ?? _workspace.ActivePane) ?? PaneId.Primary;
-        _search.Query = SearchTextBoxFor(pane).Text;
+        _search.Query = ActiveToolbarSearchTextBox().Text;
         return _search.StartAsync(requestedPane, DispatchToUi);
     }
 
@@ -82,9 +81,10 @@ public sealed partial class MainWindow
             Replace(PrimaryFiles, _search.Results.Select(result => SearchRowFrom(result, PaneId.Primary)));
         }
 
+        var suffix = _search.UseIndex ? " (indexed)" : "";
         SetCountText(_search.ResultCount == 1
-            ? "1 search result"
-            : $"{_search.ResultCount} search results");
+            ? $"1 search result{suffix}"
+            : $"{_search.ResultCount} search results{suffix}");
     }
 
     private Task CancelActiveSearchAsync() =>

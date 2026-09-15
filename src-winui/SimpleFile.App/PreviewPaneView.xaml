@@ -92,6 +92,43 @@
                                         ToolTipService.ToolTip="Checksums">
                                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE9D9;" />
                                     </Button>
+                                    <Button
+                                        x:Name="PreviewMoreActionsButton"
+                                        Style="{StaticResource SfToolbarButtonStyle}"
+                                        AutomationProperties.Name="More preview actions"
+                                        IsEnabled="False"
+                                        ToolTipService.ToolTip="More preview actions"
+                                        Visibility="Collapsed">
+                                        <Button.Flyout>
+                                            <MenuFlyout>
+                                                <MenuFlyoutItem
+                                                    x:Name="PreviewCompareMenuItem"
+                                                    Text="Compare selected files"
+                                                    Click="OnPreviewCompareClick" />
+                                                <MenuFlyoutItem
+                                                    x:Name="PreviewChecksumMenuItem"
+                                                    Text="Compute checksums"
+                                                    Click="OnPreviewChecksumClick" />
+                                            </MenuFlyout>
+                                        </Button.Flyout>
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE712;" />
+                                    </Button>
+                                </StackPanel>
+                                <StackPanel
+                                    x:Name="PreviewOptionsPanel"
+                                    Orientation="Horizontal"
+                                    Spacing="12"
+                                    Visibility="Collapsed">
+                                    <CheckBox
+                                        x:Name="PreviewRenderHtmlCheckBox"
+                                        AutomationProperties.Name="Render preview"
+                                        Content="Rendered"
+                                        Visibility="Collapsed" />
+                                    <CheckBox
+                                        x:Name="PreviewVideoPlaybackCheckBox"
+                                        AutomationProperties.Name="Preview video playback"
+                                        Content="Preview video"
+                                        Visibility="Collapsed" />
                                 </StackPanel>
                             </StackPanel>
 
@@ -132,6 +169,34 @@
                                         AutoPlay="False"
                                         HorizontalAlignment="Stretch"
                                         Visibility="Collapsed" />
+                                    <StackPanel
+                                        x:Name="PreviewVideoFrameControls"
+                                        Spacing="8"
+                                        Visibility="Collapsed">
+                                        <Grid ColumnSpacing="10" MinHeight="72">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="72" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Image
+                                                x:Name="PreviewVideoFrameImage"
+                                                Width="72"
+                                                Height="72"
+                                                HorizontalAlignment="Left"
+                                                Stretch="Uniform" />
+                                            <RadioButtons
+                                                x:Name="PreviewVideoFramePresetOptions"
+                                                Grid.Column="1"
+                                                Header="Icon frame"
+                                                MaxColumns="3">
+                                                <RadioButton Content="10%" Tag="10" />
+                                                <RadioButton Content="25%" Tag="25" />
+                                                <RadioButton Content="50%" Tag="50" />
+                                                <RadioButton Content="75%" Tag="75" />
+                                                <RadioButton Content="90%" Tag="90" />
+                                            </RadioButtons>
+                                        </Grid>
+                                    </StackPanel>
                                     <TextBox
                                         x:Name="PreviewTextBox"
                                         MaxHeight="280"

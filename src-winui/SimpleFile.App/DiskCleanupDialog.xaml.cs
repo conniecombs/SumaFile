@@ -3,11 +3,12 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SimpleFile.Core;
 using SimpleFile.Ipc;
 
 namespace SimpleFile.App;
 
-public sealed partial class DiskCleanupDialog : ContentDialog
+public sealed partial class DiskCleanupDialog : ContentDialog, IScanDialog<CleanupResult>
 {
     private const int LargeFileLimit = 50;
     private const int DuplicateGroupLimit = 25;
@@ -124,6 +125,10 @@ public sealed partial class DiskCleanupDialog : ContentDialog
         }
     }
 
+    public async Task<ContentDialogResult> ShowScanHostAsync() => await ShowAsync();
+
+    public void CloseScanHost() => Hide();
+
     private void OnLoaded(object sender, RoutedEventArgs e) => BindFolderPath();
 
     private void BindFolderPath()
@@ -163,19 +168,6 @@ public sealed partial class DiskCleanupDialog : ContentDialog
         return (ulong)(megabytes * 1024 * 1024);
     }
 
-    public static string FormatSize(long bytes)
-    {
-        string[] sizes = ["B", "KB", "MB", "GB", "TB"];
-        double len = Math.Max(0, bytes);
-        var order = 0;
-        while (len >= 1024 && order < sizes.Length - 1)
-        {
-            order++;
-            len /= 1024;
-        }
-
-        return $"{len:0.##} {sizes[order]}";
-    }
 }
 
 public sealed class LargeFileViewModel
@@ -184,7 +176,7 @@ public sealed class LargeFileViewModel
     public string Name { get; }
     public string Directory { get; }
     public ulong Size { get; }
-    public string FormattedSize => DiskCleanupDialog.FormatSize((long)Size);
+    public string FormattedSize => EntryPresentation.FormatCompactFileSize(Size);
 
     public LargeFileViewModel(CleanupFile file)
     {

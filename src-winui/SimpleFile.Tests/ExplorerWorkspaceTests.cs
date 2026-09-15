@@ -23,6 +23,48 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task Initialize_UsesStartupCachedHomeAndDrives()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.ListDrivesHandler = _ => throw new InvalidOperationException("Initialize should use cached startup drives.");
+        var workspace = new ExplorerWorkspace(backend);
+
+        await workspace.InitializeAsync();
+
+        Assert.Equal(0, backend.GetHomeDirCalls);
+        Assert.Equal(0, backend.ListDrivesCalls);
+        Assert.Equal(0, backend.ListDrivesLightCalls);
+        Assert.Equal(@"C:\Users\test", workspace.HomePath);
+        Assert.Equal("Windows (C:)", Assert.Single(workspace.Drives).Name);
+    }
+
+    [Fact]
+    public async Task Initialize_UsesLightDriveRefreshWhenNoStartupCacheExists()
+    {
+        var backend = new FakeExplorerBackend();
+        backend.Listings[@"C:\Users\test"] = FakeExplorerBackend.Typical().Listings[@"C:\Users\test"];
+        backend.ListDrivesHandler = _ => throw new InvalidOperationException("Initialize should not use the full drive refresh.");
+        backend.ListDrivesLightHandler = _ => Task.FromResult<IReadOnlyList<DriveInfo>>(
+        [
+            new DriveInfo
+            {
+                Name = "Startup Light (Z:)",
+                Path = @"Z:\",
+                DriveType = "Network",
+                DriveStatus = "unknown",
+            },
+        ]);
+        var workspace = new ExplorerWorkspace(backend);
+
+        await workspace.InitializeAsync();
+
+        Assert.Equal(0, backend.GetHomeDirCalls);
+        Assert.Equal(0, backend.ListDrivesCalls);
+        Assert.Equal(1, backend.ListDrivesLightCalls);
+        Assert.Equal("Startup Light (Z:)", Assert.Single(workspace.Drives).Name);
+    }
+
+    [Fact]
     public void RememberOperation_StoresStatusNewestFirstAndCapsHistory()
     {
         var workspace = new ExplorerWorkspace(FakeExplorerBackend.Typical());
@@ -222,6 +264,38 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task ApplyGitStatuses_ClearsStaleEntryStatusesWhenClean()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.Listings[@"C:\Users\test"].Entries.Single(entry => entry.Name == "notes.txt").GitStatus = "modified";
+        var settingsIpc = new ConfigurableIpc();
+        settingsIpc.GitFileStatuses[@"C:\Users\test"] = [];
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        await workspace.ApplyGitStatusesAsync(PaneId.Primary);
+
+        Assert.Equal(1, settingsIpc.GitStatusCalls);
+        Assert.Null(workspace.VisibleEntries.Single(entry => entry.Name == "notes.txt").GitStatus);
+    }
+
+    [Fact]
+    public async Task ApplyGitStatuses_DisabledClearsEntriesAndDoesNotCallBackend()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.Listings[@"C:\Users\test"].Entries.Single(entry => entry.Name == "notes.txt").GitStatus = "modified";
+        var settingsIpc = new ConfigurableIpc();
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+        workspace.Settings.EnableGitIntegration = false;
+
+        await workspace.ApplyGitStatusesAsync(PaneId.Primary);
+
+        Assert.Equal(0, settingsIpc.GitStatusCalls);
+        Assert.Null(workspace.VisibleEntries.Single(entry => entry.Name == "notes.txt").GitStatus);
+    }
+
+    [Fact]
     public async Task FillFolderMetrics_StaleNavigationDoesNotUpdateOldEntries()
     {
         var backend = FakeExplorerBackend.Typical();
@@ -313,6 +387,90 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task CreateNewItem_UsesUniqueTemplateNameAndSelectsCreatedEntry()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var root = backend.Listings[@"C:\Users\test"];
+        root.Entries.Add(new FileEntry
+        {
+            Name = "New Text Document.txt",
+            Path = @"C:\Users\test\New Text Document.txt",
+            Extension = "txt",
+        });
+        var settingsIpc = new ConfigurableIpc
+        {
+            CreateFileHandler = (path, name, ct) =>
+            {
+                var created = $@"{path}\{name}";
+                backend.Listings[path].Entries.Add(new FileEntry
+                {
+                    Name = name,
+                    Path = created,
+                    Extension = Path.GetExtension(name).TrimStart('.'),
+                });
+                return Task.FromResult(created);
+            },
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        var result = await workspace.CreateNewItemInCurrentPaneAsync(NewItemTemplate.TextFile);
+
+        Assert.Equal(@"C:\Users\test\New Text Document (2).txt", result);
+        Assert.Equal(result, workspace.SelectedPath);
+        Assert.Contains(workspace.VisibleEntries, entry => entry.Path == result);
+        Assert.Equal("Created New Text Document (2).txt", workspace.StatusMessage);
+    }
+
+    [Fact]
+    public async Task CreateShortcut_SelectsCreatedEntryAndPushesShortcutUndo()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var targetPath = @"C:\Users\test\notes.txt";
+        string? receivedArguments = null;
+        string? receivedWorkingDirectory = null;
+        string? receivedIconPath = null;
+        var settingsIpc = new ConfigurableIpc
+        {
+            CreateShortcutHandler = (path, name, target, arguments, workingDirectory, iconPath, ct) =>
+            {
+                Assert.Equal(@"C:\Users\test", path);
+                Assert.Equal("Notes", name);
+                Assert.Equal(targetPath, target);
+                receivedArguments = arguments;
+                receivedWorkingDirectory = workingDirectory;
+                receivedIconPath = iconPath;
+                var created = $@"{path}\{name}.lnk";
+                backend.Listings[path].Entries.Add(new FileEntry
+                {
+                    Name = $"{name}.lnk",
+                    Path = created,
+                    Extension = "lnk",
+                });
+                return Task.FromResult(created);
+            },
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        var result = await workspace.CreateShortcutInCurrentPaneAsync(
+            "Notes",
+            targetPath,
+            "--safe",
+            @"C:\Users\test",
+            @"C:\Users\test\notes.ico");
+
+        Assert.Equal(@"C:\Users\test\Notes.lnk", result);
+        Assert.Equal(result, workspace.SelectedPath);
+        Assert.Equal("Created Notes.lnk", workspace.StatusMessage);
+        Assert.True(workspace.Undo.CanUndo);
+        Assert.Equal("Create shortcut", workspace.Undo.NextUndoDescription);
+        Assert.Equal("--safe", receivedArguments);
+        Assert.Equal(@"C:\Users\test", receivedWorkingDirectory);
+        Assert.Equal(@"C:\Users\test\notes.ico", receivedIconPath);
+    }
+
+    [Fact]
     public async Task RenameSelected_PushesUndoEntryAfterSuccess()
     {
         var backend = FakeExplorerBackend.Typical();
@@ -327,6 +485,40 @@ public class ExplorerWorkspaceTests
 
         Assert.True(workspace.Undo.CanUndo);
         Assert.Equal("Rename 1 item(s)", workspace.Undo.NextUndoDescription);
+    }
+
+    [Fact]
+    public async Task RenameSelected_SelectsRenamedEntryAfterRefresh()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var original = @"C:\Users\test\notes.txt";
+        var settingsIpc = new ConfigurableIpc
+        {
+            RenameEntryHandler = (path, name, ct) =>
+            {
+                var renamed = $@"C:\Users\test\{name}";
+                var listing = backend.Listings[@"C:\Users\test"];
+                var entry = listing.Entries.Single(item => item.Path == path);
+                listing.Entries.Remove(entry);
+                listing.Entries.Add(new FileEntry
+                {
+                    Name = name,
+                    Path = renamed,
+                    Extension = Path.GetExtension(name).TrimStart('.'),
+                    Size = entry.Size,
+                });
+                return Task.FromResult(renamed);
+            },
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        var result = await workspace.RenameSelectedAsync(original, "renamed.txt");
+
+        Assert.Equal(@"C:\Users\test\renamed.txt", result);
+        Assert.Equal(result, workspace.SelectedPath);
+        Assert.Contains(workspace.VisibleEntries, entry => entry.Path == result);
+        Assert.Equal("Renamed to renamed.txt", workspace.StatusMessage);
     }
 
     [Fact]
@@ -558,6 +750,37 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task FillFolderMetrics_UsesCombinedFolderMetricsWhenSizeAndCountRequested()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var combinedCalls = 0;
+        var settingsIpc = new ConfigurableIpc
+        {
+            GetFolderMetricsHandler = (path, _) =>
+            {
+                combinedCalls += 1;
+                Assert.Equal(@"C:\Users\test\Desktop", path);
+                return Task.FromResult(new FolderMetrics
+                {
+                    Size = 42,
+                    ItemCount = 3,
+                });
+            },
+            CalculateFolderSizeHandler = (_, _) => throw new InvalidOperationException("split size call should not run"),
+            CountFolderItemsHandler = (_, _) => throw new InvalidOperationException("split item-count call should not run"),
+        };
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
+        await workspace.InitializeAsync();
+
+        await workspace.FillFolderMetricsAsync(PaneId.Primary, includeSizes: true, includeItemCounts: true);
+
+        var desktop = workspace.VisibleEntries.Single(entry => entry.Name == "Desktop");
+        Assert.Equal(42UL, desktop.Size);
+        Assert.Equal(3UL, desktop.ItemCount);
+        Assert.Equal(1, combinedCalls);
+    }
+
+    [Fact]
     public async Task ResultTooLarge_KeepsStreamedChunks()
     {
         var backend = FakeExplorerBackend.Typical();
@@ -664,13 +887,32 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
-    public async Task NamedWorkspaceLayouts_SaveApplyOverwriteAndDelete()
+    public async Task WorkspaceProfiles_SaveApplyDuplicateExportResetAndDelete()
     {
         var backend = FakeExplorerBackend.Typical();
         var settingsIpc = new ConfigurableIpc();
         var fileOps = new FileOperationService(settingsIpc);
         var workspace = new ExplorerWorkspace(backend, fileOps);
         await workspace.InitializeAsync();
+
+        var builtIns = await workspace.ListWorkspaceProfilesAsync();
+        Assert.Equal(
+            ["Standard", "Developer", "Photos", "Transfer", "Minimal"],
+            builtIns.Take(5).Select(profile => profile.Name));
+        Assert.All(builtIns.Take(5), profile => Assert.True(profile.IsBuiltIn));
+
+        await workspace.ApplyWorkspaceProfileAsync(WorkspaceProfileTemplates.DeveloperId);
+
+        Assert.Equal(WorkspaceProfileTemplates.DeveloperId, workspace.ActiveProfileId);
+        Assert.False(workspace.DualPaneEnabled);
+        Assert.Equal("details", workspace.ViewFor(PaneId.Primary));
+        Assert.Equal(16, workspace.IconSizeFor(PaneId.Primary));
+        Assert.True(workspace.Settings.EnableGitIntegration);
+        Assert.Equal("developer", workspace.Settings.ColumnPreset);
+        Assert.Contains("git", workspace.Columns.VisibleIds);
+        Assert.Equal(
+            WorkspaceProfileTemplates.DeveloperId,
+            WorkspaceProfilesDocument.FromJson(settingsIpc.Settings[WorkspaceProfilesDocument.SettingsKey]).ActiveProfileId);
 
         await workspace.OpenNewTabAsync(PaneId.Primary, @"C:\Users\test\Desktop");
         await workspace.ToggleDualPaneAsync();
@@ -683,6 +925,9 @@ public class ExplorerWorkspaceTests
         workspace.SetSort(PaneId.Secondary, "date");
 
         var settings = workspace.Settings;
+        settings.KeepFoldersOnTop = false;
+        settings.EnableGitIntegration = false;
+        settings.ProgressQueueVisible = true;
         settings.PreviewVisible = false;
         settings.PreviewWidth = 420;
         settings.SidebarVisible = false;
@@ -693,32 +938,23 @@ public class ExplorerWorkspaceTests
         settings.MyPcCollapsed = true;
         settings.ColumnPreset = "developer";
         workspace.ApplyUiSettings(settings, applyViewDefaultsToPanes: false);
+        workspace.Columns.RestoreVisibleIds(["name", "path", "git"]);
         workspace.Columns.Resize("path", 360);
 
-        var saved = await workspace.SaveNamedWorkspaceLayoutAsync("  Code    review  ");
+        var saved = await workspace.SaveWorkspaceProfileAsync("  Code    review  ");
+        var document = WorkspaceProfilesDocument.FromJson(settingsIpc.Settings[WorkspaceProfilesDocument.SettingsKey]);
+        var stored = Assert.Single(document.Profiles);
 
         Assert.Equal("Code review", saved.Name);
-        Assert.True(settingsIpc.Settings.ContainsKey(SavedWorkspaceLayoutsDocument.SettingsKey));
-        Assert.Contains("\"columnPreset\":\"developer\"", settingsIpc.Settings[SavedWorkspaceLayoutsDocument.SettingsKey]);
+        Assert.Equal(saved.Id, workspace.ActiveProfileId);
+        Assert.Equal(saved.Id, document.ActiveProfileId);
+        Assert.Equal(["name", "path", "git"], stored.Chrome!.VisibleColumnIds);
+        Assert.False(stored.Chrome.KeepFoldersOnTop);
+        Assert.False(stored.Chrome.EnableGitIntegration);
+        Assert.True(stored.Chrome.ProgressQueueVisible);
 
-        await workspace.ToggleDualPaneAsync();
-        await workspace.NavigatePaneAsync(PaneId.Primary, @"C:\", HistoryMode.ReplaceCurrent);
-        workspace.SetFileListView(PaneId.Primary, "details");
-        workspace.SetFileListIconSize(PaneId.Primary, 16);
-        settings = workspace.Settings;
-        settings.PreviewVisible = true;
-        settings.PreviewWidth = UiSettings.PreviewDefaultWidth;
-        settings.SidebarVisible = true;
-        settings.SidebarWidth = UiSettings.SidebarDefaultWidth;
-        settings.DualPanePrimaryPercent = UiSettings.DualPaneDefaultPercent;
-        settings.DualPanePrimaryWidth = 0;
-        settings.QuickAccessCollapsed = false;
-        settings.MyPcCollapsed = false;
-        settings.ColumnPreset = "photo";
-        workspace.ApplyUiSettings(settings, applyViewDefaultsToPanes: false);
-        workspace.Columns.Resize("name", 500);
-
-        await workspace.ApplySavedWorkspaceLayoutAsync(saved.Id);
+        await workspace.ApplyWorkspaceProfileAsync(WorkspaceProfileTemplates.MinimalId);
+        await workspace.ApplyWorkspaceProfileAsync(saved.Id);
 
         Assert.True(workspace.DualPaneEnabled);
         Assert.Equal(@"C:\Users\test\Desktop", workspace.Primary.Path);
@@ -729,30 +965,120 @@ public class ExplorerWorkspaceTests
         Assert.Equal(96, workspace.IconSizeFor(PaneId.Secondary));
         Assert.Equal("date", workspace.SortByFor(PaneId.Secondary));
         Assert.False(workspace.SortAscendingFor(PaneId.Secondary));
+        Assert.False(workspace.Settings.KeepFoldersOnTop);
+        Assert.False(workspace.Settings.EnableGitIntegration);
+        Assert.True(workspace.Settings.ProgressQueueVisible);
         Assert.False(workspace.Settings.PreviewVisible);
         Assert.Equal(420, workspace.Settings.PreviewWidth);
         Assert.False(workspace.Settings.SidebarVisible);
         Assert.Equal(344, workspace.Settings.SidebarWidth);
         Assert.Equal(35, workspace.Settings.DualPanePrimaryPercent);
         Assert.Equal(410, workspace.Settings.DualPanePrimaryWidth);
-        Assert.True(workspace.Settings.QuickAccessCollapsed);
-        Assert.True(workspace.Settings.MyPcCollapsed);
         Assert.Equal("developer", workspace.Settings.ColumnPreset);
+        Assert.Equal(["name", "path", "git"], workspace.Columns.SnapshotVisibleIds());
         Assert.Equal(360, workspace.Columns.WidthOf("path"));
-        Assert.Equal("developer", settingsIpc.Settings["columnPreset"]);
-        Assert.Equal("420", settingsIpc.Settings["preview.width"]);
-        Assert.Contains("\"dualPaneEnabled\":true", settingsIpc.Settings[WorkspaceLayout.SettingsKey]);
+        Assert.Equal("false", settingsIpc.Settings["enableGitIntegration"]);
+        Assert.Equal("true", settingsIpc.Settings["progressQueue.visible"]);
 
-        await workspace.NavigatePaneAsync(PaneId.Primary, @"C:\", HistoryMode.ReplaceCurrent);
-        var overwritten = await workspace.OverwriteSavedWorkspaceLayoutAsync(saved.Id);
-        var document = SavedWorkspaceLayoutsDocument.FromJson(settingsIpc.Settings[SavedWorkspaceLayoutsDocument.SettingsKey]);
-        Assert.Equal(saved.Id, overwritten.Id);
-        Assert.Equal(@"C:\", Assert.Single(document.Layouts).Layout.Primary.Path);
+        var duplicate = await workspace.DuplicateWorkspaceProfileAsync(WorkspaceProfileTemplates.PhotosId, "Vacation photos");
+        Assert.False(duplicate.IsBuiltIn);
+        Assert.Equal(WorkspaceProfileTemplates.PhotosId, duplicate.SourceProfileId);
+        Assert.Equal(duplicate.Id, workspace.ActiveProfileId);
 
-        await workspace.DeleteSavedWorkspaceLayoutAsync(saved.Id);
+        var renamed = await workspace.RenameWorkspaceProfileAsync(duplicate.Id, "Vacation review");
+        Assert.Equal("Vacation review", renamed.Name);
+        var exported = await workspace.ExportWorkspaceProfileAsync(renamed.Id);
+        Assert.Contains("sumafile.workspace-profile", exported);
+        Assert.Contains("Vacation review", exported);
 
-        Assert.Empty(await workspace.ListSavedWorkspaceLayoutsAsync());
-        Assert.Contains("\"layouts\":[]", settingsIpc.Settings[SavedWorkspaceLayoutsDocument.SettingsKey]);
+        await workspace.OverwriteWorkspaceProfileAsync(renamed.Id);
+        var reset = await workspace.ResetWorkspaceProfileAsync(renamed.Id);
+        Assert.Equal("photo", reset.Chrome!.ColumnPreset);
+
+        await workspace.ApplyWorkspaceProfileAsync(renamed.Id);
+        Assert.Equal("tiles", workspace.ViewFor(PaneId.Primary));
+        Assert.Equal(192, workspace.IconSizeFor(PaneId.Primary));
+        Assert.Equal("photo", workspace.Settings.ColumnPreset);
+        Assert.False(workspace.Settings.EnableGitIntegration);
+        Assert.Contains("date", workspace.Columns.VisibleIds);
+
+        await workspace.DeleteWorkspaceProfileAsync(renamed.Id);
+
+        Assert.Equal("", workspace.ActiveProfileId);
+        Assert.DoesNotContain(
+            await workspace.ListWorkspaceProfilesAsync(),
+            profile => string.Equals(profile.Id, renamed.Id, StringComparison.OrdinalIgnoreCase));
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => workspace.DeleteWorkspaceProfileAsync(WorkspaceProfileTemplates.StandardId));
+    }
+
+    [Fact]
+    public async Task WorkspaceProfiles_MigrateLegacySavedLayouts()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(settingsIpc);
+        var legacy = new SavedWorkspaceLayoutsDocument
+        {
+            Layouts =
+            [
+                new SavedWorkspaceLayout
+                {
+                    Id = "legacy-id",
+                    Name = "  Legacy    layout  ",
+                    CreatedAt = DateTimeOffset.Parse("2026-01-01T00:00:00+00:00"),
+                    UpdatedAt = DateTimeOffset.Parse("2026-01-02T00:00:00+00:00"),
+                    Layout = new WorkspaceLayout
+                    {
+                        DualPaneEnabled = true,
+                        Primary = new WorkspacePaneLayout
+                        {
+                            Path = @"C:\Users\test\Desktop",
+                            View = "tiles",
+                            IconSize = 96,
+                        },
+                        Secondary = new WorkspacePaneLayout
+                        {
+                            Path = @"C:\",
+                            View = "details",
+                            IconSize = 32,
+                        },
+                    },
+                    Chrome = new WorkspaceChromeLayout
+                    {
+                        PreviewVisible = false,
+                        SidebarVisible = false,
+                        ColumnPreset = "developer",
+                        VisibleColumnIds = ["name", "git"],
+                    },
+                },
+            ],
+        };
+        settingsIpc.Settings[SavedWorkspaceLayoutsDocument.SettingsKey] = legacy.ToJson();
+        var workspace = new ExplorerWorkspace(backend, fileOps);
+        await workspace.InitializeAsync();
+
+        var profiles = await workspace.ListWorkspaceProfilesAsync();
+        var migrated = Assert.Single(profiles, profile => !profile.IsBuiltIn);
+
+        Assert.True(settingsIpc.Settings.ContainsKey(WorkspaceProfilesDocument.SettingsKey));
+        Assert.Equal("legacy-id", migrated.Id);
+        Assert.Equal("Legacy layout", migrated.Name);
+        Assert.Equal(@"C:\Users\test\Desktop", migrated.Layout.Primary.Path);
+        Assert.False(migrated.Chrome!.PreviewVisible);
+        Assert.Equal(["name", "git"], migrated.Chrome.VisibleColumnIds);
+
+        await workspace.ApplyWorkspaceProfileAsync(migrated.Id);
+
+        Assert.True(workspace.DualPaneEnabled);
+        Assert.Equal(@"C:\Users\test\Desktop", workspace.Primary.Path);
+        Assert.Equal(@"C:\", workspace.Secondary.Path);
+        Assert.Equal("tiles", workspace.ViewFor(PaneId.Primary));
+        Assert.Equal(96, workspace.IconSizeFor(PaneId.Primary));
+        Assert.False(workspace.Settings.PreviewVisible);
+        Assert.False(workspace.Settings.SidebarVisible);
+        Assert.Equal("developer", workspace.Settings.ColumnPreset);
+        Assert.Equal(["name", "git"], workspace.Columns.SnapshotVisibleIds());
     }
 
     [Fact]
@@ -810,6 +1136,7 @@ public class ExplorerWorkspaceTests
         await first.InitializeAsync();
         var settings = UiSettings.CreateDefault();
         settings.ColumnPreset = "developer";
+        settings.SecondaryColumnPreset = "photo";
         settings.DefaultView = "tiles";
         settings.DefaultIconSize = 96;
         settings.ShowQuickAccess = false;
@@ -825,19 +1152,24 @@ public class ExplorerWorkspaceTests
         settings.QuickAccessCollapsed = true;
         settings.MyPcCollapsed = true;
         first.ApplyUiSettings(settings);
-        first.Columns.Resize("path", 360);
+        first.PrimaryColumns.Resize("path", 360);
+        first.SecondaryColumns.Resize("name", 275);
         await first.SaveUiSettingsAsync();
 
         var second = new ExplorerWorkspace(backend, fileOps);
         await second.InitializeAsync();
 
         Assert.Equal("developer", second.Settings.ColumnPreset);
+        Assert.Equal("photo", second.Settings.SecondaryColumnPreset);
         Assert.Equal("tiles", second.Settings.DefaultView);
         Assert.Equal(96, second.Settings.DefaultIconSize);
         Assert.Equal("tiles", second.ViewFor(PaneId.Primary));
         Assert.Equal(96, second.IconSizeFor(PaneId.Primary));
-        Assert.Equal(["name", "size", "date", "extension", "git", "symlink", "path"], second.Columns.VisibleColumns.Select(column => column.Id));
-        Assert.Equal(360, second.Columns.WidthOf("path"));
+        Assert.Equal(["name", "size", "date", "extension", "git", "symlink", "path"], second.PrimaryColumns.VisibleColumns.Select(column => column.Id));
+        Assert.Equal(360, second.PrimaryColumns.WidthOf("path"));
+        Assert.Contains("date", second.SecondaryColumns.VisibleIds);
+        Assert.DoesNotContain("git", second.SecondaryColumns.VisibleIds);
+        Assert.Equal(275, second.SecondaryColumns.WidthOf("name"));
         Assert.False(second.Settings.ShowQuickAccess);
         Assert.True(second.Settings.ShowFolderTree);
         Assert.False(second.Settings.ShowBookmarks);
@@ -961,6 +1293,133 @@ public class ExplorerWorkspaceTests
         Assert.Equal(96, workspace.Settings.DefaultIconSize);
         Assert.Equal("content", workspace.ViewFor(PaneId.Primary));
         Assert.Equal(48, workspace.IconSizeFor(PaneId.Primary));
+    }
+
+    [Fact]
+    public async Task ColumnLayouts_ResizingPrimaryDoesNotAffectSecondary()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var workspace = new ExplorerWorkspace(backend);
+        await workspace.InitializeAsync();
+
+        var secondaryName = workspace.SecondaryColumns.WidthOf("name");
+        var secondaryVisible = workspace.SecondaryColumns.SnapshotVisibleIds();
+
+        workspace.PrimaryColumns.Resize("name", 350);
+        workspace.PrimaryColumns.ApplyPreset("developer");
+        workspace.PrimaryColumns.RestoreVisibleIds(["name", "git", "path"]);
+
+        Assert.Equal(350, workspace.PrimaryColumns.WidthOf("name"));
+        Assert.Equal(["name", "git", "path"], workspace.PrimaryColumns.SnapshotVisibleIds());
+        Assert.Equal(secondaryName, workspace.SecondaryColumns.WidthOf("name"));
+        Assert.Equal(secondaryVisible, workspace.SecondaryColumns.SnapshotVisibleIds());
+
+        workspace.SecondaryColumns.Resize("size", 155);
+        workspace.SecondaryColumns.ApplyPreset("photo");
+
+        Assert.Equal(350, workspace.PrimaryColumns.WidthOf("name"));
+        Assert.Equal(["name", "git", "path"], workspace.PrimaryColumns.SnapshotVisibleIds());
+        Assert.Equal(155, workspace.SecondaryColumns.WidthOf("size"));
+        Assert.Contains("date", workspace.SecondaryColumns.VisibleIds);
+        Assert.DoesNotContain("git", workspace.SecondaryColumns.VisibleIds);
+    }
+
+    [Fact]
+    public async Task FolderViewSettings_ApplyDescendantRuleBeforeListing()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var fileOps = new FileOperationService(new ConfigurableIpc());
+        var workspace = new ExplorerWorkspace(backend, fileOps);
+        await workspace.InitializeAsync();
+
+        workspace.SetFileListView(PaneId.Primary, "content");
+        workspace.SetFileListIconSize(PaneId.Primary, 48);
+        workspace.SetSort(PaneId.Primary, "date");
+        workspace.SetSort(PaneId.Primary, "date");
+        workspace.SetShowHidden(true);
+        workspace.Settings.PreviewVisible = false;
+        workspace.Settings.ColumnPreset = "developer";
+        workspace.Columns.ApplyPreset("developer");
+        workspace.Columns.RestoreVisibleIds(["name", "git", "path"]);
+        workspace.Columns.Resize("path", 360);
+
+        var saved = await workspace.SaveFolderViewSettingsAsync(FolderViewScope.Descendants, PaneId.Primary);
+
+        Assert.Equal(FolderViewRuleScope.Descendants, saved.Scope);
+        Assert.Equal(@"C:\Users\test", saved.Path);
+
+        workspace.SetFileListView(PaneId.Primary, "details");
+        workspace.SetFileListIconSize(PaneId.Primary, 16);
+        workspace.SetSort(PaneId.Primary, "name");
+        workspace.SetShowHidden(false);
+        workspace.Settings.PreviewVisible = true;
+        workspace.Settings.ColumnPreset = "default";
+        workspace.Columns.ApplyPreset("default");
+        workspace.Columns.Resize("path", 220);
+
+        await workspace.NavigateToAsync(@"C:\Users\test\Desktop");
+
+        Assert.Equal("content", workspace.ViewFor(PaneId.Primary));
+        Assert.Equal(48, workspace.IconSizeFor(PaneId.Primary));
+        Assert.Equal("date", workspace.SortByFor(PaneId.Primary));
+        Assert.False(workspace.SortAscendingFor(PaneId.Primary));
+        Assert.True(workspace.ShowHiddenFiles);
+        Assert.True(workspace.Settings.PreviewVisible);
+        Assert.Equal("developer", workspace.Settings.ColumnPreset);
+        Assert.Equal(["name", "git", "path"], workspace.Columns.SnapshotVisibleIds());
+        Assert.Equal(360, workspace.Columns.WidthOf("path"));
+        Assert.Equal("date", backend.LastListDirectoryOptions?.SortBy);
+        Assert.False(backend.LastListDirectoryOptions?.SortAscending);
+    }
+
+    [Fact]
+    public async Task FolderViewSettings_IgnoreLegacyPreviewVisibility()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc();
+        settingsIpc.Settings[FolderViewSettingsDocument.SettingsKey] = """
+            {
+              "version": 1,
+              "rules": [
+                {
+                  "id": "legacy-preview",
+                  "scope": "descendants",
+                  "path": "C:\\Users\\test",
+                  "options": {
+                    "view": "content",
+                    "previewVisible": false
+                  }
+                }
+              ]
+            }
+            """;
+        var fileOps = new FileOperationService(settingsIpc);
+        var workspace = new ExplorerWorkspace(backend, fileOps);
+        await workspace.InitializeAsync();
+
+        workspace.Settings.PreviewVisible = true;
+
+        await workspace.NavigateToAsync(@"C:\Users\test\Desktop");
+
+        Assert.Equal("content", workspace.ViewFor(PaneId.Primary));
+        Assert.True(workspace.Settings.PreviewVisible);
+    }
+
+    [Fact]
+    public async Task FolderViewSettings_SaveAllThreeScopes()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var fileOps = new FileOperationService(new ConfigurableIpc());
+        var workspace = new ExplorerWorkspace(backend, fileOps);
+        await workspace.InitializeAsync();
+
+        await workspace.SaveFolderViewSettingsAsync(FolderViewScope.Global, PaneId.Primary);
+        await workspace.SaveFolderViewSettingsAsync(FolderViewScope.Folder, PaneId.Primary);
+        await workspace.SaveFolderViewSettingsAsync(FolderViewScope.Descendants, PaneId.Primary);
+
+        Assert.Contains(workspace.Settings.FolderViewSettings.Rules, rule => rule.Scope == FolderViewRuleScope.Global);
+        Assert.Contains(workspace.Settings.FolderViewSettings.Rules, rule => rule.Scope == FolderViewRuleScope.Folder);
+        Assert.Contains(workspace.Settings.FolderViewSettings.Rules, rule => rule.Scope == FolderViewRuleScope.Descendants);
     }
 
     [Fact]

@@ -32,6 +32,21 @@ function requireSnippet(source, file, snippet) {
   }
 }
 
+function readText(relativePath) {
+  return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+}
+
+function extractStringConst(source, file, name) {
+  const pattern = new RegExp(`(?:pub\\s+)?const\\s+${name}\\s*:\\s*&str\\s*=\\s*"([^"]+)"`, 'u');
+  const match = pattern.exec(source);
+  if (!match) {
+    fail(`${file} must define ${name}.`);
+    return '';
+  }
+
+  return match[1];
+}
+
 function isHistorical(relativePath) {
   return allowedHistoricalPaths.some((pattern) => pattern.test(relativePath));
 }
@@ -64,17 +79,17 @@ for (const relativePath of trackedFiles) {
   }
 }
 
-const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
-const packageJson = fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8');
-const release100 = fs.readFileSync(path.join(repoRoot, 'docs/RELEASE_1.0.0.md'), 'utf8');
-const upgradeFromRef = fs.readFileSync(
-  path.join(repoRoot, 'scripts/smoke-winui-upgrade-from-ref.ps1'),
-  'utf8',
-);
+const readme = readText('README.md');
+const packageJson = readText('package.json');
+const release101 = readText('docs/RELEASE_1.0.1.md');
+const upgradeFromRef = readText('scripts/smoke-winui-upgrade-from-ref.ps1');
+const ipcLib = readText('crates/simplefile-ipc/src/lib.rs');
+const settingsStore = readText('crates/simplefile-core/src/settings_store.rs');
+const updater = readText('crates/simplefile-core/src/updater.rs');
 
 for (const snippet of [
-  'SumaFile 1.0.0',
-  'docs/RELEASE_1.0.0.md',
+  'SumaFile 1.0.1',
+  'docs/RELEASE_1.0.1.md',
   '## Known Limitations',
   'No manual import is needed for normal SimpleFile-to-SumaFile use.',
 ]) {
@@ -82,10 +97,10 @@ for (const snippet of [
 }
 
 for (const snippet of [
-  '# SumaFile 1.0.0 Release Checklist',
-  'SumaFile_1.0.0_x64-winui-setup.exe',
-  'SumaFile_1.0.0_x64-winui.msi',
-  'SumaFile_1.0.0_x64-winui-portable.zip',
+  '# SumaFile 1.0.1 Release Checklist',
+  'SumaFile_1.0.1_x64-winui-setup.exe',
+  'SumaFile_1.0.1_x64-winui.msi',
+  'SumaFile_1.0.1_x64-winui-portable.zip',
   'latest-winui.json',
   '## Dogfood 10-Step Script',
   'smoke:winui-upgrade-from-ref',
@@ -93,7 +108,7 @@ for (const snippet of [
   '## Known Limitations',
   'signed test release before claiming in-app updater installation is proven',
 ]) {
-  requireSnippet(release100, 'docs/RELEASE_1.0.0.md', snippet);
+  requireSnippet(release101, 'docs/RELEASE_1.0.1.md', snippet);
 }
 
 requireSnippet(packageJson, 'package.json', 'smoke:winui-upgrade-from-ref');
@@ -105,6 +120,16 @@ for (const snippet of [
   'git @("worktree", "remove", "--force"',
 ]) {
   requireSnippet(upgradeFromRef, 'scripts/smoke-winui-upgrade-from-ref.ps1', snippet);
+}
+
+const appIdentifier = extractStringConst(ipcLib, 'crates/simplefile-ipc/src/lib.rs', 'APP_IDENTIFIER');
+for (const [file, value] of [
+  ['crates/simplefile-core/src/settings_store.rs', extractStringConst(settingsStore, 'crates/simplefile-core/src/settings_store.rs', 'APP_IDENTIFIER')],
+  ['crates/simplefile-core/src/updater.rs', extractStringConst(updater, 'crates/simplefile-core/src/updater.rs', 'APP_IDENTIFIER')],
+]) {
+  if (value !== appIdentifier) {
+    fail(`${file} APP_IDENTIFIER "${value}" must match simplefile-ipc "${appIdentifier}".`);
+  }
 }
 
 if (!process.exitCode) {

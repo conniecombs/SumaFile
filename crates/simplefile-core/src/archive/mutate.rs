@@ -2,11 +2,10 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::create::{
-    create_rar_archive, create_seven_zip_archive, create_tar_archive, create_zip_archive,
-    resolve_rar_binary,
+use super::create::{create_seven_zip_archive, create_tar_archive, create_zip_archive};
+use super::extract::{
+    extract_archive_entry_to_directory, extract_archive_to_directory, ExtractLimits,
 };
-use super::extract::extract_archive_to_directory;
 use super::path::{
     build_virtual_archive_path, create_dir_all, replace_archive, same_archive_path,
     split_archive_path, unique_temp_archive_path, unique_work_dir, ArchiveFormat, ArchivePath,
@@ -44,7 +43,9 @@ pub fn copy_entry_resolved(
             Ok(result.unwrap_or_else(|| format!("SKIPPED:{source}")))
         }
         (source_parsed, Some(destination_parsed)) => {
+            ensure_archive_can_modify(destination_parsed.format)?;
             let materialized = materialize_transfer_source(&source, source_parsed.as_ref())?;
+            let mut materialized = materialized;
             let result = mutate_archive(
                 &destination_parsed.archive_path,
                 destination_parsed.format,
@@ -72,6 +73,13 @@ pub fn move_entry_resolved(
     let source_archive =
         split_archive_path(&source)?.filter(|parsed| !parsed.inner_path.as_os_str().is_empty());
     let destination_archive = split_archive_path(&destination)?;
+
+    if let Some(source_parsed) = &source_archive {
+        ensure_archive_can_modify(source_parsed.format)?;
+    }
+    if let Some(destination_parsed) = &destination_archive {
+        ensure_archive_can_modify(destination_parsed.format)?;
+    }
 
     match (source_archive, destination_archive) {
         (Some(source_parsed), Some(destination_parsed))
@@ -124,6 +132,7 @@ pub fn create_archive_directory(path: String, name: String) -> Result<String, St
     crate::utils::validate_name(&name)?;
     let parsed = split_archive_path(&path)?
         .ok_or_else(|| format!("Path is not inside an archive: {path}"))?;
+    ensure_archive_can_modify(parsed.format)?;
     let result = mutate_archive(&parsed.archive_path, parsed.format, |root| {
         let dir_path = root.join(&parsed.inner_path).join(&name);
         if dir_path.exists() {
@@ -139,6 +148,7 @@ pub fn create_archive_file(path: String, name: String) -> Result<String, String>
     crate::utils::validate_name(&name)?;
     let parsed = split_archive_path(&path)?
         .ok_or_else(|| format!("Path is not inside an archive: {path}"))?;
+    ensure_archive_can_modify(parsed.format)?;
     let result = mutate_archive(&parsed.archive_path, parsed.format, |root| {
         let file_path = root.join(&parsed.inner_path).join(&name);
         if let Some(parent) = file_path.parent() {
@@ -165,6 +175,7 @@ pub fn rename_archive_entry(path: String, new_name: String) -> Result<String, St
     let parsed = split_archive_path(&path)?
         .filter(|parsed| !parsed.inner_path.as_os_str().is_empty())
         .ok_or_else(|| format!("Path is not an archive entry: {path}"))?;
+    ensure_archive_can_modify(parsed.format)?;
     let result = mutate_archive(&parsed.archive_path, parsed.format, |root| {
         let source_path = root.join(&parsed.inner_path);
         if !source_path.exists() {
@@ -187,21 +198,65 @@ pub fn rename_archive_entry(path: String, new_name: String) -> Result<String, St
     result.ok_or_else(|| "Archive entry was not renamed".to_string())
 }
 
-pub fn materialize_archive_entry_to_temp(path: &str) -> Result<PathBuf, String> {
+pub fn materialize_archive_entry_to_temp(path: &str) -> Result<MaterializedSource, String> {
+    materialize_archive_entry_to_temp_with_limits(path, ExtractLimits::materialize_defaults())
+}
+
+pub(super) fn materialize_archive_entry_to_temp_with_limits(
+    path: &str,
+    limits: ExtractLimits,
+) -> Result<MaterializedSource, String> {
     let parsed = split_archive_path(path)?
         .filter(|parsed| !parsed.inner_path.as_os_str().is_empty())
         .ok_or_else(|| format!("Path is not an archive entry: {path}"))?;
-    let work_root = unique_work_dir("open")?;
-    extract_archive_to_directory(&parsed.archive_path, &work_root)?;
-    let materialized = work_root.join(&parsed.inner_path);
+    let mut work_root = WorkRootGuard::create("open")?;
+    extract_archive_entry_to_directory(
+        &parsed.archive_path,
+        work_root.path(),
+        &parsed.inner_path,
+        limits,
+    )?;
+    let materialized = work_root.path().join(&parsed.inner_path);
     if !materialized.exists() {
-        let _ = fs::remove_dir_all(&work_root);
         return Err(format!("Archive entry not found: {path}"));
     }
-    Ok(materialized)
+    Ok(MaterializedSource {
+        path: materialized,
+        cleanup_root: Some(work_root.take()),
+    })
+}
+
+/// Deletes `unique_work_dir` on drop unless `take()` transfers ownership.
+struct WorkRootGuard {
+    root: Option<PathBuf>,
+}
+
+impl WorkRootGuard {
+    fn create(label: &str) -> Result<Self, String> {
+        Ok(Self {
+            root: Some(unique_work_dir(label)?),
+        })
+    }
+
+    fn path(&self) -> &Path {
+        self.root.as_ref().expect("work root still owned")
+    }
+
+    fn take(&mut self) -> PathBuf {
+        self.root.take().expect("work root still owned")
+    }
+}
+
+impl Drop for WorkRootGuard {
+    fn drop(&mut self) {
+        if let Some(root) = self.root.take() {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
 }
 
 fn delete_archive_entry_parsed(parsed: &ArchivePath) -> Result<(), String> {
+    ensure_archive_can_modify(parsed.format)?;
     mutate_archive(&parsed.archive_path, parsed.format, |root| {
         let path = root.join(&parsed.inner_path);
         remove_local_path(&path)?;
@@ -210,16 +265,63 @@ fn delete_archive_entry_parsed(parsed: &ArchivePath) -> Result<(), String> {
     Ok(())
 }
 
-struct MaterializedSource {
+/// Temp materialization of an archive entry (or a passthrough local path).
+///
+/// When `cleanup_root` is set, the work directory is deleted on `cleanup()` / Drop.
+#[derive(Debug)]
+pub struct MaterializedSource {
     path: PathBuf,
     cleanup_root: Option<PathBuf>,
 }
 
 impl MaterializedSource {
-    fn cleanup(&self) {
-        if let Some(root) = &self.cleanup_root {
+    pub fn local(path: PathBuf) -> Self {
+        Self {
+            path,
+            cleanup_root: None,
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn cleanup_root(&self) -> Option<&Path> {
+        self.cleanup_root.as_deref()
+    }
+
+    pub fn cleanup(&mut self) {
+        if let Some(root) = self.cleanup_root.take() {
             let _ = fs::remove_dir_all(root);
         }
+    }
+
+    /// Hand off for Open With: keep the file on disk and return the optional work root
+    /// that the caller must delete after the launched process exits.
+    pub fn into_open_with_handoff(mut self) -> (PathBuf, Option<PathBuf>) {
+        let cleanup_root = self.cleanup_root.take();
+        let path = std::mem::take(&mut self.path);
+        (path, cleanup_root)
+    }
+}
+
+impl Drop for MaterializedSource {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
+impl AsRef<Path> for MaterializedSource {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl std::ops::Deref for MaterializedSource {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -227,23 +329,13 @@ fn materialize_transfer_source(
     source: &str,
     parsed: Option<&ArchivePath>,
 ) -> Result<MaterializedSource, String> {
-    if let Some(parsed) = parsed {
-        let work_root = unique_work_dir("source")?;
-        extract_archive_to_directory(&parsed.archive_path, &work_root)?;
-        let path = work_root.join(&parsed.inner_path);
-        if !path.exists() {
-            let _ = fs::remove_dir_all(&work_root);
-            return Err(format!("Archive entry not found: {source}"));
-        }
-        Ok(MaterializedSource {
-            path,
-            cleanup_root: Some(work_root),
-        })
+    if parsed.is_some() {
+        // Same selective extract + size/entry caps + WorkRootGuard cleanup as open/preview.
+        materialize_archive_entry_to_temp(source)
     } else {
-        Ok(MaterializedSource {
-            path: crate::utils::validate_path_no_follow(source)?,
-            cleanup_root: None,
-        })
+        Ok(MaterializedSource::local(
+            crate::utils::validate_path_no_follow(source)?,
+        ))
     }
 }
 
@@ -252,28 +344,43 @@ fn copy_archive_entry_to_local(
     destination: &str,
     conflict_action: &str,
 ) -> Result<String, String> {
+    copy_archive_entry_to_local_with_limits(
+        parsed,
+        destination,
+        conflict_action,
+        ExtractLimits::materialize_defaults(),
+    )
+}
+
+pub(super) fn copy_archive_entry_to_local_with_limits(
+    parsed: &ArchivePath,
+    destination: &str,
+    conflict_action: &str,
+    limits: ExtractLimits,
+) -> Result<String, String> {
     let dest_dir = crate::utils::validate_existing_path_no_resolve(destination)?;
     if !dest_dir.is_dir() {
         return Err(format!("Destination is not a directory: {destination}"));
     }
 
-    let work_root = unique_work_dir("extract-entry")?;
-    let result = (|| {
-        extract_archive_to_directory(&parsed.archive_path, &work_root)?;
-        let source_path = work_root.join(&parsed.inner_path);
-        if !source_path.exists() {
-            return Err(format!(
-                "Archive entry not found: {}",
-                build_virtual_archive_path(&parsed.archive_path, &parsed.inner_path)
-            ));
-        }
-        let final_dest = copy_with_conflict(&source_path, &dest_dir, conflict_action)?;
-        Ok(final_dest.map(|path| path.to_string_lossy().to_string()))
-    })();
-    let _ = fs::remove_dir_all(&work_root);
-
-    match result? {
-        Some(path) => Ok(path),
+    // Selective extract + caps; WorkRootGuard always deletes the temp root (success/fail).
+    let work_root = WorkRootGuard::create("extract-entry")?;
+    extract_archive_entry_to_directory(
+        &parsed.archive_path,
+        work_root.path(),
+        &parsed.inner_path,
+        limits,
+    )?;
+    let source_path = work_root.path().join(&parsed.inner_path);
+    if !source_path.exists() {
+        return Err(format!(
+            "Archive entry not found: {}",
+            build_virtual_archive_path(&parsed.archive_path, &parsed.inner_path)
+        ));
+    }
+    let final_dest = copy_with_conflict(&source_path, &dest_dir, conflict_action)?;
+    match final_dest {
+        Some(path) => Ok(path.to_string_lossy().to_string()),
         None => Ok(format!(
             "SKIPPED:{}",
             build_virtual_archive_path(&parsed.archive_path, &parsed.inner_path)
@@ -289,6 +396,7 @@ fn mutate_archive<F>(
 where
     F: FnMut(&Path) -> Result<Option<PathBuf>, String>,
 {
+    ensure_archive_can_modify(format)?;
     let work_root = unique_work_dir("mutate")?;
     let new_archive = unique_temp_archive_path(archive_path)?;
     let result = (|| {
@@ -306,6 +414,17 @@ where
     let _ = fs::remove_file(&new_archive);
 
     result
+}
+
+fn ensure_archive_can_modify(format: ArchiveFormat) -> Result<(), String> {
+    if format == ArchiveFormat::Rar {
+        return Err(
+            "RAR archives can be listed and extracted, but SumaFile does not rewrite RAR archives."
+                .to_string(),
+        );
+    }
+
+    Ok(())
 }
 
 fn copy_with_conflict(
@@ -496,15 +615,10 @@ fn rebuild_archive_from_directory(
         ArchiveFormat::Zip => create_zip_archive(&child_paths, &archive_path),
         ArchiveFormat::Tar => create_tar_archive(&child_paths, &archive_path, None),
         ArchiveFormat::TarGz => create_tar_archive(&child_paths, &archive_path, Some("gz")),
-        ArchiveFormat::Rar => {
-            if child_paths.is_empty() {
-                return Err("RAR archives cannot be rewritten with no entries".to_string());
-            }
-            let binary = resolve_rar_binary().ok_or_else(|| {
-                "RAR command not found. Install it from Settings -> RAR Tools.".to_string()
-            })?;
-            create_rar_archive(&child_paths, &archive_path, &binary)
-        }
+        ArchiveFormat::Rar => Err(
+            "RAR archives can be listed and extracted, but SumaFile does not rewrite RAR archives."
+                .to_string(),
+        ),
         ArchiveFormat::SevenZip => {
             if child_paths.is_empty() {
                 return Err("7-Zip archives cannot be rewritten with no entries".to_string());

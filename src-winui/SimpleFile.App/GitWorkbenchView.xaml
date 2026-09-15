@@ -1,0 +1,254 @@
+<UserControl
+    x:Class="SimpleFile.App.GitWorkbenchView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:SimpleFile.App">
+    <Grid
+        x:Name="Root"
+        MinHeight="260"
+        Padding="12"
+        Background="{ThemeResource SfBgSecondaryBrush}"
+        RowSpacing="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <FontIcon
+                VerticalAlignment="Center"
+                FontFamily="{StaticResource SfIconFont}"
+                FontSize="16"
+                Foreground="{ThemeResource SfAccentBrush}"
+                Glyph="&#xE8EF;" />
+            <StackPanel Grid.Column="1" MinWidth="0" Spacing="1">
+                <TextBlock
+                    FontSize="13"
+                    FontWeight="SemiBold"
+                    Foreground="{ThemeResource SfTextPrimaryBrush}"
+                    Text="{Binding BranchText}"
+                    TextTrimming="CharacterEllipsis" />
+                <TextBlock
+                    FontSize="12"
+                    Foreground="{ThemeResource SfTextMutedBrush}"
+                    Text="{Binding SummaryText}"
+                    TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+            <ScrollViewer
+                Grid.Column="2"
+                HorizontalScrollBarVisibility="Auto"
+                HorizontalScrollMode="Enabled"
+                VerticalScrollBarVisibility="Disabled"
+                VerticalScrollMode="Disabled">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Click="OnRefreshClicked"
+                        IsEnabled="{Binding CanRefresh}"
+                        ToolTipService.ToolTip="Refresh Git status">
+                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE72C;" />
+                    </Button>
+                    <Button
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Click="OnFetchClicked"
+                        IsEnabled="{Binding CanFetch}"
+                        ToolTipService.ToolTip="Fetch">
+                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE8B5;" />
+                    </Button>
+                    <Button
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Click="OnPullClicked"
+                        IsEnabled="{Binding CanPull}"
+                        ToolTipService.ToolTip="Pull">
+                        <TextBlock FontSize="12" Text="Pull" />
+                    </Button>
+                    <Button
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Click="OnPushClicked"
+                        IsEnabled="{Binding CanPush}"
+                        ToolTipService.ToolTip="Push">
+                        <TextBlock FontSize="12" Text="Push" />
+                    </Button>
+                    <Button
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Click="OnCommitClicked"
+                        IsEnabled="{Binding CanCommit}"
+                        ToolTipService.ToolTip="Commit staged changes">
+                        <TextBlock FontSize="12" Text="Commit" />
+                    </Button>
+                    <Button
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Click="OnStageClicked"
+                        IsEnabled="{Binding CanStage}"
+                        ToolTipService.ToolTip="Stage selected changes">
+                        <TextBlock FontSize="12" Text="Stage" />
+                    </Button>
+                    <Button
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Click="OnUnstageClicked"
+                        IsEnabled="{Binding CanUnstage}"
+                        ToolTipService.ToolTip="Unstage selected changes">
+                        <TextBlock FontSize="12" Text="Unstage" />
+                    </Button>
+                    <Button
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Click="OnDiscardClicked"
+                        IsEnabled="{Binding CanDiscard}"
+                        ToolTipService.ToolTip="Discard selected changes">
+                        <TextBlock FontSize="12" Text="Discard" />
+                    </Button>
+                    <Button
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Click="OnDiffClicked"
+                        IsEnabled="{Binding CanDiff}"
+                        ToolTipService.ToolTip="Preview selected diff">
+                        <TextBlock FontSize="12" Text="Diff" />
+                    </Button>
+                    <Button
+                        MinWidth="64"
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Click="OnHostToggleClicked"
+                        ToolTipService.ToolTip="{Binding HostActionToolTip}">
+                        <TextBlock FontSize="12" Text="{Binding HostActionText}" />
+                    </Button>
+                    <Button
+                        Width="30"
+                        Height="30"
+                        MinWidth="30"
+                        Padding="0"
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        AutomationProperties.Name="Close Git workbench"
+                        Click="OnCloseClicked"
+                        ToolTipService.ToolTip="Close Git workbench">
+                        <FontIcon
+                            FontFamily="{StaticResource SfIconFont}"
+                            FontSize="12"
+                            Glyph="&#xE711;" />
+                    </Button>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <Grid
+            x:Name="ContentGrid"
+            Grid.Row="1"
+            MinHeight="190"
+            ColumnSpacing="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="ChangesColumn" Width="2*" MinWidth="260" />
+                <ColumnDefinition x:Name="DiffDividerColumn" Width="8" />
+                <ColumnDefinition x:Name="DiffPreviewColumn" Width="420" MinWidth="260" MaxWidth="960" />
+            </Grid.ColumnDefinitions>
+
+            <Grid>
+                <ListView
+                    x:Name="ChangesList"
+                    AutomationProperties.Name="Git changes"
+                    ItemsSource="{Binding Changes}"
+                    SelectionChanged="OnChangesSelectionChanged"
+                    SelectionMode="Extended">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0,0,0,2" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid MinHeight="36" Padding="8,5" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="96" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    FontSize="12"
+                                    Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                    Text="{Binding StatusText}"
+                                    TextTrimming="CharacterEllipsis" />
+                                <StackPanel Grid.Column="1" MinWidth="0" Spacing="1">
+                                    <TextBlock
+                                        FontSize="12"
+                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                        Text="{Binding Path}"
+                                        TextTrimming="CharacterEllipsis" />
+                                    <TextBlock
+                                        FontSize="11"
+                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                        Text="{Binding DetailText}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <TextBlock
+                                    Grid.Column="2"
+                                    VerticalAlignment="Center"
+                                    FontSize="11"
+                                    Foreground="{ThemeResource SfTextMutedBrush}"
+                                    Text="{Binding StageText}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+                <TextBlock
+                    Margin="8"
+                    VerticalAlignment="Top"
+                    FontSize="12"
+                    Foreground="{ThemeResource SfTextMutedBrush}"
+                    Text="No changed files"
+                    Visibility="{Binding ChangesEmptyVisibility}" />
+            </Grid>
+
+            <local:PaneResizeGrip
+                x:Name="DiffDivider"
+                Grid.Column="1"
+                AutomationProperties.Name="Resize Git diff preview"
+                DoubleTapped="OnDiffDividerDoubleTapped"
+                PointerMoved="OnDiffDividerMoved"
+                PointerPressed="OnDiffDividerPressed"
+                PointerReleased="OnDiffDividerReleased">
+                <Rectangle
+                    Width="1"
+                    HorizontalAlignment="Center"
+                    Fill="{ThemeResource SfBorderBrush}" />
+            </local:PaneResizeGrip>
+
+            <Border
+                Grid.Column="2"
+                Padding="10"
+                Background="{ThemeResource SfBgPrimaryBrush}"
+                BorderBrush="{ThemeResource SfBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="6">
+                <Grid RowSpacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock
+                        FontSize="12"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                        Text="{Binding DiffTitle}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBox
+                        Grid.Row="1"
+                        AcceptsReturn="True"
+                        BorderThickness="0"
+                        FontFamily="Consolas"
+                        FontSize="12"
+                        IsReadOnly="True"
+                        ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                        ScrollViewer.VerticalScrollBarVisibility="Auto"
+                        Text="{Binding DiffText, Mode=OneWay}"
+                        TextWrapping="NoWrap" />
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

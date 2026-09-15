@@ -8,9 +8,9 @@
 | **Status** | Historical design (Svelte/Tauri UI retired 2026-08-15) |
 | **Source tree** | `R:\Repos\SimpleFile-Windows` |
 | **Contract source** | [`docs/winui-migration/inventory.md`](inventory.md) |
-| **Current product** | SumaFile 1.0.0 (`com.simplefile.desktop`) |
+| **Current product** | SumaFile 1.0.1 (`com.simplefile.desktop`) |
 
-This is a historical design document from before the Svelte/Tauri UI was retired. The 74-command / 5-event inventory remains the behavioral contract.
+This is a historical design document from before the Svelte/Tauri UI was retired. The original 74-command / 5-event inventory remains migration context; the current parity gate is authoritative for the live service command count.
 
 ---
 
@@ -18,7 +18,7 @@ This is a historical design document from before the Svelte/Tauri UI was retired
 
 The retired SimpleFile Tauri 2 process was a Svelte 5 WebView talking to a Rust backend through `invoke`, `listen`, and one `Channel` (`list_directory`). `src-tauri/src/lib.rs` registered 74 `#[tauri::command]` handlers, three plugins (`dialog`, `opener`, `updater`), SQLite `DbState`, and shared `AppState`. Settings and workspace state lived in WebView `localStorage`; tags lived in `{app_data_dir}/metadata.db`; smart folders lived in `{app_data_dir}/smart_folders.json`.
 
-The migration keeps that Rust domain as a sibling IPC service and replaces only the renderer and Tauri host glue with a native C# WinUI 3 UI process. The chosen transport is **Windows named pipes + JSON-RPC 2.0** (length-prefixed frames). One UI process owns exactly one service process, connected on a per-session / per-PID pipe so two SumaFile instances never collide. Svelte/Tauri remain buildable and shippable until an explicit retirement PR after parity gates pass.
+The migration kept that Rust domain as a sibling IPC service and replaced the renderer and Tauri host glue with a native C# WinUI 3 UI process. The chosen transport is **Windows named pipes + JSON-RPC 2.0** (length-prefixed frames). One UI process owns exactly one service process, connected on a per-session / per-PID pipe so two SumaFile instances never collide. The Svelte/Tauri host and frontend were retired after the parity gates passed.
 
 ---
 
@@ -57,7 +57,7 @@ The Svelte/Tauri stack stays until retirement so existing 1.1.0 users, CI, and u
 - Keep `{app_data_dir}/metadata.db`, `{app_data_dir}/smart_folders.json`, and `%LOCALAPPDATA%\SumaFile\startup.log` on their current paths.
 - Migrate WebView `localStorage` keys listed in the inventory into WinUI-owned files without dropping workspace tabs, bookmarks, or color labels.
 - Dual-host during migration: Tauri remains the shipped UI until staged gates say otherwise.
-- Replace `check-api-parity.mjs` / `check-tauri-invokes.mjs` with an IPC contract parity check that still covers the 74 handlers.
+- Replace `check-api-parity.mjs` / `check-tauri-invokes.mjs` with an IPC contract parity check that covers the 86 service domain methods.
 
 ### Non-Goals
 
@@ -120,7 +120,7 @@ Two SumaFile windows are two UI processes, each with its own child service and i
 Not a global well-known name.
 
 ```
-\\.\pipe\SimpleFile.{sessionId}.{uiPid}
+\\.\pipe\SumaFile.{sessionId}.{uiPid}
 ```
 
 - `sessionId` = Windows session id of the UI process (`ProcessIdToSessionId`).
@@ -129,7 +129,7 @@ Not a global well-known name.
 CLI (service):
 
 ```text
-simplefile-service.exe --pipe-name SimpleFile.{sessionId}.{uiPid} --parent-pid <uiPid>
+simplefile-service.exe --pipe-name SumaFile.{sessionId}.{uiPid} --parent-pid <uiPid>
 ```
 
 The UI creates the pipe name **before** spawn. The service creates the pipe; the UI connects as client.
@@ -168,7 +168,7 @@ sequenceDiagram
   Svc->>Svc: GetNamedPipeClientProcessId == parent-pid
   UI->>Svc: ipc.handshake {protocolVersion:1, authToken via inherited pipe}
   Svc-->>UI: {protocolVersion:1, appVersion, identifier}
-  UI->>Svc: get_app_version / get_home_dir / list_drives
+  UI->>Svc: get_app_version / get_home_dir / list_drives(mode=light)
   UI->>UI: load settings, workspace, bookmarks
   UI->>Svc: load_smart_folders / get_all_tags
 ```
@@ -267,7 +267,7 @@ Do this in **named PRs** so `src-tauri` keeps shipping and Gate 3 is not claimed
 
 **`Host` must live in `simplefile-core` before PRs 5–6.** Parking the trait in `src-tauri` would force a circular `simplefile-core` → `src-tauri` dependency the moment `dir_list` / `archive` / `rar_installer` / `progress` / `search` / `watcher` / `cleanup` move. PR 3 creates the crate and the trait; `src-tauri` implements `TauriHost` only.
 
-**Gate 3 is not done** until steps E-I have removed `Channel`, `AppHandle`, `tauri::State`, and plugin traits from domain modules, and PR 10's contract tests exercise all 76 methods against core. Do not skip to the service while those modules are still `mod` (private) inside `src-tauri`.
+**Gate 3 is not done** until steps E-I have removed `Channel`, `AppHandle`, `tauri::State`, and plugin traits from domain modules, and PR 10's contract tests exercise all 79 methods against core. Do not skip to the service while those modules are still `mod` (private) inside `src-tauri`.
 
 Modules and their Tauri coupling (from inventory §6, verified):
 
@@ -330,7 +330,7 @@ src-winui\
 | Project | TFM | References | Responsibility |
 | --- | --- | --- | --- |
 | `SimpleFile.App` | `net10.0-windows10.0.19041.0` | Core, Ipc, Windows App SDK | Window (1200x800, min 800x600, centered, title `SimpleFile - File Explorer`), XAML shells, `FolderPicker`, drag-drop, process/job lifetime, Activate |
-| `SimpleFile.Ipc` | `net10.0-windows` | none of WinUI | Named-pipe client, framing, 76 methods, event multicast, error mapping |
+| `SimpleFile.Ipc` | `net10.0-windows` | none of WinUI | Named-pipe client, framing, 79 methods, event multicast, error mapping |
 | `SimpleFile.Core` | `net10.0-windows` | Ipc | Port of `frontend/src/lib/app/*`, `appState.ts`, transfer/search/navigation workflows |
 | `SimpleFile.Tests` | `net10.0-windows` | Core, Ipc | **Required.** Serialization parity, client framing, workflow unit tests. `dotnet test` is part of `check:winui`. |
 
@@ -496,9 +496,9 @@ Result:
 ```json
 {
   "protocolVersion": 1,
-  "appVersion": "1.0.0",
+  "appVersion": "1.0.1",
   "identifier": "com.simplefile.desktop",
-  "methodCount": 76
+  "methodCount": 79
 }
 ```
 
@@ -511,11 +511,11 @@ Rules:
 
 ### Method names
 
-The 74 Tauri command names, verbatim, from `tauri::generate_handler!` in `src-tauri/src/lib.rs` / `TauriCommandMap` in `frontend/src/lib/types.ts`:
+The v1 WinUI service method names are frozen in `ipc/schema/v1/commands.json`:
 
-`get_home_dir`, `select_directory`, `list_drives`, `list_directory`, `create_directory`, `create_file`, `delete_entry`, `move_to_trash`, `rename_entry`, `batch_rename`, `copy_entry`, `move_entry`, `copy_entry_resolved`, `move_entry_resolved`, `get_entry_info`, `watch_directory`, `unwatch_directory`, `copy_with_progress`, `move_with_progress`, `cancel_operation`, `open_file`, `open_external_url`, `reveal_in_folder`, `list_subdirectories`, `calculate_folder_size`, `count_folder_items`, `cancel_folder_size`, `cancel_folder_item_count`, `cancel_count_items`, `read_file_preview`, `generate_thumbnail`, `generate_thumbnails`, `search_files`, `cancel_search`, `get_git_status`, `get_git_file_statuses`, `git_pull`, `git_push`, `list_archive`, `extract_archive`, `create_archive`, `open_terminal`, `open_powershell_admin`, `compute_checksum`, `check_rar_installed`, `prepare_rar_install`, `discard_rar_install`, `install_rar`, `get_app_version`, `get_app_about_info`, `check_for_update`, `install_update`, `open_file_with`, `compare_files`, `disk_cleanup`, `cancel_disk_cleanup`, `duplicate_check`, `cancel_duplicate_check`, `get_image_metadata`, `get_file_metadata`, `show_main_window`, `load_smart_folders`, `save_smart_folder`, `delete_smart_folder`, `get_db_setting`, `set_db_setting`, `get_all_tags`, `create_tag`, `update_tag`, `delete_tag`, `get_tags_for_path`, `set_tags_for_path`, `get_files_with_tag`, `get_all_file_tags`.
+`get_home_dir`, `select_directory`, `list_drives`, `list_directory`, `create_directory`, `create_file`, `delete_entry`, `move_to_trash`, `rename_entry`, `batch_rename`, `copy_entry`, `move_entry`, `copy_entry_resolved`, `move_entry_resolved`, `get_entry_info`, `watch_directory`, `unwatch_directory`, `copy_with_progress`, `move_with_progress`, `cancel_operation`, `open_file`, `open_external_url`, `reveal_in_folder`, `list_subdirectories`, `calculate_folder_size`, `count_folder_items`, `cancel_folder_size`, `cancel_folder_item_count`, `cancel_count_items`, `read_file_preview`, `generate_thumbnail`, `generate_thumbnails`, `search_files`, `cancel_search`, `get_git_status`, `get_git_repository_status`, `get_git_file_statuses`, `git_stage_paths`, `git_unstage_paths`, `git_discard_paths`, `git_diff_path`, `git_commit`, `git_fetch`, `git_pull`, `git_push`, `list_archive`, `extract_archive`, `create_archive`, `open_terminal`, `open_powershell_admin`, `compute_checksum`, `check_rar_installed`, `prepare_rar_install`, `discard_rar_install`, `install_rar`, `get_app_version`, `get_app_about_info`, `check_for_update`, `install_update`, `open_file_with`, `compare_files`, `disk_cleanup`, `cancel_disk_cleanup`, `duplicate_check`, `cancel_duplicate_check`, `get_image_metadata`, `get_file_metadata`, `show_main_window`, `load_smart_folders`, `save_smart_folder`, `delete_smart_folder`, `get_db_setting`, `get_db_settings`, `set_db_setting`, `get_all_tags`, `create_tag`, `update_tag`, `delete_tag`, `get_tags_for_path`, `set_tags_for_path`, `get_files_with_tag`, `get_all_file_tags`.
 
-Keep unused-but-typed commands (`get_db_setting`, `set_db_setting`, `get_git_status`, `cancel_count_items`, `show_main_window`). Do not drop them in the service.
+Compatibility-only or host-owned wrappers (`copy_entry`, `move_entry`, `get_git_status`, `cancel_count_items`, `show_main_window`) are marked in `commands.json`. Do not add new live App/Core callers for those wrappers.
 
 ### Argument naming
 
@@ -523,7 +523,7 @@ Tauri remaps **top-level command args only**. Nested structs in `frontend/src/li
 
 **Rule:**
 
-1. **Top-level param keys** follow the camelCase `TauriCommandMap` args (`defaultPath`, `newName`, `conflictAction`, `operationId`, `maxSize`, `archivePath`, `sizeThreshold`, `minSize`, `partialHashBytes`, `pathA`, `pathB`, `tagIds`, `searchId`, `confirmationToken`).
+1. **Top-level param keys** follow the camelCase `TauriCommandMap` args (`defaultPath`, `newName`, `conflictAction`, `operationId`, `maxSize`, `archivePath`, `sizeThreshold`, `minSize`, `partialHashBytes`, `maxDepth`, `excludePatterns`, `networkMode`, `pathA`, `pathB`, `tagIds`, `searchId`, `confirmationToken`).
 2. **Nested structs and all results** use the exact field names in `types.ts` / `models.rs` (snake_case): `RenameRequest.new_name`, `SearchOptions.search_path` / `case_sensitive` / `include_hidden` / `file_types` / `max_results` / `max_depth` / `search_id` / `content_search` / `min_size` / `max_size` / `date_after` / `date_before`, `SmartFolder.search_options`, `RarInstallPlan.confirmation_token`, `FileEntry.is_dir`, `ProgressUpdate.operation_id`.
 3. **Frontend-only extras are not on the wire.** `FileEntry.itemCount` in `types.ts` is UI-computed. The service must not require it; C# must treat it as optional and never send it as a command field.
 
@@ -539,7 +539,7 @@ Tauri remaps **top-level command args only**. Nested structs in `frontend/src/li
 | `read_file_preview` | `{ path, maxSize? }` | result `file_type`, `mime_type` |
 | `extract_archive` | `{ archivePath, destination }` | — |
 | `disk_cleanup` | `{ directory, sizeThreshold? }` | — |
-| `duplicate_check` | `{ directory, minSize?, partialHashBytes? }` | — |
+| `duplicate_check` | `{ directory, minSize?, partialHashBytes?, maxDepth?, excludePatterns?, networkMode?, operationId? }` | — |
 | `compare_files` | `{ pathA, pathB }` | — |
 | `set_tags_for_path` | `{ path, tagIds }` | — |
 | `cancel_search` | `{ searchId }` | — |
@@ -571,7 +571,7 @@ C# DTOs use `[JsonPropertyName]` per field. Do not set a global `PropertyNamingP
 
 1. **Behavioral contract:** [`docs/winui-migration/inventory.md`](inventory.md) plus `frontend/src/lib/types.ts` `TauriCommandMap` / `TauriEventMap`.
 2. **Serde models:** `src-tauri/src/models.rs` (later `simplefile-core`).
-3. **Handler table:** `src-tauri/src/lib.rs` `generate_handler!` until retirement; service registry must be a superset (74 + `ipc.handshake`).
+3. **Handler table:** `simplefile-service` dispatch plus generated method metadata; service registry must match the 79 domain methods plus `ipc.handshake`.
 
 ### C# DTOs
 
@@ -585,9 +585,9 @@ New script, e.g. `scripts/check-ipc-parity.mjs` (and a C# test), must assert:
 
 | Check | Sources |
 | --- | --- |
-| 74 handler names ⊆ service registry | `lib.rs` `generate_handler!` vs `simplefile-service` method table vs `SimpleFile.Ipc` client |
-| 74 names ⊆ `TauriCommandMap` while Svelte remains | `frontend/src/lib/types.ts` |
-| 74 names ⊆ `api.ts` wrappers while Svelte remains | `frontend/src/lib/api.ts` |
+| 79 domain method names subset of service registry | `commands.json` vs `simplefile-service` method table vs `SimpleFile.Ipc` client |
+| Compatibility-only wrappers have no live App/Core callers | `commands.json` `compatOnly` markers vs WinUI source scan |
+| Host-owned methods stay labeled | `commands.json` `hostOwned` markers |
 | Event names | emit sites vs C# event map vs `TauriEventMap` |
 | DTO field names | `models.rs` struct fields vs C# `[JsonPropertyName]` |
 | Top-level camelCase vs nested snake_case | `TauriCommandMap` args vs `SearchOptions` / `RenameRequest` / `SmartFolder` |
@@ -606,7 +606,7 @@ Check in JSON samples produced by Rust serde for: `FileEntry` (without `itemCoun
 
 ### Protocol versioning
 
-`ipc.handshake.protocolVersion = 1`. Additive optional fields are allowed. Renames or meaning changes require a version bump and a dual-stack compatibility decision. The 74 method names are frozen for v1.
+`ipc.handshake.protocolVersion = 1`. Additive optional fields are allowed. Renames or meaning changes require a version bump and a dual-stack compatibility decision. The 79 domain method names are frozen for v1.
 
 ---
 
@@ -621,7 +621,7 @@ Check in JSON samples produced by Rust serde for: `FileEntry` (without `itemCoun
 5. Service accepts only if `GetNamedPipeClientProcessId == --parent-pid`.
 6. `ipc.handshake` with the inherited-pipe token.
 7. `get_app_version` (contract) and compare to the UI file version (warn, do not refuse, if they drift during dev).
-8. Existing bootstrap: load WinUI settings/workspace/bookmarks/recents; `get_home_dir`; `list_drives`; `load_smart_folders`; `get_all_tags`; apply `startLocation` (`home` / `last` / `custom`); `list_directory` on the start path; `watch_directory`.
+8. Existing bootstrap: load WinUI settings/workspace/bookmarks/recents with `get_db_settings`; use cached `get_home_dir` and light `list_drives`; `load_smart_folders`; `get_all_tags`; apply `startLocation` (`home` / `last` / `custom`); `list_directory` on the start path; `watch_directory`.
 
 ### Service crash
 
@@ -700,7 +700,7 @@ Until PR 19 lands a real minisign client, `check_for_update` and `install_update
 | Method (notification name) | Payload | Source today |
 | --- | --- | --- |
 | `file-change` | `FileChangeEvent { path, kind }` | `watcher.rs` — kinds `create`, `modify`, `remove`, `rename`; 500 ms per-path debounce; ignore `tmp`/`part`/`crdownload`, `desktop.ini`, `thumbs.db`, `.ds_store`; non-recursive |
-| `operation-progress` | `ProgressUpdate` | `progress.rs` (copy/move); `cleanup.rs` with `operation_type: "cleanup"` and id `disk_cleanup`; duplicate check `"duplicate-check"` / id `duplicate_check` |
+| `operation-progress` | `ProgressUpdate` | `progress.rs` (copy/move); cleanup and duplicate scans emit generated operation ids with `operation_type: "cleanup"` / `"duplicate-check"` |
 | `search-results-batch` | `SearchResult[]` | `search.rs` — batch 32 or 80 ms; BFS; final set is the `search_files` result |
 | `search-complete` | `number` (result count) | `search.rs` — emitted even though Svelte mostly ignores the wrapper |
 | `update-chunk` | `[bytesDownloaded, totalBytes \| null]` | `updater.rs` |
@@ -770,9 +770,9 @@ Keep the **existing cancel commands**. Do not add JSON-RPC `$/cancel` unless tho
 | `cancel_search` | `{ searchId }` | `SEARCH_CANCEL_FLAGS` | Sets flag; `search_files` returns **partial results**, not an error. |
 | `cancel_folder_size` | none | `folder_size_cancel` + generation | Navigation abort |
 | `cancel_folder_item_count` | none | `folder_item_count_cancel` + generation | Passive list counts |
-| `cancel_count_items` | none | `item_count_cancel` | Wrapper exists; no live Svelte caller; keep |
-| `cancel_disk_cleanup` | none | `disk_cleanup_cancel` | |
-| `cancel_duplicate_check` | none | `duplicate_check_cancel` | |
+| `cancel_count_items` | none | `item_count_cancel` | `compatOnly`; use `cancel_folder_item_count` |
+| `cancel_disk_cleanup` | `{ operationId? }` | cleanup operation registry | Cancels the matching cleanup scan; omitted id cancels active cleanup scans. |
+| `cancel_duplicate_check` | `{ operationId? }` | duplicate-check operation registry | Cancels the matching duplicate scan; omitted id cancels active duplicate scans. |
 
 `AppState` generation tokens (`folder_size_generation`, etc. in `state.rs`) stay inside the service. The UI does not see them.
 
@@ -1010,11 +1010,11 @@ Portable zip after WinUI default: zip filename is `SumaFile_*_x64-winui-portable
 
 ### Checks / scripts (inventory §9)
 
-Keep while Svelte/Tauri remain: `check`, `check:frontend`, `check:js`, `check:invokes`, `check:tauri-surface`, `check:updater`, `check:workflows`, `check:provider-surface`, `check:windows-assets`, `check:rust`, `check:security`, `check:release`, all `frontend/package.json` stage checks.
+Retired with Svelte/Tauri: `check:frontend`, `check:js`, `check:invokes`, `check:tauri-surface`, and all `frontend/package.json` stage checks.
 
-Add, do not replace yet:
+Current WinUI-era checks:
 
-- `check:ipc-parity` — 74 names + DTO fields + events.
+- `check:ipc-parity` - 79 domain commands + DTO fields + events.
 - `check:winui` — `dotnet test` + UI-layer boundary.
 - `check:rust` expands to the workspace (`simplefile-core`, `simplefile-ipc`, `simplefile-service`) with the same `fmt` / `test` / `clippy -D warnings`.
 
@@ -1030,7 +1030,7 @@ Gates are explicit. No gate implies code deletion.
 | --- | --- | --- | --- |
 | 1 | Inventory | Tauri | [`inventory.md`](inventory.md) exists and lists 74 commands, events, workflows, paths, checks. **Done.** |
 | 2 | Architecture | Tauri | This document reviewed; Key Decisions accepted. **This step.** |
-| 3 | IPC service + contract tests | Tauri | PRs 1–10: core extract finished (no Tauri types in domain modules), `simplefile-service` implements 76 methods + 5 events + `list_directory.chunk`. Updater commands return the unconfigured stub string. Golden JSON + parity script green. `src-tauri` still ships. Svelte still the UI. |
+| 3 | IPC service + contract tests | Tauri | PRs 1-10: core extract finished (no Tauri types in domain modules), `simplefile-service` implements 79 methods + 5 events + `list_directory.chunk`. Updater commands return the unconfigured stub string. Golden JSON + parity script green. `src-tauri` still ships. Svelte still the UI. |
 | 4 | WinUI shell lists/navigates | Tauri | `SimpleFile.App` starts the service, handshakes, `list_directory` + chunks, tree, drives, breadcrumbs. Svelte remains default. |
 | 5 | Feature parity | Tauri | Rewrite of frontend stage checks against WinUI/Core: dual-pane + tabs + watcher (`stage11`), transfer safety (`stage10`), search + smart folders (`stage7`), inspection (`stage8`), organization/cleanup (`stage9`), overlays/menus (`stage5`), settings/tools (`stage4`, About shows updater stub), huge-folder + marquee + fast listing, markdown/HTML sanitizer replacements. Manual pass of keyboard map and Escape order. Real `latest-winui.json` client is **not** required to exit Gate 5. |
 | 6 | WinUI default package | **WinUI** | NSIS/MSI/portable produce WinUI as the installed UI. `latest.json` points at the Tauri-compatible stub artifact (launches WinUI NSIS, removes Tauri exe). `latest-winui.json` serves already-on-WinUI clients. Tauri still `cargo tauri build`able. C# version matches Cargo. |
@@ -1243,7 +1243,7 @@ Ordered. Each PR is independently reviewable. None of these is this design-only 
 | 7 | `refactor: move preview + opener-free shell open into core` | `simplefile-core`, `ShellExecuteW` | PR 6 | No `tauri-plugin-opener` in core. |
 | 8 | `refactor: move db/tags/smart_folders into core` | `simplefile-core`, `Host::app_data_dir()` | PR 4 | Same `%APPDATA%\com.simplefile.desktop` paths. |
 | 9 | `refactor: move remaining domain modules into core` | `drives`, `git`, `terminal`, `checksum`, `compare`, `metadata`, `open_with` | PRs 6–8 | Updater **logic** not extracted yet. Domain modules have no Tauri types after this PR. |
-| 10 | `feat: simplefile-service named-pipe JSON-RPC` | `crates/simplefile-service/**`, panic logger, `init_db`, PID check | PRs 2, 5-9 | Implements 76 methods + notifications. `select_directory` -> `-32001` `HOST_OWNED: select_directory`. `show_main_window` no-op. `check_for_update` / `install_update` -> `Err("App updates are not configured for this build.")`. Parent-pid watcher + client-PID check. Contract tests vs goldens. Tauri still ships. **Gate 3 exit.** |
+| 10 | `feat: simplefile-service named-pipe JSON-RPC` | `crates/simplefile-service/**`, panic logger, `init_db`, PID check | PRs 2, 5-9 | Implements 79 methods + notifications. `select_directory` -> `-32001` `HOST_OWNED: select_directory`. `show_main_window` no-op. `check_for_update` / `install_update` -> `Err("App updates are not configured for this build.")`. Parent-pid watcher + client-PID check. Contract tests vs goldens. Tauri still ships. **Gate 3 exit.** |
 | 11 | `feat: src-winui SimpleFile.Ipc + Tests` | `src-winui/SimpleFile.Ipc/**`, `SimpleFile.Tests/**` | PR 10 | Required test project. C# client, mixed-case DTOs, framing, error mapping, `ListDirectoryAsync`. `dotnet test` in CI. |
 | 12 | `feat: WinUI shell can list and navigate` | `src-winui/SimpleFile.App/**`, `SimpleFile.Core` (nav subset) | PR 11 | Window chrome, job object spawn, inherited-pipe token, handshake, drives, `list_directory` chunks, breadcrumbs, tree. Svelte remains default. **Gate 4 exit.** |
 | 13 | `feat: persist UI settings + ui-export.json + LevelDB importer` | `SimpleFile.Core` persistence, Tauri dump helper, LevelDB fixture | PR 12 | Inventory localStorage keys. Do not move `metadata.db`. Dual-stack dump for testers; Gate 6 installer will reuse the helper. |
@@ -1264,11 +1264,11 @@ PRs 14–18 may be split further to match review bandwidth, but they cannot skip
 ## Key Decisions
 
 1. **Transport is named pipes + JSON-RPC 2.0** with 4-byte LE length-prefix and an **80 MiB** frame cap (covers `read_file_preview` image `max_size*5` base64; 32 MiB is not enough). Inbound oversize prefix tears the pipe down. Outbound unbounded arrays (`list_directory` final result, etc.) return `-32000` `RESULT_TOO_LARGE` and **keep the connection**. Inspection found no existing non-Tauri protocol; this is the recommended default and the chosen design.
-2. **One UI process owns one service process.** Pipe name is `\\.\pipe\SimpleFile.{sessionId}.{uiPid}`. Same-user auth is `GetNamedPipeClientProcessId == --parent-pid` plus an inherited-pipe token (not argv). `PIPE_REJECT_REMOTE_CLIENTS` + user-only DACL. Not a global well-known pipe.
+2. **One UI process owns one service process.** Pipe name is `\\.\pipe\SumaFile.{sessionId}.{uiPid}`. Same-user auth is `GetNamedPipeClientProcessId == --parent-pid` plus an inherited-pipe token (not argv). `PIPE_REJECT_REMOTE_CLIENTS` + user-only DACL. Not a global well-known pipe.
 3. **UI is the parent.** Job object `KILL_ON_JOB_CLOSE` plus parent-pid poll. Service `main` runs panic hook, `AppState`, and `init_db` before accept. A respawn is a new process (empty cancels/watchers/RAR tokens).
-4. **Keep `src-tauri` and `frontend/` until gate 7.** Dual-host: PR 3 creates `simplefile-core` with **`Host` + `AppAboutInfo`**; only `TauriHost` stays in `src-tauri`. PRs 4–9 move domain modules into that crate **before** the service (PR 10). PRs 5–6 must not leave `Host` in `src-tauri` while moving `AppHandle` / emit users. Gate 3 is not done while domain modules still use Tauri types.
+4. **`src-tauri` and `frontend/` are retired.** Dual-host migration kept `simplefile-core` as the reusable Rust domain crate, then removed the old host and renderer after parity gates passed.
 5. **C# split:** `SimpleFile.App` (WinUI), `SimpleFile.Ipc` (client), `SimpleFile.Core` (workflows), **required** `SimpleFile.Tests`. Unpackaged WinUI 3, WASDK self-contained, TFM **`net10.0-windows10.0.19041.0`**, min OS Windows 10 2004. Keep multi-instance (no mutex). Hand-sync DTOs + parity script (no typeshare). Cargo package version is canonical; MSBuild reads it.
-6. **Methods are the 76 existing command names.** Top-level params stay camelCase (`TauriCommandMap`); nested structs and results stay snake_case (`models.rs` / `types.ts`). `FileEntry.itemCount` is not on the wire.
+6. **Methods are the 79 existing command names.** Top-level params stay camelCase (`TauriCommandMap`); nested structs and results stay snake_case (`models.rs` / `types.ts`). `FileEntry.itemCount` is not on the wire.
 7. **`list_directory` Channel becomes notification `list_directory.chunk`** with `requestId`, same 96/256 sizes, `done: true` on the last (possibly non-empty) chunk, plus the existing full `DirectoryListing` result when it fits. If that result would exceed 80 MiB, return `RESULT_TOO_LARGE` and let Core concat+sort chunks; do not disconnect.
 8. **Cancellation stays named commands** (`cancel_operation`, `cancel_search`, folder-size/count/cleanup/duplicate cancels). No generic JSON-RPC cancel. `CancellationToken` only abandons the client await; no per-RPC idle timeout.
 9. **`Err(String)` maps to JSON-RPC `-32000` with the identical message**, including `CONFLICT:` and `TRASH_UNAVAILABLE:`. Live transfers probe + `conflictAction`; `CONFLICT:` is the residual backend error.

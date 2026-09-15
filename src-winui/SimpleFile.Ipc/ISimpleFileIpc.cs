@@ -30,6 +30,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<string> GetHomeDirAsync(CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<DriveInfo>> ListDrivesAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default);
 
     Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default);
 
@@ -38,10 +39,19 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task ShutdownAsync(CancellationToken cancellationToken = default);
 
     Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default);
+    Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default);
     Task SetDbSettingAsync(string key, string value, CancellationToken ct = default);
 
     Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default);
     Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default);
+    Task<string> CreateShortcutAsync(
+        string path,
+        string name,
+        string targetPath,
+        string? arguments = null,
+        string? workingDirectory = null,
+        string? iconPath = null,
+        CancellationToken ct = default);
     Task DeleteEntryAsync(string path, CancellationToken ct = default);
     Task<string[]> MoveToTrashAsync(string[] paths, CancellationToken ct = default);
     Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken ct = default);
@@ -57,10 +67,11 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task RevealInFolderAsync(string path, CancellationToken ct = default);
     Task OpenExternalUrlAsync(string url, CancellationToken ct = default);
     Task<ArchiveInfo> ListArchiveAsync(string path, CancellationToken ct = default);
+    Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default);
     Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default);
     Task CreateArchiveAsync(string[] paths, string archivePath, string format, CancellationToken ct = default);
     Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default);
-    Task<string> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default);
+    Task<byte[]> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default);
     Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default);
     Task OpenFileWithAsync(string path, string application, CancellationToken ct = default);
     Task<FileComparison> CompareFilesAsync(string pathA, string pathB, CancellationToken ct = default);
@@ -68,6 +79,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<ImageMetadata> GetImageMetadataAsync(string path, CancellationToken ct = default);
     Task<FileMetadata> GetFileMetadataAsync(string path, CancellationToken ct = default);
     Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default);
+    Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default);
     Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default);
     Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default);
     Task<TransferResult[]> CopyWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default);
@@ -80,14 +92,11 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task CancelFolderSizeAsync(CancellationToken ct = default);
     Task CancelFolderItemCountAsync(CancellationToken ct = default);
     Task CancelCountItemsAsync(CancellationToken ct = default);
-    Task<bool> CheckRarInstalledAsync(CancellationToken ct = default);
-    Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default);
-    Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default);
-    Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default);
+    Task CancelFolderMetricsAsync(CancellationToken ct = default);
     Task<CleanupResult> DiskCleanupAsync(string directory, ulong? sizeThreshold, string? operationId, CancellationToken ct = default);
-    Task CancelDiskCleanupAsync(CancellationToken ct = default);
-    Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, ulong? minSize, ulong? partialHashBytes, string? operationId, CancellationToken ct = default);
-    Task CancelDuplicateCheckAsync(CancellationToken ct = default);
+    Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default);
+    Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, DuplicateScanOptions? options, string? operationId, CancellationToken ct = default);
+    Task CancelDuplicateCheckAsync(string? operationId = null, CancellationToken ct = default);
     Task<Tag[]> GetAllTagsAsync(CancellationToken ct = default);
     Task<Tag> CreateTagAsync(string name, string color, CancellationToken ct = default);
     Task<Tag> UpdateTagAsync(long id, string name, string color, CancellationToken ct = default);
@@ -105,7 +114,14 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task OpenTerminalAsync(string path, CancellationToken ct = default);
     Task OpenPowershellAdminAsync(string path, CancellationToken ct = default);
     Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default);
+    Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default);
     Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default);
-    Task GitPullAsync(string path, CancellationToken ct = default);
-    Task GitPushAsync(string path, CancellationToken ct = default);
+    Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default);
+    Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default);
+    Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default);
+    Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default);
+    Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default);
+    Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default);
+    Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default);
+    Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default);
 }

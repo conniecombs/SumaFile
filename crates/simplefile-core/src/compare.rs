@@ -1,8 +1,8 @@
-use crate::utils::validate_existing_path_no_resolve;
+use crate::utils::resolve_readable_path;
 use serde::Serialize;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const MAX_COMPARE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_COMPARE_LINES: usize = 2_000;
@@ -122,14 +122,6 @@ pub fn compare_files(path_a: String, path_b: String) -> Result<FileComparison, S
         rows,
         binary_rows: Vec::new(),
     })
-}
-
-fn resolve_readable_path(path: &str) -> Result<PathBuf, String> {
-    if crate::archive::is_archive_virtual_path(path) {
-        return crate::archive::materialize_archive_entry_to_temp(path);
-    }
-
-    validate_existing_path_no_resolve(path)
 }
 
 fn read_compare_input(path: &Path) -> Result<CompareInput, String> {

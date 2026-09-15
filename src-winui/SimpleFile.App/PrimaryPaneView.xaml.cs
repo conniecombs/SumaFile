@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
@@ -11,6 +12,12 @@ public sealed partial class PrimaryPaneView : UserControl
     public PrimaryPaneView()
     {
         InitializeComponent();
+        PrimaryDetailsFileList.Pane = SimpleFile.Core.PaneId.Primary;
+        PrimaryDetailsFileList.SelectionChanged += (_, e) => DetailsSelectionChanged?.Invoke(this, e);
+        PrimaryDetailsFileList.RowInvoked += (_, e) => DetailsRowInvoked?.Invoke(this, e);
+        PrimaryDetailsFileList.RowContextRequested += (_, e) => DetailsRowContextRequested?.Invoke(this, e);
+        PrimaryDetailsFileList.RowsDragStarting += (_, e) => DetailsRowsDragStarting?.Invoke(this, e);
+        PrimaryDetailsFileList.RowsDragCompleted += (_, e) => DetailsRowsDragCompleted?.Invoke(this, e);
     }
 
     public Grid Root => PrimaryPaneRoot;
@@ -25,8 +32,11 @@ public sealed partial class PrimaryPaneView : UserControl
     public StackPanel BreadcrumbHost => PrimaryBreadcrumbHost;
     public TextBox PathInput => PrimaryPathInput;
     public Button EditPathButton => PrimaryEditPathButton;
-    public ScrollViewer ColumnHeaderScroller => PrimaryColumnHeaderScroller;
+    public ScrollBar DetailsHorizontalScrollBar => PrimaryDetailsHorizontalScrollBar;
+    public Grid FileSurface => PrimaryFileSurface;
+    public Grid FileViewport => PrimaryFileViewport;
     public Grid ColumnHeader => PrimaryColumnHeader;
+    public DetailsFileListView DetailsFileList => PrimaryDetailsFileList;
     public ListView FileList => PrimaryFileList;
     public Canvas MarqueeCanvas => PrimaryMarqueeCanvas;
     public Rectangle MarqueeRect => PrimaryMarqueeRect;
@@ -53,6 +63,13 @@ public sealed partial class PrimaryPaneView : UserControl
     public event SelectionChangedEventHandler? FileSelectionChanged;
     public event EventHandler<object>? FileListContextOpening;
     public event EventHandler<ContextRequestedEventArgs>? FileRowContextRequested;
+    public event RangeBaseValueChangedEventHandler? DetailsHorizontalScrollChanged;
+    public event EventHandler<DetailsFileSelectionChangedEventArgs>? DetailsSelectionChanged;
+    public event EventHandler<DetailsFileRowEventArgs>? DetailsRowInvoked;
+    public event EventHandler<DetailsFileRowContextEventArgs>? DetailsRowContextRequested;
+    public event EventHandler<DetailsFileRowsDragStartingEventArgs>? DetailsRowsDragStarting;
+    public event EventHandler? DetailsRowsDragCompleted;
+    public event KeyEventHandler? DetailsFileKeyDown;
 
     private void OnPrimaryPathKeyDown(object sender, KeyRoutedEventArgs e) => PathKeyDown?.Invoke(sender, e);
 
@@ -61,6 +78,12 @@ public sealed partial class PrimaryPaneView : UserControl
     private void OnPrimaryPathTextChanged(object sender, TextChangedEventArgs e) => PathTextChanged?.Invoke(sender, e);
 
     private void OnEditPrimaryPath(object sender, RoutedEventArgs e) => EditPath?.Invoke(sender, e);
+
+    private void OnPrimaryDetailsHorizontalScrollChanged(object sender, RangeBaseValueChangedEventArgs e) =>
+        DetailsHorizontalScrollChanged?.Invoke(sender, e);
+
+    private void OnPrimaryDetailsFileKeyDown(object sender, KeyRoutedEventArgs e) =>
+        DetailsFileKeyDown?.Invoke(sender, e);
 
     private void OnPrimaryMarqueePressed(object sender, PointerRoutedEventArgs e) => MarqueePressed?.Invoke(sender, e);
 

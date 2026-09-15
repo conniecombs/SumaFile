@@ -10,10 +10,10 @@ public static class ToolbarOverflowPlanner
     public const string Filter = "filter";
     public const string Search = "search";
     public const string Settings = "settings";
+    public const string Profiles = "profiles";
     public const string DualPane = "dual-pane";
     public const string ViewOptions = "view-options";
-    public const string NewFile = "new-file";
-    public const string NewFolder = "new-folder";
+    public const string New = "new";
 
     public const double PathMinWidth = 140;
     public const double ColumnSpacing = 8;
@@ -32,11 +32,45 @@ public static class ToolbarOverflowPlanner
         Filter,
         Search,
         Settings,
+        Profiles,
         DualPane,
         ViewOptions,
-        NewFile,
-        NewFolder,
+        New,
     ];
+
+    public static IReadOnlyList<string> PrimaryHideOrderFor(CommandSurfaceLayout layout)
+    {
+        var actionIds = layout.VisiblePrimaryActionIds();
+        if (actionIds.SequenceEqual(CommandSurfaceLayout.DefaultPrimaryActionIds, StringComparer.Ordinal))
+        {
+            return PrimaryHideOrder;
+        }
+
+        return
+        [
+            Filter,
+            Search,
+            .. actionIds.Reverse(),
+        ];
+    }
+
+    public static IReadOnlyDictionary<string, double> PrimaryItemWidthsFor(
+        double availableWidth,
+        CommandSurfaceLayout layout)
+    {
+        var widths = new Dictionary<string, double>(StringComparer.Ordinal)
+        {
+            [Filter] = FilterOverflowWidthFor(availableWidth),
+            [Search] = SearchOverflowWidthFor(availableWidth),
+        };
+
+        foreach (var id in layout.VisiblePrimaryActionIds())
+        {
+            widths[id] = ToolbarActionCatalog.WidthFor(id, layout.ToolbarDisplayMode);
+        }
+
+        return widths;
+    }
 
     public static HashSet<string> OverflowIds(
         double availableWidth,

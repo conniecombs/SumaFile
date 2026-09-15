@@ -1,11 +1,11 @@
 use crate::models::{FileMetadata, ImageMetadata};
-use crate::utils::validate_existing_path_no_resolve;
+use crate::utils::resolve_readable_path;
 use image::GenericImageView;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::tag::{Accessor, ItemKey};
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use zip::ZipArchive;
 
@@ -45,8 +45,14 @@ pub fn get_file_metadata(path: String) -> Result<FileMetadata, String> {
     match classify_extension(&extension) {
         MetadataKind::Image => {
             ensure_size_limit(&path_buf, MAX_IMAGE_METADATA_BYTES, "image")?;
-            let image = extract_image_metadata(&path_buf)?;
-            Ok(file_metadata_from_image(image))
+            match extract_image_metadata(&path_buf) {
+                Ok(image) => Ok(file_metadata_from_image(image)),
+                Err(_) => Ok(format_only_metadata(
+                    "image",
+                    "Image file",
+                    extension.to_ascii_uppercase(),
+                )),
+            }
         }
         MetadataKind::Pdf => {
             ensure_size_limit(&path_buf, MAX_PDF_METADATA_BYTES, "PDF")?;
@@ -71,6 +77,14 @@ pub fn get_file_metadata(path: String) -> Result<FileMetadata, String> {
             ensure_size_limit(&path_buf, MAX_OFFICE_METADATA_BYTES, "Office document")?;
             extract_office_metadata(&path_buf, &extension)
         }
+        MetadataKind::Data => extract_data_metadata(&path_buf, &extension),
+        MetadataKind::Archive => extract_archive_metadata(&path_buf, &extension),
+        MetadataKind::Font => extract_font_metadata(&path_buf, &extension),
+        MetadataKind::Ebook => extract_ebook_metadata(&path_buf, &extension),
+        MetadataKind::Email => extract_email_metadata(&path_buf, &extension),
+        MetadataKind::Calendar => extract_calendar_metadata(&path_buf, &extension),
+        MetadataKind::Contact => extract_contact_metadata(&path_buf, &extension),
+        MetadataKind::Certificate => extract_certificate_metadata(&path_buf, &extension),
         MetadataKind::Unsupported => Ok(FileMetadata {
             kind: "unsupported".to_string(),
             summary: None,
@@ -86,25 +100,49 @@ enum MetadataKind {
     Audio,
     Video,
     Office,
+    Data,
+    Archive,
+    Font,
+    Ebook,
+    Email,
+    Calendar,
+    Contact,
+    Certificate,
     Unsupported,
-}
-
-fn resolve_readable_path(path: &str) -> Result<PathBuf, String> {
-    if crate::archive::is_archive_virtual_path(path) {
-        return crate::archive::materialize_archive_entry_to_temp(path);
-    }
-
-    validate_existing_path_no_resolve(path)
 }
 
 fn classify_extension(extension: &str) -> MetadataKind {
     match extension.to_ascii_lowercase().as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tif" | "tiff" => MetadataKind::Image,
+        "png" | "jpg" | "jpeg" | "jpe" | "jfif" | "gif" | "bmp" | "dib" | "webp" | "tif"
+        | "tiff" | "svg" | "ico" | "cur" | "heic" | "heif" | "avif" | "avifs" | "jxl" | "jp2"
+        | "j2k" | "jpf" | "tga" | "dds" | "exr" | "hdr" | "qoi" | "pnm" | "pbm" | "pgm" | "ppm"
+        | "pam" | "dng" | "arw" | "cr2" | "cr3" | "nef" | "orf" | "rw2" | "raf" | "srw" | "pef"
+        | "x3f" => MetadataKind::Image,
         "pdf" => MetadataKind::Pdf,
         "mp3" | "flac" | "ogg" | "oga" | "opus" | "wav" | "m4a" | "aac" | "aiff" | "aif"
-        | "wma" | "wv" | "ape" => MetadataKind::Audio,
-        "mp4" | "m4v" | "mov" | "webm" | "mkv" | "avi" | "wmv" => MetadataKind::Video,
+        | "wma" | "wv" | "ape" | "alac" | "amr" | "caf" | "mka" | "ra" => MetadataKind::Audio,
+        "mp4" | "m4v" | "mov" | "qt" | "webm" | "mkv" | "mk3d" | "avi" | "divx" | "wmv" | "asf"
+        | "mpg" | "mpeg" | "mpe" | "m2v" | "m2ts" | "mts" | "vob" | "flv" | "f4v" | "3gp"
+        | "3g2" | "ogv" | "mxf" | "rm" | "rmvb" | "h264" | "h265" | "hevc" | "y4m" => {
+            MetadataKind::Video
+        }
         "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" => MetadataKind::Office,
+        "md" | "markdown" | "mdx" | "json" | "jsonc" | "map" | "jsonl" | "ndjson" | "csv"
+        | "tsv" | "xml" | "xaml" | "html" | "htm" | "yaml" | "yml" | "toml" | "ini" | "cfg"
+        | "conf" | "config" | "properties" | "env" | "editorconfig" | "gitignore"
+        | "gitattributes" | "npmrc" | "log" | "srt" | "vtt" | "ass" | "ssa" | "lrc" | "nfo"
+        | "cue" | "m3u" | "m3u8" | "pls" | "diff" | "patch" | "reg" | "lock" | "adoc"
+        | "asciidoc" | "rst" | "tex" => MetadataKind::Data,
+        "zip" | "zipx" | "7z" | "rar" | "tar" | "gz" | "tgz" | "bz2" | "tbz" | "tbz2" | "xz"
+        | "txz" | "zst" | "tzst" | "cab" | "jar" | "apk" | "ipa" | "crx" | "xpi" => {
+            MetadataKind::Archive
+        }
+        "ttf" | "otf" | "woff" | "woff2" | "eot" | "fon" => MetadataKind::Font,
+        "epub" | "mobi" | "azw" | "azw3" | "fb2" => MetadataKind::Ebook,
+        "eml" | "msg" | "pst" | "ost" => MetadataKind::Email,
+        "ics" => MetadataKind::Calendar,
+        "vcf" => MetadataKind::Contact,
+        "cer" | "crt" | "der" | "pem" | "pfx" | "p12" | "csr" | "key" => MetadataKind::Certificate,
         _ => MetadataKind::Unsupported,
     }
 }
@@ -240,6 +278,14 @@ fn file_metadata_from_image(image: ImageMetadata) -> FileMetadata {
         kind: "image".to_string(),
         summary: Some(format!("{} × {}", image.width, image.height)),
         fields,
+    }
+}
+
+fn format_only_metadata(kind: &str, format_label: &str, format_value: String) -> FileMetadata {
+    FileMetadata {
+        kind: kind.to_string(),
+        summary: Some(format_label.to_string()),
+        fields: vec![("Format".to_string(), format_value)],
     }
 }
 
@@ -645,6 +691,465 @@ fn parse_tkhd(buf: &[u8]) -> Option<(u32, u32)> {
     Some((width, height))
 }
 
+fn extract_data_metadata(path: &Path, extension: &str) -> Result<FileMetadata, String> {
+    const MAX_TEXT_METADATA_BYTES: u64 = 2 * 1024 * 1024;
+    let text = read_limited_text(path, MAX_TEXT_METADATA_BYTES)?;
+    let mut fields = vec![(
+        "Format".to_string(),
+        data_format_label(extension).to_string(),
+    )];
+    let mut summary = data_format_label(extension).to_string();
+
+    match extension {
+        "json" | "jsonc" | "map" => {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                summarize_json_value(&mut fields, &mut summary, &value);
+            } else {
+                fields.push(("Parse".to_string(), "Invalid JSON".to_string()));
+            }
+        }
+        "jsonl" | "ndjson" => summarize_json_lines(&mut fields, &mut summary, &text),
+        "csv" => summarize_delimited(&mut fields, &mut summary, &text, ','),
+        "tsv" => summarize_delimited(&mut fields, &mut summary, &text, '\t'),
+        "xml" | "xaml" => {
+            if let Some(root) = xml_root_name(&text) {
+                summary = format!("XML root: {root}");
+                fields.push(("Root".to_string(), root));
+            }
+        }
+        "html" | "htm" => {
+            if let Some(title) = xml_local_text(&text, "title") {
+                summary = title.clone();
+                fields.push(("Title".to_string(), title));
+            }
+        }
+        "md" | "markdown" | "mdx" => summarize_markdown(&mut fields, &mut summary, &text),
+        "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "config" | "properties" | "env" => {
+            summarize_key_value_text(&mut fields, &text, extension)
+        }
+        _ => {}
+    }
+
+    let line_count = text.lines().count();
+    if line_count > 0 {
+        fields.push(("Lines".to_string(), line_count.to_string()));
+    }
+
+    Ok(FileMetadata {
+        kind: "data".to_string(),
+        summary: Some(summary),
+        fields,
+    })
+}
+
+fn summarize_json_value(
+    fields: &mut Vec<(String, String)>,
+    summary: &mut String,
+    value: &serde_json::Value,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            *summary = format!("JSON object with {} keys", map.len());
+            fields.push(("Structure".to_string(), "Object".to_string()));
+            fields.push(("Top-level keys".to_string(), map.len().to_string()));
+            if let Some(keys) = join_limited(map.keys().cloned(), 12) {
+                fields.push(("Keys".to_string(), keys));
+            }
+        }
+        serde_json::Value::Array(items) => {
+            *summary = format!("JSON array with {} items", items.len());
+            fields.push(("Structure".to_string(), "Array".to_string()));
+            fields.push(("Items".to_string(), items.len().to_string()));
+        }
+        _ => {
+            *summary = "JSON value".to_string();
+            fields.push(("Structure".to_string(), "Value".to_string()));
+        }
+    }
+}
+
+fn summarize_json_lines(fields: &mut Vec<(String, String)>, summary: &mut String, text: &str) {
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let valid = lines
+        .iter()
+        .take(500)
+        .filter(|line| serde_json::from_str::<serde_json::Value>(line).is_ok())
+        .count();
+    *summary = format!("JSON Lines with {} records", lines.len());
+    fields.push(("Records".to_string(), lines.len().to_string()));
+    fields.push(("Valid sample records".to_string(), valid.to_string()));
+}
+
+fn summarize_delimited(
+    fields: &mut Vec<(String, String)>,
+    summary: &mut String,
+    text: &str,
+    delimiter: char,
+) {
+    let rows: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let headers = rows
+        .first()
+        .map(|line| split_delimited_line(line, delimiter))
+        .unwrap_or_default();
+    let column_count = headers.len();
+    *summary = if column_count > 0 {
+        format!("{} rows x {} columns", rows.len(), column_count)
+    } else {
+        format!("{} rows", rows.len())
+    };
+    fields.push(("Rows".to_string(), rows.len().to_string()));
+    if column_count > 0 {
+        fields.push(("Columns".to_string(), column_count.to_string()));
+        if let Some(header_text) = join_limited(headers, 10) {
+            fields.push(("Headers".to_string(), header_text));
+        }
+    }
+}
+
+fn summarize_markdown(fields: &mut Vec<(String, String)>, summary: &mut String, text: &str) {
+    let heading = text
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("# ").map(str::trim))
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    if let Some(heading) = heading {
+        *summary = heading.clone();
+        fields.push(("Title".to_string(), heading));
+    } else {
+        *summary = "Markdown document".to_string();
+    }
+
+    let headings = text
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with('#') && trimmed.chars().take_while(|ch| *ch == '#').count() <= 6
+        })
+        .count();
+    let words = text.split_whitespace().count();
+    fields.push(("Headings".to_string(), headings.to_string()));
+    fields.push(("Words".to_string(), words.to_string()));
+    fields.push(("Links".to_string(), text.matches("](").count().to_string()));
+}
+
+fn summarize_key_value_text(fields: &mut Vec<(String, String)>, text: &str, extension: &str) {
+    let separator = if extension == "toml" { '=' } else { ':' };
+    let keys = top_level_keys(text, separator);
+    if !keys.is_empty() {
+        fields.push(("Top-level keys".to_string(), keys.len().to_string()));
+        if let Some(key_text) = join_limited(keys, 12) {
+            fields.push(("Keys".to_string(), key_text));
+        }
+    }
+}
+
+fn extract_archive_metadata(path: &Path, extension: &str) -> Result<FileMetadata, String> {
+    match extension {
+        "zip" | "zipx" | "jar" | "apk" | "ipa" | "crx" | "xpi" => {
+            extract_zip_archive_metadata(path, archive_format_label(extension))
+        }
+        "tar" => {
+            let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
+            extract_tar_archive_metadata(file, archive_format_label(extension))
+        }
+        "tgz" => {
+            let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
+            let decoder = flate2::read::GzDecoder::new(file);
+            extract_tar_archive_metadata(decoder, "Compressed tar archive")
+        }
+        _ => Ok(format_only_metadata(
+            "archive",
+            archive_format_label(extension),
+            extension.to_ascii_uppercase(),
+        )),
+    }
+}
+
+fn extract_zip_archive_metadata(path: &Path, format_label: &str) -> Result<FileMetadata, String> {
+    const MAX_ARCHIVE_ENTRIES: usize = 2_000;
+    let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| format!("Failed to read archive: {e}"))?;
+    let mut files = 0usize;
+    let mut directories = 0usize;
+    let mut uncompressed = 0u64;
+    let mut compressed = 0u64;
+    let mut names = Vec::new();
+    for index in 0..archive.len().min(MAX_ARCHIVE_ENTRIES) {
+        if let Ok(file) = archive.by_index(index) {
+            if file.is_dir() {
+                directories += 1;
+            } else {
+                files += 1;
+            }
+
+            uncompressed = uncompressed.saturating_add(file.size());
+            compressed = compressed.saturating_add(file.compressed_size());
+            if names.len() < 8 {
+                names.push(file.name().replace('\\', "/"));
+            }
+        }
+    }
+
+    let mut fields = vec![
+        ("Format".to_string(), format_label.to_string()),
+        ("Files".to_string(), files.to_string()),
+        ("Folders".to_string(), directories.to_string()),
+        ("Uncompressed size".to_string(), format_bytes(uncompressed)),
+        ("Compressed size".to_string(), format_bytes(compressed)),
+    ];
+    if let Some(entries) = join_limited(names, 8) {
+        fields.push(("Sample entries".to_string(), entries));
+    }
+
+    Ok(FileMetadata {
+        kind: "archive".to_string(),
+        summary: Some(format!("{files} files, {directories} folders")),
+        fields,
+    })
+}
+
+fn extract_tar_archive_metadata<R: Read>(
+    reader: R,
+    format_label: &str,
+) -> Result<FileMetadata, String> {
+    const MAX_ARCHIVE_ENTRIES: usize = 2_000;
+    let mut archive = tar::Archive::new(reader);
+    let mut files = 0usize;
+    let mut directories = 0usize;
+    let mut size = 0u64;
+    let mut names = Vec::new();
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("Failed to read archive: {e}"))?
+        .take(MAX_ARCHIVE_ENTRIES)
+    {
+        let entry = entry.map_err(|e| format!("Failed to read archive entry: {e}"))?;
+        if entry.header().entry_type().is_dir() {
+            directories += 1;
+        } else {
+            files += 1;
+        }
+
+        size = size.saturating_add(entry.header().size().unwrap_or(0));
+        if names.len() < 8 {
+            names.push(
+                entry
+                    .path()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+            );
+        }
+    }
+
+    let mut fields = vec![
+        ("Format".to_string(), format_label.to_string()),
+        ("Files".to_string(), files.to_string()),
+        ("Folders".to_string(), directories.to_string()),
+        ("Stored size".to_string(), format_bytes(size)),
+    ];
+    if let Some(entries) = join_limited(names, 8) {
+        fields.push(("Sample entries".to_string(), entries));
+    }
+
+    Ok(FileMetadata {
+        kind: "archive".to_string(),
+        summary: Some(format!("{files} files, {directories} folders")),
+        fields,
+    })
+}
+
+fn extract_font_metadata(path: &Path, extension: &str) -> Result<FileMetadata, String> {
+    let bytes = read_limited_bytes(path, 2 * 1024 * 1024)?;
+    let format_label = font_format_label(extension);
+    let mut fields = vec![("Format".to_string(), format_label.to_string())];
+    for (label, value) in parse_font_name_table(&bytes) {
+        push_field(&mut fields, &label, Some(value));
+    }
+
+    let summary = fields
+        .iter()
+        .find(|(label, _)| label == "Full name")
+        .or_else(|| fields.iter().find(|(label, _)| label == "Family"))
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| format_label.to_string());
+    Ok(FileMetadata {
+        kind: "font".to_string(),
+        summary: Some(summary),
+        fields,
+    })
+}
+
+fn extract_ebook_metadata(path: &Path, extension: &str) -> Result<FileMetadata, String> {
+    if extension != "epub" {
+        return Ok(format_only_metadata(
+            "ebook",
+            ebook_format_label(extension),
+            extension.to_ascii_uppercase(),
+        ));
+    }
+
+    let file = File::open(path).map_err(|e| format!("Failed to open ebook: {e}"))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| format!("Failed to read EPUB package: {e}"))?;
+    let container = read_zip_text(&mut archive, "META-INF/container.xml");
+    let opf_path = container
+        .as_deref()
+        .and_then(|xml| xml_attribute(xml, "full-path"))
+        .or_else(|| find_zip_entry_by_suffix(&mut archive, ".opf"))
+        .unwrap_or_else(|| "content.opf".to_string());
+    let opf = read_zip_text(&mut archive, &opf_path).unwrap_or_default();
+
+    let mut fields = vec![("Format".to_string(), "EPUB ebook".to_string())];
+    push_field(&mut fields, "Title", xml_local_text(&opf, "title"));
+    push_field(&mut fields, "Creator", xml_local_text(&opf, "creator"));
+    push_field(&mut fields, "Language", xml_local_text(&opf, "language"));
+    push_field(
+        &mut fields,
+        "Identifier",
+        xml_local_text(&opf, "identifier"),
+    );
+    let documents = count_zip_suffixes(&mut archive, &[".xhtml", ".html", ".htm"]);
+    if documents > 0 {
+        fields.push(("Documents".to_string(), documents.to_string()));
+    }
+
+    let summary = fields
+        .iter()
+        .find(|(label, _)| label == "Title")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| "EPUB ebook".to_string());
+    Ok(FileMetadata {
+        kind: "ebook".to_string(),
+        summary: Some(summary),
+        fields,
+    })
+}
+
+fn extract_email_metadata(path: &Path, extension: &str) -> Result<FileMetadata, String> {
+    if extension != "eml" {
+        return Ok(format_only_metadata(
+            "email",
+            email_format_label(extension),
+            extension.to_ascii_uppercase(),
+        ));
+    }
+
+    let text = read_limited_text(path, 1024 * 1024)?;
+    let headers = unfolded_header_lines(&text);
+    let mut fields = vec![("Format".to_string(), "Email message".to_string())];
+    push_field(&mut fields, "Subject", header_value(&headers, "Subject"));
+    push_field(&mut fields, "From", header_value(&headers, "From"));
+    push_field(&mut fields, "To", header_value(&headers, "To"));
+    push_field(&mut fields, "Date", header_value(&headers, "Date"));
+    push_field(
+        &mut fields,
+        "Content type",
+        header_value(&headers, "Content-Type"),
+    );
+
+    let summary = fields
+        .iter()
+        .find(|(label, _)| label == "Subject")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| "Email message".to_string());
+    Ok(FileMetadata {
+        kind: "email".to_string(),
+        summary: Some(summary),
+        fields,
+    })
+}
+
+fn extract_calendar_metadata(path: &Path, extension: &str) -> Result<FileMetadata, String> {
+    if extension != "ics" {
+        return Ok(format_only_metadata(
+            "calendar",
+            "Calendar file",
+            extension.to_ascii_uppercase(),
+        ));
+    }
+
+    let text = read_limited_text(path, 1024 * 1024)?;
+    let lines = unfolded_property_lines(&text);
+    let mut fields = vec![("Format".to_string(), "iCalendar".to_string())];
+    push_field(&mut fields, "Summary", property_value(&lines, "SUMMARY"));
+    push_field(&mut fields, "Starts", property_value(&lines, "DTSTART"));
+    push_field(&mut fields, "Ends", property_value(&lines, "DTEND"));
+    push_field(&mut fields, "Location", property_value(&lines, "LOCATION"));
+    let events = lines
+        .iter()
+        .filter(|line| line.eq_ignore_ascii_case("BEGIN:VEVENT"))
+        .count();
+    fields.push(("Events".to_string(), events.to_string()));
+
+    let summary = fields
+        .iter()
+        .find(|(label, _)| label == "Summary")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| "Calendar file".to_string());
+    Ok(FileMetadata {
+        kind: "calendar".to_string(),
+        summary: Some(summary),
+        fields,
+    })
+}
+
+fn extract_contact_metadata(path: &Path, extension: &str) -> Result<FileMetadata, String> {
+    if extension != "vcf" {
+        return Ok(format_only_metadata(
+            "contact",
+            "Contact file",
+            extension.to_ascii_uppercase(),
+        ));
+    }
+
+    let text = read_limited_text(path, 1024 * 1024)?;
+    let lines = unfolded_property_lines(&text);
+    let mut fields = vec![("Format".to_string(), "vCard".to_string())];
+    push_field(&mut fields, "Name", property_value(&lines, "FN"));
+    push_field(&mut fields, "Organization", property_value(&lines, "ORG"));
+    push_field(&mut fields, "Title", property_value(&lines, "TITLE"));
+    push_field(&mut fields, "Email", property_value(&lines, "EMAIL"));
+    push_field(&mut fields, "Phone", property_value(&lines, "TEL"));
+
+    let summary = fields
+        .iter()
+        .find(|(label, _)| label == "Name")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_else(|| "Contact file".to_string());
+    Ok(FileMetadata {
+        kind: "contact".to_string(),
+        summary: Some(summary),
+        fields,
+    })
+}
+
+fn extract_certificate_metadata(path: &Path, extension: &str) -> Result<FileMetadata, String> {
+    let mut fields = vec![(
+        "Format".to_string(),
+        certificate_format_label(extension).to_string(),
+    )];
+    if matches!(extension, "pem" | "csr" | "key" | "crt" | "cer") {
+        if let Ok(text) = read_limited_text(path, 512 * 1024) {
+            if let Some(block) = pem_block_label(&text) {
+                fields.push(("PEM block".to_string(), block));
+            }
+        }
+    }
+
+    Ok(FileMetadata {
+        kind: "certificate".to_string(),
+        summary: Some(certificate_format_label(extension).to_string()),
+        fields,
+    })
+}
+
 fn extract_office_metadata(path: &Path, extension: &str) -> Result<FileMetadata, String> {
     let file = File::open(path).map_err(|e| format!("Failed to open document: {e}"))?;
     let mut archive =
@@ -786,6 +1291,429 @@ fn count_zip_prefix<R: Read + Seek>(archive: &mut ZipArchive<R>, prefix: &str) -
     count
 }
 
+fn count_zip_suffixes<R: Read + Seek>(archive: &mut ZipArchive<R>, suffixes: &[&str]) -> usize {
+    let mut count = 0usize;
+    for index in 0..archive.len() {
+        if let Ok(file) = archive.by_index(index) {
+            let name = file.name().to_ascii_lowercase();
+            if suffixes.iter().any(|suffix| name.ends_with(suffix)) {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn find_zip_entry_by_suffix<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    suffix: &str,
+) -> Option<String> {
+    for index in 0..archive.len() {
+        if let Ok(file) = archive.by_index(index) {
+            let name = file.name().replace('\\', "/");
+            if name.to_ascii_lowercase().ends_with(suffix) {
+                return Some(name);
+            }
+        }
+    }
+
+    None
+}
+
+fn read_limited_bytes(path: &Path, max_bytes: u64) -> Result<Vec<u8>, String> {
+    let mut file = File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(max_bytes)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+    Ok(bytes)
+}
+
+fn read_limited_text(path: &Path, max_bytes: u64) -> Result<String, String> {
+    let bytes = read_limited_bytes(path, max_bytes)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn data_format_label(extension: &str) -> &'static str {
+    match extension {
+        "md" | "markdown" | "mdx" => "Markdown document",
+        "json" | "jsonc" | "map" => "JSON document",
+        "jsonl" | "ndjson" => "JSON Lines document",
+        "csv" => "CSV table",
+        "tsv" => "TSV table",
+        "xml" | "xaml" => "XML document",
+        "html" | "htm" => "HTML document",
+        "yaml" | "yml" => "YAML document",
+        "toml" => "TOML document",
+        "ini" | "cfg" | "conf" | "config" | "properties" | "env" => "Configuration file",
+        "srt" | "vtt" | "ass" | "ssa" | "lrc" => "Timed text",
+        "diff" | "patch" => "Patch file",
+        "reg" => "Registry file",
+        "adoc" | "asciidoc" => "AsciiDoc document",
+        "rst" => "reStructuredText document",
+        "tex" => "TeX document",
+        _ => "Text document",
+    }
+}
+
+fn archive_format_label(extension: &str) -> &'static str {
+    match extension {
+        "zip" | "zipx" => "ZIP archive",
+        "jar" => "Java archive",
+        "apk" => "Android package",
+        "ipa" => "iOS package",
+        "crx" => "Chrome extension package",
+        "xpi" => "Firefox extension package",
+        "tar" => "Tar archive",
+        "tgz" => "Compressed tar archive",
+        "gz" => "Gzip archive",
+        "bz2" | "tbz" | "tbz2" => "Bzip2 archive",
+        "xz" | "txz" => "XZ archive",
+        "zst" | "tzst" => "Zstandard archive",
+        "7z" => "7-Zip archive",
+        "rar" => "RAR archive",
+        "cab" => "Cabinet archive",
+        _ => "Archive",
+    }
+}
+
+fn font_format_label(extension: &str) -> &'static str {
+    match extension {
+        "ttf" => "TrueType font",
+        "otf" => "OpenType font",
+        "woff" => "Web Open Font",
+        "woff2" => "Web Open Font 2",
+        "eot" => "Embedded OpenType font",
+        _ => "Font file",
+    }
+}
+
+fn ebook_format_label(extension: &str) -> &'static str {
+    match extension {
+        "epub" => "EPUB ebook",
+        "mobi" => "Mobipocket ebook",
+        "azw" | "azw3" => "Kindle ebook",
+        "fb2" => "FictionBook ebook",
+        _ => "Ebook",
+    }
+}
+
+fn email_format_label(extension: &str) -> &'static str {
+    match extension {
+        "eml" => "Email message",
+        "msg" => "Outlook message",
+        "pst" => "Outlook data file",
+        "ost" => "Outlook offline data file",
+        _ => "Email file",
+    }
+}
+
+fn certificate_format_label(extension: &str) -> &'static str {
+    match extension {
+        "pem" => "PEM certificate/key",
+        "crt" | "cer" => "Certificate",
+        "der" => "DER certificate",
+        "pfx" | "p12" => "PKCS#12 certificate",
+        "csr" => "Certificate signing request",
+        "key" => "Key file",
+        _ => "Certificate/key file",
+    }
+}
+
+fn join_limited(values: impl IntoIterator<Item = String>, limit: usize) -> Option<String> {
+    let mut out = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() && !out.iter().any(|item: &String| item.as_str() == trimmed) {
+            out.push(trimmed.to_string());
+        }
+        if out.len() >= limit {
+            break;
+        }
+    }
+
+    if out.is_empty() {
+        None
+    } else {
+        Some(out.join(", "))
+    }
+}
+
+fn split_delimited_line(line: &str, delimiter: char) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut quoted = false;
+    let chars: Vec<char> = line.chars().collect();
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '"' {
+            if quoted && index + 1 < chars.len() && chars[index + 1] == '"' {
+                cell.push('"');
+                index += 1;
+            } else {
+                quoted = !quoted;
+            }
+        } else if ch == delimiter && !quoted {
+            cells.push(cell.trim().to_string());
+            cell.clear();
+        } else {
+            cell.push(ch);
+        }
+
+        index += 1;
+    }
+
+    cells.push(cell.trim().to_string());
+    cells
+}
+
+fn top_level_keys(text: &str, separator: char) -> Vec<String> {
+    let mut keys = Vec::new();
+    for line in text.lines().take(200) {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with('#')
+            || trimmed.starts_with("//")
+            || trimmed.starts_with('[')
+        {
+            continue;
+        }
+
+        if let Some((key, _)) = trimmed.split_once(separator) {
+            let key = key.trim().trim_matches('"').trim_matches('\'');
+            if !key.is_empty() {
+                keys.push(key.to_string());
+            }
+        }
+    }
+
+    keys
+}
+
+fn xml_root_name(xml: &str) -> Option<String> {
+    let start = xml.find('<')?;
+    let rest = &xml[start + 1..];
+    if rest.starts_with('?') || rest.starts_with('!') {
+        return xml_root_name(&rest[1..]);
+    }
+
+    let end = rest.find(|ch: char| ch == '>' || ch.is_whitespace() || ch == '/')?;
+    let name = rest[..end].trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+fn xml_attribute(xml: &str, attribute: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let pattern = format!("{attribute}={quote}");
+        if let Some(start) = xml.find(&pattern) {
+            let value_start = start + pattern.len();
+            if let Some(end) = xml[value_start..].find(quote) {
+                return Some(xml[value_start..value_start + end].to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn unfolded_header_lines(text: &str) -> Vec<String> {
+    let mut lines = Vec::<String>::new();
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            break;
+        }
+
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some(last) = lines.last_mut() {
+                last.push(' ');
+                last.push_str(line.trim());
+            }
+        } else {
+            lines.push(line.trim_end().to_string());
+        }
+    }
+
+    lines
+}
+
+fn unfolded_property_lines(text: &str) -> Vec<String> {
+    let mut lines = Vec::<String>::new();
+    for line in text.lines() {
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some(last) = lines.last_mut() {
+                last.push_str(line.trim());
+            }
+        } else {
+            lines.push(line.trim_end().to_string());
+        }
+    }
+
+    lines
+}
+
+fn header_value(lines: &[String], name: &str) -> Option<String> {
+    let prefix = format!("{name}:");
+    lines
+        .iter()
+        .find(|line| {
+            line.len() >= prefix.len() && line[..prefix.len()].eq_ignore_ascii_case(&prefix)
+        })
+        .map(|line| decode_basic_xml_entities(line[prefix.len()..].trim()))
+        .filter(|value| !value.is_empty())
+}
+
+fn property_value(lines: &[String], name: &str) -> Option<String> {
+    lines.iter().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        let property_name = key.split(';').next().unwrap_or(key);
+        if property_name.eq_ignore_ascii_case(name) {
+            Some(decode_basic_xml_entities(value.trim()))
+        } else {
+            None
+        }
+    })
+}
+
+fn pem_block_label(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let value = trimmed
+            .strip_prefix("-----BEGIN ")
+            .and_then(|rest| rest.strip_suffix("-----"))?;
+        Some(value.to_string())
+    })
+}
+
+fn parse_font_name_table(bytes: &[u8]) -> Vec<(String, String)> {
+    let Some(offset) = font_directory_offset(bytes) else {
+        return Vec::new();
+    };
+    if bytes.len() < offset + 12 {
+        return Vec::new();
+    }
+
+    let table_count = read_be_u16(bytes, offset + 4) as usize;
+    let records_start = offset + 12;
+    let mut name_offset = 0usize;
+    let mut name_length = 0usize;
+    for index in 0..table_count {
+        let record = records_start + (index * 16);
+        if bytes.len() < record + 16 {
+            break;
+        }
+
+        if &bytes[record..record + 4] == b"name" {
+            name_offset = read_be_u32(bytes, record + 8) as usize;
+            name_length = read_be_u32(bytes, record + 12) as usize;
+            break;
+        }
+    }
+
+    if name_offset == 0 || name_length == 0 || bytes.len() < name_offset + name_length {
+        return Vec::new();
+    }
+
+    let table = &bytes[name_offset..name_offset + name_length];
+    if table.len() < 6 {
+        return Vec::new();
+    }
+
+    let count = read_be_u16(table, 2) as usize;
+    let string_offset = read_be_u16(table, 4) as usize;
+    let mut names = Vec::new();
+    for index in 0..count {
+        let record = 6 + (index * 12);
+        if table.len() < record + 12 {
+            break;
+        }
+
+        let platform_id = read_be_u16(table, record);
+        let name_id = read_be_u16(table, record + 6);
+        let length = read_be_u16(table, record + 8) as usize;
+        let offset = read_be_u16(table, record + 10) as usize;
+        let value_start = string_offset + offset;
+        if table.len() < value_start + length {
+            continue;
+        }
+
+        let Some(label) = font_name_label(name_id) else {
+            continue;
+        };
+        if names.iter().any(|(existing, _)| existing == label) {
+            continue;
+        }
+
+        let value = decode_font_name(platform_id, &table[value_start..value_start + length]);
+        if !value.trim().is_empty() {
+            names.push((label.to_string(), value));
+        }
+    }
+
+    names
+}
+
+fn font_directory_offset(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < 12 {
+        return None;
+    }
+
+    if &bytes[..4] == b"ttcf" {
+        if bytes.len() < 16 {
+            return None;
+        }
+
+        let offset = read_be_u32(bytes, 12) as usize;
+        return (bytes.len() >= offset + 12).then_some(offset);
+    }
+
+    Some(0)
+}
+
+fn font_name_label(name_id: u16) -> Option<&'static str> {
+    match name_id {
+        1 => Some("Family"),
+        2 => Some("Subfamily"),
+        4 => Some("Full name"),
+        5 => Some("Version"),
+        6 => Some("PostScript name"),
+        _ => None,
+    }
+}
+
+fn decode_font_name(platform_id: u16, bytes: &[u8]) -> String {
+    if platform_id == 0 || platform_id == 3 {
+        let mut units = Vec::with_capacity(bytes.len() / 2);
+        for chunk in bytes.chunks(2) {
+            if chunk.len() == 2 {
+                units.push(u16::from_be_bytes([chunk[0], chunk[1]]));
+            }
+        }
+
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+fn read_be_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn read_be_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
+}
+
 fn xml_local_text(xml: &str, local_name: &str) -> Option<String> {
     // Accept both <title> and <dc:title> style tags without a full XML parser.
     let patterns = [format!("<{local_name}>"), format!(":{local_name}>")];
@@ -842,8 +1770,9 @@ fn decode_basic_xml_entities(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::dictionary;
     use std::io::Write;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(label: &str) -> PathBuf {
@@ -856,13 +1785,199 @@ mod tests {
         dir
     }
 
+    fn field_value<'a>(metadata: &'a FileMetadata, label: &str) -> Option<&'a str> {
+        metadata
+            .fields
+            .iter()
+            .find(|(field_label, _)| field_label == label)
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn write_pdf_fixture(path: &Path) {
+        let mut document = lopdf::Document::with_version("1.5");
+        let pages_id = document.new_object_id();
+        let page_id = document.new_object_id();
+        let catalog_id = document.new_object_id();
+        let info_id = document.new_object_id();
+
+        document.objects.insert(
+            catalog_id,
+            lopdf::Object::Dictionary(lopdf::dictionary! {
+                "Type" => lopdf::Object::Name(b"Catalog".to_vec()),
+                "Pages" => lopdf::Object::Reference(pages_id),
+            }),
+        );
+        document.objects.insert(
+            pages_id,
+            lopdf::Object::Dictionary(lopdf::dictionary! {
+                "Type" => lopdf::Object::Name(b"Pages".to_vec()),
+                "Kids" => lopdf::Object::Array(vec![lopdf::Object::Reference(page_id)]),
+                "Count" => 1,
+            }),
+        );
+        document.objects.insert(
+            page_id,
+            lopdf::Object::Dictionary(lopdf::dictionary! {
+                "Type" => lopdf::Object::Name(b"Page".to_vec()),
+                "Parent" => lopdf::Object::Reference(pages_id),
+                "MediaBox" => lopdf::Object::Array(vec![
+                    lopdf::Object::Integer(0),
+                    lopdf::Object::Integer(0),
+                    lopdf::Object::Integer(1),
+                    lopdf::Object::Integer(1),
+                ]),
+            }),
+        );
+        document.objects.insert(
+            info_id,
+            lopdf::Object::Dictionary(lopdf::dictionary! {
+                "Title" => lopdf::Object::String(
+                    b"Fixture PDF".to_vec(),
+                    lopdf::StringFormat::Literal,
+                ),
+                "Author" => lopdf::Object::String(
+                    b"SumaFile".to_vec(),
+                    lopdf::StringFormat::Literal,
+                ),
+            }),
+        );
+        document
+            .trailer
+            .set("Root", lopdf::Object::Reference(catalog_id));
+        document
+            .trailer
+            .set("Info", lopdf::Object::Reference(info_id));
+        document.save(path).unwrap();
+    }
+
+    fn write_wav_fixture(path: &Path) {
+        let channels = 1u16;
+        let sample_rate = 8_000u32;
+        let bits_per_sample = 16u16;
+        let bytes_per_sample = u32::from(bits_per_sample / 8);
+        let data_size = sample_rate * u32::from(channels) * bytes_per_sample;
+        let byte_rate = sample_rate * u32::from(channels) * bytes_per_sample;
+        let block_align = channels * (bits_per_sample / 8);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_size).to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&channels.to_le_bytes());
+        bytes.extend_from_slice(&sample_rate.to_le_bytes());
+        bytes.extend_from_slice(&byte_rate.to_le_bytes());
+        bytes.extend_from_slice(&block_align.to_le_bytes());
+        bytes.extend_from_slice(&bits_per_sample.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_size.to_le_bytes());
+        bytes.resize(44 + data_size as usize, 0);
+        fs::write(path, bytes).unwrap();
+    }
+
+    fn atom(kind: &[u8; 4], payload: Vec<u8>) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(8 + payload.len());
+        bytes.extend_from_slice(&((8 + payload.len()) as u32).to_be_bytes());
+        bytes.extend_from_slice(kind);
+        bytes.extend_from_slice(&payload);
+        bytes
+    }
+
+    fn write_mp4_fixture(path: &Path) {
+        let mut ftyp_payload = Vec::new();
+        ftyp_payload.extend_from_slice(b"isom");
+        ftyp_payload.extend_from_slice(&0u32.to_be_bytes());
+        ftyp_payload.extend_from_slice(b"isom");
+
+        let mut mvhd = vec![0u8; 100];
+        mvhd[0] = 0;
+        mvhd[12..16].copy_from_slice(&1_000u32.to_be_bytes());
+        mvhd[16..20].copy_from_slice(&2_000u32.to_be_bytes());
+
+        let mut tkhd = vec![0u8; 100];
+        tkhd[0] = 0;
+        tkhd[76..80].copy_from_slice(&(640u32 << 16).to_be_bytes());
+        tkhd[80..84].copy_from_slice(&(360u32 << 16).to_be_bytes());
+
+        let mut moov_payload = atom(b"mvhd", mvhd);
+        moov_payload.extend(atom(b"trak", atom(b"tkhd", tkhd)));
+
+        let mut bytes = atom(b"ftyp", ftyp_payload);
+        bytes.extend(atom(b"moov", moov_payload));
+        fs::write(path, bytes).unwrap();
+    }
+
+    fn utf16be(value: &str) -> Vec<u8> {
+        value
+            .encode_utf16()
+            .flat_map(u16::to_be_bytes)
+            .collect::<Vec<u8>>()
+    }
+
+    fn push_u16(bytes: &mut Vec<u8>, value: u16) {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn push_u32(bytes: &mut Vec<u8>, value: u32) {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn write_ttf_name_fixture(path: &Path) {
+        let family = utf16be("Suma Sans");
+        let full_name = utf16be("Suma Sans Regular");
+        let string_offset = 6 + (2 * 12);
+        let mut name = Vec::new();
+        push_u16(&mut name, 0);
+        push_u16(&mut name, 2);
+        push_u16(&mut name, string_offset as u16);
+        for (name_id, length, offset) in [
+            (1u16, family.len() as u16, 0u16),
+            (4u16, full_name.len() as u16, family.len() as u16),
+        ] {
+            push_u16(&mut name, 3);
+            push_u16(&mut name, 1);
+            push_u16(&mut name, 0x0409);
+            push_u16(&mut name, name_id);
+            push_u16(&mut name, length);
+            push_u16(&mut name, offset);
+        }
+        name.extend_from_slice(&family);
+        name.extend_from_slice(&full_name);
+
+        let name_offset = 28u32;
+        let mut font = Vec::new();
+        font.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+        push_u16(&mut font, 1);
+        push_u16(&mut font, 0);
+        push_u16(&mut font, 0);
+        push_u16(&mut font, 0);
+        font.extend_from_slice(b"name");
+        push_u32(&mut font, 0);
+        push_u32(&mut font, name_offset);
+        push_u32(&mut font, name.len() as u32);
+        font.extend_from_slice(&name);
+        fs::write(path, font).unwrap();
+    }
+
     #[test]
     fn classify_extension_covers_supported_kinds() {
         assert_eq!(classify_extension("png"), MetadataKind::Image);
+        assert_eq!(classify_extension("avif"), MetadataKind::Image);
         assert_eq!(classify_extension("PDF"), MetadataKind::Pdf);
         assert_eq!(classify_extension("mp3"), MetadataKind::Audio);
         assert_eq!(classify_extension("mp4"), MetadataKind::Video);
+        assert_eq!(classify_extension("m2ts"), MetadataKind::Video);
         assert_eq!(classify_extension("docx"), MetadataKind::Office);
+        assert_eq!(classify_extension("json"), MetadataKind::Data);
+        assert_eq!(classify_extension("zip"), MetadataKind::Archive);
+        assert_eq!(classify_extension("ttf"), MetadataKind::Font);
+        assert_eq!(classify_extension("epub"), MetadataKind::Ebook);
+        assert_eq!(classify_extension("eml"), MetadataKind::Email);
+        assert_eq!(classify_extension("ics"), MetadataKind::Calendar);
+        assert_eq!(classify_extension("vcf"), MetadataKind::Contact);
+        assert_eq!(classify_extension("pem"), MetadataKind::Certificate);
         assert_eq!(classify_extension("exe"), MetadataKind::Unsupported);
     }
 
@@ -936,6 +2051,204 @@ mod tests {
             .any(|(k, v)| k == "Creator" && v == "Finance"));
         assert!(meta.fields.iter().any(|(k, v)| k == "Pages" && v == "3"));
         assert!(meta.summary.as_deref() == Some("Budget"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pdf_metadata_reads_generated_fixture_info() {
+        let dir = temp_dir("pdf");
+        let path = dir.join("sample.pdf");
+        write_pdf_fixture(&path);
+
+        let meta = get_file_metadata(path.to_string_lossy().into_owned()).unwrap();
+
+        assert_eq!(meta.kind, "pdf");
+        assert_eq!(field_value(&meta, "Pages"), Some("1"));
+        assert_eq!(field_value(&meta, "Title"), Some("Fixture PDF"));
+        assert_eq!(field_value(&meta, "Author"), Some("SumaFile"));
+        assert_eq!(meta.summary.as_deref(), Some("1 pages · Fixture PDF"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn audio_metadata_reads_wav_duration_fixture() {
+        let dir = temp_dir("wav");
+        let path = dir.join("tone.wav");
+        write_wav_fixture(&path);
+
+        let meta = get_file_metadata(path.to_string_lossy().into_owned()).unwrap();
+
+        assert_eq!(meta.kind, "audio");
+        assert_eq!(field_value(&meta, "Duration"), Some("0:01"));
+        assert_eq!(field_value(&meta, "Sample rate"), Some("8000 Hz"));
+        assert_eq!(field_value(&meta, "Channels"), Some("1"));
+        assert_eq!(meta.summary.as_deref(), Some("0:01"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn video_metadata_reads_mp4_duration_dimensions_and_brand() {
+        let dir = temp_dir("mp4");
+        let path = dir.join("clip.mp4");
+        write_mp4_fixture(&path);
+
+        let meta = get_file_metadata(path.to_string_lossy().into_owned()).unwrap();
+
+        assert_eq!(meta.kind, "video");
+        assert_eq!(field_value(&meta, "Brand"), Some("ISOM"));
+        assert_eq!(field_value(&meta, "Duration"), Some("0:02"));
+        assert_eq!(field_value(&meta, "Dimensions"), Some("640 × 360"));
+        assert_eq!(meta.summary.as_deref(), Some("640 × 360 · 0:02"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn data_metadata_reads_markdown_json_and_csv_shapes() {
+        let dir = temp_dir("data");
+        let markdown = dir.join("notes.md");
+        let json = dir.join("package.json");
+        let csv = dir.join("people.csv");
+        fs::write(
+            &markdown,
+            "# Preview Notes\n\nA small [link](https://example.com).",
+        )
+        .unwrap();
+        fs::write(&json, r#"{"name":"SumaFile","items":[1,2]}"#).unwrap();
+        fs::write(&csv, "Name,Role\nConnie,Owner\nAda,Engineer\n").unwrap();
+
+        let markdown_meta = get_file_metadata(markdown.to_string_lossy().into_owned()).unwrap();
+        let json_meta = get_file_metadata(json.to_string_lossy().into_owned()).unwrap();
+        let csv_meta = get_file_metadata(csv.to_string_lossy().into_owned()).unwrap();
+
+        assert_eq!(markdown_meta.kind, "data");
+        assert_eq!(field_value(&markdown_meta, "Title"), Some("Preview Notes"));
+        assert_eq!(field_value(&markdown_meta, "Links"), Some("1"));
+        assert_eq!(field_value(&json_meta, "Structure"), Some("Object"));
+        assert_eq!(field_value(&json_meta, "Top-level keys"), Some("2"));
+        assert_eq!(field_value(&csv_meta, "Rows"), Some("3"));
+        assert_eq!(field_value(&csv_meta, "Columns"), Some("2"));
+        assert_eq!(field_value(&csv_meta, "Headers"), Some("Name, Role"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn archive_metadata_reads_zip_entries() {
+        let dir = temp_dir("zip-meta");
+        let path = dir.join("bundle.zip");
+        {
+            let file = File::create(&path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("folder/readme.txt", options).unwrap();
+            zip.write_all(b"hello").unwrap();
+            zip.start_file("data.json", options).unwrap();
+            zip.write_all(br#"{"ok":true}"#).unwrap();
+            zip.finish().unwrap();
+        }
+
+        let meta = get_file_metadata(path.to_string_lossy().into_owned()).unwrap();
+
+        assert_eq!(meta.kind, "archive");
+        assert_eq!(field_value(&meta, "Format"), Some("ZIP archive"));
+        assert_eq!(field_value(&meta, "Files"), Some("2"));
+        assert!(field_value(&meta, "Sample entries")
+            .is_some_and(|value| value.contains("folder/readme.txt")));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ebook_metadata_reads_epub_package_metadata() {
+        let dir = temp_dir("epub");
+        let path = dir.join("book.epub");
+        {
+            let file = File::create(&path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("META-INF/container.xml", options).unwrap();
+            zip.write_all(
+                br#"<container><rootfiles><rootfile full-path="OPS/content.opf" /></rootfiles></container>"#,
+            )
+            .unwrap();
+            zip.start_file("OPS/content.opf", options).unwrap();
+            zip.write_all(
+                br#"<package><metadata><dc:title>Rusty Preview</dc:title><dc:creator>SumaFile</dc:creator><dc:language>en</dc:language></metadata></package>"#,
+            )
+            .unwrap();
+            zip.start_file("OPS/chapter.xhtml", options).unwrap();
+            zip.write_all(b"<html><body>Chapter</body></html>").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let meta = get_file_metadata(path.to_string_lossy().into_owned()).unwrap();
+
+        assert_eq!(meta.kind, "ebook");
+        assert_eq!(field_value(&meta, "Title"), Some("Rusty Preview"));
+        assert_eq!(field_value(&meta, "Creator"), Some("SumaFile"));
+        assert_eq!(field_value(&meta, "Documents"), Some("1"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn message_metadata_reads_email_calendar_and_contact_headers() {
+        let dir = temp_dir("message");
+        let email = dir.join("message.eml");
+        let calendar = dir.join("event.ics");
+        let contact = dir.join("person.vcf");
+        fs::write(
+            &email,
+            "Subject: Preview mail\nFrom: Connie <c@example.com>\nTo: Ada <a@example.com>\nDate: Tue, 8 Sep 2026 12:00:00 -0500\n\nBody",
+        )
+        .unwrap();
+        fs::write(
+            &calendar,
+            "BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:Preview review\nDTSTART:20260908T120000Z\nLOCATION:Desk\nEND:VEVENT\nEND:VCALENDAR\n",
+        )
+        .unwrap();
+        fs::write(
+            &contact,
+            "BEGIN:VCARD\nFN:Connie Combs\nORG:SumaFile\nEMAIL:connie@example.com\nEND:VCARD\n",
+        )
+        .unwrap();
+
+        let email_meta = get_file_metadata(email.to_string_lossy().into_owned()).unwrap();
+        let calendar_meta = get_file_metadata(calendar.to_string_lossy().into_owned()).unwrap();
+        let contact_meta = get_file_metadata(contact.to_string_lossy().into_owned()).unwrap();
+
+        assert_eq!(email_meta.kind, "email");
+        assert_eq!(field_value(&email_meta, "Subject"), Some("Preview mail"));
+        assert_eq!(calendar_meta.kind, "calendar");
+        assert_eq!(
+            field_value(&calendar_meta, "Summary"),
+            Some("Preview review")
+        );
+        assert_eq!(field_value(&calendar_meta, "Events"), Some("1"));
+        assert_eq!(contact_meta.kind, "contact");
+        assert_eq!(field_value(&contact_meta, "Name"), Some("Connie Combs"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn font_metadata_reads_ttf_name_table() {
+        let dir = temp_dir("font");
+        let path = dir.join("suma.ttf");
+        write_ttf_name_fixture(&path);
+
+        let meta = get_file_metadata(path.to_string_lossy().into_owned()).unwrap();
+
+        assert_eq!(meta.kind, "font");
+        assert_eq!(field_value(&meta, "Family"), Some("Suma Sans"));
+        assert_eq!(field_value(&meta, "Full name"), Some("Suma Sans Regular"));
+        assert_eq!(meta.summary.as_deref(), Some("Suma Sans Regular"));
 
         let _ = fs::remove_dir_all(dir);
     }

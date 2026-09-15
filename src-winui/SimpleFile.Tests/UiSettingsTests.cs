@@ -15,9 +15,10 @@ public class UiSettingsTests
     [Fact]
     public void UiSettings_NormalizesAppearanceAndStartLocation()
     {
-        Assert.Equal("light", UiSettings.NormalizeTheme("Light"));
+        Assert.Equal("system", UiSettings.NormalizeTheme("Light"));
         Assert.Equal("system", UiSettings.NormalizeTheme("system"));
-        Assert.Equal("dark", UiSettings.NormalizeTheme("nope"));
+        Assert.Equal("system", UiSettings.NormalizeTheme("nope"));
+        Assert.Equal("dark", UiSettings.NormalizeTheme("Dark"));
         Assert.Equal("last", UiSettings.NormalizeStartLocation("Last"));
         Assert.Equal("custom", UiSettings.NormalizeStartLocation("custom"));
         Assert.Equal("home", UiSettings.NormalizeStartLocation(null));
@@ -50,6 +51,10 @@ public class UiSettingsTests
         Assert.Equal(UiSettings.FilePaneMinWidth, UiSettings.ResolveDualPanePrimaryWidth(10, 50, 1000));
         Assert.Equal(1000 - UiSettings.FilePaneMinWidth - UiSettings.DualPaneDividerWidth,
             UiSettings.ResolveDualPanePrimaryWidth(9000, 50, 1000));
+
+        var defaults = UiSettings.CreateDefault();
+        Assert.False(defaults.PreviewRenderHtml);
+        Assert.False(defaults.PreviewVideoPlaybackEnabled);
     }
     [Fact]
     public void ResolveStartPath_UsesHomeLastAndCustom()

@@ -6,6 +6,8 @@ using Microsoft.UI.Xaml.Media;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
+using Windows.Storage.Pickers;
 using Windows.System;
 
 namespace SimpleFile.App;
@@ -41,6 +43,21 @@ internal sealed class OperationHistoryRow
     }
 }
 
+internal sealed class WorkspaceProfileListRow
+{
+    public WorkspaceProfileListRow(WorkspaceProfile profile)
+    {
+        Profile = profile;
+    }
+
+    public WorkspaceProfile Profile { get; }
+
+    public override string ToString()
+    {
+        return Profile.IsBuiltIn ? $"{Profile.Name} · Built-in" : Profile.Name;
+    }
+}
+
 public sealed partial class MainWindow
 {
     private bool _commandPaletteOpen;
@@ -49,32 +66,11 @@ public sealed partial class MainWindow
     private readonly SemaphoreSlim _viewIconSizeSaveGate = new(1, 1);
     private List<AppCommand> _paletteCommands = [];
 
-    private void OnCommandPaletteAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        if (!IsEditingPath && !IsTextInputFocused())
-        {
-            OpenCommandPalette();
-        }
-    }
-
-    private void OnFocusPathAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        BeginPathEdit(_workspace?.ActivePane ?? PaneId.Primary);
-    }
-
-    private void OnFocusSearchAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        FocusSearchUi();
-    }
-
     private void FocusSearchUi()
     {
         var pane = ActiveUiPane;
-        var host = SearchHostFor(pane);
-        var box = SearchTextBoxFor(pane);
+        var host = ActiveToolbarSearchHost();
+        var box = ActiveToolbarSearchTextBox();
         if (host.Visibility == Visibility.Visible)
         {
             _workspace?.ActivatePane(pane);
@@ -84,8 +80,8 @@ public sealed partial class MainWindow
         }
 
         ShowOverflowInputFlyout(
-            MoreButtonFor(pane),
-            "Search",
+            ActiveToolbarMoreButton(),
+            "Find in folder",
             box.Text,
             async text =>
             {
@@ -98,7 +94,7 @@ public sealed partial class MainWindow
     private void FocusFilterUi()
     {
         var pane = ActiveUiPane;
-        var box = QuickFilterBoxFor(pane);
+        var box = ActiveToolbarQuickFilterBox();
         if (box.Visibility == Visibility.Visible)
         {
             _workspace?.ActivatePane(pane);
@@ -108,8 +104,8 @@ public sealed partial class MainWindow
         }
 
         ShowOverflowInputFlyout(
-            MoreButtonFor(pane),
-            "Filter",
+            ActiveToolbarMoreButton(),
+            "Filter list",
             box.Text,
             text =>
             {
@@ -181,136 +177,29 @@ public sealed partial class MainWindow
 
     private PaneId ActiveUiPane => _workspace?.Normalize(_workspace.ActivePane) ?? PaneId.Primary;
 
-    private TextBox SearchTextBoxFor(PaneId pane) =>
+    private TextBox ActiveToolbarSearchTextBox() =>
         SearchBox;
 
-    private Button SearchCancelButtonFor(PaneId pane) =>
+    private Button ActiveToolbarSearchCancelButton() =>
         SearchCancelButton;
 
-    private FrameworkElement SearchHostFor(PaneId pane) =>
+    private FrameworkElement ActiveToolbarSearchHost() =>
         PrimarySearchHost;
 
-    private TextBox QuickFilterBoxFor(PaneId pane) =>
+    private TextBox ActiveToolbarQuickFilterBox() =>
         QuickFilterBox;
 
-    private Button MoreButtonFor(PaneId pane) =>
+    private Button ActiveToolbarMoreButton() =>
         PrimaryMoreButton;
 
-    private void SetSearchCancelEnabled(PaneId pane, bool enabled)
+    private void SetSearchCancelEnabled(bool enabled)
     {
-        SearchCancelButtonFor(pane).IsEnabled = enabled;
+        ActiveToolbarSearchCancelButton().IsEnabled = enabled;
     }
 
     private void UpdateSearchCancelButtons()
     {
-        SetSearchCancelEnabled(_search?.Pane ?? PaneId.Primary, _search?.CanCancel == true);
-    }
-
-    private void OnSelectAllAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        if (IsEditingPath || IsTextInputFocused())
-        {
-            return;
-        }
-
-        e.Handled = true;
-        ActiveFileList.SelectAll();
-    }
-
-    private async void OnCopyPathAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        await RunUiActionAsync("Copy path", () => RunAppCommandAsync("copy-path"));
-    }
-
-    private async void OnUndoAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        await RunUiActionAsync("Undo", UndoLastAsync);
-    }
-
-    private async void OnRedoAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        await RunUiActionAsync("Redo", RedoLastAsync);
-    }
-
-    private async void OnKeyboardHelpAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        await RunUiActionAsync("Keyboard shortcuts", ShowKeyboardHelpAsync);
-    }
-
-    private async void OnCopyToOtherPaneAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        await RunUiActionAsync("Copy to other pane", () => RunAppCommandAsync("copy-to-pane"));
-    }
-
-    private async void OnMoveToOtherPaneAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        await RunUiActionAsync("Move to other pane", () => RunAppCommandAsync("move-to-pane"));
-    }
-
-    private async void OnOpenInNewTabAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        await RunUiActionAsync("Open in new tab", () => RunAppCommandAsync("open-selected-tab"));
-    }
-
-    private async void OnToggleHiddenAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        await RunUiActionAsync("Hidden files", () => RunAppCommandAsync("toggle-hidden"));
-    }
-
-    private async void OnBookmarkAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        await RunUiActionAsync("Bookmark", () => RunAppCommandAsync("bookmark-folder"));
-    }
-
-    private async void OnPropertiesAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e)
-    {
-        e.Handled = true;
-        await RunUiActionAsync("Properties", () => RunAppCommandAsync("properties"));
-    }
-
-    private async void OnTab1Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
-        await SwitchToTabAtFromAcceleratorAsync(e, 1);
-
-    private async void OnTab2Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
-        await SwitchToTabAtFromAcceleratorAsync(e, 2);
-
-    private async void OnTab3Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
-        await SwitchToTabAtFromAcceleratorAsync(e, 3);
-
-    private async void OnTab4Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
-        await SwitchToTabAtFromAcceleratorAsync(e, 4);
-
-    private async void OnTab5Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
-        await SwitchToTabAtFromAcceleratorAsync(e, 5);
-
-    private async void OnTab6Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
-        await SwitchToTabAtFromAcceleratorAsync(e, 6);
-
-    private async void OnTab7Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
-        await SwitchToTabAtFromAcceleratorAsync(e, 7);
-
-    private async void OnTab8Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
-        await SwitchToTabAtFromAcceleratorAsync(e, 8);
-
-    private async void OnTab9Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs e) =>
-        await SwitchToTabAtFromAcceleratorAsync(e, 9);
-
-    private async Task SwitchToTabAtFromAcceleratorAsync(KeyboardAcceleratorInvokedEventArgs e, int index)
-    {
-        e.Handled = true;
-        if (_workspace is not null && !IsEditingPath)
-        {
-            await RunUiActionAsync("Tab", () => _workspace.SwitchToTabAtAsync(index));
-        }
+        SetSearchCancelEnabled(_search?.CanCancel == true);
     }
 
     private void OnQuickFilterChanged(object sender, TextChangedEventArgs e)
@@ -371,7 +260,6 @@ public sealed partial class MainWindow
     {
         var next = UiSettings.NormalizeTheme(theme) switch
         {
-            "light" => ElementTheme.Light,
             "dark" => ElementTheme.Dark,
             _ => ElementTheme.Default,
         };
@@ -381,6 +269,33 @@ public sealed partial class MainWindow
         }
 
         ApplyCaptionButtonColors(next);
+        RefreshGeneratedThemeResources();
+    }
+
+    private void OnRootActualThemeChanged(FrameworkElement sender, object args)
+    {
+        ApplyCaptionButtonColors(sender.ActualTheme);
+        RefreshGeneratedThemeResources();
+    }
+
+    private void RefreshGeneratedThemeResources()
+    {
+        PrimaryBreadcrumbHost.Tag = null;
+        SecondaryBreadcrumbHost.Tag = null;
+        PrimaryTabHost.Tag = null;
+        SecondaryTabHost.Tag = null;
+
+        if (_workspace is not null)
+        {
+            RebuildBreadcrumbs(PrimaryBreadcrumbHost, _workspace.Primary.Breadcrumbs, PaneId.Primary);
+            RebuildBreadcrumbs(SecondaryBreadcrumbHost, _workspace.Secondary.Breadcrumbs, PaneId.Secondary);
+            RebuildTabs(PrimaryTabHost, _workspace.Primary, PaneId.Primary);
+            RebuildTabs(SecondaryTabHost, _workspace.Secondary, PaneId.Secondary);
+            HighlightSidebarTarget();
+            HighlightActivePane();
+        }
+
+        _previewPresenter.RefreshThemeResources();
     }
 
     private void OpenCommandPalette()
@@ -400,7 +315,8 @@ public sealed partial class MainWindow
 
     private void RefreshCommandPalette(string query)
     {
-        _paletteCommands = [.. AppCommandCatalog.Filter(query)];
+        _paletteCommands = [.. AppCommandCatalog.Filter(query)
+            .Where(command => !string.Equals(command.Group, "Git", StringComparison.Ordinal) || IsGitIntegrationEnabled)];
         CommandPaletteList.ItemsSource = _paletteCommands;
         if (_paletteCommands.Count > 0)
         {
@@ -600,210 +516,6 @@ public sealed partial class MainWindow
         await _workspace.OpenInOtherPaneAsync(row.Path, row.IsDir);
     }
 
-    private async Task RunAppCommandAsync(string id)
-    {
-        if (_workspace is null)
-        {
-            return;
-        }
-
-        switch (CommandAliasCatalog.Normalize(id))
-        {
-            case "go-home":
-                await _workspace.NavigateSpecialAsync("navigateHome");
-                break;
-            case "go-recycle-bin":
-                await _workspace.NavigateSpecialAsync("navigateRecycleBin");
-                break;
-            case "restore-selected":
-                await RestoreSelectedAsync();
-                break;
-            case "empty-recycle-bin":
-                await EmptyRecycleBinAsync();
-                break;
-            case "go-back":
-                if (!IsEditingPath)
-                {
-                    await _workspace.GoBackAsync();
-                }
-                break;
-            case "go-forward":
-                if (!IsEditingPath)
-                {
-                    await _workspace.GoForwardAsync();
-                }
-                break;
-            case "go-up":
-                if (!IsEditingPath)
-                {
-                    await _workspace.GoUpAsync();
-                }
-                break;
-            case "refresh":
-                await _workspace.RefreshAsync();
-                break;
-            case "copy":
-                await CopyToClipboard();
-                break;
-            case "cut":
-                await CutToClipboard();
-                break;
-            case "paste":
-                await PasteFromClipboard();
-                break;
-            case "copy-path":
-                CopySelectedPathsToClipboard();
-                break;
-            case "clipboard-history":
-                await ShowClipboardHistoryAsync();
-                break;
-            case "operation-history":
-                await ShowOperationHistoryAsync();
-                break;
-            case "clear-recent-history":
-                await ClearRecentHistoryAsync();
-                break;
-            case "undo":
-                await UndoLastAsync();
-                break;
-            case "redo":
-                await RedoLastAsync();
-                break;
-            case "delete":
-                await TrashSelected();
-                break;
-            case "delete-permanent":
-                await DeleteSelected();
-                break;
-            case "rename":
-                await PromptAndRename();
-                break;
-            case "advanced-rename":
-                await PromptAdvancedRenameAsync();
-                break;
-            case "new-folder":
-                await PromptAndCreateFolder(_workspace.ActivePane);
-                break;
-            case "new-file":
-                await PromptAndCreateFile(_workspace.ActivePane);
-                break;
-            case "create-archive":
-                await CreateArchiveAsync();
-                break;
-            case "terminal":
-                await OpenTerminalInActivePathAsync();
-                break;
-            case "powershell-admin":
-                await OpenPowershellAdminAsync();
-                break;
-            case "preview":
-                OnTogglePreview(this, new RoutedEventArgs());
-                break;
-            case "toggle-hidden":
-                await ToggleHiddenFilesAsync();
-                break;
-            case "toggle-side-menu":
-                await ToggleSidebarAsync();
-                break;
-            case "dual-pane":
-                await ToggleDualPaneFromUiAsync();
-                break;
-            case "close-left-pane":
-                await CloseFilePaneFromUiAsync(PaneId.Primary);
-                break;
-            case "close-right-pane":
-                await CloseFilePaneFromUiAsync(PaneId.Secondary);
-                break;
-            case "copy-to-pane":
-                await CopyOrMoveToOtherPaneAsync(move: false);
-                break;
-            case "move-to-pane":
-                await CopyOrMoveToOtherPaneAsync(move: true);
-                break;
-            case "open-selected-tab":
-                await OpenSelectedInNewTabAsync();
-                break;
-            case "open-other-pane":
-                await OpenSelectedInOtherPaneAsync();
-                break;
-            case "view-details":
-                await ApplyViewOptionAsync("view:details");
-                break;
-            case "view-list":
-                await ApplyViewOptionAsync("view:list");
-                break;
-            case "view-tiles":
-                await ApplyViewOptionAsync("view:tiles");
-                break;
-            case "view-content":
-                await ApplyViewOptionAsync("view:content");
-                break;
-            case "icon-size-small":
-                await ApplyViewOptionAsync("icon:16");
-                break;
-            case "icon-size-medium":
-                await ApplyViewOptionAsync("icon:32");
-                break;
-            case "icon-size-large":
-                await ApplyViewOptionAsync("icon:48");
-                break;
-            case "icon-size-extra-large":
-                await ApplyViewOptionAsync("icon:96");
-                break;
-            case "icon-size-jumbo":
-                await ApplyViewOptionAsync("icon:128");
-                break;
-            case "icon-size-huge":
-                await ApplyViewOptionAsync("icon:192");
-                break;
-            case "icon-size-maximum":
-                await ApplyViewOptionAsync("icon:256");
-                break;
-            case "search":
-                FocusSearchUi();
-                break;
-            case "filter":
-                FocusFilterUi();
-                break;
-            case "quick-look":
-                await ShowQuickLookAsync();
-                break;
-            case "properties":
-                await ShowPropertiesAsync();
-                break;
-            case "color-label":
-                await SetColorLabelAsync();
-                break;
-            case "bookmark-folder":
-                await BookmarkCurrentFolderAsync();
-                break;
-            case "bookmark-selected-folder":
-                await BookmarkSelectedFolderAsync();
-                break;
-            case "folder-metrics":
-                await ShowFolderMetricsAsync();
-                break;
-            case "disk-cleanup":
-                await ShowDiskCleanupAsync();
-                break;
-            case "duplicate-checker":
-                await ShowDuplicateCheckerAsync();
-                break;
-            case "settings":
-                await ShowSettingsAsync();
-                break;
-            case "keyboard-help":
-                await ShowKeyboardHelpAsync();
-                break;
-            case "git-pull":
-                await RunGitAsync(pull: true);
-                break;
-            case "git-push":
-                await RunGitAsync(pull: false);
-                break;
-        }
-    }
-
     private void OnFileRowContextRequested(object sender, ContextRequestedEventArgs e)
     {
         if (sender is not FileRowView view || view.Row is null || _workspace is null)
@@ -844,6 +556,37 @@ public sealed partial class MainWindow
         }
 
         e.Handled = true;
+    }
+
+    private void OnPrimaryDetailsRowContextRequested(object? sender, DetailsFileRowContextEventArgs e) =>
+        ShowDetailsFileContextMenu(PrimaryDetailsFileList, PaneId.Primary, e);
+
+    private void OnSecondaryDetailsRowContextRequested(object? sender, DetailsFileRowContextEventArgs e) =>
+        ShowDetailsFileContextMenu(SecondaryDetailsFileList, PaneId.Secondary, e);
+
+    private void ShowDetailsFileContextMenu(DetailsFileListView list, PaneId pane, DetailsFileRowContextEventArgs e)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        _workspace.ActivatePane(pane);
+        if (!list.ContainsSelection(e.Row))
+        {
+            list.SelectPath(e.Row.Path);
+        }
+
+        var flyout = new MenuFlyout();
+        PopulateFileListContextFlyout(flyout, pane);
+        if (e.Position is { } position)
+        {
+            flyout.ShowAt(list, new FlyoutShowOptions { Position = position });
+        }
+        else
+        {
+            flyout.ShowAt(e.Anchor);
+        }
     }
 
     private static T? FindAncestor<T>(DependencyObject start) where T : class
@@ -899,10 +642,14 @@ public sealed partial class MainWindow
             ViewIconSizeSlider.StepFrequency = UiSettings.IconSizeStep;
             ViewIconSizeSlider.Value = currentIconSize;
             UpdateViewIconSizeValueText(currentIconSize);
-            SavedLayoutsHost.Children.Clear();
-            SavedLayoutsHost.Children.Add(new TextBlock
+            var hasFolderPath = !string.IsNullOrWhiteSpace(_workspace.Pane(pane).Path);
+            ViewUseForFolderButton.IsEnabled = hasFolderPath;
+            ViewUseForDescendantsButton.IsEnabled = hasFolderPath;
+            UpdateFolderViewRuleStatusText();
+            ViewProfilesHost.Children.Clear();
+            ViewProfilesHost.Children.Add(new TextBlock
             {
-                Text = "Loading layouts...",
+                Text = "Loading profiles...",
                 FontSize = 12,
                 Opacity = 0.65,
             });
@@ -914,12 +661,12 @@ public sealed partial class MainWindow
 
         try
         {
-            await RefreshSavedLayoutsHostAsync();
+            await RefreshViewProfilesHostAsync();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            SavedLayoutsHost.Children.Clear();
-            SavedLayoutsHost.Children.Add(new TextBlock
+            ViewProfilesHost.Children.Clear();
+            ViewProfilesHost.Children.Add(new TextBlock
             {
                 Text = exception.Message,
                 FontSize = 12,
@@ -967,292 +714,49 @@ public sealed partial class MainWindow
         await RunUiActionAsync("View options", () => ApplyViewOptionAsync("pane:apply-view-to-both"));
     }
 
-    private async void OnViewSaveLayoutClicked(object sender, RoutedEventArgs e)
+    private async void OnViewUseGloballyClicked(object sender, RoutedEventArgs e)
     {
-        PrimaryViewButton.Flyout?.Hide();
-        await RunUiActionAsync("Layout", PromptSaveNamedLayoutAsync);
+        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Global));
     }
 
-    private async Task RefreshSavedLayoutsHostAsync()
+    private async void OnViewUseForFolderClicked(object sender, RoutedEventArgs e)
     {
-        SavedLayoutsHost.Children.Clear();
-        if (_workspace is null)
-        {
-            return;
-        }
-
-        var layouts = await _workspace.ListSavedWorkspaceLayoutsAsync();
-        if (layouts.Count == 0)
-        {
-            SavedLayoutsHost.Children.Add(new TextBlock
-            {
-                Text = "No saved layouts",
-                FontSize = 12,
-                Opacity = 0.65,
-            });
-            return;
-        }
-
-        foreach (var layout in layouts)
-        {
-            SavedLayoutsHost.Children.Add(CreateSavedLayoutRow(layout));
-        }
+        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Folder));
     }
 
-    private Grid CreateSavedLayoutRow(SavedWorkspaceLayout layout)
+    private async void OnViewUseForDescendantsClicked(object sender, RoutedEventArgs e)
     {
-        var row = new Grid
-        {
-            ColumnSpacing = 4,
-        };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var apply = new Button
-        {
-            Tag = layout.Id,
-            Style = ChromeStyle("SfGhostButtonStyle"),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            Padding = new Thickness(8, 4, 8, 4),
-            Content = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 8,
-                Children =
-                {
-                    CreateMenuIcon(ContextMenuIconCatalog.ViewAll),
-                    new TextBlock
-                    {
-                        Text = layout.Name,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                    },
-                },
-            },
-        };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(apply, $"Apply layout {layout.Name}");
-        ToolTipService.SetToolTip(apply, "Apply layout");
-        apply.Click += OnApplySavedLayoutClicked;
-        Grid.SetColumn(apply, 0);
-        row.Children.Add(apply);
-
-        var overwrite = CreateSavedLayoutIconButton(layout.Id, "Overwrite layout", ContextMenuIconCatalog.Save, OnOverwriteSavedLayoutClicked);
-        Grid.SetColumn(overwrite, 1);
-        row.Children.Add(overwrite);
-
-        var delete = CreateSavedLayoutIconButton(layout.Id, "Delete layout", ContextMenuIconCatalog.Delete, OnDeleteSavedLayoutClicked);
-        Grid.SetColumn(delete, 2);
-        row.Children.Add(delete);
-
-        return row;
+        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Descendants));
     }
 
-    private Button CreateSavedLayoutIconButton(
-        string id,
-        string tooltip,
-        string glyph,
-        RoutedEventHandler handler)
-    {
-        var button = new Button
-        {
-            Tag = id,
-            Width = 30,
-            Height = 30,
-            MinWidth = 30,
-            Padding = new Thickness(0),
-            Style = ChromeStyle("SfIconButtonStyle"),
-            Content = new FontIcon
-            {
-                FontFamily = new FontFamily("Segoe Fluent Icons"),
-                FontSize = 12,
-                Glyph = glyph,
-            },
-        };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, tooltip);
-        ToolTipService.SetToolTip(button, tooltip);
-        button.Click += handler;
-        return button;
-    }
-
-    private async void OnApplySavedLayoutClicked(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { Tag: string id } || _workspace is null)
-        {
-            return;
-        }
-
-        PrimaryViewButton.Flyout?.Hide();
-        await RunUiActionAsync("Layout", () => ApplySavedLayoutByIdAsync(id));
-    }
-
-    private async void OnOverwriteSavedLayoutClicked(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { Tag: string id } || _workspace is null)
-        {
-            return;
-        }
-
-        PrimaryViewButton.Flyout?.Hide();
-        await RunUiActionAsync("Layout", () => PromptOverwriteSavedLayoutAsync(id));
-    }
-
-    private async void OnDeleteSavedLayoutClicked(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { Tag: string id } || _workspace is null)
-        {
-            return;
-        }
-
-        PrimaryViewButton.Flyout?.Hide();
-        await RunUiActionAsync("Layout", () => PromptDeleteSavedLayoutAsync(id));
-    }
-
-    private async Task ApplySavedLayoutByIdAsync(string id)
+    private async Task SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope scope)
     {
         if (_workspace is null)
         {
             return;
         }
 
-        await _workspace.ApplySavedWorkspaceLayoutAsync(id);
-        SyncFromWorkspace();
-        ShowMessage("Layout", "Layout applied.", InfoBarSeverity.Success);
+        await SaveViewIconSizeNowAsync();
+        var rule = await _workspace.SaveFolderViewSettingsAsync(scope, ActiveUiPane);
+        UpdateFolderViewRuleStatusText(rule);
+        ApplyPreviewVisibility();
+        ApplyColumnWidths();
+        ApplyFileListViewPresentation();
+        SetStatusText($"Saved view defaults for {rule.ScopeLabel}.");
     }
 
-    private async Task PromptSaveNamedLayoutAsync()
+    private void UpdateFolderViewRuleStatusText(FolderViewRule? rule = null)
     {
         if (_workspace is null)
         {
+            ViewFolderRuleStatusText.Text = "";
             return;
         }
 
-        var layouts = await _workspace.ListSavedWorkspaceLayoutsAsync();
-        var suggestedName = SuggestedLayoutName(layouts);
-        var nameBox = new TextBox
-        {
-            Header = "Name",
-            Text = suggestedName,
-            SelectionStart = 0,
-            SelectionLength = suggestedName.Length,
-            MinWidth = 320,
-        };
-        var dialog = new ContentDialog
-        {
-            Title = "Save layout",
-            Content = nameBox,
-            PrimaryButtonText = "Save",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = Content.XamlRoot,
-        };
-
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-        {
-            return;
-        }
-
-        var name = SavedWorkspaceLayoutsDocument.NormalizeName(nameBox.Text);
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            ShowMessage("Layout", "Layout name cannot be empty.", InfoBarSeverity.Warning);
-            return;
-        }
-
-        var duplicate = layouts.FirstOrDefault(layout =>
-            string.Equals(layout.Name, name, StringComparison.OrdinalIgnoreCase));
-        if (duplicate is not null
-            && await ConfirmSavedLayoutOverwriteAsync(name) != ContentDialogResult.Primary)
-        {
-            return;
-        }
-
-        var saved = await _workspace.SaveNamedWorkspaceLayoutAsync(name, overwrite: duplicate is not null);
-        await RefreshSavedLayoutsHostAsync();
-        ShowMessage("Layout", $"Saved \"{saved.Name}\".", InfoBarSeverity.Success);
-    }
-
-    private static string SuggestedLayoutName(IReadOnlyList<SavedWorkspaceLayout> layouts)
-    {
-        const string baseName = "Layout";
-        var used = layouts.Select(layout => layout.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        for (var index = 1; index < 1000; index++)
-        {
-            var candidate = $"{baseName} {index}";
-            if (!used.Contains(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return baseName;
-    }
-
-    private async Task PromptOverwriteSavedLayoutAsync(string id)
-    {
-        if (_workspace is null)
-        {
-            return;
-        }
-
-        var layout = (await _workspace.ListSavedWorkspaceLayoutsAsync()).FirstOrDefault(candidate =>
-            string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
-        if (layout is null || await ConfirmSavedLayoutOverwriteAsync(layout.Name) != ContentDialogResult.Primary)
-        {
-            return;
-        }
-
-        var saved = await _workspace.OverwriteSavedWorkspaceLayoutAsync(id);
-        await RefreshSavedLayoutsHostAsync();
-        ShowMessage("Layout", $"Updated \"{saved.Name}\".", InfoBarSeverity.Success);
-    }
-
-    private async Task<ContentDialogResult> ConfirmSavedLayoutOverwriteAsync(string name)
-    {
-        var dialog = new ContentDialog
-        {
-            Title = "Overwrite layout?",
-            Content = $"Replace \"{name}\" with the current window layout?",
-            PrimaryButtonText = "Overwrite",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = Content.XamlRoot,
-        };
-        return await dialog.ShowAsync();
-    }
-
-    private async Task PromptDeleteSavedLayoutAsync(string id)
-    {
-        if (_workspace is null)
-        {
-            return;
-        }
-
-        var layout = (await _workspace.ListSavedWorkspaceLayoutsAsync()).FirstOrDefault(candidate =>
-            string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase));
-        if (layout is null)
-        {
-            return;
-        }
-
-        var dialog = new ContentDialog
-        {
-            Title = "Delete layout?",
-            Content = $"Delete \"{layout.Name}\"?",
-            PrimaryButtonText = "Delete",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = Content.XamlRoot,
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-        {
-            return;
-        }
-
-        await _workspace.DeleteSavedWorkspaceLayoutAsync(id);
-        await RefreshSavedLayoutsHostAsync();
-        ShowMessage("Layout", $"Deleted \"{layout.Name}\".", InfoBarSeverity.Success);
+        rule ??= _workspace.EffectiveFolderViewRuleFor(ActiveUiPane);
+        ViewFolderRuleStatusText.Text = rule is null
+            ? "Current folder uses global settings."
+            : $"Current folder uses {rule.ScopeLabel} defaults.";
     }
 
     private void OnViewIconSizeSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -1385,15 +889,15 @@ public sealed partial class MainWindow
         var overflow = _primaryToolbarOverflow;
 
         PopulateMenuFlyout(flyout, ContextMenuBuilder.BuildPaneMoreMenu(BuildContextMenuRequest(selected, overflow)));
-        if (overflow.Contains(ToolbarOverflowPlanner.ViewOptions))
+        if (overflow.Contains(ToolbarOverflowPlanner.Profiles))
         {
             try
             {
-                await AppendSavedLayoutOverflowMenuAsync(flyout);
+                await AppendWorkspaceProfileOverflowMenuAsync(flyout);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                ShowMessage("Layout", exception.Message, InfoBarSeverity.Warning);
+                ShowMessage("Profile", exception.Message, InfoBarSeverity.Warning);
             }
         }
     }
@@ -1407,8 +911,27 @@ public sealed partial class MainWindow
 
     private IReadOnlyList<FileRow> SelectedRowsForPane(PaneId pane)
     {
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            return details.SelectedRows;
+        }
+
         var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
         return list.SelectedItems.OfType<FileRow>().ToArray();
+    }
+
+    private FileRow? SelectedRowForPane(PaneId pane)
+    {
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            return details.SelectedRow;
+        }
+
+        var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
+        return list.SelectedItem as FileRow
+            ?? list.SelectedItems.OfType<FileRow>().LastOrDefault();
     }
 
     private ContextMenuRequest BuildContextMenuRequest(
@@ -1426,13 +949,19 @@ public sealed partial class MainWindow
             SelectedIsDirectory = selected.Count == 1 && selected[0].IsDir,
             SelectedDirectoryPath = selected.Count == 1 && selected[0].IsDir ? selected[0].Path : null,
             HasFolderSelection = selected.Any(row => row.IsDir),
+            FolderSelectionCount = selected.Count(row => row.IsDir),
             AllSelectedAreFiles = selected.Count > 0 && selected.All(row => !row.IsDir),
             SelectedIsArchive = selected.Count == 1 && !selected[0].IsDir && ArchivePaths.IsArchiveFile(selected[0].Path),
             ArchiveExtractFolderName = selected.Count == 1 ? ArchivePaths.ExtractFolderName(selected[0].Name) : null,
             SelectedExtension = selectedFile?.Extension,
             OpenWithApplications = selectedFile is null ? [] : OpenWithApplicationsForPath(selectedFile.Path),
             OverflowedToolbarIds = overflowedToolbarIds ?? [],
+            ToolbarActionOrder = CurrentPrimaryToolbarActionOrder(),
+            ToolbarDisplayMode = (_workspace?.Settings.CommandSurface ?? CommandSurfaceLayout.CreateDefault()).ToolbarDisplayMode,
             InRecycleBin = PathRules.IsRecycleBinPath(_workspace?.Active.Path),
+            GitEnabled = IsGitIntegrationEnabled,
+            InGitRepository = _gitStatus?.IsRepo == true || selected.Any(row => !string.IsNullOrWhiteSpace(row.GitText)),
+            SelectionHasGitStatus = selected.Any(row => !string.IsNullOrWhiteSpace(row.GitText)),
         };
     }
 
@@ -1494,66 +1023,6 @@ public sealed partial class MainWindow
         };
     }
 
-    private async Task AppendSavedLayoutOverflowMenuAsync(MenuFlyout flyout)
-    {
-        if (_workspace is null)
-        {
-            return;
-        }
-
-        var viewMenu = flyout.Items
-            .OfType<MenuFlyoutSubItem>()
-            .FirstOrDefault(item => string.Equals(item.Name, "overflow-view", StringComparison.Ordinal));
-        if (viewMenu is null)
-        {
-            return;
-        }
-
-        var layouts = await _workspace.ListSavedWorkspaceLayoutsAsync();
-        var layoutsMenu = new MenuFlyoutSubItem
-        {
-            Text = "Layouts",
-            Icon = CreateMenuIcon(ContextMenuIconCatalog.ViewAll),
-        };
-        layoutsMenu.Items.Add(CreateSavedLayoutMenuItem("layout:save", "Save current layout...", ContextMenuIconCatalog.Save));
-        if (layouts.Count > 0)
-        {
-            layoutsMenu.Items.Add(new MenuFlyoutSeparator());
-            foreach (var layout in layouts)
-            {
-                layoutsMenu.Items.Add(CreateSavedLayoutSubMenu(layout));
-            }
-        }
-
-        viewMenu.Items.Add(new MenuFlyoutSeparator());
-        viewMenu.Items.Add(layoutsMenu);
-    }
-
-    private MenuFlyoutSubItem CreateSavedLayoutSubMenu(SavedWorkspaceLayout layout)
-    {
-        var sub = new MenuFlyoutSubItem
-        {
-            Text = layout.Name,
-            Icon = CreateMenuIcon(ContextMenuIconCatalog.ViewAll),
-        };
-        sub.Items.Add(CreateSavedLayoutMenuItem($"layout:apply:{layout.Id}", "Apply", ContextMenuIconCatalog.ViewAll));
-        sub.Items.Add(CreateSavedLayoutMenuItem($"layout:overwrite:{layout.Id}", "Overwrite", ContextMenuIconCatalog.Save));
-        sub.Items.Add(CreateSavedLayoutMenuItem($"layout:delete:{layout.Id}", "Delete", ContextMenuIconCatalog.Delete));
-        return sub;
-    }
-
-    private MenuFlyoutItem CreateSavedLayoutMenuItem(string tag, string text, string glyph)
-    {
-        var item = new MenuFlyoutItem
-        {
-            Text = text,
-            Tag = tag,
-            Icon = CreateMenuIcon(glyph),
-        };
-        item.Click += OnSavedLayoutMenuActionClick;
-        return item;
-    }
-
     private async void OnContextMenuItemClick(object sender, RoutedEventArgs e)
     {
         if (sender is not MenuFlyoutItem item)
@@ -1569,44 +1038,6 @@ public sealed partial class MainWindow
         }
 
         await RunUiActionAsync("Context menu", () => RunContextCommandAsync(id, entry?.CommandParameter));
-    }
-
-    private async void OnSavedLayoutMenuActionClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not MenuFlyoutItem { Tag: string tag })
-        {
-            return;
-        }
-
-        await RunUiActionAsync("Layout", () => RunSavedLayoutMenuActionAsync(tag));
-    }
-
-    private async Task RunSavedLayoutMenuActionAsync(string tag)
-    {
-        if (tag == "layout:save")
-        {
-            await PromptSaveNamedLayoutAsync();
-            return;
-        }
-
-        var parts = tag.Split(':', 3);
-        if (parts.Length != 3 || parts[0] != "layout")
-        {
-            return;
-        }
-
-        switch (parts[1])
-        {
-            case "apply":
-                await ApplySavedLayoutByIdAsync(parts[2]);
-                break;
-            case "overwrite":
-                await PromptOverwriteSavedLayoutAsync(parts[2]);
-                break;
-            case "delete":
-                await PromptDeleteSavedLayoutAsync(parts[2]);
-                break;
-        }
     }
 
     private async Task RunContextCommandAsync(string id, string? commandParameter = null)
@@ -1631,6 +1062,18 @@ public sealed partial class MainWindow
             return;
         }
 
+        if (id.StartsWith("profile:", StringComparison.Ordinal))
+        {
+            await RunWorkspaceProfileMenuActionAsync(id);
+            return;
+        }
+
+        if (id.StartsWith("new:", StringComparison.Ordinal))
+        {
+            await RunNewItemCommandAsync(id, ActiveUiPane);
+            return;
+        }
+
         var commandId = CommandAliasCatalog.Normalize(id);
         if (!string.Equals(commandId, id, StringComparison.Ordinal))
         {
@@ -1641,7 +1084,7 @@ public sealed partial class MainWindow
         switch (id)
         {
             case "ctx-open":
-                await OpenSelectedFile(ActiveFileList, _workspace?.ActivePane ?? PaneId.Primary);
+                await OpenSelectedFile(_workspace?.ActivePane ?? PaneId.Primary);
                 break;
             case "ctx-open-with":
             case "ctx-open-with-choose":
@@ -1699,7 +1142,7 @@ public sealed partial class MainWindow
                 return;
             }
 
-            var filterBox = QuickFilterBoxFor(_workspace.ActivePane);
+            var filterBox = ActiveToolbarQuickFilterBox();
             if (!string.IsNullOrEmpty(filterBox.Text))
             {
                 e.Handled = true;
@@ -1707,10 +1150,10 @@ public sealed partial class MainWindow
                 return;
             }
 
-            if (ActiveFileList.SelectedItems.Count > 0)
+            if (ActiveSelectedRows.Count > 0)
             {
                 e.Handled = true;
-                ActiveFileList.SelectedItems.Clear();
+                ClearSelectionForPane(_workspace.ActivePane);
                 _workspace.SelectPath(null);
             }
 
@@ -1722,25 +1165,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (e.Key == VirtualKey.Tab && _workspace.DualPaneEnabled)
-        {
-            e.Handled = true;
-            _workspace.SwitchActivePane();
-            return;
-        }
-
-        if (e.Key == VirtualKey.Back)
-        {
-            e.Handled = true;
-            await RunUiActionAsync("Navigation", () => _workspace.GoUpAsync());
-            return;
-        }
-
-        if (e.Key == VirtualKey.Space)
-        {
-            e.Handled = true;
-            await RunUiActionAsync("Quick Look", ShowQuickLookAsync);
-        }
+        // Pane switching, backspace navigation, and Quick Look are routed through
+        // ApplyKeyboardShortcuts so user remaps take effect consistently.
     }
 
     private bool IsTextInputFocused()
@@ -1748,708 +1174,4 @@ public sealed partial class MainWindow
         return FocusManager.GetFocusedElement(Content.XamlRoot) is TextBox;
     }
 
-    private async Task ShowKeyboardHelpAsync()
-    {
-        var lines = KeyboardShortcutMap.Defaults.Select(item => $"{item.Keys,-22}  {item.Label}");
-        var box = new TextBox
-        {
-            Text = string.Join(Environment.NewLine, lines),
-            IsReadOnly = true,
-            AcceptsReturn = true,
-            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
-            FontSize = 12,
-            MinWidth = 420,
-            MaxHeight = 360,
-        };
-        var dialog = new ContentDialog
-        {
-            Title = "Keyboard shortcuts",
-            Content = box,
-            CloseButtonText = "Close",
-            XamlRoot = Content.XamlRoot,
-        };
-        await dialog.ShowAsync();
-    }
-
-    private async Task ShowQuickLookAsync()
-    {
-        if (ActiveSelectedRow is not { } row)
-        {
-            return;
-        }
-
-        var workspace = _workspace;
-        var fileOps = workspace?.FileOps;
-        var body = new StackPanel { Spacing = 8, Width = 560 };
-        body.Children.Add(new TextBlock { Text = row.Name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        body.Children.Add(new TextBlock { Text = row.Path, TextWrapping = TextWrapping.Wrap, Opacity = 0.8 });
-        body.Children.Add(new TextBlock { Text = $"{row.TypeText}  {row.SizeText}  {row.ModifiedText}" });
-        var hasVisualPreview = false;
-        Action? cleanup = null;
-
-        if (fileOps is not null && row.IsDir)
-        {
-            // Folder summary stats: show item count and total size.
-            var utilityCts = BeginUtilityOperation();
-            try
-            {
-                var sizeTask = fileOps.CalculateFolderSizeAsync(row.Path, utilityCts.Token);
-                var countTask = fileOps.CountFolderItemsAsync(row.Path, utilityCts.Token);
-                var subdirsTask = fileOps.ListSubdirectoriesAsync(row.Path, utilityCts.Token);
-                await Task.WhenAll(sizeTask, countTask, subdirsTask).ConfigureAwait(true);
-
-                if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                var totalSize = sizeTask.Result;
-                var totalItems = countTask.Result;
-                var subdirs = subdirsTask.Result;
-
-                var statsPanel = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
-                statsPanel.Children.Add(new TextBlock
-                {
-                    Text = "Folder Contents",
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Opacity = 0.7,
-                    FontSize = 12,
-                });
-                statsPanel.Children.Add(QuickLookMetadataRow(
-                    "Subfolders",
-                    $"{subdirs.Length:N0} {(subdirs.Length == 1 ? "folder" : "folders")}"));
-                statsPanel.Children.Add(QuickLookMetadataRow(
-                    "Total Items",
-                    $"{totalItems:N0} {(totalItems == 1 ? "item" : "items")}"));
-                statsPanel.Children.Add(QuickLookMetadataRow(
-                    "Total Size",
-                    EntryPresentation.FormatFileSize(totalSize)));
-                body.Children.Add(statsPanel);
-                hasVisualPreview = true;
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                body.Children.Add(new TextBlock { Text = exception.Message });
-            }
-            finally
-            {
-                FinishUtilityOperation(utilityCts);
-            }
-        }
-        else if (fileOps is not null && !row.IsDir)
-        {
-            var utilityCts = BeginUtilityOperation();
-            try
-            {
-                var preview = await fileOps.ReadFilePreviewAsync(row.Path, 80_000, utilityCts.Token);
-                if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                if (preview.FileType == "text" && preview.Content is not null)
-                {
-                    body.Children.Add(new TextBox
-                    {
-                        Text = preview.Content,
-                        IsReadOnly = true,
-                        AcceptsReturn = true,
-                        FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
-                        FontSize = 12,
-                        MaxHeight = 280,
-                    });
-                    hasVisualPreview = true;
-                }
-                else if (preview.FileType == "image" && await TryAddQuickLookImageAsync(body, row, preview, fileOps, utilityCts.Token))
-                {
-                    hasVisualPreview = true;
-                }
-                else if (PreviewPresenter.TryCreatePathBackedPreview(
-                    row,
-                    preview,
-                    520,
-                    out var pathBackedPreview,
-                    out var pathBackedPreviewCleanup)
-                    && pathBackedPreview is not null)
-                {
-                    body.Children.Add(pathBackedPreview);
-                    cleanup = pathBackedPreviewCleanup;
-                    hasVisualPreview = true;
-                }
-                else
-                {
-                    body.Children.Add(PreviewPresenter.CreateFileTypePreviewIcon(row, 96));
-                    body.Children.Add(new TextBlock { Text = PreviewPresenter.IconPreviewMessage(preview), TextWrapping = TextWrapping.Wrap });
-                    hasVisualPreview = true;
-                }
-
-                // Rich file metadata: show structured properties when available.
-                try
-                {
-                    var metadata = await fileOps.GetFileMetadataAsync(row.Path, utilityCts.Token);
-                    if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
-                    {
-                        return;
-                    }
-
-                    if (metadata.Fields.Count > 0)
-                    {
-                        var metaPanel = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
-                        var heading = metadata.Summary ?? metadata.Kind switch
-                        {
-                            "image" => "Image Details",
-                            "audio" => "Audio Details",
-                            "video" => "Video Details",
-                            "pdf" => "PDF Details",
-                            "office" => "Document Details",
-                            _ => "Details",
-                        };
-                        metaPanel.Children.Add(new TextBlock
-                        {
-                            Text = heading,
-                            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                            Opacity = 0.7,
-                            FontSize = 12,
-                        });
-
-                        var maxFields = Math.Min(metadata.Fields.Count, 12);
-                        for (var i = 0; i < maxFields; i++)
-                        {
-                            var field = metadata.Fields[i];
-                            if (field.Length >= 2)
-                            {
-                                metaPanel.Children.Add(QuickLookMetadataRow(field[0], field[1]));
-                            }
-                        }
-
-                        if (metadata.Fields.Count > maxFields)
-                        {
-                            metaPanel.Children.Add(new TextBlock
-                            {
-                                Text = $"+ {metadata.Fields.Count - maxFields} more fields…",
-                                Opacity = 0.6,
-                                FontSize = 12,
-                            });
-                        }
-
-                        body.Children.Add(metaPanel);
-                    }
-                }
-                catch
-                {
-                    // Best-effort: metadata extraction may fail for some file types.
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                body.Children.Add(new TextBlock { Text = exception.Message });
-            }
-            finally
-            {
-                FinishUtilityOperation(utilityCts);
-            }
-        }
-
-        if (!hasVisualPreview)
-        {
-            body.Children.Add(PreviewPresenter.CreateFileTypePreviewIcon(row, 96));
-        }
-
-        if (workspace is not null && !ReferenceEquals(_workspace, workspace))
-        {
-            return;
-        }
-
-        var dialog = new ContentDialog
-        {
-            Title = "Quick Look",
-            Content = body,
-            CloseButtonText = "Close",
-            XamlRoot = Content.XamlRoot,
-        };
-        if (cleanup is not null)
-        {
-            dialog.Closed += (_, _) => cleanup();
-        }
-        await dialog.ShowAsync();
-    }
-
-    private static Grid QuickLookMetadataRow(string label, string value)
-    {
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var labelBlock = new TextBlock
-        {
-            Text = label,
-            Opacity = 0.7,
-            FontSize = 13,
-        };
-        Grid.SetColumn(labelBlock, 0);
-        grid.Children.Add(labelBlock);
-
-        var valueBlock = new TextBlock
-        {
-            Text = value,
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 13,
-        };
-        Grid.SetColumn(valueBlock, 1);
-        grid.Children.Add(valueBlock);
-
-        return grid;
-    }
-
-    private static async Task<bool> TryAddQuickLookImageAsync(
-        StackPanel body,
-        FileRow row,
-        FilePreview preview,
-        FileOperationService fileOps,
-        CancellationToken cancellationToken)
-    {
-        var imageData = preview.Content;
-        if (string.IsNullOrWhiteSpace(imageData))
-        {
-            try
-            {
-                imageData = await fileOps.GenerateThumbnailAsync(row.Path, 512, cancellationToken);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        try
-        {
-            var source = await PreviewImageSourceFactory.FromBase64Async(imageData, row.Path);
-            body.Children.Add(new Image
-            {
-                Source = source,
-                MaxHeight = 420,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                Stretch = Stretch.Uniform,
-            });
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task ShowPropertiesAsync()
-    {
-        var workspace = _workspace;
-        var fileOps = workspace?.FileOps;
-        if (workspace is null || fileOps is null || ActiveSelectedRow is not { } row)
-        {
-            return;
-        }
-
-        var rows = new StackPanel { Spacing = 8, Width = 460 };
-        void AddRow(string label, string? value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return;
-            }
-
-            rows.Children.Add(new TextBlock
-            {
-                Text = label,
-                FontSize = 11,
-                Opacity = 0.7,
-            });
-            rows.Children.Add(new TextBlock
-            {
-                Text = value,
-                TextWrapping = TextWrapping.Wrap,
-            });
-        }
-
-        AddRow("Name", row.Name);
-        AddRow("Type", row.TypeText);
-        AddRow("Location", PathRules.GetParentPath(row.Path) ?? row.Path);
-        AddRow("Path", row.Path);
-        if (!string.IsNullOrEmpty(row.SymlinkText))
-        {
-            AddRow(PathRules.IsRecycleBinPath(workspace.Active.Path) ? "Original location" : "Link target", row.SymlinkText);
-        }
-
-        AddRow("Size", row.SizeText);
-        AddRow("Modified", row.ModifiedText);
-
-        var checksumText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"), FontSize = 12 };
-        var checksumButton = new Button { Content = "Compute checksums", HorizontalAlignment = HorizontalAlignment.Left };
-
-        var utilityCts = BeginUtilityOperation();
-        try
-        {
-            var info = await fileOps.GetEntryInfoAsync(row.Path, utilityCts.Token);
-            if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
-            {
-                return;
-            }
-
-            var attributes = new List<string>();
-            if (info.IsHidden)
-            {
-                attributes.Add("Hidden");
-            }
-
-            if (info.IsSystem)
-            {
-                attributes.Add("System");
-            }
-
-            if (info.IsSymlink)
-            {
-                attributes.Add("Shortcut");
-            }
-
-            AddRow("Attributes", attributes.Count == 0 ? "Normal" : string.Join(", ", attributes));
-            if (!string.IsNullOrEmpty(info.Permissions))
-            {
-                AddRow("Permissions", info.Permissions);
-            }
-
-            try
-            {
-                var metadata = await fileOps.GetFileMetadataAsync(row.Path, utilityCts.Token);
-                if (!string.IsNullOrEmpty(metadata.Summary))
-                {
-                    AddRow("Summary", metadata.Summary);
-                }
-
-                foreach (var field in metadata.Fields)
-                {
-                    if (field.Length >= 2)
-                    {
-                        AddRow(field[0], field[1]);
-                    }
-                }
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                // Metadata is optional; core properties still show.
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            AddRow("Error", exception.Message);
-        }
-        finally
-        {
-            FinishUtilityOperation(utilityCts);
-        }
-
-        checksumButton.Click += async (_, _) =>
-        {
-            checksumButton.IsEnabled = false;
-            checksumText.Text = "Computing…";
-            var hashCts = BeginUtilityOperation();
-            try
-            {
-                var checksums = await fileOps.ComputeChecksumAsync(row.Path, hashCts.Token);
-                checksumText.Text = $"MD5    {checksums.Md5}{Environment.NewLine}SHA-1  {checksums.Sha1}{Environment.NewLine}SHA-256 {checksums.Sha256}";
-            }
-            catch (Exception exception)
-            {
-                checksumText.Text = exception.Message;
-            }
-            finally
-            {
-                FinishUtilityOperation(hashCts);
-                checksumButton.IsEnabled = true;
-            }
-        };
-
-        rows.Children.Add(checksumButton);
-        rows.Children.Add(checksumText);
-
-        if (!ReferenceEquals(_workspace, workspace))
-        {
-            return;
-        }
-
-        var dialog = new ContentDialog
-        {
-            Title = "Properties",
-            Content = new ScrollViewer
-            {
-                MaxHeight = 480,
-                Content = rows,
-            },
-            CloseButtonText = "Close",
-            XamlRoot = Content.XamlRoot,
-        };
-        await dialog.ShowAsync();
-    }
-
-    private async Task ShowClipboardHistoryAsync()
-    {
-        if (_workspace is null)
-        {
-            return;
-        }
-
-        var entries = _workspace.ClipboardHistory.Items;
-        if (entries.Count == 0)
-        {
-            SetStatusText("Clipboard history is empty");
-            return;
-        }
-
-        var list = new ListView
-        {
-            MinWidth = 420,
-            MaxHeight = 320,
-            SelectionMode = ListViewSelectionMode.Single,
-        };
-        foreach (var entry in entries)
-        {
-            list.Items.Add(new ClipboardHistoryRow(entry));
-        }
-
-        list.SelectedIndex = 0;
-        var dialog = new ContentDialog
-        {
-            Title = "Clipboard history",
-            Content = list,
-            PrimaryButtonText = "Paste this",
-            CloseButtonText = "Close",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = Content.XamlRoot,
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || list.SelectedItem is not ClipboardHistoryRow row)
-        {
-            return;
-        }
-
-        if (row.Entry.Operation == ClipboardOperation.Cut)
-        {
-            _workspace.Clipboard.SetCut(row.Entry.Paths);
-        }
-        else
-        {
-            _workspace.Clipboard.SetCopy(row.Entry.Paths);
-        }
-
-        await PasteFromClipboard();
-    }
-
-    private async Task ShowFolderMetricsAsync()
-    {
-        var workspace = _workspace;
-        var fileOps = workspace?.FileOps;
-        if (workspace is null || fileOps is null)
-        {
-            return;
-        }
-
-        var folders = ActiveSelectedRows.Where(row => row.IsDir).ToArray();
-        var paths = folders.Length > 0
-            ? folders.Select(f => f.Path).ToArray()
-            : [workspace.Active.Path];
-
-        var utilityCts = BeginUtilityOperation();
-        try
-        {
-            var lines = new List<string>();
-            ulong totalSize = 0;
-            ulong totalCount = 0;
-
-            foreach (var path in paths)
-            {
-                SetStatusText($"Calculating metrics for {path}...");
-                var size = await fileOps.CalculateFolderSizeAsync(path, utilityCts.Token);
-                var count = await fileOps.CountFolderItemsAsync(path, utilityCts.Token);
-                if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                lines.Add($"{path}{Environment.NewLine}{EntryPresentation.FormatFileSize(size)} · {count} item(s)");
-                totalSize += size;
-                totalCount += count;
-            }
-
-            if (paths.Length > 1)
-            {
-                lines.Add($"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s) across {paths.Length} folders");
-            }
-            else
-            {
-                lines.Add($"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s)");
-            }
-
-            SetStatusText("");
-            var dialog = new ContentDialog
-            {
-                Title = "Folder metrics",
-                Content = new ScrollViewer
-                {
-                    MaxHeight = 400,
-                    Content = new TextBlock
-                    {
-                        Text = string.Join(Environment.NewLine + Environment.NewLine, lines),
-                        TextWrapping = TextWrapping.Wrap,
-                        Width = 420,
-                    },
-                },
-                CloseButtonText = "Close",
-                XamlRoot = Content.XamlRoot,
-            };
-            await dialog.ShowAsync();
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception exception)
-        {
-            ShowMessage("Folder metrics", exception.Message, InfoBarSeverity.Error);
-        }
-        finally
-        {
-            FinishUtilityOperation(utilityCts);
-        }
-    }
-
-    private async Task ShowOperationHistoryAsync()
-    {
-        var workspace = _workspace;
-        var records = workspace?.OperationLog ?? [];
-        if (workspace is null || records.Count == 0)
-        {
-            SetStatusText("No operations in this session.");
-            return;
-        }
-
-        var list = new ListView
-        {
-            MinWidth = 420,
-            MaxHeight = 320,
-            SelectionMode = ListViewSelectionMode.Single,
-        };
-        foreach (var record in records)
-        {
-            list.Items.Add(new OperationHistoryRow(record));
-        }
-
-        list.SelectedIndex = 0;
-
-        var dialog = new ContentDialog
-        {
-            Title = "Operation history",
-            Content = list,
-            PrimaryButtonText = "Retry",
-            SecondaryButtonText = workspace.Undo.CanUndo ? "Undo last" : "",
-            CloseButtonText = "Close",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = Content.XamlRoot,
-        };
-        var result = await dialog.ShowAsync();
-        if (!ReferenceEquals(_workspace, workspace))
-        {
-            return;
-        }
-
-        if (result == ContentDialogResult.Primary && list.SelectedItem is OperationHistoryRow row)
-        {
-            await TransferWithConflictAsync(
-                row.Record.Sources,
-                row.Record.Destination,
-                row.Record.Move);
-        }
-        else if (result == ContentDialogResult.Secondary && workspace.Undo.CanUndo)
-        {
-            await UndoLastAsync();
-        }
-    }
-
-    private async Task RunGitAsync(bool pull)
-    {
-        var workspace = _workspace;
-        var fileOps = workspace?.FileOps;
-        if (workspace is null || fileOps is null)
-        {
-            return;
-        }
-
-        var path = workspace.Active.Path;
-        var utilityCts = BeginUtilityOperation();
-        try
-        {
-            if (pull)
-            {
-                SetStatusText($"Pulling Git changes in {path}...");
-                await fileOps.GitPullAsync(path, utilityCts.Token);
-                if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
-                {
-                    ShowMessage("Git", "Pull completed.", InfoBarSeverity.Success);
-                }
-            }
-            else
-            {
-                SetStatusText($"Pushing Git changes from {path}...");
-                await fileOps.GitPushAsync(path, utilityCts.Token);
-                if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
-                {
-                    ShowMessage("Git", "Push completed.", InfoBarSeverity.Success);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception exception)
-        {
-            ShowMessage(pull ? "Git pull" : "Git push", exception.Message, InfoBarSeverity.Error);
-        }
-        finally
-        {
-            FinishUtilityOperation(utilityCts);
-        }
-    }
-
-    private async Task OpenPowershellAdminAsync()
-    {
-        var workspace = _workspace;
-        var fileOps = workspace?.FileOps;
-        if (workspace is null || fileOps is null)
-        {
-            return;
-        }
-
-        var utilityCts = BeginUtilityOperation();
-        try
-        {
-            await fileOps.OpenPowershellAdminAsync(workspace.Active.Path, utilityCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception exception)
-        {
-            ShowMessage("PowerShell", exception.Message, InfoBarSeverity.Error);
-        }
-        finally
-        {
-            FinishUtilityOperation(utilityCts);
-        }
-    }
 }

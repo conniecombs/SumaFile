@@ -1,4 +1,5 @@
 use rusqlite::{Connection, OptionalExtension};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const APP_IDENTIFIER: &str = "com.simplefile.desktop";
@@ -12,6 +13,35 @@ pub fn get_db_setting(key: String) -> Result<Option<String>, String> {
     validate_key(&key)?;
     let path = metadata_db_path()?;
     get_db_setting_at(&path, &key)
+}
+
+pub fn get_db_settings(keys: Vec<String>) -> Result<HashMap<String, Option<String>>, String> {
+    for key in &keys {
+        validate_key(key)?;
+    }
+
+    let path = metadata_db_path()?;
+    get_db_settings_at(&path, &keys)
+}
+
+fn get_db_settings_at(
+    path: &Path,
+    keys: &[String],
+) -> Result<HashMap<String, Option<String>>, String> {
+    let connection = open_metadata_db_at(path)?;
+    let mut statement = connection
+        .prepare("SELECT value FROM settings WHERE key = ?1")
+        .map_err(|error| error.to_string())?;
+    let mut values = HashMap::with_capacity(keys.len());
+    for key in keys {
+        let value = statement
+            .query_row([key.as_str()], |row| row.get::<_, String>(0))
+            .optional()
+            .map_err(|error| error.to_string())?;
+        values.insert(key.clone(), value);
+    }
+
+    Ok(values)
 }
 
 pub fn set_db_setting(key: String, value: String) -> Result<(), String> {
@@ -279,6 +309,37 @@ mod tests {
             )
             .expect("query table");
         assert_eq!(table_count, 1);
+
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn batch_settings_return_present_and_missing_values() {
+        let db = temp_db("batch");
+        set_db_setting_at(&db, "theme", "dark").expect("set theme");
+        set_db_setting_at(&db, "previewVisible", "false").expect("set preview");
+
+        let values = get_db_settings_at(
+            &db,
+            &[
+                "theme".to_string(),
+                "previewVisible".to_string(),
+                "missing".to_string(),
+            ],
+        )
+        .expect("get batch");
+
+        assert_eq!(
+            values.get("theme").and_then(|value| value.as_deref()),
+            Some("dark")
+        );
+        assert_eq!(
+            values
+                .get("previewVisible")
+                .and_then(|value| value.as_deref()),
+            Some("false")
+        );
+        assert_eq!(values.get("missing"), Some(&None));
 
         let _ = std::fs::remove_file(db);
     }

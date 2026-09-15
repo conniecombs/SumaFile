@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace SimpleFile.Ipc;
@@ -10,42 +9,6 @@ public sealed class JsonRpcRequest
 
     [JsonPropertyName("id")]
     public int Id { get; set; }
-
-    [JsonPropertyName("method")]
-    public required string Method { get; set; }
-
-    [JsonPropertyName("params")]
-    public object? Params { get; set; }
-}
-
-public sealed class JsonRpcError
-{
-    [JsonPropertyName("code")]
-    public int Code { get; set; }
-
-    [JsonPropertyName("message")]
-    public string Message { get; set; } = "";
-}
-
-public sealed class JsonRpcResponse
-{
-    [JsonPropertyName("jsonrpc")]
-    public string JsonRpc { get; set; } = Protocol.JsonRpc;
-
-    [JsonPropertyName("id")]
-    public JsonElement? Id { get; set; }
-
-    [JsonPropertyName("result")]
-    public JsonElement? Result { get; set; }
-
-    [JsonPropertyName("error")]
-    public JsonRpcError? Error { get; set; }
-}
-
-public sealed class JsonRpcNotification
-{
-    [JsonPropertyName("jsonrpc")]
-    public string JsonRpc { get; set; } = Protocol.JsonRpc;
 
     [JsonPropertyName("method")]
     public required string Method { get; set; }

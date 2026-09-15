@@ -131,6 +131,15 @@ public sealed class SavedWorkspaceLayout
 
 public sealed class WorkspaceChromeLayout
 {
+    [JsonPropertyName("keepFoldersOnTop")]
+    public bool KeepFoldersOnTop { get; set; } = true;
+
+    [JsonPropertyName("enableGitIntegration")]
+    public bool EnableGitIntegration { get; set; } = true;
+
+    [JsonPropertyName("progressQueueVisible")]
+    public bool ProgressQueueVisible { get; set; }
+
     [JsonPropertyName("previewVisible")]
     public bool PreviewVisible { get; set; } = true;
 
@@ -158,13 +167,31 @@ public sealed class WorkspaceChromeLayout
     [JsonPropertyName("columnPreset")]
     public string ColumnPreset { get; set; } = "default";
 
+    [JsonPropertyName("visibleColumnIds")]
+    public List<string> VisibleColumnIds { get; set; } = [];
+
     [JsonPropertyName("columnWidths")]
     public Dictionary<string, double> ColumnWidths { get; set; } = new(StringComparer.Ordinal);
 
-    public static WorkspaceChromeLayout Capture(UiSettings settings, ColumnLayout columns)
+    [JsonPropertyName("secondaryColumnPreset")]
+    public string? SecondaryColumnPreset { get; set; }
+
+    [JsonPropertyName("secondaryVisibleColumnIds")]
+    public List<string>? SecondaryVisibleColumnIds { get; set; }
+
+    [JsonPropertyName("secondaryColumnWidths")]
+    public Dictionary<string, double>? SecondaryColumnWidths { get; set; }
+
+    public static WorkspaceChromeLayout Capture(
+        UiSettings settings,
+        ColumnLayout primaryColumns,
+        ColumnLayout secondaryColumns)
     {
         return new WorkspaceChromeLayout
         {
+            KeepFoldersOnTop = settings.KeepFoldersOnTop,
+            EnableGitIntegration = settings.EnableGitIntegration,
+            ProgressQueueVisible = settings.ProgressQueueVisible,
             PreviewVisible = settings.PreviewVisible,
             PreviewWidth = UiSettings.NormalizePreviewWidth(settings.PreviewWidth),
             SidebarVisible = settings.SidebarVisible,
@@ -174,13 +201,20 @@ public sealed class WorkspaceChromeLayout
             QuickAccessCollapsed = settings.QuickAccessCollapsed,
             MyPcCollapsed = settings.MyPcCollapsed,
             ColumnPreset = UiSettings.NormalizeColumnPreset(settings.ColumnPreset),
-            ColumnWidths = columns.SnapshotWidths(),
+            VisibleColumnIds = primaryColumns.SnapshotVisibleIds(),
+            ColumnWidths = primaryColumns.SnapshotWidths(),
+            SecondaryColumnPreset = UiSettings.NormalizeColumnPreset(settings.SecondaryColumnPreset),
+            SecondaryVisibleColumnIds = secondaryColumns.SnapshotVisibleIds(),
+            SecondaryColumnWidths = secondaryColumns.SnapshotWidths(),
         };
     }
 
-    public void Apply(UiSettings settings, ColumnLayout columns)
+    public void Apply(UiSettings settings, ColumnLayout primaryColumns, ColumnLayout secondaryColumns)
     {
         Normalize();
+        settings.KeepFoldersOnTop = KeepFoldersOnTop;
+        settings.EnableGitIntegration = EnableGitIntegration;
+        settings.ProgressQueueVisible = ProgressQueueVisible;
         settings.PreviewVisible = PreviewVisible;
         settings.PreviewWidth = PreviewWidth;
         settings.SidebarVisible = SidebarVisible;
@@ -189,10 +223,27 @@ public sealed class WorkspaceChromeLayout
         settings.DualPanePrimaryWidth = DualPanePrimaryWidth;
         settings.QuickAccessCollapsed = QuickAccessCollapsed;
         settings.MyPcCollapsed = MyPcCollapsed;
+
         settings.ColumnPreset = ColumnPreset;
         settings.ColumnWidths = new Dictionary<string, double>(ColumnWidths, StringComparer.Ordinal);
-        columns.ApplyPreset(settings.ColumnPreset);
-        columns.RestoreWidths(settings.ColumnWidths);
+        primaryColumns.ApplyPreset(settings.ColumnPreset);
+        primaryColumns.RestoreVisibleIds(VisibleColumnIds);
+        primaryColumns.RestoreWidths(settings.ColumnWidths);
+
+        // Legacy chrome layouts without secondary* fields seed both panes from the flat primary fields.
+        var secondaryPreset = UiSettings.NormalizeColumnPreset(
+            string.IsNullOrWhiteSpace(SecondaryColumnPreset) ? ColumnPreset : SecondaryColumnPreset);
+        var secondaryVisible = SecondaryVisibleColumnIds is { Count: > 0 }
+            ? SecondaryVisibleColumnIds
+            : VisibleColumnIds;
+        var secondaryWidths = SecondaryColumnWidths is { Count: > 0 }
+            ? SecondaryColumnWidths
+            : ColumnWidths;
+        settings.SecondaryColumnPreset = secondaryPreset;
+        settings.SecondaryColumnWidths = new Dictionary<string, double>(secondaryWidths, StringComparer.Ordinal);
+        secondaryColumns.ApplyPreset(secondaryPreset);
+        secondaryColumns.RestoreVisibleIds(secondaryVisible);
+        secondaryColumns.RestoreWidths(settings.SecondaryColumnWidths);
     }
 
     public void Normalize()
@@ -202,10 +253,32 @@ public sealed class WorkspaceChromeLayout
         DualPanePrimaryPercent = UiSettings.NormalizeDualPanePrimaryPercent(DualPanePrimaryPercent);
         DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(DualPanePrimaryWidth);
         ColumnPreset = UiSettings.NormalizeColumnPreset(ColumnPreset);
-        ColumnWidths = ColumnWidths
+        if (!string.IsNullOrWhiteSpace(SecondaryColumnPreset))
+        {
+            SecondaryColumnPreset = UiSettings.NormalizeColumnPreset(SecondaryColumnPreset);
+        }
+
+        var knownColumns = new ColumnLayout();
+        VisibleColumnIds = NormalizeVisibleIds(VisibleColumnIds, knownColumns);
+        SecondaryVisibleColumnIds = SecondaryVisibleColumnIds is null
+            ? null
+            : NormalizeVisibleIds(SecondaryVisibleColumnIds, knownColumns);
+        ColumnWidths = NormalizeWidths(ColumnWidths);
+        SecondaryColumnWidths = SecondaryColumnWidths is null
+            ? null
+            : NormalizeWidths(SecondaryColumnWidths);
+    }
+
+    private static List<string> NormalizeVisibleIds(IEnumerable<string> ids, ColumnLayout knownColumns) =>
+        ids
+            .Where(id => !string.IsNullOrWhiteSpace(id) && knownColumns.Find(id) is not null)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    private static Dictionary<string, double> NormalizeWidths(Dictionary<string, double> widths) =>
+        widths
             .Where(pair => !string.IsNullOrWhiteSpace(pair.Key)
                 && !double.IsNaN(pair.Value)
                 && !double.IsInfinity(pair.Value))
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-    }
 }

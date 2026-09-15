@@ -42,6 +42,8 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<IReadOnlyList<DriveInfo>> ListDrivesAsync(CancellationToken cancellationToken = default) => throw NotConfigured();
 
+    public virtual Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default) => throw NotConfigured();
+
     public virtual Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default) => throw NotConfigured();
 
     public virtual Task ShowMainWindowAsync(CancellationToken cancellationToken = default) => throw NotConfigured();
@@ -50,11 +52,22 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task SetDbSettingAsync(string key, string value, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<string> CreateShortcutAsync(
+        string path,
+        string name,
+        string targetPath,
+        string? arguments = null,
+        string? workingDirectory = null,
+        string? iconPath = null,
+        CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task DeleteEntryAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
@@ -94,6 +107,8 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<ArchiveInfo> ListArchiveAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task CreateArchiveAsync(
@@ -104,7 +119,7 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task<string> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task<byte[]> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default) => throw NotConfigured();
 
@@ -119,6 +134,8 @@ internal abstract class NullIpc : ISimpleFileIpc
     public virtual Task<FileMetadata> GetFileMetadataAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
@@ -158,13 +175,7 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task CancelCountItemsAsync(CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task<bool> CheckRarInstalledAsync(CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task CancelFolderMetricsAsync(CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<CleanupResult> DiskCleanupAsync(
         string directory,
@@ -172,16 +183,15 @@ internal abstract class NullIpc : ISimpleFileIpc
         string? operationId,
         CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task CancelDiskCleanupAsync(CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<DuplicateCheckResult> DuplicateCheckAsync(
         string directory,
-        ulong? minSize,
-        ulong? partialHashBytes,
+        DuplicateScanOptions? options,
         string? operationId,
         CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task CancelDuplicateCheckAsync(CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task CancelDuplicateCheckAsync(string? operationId = null, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<Tag[]> GetAllTagsAsync(CancellationToken ct = default) => throw NotConfigured();
 
@@ -217,11 +227,25 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task GitPullAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task GitPushAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
 

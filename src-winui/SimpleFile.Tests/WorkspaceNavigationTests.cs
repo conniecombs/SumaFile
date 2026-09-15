@@ -106,4 +106,51 @@ public class WorkspaceNavigationTests
         Assert.False(WorkspaceNavigation.CanUsePresortedEntries(pane, keepFoldersOnTop: true));
         Assert.False(WorkspaceNavigation.CanUsePresortedEntries(pane, keepFoldersOnTop: false));
     }
+
+    [Fact]
+    public async Task PaneNavigator_NavigateAsyncKeepsStreamedChunksWhenFinalResultIsTooLarge()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.ThrowTooLargeAfterChunks = true;
+        var pane = new ExplorerPane(PaneId.Primary);
+        var changes = 0;
+        var navigator = new PaneNavigator(backend, new object(), () => changes++);
+        var token = pane.NextNavigationToken();
+
+        var result = await navigator.NavigateAsync(pane, @"C:\Users\test", token, CancellationToken.None);
+
+        Assert.False(result.IsAbandoned);
+        Assert.Null(result.Listing);
+        Assert.Contains("RESULT_TOO_LARGE", result.PartialResultMessage, StringComparison.Ordinal);
+        Assert.Equal(["Desktop", "notes.txt"], pane.Entries.Select(entry => entry.Name));
+        Assert.True(changes > 0);
+    }
+
+    [Fact]
+    public async Task PaneNavigator_RefreshAsyncIgnoresStaleFinalListing()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var release = new TaskCompletionSource<DirectoryListing>(TaskCreationOptions.RunContinuationsAsynchronously);
+        backend.Pending[@"C:\Users\test"] = release.Task;
+        var pane = new ExplorerPane(PaneId.Primary)
+        {
+            Path = @"C:\Users\test",
+        };
+        var navigator = new PaneNavigator(backend, new object(), () => { });
+        var token = pane.NextNavigationToken();
+
+        var refresh = navigator.RefreshAsync(pane, @"C:\Users\test", token, CancellationToken.None);
+        pane.Path = @"C:\Other";
+        release.SetResult(new DirectoryListing
+        {
+            Path = @"C:\Users\test",
+            Entries = [new FileEntry { Name = "stale.txt", Path = @"C:\Users\test\stale.txt" }],
+        });
+
+        var result = await refresh;
+
+        Assert.True(result.IsAbandoned);
+        Assert.Equal(@"C:\Other", pane.Path);
+        Assert.Empty(pane.Entries);
+    }
 }

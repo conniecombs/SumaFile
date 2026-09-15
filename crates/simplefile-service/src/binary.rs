@@ -82,10 +82,10 @@ pub(crate) fn encode_file_change(change: &FileChangeEvent) -> EncodeResult<Vec<u
     Ok(writer.finish())
 }
 
-pub(crate) fn encode_thumbnail_result(request_id: i32, data: &str) -> EncodeResult<Vec<u8>> {
+pub(crate) fn encode_thumbnail_result(request_id: i32, data: &[u8]) -> EncodeResult<Vec<u8>> {
     let mut writer = BinaryWriter::new(BINARY_THUMBNAIL_RESULT);
     writer.i32(request_id);
-    writer.string(data)?;
+    writer.bytes(data)?;
     Ok(writer.finish())
 }
 
@@ -98,7 +98,7 @@ pub(crate) fn encode_thumbnail_results_result(
     writer.len(results.len())?;
     for result in results {
         writer.string(&result.path)?;
-        writer.opt_string(result.data.as_deref())?;
+        writer.opt_bytes(result.data.as_deref())?;
         writer.opt_string(result.error.as_deref())?;
     }
     Ok(writer.finish())
@@ -168,6 +168,25 @@ impl BinaryWriter {
             Some(value) => {
                 self.bool(true);
                 self.string(value)
+            }
+            None => {
+                self.bool(false);
+                Ok(())
+            }
+        }
+    }
+
+    fn bytes(&mut self, value: &[u8]) -> EncodeResult<()> {
+        self.len(value.len())?;
+        self.bytes.extend_from_slice(value);
+        Ok(())
+    }
+
+    fn opt_bytes(&mut self, value: Option<&[u8]>) -> EncodeResult<()> {
+        match value {
+            Some(value) => {
+                self.bool(true);
+                self.bytes(value)
             }
             None => {
                 self.bool(false);

@@ -42,6 +42,47 @@ public class FileOperationServiceTests
     }
 
     [Fact]
+    public async Task CreateShortcutAsync_ForwardsShortcutDetailsToIpc()
+    {
+        string? receivedPath = null;
+        string? receivedName = null;
+        string? receivedTarget = null;
+        string? receivedArguments = null;
+        string? receivedWorkingDirectory = null;
+        string? receivedIconPath = null;
+        var stub = new ConfigurableIpc
+        {
+            CreateShortcutHandler = (path, name, targetPath, arguments, workingDirectory, iconPath, ct) =>
+            {
+                receivedPath = path;
+                receivedName = name;
+                receivedTarget = targetPath;
+                receivedArguments = arguments;
+                receivedWorkingDirectory = workingDirectory;
+                receivedIconPath = iconPath;
+                return Task.FromResult($@"{path}\{name}.lnk");
+            },
+        };
+        var service = new FileOperationService(stub);
+
+        var result = await service.CreateShortcutAsync(
+            @"C:\test",
+            "Notes",
+            @"C:\target\notes.txt",
+            "--safe",
+            @"C:\target",
+            @"C:\target\notes.ico");
+
+        Assert.Equal(@"C:\test\Notes.lnk", result);
+        Assert.Equal(@"C:\test", receivedPath);
+        Assert.Equal("Notes", receivedName);
+        Assert.Equal(@"C:\target\notes.txt", receivedTarget);
+        Assert.Equal("--safe", receivedArguments);
+        Assert.Equal(@"C:\target", receivedWorkingDirectory);
+        Assert.Equal(@"C:\target\notes.ico", receivedIconPath);
+    }
+
+    [Fact]
     public async Task ReplaceIpc_UsesNewClientForFutureCalls()
     {
         var first = new ConfigurableIpc
@@ -323,6 +364,26 @@ public class FileOperationServiceTests
     }
 
     [Fact]
+    public async Task GetFolderMetricsAsync_CancellationSendsBackendCancel()
+    {
+        using var cts = new CancellationTokenSource();
+        var stub = new ConfigurableIpc
+        {
+            GetFolderMetricsHandler = (_, ct) =>
+            {
+                cts.Cancel();
+                return Task.FromCanceled<FolderMetrics>(ct);
+            },
+        };
+        var service = new FileOperationService(stub);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.GetFolderMetricsAsync(@"S:\Movies", cts.Token));
+
+        Assert.Equal(1, stub.CancelFolderMetricsCalls);
+    }
+
+    [Fact]
     public async Task CopyAsync_TokenCancel_CallsBackendCancel()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -486,12 +547,15 @@ public class FileOperationServiceTests
                 new InlineProgress<ProgressUpdate>(seen.Add),
                 cts.Token));
 
-        Assert.Single(seen);
+        var seenAfterCancel = seen.Count;
+        Assert.True(seenAfterCancel >= 1);
+        Assert.Equal(1, stub.CancelDiskCleanupCalls);
+        Assert.Equal(seen[0].OperationId, stub.LastDiskCleanupCancelOperationId);
         Assert.Equal(0, stub.SubscriptionCount(Protocol.OperationProgressEvent));
         stub.Emit(
             Protocol.OperationProgressEvent,
             new ProgressUpdate { OperationId = seen[0].OperationId, OperationType = "cleanup" });
-        Assert.Single(seen);
+        Assert.Equal(seenAfterCancel, seen.Count);
     }
 
     [Fact]
@@ -500,7 +564,7 @@ public class FileOperationServiceTests
         var seen = new List<ProgressUpdate>();
         using var cts = new CancellationTokenSource();
         var stub = new ConfigurableIpc();
-        stub.DuplicateCheckHandler = (path, minSize, hashBytes, opId, ct) =>
+        stub.DuplicateCheckHandler = (path, options, opId, ct) =>
         {
             stub.Emit(
                 Protocol.OperationProgressEvent,
@@ -520,17 +584,19 @@ public class FileOperationServiceTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             service.DuplicateCheckAsync(
                 @"C:\test",
-                1024,
-                null,
+                new DuplicateScanOptions { MinSize = 1024 },
                 new InlineProgress<ProgressUpdate>(seen.Add),
                 cts.Token));
 
-        Assert.Single(seen);
+        var seenAfterCancel = seen.Count;
+        Assert.True(seenAfterCancel >= 1);
+        Assert.Equal(1, stub.CancelDuplicateCheckCalls);
+        Assert.Equal(seen[0].OperationId, stub.LastDuplicateCancelOperationId);
         Assert.Equal(0, stub.SubscriptionCount(Protocol.OperationProgressEvent));
         stub.Emit(
             Protocol.OperationProgressEvent,
             new ProgressUpdate { OperationId = seen[0].OperationId, OperationType = "duplicate-check" });
-        Assert.Single(seen);
+        Assert.Equal(seenAfterCancel, seen.Count);
     }
 
     [Fact]
@@ -580,6 +646,47 @@ public class FileOperationServiceTests
         Assert.Equal(@"C:\a.txt", entries[0].Sources.Single());
         Assert.Equal(@"C:\dest", entries[0].Destination);
         Assert.Equal(entries[0].OperationId, entries[1].OperationId);
+    }
+
+    [Fact]
+    public async Task OperationJournal_RecordsScanLifecycle()
+    {
+        var journal = TempJournal();
+        var stub = new ConfigurableIpc
+        {
+            DiskCleanupHandler = (directory, minSize, operationId, ct) =>
+            {
+                Assert.Equal(@"C:\temp", directory);
+                Assert.Equal(1024UL, minSize);
+                Assert.NotNull(operationId);
+                return Task.FromResult(new CleanupResult { ScannedFiles = 3 });
+            },
+            DuplicateCheckHandler = (directory, options, operationId, ct) =>
+            {
+                Assert.Equal(@"C:\temp", directory);
+                Assert.Equal(2048UL, options?.MinSize);
+                Assert.Equal(4096UL, options?.PartialHashBytes);
+                Assert.NotNull(operationId);
+                return Task.FromResult(new DuplicateCheckResult { ScannedFiles = 4 });
+            },
+        };
+        var service = new FileOperationService(stub, journal);
+
+        await service.DiskCleanupAsync(@"C:\temp", 1024);
+        await service.DuplicateCheckAsync(
+            @"C:\temp",
+            new DuplicateScanOptions { MinSize = 2048, PartialHashBytes = 4096 });
+
+        var entries = journal.ReadEntries();
+        var cleanup = entries.Where(entry => entry.OperationType == "cleanup").ToList();
+        var duplicates = entries.Where(entry => entry.OperationType == "duplicate-check").ToList();
+
+        Assert.Equal(["started", "completed"], cleanup.Select(entry => entry.State));
+        Assert.Equal(["started", "completed"], duplicates.Select(entry => entry.State));
+        Assert.Equal(@"C:\temp", cleanup[0].Sources.Single());
+        Assert.Equal(@"C:\temp", duplicates[0].Sources.Single());
+        Assert.Equal(cleanup[0].OperationId, cleanup[1].OperationId);
+        Assert.Equal(duplicates[0].OperationId, duplicates[1].OperationId);
     }
 
     [Fact]
@@ -661,6 +768,7 @@ public class FileOperationServiceTests
     public async Task ArchiveMethods_CallTypedIpc()
     {
         string? listed = null;
+        bool capabilitiesRequested = false;
         (string Archive, string Destination)? extracted = null;
         (string[] Paths, string Archive, string Format)? created = null;
         var stub = new ConfigurableIpc
@@ -680,6 +788,22 @@ public class FileOperationServiceTests
                     CompressedSize = 4,
                 });
             },
+            GetArchiveCapabilitiesHandler = ct =>
+            {
+                capabilitiesRequested = true;
+                return Task.FromResult(new ArchiveCapabilities
+                {
+                    Formats =
+                    [
+                        new ArchiveFormatCapability
+                        {
+                            Format = "zip",
+                            Extension = ".zip",
+                            CanCreate = true,
+                        },
+                    ],
+                });
+            },
             ExtractArchiveHandler = (archive, destination, ct) =>
             {
                 extracted = (archive, destination);
@@ -694,11 +818,14 @@ public class FileOperationServiceTests
         var service = new FileOperationService(stub);
 
         var info = await service.ListArchiveAsync(@"C:\pack.zip");
+        var capabilities = await service.GetArchiveCapabilitiesAsync();
         await service.ExtractArchiveAsync(@"C:\pack.zip", @"C:\out");
         await service.CreateArchiveAsync([@"C:\a.txt", @"C:\b.txt"], @"C:\pack.zip", "zip");
 
         Assert.Equal(@"C:\pack.zip", listed);
         Assert.Equal("notes.txt", info.Entries[0].Name);
+        Assert.True(capabilitiesRequested);
+        Assert.Equal("zip", capabilities.Formats[0].Format);
         Assert.Equal((@"C:\pack.zip", @"C:\out"), extracted);
         Assert.NotNull(created);
         Assert.Equal([@"C:\a.txt", @"C:\b.txt"], created.Value.Paths);

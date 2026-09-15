@@ -23,6 +23,9 @@ public class WorkspaceSettingsStoreTests
                     "primary": { "path": "C:\\Work" }
                   },
                   "chrome": {
+                    "keepFoldersOnTop": false,
+                    "enableGitIntegration": false,
+                    "progressQueueVisible": true,
                     "previewVisible": false,
                     "previewWidth": 2000,
                     "sidebarVisible": false,
@@ -30,6 +33,7 @@ public class WorkspaceSettingsStoreTests
                     "dualPanePrimaryPercent": 5,
                     "dualPanePrimaryWidth": 40,
                     "columnPreset": "developer",
+                    "visibleColumnIds": [ "name", "git", "name", "missing", " " ],
                     "columnWidths": { "name": 321 }
                   }
                 },
@@ -56,14 +60,63 @@ public class WorkspaceSettingsStoreTests
         Assert.True(saved.Layout.DualPaneEnabled);
         Assert.Equal(@"C:\Work", saved.Layout.Primary.Path);
         Assert.NotNull(saved.Chrome);
-        Assert.False(saved.Chrome!.PreviewVisible);
+        Assert.False(saved.Chrome!.KeepFoldersOnTop);
+        Assert.False(saved.Chrome.EnableGitIntegration);
+        Assert.True(saved.Chrome.ProgressQueueVisible);
+        Assert.False(saved.Chrome.PreviewVisible);
         Assert.Equal(UiSettings.PreviewMaxWidth, saved.Chrome.PreviewWidth);
         Assert.False(saved.Chrome.SidebarVisible);
         Assert.Equal(UiSettings.SidebarMinWidth, saved.Chrome.SidebarWidth);
         Assert.Equal(UiSettings.DualPaneMinPercent, saved.Chrome.DualPanePrimaryPercent);
         Assert.Equal(UiSettings.FilePaneMinWidth, saved.Chrome.DualPanePrimaryWidth);
         Assert.Equal("developer", saved.Chrome.ColumnPreset);
+        Assert.Equal(["name", "git"], saved.Chrome.VisibleColumnIds);
         Assert.Equal(321, saved.Chrome.ColumnWidths["name"]);
+    }
+
+    [Fact]
+    public void WorkspaceProfilesDocument_SanitizesStoredProfilesAndTracksActiveBuiltIn()
+    {
+        var raw = """
+            {
+              "version": 99,
+              "activeProfileId": "builtin-transfer",
+              "profiles": [
+                {
+                  "id": "",
+                  "name": "  Photo    triage  ",
+                  "builtInId": "builtin-photos",
+                  "sourceProfileId": " builtin-photos ",
+                  "layout": {
+                    "dualPaneEnabled": false,
+                    "primary": { "path": "D:\\Photos", "view": "tiles", "iconSize": 192 }
+                  },
+                  "chrome": {
+                    "columnPreset": "photo",
+                    "visibleColumnIds": [ "name", "date", "missing" ]
+                  }
+                },
+                {
+                  "id": "duplicate",
+                  "name": "photo triage",
+                  "layout": {}
+                }
+              ]
+            }
+            """;
+
+        var document = WorkspaceProfilesDocument.FromJson(raw);
+        var saved = Assert.Single(document.Profiles);
+
+        Assert.Equal(WorkspaceProfilesDocument.CurrentVersion, document.Version);
+        Assert.Equal(WorkspaceProfileTemplates.TransferId, document.ActiveProfileId);
+        Assert.NotEmpty(saved.Id);
+        Assert.Equal("Photo triage", saved.Name);
+        Assert.False(saved.IsBuiltIn);
+        Assert.Equal(WorkspaceProfileTemplates.PhotosId, saved.SourceProfileId);
+        Assert.Equal(@"D:\Photos", saved.Layout.Primary.Path);
+        Assert.Equal("photo", saved.Chrome!.ColumnPreset);
+        Assert.Equal(["name", "date"], saved.Chrome.VisibleColumnIds);
     }
 
     [Fact]
@@ -86,12 +139,16 @@ public class WorkspaceSettingsStoreTests
             CustomPath = @"D:\Work",
             OpenInNewTab = true,
             EnableGitIntegration = false,
+            ProgressQueueVisible = true,
             ShowFolderSizes = true,
             PreviewVisible = false,
+            PreviewRenderHtml = true,
+            PreviewVideoPlaybackEnabled = true,
             PreviewWidth = 2000,
             DualPanePrimaryPercent = 5,
             DualPanePrimaryWidth = 40,
             ColumnPreset = "developer",
+            SecondaryColumnPreset = "developer",
             ShowQuickAccess = false,
             ShowFolderTree = true,
             ShowBookmarks = false,
@@ -102,6 +159,21 @@ public class WorkspaceSettingsStoreTests
             QuickAccessCollapsed = true,
             MyPcCollapsed = true,
             LastPath = @"C:\Last",
+            ShortcutOverrides = new Dictionary<string, List<string>>(StringComparer.Ordinal)
+            {
+                ["search.focus"] = ["Ctrl+K", "F3"],
+                ["tabs.close"] = [],
+            },
+            CommandSurface = new CommandSurfaceLayout
+            {
+                ToolbarDisplayMode = ToolbarActionCatalog.IconAndLabelDisplayMode,
+                PrimaryToolbar =
+                [
+                    CommandSurfaceItem.Command(ToolbarOverflowPlanner.Settings),
+                    CommandSurfaceItem.Separator(),
+                    CommandSurfaceItem.Command("copy"),
+                ],
+            },
         };
         var bookmarks = new List<BookmarkItem>
         {
@@ -112,11 +184,28 @@ public class WorkspaceSettingsStoreTests
             @"D:\Work",
             @"C:\Last",
         };
+        settings.FolderViewSettings.Upsert(
+            FolderViewScope.Descendants,
+            @"D:\Work",
+            [],
+            new FolderViewOptions
+            {
+                View = "content",
+                IconSize = 48,
+                SortBy = "date",
+                SortAscending = false,
+                ShowHidden = true,
+                WorkspaceProfileId = WorkspaceProfileTemplates.DeveloperId,
+            });
 
+        var secondaryColumns = new ColumnLayout();
+        secondaryColumns.ApplyPreset("developer");
+        secondaryColumns.Resize("name", 321);
         await WorkspaceSettingsStore.SaveAsync(
             fileOps,
             settings,
             columns,
+            secondaryColumns,
             showHidden: true,
             bookmarks,
             recentPaths,
@@ -124,7 +213,7 @@ public class WorkspaceSettingsStoreTests
         var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
 
         Assert.True(state.Settings.ShowHidden);
-        Assert.Equal("light", state.Settings.Theme);
+        Assert.Equal("system", state.Settings.Theme);
         Assert.Equal("tiles", state.Settings.DefaultView);
         Assert.Equal(96, state.Settings.DefaultIconSize);
         Assert.False(state.Settings.ConfirmDelete);
@@ -133,13 +222,20 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal(@"D:\Work", state.Settings.CustomPath);
         Assert.True(state.Settings.OpenInNewTab);
         Assert.False(state.Settings.EnableGitIntegration);
+        Assert.True(state.Settings.ProgressQueueVisible);
         Assert.True(state.Settings.ShowFolderSizes);
         Assert.False(state.Settings.PreviewVisible);
+        Assert.True(state.Settings.PreviewRenderHtml);
+        Assert.True(state.Settings.PreviewVideoPlaybackEnabled);
         Assert.Equal(UiSettings.PreviewMaxWidth, state.Settings.PreviewWidth);
         Assert.Equal(UiSettings.DualPaneMinPercent, state.Settings.DualPanePrimaryPercent);
         Assert.Equal(UiSettings.FilePaneMinWidth, state.Settings.DualPanePrimaryWidth);
         Assert.Equal("developer", state.Settings.ColumnPreset);
+        Assert.Equal("developer", state.Settings.SecondaryColumnPreset);
         Assert.Equal(321, state.Settings.ColumnWidths["name"]);
+        Assert.Equal(321, state.Settings.SecondaryColumnWidths["name"]);
+        Assert.Contains("primary", ipc.Settings["columnWidths"]);
+        Assert.Contains("secondary", ipc.Settings["columnWidths"]);
         Assert.False(state.Settings.ShowQuickAccess);
         Assert.True(state.Settings.ShowFolderTree);
         Assert.False(state.Settings.ShowBookmarks);
@@ -150,6 +246,29 @@ public class WorkspaceSettingsStoreTests
         Assert.True(state.Settings.QuickAccessCollapsed);
         Assert.True(state.Settings.MyPcCollapsed);
         Assert.Equal(@"C:\Last", state.Settings.LastPath);
+        Assert.Equal(["Ctrl+K", "F3"], state.Settings.ShortcutOverrides["search.focus"]);
+        Assert.Equal([], state.Settings.ShortcutOverrides["tabs.close"]);
+        Assert.Equal(ToolbarActionCatalog.IconAndLabelDisplayMode, state.Settings.CommandSurface.ToolbarDisplayMode);
+        Assert.Equal([ToolbarOverflowPlanner.Settings, "copy"], state.Settings.CommandSurface.VisiblePrimaryActionIds());
+        var folderRule = Assert.Single(state.Settings.FolderViewSettings.Rules);
+        Assert.Equal(FolderViewRuleScope.Descendants, folderRule.Scope);
+        Assert.Equal("content", folderRule.Options.View);
+        Assert.False(folderRule.Options.SortAscending);
+        Assert.True(folderRule.Options.ShowHidden);
+        Assert.Equal(WorkspaceProfileTemplates.DeveloperId, folderRule.Options.WorkspaceProfileId);
+        Assert.Equal("true", ipc.Settings["progressQueue.visible"]);
+        Assert.Equal("true", ipc.Settings["preview.renderHtml"]);
+        Assert.Equal("true", ipc.Settings["preview.videoPlayback"]);
+        Assert.Equal("system", ipc.Settings["theme"]);
+        Assert.Equal(1, ipc.GetDbSettingsCalls);
+        Assert.Equal(0, ipc.GetDbSettingCalls);
+        Assert.Contains("theme", ipc.LastGetDbSettingsKeys);
+        Assert.Contains("previewVisible", ipc.LastGetDbSettingsKeys);
+        Assert.Contains("places.bookmarks", ipc.LastGetDbSettingsKeys);
+        Assert.Contains("\"search.focus\"", ipc.Settings[KeyboardShortcutMap.SettingsKey], StringComparison.Ordinal);
+        Assert.Contains("\"copy\"", ipc.Settings[CommandSurfaceLayout.SettingsKey], StringComparison.Ordinal);
+        Assert.Contains("\"scope\": \"descendants\"", ipc.Settings[FolderViewSettingsDocument.SettingsKey], StringComparison.Ordinal);
+        Assert.DoesNotContain("\"previewVisible\"", ipc.Settings[FolderViewSettingsDocument.SettingsKey], StringComparison.Ordinal);
         Assert.Equal(bookmarks.Single().Path, state.Bookmarks.Single().Path);
         Assert.Equal(recentPaths, state.RecentPaths);
     }
@@ -160,6 +279,14 @@ public class WorkspaceSettingsStoreTests
         var ipc = new ConfigurableIpc();
         var fileOps = new FileOperationService(ipc);
         ipc.Settings["columnWidths"] = "{not json";
+        ipc.Settings[KeyboardShortcutMap.SettingsKey] = """
+            {
+              "search.focus": "Ctrl+K",
+              "tabs.close": [],
+              "directory.refresh": [ "F5" ],
+              "tabs.jump": [ "Ctrl+9" ]
+            }
+            """;
         ipc.Settings["places.bookmarks"] = JsonSerializer.Serialize(new[]
         {
             new BookmarkItem { Name = "", Path = "  C:\\Work  " },
@@ -179,6 +306,11 @@ public class WorkspaceSettingsStoreTests
         var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
 
         Assert.Empty(state.Settings.ColumnWidths);
+        Assert.Empty(state.Settings.SecondaryColumnWidths);
+        Assert.Equal(["Ctrl+K"], state.Settings.ShortcutOverrides["search.focus"]);
+        Assert.Equal([], state.Settings.ShortcutOverrides["tabs.close"]);
+        Assert.False(state.Settings.ShortcutOverrides.ContainsKey("directory.refresh"));
+        Assert.False(state.Settings.ShortcutOverrides.ContainsKey("tabs.jump"));
         Assert.Equal(
             [
                 @"C:\Work",
@@ -194,4 +326,54 @@ public class WorkspaceSettingsStoreTests
             ],
             state.RecentPaths);
     }
+
+    [Fact]
+    public async Task LoadAsync_MigratesFlatColumnWidthsToBothPanes()
+    {
+        var ipc = new ConfigurableIpc();
+        ipc.Settings["columnPreset"] = "details";
+        ipc.Settings["columnWidths"] = """{"name": 333, "size": 111}""";
+        var fileOps = new FileOperationService(ipc);
+
+        var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+
+        Assert.Equal("details", state.Settings.ColumnPreset);
+        Assert.Equal("details", state.Settings.SecondaryColumnPreset);
+        Assert.Equal(333, state.Settings.ColumnWidths["name"]);
+        Assert.Equal(111, state.Settings.ColumnWidths["size"]);
+        Assert.Equal(333, state.Settings.SecondaryColumnWidths["name"]);
+        Assert.Equal(111, state.Settings.SecondaryColumnWidths["size"]);
+    }
+
+    [Fact]
+    public async Task SaveAndLoadAsync_KeepsIndependentPaneColumnWidths()
+    {
+        var ipc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(ipc);
+        var primary = new ColumnLayout();
+        primary.Resize("name", 280);
+        var secondary = new ColumnLayout();
+        secondary.ApplyPreset("developer");
+        secondary.Resize("name", 410);
+        var settings = UiSettings.CreateDefault();
+        settings.ColumnPreset = "default";
+        settings.SecondaryColumnPreset = "developer";
+
+        await WorkspaceSettingsStore.SaveAsync(
+            fileOps,
+            settings,
+            primary,
+            secondary,
+            showHidden: false,
+            bookmarks: [],
+            recentPaths: [],
+            CancellationToken.None);
+        var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+
+        Assert.Equal("default", state.Settings.ColumnPreset);
+        Assert.Equal("developer", state.Settings.SecondaryColumnPreset);
+        Assert.Equal(280, state.Settings.ColumnWidths["name"]);
+        Assert.Equal(410, state.Settings.SecondaryColumnWidths["name"]);
+    }
+
 }

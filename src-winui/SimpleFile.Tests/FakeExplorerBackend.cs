@@ -12,11 +12,17 @@ internal sealed class FakeExplorerBackend : IExplorerBackend
     public Dictionary<string, Task<DirectoryListing>> Pending { get; } = new(StringComparer.OrdinalIgnoreCase);
     public bool EmitChunks { get; set; }
     public bool ThrowTooLargeAfterChunks { get; set; }
+    public int GetHomeDirCalls { get; private set; }
     public int ListDirectoryCalls { get; private set; }
     public int ListDrivesCalls { get; private set; }
+    public int ListDrivesLightCalls { get; private set; }
     public ListDirectoryOptions? LastListDirectoryOptions { get; private set; }
     public Func<CancellationToken, Task<IReadOnlyList<DriveInfo>>>? ListDrivesHandler { get; set; }
+    public Func<CancellationToken, Task<IReadOnlyList<DriveInfo>>>? ListDrivesLightHandler { get; set; }
     public Func<string, CancellationToken, Task<DirectoryListing>?>? ListDirectoryHandler { get; set; }
+
+    public string? CachedHomeDir => Home;
+    public IReadOnlyList<DriveInfo>? CachedDrives => Drives;
 
     public static FakeExplorerBackend Typical()
     {
@@ -67,6 +73,7 @@ internal sealed class FakeExplorerBackend : IExplorerBackend
 
     public Task<string> GetHomeDirAsync(CancellationToken cancellationToken = default)
     {
+        GetHomeDirCalls += 1;
         return Task.FromResult(Home);
     }
 
@@ -74,6 +81,14 @@ internal sealed class FakeExplorerBackend : IExplorerBackend
     {
         ListDrivesCalls += 1;
         return ListDrivesHandler?.Invoke(cancellationToken)
+            ?? Task.FromResult<IReadOnlyList<DriveInfo>>(Drives);
+    }
+
+    public Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default)
+    {
+        ListDrivesLightCalls += 1;
+        return ListDrivesLightHandler?.Invoke(cancellationToken)
+            ?? ListDrivesHandler?.Invoke(cancellationToken)
             ?? Task.FromResult<IReadOnlyList<DriveInfo>>(Drives);
     }
 

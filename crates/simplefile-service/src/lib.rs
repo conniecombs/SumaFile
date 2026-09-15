@@ -6,6 +6,7 @@ pub mod progress;
 mod scheduler;
 pub mod search;
 pub mod session;
+pub mod shared_memory;
 pub mod shell;
 mod transfer_staging;
 pub mod watcher;

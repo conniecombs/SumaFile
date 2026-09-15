@@ -1,6 +1,6 @@
 # Code Analysis
 
-SimpleFile is split across a WinUI 3 host and a Rust IPC service.
+SumaFile is split across a WinUI 3 host and a Rust IPC service.
 
 ## UI host
 

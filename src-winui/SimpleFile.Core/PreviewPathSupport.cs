@@ -21,7 +21,12 @@ public static class PreviewPathSupport
 
     public static bool IsPathBackedPreviewType(string? fileType)
     {
-        return IsPdfPreviewType(fileType) || IsMediaPreviewType(fileType);
+        return IsImagePreviewType(fileType) || IsPdfPreviewType(fileType) || IsMediaPreviewType(fileType);
+    }
+
+    public static bool IsImagePreviewType(string? fileType)
+    {
+        return string.Equals(fileType, "image", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsPdfPreviewType(string? fileType)

@@ -37,6 +37,7 @@ public static class ContextMenuIconCatalog
     public const string AreaChart = "\uE9D2";
     public const string List = "\uEA37";
     public const string Tiles = "\uECA5";
+    public const string Branch = "\uE8EF";
 
     public static string? GlyphFor(string commandId)
     {
@@ -48,6 +49,8 @@ public static class ContextMenuIconCatalog
             "ctx-open-tab" => NewTab,
             "ctx-open-other-pane" => OpenPane,
             "ctx-open-with" or "ctx-open-with-choose" => OpenWith,
+            "ctx-customize-toolbar" => Settings,
+            "ctx-toggle-toolbar-labels" => ViewAll,
             "ctx-preview" => Preview,
             "ctx-compare" => Switch,
             "ctx-terminal" => CommandPrompt,
@@ -62,19 +65,30 @@ public static class ContextMenuIconCatalog
             "ctx-bookmark" => Favorite,
             "ctx-cut" => Cut,
             "ctx-paste" => Paste,
+            "ctx-send-to-menu" => MoveToFolder,
             "ctx-move-to-pane" => MoveToFolder,
+            "ctx-tools-menu" => AreaChart,
             "ctx-pack" => Folder,
             "ctx-unpack" => Import,
+            "ctx-archive-menu" => Package,
             "ctx-compress" or "ctx-view-archive" => Package,
             "ctx-extract-menu" or "ctx-extract-to" => Import,
             "ctx-delete-menu" => Delete,
             "ctx-info" => Info,
             "ctx-close-left-pane" or "ctx-close-dual-pane" => ClosePane,
+            "ctx-git-menu" or "ctx-git-panel" => Branch,
+            "ctx-git-refresh" => "\uE72C",
+            "ctx-git-fetch" or "ctx-git-pull" => Import,
+            "ctx-git-push" or "ctx-git-commit" => Save,
+            "ctx-git-stage" => "\uE73E",
+            "ctx-git-unstage" => "\uE738",
+            "ctx-git-discard" => EraseTool,
+            "ctx-git-diff" => Switch,
             "overflow-search" => Search,
             "overflow-filter" => Filter,
-            "overflow-new-folder" => NewFolder,
-            "overflow-new-file" => Document,
+            "overflow-new" => NewFolder,
             "overflow-dual-pane" => OpenPane,
+            "overflow-profiles" => Switch,
             "overflow-view" => ViewAll,
             "overflow-settings" => Settings,
             "view:details" => BulletedList,

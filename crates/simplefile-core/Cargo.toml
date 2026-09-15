@@ -1,6 +1,6 @@
 [package]
 name = "simplefile-core"
-version = "1.0.0"
+version = "1.0.1"
 description = "Reusable SumaFile backend domain types and utilities"
 authors = ["SumaFile Team"]
 license = "MIT"
@@ -45,4 +45,9 @@ winapi = { version = "0.3", features = [
   "winerror",
   "winnetwk",
   "winnt",
+] }
+windows = { version = "0.56", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_UI_Shell",
 ] }

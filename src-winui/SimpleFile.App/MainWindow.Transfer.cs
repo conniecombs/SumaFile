@@ -1,7 +1,9 @@
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
 using Windows.ApplicationModel.DataTransfer;
@@ -30,25 +32,43 @@ public sealed partial class MainWindow
     private bool _previewMoved;
     private bool _columnDragging;
     private string? _columnDragId;
+    private PaneId _columnDragPane = PaneId.Primary;
     private double _columnDragStartX;
     private double _columnDragStartWidth;
 
     private void OnFileDragItemsStarting(object sender, DragItemsStartingEventArgs e)
     {
-        _dragPaths = e.Items.OfType<FileRow>().Select(row => row.Path).ToArray();
-        if (_dragPaths.Length == 0)
+        if (!PopulateFileDragData(e.Items.OfType<FileRow>(), e.Data))
         {
             e.Cancel = true;
-            return;
+        }
+    }
+
+    private void OnDetailsRowsDragStarting(object? sender, DetailsFileRowsDragStartingEventArgs e)
+    {
+        e.Cancel = !PopulateFileDragData(e.Rows, e.Data);
+    }
+
+    private void OnDetailsRowsDragCompleted(object? sender, EventArgs e)
+    {
+        _dragPaths = [];
+    }
+
+    private bool PopulateFileDragData(IEnumerable<FileRow> rows, DataPackage data)
+    {
+        _dragPaths = rows.Select(row => row.Path).ToArray();
+        if (_dragPaths.Length == 0)
+        {
+            return false;
         }
 
-        e.Data.SetText($"{InternalDragFormat}|{string.Join('\n', _dragPaths)}");
-        e.Data.RequestedOperation = DataPackageOperation.Copy | DataPackageOperation.Move;
+        data.SetText($"{InternalDragFormat}|{string.Join('\n', _dragPaths)}");
+        data.RequestedOperation = DataPackageOperation.Copy | DataPackageOperation.Move;
 
         // Defer StorageItem resolution so we don't block the UI thread on slow/network paths.
         // The provider callback runs asynchronously when an external drop target requests the data.
         var paths = _dragPaths;
-        e.Data.SetDataProvider(StandardDataFormats.StorageItems, async request =>
+        data.SetDataProvider(StandardDataFormats.StorageItems, async request =>
         {
             var deferral = request.GetDeferral();
             try
@@ -80,6 +100,7 @@ public sealed partial class MainWindow
                 deferral.Complete();
             }
         });
+        return true;
     }
 
     private void OnFileDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs e)
@@ -142,12 +163,19 @@ public sealed partial class MainWindow
         var internalDrag = _dragPaths.Length > 0;
         var move = internalDrag
             && (e.Modifiers & Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Control) == 0;
-        await TransferWithConflictAsync(sources.ToArray(), target.Destination, move);
+        var transfer = TransferWithConflictAsync(sources.ToArray(), target.Destination, move);
         _dragPaths = [];
+        await transfer;
     }
 
     private FileRow? HoveredFileRow(DragEventArgs e, PaneId pane)
     {
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (details.Visibility == Visibility.Visible)
+        {
+            return details.RowFromPoint(e.GetPosition(details));
+        }
+
         var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
         var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
         var point = e.GetPosition(list);
@@ -203,10 +231,51 @@ public sealed partial class MainWindow
             return TransferRunStatus.NoOp;
         }
 
-        var transferCts = _transfer?.BeginTransfer() ?? new CancellationTokenSource();
-        StartPreparingTransfer(move, sources, destination);
+        if (_transfer is null)
+        {
+            return TransferRunStatus.NoOp;
+        }
+
+        var operation = _transfer.Enqueue(
+            sources,
+            destination,
+            move,
+            (queuedOperation, token) => RunTransferOperationAsync(
+                queuedOperation,
+                workspace,
+                fileOps,
+                sources,
+                destination,
+                move,
+                token));
+        ShowTransferProgressWindow();
+
+        var status = await operation.CompletionTask;
+        var finalStatus = TransferStatusToRunStatus(status);
+        if (finalStatus != TransferRunStatus.NoOp && ReferenceEquals(_workspace, workspace))
+        {
+            workspace.RememberOperation(
+                move ? "move" : "copy",
+                $"{(move ? "Move" : "Copy")} {sources.Length} item(s) to {destination}",
+                sources,
+                destination,
+                move,
+                finalStatus.ToString().ToLowerInvariant());
+        }
+
+        return finalStatus;
+    }
+
+    private async Task<TransferOperationStatus> RunTransferOperationAsync(
+        TransferOperationViewModel operation,
+        ExplorerWorkspace workspace,
+        FileOperationService fileOps,
+        string[] sources,
+        string destination,
+        bool move,
+        CancellationToken cancellationToken)
+    {
         var conflictSession = new TransferConflictSession();
-        var finalStatus = TransferRunStatus.NoOp;
 
         try
         {
@@ -214,20 +283,18 @@ public sealed partial class MainWindow
                 sources,
                 destination,
                 conflictSession,
-                transferCts.Token);
+                cancellationToken);
             if (action is null)
             {
-                CloseTransferProgressWindow();
-                finalStatus = transferCts.IsCancellationRequested
-                    ? TransferRunStatus.Cancelled
-                    : TransferRunStatus.NoOp;
-                return finalStatus;
+                return cancellationToken.IsCancellationRequested
+                    ? TransferOperationStatus.Cancelled
+                    : TransferOperationStatus.Skipped;
             }
 
-            var progress = new Progress<ProgressUpdate>(OnTransferProgress);
+            var progress = new Progress<ProgressUpdate>(update => OnTransferProgress(operation, update));
             while (true)
             {
-                transferCts.Token.ThrowIfCancellationRequested();
+                cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
                     if (move)
@@ -237,9 +304,9 @@ public sealed partial class MainWindow
                             destination,
                             action,
                             progress,
-                            operationId => StartTransferProgress(operationId, move: true, sources, destination),
-                            transferCts.Token);
-                        if (ReferenceEquals(_workspace, workspace) && !transferCts.IsCancellationRequested)
+                            operationId => StartTransferProgress(operation, operationId),
+                            cancellationToken);
+                        if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
                         {
                             workspace.Undo.PushMove(results, fileOps);
                         }
@@ -251,74 +318,63 @@ public sealed partial class MainWindow
                             destination,
                             action,
                             progress,
-                            operationId => StartTransferProgress(operationId, move: false, sources, destination),
-                            transferCts.Token);
-                        if (ReferenceEquals(_workspace, workspace) && !transferCts.IsCancellationRequested)
+                            operationId => StartTransferProgress(operation, operationId),
+                            cancellationToken);
+                        if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
                         {
                             workspace.Undo.PushCopy(results, fileOps);
                         }
                     }
 
-                    if (ReferenceEquals(_workspace, workspace) && !transferCts.IsCancellationRequested)
+                    if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
                     {
-                        await workspace.RefreshAsync(transferCts.Token);
+                        CompleteTransferProgress(move, sources.Length);
+                        await workspace.RefreshAsync(cancellationToken);
                     }
 
                     break;
                 }
-                catch (IpcException exception) when (FileOperationService.IsConflict(exception) && !transferCts.IsCancellationRequested)
+                catch (IpcException exception) when (FileOperationService.IsConflict(exception) && !cancellationToken.IsCancellationRequested)
                 {
                     var retryAction = await ChooseConflictActionFromBackendConflictAsync(
                         exception.Message,
                         destination,
-                        conflictSession);
+                        conflictSession,
+                        cancellationToken);
                     if (retryAction is null)
                     {
-                        _transfer?.ClearCurrentOperation();
-                        CloseTransferProgressWindow();
-                        finalStatus = TransferRunStatus.NoOp;
-                        return finalStatus;
+                        return cancellationToken.IsCancellationRequested
+                            ? TransferOperationStatus.Cancelled
+                            : TransferOperationStatus.Skipped;
                     }
 
                     action = retryAction;
                 }
             }
 
-            finalStatus = transferCts.IsCancellationRequested
-                ? TransferRunStatus.Cancelled
-                : TransferRunStatus.Completed;
-            return finalStatus;
+            return cancellationToken.IsCancellationRequested
+                ? TransferOperationStatus.Cancelled
+                : TransferOperationStatus.Completed;
         }
         catch (OperationCanceledException)
         {
-            finalStatus = TransferRunStatus.Cancelled;
-            return finalStatus;
+            return TransferOperationStatus.Cancelled;
         }
         catch (Exception exception)
         {
+            operation.SetErrorMessage(exception.Message);
             ShowMessage(move ? "Move" : "Copy", exception.Message, InfoBarSeverity.Error);
-            finalStatus = TransferRunStatus.Failed;
-            return finalStatus;
-        }
-        finally
-        {
-            if (finalStatus != TransferRunStatus.NoOp && ReferenceEquals(_workspace, workspace))
-            {
-                workspace.RememberOperation(
-                    move ? "move" : "copy",
-                    $"{(move ? "Move" : "Copy")} {sources.Length} item(s) to {destination}",
-                    sources,
-                    destination,
-                    move,
-                    finalStatus.ToString().ToLowerInvariant());
-            }
-
-            if (_transfer?.FinishTransfer(transferCts) != true)
-            {
-                transferCts.Dispose();
-            }
+            return TransferOperationStatus.Failed;
         }
     }
+
+    private static TransferRunStatus TransferStatusToRunStatus(TransferOperationStatus status) => status switch
+    {
+        TransferOperationStatus.Completed => TransferRunStatus.Completed,
+        TransferOperationStatus.Cancelled => TransferRunStatus.Cancelled,
+        TransferOperationStatus.Failed => TransferRunStatus.Failed,
+        _ => TransferRunStatus.NoOp,
+    };
 
     private async Task<string?> ChooseConflictActionAsync(
         string[] sources,
@@ -342,17 +398,7 @@ public sealed partial class MainWindow
             return "error";
         }
 
-        return await PromptConflictActionAsync(destination, conflicts, session);
-    }
-
-    private void StartPreparingTransfer(bool move, IReadOnlyList<string> sources, string destination)
-    {
-        var window = EnsureTransferProgressWindow();
-        window.Start(new TransferProgressContext(
-            move,
-            sources.Count,
-            TransferViewModel.DescribeSource(sources),
-            destination));
+        return await PromptConflictActionAsync(destination, conflicts, session, cancellationToken);
     }
 
     private async Task<IReadOnlyList<string>?> ProbeDestinationConflictsAsync(
@@ -366,7 +412,7 @@ public sealed partial class MainWindow
                 () => DropDestination.ProbeConflictingTransferNames(
                     sources,
                     destination,
-                    path => File.Exists(path) || Directory.Exists(path),
+                    NativePath.ExistsNoFollow,
                     cancellationToken),
                 cancellationToken);
         }
@@ -420,7 +466,8 @@ public sealed partial class MainWindow
     private async Task<string?> ChooseConflictActionFromBackendConflictAsync(
         string message,
         string destination,
-        TransferConflictSession session)
+        TransferConflictSession session,
+        CancellationToken cancellationToken)
     {
         if (session.TryGetSticky(out var sticky))
         {
@@ -434,7 +481,7 @@ public sealed partial class MainWindow
         IReadOnlyList<string> conflicts = string.IsNullOrWhiteSpace(conflictName)
             ? Array.Empty<string>()
             : [conflictName];
-        return await PromptConflictActionAsync(destination, conflicts, session);
+        return await PromptConflictActionAsync(destination, conflicts, session, cancellationToken);
     }
 
     private static string ConflictPathFromMessage(string message)
@@ -461,31 +508,42 @@ public sealed partial class MainWindow
     private async Task<string?> PromptConflictActionAsync(
         string destination,
         IReadOnlyList<string> conflicts,
-        TransferConflictSession session)
+        TransferConflictSession session,
+        CancellationToken cancellationToken)
     {
         if (session.TryGetSticky(out var sticky))
         {
             return sticky;
         }
 
-        var dialog = new ConflictDialog { XamlRoot = Content.XamlRoot };
-        dialog.SetConflict(destination, conflicts);
-        var result = await dialog.ShowAsync();
-        string? action = dialog.Result == ConflictResolution.KeepBoth
-            ? "keep-both"
-            : result switch
-            {
-                ContentDialogResult.Primary => "replace",
-                ContentDialogResult.Secondary => "skip",
-                _ => null,
-            };
-        if (action is null)
+        await _transferPromptGate.WaitAsync(cancellationToken);
+        try
         {
-            return null;
-        }
+            cancellationToken.ThrowIfCancellationRequested();
+            var dialog = new ConflictDialog { XamlRoot = Content.XamlRoot };
+            dialog.SetConflict(destination, conflicts);
+            var result = await dialog.ShowAsync();
+            cancellationToken.ThrowIfCancellationRequested();
+            string? action = dialog.Result == ConflictResolution.KeepBoth
+                ? "keep-both"
+                : result switch
+                {
+                    ContentDialogResult.Primary => "replace",
+                    ContentDialogResult.Secondary => "skip",
+                    _ => null,
+                };
+            if (action is null)
+            {
+                return null;
+            }
 
-        session.Remember(action, dialog.ApplyToAllChecked);
-        return action;
+            session.Remember(action, dialog.ApplyToAllChecked);
+            return action;
+        }
+        finally
+        {
+            _transferPromptGate.Release();
+        }
     }
 
     private async Task CopyOrMoveToOtherPaneAsync(bool move)
@@ -955,8 +1013,9 @@ public sealed partial class MainWindow
 
         _columnDragging = true;
         _columnDragId = target.ColumnId;
+        _columnDragPane = target.Pane;
         _columnDragStartX = e.GetCurrentPoint(RootGrid).Position.X;
-        _columnDragStartWidth = ColumnLayoutHost.Shared.WidthOf(_columnDragId);
+        _columnDragStartWidth = ColumnLayoutHost.For(_columnDragPane).WidthOf(_columnDragId);
         element.CapturePointer(e.Pointer);
         e.Handled = true;
     }
@@ -969,7 +1028,7 @@ public sealed partial class MainWindow
         }
 
         var delta = e.GetCurrentPoint(RootGrid).Position.X - _columnDragStartX;
-        var columns = _workspace?.Columns ?? ColumnLayoutHost.Shared;
+        var columns = _workspace?.ColumnsFor(_columnDragPane) ?? ColumnLayoutHost.For(_columnDragPane);
         columns.Resize(_columnDragId, _columnDragStartWidth + delta);
         ApplyColumnWidths();
         e.Handled = true;
@@ -1020,21 +1079,147 @@ public sealed partial class MainWindow
 
     private void ApplyColumnWidths()
     {
-        var columns = _workspace?.Columns ?? ColumnLayoutHost.Shared;
-        ApplyColumnHeader(PrimaryColumnHeader, columns, PaneId.Primary, ref _primaryColumnHeaderKey);
-        ApplyColumnHeader(SecondaryColumnHeader, columns, PaneId.Secondary, ref _secondaryColumnHeaderKey);
-        ApplyDetailsItemMinWidths(PrimaryFileList, columns.VisibleWidth);
-        ApplyDetailsItemMinWidths(SecondaryFileList, columns.VisibleWidth);
+        var primaryBase = _workspace?.ColumnsFor(PaneId.Primary) ?? ColumnLayoutHost.For(PaneId.Primary);
+        var secondaryBase = _workspace?.ColumnsFor(PaneId.Secondary) ?? ColumnLayoutHost.For(PaneId.Secondary);
+        var primary = EffectiveColumnsForPane(primaryBase, PaneId.Primary);
+        var secondary = EffectiveColumnsForPane(secondaryBase, PaneId.Secondary);
+        ColumnLayoutHost.ApplyEffective(primary, secondary);
+        ApplyColumnHeader(PrimaryColumnHeader, primary, PaneId.Primary, ref _primaryColumnHeaderKey);
+        ApplyColumnHeader(SecondaryColumnHeader, secondary, PaneId.Secondary, ref _secondaryColumnHeaderKey);
+        ApplyDetailsSurface(PaneId.Primary, primary);
+        ApplyDetailsSurface(PaneId.Secondary, secondary);
     }
 
-    private static void ApplyDetailsItemMinWidths(ListView list, double width)
+    private ColumnLayout EffectiveColumnsForPane(ColumnLayout columns, PaneId pane)
+    {
+        var paneWidth = pane == PaneId.Secondary ? SecondaryPaneRoot.ActualWidth : PrimaryPaneRoot.ActualWidth;
+        return columns.EffectiveForPaneWidth(
+            paneWidth,
+            _workspace?.DualPaneEnabled == true,
+            IsGitIntegrationEnabled);
+    }
+
+    private static void ClearDetailsItemWidths(ListView list)
     {
         for (var index = 0; index < list.Items.Count; index++)
         {
             if (list.ContainerFromIndex(index) is ListViewItem item)
             {
-                item.MinWidth = width;
+                item.MinWidth = 0;
+                item.Width = double.NaN;
             }
+        }
+    }
+
+    private void ApplyDetailsSurface(PaneId pane, ColumnLayout columns)
+    {
+        var details = EffectiveFileListViewForPane(pane) == "details";
+        var scrollBar = pane == PaneId.Secondary ? SecondaryDetailsHorizontalScrollBar : PrimaryDetailsHorizontalScrollBar;
+        var surface = pane == PaneId.Secondary ? SecondaryFileSurface : PrimaryFileSurface;
+        var viewport = pane == PaneId.Secondary ? SecondaryFileViewport : PrimaryFileViewport;
+        var header = pane == PaneId.Secondary ? SecondaryColumnHeader : PrimaryColumnHeader;
+        var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
+        var detailsList = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        var paneWidth = pane == PaneId.Secondary ? SecondaryPaneRoot.ActualWidth : PrimaryPaneRoot.ActualWidth;
+        var viewportWidth = Math.Max(1, FileViewportWidthForPane(pane, paneWidth));
+
+        if (!details)
+        {
+            list.Width = double.NaN;
+            surface.HorizontalAlignment = HorizontalAlignment.Stretch;
+            scrollBar.Visibility = Visibility.Collapsed;
+            scrollBar.Value = 0;
+            ClearDetailsItemWidths(list);
+            ApplyDetailsHorizontalOffset(pane, header, 0);
+            ResetHiddenListHorizontalScroll(list);
+            return;
+        }
+
+        var contentWidth = DetailsContentWidth(columns);
+        var maxOffset = Math.Max(0, contentWidth - viewportWidth);
+        var nextOffset = Math.Min(scrollBar.Value, maxOffset);
+        surface.HorizontalAlignment = HorizontalAlignment.Stretch;
+        ConfigureDetailsHorizontalScrollBar(scrollBar, viewportWidth, maxOffset, nextOffset);
+        ApplyDetailsHorizontalOffset(pane, header, nextOffset);
+        detailsList.ApplyDetailsLayout(columns, FileListViewHost.IconSizeFor(pane), viewportWidth, nextOffset);
+        surface.InvalidateMeasure();
+        viewport.InvalidateMeasure();
+        detailsList.InvalidateMeasure();
+        ResetHiddenListHorizontalScroll(list);
+    }
+
+    private static void ConfigureDetailsHorizontalScrollBar(
+        ScrollBar scrollBar,
+        double viewportWidth,
+        double maxOffset,
+        double value)
+    {
+        scrollBar.Minimum = 0;
+        scrollBar.Maximum = maxOffset;
+        scrollBar.ViewportSize = viewportWidth;
+        scrollBar.SmallChange = 32;
+        scrollBar.LargeChange = Math.Max(32, viewportWidth * 0.85);
+        scrollBar.Visibility = maxOffset > 0.5 ? Visibility.Visible : Visibility.Collapsed;
+        if (Math.Abs(scrollBar.Value - value) > 0.5)
+        {
+            scrollBar.Value = value;
+        }
+    }
+
+    private void OnPrimaryDetailsHorizontalScrollChanged(object sender, RangeBaseValueChangedEventArgs e) =>
+        OnDetailsHorizontalScrollChanged(PaneId.Primary, e.NewValue);
+
+    private void OnSecondaryDetailsHorizontalScrollChanged(object sender, RangeBaseValueChangedEventArgs e) =>
+        OnDetailsHorizontalScrollChanged(PaneId.Secondary, e.NewValue);
+
+    private void OnDetailsHorizontalScrollChanged(PaneId pane, double offset)
+    {
+        var header = pane == PaneId.Secondary ? SecondaryColumnHeader : PrimaryColumnHeader;
+        var maxOffset = pane == PaneId.Secondary
+            ? SecondaryDetailsHorizontalScrollBar.Maximum
+            : PrimaryDetailsHorizontalScrollBar.Maximum;
+        ApplyDetailsHorizontalOffset(pane, header, Math.Min(offset, maxOffset));
+    }
+
+    private static void ApplyDetailsHorizontalOffset(PaneId pane, Grid header, double offset)
+    {
+        var nextOffset = Math.Max(0, offset);
+        if (header.RenderTransform is not TranslateTransform transform)
+        {
+            transform = new TranslateTransform();
+            header.RenderTransform = transform;
+        }
+
+        transform.X = Math.Abs(nextOffset) > 0.5 ? -nextOffset : 0;
+        FileListHorizontalScrollHost.Apply(pane, nextOffset);
+    }
+
+    private void QueueDetailsScrollRefresh()
+    {
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            PrimaryFileSurface.UpdateLayout();
+            SecondaryFileSurface.UpdateLayout();
+            PrimaryDetailsFileList.UpdateLayout();
+            SecondaryDetailsFileList.UpdateLayout();
+            ResetHiddenListHorizontalScroll(PrimaryFileList);
+            ResetHiddenListHorizontalScroll(SecondaryFileList);
+            ApplyColumnWidths();
+        });
+    }
+
+    private static void ResetHiddenListHorizontalScroll(ListView list)
+    {
+        if (FindDescendantScrollViewer(list) is not { } scroller)
+        {
+            return;
+        }
+
+        scroller.HorizontalScrollMode = ScrollMode.Disabled;
+        scroller.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+        if (Math.Abs(scroller.HorizontalOffset) > 0.5)
+        {
+            scroller.ChangeView(0, null, null, disableAnimation: true);
         }
     }
 }

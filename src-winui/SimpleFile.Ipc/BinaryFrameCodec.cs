@@ -45,7 +45,7 @@ public static class BinaryFrameCodec
                 ReadFileChange(ref reader)),
             Protocol.BinaryThumbnailResult => BinaryFrameMessage.Response(
                 reader.ReadInt32(),
-                reader.ReadString()),
+                reader.ReadBytes()),
             Protocol.BinaryThumbnailsResult => BinaryFrameMessage.Response(
                 reader.ReadInt32(),
                 ReadThumbnailResults(ref reader)),
@@ -113,11 +113,11 @@ public static class BinaryFrameCodec
         return writer.ToArray();
     }
 
-    public static byte[] EncodeThumbnailResult(int requestId, string data)
+    public static byte[] EncodeThumbnailResult(int requestId, byte[] data)
     {
         var writer = new BinaryPayloadWriter(Protocol.BinaryThumbnailResult);
         writer.WriteInt32(requestId);
-        writer.WriteString(data);
+        writer.WriteBytesArray(data);
         return writer.ToArray();
     }
 
@@ -129,7 +129,7 @@ public static class BinaryFrameCodec
         foreach (var result in results)
         {
             writer.WriteString(result.Path);
-            writer.WriteOptionalString(result.Data);
+            writer.WriteOptionalBytesArray(result.Data);
             writer.WriteOptionalString(result.Error);
         }
 
@@ -256,7 +256,7 @@ public static class BinaryFrameCodec
             results[i] = new ThumbnailResult
             {
                 Path = reader.ReadString(),
-                Data = reader.ReadOptionalString(),
+                Data = reader.ReadOptionalBytes(),
                 Error = reader.ReadOptionalString(),
             };
         }
@@ -375,6 +375,20 @@ public static class BinaryFrameCodec
             return ReadBool() ? ReadString() : null;
         }
 
+        public byte[] ReadBytes()
+        {
+            var length = ReadCount();
+            Ensure(length);
+            var value = _remaining[..length].ToArray();
+            _remaining = _remaining[length..];
+            return value;
+        }
+
+        public byte[]? ReadOptionalBytes()
+        {
+            return ReadBool() ? ReadBytes() : null;
+        }
+
         public void EnsureComplete()
         {
             if (!_remaining.IsEmpty)
@@ -451,6 +465,21 @@ public static class BinaryFrameCodec
             if (value is not null)
             {
                 WriteString(value);
+            }
+        }
+
+        public void WriteBytesArray(byte[] bytes)
+        {
+            WriteCount(bytes.Length);
+            _bytes.AddRange(bytes);
+        }
+
+        public void WriteOptionalBytesArray(byte[]? bytes)
+        {
+            WriteBool(bytes is not null);
+            if (bytes is not null)
+            {
+                WriteBytesArray(bytes);
             }
         }
 

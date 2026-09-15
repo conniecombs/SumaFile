@@ -26,7 +26,7 @@ function requireSnippet(source, file, snippet) {
 }
 
 const requiredFiles = [
-  'packaging/winui/simplefile-winui.nsi',
+  'packaging/winui/sumafile-winui.nsi',
   'packaging/winui/Product.wxs',
   'scripts/build-winui-release.ps1',
   'scripts/write-latest-winui.mjs',
@@ -40,6 +40,10 @@ const requiredFiles = [
   'docs/winui-migration/parity-gate.md',
   'src-winui/SimpleFile.App/SimpleFile.App.csproj',
   'crates/simplefile-service/Cargo.toml',
+  'third_party/7zip/win-x64/7za.exe',
+  'third_party/7zip/win-x64/7za.dll',
+  'third_party/7zip/win-x64/7zxa.dll',
+  'third_party/7zip/win-x64/License.txt',
 ];
 
 for (const relativePath of requiredFiles) {
@@ -48,7 +52,7 @@ for (const relativePath of requiredFiles) {
   }
 }
 
-const nsis = readText('packaging/winui/simplefile-winui.nsi');
+const nsis = readText('packaging/winui/sumafile-winui.nsi');
 const wxs = readText('packaging/winui/Product.wxs');
 const buildScript = readText('scripts/build-winui-release.ps1');
 const packageJson = readText('package.json');
@@ -57,6 +61,13 @@ const ciYml = readText('.github/workflows/ci.yml');
 const releaseBuildYml = readText('.github/workflows/release-build.yml');
 const installerSmokeYml = readText('.github/workflows/installer-smoke.yml');
 const appCsproj = readText('src-winui/SimpleFile.App/SimpleFile.App.csproj');
+
+let packageScripts = {};
+try {
+  packageScripts = JSON.parse(packageJson).scripts ?? {};
+} catch (error) {
+  fail(`package.json must be valid JSON: ${error.message}`);
+}
 
 const nsisSnippets = [
   'Name "SumaFile"',
@@ -68,7 +79,7 @@ const nsisSnippets = [
 ];
 
 for (const snippet of nsisSnippets) {
-  requireSnippet(nsis, 'packaging/winui/simplefile-winui.nsi', snippet);
+  requireSnippet(nsis, 'packaging/winui/sumafile-winui.nsi', snippet);
 }
 
 const wxsSnippets = [
@@ -92,6 +103,9 @@ const buildSnippets = [
   'latest-winui.json',
   'resources.pri',
   'MainWindow.xbf',
+  'third_party\\7zip\\win-x64',
+  'tools\\7zip',
+  '7za.exe',
   '-sice:ICE03',
   '-sice:ICE38',
   '-sice:ICE64',
@@ -115,6 +129,24 @@ const npmSnippets = [
 
 for (const snippet of npmSnippets) {
   requireSnippet(packageJson, 'package.json', snippet);
+}
+
+const releaseBuildCommand = 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-winui-release.ps1';
+const expectedReleaseAliases = {
+  build: 'npm run release:build',
+  'build:winui:release': 'npm run release:build',
+  'release:build': releaseBuildCommand,
+  'release:local': 'npm run check:release && npm run release:build',
+};
+
+for (const [name, expectedCommand] of Object.entries(expectedReleaseAliases)) {
+  if (packageScripts[name] !== expectedCommand) {
+    fail(`package.json script ${name} must be "${expectedCommand}".`);
+  }
+}
+
+if (Object.hasOwn(packageScripts, 'release:winui')) {
+  fail('package.json should not keep the redundant release:winui alias; use release:build.');
 }
 
 

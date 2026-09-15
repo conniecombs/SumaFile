@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SimpleFile.Ipc;
 using Xunit;
+using DriveInfo = SimpleFile.Ipc.DriveInfo;
 
 namespace SimpleFile.Tests;
 
@@ -26,7 +27,7 @@ public class NamedPipeJsonClientTests
             new HandshakeResult
             {
                 ProtocolVersion = 1,
-                AppVersion = "1.0.0",
+                AppVersion = "1.0.1",
                 Identifier = Protocol.Identifier,
                 MethodCount = Protocol.DomainMethodCount,
             });
@@ -42,12 +43,12 @@ public class NamedPipeJsonClientTests
         {
             Ok = true,
             ProtocolVersion = 1,
-            AppVersion = "1.0.0",
+            AppVersion = "1.0.1",
         });
 
         var health = await healthTask;
         Assert.True(health.Ok);
-        Assert.Equal("1.0.0", health.AppVersion);
+        Assert.Equal("1.0.1", health.AppVersion);
     }
 
     [Fact]
@@ -480,18 +481,65 @@ public class NamedPipeJsonClientTests
 
         var single = client.GenerateThumbnailAsync(@"C:\img\a.jpg", 128);
         var singleRequest = await server.ReadRequestAsync();
-        await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeThumbnailResult(singleRequest.Id, "abc123"));
-        Assert.Equal("abc123", await single);
+        var bytes = System.Text.Encoding.UTF8.GetBytes("abc123");
+        await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeThumbnailResult(singleRequest.Id, bytes));
+        Assert.Equal(bytes, await single);
 
         var batch = client.GenerateThumbnailsAsync([@"C:\img\a.jpg"], 128);
         var batchRequest = await server.ReadRequestAsync();
         await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeThumbnailResultsResult(
             batchRequest.Id,
-            [new ThumbnailResult { Path = @"C:\img\a.jpg", Data = "abc123" }]));
+            [new ThumbnailResult { Path = @"C:\img\a.jpg", Data = bytes }]));
 
         var results = await batch;
         Assert.Single(results);
-        Assert.Equal("abc123", results[0].Data);
+        Assert.Equal(bytes, results[0].Data);
+    }
+
+    [Fact]
+    public async Task DriveListMethods_UseFullAndLightModes()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+
+        var full = client.ListDrivesAsync();
+        var fullRequest = await server.ReadRequestAsync();
+        Assert.Equal(Protocol.ListDrivesMethod, fullRequest.Method);
+        var fullParams = Assert.IsType<JsonElement>(fullRequest.Params);
+        Assert.False(fullParams.TryGetProperty("mode", out _));
+        await server.SendResultAsync(
+            fullRequest.Id,
+            new[]
+            {
+                new DriveInfo
+                {
+                    Name = "Windows (C:)",
+                    Path = @"C:\",
+                    DriveType = "Fixed",
+                    DriveStatus = "available",
+                },
+            });
+        Assert.Equal("Windows (C:)", Assert.Single(await full).Name);
+
+        var light = client.ListDrivesLightAsync();
+        var lightRequest = await server.ReadRequestAsync();
+        Assert.Equal(Protocol.ListDrivesMethod, lightRequest.Method);
+        var lightParams = Assert.IsType<JsonElement>(lightRequest.Params);
+        Assert.Equal("light", lightParams.GetProperty("mode").GetString());
+        await server.SendResultAsync(
+            lightRequest.Id,
+            new[]
+            {
+                new DriveInfo
+                {
+                    Name = "Team Share (Z:)",
+                    Path = @"Z:\",
+                    DriveType = "Network",
+                    DriveStatus = "unknown",
+                },
+            });
+        Assert.Equal("unknown", Assert.Single(await light).DriveStatus);
     }
 
     [Fact]
@@ -542,6 +590,24 @@ public class NamedPipeJsonClientTests
         Assert.Equal(Protocol.GetDbSettingMethod, missingRequest.Method);
         await server.SendResultAsync(missingRequest.Id, null);
         Assert.Null(await missing);
+
+        var batch = client.GetDbSettingsAsync(["theme", "missing"]);
+        var batchRequest = await server.ReadRequestAsync();
+        Assert.Equal(Protocol.GetDbSettingsMethod, batchRequest.Method);
+        var batchParams = Assert.IsType<JsonElement>(batchRequest.Params);
+        Assert.Equal(
+            ["theme", "missing"],
+            batchParams.GetProperty("keys").EnumerateArray().Select(item => item.GetString()!).ToArray());
+        await server.SendResultAsync(
+            batchRequest.Id,
+            new Dictionary<string, string?>
+            {
+                ["theme"] = "dark",
+                ["missing"] = null,
+            });
+        var batchResult = await batch;
+        Assert.Equal("dark", batchResult["theme"]);
+        Assert.Null(batchResult["missing"]);
 
         var set = client.SetDbSettingAsync("winui.workspace.layout.v1", "{\"version\":1}");
         var setRequest = await server.ReadRequestAsync();
@@ -636,6 +702,28 @@ public class NamedPipeJsonClientTests
         });
         Assert.Equal("zip", (await list).Format);
 
+        var capabilities = client.GetArchiveCapabilitiesAsync();
+        var capabilitiesRequest = await server.ReadRequestAsync();
+        Assert.Equal(Protocol.GetArchiveCapabilitiesMethod, capabilitiesRequest.Method);
+        await server.SendResultAsync(capabilitiesRequest.Id, new ArchiveCapabilities
+        {
+            Formats =
+            [
+                new ArchiveFormatCapability
+                {
+                    Format = "rar",
+                    Extension = ".rar",
+                    CanList = true,
+                    CanExtract = true,
+                    CanCreate = false,
+                    CanModify = false,
+                    Engine = "built-in-unrar",
+                    Note = "read only",
+                },
+            ],
+        });
+        Assert.False((await capabilities).Formats[0].CanCreate);
+
         var extract = client.ExtractArchiveAsync(@"C:\pack.zip", @"C:\out");
         var extractRequest = await server.ReadRequestAsync();
         Assert.Equal(Protocol.ExtractArchiveMethod, extractRequest.Method);
@@ -678,8 +766,8 @@ public class NamedPipeJsonClientTests
         var nextRequest = await server.ReadRequestAsync();
         Assert.Equal(Protocol.GetAppVersionMethod, nextRequest.Method);
         Assert.NotEqual(request.Id, nextRequest.Id);
-        await server.SendResultAsync(nextRequest.Id, "1.0.0");
-        Assert.Equal("1.0.0", await next);
+        await server.SendResultAsync(nextRequest.Id, "1.0.1");
+        Assert.Equal("1.0.1", await next);
     }
 
     [Fact]

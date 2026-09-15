@@ -34,19 +34,32 @@ public sealed class UiSettings
     public double SidebarWidth { get; set; } = SidebarDefaultWidth;
     public bool ShowFolderSizes { get; set; }
     public bool EnableGitIntegration { get; set; } = true;
+    public bool ProgressQueueVisible { get; set; }
     public string StartLocation { get; set; } = "home";
     public string CustomPath { get; set; } = "";
     public string LastPath { get; set; } = "";
     public bool PreviewVisible { get; set; } = true;
     public double PreviewWidth { get; set; } = PreviewDefaultWidth;
+    public bool PreviewRenderHtml { get; set; }
+    public bool PreviewVideoPlaybackEnabled { get; set; }
     public double DualPanePrimaryPercent { get; set; } = DualPaneDefaultPercent;
     public double DualPanePrimaryWidth { get; set; }
     public bool QuickAccessCollapsed { get; set; }
     public bool MyPcCollapsed { get; set; }
     public int PhotoFolderImageThreshold { get; set; } = 70;
+    /// <summary>Primary pane column preset. Settings dialog edits this and mirrors to secondary.</summary>
     public string ColumnPreset { get; set; } = "default";
+    /// <summary>Secondary pane column preset (independent of primary).</summary>
+    public string SecondaryColumnPreset { get; set; } = "default";
+    /// <summary>Primary pane column widths.</summary>
     public Dictionary<string, double> ColumnWidths { get; set; } = new(StringComparer.Ordinal);
-    public Dictionary<string, string> ShortcutOverrides { get; set; } = new(StringComparer.Ordinal);
+    /// <summary>Secondary pane column widths (independent of primary).</summary>
+    public Dictionary<string, double> SecondaryColumnWidths { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, List<string>> ShortcutOverrides { get; set; } = new(StringComparer.Ordinal);
+    public CommandSurfaceLayout CommandSurface { get; set; } = CommandSurfaceLayout.CreateDefault();
+    public FolderViewSettingsDocument FolderViewSettings { get; set; } = new();
+    public uint ThumbnailCacheMaxMb { get; set; } = 500;
+    public string ThumbnailCachePath { get; set; } = "";
 
     public static UiSettings CreateDefault() => new();
 
@@ -71,19 +84,20 @@ public sealed class UiSettings
 
     public static string NormalizeTheme(string? theme)
     {
-        if (string.Equals(theme, "light", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase))
         {
-            return "light";
+            return "dark";
         }
 
         if (string.Equals(theme, "system", StringComparison.OrdinalIgnoreCase)
             || string.Equals(theme, "windows", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(theme, "default", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(theme, "default", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(theme, "light", StringComparison.OrdinalIgnoreCase))
         {
             return "system";
         }
 
-        return "dark";
+        return "system";
     }
 
     public static string NormalizeStartLocation(string? startLocation)

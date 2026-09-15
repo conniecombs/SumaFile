@@ -11,10 +11,12 @@ internal sealed class ConfigurableIpc : NullIpc
     public Dictionary<string, FileEntry[]> GitFileStatuses { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, ulong> FolderSizes { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, ulong> FolderItemCounts { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, FolderMetrics> FolderMetrics { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> OpenedFiles { get; } = [];
 
     public Func<string, string, CancellationToken, Task<string>>? CreateDirectoryHandler { get; set; }
     public Func<string, string, CancellationToken, Task<string>>? CreateFileHandler { get; set; }
+    public Func<string, string, string, string?, string?, string?, CancellationToken, Task<string>>? CreateShortcutHandler { get; set; }
     public Func<string, string, CancellationToken, Task<string>>? RenameEntryHandler { get; set; }
     public Func<RenameRequest[], CancellationToken, Task<string[]>>? BatchRenameHandler { get; set; }
     public Func<string, CancellationToken, Task<string?>>? GetDbSettingHandler { get; set; }
@@ -24,6 +26,7 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<CancellationToken, Task>? EmptyRecycleBinHandler { get; set; }
     public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? CopyWithProgressHandler { get; set; }
     public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? MoveWithProgressHandler { get; set; }
+    public Func<string[], CancellationToken, Task<Dictionary<string, string?>>>? GetDbSettingsHandler { get; set; }
     public Func<string, CancellationToken, Task>? CancelOperationHandler { get; set; }
     public Func<SearchOptions, Action<SearchResult[]>?, Action<int>?, CancellationToken, Task<SearchResult[]>>? SearchFilesHandler { get; set; }
     public Func<string, CancellationToken, Task>? CancelSearchHandler { get; set; }
@@ -34,26 +37,39 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<string, CancellationToken, Task<FileMetadata>>? GetFileMetadataHandler { get; set; }
     public Func<string, string, CancellationToken, Task<FileComparison>>? CompareFilesHandler { get; set; }
     public Func<string, CancellationToken, Task<ArchiveInfo>>? ListArchiveHandler { get; set; }
+    public Func<CancellationToken, Task<ArchiveCapabilities>>? GetArchiveCapabilitiesHandler { get; set; }
     public Func<string, string, CancellationToken, Task>? ExtractArchiveHandler { get; set; }
     public Func<string[], string, string, CancellationToken, Task>? CreateArchiveHandler { get; set; }
     public Func<string, ulong?, string?, CancellationToken, Task<CleanupResult>>? DiskCleanupHandler { get; set; }
-    public Func<string, ulong?, ulong?, string?, CancellationToken, Task<DuplicateCheckResult>>? DuplicateCheckHandler { get; set; }
+    public Func<string?, CancellationToken, Task>? CancelDiskCleanupHandler { get; set; }
+    public Func<string, DuplicateScanOptions?, string?, CancellationToken, Task<DuplicateCheckResult>>? DuplicateCheckHandler { get; set; }
+    public Func<string?, CancellationToken, Task>? CancelDuplicateCheckHandler { get; set; }
     public Func<CancellationToken, Task>? InstallUpdateHandler { get; set; }
     public Func<string, CancellationToken, Task<FileEntry>>? GetEntryInfoHandler { get; set; }
     public Func<string, CancellationToken, Task>? OpenFileHandler { get; set; }
     public Func<string, CancellationToken, Task<ulong>>? CalculateFolderSizeHandler { get; set; }
     public Func<string, CancellationToken, Task<ulong>>? CountFolderItemsHandler { get; set; }
+    public Func<string, CancellationToken, Task<FolderMetrics>>? GetFolderMetricsHandler { get; set; }
     public Func<CancellationToken, Task>? CancelFolderSizeHandler { get; set; }
     public Func<CancellationToken, Task>? CancelFolderItemCountHandler { get; set; }
+    public Func<CancellationToken, Task>? CancelFolderMetricsHandler { get; set; }
     public Func<CancellationToken, Task<SmartFolder[]>>? LoadSmartFoldersHandler { get; set; }
 
     public int GitStatusCalls { get; private set; }
     public int MoveWithProgressCalls { get; private set; }
+    public int GetDbSettingCalls { get; private set; }
+    public int GetDbSettingsCalls { get; private set; }
     public int CancelFolderSizeCalls { get; private set; }
     public int CancelFolderItemCountCalls { get; private set; }
+    public int CancelFolderMetricsCalls { get; private set; }
+    public int CancelDiskCleanupCalls { get; private set; }
+    public int CancelDuplicateCheckCalls { get; private set; }
     public SearchOptions? LastSearchOptions { get; private set; }
     public string? LastCancelledOperationId { get; private set; }
     public string? LastCancelledSearchId { get; private set; }
+    public string? LastDiskCleanupCancelOperationId { get; private set; }
+    public string? LastDuplicateCancelOperationId { get; private set; }
+    public string[] LastGetDbSettingsKeys { get; private set; } = [];
 
     public override bool IsConnected => true;
 
@@ -87,6 +103,7 @@ internal sealed class ConfigurableIpc : NullIpc
 
     public override Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default)
     {
+        GetDbSettingCalls += 1;
         if (GetDbSettingHandler is not null)
         {
             return GetDbSettingHandler(key, ct);
@@ -94,6 +111,26 @@ internal sealed class ConfigurableIpc : NullIpc
 
         Settings.TryGetValue(key, out var value);
         return Task.FromResult<string?>(value);
+    }
+
+    public override async Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default)
+    {
+        GetDbSettingsCalls += 1;
+        LastGetDbSettingsKeys = [.. keys];
+        if (GetDbSettingsHandler is not null)
+        {
+            return await GetDbSettingsHandler(keys, ct).ConfigureAwait(false);
+        }
+
+        var result = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var key in keys)
+        {
+            ct.ThrowIfCancellationRequested();
+            Settings.TryGetValue(key, out var value);
+            result[key] = value;
+        }
+
+        return result;
     }
 
     public override Task SetDbSettingAsync(string key, string value, CancellationToken ct = default)
@@ -112,6 +149,17 @@ internal sealed class ConfigurableIpc : NullIpc
 
     public override Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default)
         => CreateFileHandler?.Invoke(path, name, ct) ?? throw NotConfigured();
+
+    public override Task<string> CreateShortcutAsync(
+        string path,
+        string name,
+        string targetPath,
+        string? arguments = null,
+        string? workingDirectory = null,
+        string? iconPath = null,
+        CancellationToken ct = default)
+        => CreateShortcutHandler?.Invoke(path, name, targetPath, arguments, workingDirectory, iconPath, ct)
+            ?? throw NotConfigured();
 
     public override Task<string[]> MoveToTrashAsync(string[] paths, CancellationToken ct = default)
         => MoveToTrashHandler?.Invoke(paths, ct) ?? throw NotConfigured();
@@ -191,6 +239,9 @@ internal sealed class ConfigurableIpc : NullIpc
     public override Task<ArchiveInfo> ListArchiveAsync(string path, CancellationToken ct = default)
         => ListArchiveHandler?.Invoke(path, ct) ?? throw NotConfigured();
 
+    public override Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)
+        => GetArchiveCapabilitiesHandler?.Invoke(ct) ?? throw NotConfigured();
+
     public override Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
         => ExtractArchiveHandler?.Invoke(archivePath, destination, ct) ?? throw NotConfigured();
 
@@ -208,13 +259,26 @@ internal sealed class ConfigurableIpc : NullIpc
         CancellationToken ct = default)
         => DiskCleanupHandler?.Invoke(directory, sizeThreshold, operationId, ct) ?? throw NotConfigured();
 
+    public override Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default)
+    {
+        CancelDiskCleanupCalls += 1;
+        LastDiskCleanupCancelOperationId = operationId;
+        return CancelDiskCleanupHandler?.Invoke(operationId, ct) ?? Task.CompletedTask;
+    }
+
     public override Task<DuplicateCheckResult> DuplicateCheckAsync(
         string directory,
-        ulong? minSize,
-        ulong? partialHashBytes,
+        DuplicateScanOptions? options,
         string? operationId,
         CancellationToken ct = default)
-        => DuplicateCheckHandler?.Invoke(directory, minSize, partialHashBytes, operationId, ct) ?? throw NotConfigured();
+        => DuplicateCheckHandler?.Invoke(directory, options, operationId, ct) ?? throw NotConfigured();
+
+    public override Task CancelDuplicateCheckAsync(string? operationId = null, CancellationToken ct = default)
+    {
+        CancelDuplicateCheckCalls += 1;
+        LastDuplicateCancelOperationId = operationId;
+        return CancelDuplicateCheckHandler?.Invoke(operationId, ct) ?? Task.CompletedTask;
+    }
 
     public override Task InstallUpdateAsync(CancellationToken ct = default)
         => InstallUpdateHandler?.Invoke(ct) ?? throw NotConfigured();
@@ -259,6 +323,16 @@ internal sealed class ConfigurableIpc : NullIpc
         => CountFolderItemsHandler?.Invoke(path, ct)
             ?? Task.FromResult(FolderItemCounts.TryGetValue(path, out var count) ? count : 0UL);
 
+    public override Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default)
+        => GetFolderMetricsHandler?.Invoke(path, ct)
+            ?? Task.FromResult(FolderMetrics.TryGetValue(path, out var metrics)
+                ? metrics
+                : new FolderMetrics
+                {
+                    Size = FolderSizes.TryGetValue(path, out var size) ? size : 0UL,
+                    ItemCount = FolderItemCounts.TryGetValue(path, out var count) ? count : 0UL,
+                });
+
     public override Task CancelFolderSizeAsync(CancellationToken ct = default)
     {
         CancelFolderSizeCalls += 1;
@@ -269,6 +343,12 @@ internal sealed class ConfigurableIpc : NullIpc
     {
         CancelFolderItemCountCalls += 1;
         return CancelFolderItemCountHandler?.Invoke(ct) ?? Task.CompletedTask;
+    }
+
+    public override Task CancelFolderMetricsAsync(CancellationToken ct = default)
+    {
+        CancelFolderMetricsCalls += 1;
+        return CancelFolderMetricsHandler?.Invoke(ct) ?? Task.CompletedTask;
     }
 
     public override Task<SmartFolder[]> LoadSmartFoldersAsync(CancellationToken ct = default)

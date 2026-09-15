@@ -24,4 +24,28 @@ public class PhotoFolderTests
         Assert.True(PhotoFolder.IsPhotoFolder(photos, 60));
         Assert.False(PhotoFolder.IsPhotoFolder(photos, 80));
     }
+
+    [Fact]
+    public void MediaFolder_DetectsImageAndVideoHeavyDirectory()
+    {
+        var media = new[]
+        {
+            new FileEntry { Name = "clip.mp4", Extension = "mp4" },
+            new FileEntry { Name = "scene.mov", Extension = "mov" },
+            new FileEntry { Name = "notes.txt", Extension = "txt" },
+        };
+
+        Assert.True(MediaFolder.IsMediaFolder(media, 60));
+        Assert.False(MediaFolder.IsMediaFolder(media, 80));
+    }
+
+    [Fact]
+    public void MediaFolder_VideoDetectionAcceptsExtensionsAndNames()
+    {
+        Assert.True(MediaFolder.IsVideo("mp4"));
+        Assert.True(MediaFolder.IsVideo("movie.webm"));
+        Assert.True(MediaFolder.IsVideo("phone.3gp"));
+        Assert.True(MediaFolder.IsVisualMedia("poster.jpg"));
+        Assert.False(MediaFolder.IsVideo("archive.zip"));
+    }
 }

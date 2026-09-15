@@ -1,7 +1,7 @@
 use super::params::{
     parse_params, parse_path_params, DiskCleanupParams, DuplicateCheckParams, ListDirectoryParams,
-    OperationIdParams, PathParams, ProgressCopyMoveParams, SearchFilesParams, SearchIdParams,
-    ThumbnailBatchParams, ThumbnailParams,
+    OperationIdParams, OptionalOperationIdParams, PathParams, ProgressCopyMoveParams,
+    SearchFilesParams, SearchIdParams, ThumbnailBatchParams, ThumbnailParams,
 };
 use super::{Dispatch, SessionState};
 use serde_json::Value;
@@ -213,6 +213,9 @@ pub(super) fn duplicate_check(request: &JsonRpcRequest) -> Dispatch {
             directory: params.directory,
             min_size: params.min_size,
             partial_hash_bytes: params.partial_hash_bytes,
+            max_depth: params.max_depth,
+            exclude_patterns: params.exclude_patterns.unwrap_or_default(),
+            network_mode: params.network_mode,
             operation_id: params.operation_id,
         },
         Err(response) => Dispatch::Reply(response),
@@ -220,8 +223,12 @@ pub(super) fn duplicate_check(request: &JsonRpcRequest) -> Dispatch {
 }
 
 pub(super) fn cancel_duplicate_check(request: &JsonRpcRequest) -> Dispatch {
-    Dispatch::CancelDuplicateCheck {
-        id: request.id.clone(),
+    match parse_params::<OptionalOperationIdParams>(request) {
+        Ok(params) => Dispatch::CancelDuplicateCheck {
+            id: request.id.clone(),
+            operation_id: params.operation_id,
+        },
+        Err(response) => Dispatch::Reply(response),
     }
 }
 
@@ -238,7 +245,11 @@ pub(super) fn disk_cleanup(request: &JsonRpcRequest) -> Dispatch {
 }
 
 pub(super) fn cancel_disk_cleanup(request: &JsonRpcRequest) -> Dispatch {
-    Dispatch::CancelDiskCleanup {
-        id: request.id.clone(),
+    match parse_params::<OptionalOperationIdParams>(request) {
+        Ok(params) => Dispatch::CancelDiskCleanup {
+            id: request.id.clone(),
+            operation_id: params.operation_id,
+        },
+        Err(response) => Dispatch::Reply(response),
     }
 }

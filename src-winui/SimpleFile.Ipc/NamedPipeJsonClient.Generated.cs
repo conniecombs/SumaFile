@@ -28,6 +28,13 @@ public sealed partial class NamedPipeJsonClient
         return drives;
     }
 
+    public async Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default)
+    {
+        var drives = await InvokeAsync<DriveInfo[]>(Protocol.ListDrivesMethod, new { mode = "light" }, cancellationToken)
+            .ConfigureAwait(false);
+        return drives;
+    }
+
     public Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default)
         => InvokeAsync(Protocol.SelectDirectoryMethod, new SelectDirectoryParams { DefaultPath = defaultPath }, cancellationToken);
 
@@ -37,6 +44,9 @@ public sealed partial class NamedPipeJsonClient
     public Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default)
         => InvokeAsync<string?>(Protocol.GetDbSettingMethod, new { key }, ct);
 
+    public Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default)
+        => InvokeAsync<Dictionary<string, string?>>(Protocol.GetDbSettingsMethod, new { keys }, ct);
+
     public Task SetDbSettingAsync(string key, string value, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.SetDbSettingMethod, new { key, value }, ct);
 
@@ -45,6 +55,9 @@ public sealed partial class NamedPipeJsonClient
 
     public Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default)
         => InvokeAsync<string>(Protocol.CreateFileMethod, new { path, name }, ct);
+
+    public Task<string> CreateShortcutAsync(string path, string name, string targetPath, string? arguments = null, string? workingDirectory = null, string? iconPath = null, CancellationToken ct = default)
+        => InvokeAsync<string>(Protocol.CreateShortcutMethod, new { path, name, targetPath, arguments, workingDirectory, iconPath }, ct);
 
     public Task DeleteEntryAsync(string path, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.DeleteEntryMethod, new { path }, ct);
@@ -91,6 +104,9 @@ public sealed partial class NamedPipeJsonClient
     public Task<ArchiveInfo> ListArchiveAsync(string path, CancellationToken ct = default)
         => InvokeAsync<ArchiveInfo>(Protocol.ListArchiveMethod, new { path }, ct);
 
+    public Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)
+        => InvokeAsync<ArchiveCapabilities>(Protocol.GetArchiveCapabilitiesMethod, new { }, ct);
+
     public Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.ExtractArchiveMethod, new { archivePath, destination }, ct);
 
@@ -100,8 +116,8 @@ public sealed partial class NamedPipeJsonClient
     public Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default)
         => InvokeAsync<FilePreview>(Protocol.ReadFilePreviewMethod, new { path, maxSize }, ct);
 
-    public Task<string> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default)
-        => InvokeAsync<string>(Protocol.GenerateThumbnailMethod, new { path, size }, ct);
+    public Task<byte[]> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default)
+        => InvokeAsync<byte[]>(Protocol.GenerateThumbnailMethod, new { path, size }, ct);
 
     public Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default)
         => InvokeAsync<ThumbnailResult[]>(Protocol.GenerateThumbnailsMethod, new { paths, size }, ct);
@@ -123,6 +139,9 @@ public sealed partial class NamedPipeJsonClient
 
     public Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default)
         => InvokeAsync<TreeNode[]>(Protocol.ListSubdirectoriesMethod, new { path }, ct);
+
+    public Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default)
+        => InvokeAsync<FolderMetrics>(Protocol.GetFolderMetricsMethod, new { path }, ct);
 
     public Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)
         => InvokeAsync<ulong>(Protocol.CalculateFolderSizeMethod, new { path }, ct);
@@ -157,29 +176,20 @@ public sealed partial class NamedPipeJsonClient
     public Task CancelCountItemsAsync(CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.CancelCountItemsMethod, new { }, ct);
 
-    public Task<bool> CheckRarInstalledAsync(CancellationToken ct = default)
-        => InvokeAsync<bool>(Protocol.CheckRarInstalledMethod, new { }, ct);
-
-    public Task<RarInstallPlan> PrepareRarInstallAsync(CancellationToken ct = default)
-        => InvokeAsync<RarInstallPlan>(Protocol.PrepareRarInstallMethod, new { }, ct);
-
-    public Task DiscardRarInstallAsync(string confirmationToken, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.DiscardRarInstallMethod, new { confirmationToken }, ct);
-
-    public Task<string> InstallRarAsync(string confirmationToken, CancellationToken ct = default)
-        => InvokeAsync<string>(Protocol.InstallRarMethod, new { confirmationToken }, ct);
+    public Task CancelFolderMetricsAsync(CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CancelFolderMetricsMethod, new { }, ct);
 
     public Task<CleanupResult> DiskCleanupAsync(string directory, ulong? sizeThreshold, string? operationId, CancellationToken ct = default)
         => InvokeAsync<CleanupResult>(Protocol.DiskCleanupMethod, new { directory, sizeThreshold, operationId }, ct);
 
-    public Task CancelDiskCleanupAsync(CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.CancelDiskCleanupMethod, new { }, ct);
+    public Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CancelDiskCleanupMethod, new { operationId }, ct);
 
-    public Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, ulong? minSize, ulong? partialHashBytes, string? operationId, CancellationToken ct = default)
-        => InvokeAsync<DuplicateCheckResult>(Protocol.DuplicateCheckMethod, new { directory, minSize, partialHashBytes, operationId }, ct);
+    public Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, DuplicateScanOptions? options, string? operationId, CancellationToken ct = default)
+        => InvokeAsync<DuplicateCheckResult>(Protocol.DuplicateCheckMethod, new { directory, minSize = options?.MinSize, partialHashBytes = options?.PartialHashBytes, maxDepth = options?.MaxDepth, excludePatterns = options?.ExcludePatterns, networkMode = options?.NetworkMode, operationId }, ct);
 
-    public Task CancelDuplicateCheckAsync(CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.CancelDuplicateCheckMethod, new { }, ct);
+    public Task CancelDuplicateCheckAsync(string? operationId = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CancelDuplicateCheckMethod, new { operationId }, ct);
 
     public Task<Tag[]> GetAllTagsAsync(CancellationToken ct = default)
         => InvokeAsync<Tag[]>(Protocol.GetAllTagsMethod, new { }, ct);
@@ -232,12 +242,33 @@ public sealed partial class NamedPipeJsonClient
     public Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default)
         => InvokeAsync<GitStatus>(Protocol.GetGitStatusMethod, new { path }, ct);
 
+    public Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default)
+        => InvokeAsync<GitRepositoryStatus>(Protocol.GetGitRepositoryStatusMethod, new { path }, ct);
+
     public Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)
         => InvokeAsync<FileEntry[]>(Protocol.GetGitFileStatusesMethod, new { path }, ct);
 
-    public Task GitPullAsync(string path, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.GitPullMethod, new { path }, ct);
+    public Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitStagePathsMethod, new { path, paths }, ct);
 
-    public Task GitPushAsync(string path, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.GitPushMethod, new { path }, ct);
+    public Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitUnstagePathsMethod, new { path, paths }, ct);
+
+    public Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitDiscardPathsMethod, new { path, paths }, ct);
+
+    public Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default)
+        => InvokeAsync<string>(Protocol.GitDiffPathMethod, new { path, filePath }, ct);
+
+    public Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitCommitMethod, new { path, message }, ct);
+
+    public Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitFetchMethod, new { path }, ct);
+
+    public Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitPullMethod, new { path }, ct);
+
+    public Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default)
+        => InvokeAsync<GitCommandResult>(Protocol.GitPushMethod, new { path }, ct);
 }

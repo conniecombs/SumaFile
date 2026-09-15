@@ -6,10 +6,11 @@ public static class CommandAliasCatalog
     {
         ["overflow-search"] = "search",
         ["overflow-filter"] = "filter",
-        ["overflow-new-folder"] = "new-folder",
-        ["overflow-new-file"] = "new-file",
         ["overflow-dual-pane"] = "dual-pane",
+        ["overflow-profiles"] = "profile-manage",
         ["overflow-settings"] = "settings",
+        ["ctx-customize-toolbar"] = "customize-toolbar",
+        ["ctx-toggle-toolbar-labels"] = "toggle-toolbar-labels",
         ["ctx-open-tab"] = "open-selected-tab",
         ["ctx-open-other-pane"] = "open-other-pane",
         ["ctx-preview"] = "quick-look",
@@ -36,10 +37,35 @@ public static class CommandAliasCatalog
         ["ctx-restore"] = "restore-selected",
         ["ctx-empty-recycle-bin"] = "empty-recycle-bin",
         ["ctx-info"] = "properties",
+        ["ctx-git-panel"] = "git-panel",
+        ["ctx-git-diff"] = "git-diff-selected",
+        ["ctx-git-stage"] = "git-stage-selected",
+        ["ctx-git-unstage"] = "git-unstage-selected",
+        ["ctx-git-discard"] = "git-discard-selected",
+        ["ctx-git-refresh"] = "git-refresh",
+        ["ctx-git-fetch"] = "git-fetch",
+        ["ctx-git-pull"] = "git-pull",
+        ["ctx-git-push"] = "git-push",
+        ["ctx-git-commit"] = "git-commit",
     };
 
     public static string Normalize(string id)
     {
-        return Aliases.TryGetValue(id, out var canonical) ? canonical : id;
+        if (Aliases.TryGetValue(id, out var canonical))
+        {
+            return canonical;
+        }
+
+        const string overflowPrefix = "overflow-";
+        if (id.StartsWith(overflowPrefix, StringComparison.Ordinal))
+        {
+            var commandId = id[overflowPrefix.Length..];
+            if (AppCommandCatalog.Find(commandId) is not null)
+            {
+                return commandId;
+            }
+        }
+
+        return id;
     }
 }

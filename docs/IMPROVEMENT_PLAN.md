@@ -5,7 +5,7 @@ the pre-retirement Svelte/Tauri tree. The shipping host is now WinUI 3 +
 `simplefile-service`. Product goals in this plan still apply.
 
 This document expands the seven highest-value improvement areas for the
-Windows-focused SimpleFile branch. The intent is to keep the product direction
+Windows-focused SumaFile branch. The intent is to keep the product direction
 tight: local files, Windows drives, mapped network drives, archives, search,
 previews, metadata, Git helpers, cleanup tools, and Windows installers.
 
@@ -279,7 +279,7 @@ Status: Completed in the current worktree.
 ### Why This Matters
 
 The normal CI builds the Rust backend, but packaging failures can still appear
-only when Tauri creates NSIS/MSI installers. Since SimpleFile ships as a Windows
+only when Tauri creates NSIS/MSI installers. Since SumaFile ships as a Windows
 desktop app, installer health is part of product health.
 
 The repo already has good smoke scripts. The improvement is to run them earlier
@@ -341,13 +341,12 @@ icon size, and keyboard shortcuts should feel personal and durable.
 
 ### Remaining Optional Follow-Ups
 
-- Advanced rename / Quick Look off remaining DOM IDs (see `fixit.txt`).
+- Advanced rename / Quick Look WinUI polish if future UX gaps appear.
 - Folder-metrics progress polish for huge trees.
 
 ## Suggested Implementation Order
 
-Historical order (all primary items complete; see `fixit.txt` for remaining
-medium-priority work):
+Historical order (all primary items complete; track any remaining medium-priority work here or in `CODE_CLEANUP_CANDIDATES.md`):
 
 1. Archive extraction safety — done.
 2. Backend Windows filename validation — done.
