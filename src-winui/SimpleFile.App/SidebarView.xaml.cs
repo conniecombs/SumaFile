@@ -36,6 +36,10 @@ public sealed partial class SidebarView : UserControl
     public StackPanel SmartFoldersSectionRoot => SmartFoldersSection;
     public TextBlock SmartFoldersEmpty => SmartFoldersEmptyText;
     public ListView SmartFolders => SmartFoldersList;
+    public StackPanel TagsSectionRoot => TagsSection;
+    public Button ClearTagFilter => ClearTagFilterButton;
+    public TextBlock TagsEmpty => TagsEmptyText;
+    public ListView Tags => TagsList;
 
     public event RoutedEventHandler? SidebarLeft;
     public event RoutedEventHandler? SidebarRight;
@@ -56,6 +60,8 @@ public sealed partial class SidebarView : UserControl
     public event RoutedEventHandler? SaveSmartFolder;
     public event ItemClickEventHandler? SmartFolderClicked;
     public event RoutedEventHandler? DeleteSmartFolderClicked;
+    public event RoutedEventHandler? ClearTagFilterClicked;
+    public event ItemClickEventHandler? TagClicked;
 
     private void OnSidebarLeft(object sender, RoutedEventArgs e) => SidebarLeft?.Invoke(sender, e);
 
@@ -95,4 +101,8 @@ public sealed partial class SidebarView : UserControl
 
     private void OnDeleteSmartFolderClicked(object sender, RoutedEventArgs e) =>
         DeleteSmartFolderClicked?.Invoke(sender, e);
+
+    private void OnClearTagFilter(object sender, RoutedEventArgs e) => ClearTagFilterClicked?.Invoke(sender, e);
+
+    private void OnTagClicked(object sender, ItemClickEventArgs e) => TagClicked?.Invoke(sender, e);
 }

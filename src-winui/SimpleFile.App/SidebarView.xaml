@@ -429,6 +429,55 @@
                                 </ListView.ItemTemplate>
                             </ListView>
                         </StackPanel>
+
+                        <StackPanel x:Name="TagsSection" Spacing="2">
+                            <Grid Margin="4,0,0,4">
+                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Tags" />
+                                <Button
+                                    x:Name="ClearTagFilterButton"
+                                    Style="{StaticResource SfSidebarIconButtonStyle}"
+                                    AutomationProperties.Name="Clear tag filter"
+                                    Click="OnClearTagFilter"
+                                    ToolTipService.ToolTip="Clear tag filter">
+                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE711;" />
+                                </Button>
+                            </Grid>
+                            <TextBlock
+                                x:Name="TagsEmptyText"
+                                Style="{StaticResource SfEmptyHintStyle}"
+                                Text="No color labels yet" />
+                            <ListView
+                                x:Name="TagsList"
+                                Style="{StaticResource SfSidebarListStyle}"
+                                IsItemClickEnabled="True"
+                                ItemClick="OnTagClicked"
+                                SelectionMode="None">
+                                <ListView.ItemContainerStyle>
+                                    <Style BasedOn="{StaticResource SfNavListItemStyle}" TargetType="ListViewItem" />
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="ipc:Tag">
+                                        <Grid Padding="2,1" ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Ellipse
+                                                Width="10"
+                                                Height="10"
+                                                VerticalAlignment="Center"
+                                                Fill="{Binding Color}" />
+                                            <TextBlock
+                                                Grid.Column="1"
+                                                VerticalAlignment="Center"
+                                                Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                Text="{x:Bind Name}"
+                                                TextTrimming="CharacterEllipsis" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
             </Grid>

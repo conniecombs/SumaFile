@@ -53,6 +53,98 @@
                                 </Button>
                             </StackPanel>
                             <Grid
+                                x:Name="OmnibarHost"
+                                Grid.Column="1"
+                                MinWidth="280"
+                                MaxWidth="760"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Center">
+                                <TextBox
+                                    x:Name="OmnibarBox"
+                                    Padding="116,4,34,4"
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="Omnibar"
+                                    CornerRadius="4"
+                                    GotFocus="OnOmnibarGotFocus"
+                                    KeyDown="OnOmnibarKeyDown"
+                                    LostFocus="OnOmnibarLostFocus"
+                                    PlaceholderText="Path, search, filter, or command" />
+                                <StackPanel
+                                    Margin="2,0,0,0"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Orientation="Horizontal"
+                                    Spacing="1">
+                                    <ToggleButton
+                                        x:Name="OmnibarPathModeButton"
+                                        Width="28"
+                                        Height="28"
+                                        MinWidth="28"
+                                        Padding="0"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        AutomationProperties.Name="Path mode"
+                                        Click="OnOmnibarPathModeClick"
+                                        IsChecked="True"
+                                        ToolTipService.ToolTip="Path">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE8B7;" />
+                                    </ToggleButton>
+                                    <ToggleButton
+                                        x:Name="OmnibarSearchModeButton"
+                                        Width="28"
+                                        Height="28"
+                                        MinWidth="28"
+                                        Padding="0"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        AutomationProperties.Name="Search mode"
+                                        Click="OnOmnibarSearchModeClick"
+                                        ToolTipService.ToolTip="Search">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE721;" />
+                                    </ToggleButton>
+                                    <ToggleButton
+                                        x:Name="OmnibarFilterModeButton"
+                                        Width="28"
+                                        Height="28"
+                                        MinWidth="28"
+                                        Padding="0"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        AutomationProperties.Name="Filter mode"
+                                        Click="OnOmnibarFilterModeClick"
+                                        ToolTipService.ToolTip="Filter">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE71C;" />
+                                    </ToggleButton>
+                                    <ToggleButton
+                                        x:Name="OmnibarCommandModeButton"
+                                        Width="28"
+                                        Height="28"
+                                        MinWidth="28"
+                                        Padding="0"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        AutomationProperties.Name="Command mode"
+                                        Click="OnOmnibarCommandModeClick"
+                                        ToolTipService.ToolTip="Commands">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE945;" />
+                                    </ToggleButton>
+                                </StackPanel>
+                                <Button
+                                    x:Name="OmnibarExecuteButton"
+                                    Width="28"
+                                    Height="28"
+                                    Margin="0,0,2,0"
+                                    Padding="0"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    AutomationProperties.Name="Run Omnibar input"
+                                    Click="OnOmnibarExecuteClick"
+                                    Style="{StaticResource SfIconButtonStyle}"
+                                    ToolTipService.ToolTip="Run">
+                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE76C;" />
+                                </Button>
+                            </Grid>
+                            <Grid
                                 x:Name="PrimarySearchHost"
                                 Grid.Column="2"
                                 Width="260"

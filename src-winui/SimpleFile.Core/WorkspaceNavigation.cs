@@ -20,22 +20,8 @@ internal static class WorkspaceNavigation
         return string.IsNullOrEmpty(homePath) ? primaryPath : homePath;
     }
 
-    public static bool CanUsePresortedEntries(ExplorerPane pane, bool keepFoldersOnTop)
-    {
-        return pane.ListingInProgress
-            && !pane.PathIsNetwork
-            && keepFoldersOnTop
-            && string.Equals(pane.SortBy, "name", StringComparison.OrdinalIgnoreCase)
-            && pane.SortAscending;
-    }
-
     public static ListDirectoryOptions? BuildStreamedListingOptions(ExplorerPane pane)
     {
-        if (pane.PathIsNetwork)
-        {
-            return null;
-        }
-
         return new ListDirectoryOptions
         {
             Mode = "light",

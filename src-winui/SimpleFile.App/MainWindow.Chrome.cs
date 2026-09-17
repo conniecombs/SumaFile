@@ -198,7 +198,9 @@ public sealed partial class MainWindow
         BookmarksEmptyText.Visibility = _workspace.Bookmarks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         RecentsEmptyText.Visibility = _workspace.RecentPaths.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         SmartFoldersEmptyText.Visibility = _workspace.SmartFolders.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        TagsEmptyText.Visibility = _workspace.AllTags.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         ClearRecentsButton.IsEnabled = _workspace.RecentPaths.Count > 0;
+        ClearTagFilterButton.IsEnabled = _workspace.ActiveTagFilter is not null;
     }
 
     private void ApplySidebarSectionVisibility()
@@ -214,6 +216,9 @@ public sealed partial class MainWindow
         BookmarksSection.Visibility = SidebarSectionVisibility.Bookmarks(settings) ? Visibility.Visible : Visibility.Collapsed;
         RecentSection.Visibility = SidebarSectionVisibility.Recent(settings, _workspace.RecentPaths.Count) ? Visibility.Visible : Visibility.Collapsed;
         SmartFoldersSection.Visibility = SidebarSectionVisibility.SmartFolders(settings, _workspace.SmartFolders.Count, _search?.IsActive == true)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        TagsSection.Visibility = _workspace.AllTags.Count > 0 || _workspace.ActiveTagFilter is not null
             ? Visibility.Visible
             : Visibility.Collapsed;
 

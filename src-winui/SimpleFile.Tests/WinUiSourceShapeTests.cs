@@ -79,6 +79,75 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
+    public void MainWindow_CoalescesWorkspaceSyncDuringDirectoryListings()
+    {
+        var root = FindRepoRoot();
+        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
+
+        Assert.Contains("WorkspaceSyncCoalesceMilliseconds = 75", mainWindow);
+        Assert.Contains("DispatcherQueue.TryEnqueue(QueueWorkspaceSync)", mainWindow);
+        Assert.Contains("WorkspaceHasListingInProgress(_workspace)", mainWindow);
+        Assert.Contains("DispatcherQueue.CreateTimer()", mainWindow);
+        Assert.Contains("timer.Interval = TimeSpan.FromMilliseconds(WorkspaceSyncCoalesceMilliseconds)", mainWindow);
+        Assert.Contains("_workspaceSyncPending", mainWindow);
+        Assert.Contains("StopWorkspaceSyncTimer();", mainWindow);
+        Assert.DoesNotContain("DispatcherQueue.TryEnqueue(SyncFromWorkspace)", mainWindow);
+    }
+
+    [Fact]
+    public void MainWindow_DefersStartupDriveRefreshPastFirstInteraction()
+    {
+        var root = FindRepoRoot();
+        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
+
+        Assert.Contains("StartupDriveRefreshDelayMilliseconds = 5000", mainWindow);
+        Assert.Contains("RefreshStartupDrivesAsync(workspace, cts)", mainWindow);
+        Assert.Contains("InitializeAsync(deferInitialNavigation: true)", mainWindow);
+        Assert.Contains("QueueDeferredStartupNavigation(_workspace)", mainWindow);
+        Assert.Contains("RunDeferredStartupNavigationAsync", mainWindow);
+        Assert.Contains("var cancellationToken = cts.Token", mainWindow);
+        Assert.Contains("WorkspaceHasListingInProgress(workspace)", mainWindow);
+        Assert.Contains("postponed-listing", mainWindow);
+        Assert.Contains("skipped-busy", mainWindow);
+        Assert.Contains("workspace.RefreshDrivesAsync(quiet: true, cancellationToken)", mainWindow);
+        Assert.DoesNotContain("Task.Delay(TimeSpan.FromMilliseconds(150))", mainWindow);
+    }
+
+    [Fact]
+    public void MainWindow_WiresOmnibarStatusCenterAndTagNavigation()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var mainWindow = ReadMainWindowSource(appRoot);
+        var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
+        var toolbar = File.ReadAllText(Path.Combine(appRoot, "PrimaryToolbarView.xaml"));
+        var sidebar = File.ReadAllText(Path.Combine(appRoot, "SidebarView.xaml"));
+
+        Assert.Contains("x:Name=\"OmnibarBox\"", toolbar);
+        Assert.Contains("OnOmnibarModeRequested", mainWindow);
+        Assert.Contains("OmnibarIntentParser.Parse", mainWindow);
+        Assert.Contains("FocusOmnibar(OmnibarMode.Search)", mainWindow);
+        Assert.Contains("FocusOmnibar(OmnibarMode.Navigate)", mainWindow);
+
+        Assert.Contains("x:Name=\"StatusCenterButton\"", mainWindowXaml);
+        Assert.Contains("x:Name=\"StatusCenterTaskList\"", mainWindowXaml);
+        Assert.Contains("x:Name=\"StatusCenterCancelTransferButton\"", mainWindowXaml);
+        Assert.Contains("x:Name=\"StatusCenterClearCompletedButton\"", mainWindowXaml);
+        Assert.Contains("StatusCenterFormatter.Format", mainWindow);
+        Assert.Contains("StatusCenterRows(snapshot)", mainWindow);
+        Assert.Contains("OnStatusCenterTransfersClick", mainWindow);
+        Assert.Contains("OnStatusCenterHistoryClick", mainWindow);
+        Assert.Contains("OnStatusCenterCancelTransferClick", mainWindow);
+        Assert.Contains("OnStatusCenterClearCompletedClick", mainWindow);
+        Assert.Contains("FirstCancellableTransfer()", mainWindow);
+
+        Assert.Contains("x:Name=\"TagsSection\"", sidebar);
+        Assert.Contains("OnTagClicked", mainWindow);
+        Assert.Contains("_workspace.SetTagFilter(tag.Id)", mainWindow);
+        Assert.Contains("clear-tag-filter", File.ReadAllText(Path.Combine(root, "SimpleFile.Core", "AppCommandCatalog.cs")));
+    }
+
+    [Fact]
     public void DetailsColumns_UsePaneOwnedHorizontalScrollBarAndRefreshAfterPaneResize()
     {
         var root = FindRepoRoot();

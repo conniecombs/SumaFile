@@ -19,6 +19,11 @@ namespace SimpleFile.App;
 
 public sealed partial class MainWindow : Window
 {
+    private const int WorkspaceSyncCoalesceMilliseconds = 75;
+    private const int StartupDriveRefreshDelayMilliseconds = 5000;
+    private const int StartupDriveRefreshBusyRetryMilliseconds = 2000;
+    private const int StartupDriveRefreshBusyRetryLimit = 3;
+
     private BackendSession? _backend;
     private ExplorerWorkspace? _workspace;
     private readonly PreviewPresenter _previewPresenter;
@@ -52,6 +57,11 @@ public sealed partial class MainWindow : Window
     private string? _primaryColumnHeaderKey;
     private string? _secondaryColumnHeaderKey;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _paneSizeColumnRefreshTimer;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _workspaceSyncTimer;
+    private bool _workspaceSyncPending;
+    private bool _workspaceSyncTimerRunning;
+    private CancellationTokenSource? _startupNavigationCts;
+    private CancellationTokenSource? _startupDriveRefreshCts;
     private readonly Dictionary<int, Style> _tileItemStyles = new();
     private string? _columnEnrichmentSignature;
     private CancellationTokenSource? _columnEnrichmentCts;
@@ -207,7 +217,7 @@ public sealed partial class MainWindow : Window
             ColumnLayoutHost.Attach(_workspace.PrimaryColumns, _workspace.SecondaryColumns);
             _workspace.Changed += OnWorkspaceChanged;
             _fileChangeSubscription = client.On<FileChangeEvent>(Protocol.FileChangeEvent, OnFileChange);
-            await _workspace.InitializeAsync();
+            await _workspace.InitializeAsync(deferInitialNavigation: true);
             timer.Mark("workspace-initialized");
             ApplyKeyboardShortcuts();
             await LoadOpenWithPreferencesAsync(fileOps, CancellationToken.None);
@@ -220,6 +230,7 @@ public sealed partial class MainWindow : Window
             timer.Mark("first-sync");
             QueueStartupDriveRefresh(_workspace);
             timer.Mark("ready");
+            QueueDeferredStartupNavigation(_workspace);
         }
         catch (Exception exception)
         {
@@ -241,16 +252,59 @@ public sealed partial class MainWindow : Window
 
     private void QueueStartupDriveRefresh(ExplorerWorkspace workspace)
     {
-        _ = RefreshStartupDrivesAsync(workspace);
+        CancelStartupDriveRefresh();
+        var cts = new CancellationTokenSource();
+        _startupDriveRefreshCts = cts;
+        _ = RefreshStartupDrivesAsync(workspace, cts);
     }
 
-    private async Task RefreshStartupDrivesAsync(ExplorerWorkspace workspace)
+    private void QueueDeferredStartupNavigation(ExplorerWorkspace workspace)
+    {
+        CancelStartupNavigation();
+        var cts = new CancellationTokenSource();
+        _startupNavigationCts = cts;
+        _ = RunDeferredStartupNavigationAsync(workspace, cts);
+    }
+
+    private async Task RunDeferredStartupNavigationAsync(ExplorerWorkspace workspace, CancellationTokenSource cts)
+    {
+        try
+        {
+            var cancellationToken = cts.Token;
+            await Task.Run(
+                    async () => await workspace.RunDeferredStartupNavigationAsync(cancellationToken).ConfigureAwait(false),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (ReferenceEquals(_workspace, workspace))
+            {
+                DispatcherQueue.TryEnqueue(() => SetStatusText(exception.Message));
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_startupNavigationCts, cts))
+            {
+                _startupNavigationCts = null;
+            }
+
+            cts.Dispose();
+        }
+    }
+
+    private async Task RefreshStartupDrivesAsync(ExplorerWorkspace workspace, CancellationTokenSource cts)
     {
         var timer = new StartupTimer("MainWindow.StartupDriveRefresh");
         timer.Mark("queued");
         try
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(150));
+            var cancellationToken = cts.Token;
+            await Task.Delay(TimeSpan.FromMilliseconds(StartupDriveRefreshDelayMilliseconds), cancellationToken);
             if (!ReferenceEquals(_workspace, workspace))
             {
                 timer.Mark("abandoned");
@@ -263,12 +317,42 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            await workspace.RefreshDrivesAsync(quiet: true);
+            for (var attempt = 0; attempt < StartupDriveRefreshBusyRetryLimit && WorkspaceHasListingInProgress(workspace); attempt++)
+            {
+                timer.Mark("postponed-listing", $"attempt={attempt + 1}");
+                await Task.Delay(TimeSpan.FromMilliseconds(StartupDriveRefreshBusyRetryMilliseconds), cancellationToken);
+                if (!ReferenceEquals(_workspace, workspace))
+                {
+                    timer.Mark("abandoned");
+                    return;
+                }
+            }
+
+            if (WorkspaceHasListingInProgress(workspace))
+            {
+                timer.Mark("skipped-busy");
+                return;
+            }
+
+            await workspace.RefreshDrivesAsync(quiet: true, cancellationToken);
             timer.Mark("refreshed", $"count={workspace.Drives.Count}");
+        }
+        catch (OperationCanceledException)
+        {
+            timer.Mark("cancelled");
         }
         catch (Exception exception)
         {
             timer.Mark("failed", exception.Message);
+        }
+        finally
+        {
+            if (ReferenceEquals(_startupDriveRefreshCts, cts))
+            {
+                _startupDriveRefreshCts = null;
+            }
+
+            cts.Dispose();
         }
     }
 
@@ -282,6 +366,11 @@ public sealed partial class MainWindow : Window
             _search.PropertyChanged += OnSearchPropertyChanged;
         }
 
+        if (_transfer is not null)
+        {
+            _transfer.PropertyChanged += OnTransferPropertyChanged;
+        }
+
     }
 
     private void DetachViewModels()
@@ -292,6 +381,11 @@ public sealed partial class MainWindow : Window
             _search.Cleared -= OnSearchCleared;
             _search.MessageRequested -= OnViewModelMessageRequested;
             _search.PropertyChanged -= OnSearchPropertyChanged;
+        }
+
+        if (_transfer is not null)
+        {
+            _transfer.PropertyChanged -= OnTransferPropertyChanged;
         }
 
     }
@@ -366,7 +460,7 @@ public sealed partial class MainWindow : Window
 
     private void OnWorkspaceChanged(object? sender, EventArgs e)
     {
-        DispatcherQueue.TryEnqueue(SyncFromWorkspace);
+        DispatcherQueue.TryEnqueue(QueueWorkspaceSync);
     }
 
     private void DispatchToUi(Action action)
@@ -390,6 +484,94 @@ public sealed partial class MainWindow : Window
         {
             _applyingWorkspace = false;
         }
+    }
+
+    private void QueueWorkspaceSync()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        if (_applyingWorkspace || WorkspaceHasListingInProgress(_workspace))
+        {
+            ScheduleWorkspaceSync();
+            return;
+        }
+
+        FlushWorkspaceSync();
+    }
+
+    private void ScheduleWorkspaceSync()
+    {
+        _workspaceSyncPending = true;
+        var timer = EnsureWorkspaceSyncTimer();
+        if (!_workspaceSyncTimerRunning)
+        {
+            _workspaceSyncTimerRunning = true;
+            timer.Start();
+        }
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer EnsureWorkspaceSyncTimer()
+    {
+        if (_workspaceSyncTimer is not null)
+        {
+            return _workspaceSyncTimer;
+        }
+
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(WorkspaceSyncCoalesceMilliseconds);
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            _workspaceSyncTimerRunning = false;
+            if (_workspaceSyncPending)
+            {
+                FlushWorkspaceSync();
+            }
+        };
+        _workspaceSyncTimer = timer;
+        return timer;
+    }
+
+    private void FlushWorkspaceSync()
+    {
+        if (_applyingWorkspace)
+        {
+            ScheduleWorkspaceSync();
+            return;
+        }
+
+        _workspaceSyncPending = false;
+        _workspaceSyncTimer?.Stop();
+        _workspaceSyncTimerRunning = false;
+        SyncFromWorkspace();
+    }
+
+    private void StopWorkspaceSyncTimer()
+    {
+        _workspaceSyncTimer?.Stop();
+        _workspaceSyncTimer = null;
+        _workspaceSyncPending = false;
+        _workspaceSyncTimerRunning = false;
+    }
+
+    private void CancelStartupDriveRefresh()
+    {
+        _startupDriveRefreshCts?.Cancel();
+        _startupDriveRefreshCts = null;
+    }
+
+    private void CancelStartupNavigation()
+    {
+        _startupNavigationCts?.Cancel();
+        _startupNavigationCts = null;
+    }
+
+    private static bool WorkspaceHasListingInProgress(ExplorerWorkspace workspace)
+    {
+        return workspace.Primary.ListingInProgress || workspace.Secondary.ListingInProgress;
     }
 
     private void SyncFromWorkspaceCore()
@@ -440,6 +622,7 @@ public sealed partial class MainWindow : Window
         SetExpandGlyph(QuickAccessCollapseButton, _quickAccessCollapsed);
         SetExpandGlyph(MyPcCollapseButton, _myPcCollapsed);
         RefreshSmartFolders();
+        RefreshTags();
         BindItemsSource(FolderTreeList, _workspace.FolderTreeRows);
         BindItemsSource(BookmarksList, _workspace.Bookmarks);
         BindItemsSource(RecentsList, _workspace.RecentPaths);
@@ -458,6 +641,7 @@ public sealed partial class MainWindow : Window
         HighlightSidebarTarget();
         HighlightActivePane();
         SyncQuickFilterFromWorkspace();
+        SyncOmnibarFromWorkspace();
         UpdateSearchCancelButtons();
         UpdateDualPaneButton(_toolbar?.IsDualPaneEnabled ?? _workspace.DualPaneEnabled);
         RefreshGitUiVisibility();
@@ -518,6 +702,7 @@ public sealed partial class MainWindow : Window
         PrimaryUpButton.IsEnabled = _toolbar.CanGoUp;
         CountText.Text = _toolbar.CountText;
         StatusText.Text = _toolbar.StatusText;
+        RefreshStatusCenter();
     }
 
     private void ApplyStatusBarState()
@@ -549,10 +734,12 @@ public sealed partial class MainWindow : Window
         {
             _toolbar.SetStatusText(text);
             StatusText.Text = _toolbar.StatusText;
+            RefreshStatusCenter();
             return;
         }
 
         StatusText.Text = text;
+        RefreshStatusCenter();
     }
 
     private void ApplyDualPaneLayout()
@@ -1174,6 +1361,9 @@ public sealed partial class MainWindow : Window
         _search?.ClearState(notifyHost: false);
         _paneSizeColumnRefreshTimer?.Stop();
         _paneSizeColumnRefreshTimer = null;
+        StopWorkspaceSyncTimer();
+        CancelStartupNavigation();
+        CancelStartupDriveRefresh();
         Interlocked.Increment(ref _columnEnrichmentToken);
         _columnEnrichmentCts?.Cancel();
         _columnEnrichmentCts = null;
@@ -1185,6 +1375,9 @@ public sealed partial class MainWindow : Window
 
     private async Task CleanupSessionAsync(bool saveWorkspace, bool unwatchDirectory)
     {
+        StopWorkspaceSyncTimer();
+        CancelStartupNavigation();
+        CancelStartupDriveRefresh();
         _watchTargetPath = null;
         _watchedPath = null;
 

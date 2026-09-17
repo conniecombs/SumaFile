@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using SimpleFile.Core;
 
 namespace SimpleFile.App;
 
@@ -20,6 +21,13 @@ public sealed partial class PrimaryToolbarView : UserControl
     public Button BackButton => PrimaryBackButton;
     public Button ForwardButton => PrimaryForwardButton;
     public Button UpButton => PrimaryUpButton;
+    public Grid OmnibarRoot => OmnibarHost;
+    public TextBox OmnibarTextBox => OmnibarBox;
+    public ToggleButton OmnibarPathMode => OmnibarPathModeButton;
+    public ToggleButton OmnibarSearchMode => OmnibarSearchModeButton;
+    public ToggleButton OmnibarFilterMode => OmnibarFilterModeButton;
+    public ToggleButton OmnibarCommandMode => OmnibarCommandModeButton;
+    public Button OmnibarExecute => OmnibarExecuteButton;
     public Grid SearchHost => PrimarySearchHost;
     public TextBox SearchTextBox => SearchBox;
     public ToggleButton ContentSearchToggle => ContentSearchButton;
@@ -55,6 +63,11 @@ public sealed partial class PrimaryToolbarView : UserControl
     public event RoutedEventHandler? PrimaryBack;
     public event RoutedEventHandler? PrimaryForward;
     public event RoutedEventHandler? PrimaryUp;
+    public event KeyEventHandler? OmnibarKeyDown;
+    public event RoutedEventHandler? OmnibarExecuteClick;
+    public event EventHandler<OmnibarMode>? OmnibarModeRequested;
+    public event RoutedEventHandler? OmnibarGotFocus;
+    public event RoutedEventHandler? OmnibarLostFocus;
     public event KeyEventHandler? SearchKeyDown;
     public event RoutedEventHandler? SearchClick;
     public event RoutedEventHandler? ContentSearchToggleClick;
@@ -88,6 +101,26 @@ public sealed partial class PrimaryToolbarView : UserControl
     private void OnPrimaryForward(object sender, RoutedEventArgs e) => PrimaryForward?.Invoke(sender, e);
 
     private void OnPrimaryUp(object sender, RoutedEventArgs e) => PrimaryUp?.Invoke(sender, e);
+
+    private void OnOmnibarKeyDown(object sender, KeyRoutedEventArgs e) => OmnibarKeyDown?.Invoke(sender, e);
+
+    private void OnOmnibarExecuteClick(object sender, RoutedEventArgs e) => OmnibarExecuteClick?.Invoke(sender, e);
+
+    private void OnOmnibarPathModeClick(object sender, RoutedEventArgs e) =>
+        OmnibarModeRequested?.Invoke(this, OmnibarMode.Navigate);
+
+    private void OnOmnibarSearchModeClick(object sender, RoutedEventArgs e) =>
+        OmnibarModeRequested?.Invoke(this, OmnibarMode.Search);
+
+    private void OnOmnibarFilterModeClick(object sender, RoutedEventArgs e) =>
+        OmnibarModeRequested?.Invoke(this, OmnibarMode.Filter);
+
+    private void OnOmnibarCommandModeClick(object sender, RoutedEventArgs e) =>
+        OmnibarModeRequested?.Invoke(this, OmnibarMode.Command);
+
+    private void OnOmnibarGotFocus(object sender, RoutedEventArgs e) => OmnibarGotFocus?.Invoke(sender, e);
+
+    private void OnOmnibarLostFocus(object sender, RoutedEventArgs e) => OmnibarLostFocus?.Invoke(sender, e);
 
     private void OnSearchKeyDown(object sender, KeyRoutedEventArgs e) => SearchKeyDown?.Invoke(sender, e);
 

@@ -33,6 +33,7 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "command-palette");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "copy-path");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "bookmark-folder");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "clear-tag-filter");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-back");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-recycle-bin");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "restore-selected");
@@ -56,6 +57,7 @@ public class AppCommandCatalogTests
         Assert.Equal("Ctrl+Alt+C", AppCommandCatalog.Find("copy-to-pane")?.Shortcut);
         Assert.Equal("Move to Recycle Bin", AppCommandCatalog.Find("delete")?.Label);
         Assert.Equal("Delete Permanently", AppCommandCatalog.Find("delete-permanent")?.Label);
+        Assert.Equal("Clear tag filter", AppCommandCatalog.Find("clear-tag-filter")?.Label);
         Assert.Equal(AppCommandCatalog.All.Count, AppCommandCatalog.Filter("").Count);
         var git = AppCommandCatalog.Filter("git");
         Assert.Equal(10, git.Count);

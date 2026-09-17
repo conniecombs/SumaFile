@@ -36,6 +36,7 @@ public sealed partial class ExplorerWorkspace
     private readonly object _gate = new();
     private readonly List<ClosedFileTab> _closedTabs = [];
     private List<DriveInfo> _drives = [];
+    private string? _deferredStartupNavigationPath;
 
     private sealed class ClosedFileTab
     {

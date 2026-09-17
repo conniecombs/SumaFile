@@ -30,6 +30,10 @@ public sealed partial class MainWindow
     private StackPanel SmartFoldersSection => SidebarPanel.SmartFoldersSectionRoot;
     private TextBlock SmartFoldersEmptyText => SidebarPanel.SmartFoldersEmpty;
     private ListView SmartFoldersList => SidebarPanel.SmartFolders;
+    private StackPanel TagsSection => SidebarPanel.TagsSectionRoot;
+    private Button ClearTagFilterButton => SidebarPanel.ClearTagFilter;
+    private TextBlock TagsEmptyText => SidebarPanel.TagsEmpty;
+    private ListView TagsList => SidebarPanel.Tags;
 
     private Grid PrimaryToolbar => PrimaryToolbarPanel.ToolbarRoot;
     private ColumnDefinition PrimarySearchColumn => PrimaryToolbarPanel.SearchColumn;
@@ -39,6 +43,12 @@ public sealed partial class MainWindow
     private Button PrimaryBackButton => PrimaryToolbarPanel.BackButton;
     private Button PrimaryForwardButton => PrimaryToolbarPanel.ForwardButton;
     private Button PrimaryUpButton => PrimaryToolbarPanel.UpButton;
+    private Grid OmnibarHost => PrimaryToolbarPanel.OmnibarRoot;
+    private TextBox OmnibarInput => PrimaryToolbarPanel.OmnibarTextBox;
+    private ToggleButton OmnibarPathModeButton => PrimaryToolbarPanel.OmnibarPathMode;
+    private ToggleButton OmnibarSearchModeButton => PrimaryToolbarPanel.OmnibarSearchMode;
+    private ToggleButton OmnibarFilterModeButton => PrimaryToolbarPanel.OmnibarFilterMode;
+    private ToggleButton OmnibarCommandModeButton => PrimaryToolbarPanel.OmnibarCommandMode;
     private Grid PrimarySearchHost => PrimaryToolbarPanel.SearchHost;
     private TextBox SearchBox => PrimaryToolbarPanel.SearchTextBox;
     private ToggleButton ContentSearchButton => PrimaryToolbarPanel.ContentSearchToggle;
@@ -164,12 +174,19 @@ public sealed partial class MainWindow
         SidebarPanel.SaveSmartFolder += OnSaveSmartFolder;
         SidebarPanel.SmartFolderClicked += OnSmartFolderClicked;
         SidebarPanel.DeleteSmartFolderClicked += OnDeleteSmartFolderClicked;
+        SidebarPanel.ClearTagFilterClicked += OnClearTagFilter;
+        SidebarPanel.TagClicked += OnTagClicked;
 
         PrimaryToolbarPanel.PrimaryToolbarSizeChanged += OnPrimaryToolbarSizeChanged;
         PrimaryToolbarPanel.ToggleSidebar += OnToggleSidebar;
         PrimaryToolbarPanel.PrimaryBack += OnPrimaryBack;
         PrimaryToolbarPanel.PrimaryForward += OnPrimaryForward;
         PrimaryToolbarPanel.PrimaryUp += OnPrimaryUp;
+        PrimaryToolbarPanel.OmnibarKeyDown += OnOmnibarKeyDown;
+        PrimaryToolbarPanel.OmnibarExecuteClick += OnOmnibarExecuteClick;
+        PrimaryToolbarPanel.OmnibarModeRequested += OnOmnibarModeRequested;
+        PrimaryToolbarPanel.OmnibarGotFocus += OnOmnibarGotFocus;
+        PrimaryToolbarPanel.OmnibarLostFocus += OnOmnibarLostFocus;
         PrimaryToolbarPanel.SearchKeyDown += OnSearchKeyDown;
         PrimaryToolbarPanel.SearchClick += OnSearchClick;
         PrimaryToolbarPanel.ContentSearchToggleClick += OnContentSearchToggle;

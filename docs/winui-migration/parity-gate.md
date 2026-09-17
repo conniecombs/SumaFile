@@ -320,6 +320,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `open-selected-tab` `open-other-pane` `reopen-closed-tab` | Tab and pane open commands | Catalog + handlers | Tab workspace tests | Ctrl+Enter / reopen tab | `PASS` |
 | `properties` | Properties | Dialog | Catalog + properties source-shape guard | — | `PASS` |
 | `color-label` | Tag picker | Dialog | Catalog | — | `MANUAL` |
+| `clear-tag-filter` | Clear active tag filter | Sidebar Tags + command handler | Catalog + source-shape guard | Click a tag, clear it | `PASS` |
 | `bookmark-folder` | Bookmark current folder | Workspace places | Catalog + places tests | Ctrl+B | `PASS` |
 | `folder-metrics` | Metrics | Dialog | Catalog | — | `MANUAL` |
 | `disk-cleanup` | Cleanup | Dialog | Catalog | — | `MANUAL` |

@@ -33,4 +33,54 @@ public class StatusBarFormatterTests
         Assert.Equal("3 items", selected.ItemText);
         Assert.Equal("2 selected (1.0 KB)", selected.SelectionText);
     }
+
+    [Fact]
+    public void StatusCenter_PrioritizesActiveTransfersLoadingThenIdle()
+    {
+        var transfers = StatusCenterFormatter.Format(
+            activeTransfers: 2,
+            queuedTransfers: 1,
+            hasCompletedTransfers: false,
+            listingInProgress: true,
+            workspaceStatus: "Opened folder",
+            operationHistoryCount: 4);
+        Assert.Equal("2 active", transfers.BadgeText);
+        Assert.Equal("Transfers in progress", transfers.HeaderText);
+        Assert.True(transfers.HasWork);
+
+        var loading = StatusCenterFormatter.Format(
+            activeTransfers: 0,
+            queuedTransfers: 0,
+            hasCompletedTransfers: false,
+            listingInProgress: true,
+            workspaceStatus: null,
+            operationHistoryCount: 0);
+        Assert.Equal("Loading", loading.BadgeText);
+        Assert.Equal("Folder is loading", loading.HeaderText);
+
+        var idle = StatusCenterFormatter.Format(
+            activeTransfers: 0,
+            queuedTransfers: 0,
+            hasCompletedTransfers: false,
+            listingInProgress: false,
+            workspaceStatus: null,
+            operationHistoryCount: 0);
+        Assert.Equal("Idle", idle.BadgeText);
+        Assert.False(idle.HasWork);
+    }
+
+    [Fact]
+    public void StatusCenter_MarksCompletedTransfersAsAttention()
+    {
+        var snapshot = StatusCenterFormatter.Format(
+            activeTransfers: 0,
+            queuedTransfers: 0,
+            hasCompletedTransfers: true,
+            listingInProgress: false,
+            workspaceStatus: null,
+            operationHistoryCount: 2);
+
+        Assert.Equal("Done", snapshot.BadgeText);
+        Assert.True(snapshot.HasAttention);
+    }
 }

@@ -13,6 +13,12 @@ public sealed partial class MainWindow
         BindItemsSource(SmartFoldersList, _workspace.SmartFolders);
     }
 
+    private void RefreshTags()
+    {
+        if (_workspace == null) return;
+        BindItemsSource(TagsList, _workspace.AllTags);
+    }
+
     private async void OnSmartFolderClicked(object sender, ItemClickEventArgs e)
     {
         if (_workspace == null || e.ClickedItem is not SimpleFile.Ipc.SmartFolder folder) return;
@@ -20,6 +26,33 @@ public sealed partial class MainWindow
         await RunUiActionAsync(
             "Smart folder",
             () => _search?.StartSmartFolderAsync(folder, DispatchToUi) ?? Task.CompletedTask);
+    }
+
+    private void OnTagClicked(object sender, ItemClickEventArgs e)
+    {
+        if (_workspace is null || e.ClickedItem is not Tag tag)
+        {
+            return;
+        }
+
+        _workspace.SetTagFilter(tag.Id);
+        SetStatusText($"Showing items tagged {tag.Name}");
+    }
+
+    private void OnClearTagFilter(object sender, RoutedEventArgs e)
+    {
+        ClearTagFilter();
+    }
+
+    private void ClearTagFilter()
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        _workspace.SetTagFilter(null);
+        SetStatusText("Tag filter cleared");
     }
 
     private async void OnRefreshFolderTree(object sender, RoutedEventArgs e)

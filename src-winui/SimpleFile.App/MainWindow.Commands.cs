@@ -68,6 +68,12 @@ public sealed partial class MainWindow
 
     private void FocusSearchUi()
     {
+        if (OmnibarHost.Visibility == Visibility.Visible)
+        {
+            FocusOmnibar(OmnibarMode.Search);
+            return;
+        }
+
         var pane = ActiveUiPane;
         var host = ActiveToolbarSearchHost();
         var box = ActiveToolbarSearchTextBox();
@@ -93,6 +99,12 @@ public sealed partial class MainWindow
 
     private void FocusFilterUi()
     {
+        if (OmnibarHost.Visibility == Visibility.Visible)
+        {
+            FocusOmnibar(OmnibarMode.Filter);
+            return;
+        }
+
         var pane = ActiveUiPane;
         var box = ActiveToolbarQuickFilterBox();
         if (box.Visibility == Visibility.Visible)
@@ -298,13 +310,14 @@ public sealed partial class MainWindow
         _previewPresenter.RefreshThemeResources();
     }
 
-    private void OpenCommandPalette()
+    private void OpenCommandPalette(string initialQuery = "")
     {
         _commandPaletteOpen = true;
         CommandPaletteOverlay.Visibility = Visibility.Visible;
-        CommandPaletteInput.Text = "";
-        RefreshCommandPalette("");
+        CommandPaletteInput.Text = initialQuery;
+        RefreshCommandPalette(initialQuery);
         CommandPaletteInput.Focus(FocusState.Programmatic);
+        CommandPaletteInput.SelectAll();
     }
 
     private void CloseCommandPalette()

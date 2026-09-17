@@ -211,6 +211,17 @@ pub fn list_directory_with_options(
     let current_path = path_buf.to_string_lossy().to_string();
     let parent = path_buf.parent().map(|p| p.to_string_lossy().to_string());
     let is_network = is_network_path(&path_buf);
+    if !options.final_entries {
+        return list_directory_streaming_options(
+            &path_buf,
+            current_path,
+            parent,
+            is_network,
+            &options,
+            &mut on_chunk,
+        );
+    }
+
     let mut entries = Vec::new();
     enumerate_directory(&path_buf, &mut |entry| {
         entries.push(entry);
@@ -254,34 +265,131 @@ fn enumerate_directory(
     enumerate_directory_std(path, on_entry)
 }
 
-fn prepare_entries(mut entries: Vec<FileEntry>, options: &ListDirectoryOptions) -> Vec<FileEntry> {
-    if !options.include_hidden {
-        entries.retain(|entry| !entry.is_hidden && !entry.is_system);
+fn list_directory_streaming_options(
+    path_buf: &Path,
+    current_path: String,
+    parent: Option<String>,
+    is_network: bool,
+    options: &ListDirectoryOptions,
+    on_chunk: &mut dyn FnMut(DirectoryListingChunk) -> Result<(), String>,
+) -> Result<DirectoryListing, String> {
+    let filter = normalized_filter(options);
+    let mut pending: Vec<FileEntry> = Vec::with_capacity(FIRST_CHUNK_SIZE);
+    let mut chunk_index: u32 = 0;
+
+    enumerate_directory(path_buf, &mut |mut entry| {
+        if !entry_matches_options(&entry, options, filter.as_deref()) {
+            return Ok(());
+        }
+
+        apply_light_mode(&mut entry, options.mode);
+        pending.push(entry);
+        let threshold = if chunk_index == 0 {
+            FIRST_CHUNK_SIZE
+        } else {
+            LATER_CHUNK_SIZE
+        };
+        if pending.len() >= threshold {
+            flush_streaming_options_chunk(
+                &current_path,
+                parent.as_deref(),
+                is_network,
+                &mut pending,
+                &mut chunk_index,
+                false,
+                on_chunk,
+            )?;
+        }
+        Ok(())
+    })?;
+    flush_streaming_options_chunk(
+        &current_path,
+        parent.as_deref(),
+        is_network,
+        &mut pending,
+        &mut chunk_index,
+        true,
+        on_chunk,
+    )?;
+
+    Ok(DirectoryListing {
+        path: current_path,
+        parent,
+        entries: Vec::new(),
+        is_network,
+    })
+}
+
+fn flush_streaming_options_chunk(
+    path: &str,
+    parent: Option<&str>,
+    is_network: bool,
+    entries: &mut Vec<FileEntry>,
+    chunk_index: &mut u32,
+    done: bool,
+    on_chunk: &mut dyn FnMut(DirectoryListingChunk) -> Result<(), String>,
+) -> Result<(), String> {
+    if entries.is_empty() && !done {
+        return Ok(());
     }
 
-    if let Some(filter) = options
+    let chunk_entries = std::mem::take(entries);
+    on_chunk(DirectoryListingChunk {
+        path: path.to_string(),
+        parent: parent.map(str::to_string),
+        entries: chunk_entries,
+        chunk_index: *chunk_index,
+        done,
+        is_network,
+    })?;
+    *chunk_index = (*chunk_index).saturating_add(1);
+    Ok(())
+}
+
+fn prepare_entries(mut entries: Vec<FileEntry>, options: &ListDirectoryOptions) -> Vec<FileEntry> {
+    let filter = normalized_filter(options);
+    entries.retain(|entry| entry_matches_options(entry, options, filter.as_deref()));
+
+    sort_entries(&mut entries, options);
+
+    for entry in &mut entries {
+        apply_light_mode(entry, options.mode);
+    }
+
+    entries
+}
+
+fn normalized_filter(options: &ListDirectoryOptions) -> Option<String> {
+    options
         .filter
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
-        let filter = filter.to_lowercase();
-        entries.retain(|entry| entry.name.to_lowercase().contains(&filter));
+        .map(str::to_lowercase)
+}
+
+fn entry_matches_options(
+    entry: &FileEntry,
+    options: &ListDirectoryOptions,
+    filter: Option<&str>,
+) -> bool {
+    if !options.include_hidden && (entry.is_hidden || entry.is_system) {
+        return false;
     }
 
-    sort_entries(&mut entries, options);
+    filter.is_none_or(|value| entry.name.to_lowercase().contains(value))
+}
 
-    if options.mode == ListingMode::Light {
-        for entry in &mut entries {
-            entry.path.clear();
-            entry.extension.clear();
-            entry.permissions = None;
-            entry.symlink_target = None;
-            entry.git_status = None;
-        }
+fn apply_light_mode(entry: &mut FileEntry, mode: ListingMode) {
+    if mode != ListingMode::Light {
+        return;
     }
 
-    entries
+    entry.path.clear();
+    entry.extension.clear();
+    entry.permissions = None;
+    entry.symlink_target = None;
+    entry.git_status = None;
 }
 
 fn sort_entries(entries: &mut [FileEntry], options: &ListDirectoryOptions) {
@@ -608,6 +716,45 @@ mod tests {
         assert_eq!(entry.name, "a.txt");
         assert!(entry.path.is_empty());
         assert!(entry.extension.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn listing_options_light_without_final_entries_emits_progressive_chunks() {
+        let dir = unique_temp("options-progressive");
+        for index in 0..(FIRST_CHUNK_SIZE + 2) {
+            fs::write(dir.join(format!("{index:03}.txt")), b"x").unwrap();
+        }
+
+        let mut chunks = Vec::new();
+        let listing = list_directory_with_options(
+            dir.to_string_lossy().to_string(),
+            ListDirectoryOptions {
+                mode: ListingMode::Light,
+                final_entries: false,
+                sort_by: "name".to_string(),
+                sort_ascending: true,
+                filter: None,
+                include_hidden: true,
+            },
+            |chunk| {
+                chunks.push(chunk);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(listing.entries.is_empty());
+        assert!(chunks.len() >= 2);
+        assert_eq!(chunks[0].entries.len(), FIRST_CHUNK_SIZE);
+        assert!(!chunks[0].done);
+        assert!(chunks.last().unwrap().done);
+        assert!(chunks[0].entries.iter().all(|entry| entry.path.is_empty()));
+        assert!(chunks[0]
+            .entries
+            .iter()
+            .all(|entry| entry.extension.is_empty()));
 
         let _ = fs::remove_dir_all(&dir);
     }

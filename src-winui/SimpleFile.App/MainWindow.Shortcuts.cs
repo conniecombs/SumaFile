@@ -112,7 +112,7 @@ public sealed partial class MainWindow
 
                 break;
             case "path.focus":
-                BeginPathEdit(_workspace?.ActivePane ?? PaneId.Primary);
+                FocusOmnibar(OmnibarMode.Navigate);
                 break;
             case "search.focus":
                 FocusSearchUi();

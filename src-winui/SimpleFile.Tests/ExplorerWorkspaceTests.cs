@@ -23,6 +23,33 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task Initialize_CanDeferSlowStartupListing()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var listing = backend.Listings[backend.Home];
+        var pending = new TaskCompletionSource<DirectoryListing>(TaskCreationOptions.RunContinuationsAsynchronously);
+        backend.Pending[backend.Home] = pending.Task;
+        var workspace = new ExplorerWorkspace(backend);
+
+        await workspace.InitializeAsync(deferInitialNavigation: true);
+
+        Assert.Equal(backend.Home, workspace.CurrentPath);
+        Assert.True(workspace.ListingInProgress);
+        Assert.Empty(workspace.VisibleEntries);
+        Assert.Equal(0, backend.ListDirectoryCalls);
+
+        var load = workspace.RunDeferredStartupNavigationAsync();
+        Assert.Equal(1, backend.ListDirectoryCalls);
+
+        pending.SetResult(listing);
+        await load;
+        await WaitUntilAsync(() => !workspace.ListingInProgress);
+
+        Assert.Equal(["Desktop", "notes.txt"], workspace.VisibleEntries.Select(entry => entry.Name));
+        Assert.Equal([backend.Home], workspace.History);
+    }
+
+    [Fact]
     public async Task Initialize_UsesStartupCachedHomeAndDrives()
     {
         var backend = FakeExplorerBackend.Typical();
@@ -62,6 +89,15 @@ public class ExplorerWorkspaceTests
         Assert.Equal(0, backend.ListDrivesCalls);
         Assert.Equal(1, backend.ListDrivesLightCalls);
         Assert.Equal("Startup Light (Z:)", Assert.Single(workspace.Drives).Name);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> predicate)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!predicate())
+        {
+            await Task.Delay(20, timeout.Token);
+        }
     }
 
     [Fact]
@@ -677,7 +713,7 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
-    public async Task NavigateRemoteLikeFixedDrive_UsesImmediateBackendStreaming()
+    public async Task NavigateRemoteLikeFixedDrive_UsesLightChunkOnlyListing()
     {
         var backend = FakeExplorerBackend.Typical();
         backend.Drives.Add(new DriveInfo
@@ -702,7 +738,8 @@ public class ExplorerWorkspaceTests
         await workspace.NavigateToAsync(@"S:\Movies");
 
         Assert.True(workspace.PathIsNetwork);
-        Assert.Null(backend.LastListDirectoryOptions);
+        Assert.Equal("light", backend.LastListDirectoryOptions?.Mode);
+        Assert.False(backend.LastListDirectoryOptions?.FinalEntries ?? true);
     }
 
     [Fact]

@@ -36,7 +36,7 @@ public class WorkspaceNavigationTests
     }
 
     [Fact]
-    public void BuildStreamedListingOptions_DisablesStreamingForNetworkPane()
+    public void BuildStreamedListingOptions_UsesLightChunkOnlyShape()
     {
         var pane = new ExplorerPane(PaneId.Primary)
         {
@@ -45,9 +45,6 @@ public class WorkspaceNavigationTests
             SortAscending = false,
         };
 
-        Assert.Null(WorkspaceNavigation.BuildStreamedListingOptions(pane));
-
-        pane.PathIsNetwork = false;
         var options = WorkspaceNavigation.BuildStreamedListingOptions(pane);
         Assert.NotNull(options);
         Assert.Equal("light", options.Mode);
@@ -83,28 +80,6 @@ public class WorkspaceNavigationTests
         Assert.False(pane.IsNavigating);
         Assert.Equal(["a.txt"], pane.Entries.Select(entry => entry.Name));
         Assert.Single(progressive);
-    }
-
-    [Fact]
-    public void CanUsePresortedEntries_OnlyForActiveNameAscendingLocalListing()
-    {
-        var pane = new ExplorerPane(PaneId.Primary)
-        {
-            ListingInProgress = true,
-            PathIsNetwork = false,
-            SortBy = "name",
-            SortAscending = true,
-        };
-
-        Assert.True(WorkspaceNavigation.CanUsePresortedEntries(pane, keepFoldersOnTop: true));
-
-        pane.SortBy = "date";
-        Assert.False(WorkspaceNavigation.CanUsePresortedEntries(pane, keepFoldersOnTop: true));
-
-        pane.SortBy = "name";
-        pane.PathIsNetwork = true;
-        Assert.False(WorkspaceNavigation.CanUsePresortedEntries(pane, keepFoldersOnTop: true));
-        Assert.False(WorkspaceNavigation.CanUsePresortedEntries(pane, keepFoldersOnTop: false));
     }
 
     [Fact]

@@ -87,6 +87,7 @@ public static class AppCommandCatalog
         new("reopen-closed-tab", "Reopen closed tab", "Tabs"),
         new("properties", "Properties", "Inspection", "Alt+Enter"),
         new("color-label", "Set color label", "Organization"),
+        new("clear-tag-filter", "Clear tag filter", "Organization"),
         new("bookmark-folder", "Bookmark current folder", "Organization", "Ctrl+B"),
         new("folder-metrics", "Compare folder metrics", "Tools"),
         new("disk-cleanup", "Disk cleanup", "Tools"),

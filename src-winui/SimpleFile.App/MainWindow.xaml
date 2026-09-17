@@ -163,6 +163,7 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock
                         x:Name="StatusText"
@@ -172,8 +173,141 @@
                         Text="Starting SumaFile service..."
                         TextTrimming="CharacterEllipsis" />
                     <Button
-                        x:Name="GitToggleButton"
+                        x:Name="StatusCenterButton"
                         Grid.Column="1"
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        MinHeight="26"
+                        Margin="8,0"
+                        Padding="8,3"
+                        HorizontalAlignment="Right"
+                        AutomationProperties.Name="Status Center"
+                        ToolTipService.ToolTip="Status Center">
+                        <Button.Flyout>
+                            <Flyout Opening="OnStatusCenterFlyoutOpening">
+                                <StackPanel Width="320" Padding="4" Spacing="10">
+                                    <TextBlock
+                                        x:Name="StatusCenterHeaderText"
+                                        FontWeight="SemiBold"
+                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                        Text="No active tasks"
+                                        TextWrapping="Wrap" />
+                                    <TextBlock
+                                        x:Name="StatusCenterDetailText"
+                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                        Text="SumaFile is ready."
+                                        TextWrapping="Wrap" />
+                                    <ListView
+                                        x:Name="StatusCenterTaskList"
+                                        MaxHeight="220"
+                                        SelectionMode="None">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Padding="0,4" ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <FontIcon
+                                                        VerticalAlignment="Top"
+                                                        FontFamily="{StaticResource SfIconFont}"
+                                                        FontSize="12"
+                                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                                        Glyph="&#xE9D9;" />
+                                                    <StackPanel Grid.Column="1" Spacing="2">
+                                                        <TextBlock
+                                                            Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                            Text="{Binding Title}"
+                                                            TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock
+                                                            FontSize="12"
+                                                            Foreground="{ThemeResource SfTextMutedBrush}"
+                                                            Text="{Binding Detail}"
+                                                            TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                    <TextBlock
+                                                        Grid.Column="2"
+                                                        FontSize="12"
+                                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                                        Text="{Binding Badge}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                    <StackPanel Spacing="8">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Button
+                                                MinHeight="30"
+                                                Padding="10,4"
+                                                Click="OnStatusCenterTransfersClick">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <FontIcon
+                                                        FontFamily="{StaticResource SfIconFont}"
+                                                        FontSize="11"
+                                                        Glyph="&#xE9D9;" />
+                                                    <TextBlock Text="Transfers" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button
+                                                MinHeight="30"
+                                                Padding="10,4"
+                                                Click="OnStatusCenterHistoryClick">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <FontIcon
+                                                        FontFamily="{StaticResource SfIconFont}"
+                                                        FontSize="11"
+                                                        Glyph="&#xE81C;" />
+                                                    <TextBlock Text="History" />
+                                                </StackPanel>
+                                            </Button>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Button
+                                                x:Name="StatusCenterCancelTransferButton"
+                                                MinHeight="30"
+                                                Padding="10,4"
+                                                Click="OnStatusCenterCancelTransferClick"
+                                                IsEnabled="False"
+                                                ToolTipService.ToolTip="Cancel the first active transfer">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <FontIcon
+                                                        FontFamily="{StaticResource SfIconFont}"
+                                                        FontSize="11"
+                                                        Glyph="&#xE711;" />
+                                                    <TextBlock Text="Cancel" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button
+                                                x:Name="StatusCenterClearCompletedButton"
+                                                MinHeight="30"
+                                                Padding="10,4"
+                                                Click="OnStatusCenterClearCompletedClick"
+                                                IsEnabled="False"
+                                                ToolTipService.ToolTip="Clear completed transfers">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <FontIcon
+                                                        FontFamily="{StaticResource SfIconFont}"
+                                                        FontSize="11"
+                                                        Glyph="&#xE74D;" />
+                                                    <TextBlock Text="Clear" />
+                                                </StackPanel>
+                                            </Button>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon
+                                FontFamily="{StaticResource SfIconFont}"
+                                FontSize="12"
+                                Glyph="&#xE9D9;" />
+                            <TextBlock x:Name="StatusCenterBadgeText" FontSize="12" Text="Idle" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="GitToggleButton"
+                        Grid.Column="2"
                         Style="{StaticResource SfGhostButtonStyle}"
                         MinHeight="26"
                         Margin="8,0"
@@ -192,7 +326,7 @@
                     </Button>
                     <Button
                         x:Name="PreviewToggleButton"
-                        Grid.Column="2"
+                        Grid.Column="3"
                         Style="{StaticResource SfGhostButtonStyle}"
                         MinHeight="26"
                         Margin="8,0"
@@ -211,7 +345,7 @@
                     </Button>
                     <TextBlock
                         x:Name="CountText"
-                        Grid.Column="3"
+                        Grid.Column="4"
                         VerticalAlignment="Center"
                         FontSize="12"
                         Foreground="{ThemeResource SfTextMutedBrush}" />

@@ -365,7 +365,21 @@ fn list_drives_blocking(mode: DriveListMode) -> Result<Vec<DriveInfo>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{network_remote_display_name, windows_error_detail};
+    use super::{list_drives_light, network_remote_display_name, windows_error_detail};
+
+    #[test]
+    fn light_drive_listing_does_not_probe_network_roots() {
+        let drives = list_drives_light().expect("light drive listing");
+        for drive in drives {
+            assert!(!drive.path.is_empty());
+            if drive.drive_type == "Network" {
+                assert_eq!(drive.drive_status, "unknown");
+                assert_eq!(drive.total_space, 0);
+                assert_eq!(drive.free_space, 0);
+                assert!(drive.remote_path.is_none());
+            }
+        }
+    }
 
     #[test]
     fn network_remote_display_name_formats_unc_share() {

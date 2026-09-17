@@ -9,7 +9,9 @@ public sealed partial class ExplorerWorkspace
     public string FileListView => ViewFor(ActivePane);
     public int FileListIconSize => IconSizeFor(ActivePane);
 
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(
+        CancellationToken cancellationToken = default,
+        bool deferInitialNavigation = false)
     {
         var timer = new StartupTimer("ExplorerWorkspace.Initialize");
         timer.Mark("begin");
@@ -45,9 +47,49 @@ public sealed partial class ExplorerWorkspace
         }
 
         var startPath = ResolveStartPath();
+        if (deferInitialNavigation)
+        {
+            PrimeDeferredStartupNavigation(startPath);
+            timer.Mark("primed-start-navigation", startPath);
+            return;
+        }
+
         await NavigatePaneAsync(PaneId.Primary, startPath, HistoryMode.Push, activate: false, cancellationToken)
             .ConfigureAwait(false);
         timer.Mark("navigated-start", startPath);
+    }
+
+    public Task RunDeferredStartupNavigationAsync(CancellationToken cancellationToken = default)
+    {
+        var path = _deferredStartupNavigationPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return Task.CompletedTask;
+        }
+
+        _deferredStartupNavigationPath = null;
+        return NavigatePaneAsync(PaneId.Primary, path, HistoryMode.Push, activate: false, cancellationToken);
+    }
+
+    private void PrimeDeferredStartupNavigation(string startPath)
+    {
+        _deferredStartupNavigationPath = startPath;
+        lock (_gate)
+        {
+            var state = Primary;
+            state.IsNavigating = true;
+            state.ListingInProgress = true;
+            state.Path = startPath;
+            state.Entries = [];
+            state.SelectedPath = null;
+            ErrorMessage = null;
+            FileOpenUnsupported = false;
+            PendingReconnect = null;
+            state.PathIsNetwork = PathRules.IsNetworkFsPath(startPath, _drives);
+            ApplyFolderViewSettingsForPathLocked(PaneId.Primary, startPath);
+        }
+
+        RaiseChanged();
     }
 
     public void SelectPath(string? path)
@@ -145,10 +187,7 @@ public sealed partial class ExplorerWorkspace
         var target = Normalize(pane);
         var state = Pane(target);
         var keepFoldersOnTop = Settings.KeepFoldersOnTop;
-        var canUsePresorted = WorkspaceNavigation.CanUsePresortedEntries(state, keepFoldersOnTop);
-        var entries = canUsePresorted
-            ? EntryPresentation.VisibleEntriesPreSorted(state.Entries, FilterQueryFor(target), ShowHiddenFiles)
-            : state.VisibleEntries(ShowHiddenFiles, FilterQueryFor(target), keepFoldersOnTop);
+        var entries = state.VisibleEntries(ShowHiddenFiles, FilterQueryFor(target), keepFoldersOnTop);
 
         if (ActiveTagFilter is long tagId)
         {
