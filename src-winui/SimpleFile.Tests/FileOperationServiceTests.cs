@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -448,6 +449,44 @@ public class FileOperationServiceTests
         var entries = journal.ReadEntries();
         Assert.Contains(entries, entry => entry.OperationType == "copy" && entry.State == "cancelled");
         Assert.DoesNotContain(entries, entry => entry.OperationType == "copy" && entry.State == "completed");
+    }
+
+    [Fact]
+    public async Task CopyAsync_IpcPartialFailure_ThrowsTransferOperationException()
+    {
+        var outcome = new
+        {
+            operation_id = "op_partial",
+            status = "failed",
+            committed = new[]
+            {
+                new { source = @"C:\a.txt", destination = @"C:\dest\a.txt" },
+            },
+            skipped = Array.Empty<object>(),
+            failed = new[]
+            {
+                new { source = @"C:\b.txt", error = "missing" },
+            },
+            pending = new[] { @"C:\c.txt" },
+        };
+        var stub = new ConfigurableIpc
+        {
+            CopyWithProgressHandler = (sources, destination, operationId, conflictAction, ct) =>
+            {
+                var data = JsonSerializer.SerializeToElement(outcome);
+                throw new IpcException(Protocol.ErrApplication, "copy failed", data);
+            },
+        };
+        var service = new FileOperationService(stub);
+
+        var error = await Assert.ThrowsAsync<TransferOperationException>(() =>
+            service.CopyAsync([@"C:\a.txt", @"C:\b.txt", @"C:\c.txt"], @"C:\dest", "skip"));
+
+        Assert.Equal("copy failed", error.Message);
+        Assert.Equal("op_partial", error.Outcome.OperationId);
+        Assert.Equal(@"C:\dest\a.txt", error.Outcome.Committed.Single().Destination);
+        Assert.Equal(@"C:\b.txt", error.Outcome.Failed.Single().Source);
+        Assert.Equal(@"C:\c.txt", error.Outcome.Pending.Single());
     }
 
     [Fact]

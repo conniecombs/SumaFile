@@ -32,6 +32,28 @@ pub struct TransferResult {
     pub destination: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct TransferFailure {
+    pub source: String,
+    pub error: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TransferBatchOutcome {
+    pub operation_id: String,
+    pub status: String,
+    pub committed: Vec<TransferResult>,
+    pub skipped: Vec<TransferResult>,
+    pub failed: Vec<TransferFailure>,
+    pub pending: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TransferBatchError {
+    pub message: String,
+    pub outcome: Box<TransferBatchOutcome>,
+}
+
 pub fn generate_transfer_operation_id() -> String {
     generate_operation_id()
 }
@@ -44,8 +66,17 @@ pub fn transfer_with_progress_blocking(
     conflict_action: String,
     cancel: Arc<AtomicBool>,
     emit: &dyn Fn(ProgressUpdate),
-) -> Result<Vec<TransferResult>, String> {
-    let (mut plans, _dest_path) = prepare_transfer_inputs(sources, destination, &conflict_action)?;
+) -> Result<Vec<TransferResult>, TransferBatchError> {
+    let (mut plans, _dest_path) = prepare_transfer_inputs(sources, destination, &conflict_action)
+        .map_err(|error| {
+        TransferBatchError::failed(
+            operation_id.clone(),
+            error,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    })?;
     let keep_both = is_keep_both_action(&conflict_action);
     let mut reserved_destinations: HashSet<String> = plans
         .iter()
@@ -103,15 +134,22 @@ pub fn transfer_with_progress_blocking(
     enum TransferOutcome {
         Completed(Vec<TransferResult>),
         Cancelled(Vec<TransferResult>),
-        Failed(String),
+        Failed {
+            error: String,
+            source: String,
+            committed: Vec<TransferResult>,
+            pending: Vec<String>,
+        },
     }
 
     let outcome = (|| -> TransferOutcome {
-        for mut plan in plans {
+        for index in 0..plans.len() {
+            let mut plan = plans[index].clone();
             if cancel.load(Ordering::Relaxed) {
                 return TransferOutcome::Cancelled(transferred);
             }
             let source = plan.source_path.to_string_lossy().to_string();
+            let pending_after_current = pending_sources(&plans, index + 1);
             let mut completed_plan = false;
 
             for _ in 0..100 {
@@ -130,10 +168,22 @@ pub fn transfer_with_progress_blocking(
                                 &mut plan,
                                 &mut reserved_destinations,
                             ) {
-                                return TransferOutcome::Failed(resolve_error);
+                                return TransferOutcome::Failed {
+                                    error: resolve_error,
+                                    source,
+                                    committed: transferred,
+                                    pending: pending_after_current,
+                                };
                             }
                         }
-                        Err(error) => return TransferOutcome::Failed(error),
+                        Err(error) => {
+                            return TransferOutcome::Failed {
+                                error,
+                                source,
+                                committed: transferred,
+                                pending: pending_after_current,
+                            };
+                        }
                     },
                     "move" => match move_plan_with_progress(&plan, &progress, &mut completed_bytes)
                     {
@@ -149,23 +199,42 @@ pub fn transfer_with_progress_blocking(
                                 &mut plan,
                                 &mut reserved_destinations,
                             ) {
-                                return TransferOutcome::Failed(resolve_error);
+                                return TransferOutcome::Failed {
+                                    error: resolve_error,
+                                    source,
+                                    committed: transferred,
+                                    pending: pending_after_current,
+                                };
                             }
                         }
-                        Err(error) => return TransferOutcome::Failed(error),
+                        Err(error) => {
+                            return TransferOutcome::Failed {
+                                error,
+                                source,
+                                committed: transferred,
+                                pending: pending_after_current,
+                            };
+                        }
                     },
                     _ => {
-                        return TransferOutcome::Failed(format!(
-                            "Unsupported operation: {operation_type}"
-                        ));
+                        return TransferOutcome::Failed {
+                            error: format!("Unsupported operation: {operation_type}"),
+                            source,
+                            committed: transferred,
+                            pending: pending_after_current,
+                        };
                     }
                 }
             }
 
             if !completed_plan {
-                return TransferOutcome::Failed(
-                    "Could not choose a unique destination after repeated conflicts".to_string(),
-                );
+                return TransferOutcome::Failed {
+                    error: "Could not choose a unique destination after repeated conflicts"
+                        .to_string(),
+                    source,
+                    committed: transferred,
+                    pending: pending_after_current,
+                };
             }
 
             transferred.push(TransferResult {
@@ -193,7 +262,12 @@ pub fn transfer_with_progress_blocking(
             );
             Ok(transferred)
         }
-        TransferOutcome::Failed(error) => {
+        TransferOutcome::Failed {
+            error,
+            source,
+            committed,
+            pending,
+        } => {
             progress.emit_with_total(
                 completed_bytes,
                 final_total,
@@ -201,7 +275,43 @@ pub fn transfer_with_progress_blocking(
                 "error",
                 Some(error.clone()),
             );
-            Err(error)
+            Err(TransferBatchError::failed(
+                operation_id,
+                error.clone(),
+                committed,
+                vec![TransferFailure { source, error }],
+                pending,
+            ))
+        }
+    }
+}
+
+fn pending_sources(plans: &[plan::TransferPlan], start: usize) -> Vec<String> {
+    plans
+        .iter()
+        .skip(start)
+        .map(|plan| plan.source_path.to_string_lossy().to_string())
+        .collect()
+}
+
+impl TransferBatchError {
+    fn failed(
+        operation_id: String,
+        message: String,
+        committed: Vec<TransferResult>,
+        failed: Vec<TransferFailure>,
+        pending: Vec<String>,
+    ) -> Self {
+        Self {
+            message: message.clone(),
+            outcome: Box::new(TransferBatchOutcome {
+                operation_id,
+                status: "failed".to_string(),
+                committed,
+                skipped: Vec::new(),
+                failed,
+                pending,
+            }),
         }
     }
 }
@@ -278,6 +388,74 @@ mod tests {
         assert_eq!(fs::read(&existing).unwrap(), b"destination");
         assert_ne!(result[0].destination, existing.to_string_lossy());
         assert_eq!(fs::read(&result[0].destination).unwrap(), b"source");
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[test]
+    fn transfer_failure_reports_committed_failed_and_pending_items() {
+        let src_dir = unique_temp_path("partial_failure_src");
+        let dst_dir = unique_temp_path("partial_failure_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let first = src_dir.join("first.bin");
+        let second = src_dir.join("second.txt");
+        let third = src_dir.join("third.txt");
+        fs::write(&first, vec![7u8; 5 * 1024 * 1024]).unwrap();
+        fs::write(&second, b"second").unwrap();
+        fs::write(&third, b"third").unwrap();
+
+        let conflict = dst_dir.join("second.txt");
+        let created_conflict = Arc::new(AtomicBool::new(false));
+        let created_conflict_for_emit = created_conflict.clone();
+        let first_text = first.to_string_lossy().to_string();
+        let conflict_for_emit = conflict.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let error = transfer_with_progress_blocking(
+            "copy",
+            vec![
+                first.to_string_lossy().to_string(),
+                second.to_string_lossy().to_string(),
+                third.to_string_lossy().to_string(),
+            ],
+            dst_dir.to_string_lossy().to_string(),
+            "op_partial_failure_test".to_string(),
+            "error".to_string(),
+            cancel,
+            &|update| {
+                if update.current_item == first_text
+                    && !created_conflict_for_emit.swap(true, Ordering::Relaxed)
+                {
+                    fs::write(&conflict_for_emit, b"conflict").unwrap();
+                }
+            },
+        )
+        .expect_err("second item should fail after first commits");
+
+        assert!(error.message.starts_with("CONFLICT:"));
+        assert_eq!(error.outcome.operation_id, "op_partial_failure_test");
+        assert_eq!(error.outcome.status, "failed");
+        assert_eq!(error.outcome.committed.len(), 1);
+        assert_eq!(
+            error.outcome.committed[0].source,
+            first.to_string_lossy().to_string()
+        );
+        assert_eq!(
+            error.outcome.committed[0].destination,
+            dst_dir.join("first.bin").to_string_lossy().to_string()
+        );
+        assert_eq!(error.outcome.failed.len(), 1);
+        assert_eq!(
+            error.outcome.failed[0].source,
+            second.to_string_lossy().to_string()
+        );
+        assert_eq!(
+            error.outcome.pending,
+            vec![third.to_string_lossy().to_string()]
+        );
+        assert!(dst_dir.join("first.bin").exists());
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);
@@ -566,7 +744,8 @@ mod tests {
         fs::write(&existing_source, b"one").unwrap();
         fs::write(&missing_source, b"two").unwrap();
 
-        let staging = resumable_staging_path_for(&final_destination).unwrap();
+        let operation_id = "op_resume_dir_test";
+        let staging = resumable_staging_path_for(&final_destination, operation_id).unwrap();
         fs::create_dir_all(&staging).unwrap();
         let staged_existing = staging.join("one.txt");
         fs::copy(&existing_source, &staged_existing).unwrap();
@@ -579,7 +758,7 @@ mod tests {
             "copy",
             vec![source.to_string_lossy().to_string()],
             dst_root.to_string_lossy().to_string(),
-            "op_resume_dir_test".to_string(),
+            operation_id.to_string(),
             "error".to_string(),
             cancel,
             &|_| {},
@@ -612,7 +791,8 @@ mod tests {
         fs::create_dir_all(&dst_root).unwrap();
         fs::write(source.join("feature.mkv"), b"feature").unwrap();
 
-        let staging = resumable_staging_path_for(&final_destination).unwrap();
+        let operation_id = "op_finalizing_cancel_test";
+        let staging = resumable_staging_path_for(&final_destination, operation_id).unwrap();
         let final_destination_text = final_destination.to_string_lossy().to_string();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_emit = cancel.clone();
@@ -623,7 +803,7 @@ mod tests {
             "copy",
             vec![source.to_string_lossy().to_string()],
             dst_root.to_string_lossy().to_string(),
-            "op_finalizing_cancel_test".to_string(),
+            operation_id.to_string(),
             "error".to_string(),
             cancel,
             &|update| {

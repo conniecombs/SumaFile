@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace SimpleFile.Ipc;
 
 public enum IpcErrorKind
@@ -20,21 +22,34 @@ public sealed class IpcException : Exception
 
     public IpcErrorKind Kind { get; }
 
+    public JsonElement? ErrorData { get; }
+
     public IpcException(int code, string message)
-        : this(code, message, inner: null, KindFromCode(code))
+        : this(code, message, inner: null, KindFromCode(code), errorData: null)
     {
     }
 
     public IpcException(int code, string message, Exception? inner)
-        : this(code, message, inner, KindFromCode(code))
+        : this(code, message, inner, KindFromCode(code), errorData: null)
     {
     }
 
-    private IpcException(int code, string message, Exception? inner, IpcErrorKind kind)
+    public IpcException(int code, string message, JsonElement? errorData)
+        : this(code, message, inner: null, KindFromCode(code), errorData)
+    {
+    }
+
+    private IpcException(
+        int code,
+        string message,
+        Exception? inner,
+        IpcErrorKind kind,
+        JsonElement? errorData)
         : base(message, inner)
     {
         Code = code;
         Kind = kind;
+        ErrorData = errorData;
     }
 
     public bool IsConflict => HasPrefix(Protocol.PrefixConflict);
@@ -48,7 +63,7 @@ public sealed class IpcException : Exception
 
     public static IpcException Transport(string message, Exception? inner = null)
     {
-        return new IpcException(0, message, inner, IpcErrorKind.Transport);
+        return new IpcException(0, message, inner, IpcErrorKind.Transport, errorData: null);
     }
 
     public static IpcErrorKind KindFromCode(int code)

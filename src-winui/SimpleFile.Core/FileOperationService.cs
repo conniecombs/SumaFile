@@ -1,6 +1,18 @@
+using System.Text.Json;
 using SimpleFile.Ipc;
 
 namespace SimpleFile.Core;
+
+public sealed class TransferOperationException : Exception
+{
+    public TransferOperationException(string message, TransferBatchOutcome outcome, Exception inner)
+        : base(message, inner)
+    {
+        Outcome = outcome;
+    }
+
+    public TransferBatchOutcome Outcome { get; }
+}
 
 public sealed class FileOperationService : ISettingsBackend
 {
@@ -198,6 +210,11 @@ public sealed class FileOperationService : ISettingsBackend
             _journal?.Cancelled(operationType, operationId);
             throw;
         }
+        catch (IpcException exception) when (TryGetTransferOutcome(exception, out var outcome))
+        {
+            _journal?.Failed(operationType, operationId, exception);
+            throw new TransferOperationException(exception.Message, outcome, exception);
+        }
         catch (Exception exception)
         {
             _journal?.Failed(operationType, operationId, exception);
@@ -207,6 +224,33 @@ public sealed class FileOperationService : ISettingsBackend
         {
             cancelRegistration?.Dispose();
             subscription?.Dispose();
+        }
+    }
+
+    private static bool TryGetTransferOutcome(
+        IpcException exception,
+        out TransferBatchOutcome outcome)
+    {
+        outcome = new TransferBatchOutcome();
+        if (exception.ErrorData is not JsonElement data)
+        {
+            return false;
+        }
+
+        try
+        {
+            var parsed = data.Deserialize<TransferBatchOutcome>();
+            if (parsed is null || string.IsNullOrWhiteSpace(parsed.OperationId))
+            {
+                return false;
+            }
+
+            outcome = parsed;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 

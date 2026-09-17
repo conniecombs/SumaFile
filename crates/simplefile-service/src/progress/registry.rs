@@ -37,3 +37,27 @@ impl OperationRegistry {
         self.operations.lock().await.remove(operation_id);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::OperationRegistry;
+    use std::sync::atomic::Ordering;
+
+    #[tokio::test]
+    async fn cancel_reports_unknown_operation_without_creating_one() {
+        let registry = OperationRegistry::default();
+
+        assert!(!registry.cancel("missing").await);
+        assert!(!registry.cancel("missing").await);
+    }
+
+    #[tokio::test]
+    async fn cancel_marks_registered_operation() {
+        let registry = OperationRegistry::default();
+        let cancel = registry.register("op-1").await;
+
+        assert!(!cancel.load(Ordering::Relaxed));
+        assert!(registry.cancel("op-1").await);
+        assert!(cancel.load(Ordering::Relaxed));
+    }
+}

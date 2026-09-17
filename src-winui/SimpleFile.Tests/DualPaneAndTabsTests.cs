@@ -231,6 +231,20 @@ public class DualPaneAndTabsTests
     }
 
     [Fact]
+    public async Task SwapFilePanes_InvalidatesPendingNavigationTokens()
+    {
+        var workspace = await Started();
+        await workspace.ToggleDualPaneAsync();
+        var primaryToken = workspace.Primary.NavigationToken;
+        var secondaryToken = workspace.Secondary.NavigationToken;
+
+        workspace.SwapFilePanes();
+
+        Assert.NotEqual(primaryToken, workspace.Primary.NavigationToken);
+        Assert.NotEqual(secondaryToken, workspace.Secondary.NavigationToken);
+    }
+
+    [Fact]
     public async Task Initialize_CreatesPrimaryTab()
     {
         var workspace = await Started();

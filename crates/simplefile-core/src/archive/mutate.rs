@@ -98,6 +98,9 @@ pub fn move_entry_resolved(
         }
         (Some(source_parsed), Some(_destination_parsed)) => {
             let result = copy_entry_resolved(source.clone(), destination, conflict_action)?;
+            if is_skip_result(&result) {
+                return Ok(result);
+            }
             delete_archive_entry_parsed(&source_parsed)?;
             Ok(result)
         }
@@ -107,6 +110,9 @@ pub fn move_entry_resolved(
                 return Err("Cannot move an archive into itself".to_string());
             }
             let result = copy_entry_resolved(source.clone(), destination, conflict_action)?;
+            if is_skip_result(&result) {
+                return Ok(result);
+            }
             remove_local_path(&source_path)
                 .map_err(|e| format!("Copied into archive but failed to delete source: {e}"))?;
             Ok(result)
@@ -114,11 +120,18 @@ pub fn move_entry_resolved(
         (Some(source_parsed), None) => {
             let result =
                 copy_archive_entry_to_local(&source_parsed, &destination, &conflict_action)?;
+            if is_skip_result(&result) {
+                return Ok(result);
+            }
             delete_archive_entry_parsed(&source_parsed)?;
             Ok(result)
         }
         (None, None) => Err("No archive path was involved in the move operation".to_string()),
     }
+}
+
+fn is_skip_result(result: &str) -> bool {
+    result.starts_with("SKIPPED:")
 }
 
 pub fn delete_archive_entry(path: &str) -> Result<(), String> {
@@ -397,6 +410,7 @@ where
     F: FnMut(&Path) -> Result<Option<PathBuf>, String>,
 {
     ensure_archive_can_modify(format)?;
+    ensure_archive_mutation_can_preserve_entries(archive_path, format)?;
     let work_root = unique_work_dir("mutate")?;
     let new_archive = unique_temp_archive_path(archive_path)?;
     let result = (|| {
@@ -414,6 +428,56 @@ where
     let _ = fs::remove_file(&new_archive);
 
     result
+}
+
+fn ensure_archive_mutation_can_preserve_entries(
+    archive_path: &Path,
+    format: ArchiveFormat,
+) -> Result<(), String> {
+    match format {
+        ArchiveFormat::Tar => ensure_tar_mutation_can_preserve_entries(archive_path, None),
+        ArchiveFormat::TarGz => ensure_tar_mutation_can_preserve_entries(archive_path, Some("gz")),
+        _ => Ok(()),
+    }
+}
+
+fn ensure_tar_mutation_can_preserve_entries(
+    archive_path: &Path,
+    compression: Option<&str>,
+) -> Result<(), String> {
+    use std::io::Read;
+
+    fn check_entries<R: Read>(archive: &mut tar::Archive<R>) -> Result<(), String> {
+        for entry in archive.entries().map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let entry_type = entry.header().entry_type();
+            if !entry_type.is_file() && !entry_type.is_dir() {
+                let path = entry
+                    .path()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| "<unknown>".to_string());
+                return Err(format!(
+                    "TAR archive contains a link or special entry that cannot be modified losslessly yet: {path}"
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    let file = fs::File::open(archive_path).map_err(|e| e.to_string())?;
+    match compression {
+        Some("gz") => {
+            let decoder = flate2::read::GzDecoder::new(file);
+            let mut archive = tar::Archive::new(decoder);
+            check_entries(&mut archive)
+        }
+        None => {
+            let mut archive = tar::Archive::new(file);
+            check_entries(&mut archive)
+        }
+        _ => Err("Unsupported compression".to_string()),
+    }
 }
 
 fn ensure_archive_can_modify(format: ArchiveFormat) -> Result<(), String> {

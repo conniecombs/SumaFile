@@ -292,6 +292,7 @@ public sealed partial class MainWindow
             }
 
             var progress = new Progress<ProgressUpdate>(update => OnTransferProgress(operation, update));
+            var canRegisterUndo = !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -306,7 +307,9 @@ public sealed partial class MainWindow
                             progress,
                             operationId => StartTransferProgress(operation, operationId),
                             cancellationToken);
-                        if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
+                        if (canRegisterUndo
+                            && ReferenceEquals(_workspace, workspace)
+                            && !cancellationToken.IsCancellationRequested)
                         {
                             workspace.Undo.PushMove(results, fileOps);
                         }
@@ -320,7 +323,9 @@ public sealed partial class MainWindow
                             progress,
                             operationId => StartTransferProgress(operation, operationId),
                             cancellationToken);
-                        if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
+                        if (canRegisterUndo
+                            && ReferenceEquals(_workspace, workspace)
+                            && !cancellationToken.IsCancellationRequested)
                         {
                             workspace.Undo.PushCopy(results, fileOps);
                         }
@@ -333,6 +338,30 @@ public sealed partial class MainWindow
                     }
 
                     break;
+                }
+                catch (TransferOperationException exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    var committed = exception.Outcome.Committed;
+                    if (canRegisterUndo
+                        && committed.Length > 0
+                        && ReferenceEquals(_workspace, workspace))
+                    {
+                        if (move)
+                        {
+                            workspace.Undo.PushMove(committed, fileOps);
+                        }
+                        else
+                        {
+                            workspace.Undo.PushCopy(committed, fileOps);
+                        }
+                    }
+
+                    if (ReferenceEquals(_workspace, workspace))
+                    {
+                        await workspace.RefreshAsync(cancellationToken);
+                    }
+
+                    throw;
                 }
                 catch (IpcException exception) when (FileOperationService.IsConflict(exception) && !cancellationToken.IsCancellationRequested)
                 {

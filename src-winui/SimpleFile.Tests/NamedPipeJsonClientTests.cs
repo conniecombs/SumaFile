@@ -403,11 +403,17 @@ public class NamedPipeJsonClientTests
 
         await server.SendNotificationAsync(
             Protocol.SearchResultsBatchEvent,
-            new[]
+            new SearchResultsBatchEvent
             {
-                new SearchResult { Name = "alpha.txt", Path = @"C:\Users\Public\alpha.txt" },
+                SearchId = "search-test",
+                Results =
+                [
+                    new SearchResult { Name = "alpha.txt", Path = @"C:\Users\Public\alpha.txt" },
+                ],
             });
-        await server.SendNotificationAsync(Protocol.SearchCompleteEvent, 1);
+        await server.SendNotificationAsync(
+            Protocol.SearchCompleteEvent,
+            new SearchCompleteEvent { SearchId = "search-test", Count = 1 });
         await server.SendResultAsync(
             request.Id,
             new[]
@@ -424,11 +430,17 @@ public class NamedPipeJsonClientTests
         var afterRequest = await server.ReadRequestAsync();
         await server.SendNotificationAsync(
             Protocol.SearchResultsBatchEvent,
-            new[]
+            new SearchResultsBatchEvent
             {
-                new SearchResult { Name = "beta.txt", Path = @"C:\Users\Public\beta.txt" },
+                SearchId = "old-search",
+                Results =
+                [
+                    new SearchResult { Name = "beta.txt", Path = @"C:\Users\Public\beta.txt" },
+                ],
             });
-        await server.SendNotificationAsync(Protocol.SearchCompleteEvent, 2);
+        await server.SendNotificationAsync(
+            Protocol.SearchCompleteEvent,
+            new SearchCompleteEvent { SearchId = "old-search", Count = 2 });
         await server.SendResultAsync(afterRequest.Id, new HealthResult { Ok = true, ProtocolVersion = 1 });
         await after;
 
@@ -462,7 +474,7 @@ public class NamedPipeJsonClientTests
             MatchType = "name",
             Modified = "2026-08-25 12:00",
         };
-        await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeSearchResultsBatch([result]));
+        await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeSearchResultsBatch("search-test", [result]));
         await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeSearchResultsResult(request.Id, [result]));
 
         var results = await search;
@@ -795,6 +807,39 @@ public class NamedPipeJsonClientTests
         var hostError = await Assert.ThrowsAsync<IpcException>(() => hostOwned);
         Assert.True(hostError.IsHostOwned);
         Assert.Equal(Protocol.ErrHostOwned, hostError.Code);
+    }
+
+    [Fact]
+    public async Task TypedErrors_PreserveStructuredData()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+
+        var copy = client.CopyWithProgressAsync(
+            [@"C:\a.txt"],
+            @"C:\dest",
+            "op-test",
+            "skip");
+        var request = await server.ReadRequestAsync();
+        await server.SendErrorAsync(
+            request.Id,
+            Protocol.ErrApplication,
+            "copy failed",
+            new
+            {
+                operation_id = "op-test",
+                status = "failed",
+                committed = new[] { new { source = @"C:\a.txt", destination = @"C:\dest\a.txt" } },
+                skipped = Array.Empty<object>(),
+                failed = new[] { new { source = @"C:\b.txt", error = "missing" } },
+                pending = new[] { @"C:\c.txt" },
+            });
+
+        var error = await Assert.ThrowsAsync<IpcException>(() => copy);
+        Assert.NotNull(error.ErrorData);
+        Assert.Equal("op-test", error.ErrorData.Value.GetProperty("operation_id").GetString());
+        Assert.Equal(@"C:\dest\a.txt", error.ErrorData.Value.GetProperty("committed")[0].GetProperty("destination").GetString());
     }
 
     [Fact]

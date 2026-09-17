@@ -74,14 +74,22 @@ internal sealed class FakeIpcServer : IAsyncDisposable
             cancellationToken);
     }
 
-    public Task SendErrorAsync(int id, int code, string message, CancellationToken cancellationToken = default)
+    public Task SendErrorAsync(
+        int id,
+        int code,
+        string message,
+        object? data = null,
+        CancellationToken cancellationToken = default)
     {
+        var error = data is null
+            ? (object)new { code, message }
+            : new { code, message, data };
         return WriteAsync(
             new
             {
                 jsonrpc = Protocol.JsonRpc,
                 id,
-                error = new { code, message },
+                error,
             },
             cancellationToken);
     }

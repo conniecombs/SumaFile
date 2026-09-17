@@ -107,7 +107,7 @@
       "result": "TransferResult[]",
       "progressEvent": "operation-progress"
     },
-    "cancel_operation": { "params": { "operationId": "string" }, "result": "null", "cancellation": true },
+    "cancel_operation": { "params": { "operationId": "string" }, "result": "bool", "cancellation": true },
     "watch_directory": { "params": { "path": "string" }, "result": "null" },
     "unwatch_directory": { "params": null, "result": "null" },
     "read_file_preview": { "params": { "path": "string", "maxSize": "number?" }, "result": "FilePreview" },

@@ -45,8 +45,12 @@ pub(crate) fn encode_directory_listing_result(
     Ok(writer.finish())
 }
 
-pub(crate) fn encode_search_results_batch(results: &[SearchResult]) -> EncodeResult<Vec<u8>> {
+pub(crate) fn encode_search_results_batch(
+    search_id: Option<&str>,
+    results: &[SearchResult],
+) -> EncodeResult<Vec<u8>> {
     let mut writer = BinaryWriter::new(BINARY_SEARCH_RESULTS_BATCH);
+    writer.opt_string(search_id)?;
     writer.search_results(results)?;
     Ok(writer.finish())
 }

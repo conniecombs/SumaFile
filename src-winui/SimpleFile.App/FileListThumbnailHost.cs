@@ -10,6 +10,7 @@ namespace SimpleFile.App;
 internal static class FileListThumbnailHost
 {
     private const int MaxCachedThumbnails = 512;
+    private const int MaxInFlightThumbnails = 128;
 
     private static readonly ConcurrentDictionary<string, ImageSource> Cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, Task<ImageSource?>> InFlight = new(StringComparer.OrdinalIgnoreCase);
@@ -118,6 +119,11 @@ internal static class FileListThumbnailHost
         var videoFrame = IsVideoThumbnail(extension)
             ? VideoFrameForPath(path)
             : VideoThumbnailFrame.Default;
+        if (InFlight.Count >= MaxInFlightThumbnails && !InFlight.ContainsKey(key))
+        {
+            return null;
+        }
+
         var task = InFlight.GetOrAdd(
             key,
             _ => LoadAndCacheThumbnailAsync(key, path, extension, requestSize, videoFrame));

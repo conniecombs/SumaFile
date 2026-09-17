@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 pub fn create_archive(
@@ -6,6 +6,8 @@ pub fn create_archive(
     archive_path: String,
     format: String,
 ) -> Result<(), String> {
+    validate_archive_create_request(&paths, &archive_path)?;
+
     let normalized_format = format.trim().trim_start_matches('.').to_ascii_lowercase();
     match normalized_format.as_str() {
         "zip" => create_zip_archive(&paths, &archive_path),
@@ -23,8 +25,49 @@ pub fn create_archive(
     }
 }
 
+fn validate_archive_create_request(paths: &[String], archive_path: &str) -> Result<(), String> {
+    let archive_path = Path::new(archive_path);
+    if archive_path.exists() {
+        return Err(format!(
+            "Archive already exists: {}",
+            archive_path.to_string_lossy()
+        ));
+    }
+
+    let archive_abs = absolute_path_for_new_file(archive_path)?;
+    for source in paths {
+        let source_path = Path::new(source);
+        let Ok(source_abs) = std::fs::canonicalize(source_path) else {
+            continue;
+        };
+
+        if archive_abs == source_abs || source_abs.is_dir() && archive_abs.starts_with(&source_abs)
+        {
+            return Err(format!(
+                "Archive output cannot be inside a selected source: {}",
+                archive_abs.to_string_lossy()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn absolute_path_for_new_file(path: &Path) -> Result<PathBuf, String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| "Archive output must include a file name.".to_string())?;
+    let parent = std::fs::canonicalize(parent)
+        .map_err(|e| format!("Cannot resolve archive output directory: {e}"))?;
+    Ok(parent.join(file_name))
+}
+
 pub(super) fn create_zip_archive(paths: &[String], archive_path: &str) -> Result<(), String> {
-    let file = std::fs::File::create(archive_path).map_err(|e| e.to_string())?;
+    let file = create_new_archive_file(archive_path)?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -112,7 +155,7 @@ pub(super) fn create_tar_archive(
     archive_path: &str,
     compression: Option<&str>,
 ) -> Result<(), String> {
-    let file = std::fs::File::create(archive_path).map_err(|e| e.to_string())?;
+    let file = create_new_archive_file(archive_path)?;
 
     fn add_paths_to_tar<W: std::io::Write>(
         archive: &mut tar::Builder<W>,
@@ -152,4 +195,18 @@ pub(super) fn create_tar_archive(
         _ => return Err("Unsupported compression".to_string()),
     }
     Ok(())
+}
+
+fn create_new_archive_file(archive_path: &str) -> Result<std::fs::File, String> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(archive_path)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("Archive already exists: {archive_path}")
+            } else {
+                e.to_string()
+            }
+        })
 }

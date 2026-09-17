@@ -58,8 +58,13 @@ public sealed partial class ExplorerWorkspace
 
     public void SwapFilePanes()
     {
-        Primary.SwapContents(Secondary);
-        (_primaryFilterQuery, _secondaryFilterQuery) = (_secondaryFilterQuery, _primaryFilterQuery);
+        lock (_gate)
+        {
+            Primary.NextNavigationToken();
+            Secondary.NextNavigationToken();
+            Primary.SwapContents(Secondary);
+            (_primaryFilterQuery, _secondaryFilterQuery) = (_secondaryFilterQuery, _primaryFilterQuery);
+        }
     }
 
     public void ActivatePane(PaneId pane)

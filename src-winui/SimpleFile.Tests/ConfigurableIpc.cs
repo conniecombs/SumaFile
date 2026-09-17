@@ -195,10 +195,15 @@ internal sealed class ConfigurableIpc : NullIpc
         return MoveWithProgressHandler?.Invoke(sources, destination, operationId, conflictAction, ct) ?? throw NotConfigured();
     }
 
-    public override Task CancelOperationAsync(string operationId, CancellationToken ct = default)
+    public override async Task<bool> CancelOperationAsync(string operationId, CancellationToken ct = default)
     {
         LastCancelledOperationId = operationId;
-        return CancelOperationHandler?.Invoke(operationId, ct) ?? Task.CompletedTask;
+        if (CancelOperationHandler is not null)
+        {
+            await CancelOperationHandler(operationId, ct);
+        }
+
+        return true;
     }
 
     public override Task<SearchResult[]> SearchFilesAsync(

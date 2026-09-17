@@ -129,16 +129,34 @@ pub(super) fn encode_json_payload<T>(value: &T) -> Result<Vec<u8>, String>
 where
     T: Serialize + ?Sized,
 {
+    encode_json_payload_with_limit(value, MAX_FRAME_BYTES as usize)
+}
+
+pub(super) fn encode_json_payload_with_limit<T>(
+    value: &T,
+    max_frame_bytes: usize,
+) -> Result<Vec<u8>, String>
+where
+    T: Serialize + ?Sized,
+{
     let payload =
         serde_json::to_vec(value).map_err(|error| format!("failed to encode JSON: {error}"))?;
-    if payload.len() > MAX_FRAME_BYTES as usize {
+    if payload.len() > max_frame_bytes {
         let error = JsonRpcResponse::application_error(
-            None,
+            oversize_response_id(&payload),
             format!("{PREFIX_RESULT_TOO_LARGE} result exceeds 80 MiB; use streamed chunks"),
         );
         serde_json::to_vec(&error).map_err(|err| format!("failed to encode oversize error: {err}"))
     } else {
         Ok(payload)
+    }
+}
+
+fn oversize_response_id(payload: &[u8]) -> Option<Value> {
+    let value: Value = serde_json::from_slice(payload).ok()?;
+    match value.get("id") {
+        Some(Value::Null) | None => None,
+        Some(id) => Some(id.clone()),
     }
 }
 

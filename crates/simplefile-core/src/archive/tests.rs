@@ -63,6 +63,36 @@ fn write_test_tar(tar_path: &Path, entries: &[(&str, &[u8])]) {
     archive.finish().expect("finish test tar");
 }
 
+fn write_test_tar_with_symlink(tar_path: &Path) {
+    let file = fs::File::create(tar_path).expect("create test tar");
+    let mut archive = tar::Builder::new(file);
+
+    let mut data_header = tar::Header::new_gnu();
+    data_header.set_path("data.txt").expect("set data path");
+    data_header.set_size(4);
+    data_header.set_mode(0o644);
+    data_header.set_cksum();
+    let mut data: &[u8] = b"data";
+    archive
+        .append(&data_header, &mut data)
+        .expect("append regular entry");
+
+    let mut link_header = tar::Header::new_gnu();
+    link_header.set_path("link.txt").expect("set link path");
+    link_header.set_entry_type(tar::EntryType::Symlink);
+    link_header
+        .set_link_name("data.txt")
+        .expect("set symlink target");
+    link_header.set_size(0);
+    link_header.set_mode(0o777);
+    link_header.set_cksum();
+    archive
+        .append(&link_header, std::io::empty())
+        .expect("append symlink entry");
+
+    archive.finish().expect("finish test tar");
+}
+
 #[test]
 fn archive_format_recognizes_7z_extension() {
     assert_eq!(
@@ -109,6 +139,51 @@ fn create_archive_rejects_rar_without_external_install_guidance() {
 }
 
 #[test]
+fn create_archive_rejects_existing_output_without_truncating() {
+    let root = unique_temp_dir("create-existing-output");
+    let source = root.join("source.txt");
+    fs::write(&source, b"source").expect("write source");
+    let archive_path = root.join("existing.zip");
+    fs::write(&archive_path, b"original archive bytes").expect("write existing archive");
+
+    let err = create_archive(
+        vec![source.to_string_lossy().to_string()],
+        archive_path.to_string_lossy().to_string(),
+        "zip".to_string(),
+    )
+    .expect_err("existing output should be rejected");
+
+    assert!(err.contains("Archive already exists"));
+    assert_eq!(
+        fs::read(&archive_path).expect("read existing archive"),
+        b"original archive bytes"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn create_archive_rejects_output_inside_selected_directory() {
+    let root = unique_temp_dir("create-recursive-output");
+    let source_dir = root.join("source");
+    fs::create_dir_all(&source_dir).expect("create source dir");
+    fs::write(source_dir.join("item.txt"), b"source").expect("write source");
+    let archive_path = source_dir.join("nested.zip");
+
+    let err = create_archive(
+        vec![source_dir.to_string_lossy().to_string()],
+        archive_path.to_string_lossy().to_string(),
+        "zip".to_string(),
+    )
+    .expect_err("output inside selected source should be rejected");
+
+    assert!(err.contains("Archive output cannot be inside a selected source"));
+    assert!(!archive_path.exists());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn rar_mutations_are_rejected_before_rebuild() {
     let root = unique_temp_dir("rar-mutation-reject");
     let archive_path = root.join("sample.rar");
@@ -131,6 +206,29 @@ fn rar_mutations_are_rejected_before_rebuild() {
     )
     .expect_err("rar move should fail before copying out");
     assert!(move_err.contains("does not rewrite RAR"));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn tar_mutation_rejects_link_entries_before_rebuild() {
+    let root = unique_temp_dir("tar-mutation-link-reject");
+    let archive_path = root.join("sample.tar");
+    write_test_tar_with_symlink(&archive_path);
+    let before = fs::read(&archive_path).expect("read original tar");
+
+    let err = create_archive_file(
+        archive_path.to_string_lossy().to_string(),
+        "new.txt".to_string(),
+    )
+    .expect_err("tar mutation should reject link-preservation risk");
+
+    assert!(err.contains("cannot be modified losslessly"));
+    assert!(err.contains("link.txt"));
+    assert_eq!(
+        fs::read(&archive_path).expect("read tar after rejected mutation"),
+        before
+    );
 
     let _ = fs::remove_dir_all(root);
 }
@@ -491,6 +589,38 @@ fn copy_zip_archive_entry_out_to_local_folder() {
     assert_eq!(
         fs::read(out.join("source.txt")).expect("read copied file"),
         b"from-archive"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn move_local_file_into_zip_skip_keeps_source() {
+    let root = unique_temp_dir("move-skip-keeps-source");
+    let zip_path = root.join("sample.zip");
+    let source = root.join("source.txt");
+    fs::write(&source, b"from-local").expect("write source");
+    write_test_zip(&zip_path, &[("source.txt", b"existing")]);
+
+    let result = move_entry_resolved(
+        source.to_string_lossy().to_string(),
+        zip_path.to_string_lossy().to_string(),
+        "skip".to_string(),
+    )
+    .expect("skip move into zip should succeed as skipped");
+
+    assert!(result.starts_with("SKIPPED:"));
+    assert_eq!(
+        fs::read(&source).expect("source should remain after skipped move"),
+        b"from-local"
+    );
+
+    let out = root.join("out");
+    fs::create_dir_all(&out).expect("create out dir");
+    extract_archive_to_directory(&zip_path, &out).expect("extract unchanged zip");
+    assert_eq!(
+        fs::read(out.join("source.txt")).expect("read existing archive entry"),
+        b"existing"
     );
 
     let _ = fs::remove_dir_all(root);

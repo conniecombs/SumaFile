@@ -85,12 +85,20 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
         IDisposable? completeSubscription = null;
         if (onBatch is not null)
         {
-            batchSubscription = On<SearchResult[]>(Protocol.SearchResultsBatchEvent, onBatch);
+            batchSubscription = On<SearchResultsBatchEvent>(Protocol.SearchResultsBatchEvent, batch =>
+            {
+                if (SearchEventMatches(options.SearchId, batch.SearchId))
+                    onBatch(batch.Results);
+            });
         }
 
         if (onComplete is not null)
         {
-            completeSubscription = On<int>(Protocol.SearchCompleteEvent, onComplete);
+            completeSubscription = On<SearchCompleteEvent>(Protocol.SearchCompleteEvent, complete =>
+            {
+                if (SearchEventMatches(options.SearchId, complete.SearchId))
+                    onComplete(complete.Count);
+            });
         }
 
         try
@@ -106,6 +114,13 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
             completeSubscription?.Dispose();
             batchSubscription?.Dispose();
         }
+    }
+
+    private static bool SearchEventMatches(string? expectedSearchId, string? eventSearchId)
+    {
+        return string.IsNullOrEmpty(expectedSearchId)
+            ? string.IsNullOrEmpty(eventSearchId)
+            : string.Equals(expectedSearchId, eventSearchId, StringComparison.Ordinal);
     }
 
     public async Task<DirectoryListing> ListDirectoryAsync(
@@ -498,7 +513,10 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
                 var message = errorElement.TryGetProperty("message", out var messageElement)
                     ? messageElement.GetString() ?? ""
                     : "";
-                pending.TrySetException(new IpcException(code, message));
+                JsonElement? data = errorElement.TryGetProperty("data", out var dataElement)
+                    ? dataElement.Clone()
+                    : null;
+                pending.TrySetException(new IpcException(code, message, data));
                 return;
             }
 

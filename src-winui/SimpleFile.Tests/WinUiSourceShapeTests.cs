@@ -503,6 +503,8 @@ public class WinUiSourceShapeTests
         Assert.Contains("VideoThumbnailExtractor", thumbnailHost);
         Assert.Contains("PhotoFolder.IsImage", thumbnailHost);
         Assert.Contains("MediaFolder.IsVideo", thumbnailHost);
+        Assert.Contains("MaxInFlightThumbnails", thumbnailHost);
+        Assert.Contains("InFlight.Count >= MaxInFlightThumbnails", thumbnailHost);
         Assert.Contains("MediaFolder.IsMediaFolder", mainWindow);
         Assert.Contains("TryCreatePathBackedPreview", commands);
         Assert.Contains("InspectionDetails", presenter);
@@ -654,6 +656,33 @@ public class WinUiSourceShapeTests
 
         Assert.Contains("var renamed = await fileOps.BatchRenameAsync(requests, utilityCts.Token);", transfer);
         Assert.Contains("workspace.Undo.PushRename(requests.Select(request => request.Path).ToArray(), renamed, fileOps);", transfer);
+    }
+
+    [Fact]
+    public void ReplaceTransfers_DoNotRegisterUndoBeforeReceiptsExist()
+    {
+        var root = FindRepoRoot();
+        var transfer = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Transfer.cs"));
+
+        Assert.Contains("var canRegisterUndo = !string.Equals(action, \"replace\", StringComparison.OrdinalIgnoreCase);", transfer);
+        Assert.Contains("if (canRegisterUndo", transfer);
+    }
+
+    [Fact]
+    public void ServiceSession_SpawnsThumbnailPreviewJobs()
+    {
+        var root = FindRepoRoot();
+        var session = File.ReadAllText(Path.Combine(root, "..", "crates", "simplefile-service", "src", "session", "mod.rs"));
+        var jobs = File.ReadAllText(Path.Combine(root, "..", "crates", "simplefile-service", "src", "session", "jobs.rs"));
+        var normalizedSession = session.Replace("\r\n", "\n");
+
+        Assert.Contains("spawn_generate_thumbnail(", normalizedSession);
+        Assert.Contains("spawn_generate_thumbnails(", normalizedSession);
+        Assert.DoesNotContain("Dispatch::GenerateThumbnail { id, path, size } => {\n                generate_thumbnail_and_reply(", normalizedSession);
+        Assert.DoesNotContain("Dispatch::GenerateThumbnails { id, paths, size } => {\n                generate_thumbnails_and_reply(", normalizedSession);
+        Assert.Contains("pub(super) fn spawn_generate_thumbnail", jobs);
+        Assert.Contains("pub(super) fn spawn_generate_thumbnails", jobs);
+        Assert.Contains("tokio::spawn(async move", jobs);
     }
 
     [Fact]

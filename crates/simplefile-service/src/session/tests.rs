@@ -1,11 +1,14 @@
-use super::io::{read_frame, writer_loop, OutboundFrame, OUTBOUND_QUEUE_CAPACITY};
+use super::io::{
+    encode_json_payload_with_limit, read_frame, writer_loop, OutboundFrame, OUTBOUND_QUEUE_CAPACITY,
+};
 use super::*;
 use serde_json::{json, Value};
 use simplefile_ipc::frame::{decode_length, encode_frame};
 use simplefile_ipc::rpc::JsonRpcRequest;
 use simplefile_ipc::{
     BINARY_FRAME_MAGIC, BINARY_LIST_DIRECTORY_CHUNK, BINARY_LIST_DIRECTORY_RESULT,
-    HANDSHAKE_METHOD, HEALTH_METHOD, LIST_DIRECTORY_CHUNK, PROTOCOL_VERSION,
+    HANDSHAKE_METHOD, HEALTH_METHOD, LIST_DIRECTORY_CHUNK, PREFIX_RESULT_TOO_LARGE,
+    PROTOCOL_VERSION,
 };
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -91,6 +94,20 @@ async fn writer_loop_batches_ready_frames() {
         &batch[second_start + 4..second_start + 4 + second_len],
         b"bravo"
     );
+}
+
+#[test]
+fn oversized_json_response_preserves_request_id() {
+    let response = JsonRpcResponse::result(Some(json!(42)), json!({ "data": "large" }));
+
+    let payload = encode_json_payload_with_limit(&response, 24).expect("encode oversize error");
+    let value: Value = serde_json::from_slice(&payload).expect("parse oversize error");
+
+    assert_eq!(value["id"], json!(42));
+    assert!(value["error"]["message"]
+        .as_str()
+        .expect("error message")
+        .contains(PREFIX_RESULT_TOO_LARGE));
 }
 
 #[tokio::test]

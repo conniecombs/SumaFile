@@ -346,7 +346,7 @@ pub(crate) fn copy_plan_with_progress(
     let source_meta = fs::symlink_metadata(&plan.source_path)
         .map_err(|error| format!("Failed to stat source: {error}"))?;
     if source_meta.file_type().is_dir() && !plan.replace_existing {
-        let staged_dest = resumable_staging_path_for(&plan.final_dest)?;
+        let staged_dest = resumable_staging_path_for(&plan.final_dest, ctx.operation_id)?;
         let resumable_ctx = CopyContext {
             progress: ctx,
             operation_id: ctx.operation_id,
@@ -418,7 +418,7 @@ pub(crate) fn move_plan_with_progress(
     let source_meta = fs::symlink_metadata(&plan.source_path)
         .map_err(|error| format!("Failed to stat source: {error}"))?;
     if source_meta.file_type().is_dir() && !plan.replace_existing {
-        let staged_dest = resumable_staging_path_for(&plan.final_dest)?;
+        let staged_dest = resumable_staging_path_for(&plan.final_dest, ctx.operation_id)?;
         let resumable_ctx = CopyContext {
             progress: ctx,
             operation_id: ctx.operation_id,

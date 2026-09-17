@@ -33,7 +33,7 @@ public static class BinaryFrameCodec
                 ReadDirectoryListing(ref reader)),
             Protocol.BinarySearchResultsBatch => BinaryFrameMessage.Notification(
                 Protocol.SearchResultsBatchEvent,
-                ReadSearchResults(ref reader)),
+                ReadSearchResultsBatchEvent(ref reader)),
             Protocol.BinarySearchResultsResult => BinaryFrameMessage.Response(
                 reader.ReadInt32(),
                 ReadSearchResults(ref reader)),
@@ -75,9 +75,10 @@ public static class BinaryFrameCodec
         return writer.ToArray();
     }
 
-    public static byte[] EncodeSearchResultsBatch(IReadOnlyList<SearchResult> results)
+    public static byte[] EncodeSearchResultsBatch(string? searchId, IReadOnlyList<SearchResult> results)
     {
         var writer = new BinaryPayloadWriter(Protocol.BinarySearchResultsBatch);
+        writer.WriteOptionalString(searchId);
         WriteSearchResults(writer, results);
         return writer.ToArray();
     }
@@ -220,6 +221,15 @@ public static class BinaryFrameCodec
         }
 
         return results;
+    }
+
+    private static SearchResultsBatchEvent ReadSearchResultsBatchEvent(ref BinaryPayloadReader reader)
+    {
+        return new SearchResultsBatchEvent
+        {
+            SearchId = reader.ReadOptionalString(),
+            Results = ReadSearchResults(ref reader),
+        };
     }
 
     private static ProgressUpdate ReadProgressUpdate(ref BinaryPayloadReader reader)

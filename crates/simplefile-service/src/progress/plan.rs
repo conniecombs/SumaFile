@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct TransferPlan {
     pub(crate) source_path: PathBuf,
     pub(crate) final_dest: PathBuf,

@@ -1,5 +1,4 @@
 use crate::models::{FileEntry, GitCommandResult, GitFileStatus, GitRepositoryStatus, GitStatus};
-use crate::settings_store::get_db_setting;
 use crate::utils::{get_file_entry, hidden_command, validate_existing_path_no_resolve};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -273,18 +272,15 @@ pub fn git_commit(path: String, message: String) -> Result<GitCommandResult, Str
 }
 
 pub fn git_fetch(path: String) -> Result<GitCommandResult, String> {
-    let token = get_git_credentials();
-    run_git_remote_command(&path, "fetch", &["--prune"], token.as_deref())
+    run_git_remote_command(&path, "fetch", &["--prune"])
 }
 
 pub fn git_pull(path: String) -> Result<GitCommandResult, String> {
-    let token = get_git_credentials();
-    run_git_remote_command(&path, "pull", &[], token.as_deref())
+    run_git_remote_command(&path, "pull", &[])
 }
 
 pub fn git_push(path: String) -> Result<GitCommandResult, String> {
-    let token = get_git_credentials();
-    run_git_remote_command(&path, "push", &[], token.as_deref())
+    run_git_remote_command(&path, "push", &[])
 }
 
 fn not_a_repo_status() -> GitRepositoryStatus {
@@ -460,7 +456,8 @@ fn run_git_path_command(
     let mut args = Vec::with_capacity(prefix_args.len() + pathspecs.len());
     args.extend(prefix_args.iter().cloned());
     args.extend(pathspecs.iter().map(OsString::from));
-    run_git_repo_command(root, command_name, &args, summary)
+    let command = git_root_command(root, &args, true);
+    command_output_with_name(command, command_name, summary)
 }
 
 fn run_git_repo_command(
@@ -469,9 +466,17 @@ fn run_git_repo_command(
     args: &[OsString],
     summary: &str,
 ) -> Result<GitCommandResult, String> {
-    let mut command = hidden_command("git");
-    command.arg("-C").arg(root).args(args);
+    let command = git_root_command(root, args, false);
     command_output_with_name(command, command_name, summary)
+}
+
+fn git_root_command(root: &Path, args: &[OsString], literal_pathspecs: bool) -> Command {
+    let mut command = hidden_command("git");
+    if literal_pathspecs {
+        command.arg("--literal-pathspecs");
+    }
+    command.arg("-C").arg(root).args(args);
+    command
 }
 
 fn command_output(command: Command) -> Result<GitCommandResult, String> {
@@ -640,31 +645,8 @@ fn deleted_or_missing_entry(path: &Path, relative: &str) -> FileEntry {
     }
 }
 
-fn get_git_credentials() -> Option<String> {
-    get_db_setting("github_token".to_string())
-        .ok()
-        .flatten()
-        .filter(|token| !token.trim().is_empty())
-}
-
-fn git_remote_args(
-    path: &Path,
-    subcommand: &str,
-    subcommand_args: &[&str],
-    token: Option<&str>,
-) -> Vec<OsString> {
-    use base64::{engine::general_purpose, Engine as _};
-
+fn git_remote_args(path: &Path, subcommand: &str, subcommand_args: &[&str]) -> Vec<OsString> {
     let mut args = vec![OsString::from("-C"), path.as_os_str().to_os_string()];
-
-    if let Some(token) = token {
-        let auth = general_purpose::STANDARD.encode(format!("token:{token}"));
-        args.push(OsString::from("-c"));
-        args.push(OsString::from(format!(
-            "http.extraHeader=AUTHORIZATION: basic {auth}"
-        )));
-    }
-
     args.push(OsString::from(subcommand));
     args.extend(subcommand_args.iter().map(OsString::from));
     args
@@ -674,17 +656,19 @@ fn run_git_remote_command(
     path: &str,
     subcommand: &str,
     subcommand_args: &[&str],
-    token: Option<&str>,
 ) -> Result<GitCommandResult, String> {
     let path = validate_existing_path_no_resolve(path)?;
     let mut command = hidden_command("git");
-    command.args(git_remote_args(&path, subcommand, subcommand_args, token));
+    command.args(git_remote_args(&path, subcommand, subcommand_args));
     command_output_with_name(command, subcommand, &format!("Git {subcommand} completed."))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{git_remote_args, parse_porcelain_status, repo_relative_path, status_label};
+    use super::{
+        git_remote_args, git_root_command, parse_porcelain_status, repo_relative_path, status_label,
+    };
+    use std::ffi::OsString;
     use std::path::Path;
 
     fn to_strings(args: Vec<std::ffi::OsString>) -> Vec<String> {
@@ -694,40 +678,37 @@ mod tests {
     }
 
     #[test]
-    fn git_remote_args_put_auth_header_before_subcommand() {
-        let args = to_strings(git_remote_args(
+    fn git_file_command_enables_literal_pathspecs() {
+        let command = git_root_command(
             Path::new("repo"),
-            "pull",
-            &[],
-            Some("ghp_example"),
-        ));
-
-        assert_eq!(args[0], "-C");
-        assert_eq!(args[1], "repo");
-        assert_eq!(args[2], "-c");
-        assert!(args[3].starts_with("http.extraHeader=AUTHORIZATION: basic "));
-        assert_eq!(args[4], "pull");
-        assert!(
-            args.iter().position(|arg| arg == "-c").unwrap()
-                < args.iter().position(|arg| arg == "pull").unwrap()
+            &[
+                OsString::from("add"),
+                OsString::from("--"),
+                OsString::from("a[1].txt"),
+            ],
+            true,
         );
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(args[0], "--literal-pathspecs");
+        assert_eq!(args[1], "-C");
+        assert_eq!(args[2], "repo");
+        assert_eq!(args[3], "add");
     }
 
     #[test]
-    fn git_remote_args_without_token_do_not_add_auth_config() {
-        let args = to_strings(git_remote_args(Path::new("repo"), "push", &[], None));
+    fn git_remote_args_do_not_add_auth_config() {
+        let args = to_strings(git_remote_args(Path::new("repo"), "push", &[]));
 
         assert_eq!(args, vec!["-C", "repo", "push"]);
     }
 
     #[test]
     fn git_remote_args_append_subcommand_args_after_subcommand() {
-        let args = to_strings(git_remote_args(
-            Path::new("repo"),
-            "fetch",
-            &["--prune"],
-            None,
-        ));
+        let args = to_strings(git_remote_args(Path::new("repo"), "fetch", &["--prune"]));
 
         assert_eq!(args, vec!["-C", "repo", "fetch", "--prune"]);
     }

@@ -42,6 +42,14 @@ pub(super) struct DiskCleanupJob {
     pub(super) operation_id: Option<String>,
 }
 
+pub(super) struct CopyMoveJob {
+    pub(super) id: Option<Value>,
+    pub(super) params: ProgressCopyMoveParams,
+    pub(super) op_id: String,
+    pub(super) cancel: Arc<AtomicBool>,
+    pub(super) is_copy: bool,
+}
+
 impl EventSink {
     pub(super) fn new(outbound: OutboundSink, binary_hot_frames: Arc<AtomicBool>) -> Self {
         Self {
@@ -79,14 +87,20 @@ impl EventSink {
         self.emit(FILE_CHANGE, change);
     }
 
-    fn emit_search_results_batch(&self, batch: &[SearchResult]) {
+    fn emit_search_results_batch(&self, search_id: Option<&str>, batch: &[SearchResult]) {
         if self.binary_hot_frames.load(Ordering::Relaxed) {
-            if let Ok(payload) = crate::binary::encode_search_results_batch(batch) {
+            if let Ok(payload) = crate::binary::encode_search_results_batch(search_id, batch) {
                 let _ = self.outbound.send_payload_blocking(payload);
                 return;
             }
         }
-        self.emit(SEARCH_RESULTS_BATCH, batch);
+        self.emit(
+            SEARCH_RESULTS_BATCH,
+            &json!({
+                "search_id": search_id,
+                "results": batch,
+            }),
+        );
     }
 }
 
@@ -112,6 +126,24 @@ fn scheduled_result_response<T: Serialize>(
         Ok(Err(message)) => JsonRpcResponse::application_error(id, message),
         Err(error) => {
             JsonRpcResponse::application_error(id, format!("{task_label} failed: {error}"))
+        }
+    }
+}
+
+fn transfer_result_response(
+    id: Option<Value>,
+    result: Result<
+        Result<Vec<crate::progress::TransferResult>, crate::progress::TransferBatchError>,
+        String,
+    >,
+) -> JsonRpcResponse {
+    match result {
+        Ok(Ok(results)) => json_result_response(id, results, "failed to serialize transfer result"),
+        Ok(Err(error)) => {
+            JsonRpcResponse::application_error_with_data(id, error.message, json!(error.outcome))
+        }
+        Err(error) => {
+            JsonRpcResponse::application_error(id, format!("transfer task failed: {error}"))
         }
     }
 }
@@ -371,6 +403,33 @@ pub(super) async fn generate_thumbnail_and_reply(
     }
 }
 
+pub(super) fn spawn_generate_thumbnail(
+    writer: OutboundSink,
+    scheduler: BlockingScheduler,
+    binary_hot_frames: Arc<AtomicBool>,
+    id: Option<Value>,
+    path: String,
+    size: Option<u32>,
+) {
+    tokio::spawn(async move {
+        let response_id = id.clone();
+        let result =
+            generate_thumbnail_and_reply(&writer, scheduler, binary_hot_frames, id, path, size)
+                .await;
+
+        if let Err(message) = result {
+            let _ = write_json(
+                &writer,
+                &JsonRpcResponse::application_error(
+                    response_id,
+                    format!("thumbnail task failed: {message}"),
+                ),
+            )
+            .await;
+        }
+    });
+}
+
 pub(super) async fn generate_thumbnails_and_reply(
     writer: &OutboundSink,
     scheduler: BlockingScheduler,
@@ -424,20 +483,48 @@ pub(super) async fn generate_thumbnails_and_reply(
     }
 }
 
+pub(super) fn spawn_generate_thumbnails(
+    writer: OutboundSink,
+    scheduler: BlockingScheduler,
+    binary_hot_frames: Arc<AtomicBool>,
+    id: Option<Value>,
+    paths: Vec<String>,
+    size: Option<u32>,
+) {
+    tokio::spawn(async move {
+        let response_id = id.clone();
+        let result =
+            generate_thumbnails_and_reply(&writer, scheduler, binary_hot_frames, id, paths, size)
+                .await;
+
+        if let Err(message) = result {
+            let _ = write_json(
+                &writer,
+                &JsonRpcResponse::application_error(
+                    response_id,
+                    format!("thumbnail batch task failed: {message}"),
+                ),
+            )
+            .await;
+        }
+    });
+}
+
 pub(super) fn spawn_copy_move_with_progress(
     writer: OutboundSink,
     registry: std::sync::Arc<OperationRegistry>,
     scheduler: BlockingScheduler,
     events: EventSink,
-    id: Option<Value>,
-    params: ProgressCopyMoveParams,
-    is_copy: bool,
+    job: CopyMoveJob,
 ) {
     tokio::spawn(async move {
-        let op_id = params
-            .operation_id
-            .unwrap_or_else(crate::progress::generate_transfer_operation_id);
-        let cancel = registry.register(&op_id).await;
+        let CopyMoveJob {
+            id,
+            params,
+            op_id,
+            cancel,
+            is_copy,
+        } = job;
         let sources = params.sources;
         let destination = params.destination;
         let conflict_action = params.conflict_action;
@@ -460,12 +547,7 @@ pub(super) fn spawn_copy_move_with_progress(
             })
             .await;
 
-        let response = scheduled_result_response(
-            id,
-            result,
-            "transfer task",
-            "failed to serialize transfer result",
-        );
+        let response = transfer_result_response(id, result);
 
         let _ = write_json(&writer, &response).await;
         registry.remove(&op_id).await;
@@ -491,13 +573,21 @@ pub(super) fn spawn_search_files(
         };
 
         let events_for_task = events.clone();
+        let search_id_for_task = search_id.clone();
         let result = scheduler
             .run_general(move || {
-                let emit_batch =
-                    |batch: Vec<SearchResult>| events_for_task.emit_search_results_batch(&batch);
+                let emit_batch = |batch: Vec<SearchResult>| {
+                    events_for_task.emit_search_results_batch(search_id_for_task.as_deref(), &batch)
+                };
                 let result = crate::search::search_files_blocking(options, cancel, &emit_batch);
                 if let Ok(results) = &result {
-                    events_for_task.emit(SEARCH_COMPLETE, &results.len());
+                    events_for_task.emit(
+                        SEARCH_COMPLETE,
+                        &json!({
+                            "search_id": search_id_for_task,
+                            "count": results.len(),
+                        }),
+                    );
                 }
                 result
             })

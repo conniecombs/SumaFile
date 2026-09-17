@@ -231,6 +231,24 @@ public sealed class SearchResult
     public string MatchType { get; set; } = "";
 }
 
+public sealed class SearchResultsBatchEvent
+{
+    [JsonPropertyName("search_id")]
+    public string? SearchId { get; set; }
+
+    [JsonPropertyName("results")]
+    public SearchResult[] Results { get; set; } = [];
+}
+
+public sealed class SearchCompleteEvent
+{
+    [JsonPropertyName("search_id")]
+    public string? SearchId { get; set; }
+
+    [JsonPropertyName("count")]
+    public int Count { get; set; }
+}
+
 public sealed class SearchOptions
 {
     [JsonPropertyName("query")]
@@ -311,6 +329,35 @@ public sealed class TransferResult
     public string Source { get; set; } = "";
     [JsonPropertyName("destination")]
     public string Destination { get; set; } = "";
+}
+
+public sealed class TransferFailure
+{
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = "";
+    [JsonPropertyName("error")]
+    public string Error { get; set; } = "";
+}
+
+public sealed class TransferBatchOutcome
+{
+    [JsonPropertyName("operation_id")]
+    public string OperationId { get; set; } = "";
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "";
+
+    [JsonPropertyName("committed")]
+    public TransferResult[] Committed { get; set; } = [];
+
+    [JsonPropertyName("skipped")]
+    public TransferResult[] Skipped { get; set; } = [];
+
+    [JsonPropertyName("failed")]
+    public TransferFailure[] Failed { get; set; } = [];
+
+    [JsonPropertyName("pending")]
+    public string[] Pending { get; set; } = [];
 }
 
 public sealed class FilePreview

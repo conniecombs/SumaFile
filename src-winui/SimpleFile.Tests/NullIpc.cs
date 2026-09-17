@@ -155,7 +155,7 @@ internal abstract class NullIpc : ISimpleFileIpc
         string conflictAction,
         CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task CancelOperationAsync(string operationId, CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task<bool> CancelOperationAsync(string operationId, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<SearchResult[]> SearchFilesAsync(
         SearchOptions options,

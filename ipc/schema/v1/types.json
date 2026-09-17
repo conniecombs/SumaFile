@@ -66,6 +66,18 @@
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["name", "path", "is_dir", "size", "modified", "extension", "match_type"]
     },
+    "SearchResultsBatchEvent": {
+      "source": "crates/simplefile-service/src/session/jobs.rs",
+      "fields": ["search_id", "results"],
+      "optional": ["search_id"],
+      "notes": "search_id lets clients ignore stale batches from superseded searches."
+    },
+    "SearchCompleteEvent": {
+      "source": "crates/simplefile-service/src/session/jobs.rs",
+      "fields": ["search_id", "count"],
+      "optional": ["search_id"],
+      "notes": "search_id lets clients ignore stale completion events from superseded searches."
+    },
     "SearchOptions": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["query", "search_path", "case_sensitive", "include_hidden", "file_types", "max_results", "max_depth", "search_id", "content_search", "min_size", "max_size", "date_after", "date_before"],
@@ -161,6 +173,15 @@
     "TransferResult": {
       "source": "crates/simplefile-service/src/progress.rs",
       "fields": ["source", "destination"]
+    },
+    "TransferFailure": {
+      "source": "crates/simplefile-service/src/progress.rs",
+      "fields": ["source", "error"]
+    },
+    "TransferBatchOutcome": {
+      "source": "crates/simplefile-service/src/progress.rs",
+      "fields": ["operation_id", "status", "committed", "skipped", "failed", "pending"],
+      "notes": "Returned as JSON-RPC error.data for copy_with_progress and move_with_progress failures so clients can register safe undo for committed items and retry pending sources."
     },
     "Checksums": {
       "source": "crates/simplefile-core/src/checksum.rs",

@@ -155,8 +155,8 @@ public sealed partial class NamedPipeJsonClient
     public Task<TransferResult[]> MoveWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default)
         => InvokeAsync<TransferResult[]>(Protocol.MoveWithProgressMethod, new { sources, destination, operationId, conflictAction }, ct);
 
-    public Task CancelOperationAsync(string operationId, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.CancelOperationMethod, new { operationId }, ct);
+    public Task<bool> CancelOperationAsync(string operationId, CancellationToken ct = default)
+        => InvokeAsync<bool>(Protocol.CancelOperationMethod, new { operationId }, ct);
 
     public Task CancelSearchAsync(string searchId, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.CancelSearchMethod, new { searchId }, ct);

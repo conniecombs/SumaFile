@@ -9,12 +9,12 @@ use crate::scheduler::BlockingScheduler;
 use crate::watcher::WatcherState;
 use io::{read_frame, spawn_writer, write_json};
 use jobs::{
-    generate_thumbnail_and_reply, generate_thumbnails_and_reply, spawn_copy_move_with_progress,
-    spawn_disk_cleanup, spawn_duplicate_check, spawn_folder_item_count, spawn_folder_metrics,
-    spawn_folder_size, spawn_install_update, spawn_list_directory, spawn_search_files,
-    DiskCleanupJob, DuplicateCheckJob, EventSink,
+    spawn_copy_move_with_progress, spawn_disk_cleanup, spawn_duplicate_check,
+    spawn_folder_item_count, spawn_folder_metrics, spawn_folder_size, spawn_generate_thumbnail,
+    spawn_generate_thumbnails, spawn_install_update, spawn_list_directory, spawn_search_files,
+    CopyMoveJob, DiskCleanupJob, DuplicateCheckJob, EventSink,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use simplefile_ipc::frame::FrameError;
 use simplefile_ipc::rpc::{JsonRpcRequest, JsonRpcResponse};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -68,30 +68,48 @@ where
                 );
             }
             Dispatch::CopyWithProgress { id, params } => {
+                let op_id = params
+                    .operation_id
+                    .clone()
+                    .unwrap_or_else(crate::progress::generate_transfer_operation_id);
+                let cancel = operations.register(&op_id).await;
                 spawn_copy_move_with_progress(
                     writer.clone(),
                     operations.clone(),
                     scheduler.clone(),
                     events.clone(),
-                    id,
-                    params,
-                    true,
+                    CopyMoveJob {
+                        id,
+                        params,
+                        op_id,
+                        cancel,
+                        is_copy: true,
+                    },
                 );
             }
             Dispatch::MoveWithProgress { id, params } => {
+                let op_id = params
+                    .operation_id
+                    .clone()
+                    .unwrap_or_else(crate::progress::generate_transfer_operation_id);
+                let cancel = operations.register(&op_id).await;
                 spawn_copy_move_with_progress(
                     writer.clone(),
                     operations.clone(),
                     scheduler.clone(),
                     events.clone(),
-                    id,
-                    params,
-                    false,
+                    CopyMoveJob {
+                        id,
+                        params,
+                        op_id,
+                        cancel,
+                        is_copy: false,
+                    },
                 );
             }
             Dispatch::CancelOperation { id, operation_id } => {
-                operations.cancel(&operation_id).await;
-                write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
+                let cancelled = operations.cancel(&operation_id).await;
+                write_json(&writer, &JsonRpcResponse::result(id, json!(cancelled))).await?;
             }
             Dispatch::SearchFiles { id, options } => {
                 spawn_search_files(
@@ -189,26 +207,24 @@ where
                 spawn_install_update(writer.clone(), scheduler.clone(), events.clone(), id);
             }
             Dispatch::GenerateThumbnail { id, path, size } => {
-                generate_thumbnail_and_reply(
-                    &writer,
+                spawn_generate_thumbnail(
+                    writer.clone(),
                     scheduler.clone(),
                     binary_hot_frames.clone(),
                     id,
                     path,
                     size,
-                )
-                .await?;
+                );
             }
             Dispatch::GenerateThumbnails { id, paths, size } => {
-                generate_thumbnails_and_reply(
-                    &writer,
+                spawn_generate_thumbnails(
+                    writer.clone(),
                     scheduler.clone(),
                     binary_hot_frames.clone(),
                     id,
                     paths,
                     size,
-                )
-                .await?;
+                );
             }
             Dispatch::CalculateFolderSize { id, path, cancel } => {
                 spawn_folder_size(writer.clone(), scheduler.clone(), id, path, cancel);

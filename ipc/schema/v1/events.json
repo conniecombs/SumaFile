@@ -13,12 +13,12 @@
       "binaryFrameTag": 5
     },
     "search-results-batch": {
-      "params": { "type": "array", "items": "SearchResult" },
+      "params": "SearchResultsBatchEvent",
       "source": "crates/simplefile-service/src/search.rs",
       "binaryFrameTag": 3
     },
     "search-complete": {
-      "params": { "type": "number", "meaning": "result count" },
+      "params": "SearchCompleteEvent",
       "source": "crates/simplefile-service/src/search.rs",
       "notes": "Emitted for WinUI clients subscribed during search_files."
     },
