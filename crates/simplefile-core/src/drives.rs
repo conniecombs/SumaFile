@@ -11,6 +11,16 @@ pub enum DriveListMode {
     Light,
 }
 
+struct PendingDrive {
+    letter: u8,
+    drive_path: String,
+    wide_path: Vec<u16>,
+    dt: u32,
+    drive_type: String,
+    fallback_name: &'static str,
+    remote_path: Option<String>,
+}
+
 /// Enumerate fixed, removable, and mapped drives. Blocking.
 pub fn list_drives() -> Result<Vec<DriveInfo>, String> {
     list_drives_with_mode(DriveListMode::Full)
@@ -21,8 +31,42 @@ pub fn list_drives_light() -> Result<Vec<DriveInfo>, String> {
     list_drives_with_mode(DriveListMode::Light)
 }
 
+/// Refresh a single drive root. Blocking.
+pub fn list_drive(path: &str) -> Result<Vec<DriveInfo>, String> {
+    let root = normalize_drive_root(path)?;
+    match pending_drive(root.clone(), DriveListMode::Full) {
+        Some(drive) => {
+            let probe = if drive.dt == 4 {
+                Some(network_drive_status(
+                    &drive.wide_path,
+                    drive.remote_path.as_deref(),
+                ))
+            } else {
+                None
+            };
+            Ok(vec![drive_info_from_pending(
+                drive,
+                DriveListMode::Full,
+                probe,
+            )])
+        }
+        None => Err(format!("Drive is not available: {root}")),
+    }
+}
+
 pub fn list_drives_with_mode(mode: DriveListMode) -> Result<Vec<DriveInfo>, String> {
     list_drives_blocking(mode)
+}
+
+fn normalize_drive_root(path: &str) -> Result<String, String> {
+    let trimmed = path.trim().replace('/', "\\");
+    let bytes = trimmed.as_bytes();
+    if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
+        return Err("Expected a Windows drive path such as C:\\".to_string());
+    }
+
+    let letter = (bytes[0] as char).to_ascii_uppercase();
+    Ok(format!("{letter}:\\"))
 }
 
 fn string_from_wide_buffer(buffer: &[u16]) -> Option<String> {
@@ -203,6 +247,36 @@ fn network_drive_status(wide_path: &[u16], remote_path: Option<&str>) -> (String
     }
 }
 
+fn is_remote_like_file_system(file_system: Option<&str>) -> bool {
+    let Some(value) = file_system else {
+        return false;
+    };
+    let lower = value.to_ascii_lowercase();
+    lower.contains("network")
+        || lower.contains("remote")
+        || lower.contains("airlivedrive")
+        || lower.contains("googledrive")
+        || lower.contains("virtual")
+        || lower.contains("sshfs")
+        || lower.contains("sftp")
+        || lower.contains("fuse")
+}
+
+fn should_query_disk_space(
+    drive_type: u32,
+    drive_status: &str,
+    mode: DriveListMode,
+    file_system: Option<&str>,
+) -> bool {
+    if mode == DriveListMode::Light
+        && (drive_type == 4 || (drive_type == 3 && is_remote_like_file_system(file_system)))
+    {
+        return false;
+    }
+
+    drive_type == 3 || (drive_type == 4 && drive_status == "available")
+}
+
 fn windows_drive_display_name(
     drive_type: u32,
     volume_label: Option<&str>,
@@ -217,67 +291,63 @@ fn windows_drive_display_name(
     .unwrap_or_else(|| fallback_name.to_string())
 }
 
-fn list_drives_blocking(mode: DriveListMode) -> Result<Vec<DriveInfo>, String> {
+fn pending_drive(drive_path: String, mode: DriveListMode) -> Option<PendingDrive> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
 
-    struct PendingDrive {
-        letter: u8,
-        drive_path: String,
-        wide_path: Vec<u16>,
-        dt: u32,
-        drive_type: String,
-        fallback_name: &'static str,
-        remote_path: Option<String>,
+    let letter = drive_path.as_bytes().first()?.to_ascii_uppercase();
+    let wide_path: Vec<u16> = OsStr::new(&drive_path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let dt = unsafe { winapi::um::fileapi::GetDriveTypeW(wide_path.as_ptr()) };
+    if dt <= 1 {
+        return None;
     }
 
+    let drive_type = match dt {
+        2 => "Removable",
+        3 => "Fixed",
+        4 => "Network",
+        5 => "CD-ROM",
+        6 => "RAM Disk",
+        _ => "Unknown",
+    }
+    .to_string();
+
+    let fallback_name = match dt {
+        2 => "Removable Drive",
+        3 => "Local Disk",
+        4 => "Network Drive",
+        5 => "Optical Drive",
+        6 => "RAM Disk",
+        _ => "Drive",
+    };
+    let remote_path = if dt == 4 && mode == DriveListMode::Full {
+        mapped_network_remote_path(&drive_path)
+    } else {
+        None
+    };
+
+    Some(PendingDrive {
+        letter,
+        drive_path,
+        wide_path,
+        dt,
+        drive_type,
+        fallback_name,
+        remote_path,
+    })
+}
+
+fn list_drives_blocking(mode: DriveListMode) -> Result<Vec<DriveInfo>, String> {
     let mut pending: Vec<PendingDrive> = Vec::new();
 
     for letter in b'A'..=b'Z' {
-        let drive_path = format!("{}:\\", letter as char);
-        let wide_path: Vec<u16> = OsStr::new(&drive_path)
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-
-        let dt = unsafe { winapi::um::fileapi::GetDriveTypeW(wide_path.as_ptr()) };
-        if dt <= 1 {
-            continue;
+        if let Some(drive) = pending_drive(format!("{}:\\", letter as char), mode) {
+            pending.push(drive);
         }
-
-        let drive_type = match dt {
-            2 => "Removable",
-            3 => "Fixed",
-            4 => "Network",
-            5 => "CD-ROM",
-            6 => "RAM Disk",
-            _ => "Unknown",
-        }
-        .to_string();
-
-        let fallback_name = match dt {
-            2 => "Removable Drive",
-            3 => "Local Disk",
-            4 => "Network Drive",
-            5 => "Optical Drive",
-            6 => "RAM Disk",
-            _ => "Drive",
-        };
-        let remote_path = if dt == 4 && mode == DriveListMode::Full {
-            mapped_network_remote_path(&drive_path)
-        } else {
-            None
-        };
-
-        pending.push(PendingDrive {
-            letter,
-            drive_path,
-            wide_path,
-            dt,
-            drive_type,
-            fallback_name,
-            remote_path,
-        });
     }
 
     // Probe all network drives in parallel.
@@ -301,71 +371,84 @@ fn list_drives_blocking(mode: DriveListMode) -> Result<Vec<DriveInfo>, String> {
             .collect()
     });
 
-    let mut drives = Vec::new();
-    for (drive, probe) in pending.iter().zip(probe_results) {
-        let (drive_status, status_detail) = if drive.dt == 4 && mode == DriveListMode::Light {
-            (
-                "unknown".to_string(),
-                Some("Network drive details will refresh after startup.".to_string()),
-            )
-        } else {
-            probe.unwrap_or_else(|| ("available".to_string(), None))
-        };
-        let (volume_label, file_system) = if drive.dt == 3 {
-            windows_volume_details(&drive.wide_path)
-        } else {
-            (None, None)
-        };
+    Ok(pending
+        .into_iter()
+        .zip(probe_results)
+        .map(|(drive, probe)| drive_info_from_pending(drive, mode, probe))
+        .collect())
+}
 
-        let display_name = windows_drive_display_name(
-            drive.dt,
-            volume_label.as_deref(),
-            drive.remote_path.as_deref(),
-            drive.fallback_name,
-        );
+fn drive_info_from_pending(
+    drive: PendingDrive,
+    mode: DriveListMode,
+    probe: Option<(String, Option<String>)>,
+) -> DriveInfo {
+    let (volume_label, file_system) = if drive.dt == 3 {
+        windows_volume_details(&drive.wide_path)
+    } else {
+        (None, None)
+    };
 
-        let (total_space, free_space) =
-            if drive.dt == 3 || (drive.dt == 4 && drive_status == "available") {
-                unsafe {
-                    let mut free_bytes_available: u64 = 0;
-                    let mut total_bytes: u64 = 0;
-                    let mut total_free_bytes: u64 = 0;
+    let (drive_status, status_detail) = if mode == DriveListMode::Light
+        && (drive.dt == 4 || (drive.dt == 3 && is_remote_like_file_system(file_system.as_deref())))
+    {
+        (
+            "unknown".to_string(),
+            Some("Drive details will refresh on demand.".to_string()),
+        )
+    } else {
+        probe.unwrap_or_else(|| ("available".to_string(), None))
+    };
 
-                    if winapi::um::fileapi::GetDiskFreeSpaceExW(
-                        drive.wide_path.as_ptr(),
-                        &mut free_bytes_available as *mut u64 as *mut _,
-                        &mut total_bytes as *mut u64 as *mut _,
-                        &mut total_free_bytes as *mut u64 as *mut _,
-                    ) != 0
-                    {
-                        (total_bytes, free_bytes_available)
-                    } else {
-                        (0, 0)
-                    }
+    let display_name = windows_drive_display_name(
+        drive.dt,
+        volume_label.as_deref(),
+        drive.remote_path.as_deref(),
+        drive.fallback_name,
+    );
+
+    let (total_space, free_space) =
+        if should_query_disk_space(drive.dt, &drive_status, mode, file_system.as_deref()) {
+            unsafe {
+                let mut free_bytes_available: u64 = 0;
+                let mut total_bytes: u64 = 0;
+                let mut total_free_bytes: u64 = 0;
+
+                if winapi::um::fileapi::GetDiskFreeSpaceExW(
+                    drive.wide_path.as_ptr(),
+                    &mut free_bytes_available as *mut u64 as *mut _,
+                    &mut total_bytes as *mut u64 as *mut _,
+                    &mut total_free_bytes as *mut u64 as *mut _,
+                ) != 0
+                {
+                    (total_bytes, free_bytes_available)
+                } else {
+                    (0, 0)
                 }
-            } else {
-                (0, 0)
-            };
+            }
+        } else {
+            (0, 0)
+        };
 
-        drives.push(DriveInfo {
-            name: format!("{} ({}:)", display_name, drive.letter as char),
-            path: drive.drive_path.clone(),
-            drive_type: drive.drive_type.clone(),
-            file_system,
-            total_space,
-            free_space,
-            remote_path: drive.remote_path.clone(),
-            drive_status,
-            status_detail,
-        });
+    DriveInfo {
+        name: format!("{} ({}:)", display_name, drive.letter as char),
+        path: drive.drive_path,
+        drive_type: drive.drive_type,
+        file_system,
+        total_space,
+        free_space,
+        remote_path: drive.remote_path,
+        drive_status,
+        status_detail,
     }
-
-    Ok(drives)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{list_drives_light, network_remote_display_name, windows_error_detail};
+    use super::{
+        is_remote_like_file_system, list_drives_light, network_remote_display_name,
+        normalize_drive_root, should_query_disk_space, windows_error_detail, DriveListMode,
+    };
 
     #[test]
     fn light_drive_listing_does_not_probe_network_roots() {
@@ -379,6 +462,34 @@ mod tests {
                 assert!(drive.remote_path.is_none());
             }
         }
+    }
+
+    #[test]
+    fn remote_like_fixed_file_systems_are_deferred_in_light_mode() {
+        assert!(is_remote_like_file_system(Some("AirLiveDrive-7")));
+        assert!(is_remote_like_file_system(Some("GoogleDriveFS")));
+        assert!(!is_remote_like_file_system(Some("NTFS")));
+
+        assert!(!should_query_disk_space(
+            3,
+            "unknown",
+            DriveListMode::Light,
+            Some("AirLiveDrive-7")
+        ));
+        assert!(should_query_disk_space(
+            3,
+            "available",
+            DriveListMode::Light,
+            Some("NTFS")
+        ));
+    }
+
+    #[test]
+    fn normalize_drive_root_targets_one_drive() {
+        assert_eq!(normalize_drive_root(r"x:\projects\docs").unwrap(), r"X:\");
+        assert_eq!(normalize_drive_root("c:").unwrap(), r"C:\");
+        assert!(normalize_drive_root(r"\\server\share").is_err());
+        assert!(normalize_drive_root("").is_err());
     }
 
     #[test]

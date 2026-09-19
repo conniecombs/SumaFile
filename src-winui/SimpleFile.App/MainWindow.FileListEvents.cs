@@ -113,6 +113,18 @@ public sealed partial class MainWindow
         ApplySidebarSectionVisibility();
     }
 
+    private void OnToggleTags(object sender, RoutedEventArgs e)
+    {
+        _tagsCollapsed = !_tagsCollapsed;
+        if (_workspace is not null)
+        {
+            _workspace.Settings.TagsCollapsed = _tagsCollapsed;
+        }
+
+        SetExpandGlyph(TagsCollapseButton, _tagsCollapsed);
+        ApplySidebarSectionVisibility();
+    }
+
     private async void OnTabKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (_workspace is null || sender is not Button { Tag: PaneTab tab })
@@ -155,7 +167,15 @@ public sealed partial class MainWindow
     {
         if (_workspace is not null && e.ClickedItem is DriveRow row)
         {
-            await RunUiActionAsync("Drive", () => _workspace.OpenPathAsync(row.Path, isDirectory: true, _workspace.SidebarTarget));
+            await RunUiActionAsync("Drive", async () =>
+            {
+                if (DrivePresentation.Status(row.Source) == "unknown")
+                {
+                    await _workspace.RefreshDriveAsync(row.Path, quiet: true);
+                }
+
+                await _workspace.OpenPathAsync(row.Path, isDirectory: true, _workspace.SidebarTarget);
+            });
         }
     }
 

@@ -49,4 +49,73 @@ public class CommandSurfaceLayoutTests
         Assert.Equal(ToolbarActionCatalog.IconOnlyDisplayMode, ToolbarActionCatalog.NormalizeDisplayMode("wide"));
         Assert.True(ToolbarActionCatalog.WidthFor("copy", ToolbarActionCatalog.IconAndLabelDisplayMode) > 32);
     }
+
+    [Fact]
+    public void CreateDefault_PrioritizesTransferHistoryAndInspectionActions()
+    {
+        var layout = CommandSurfaceLayout.CreateDefault();
+
+        Assert.Equal(
+            [
+                ToolbarOverflowPlanner.New,
+                ToolbarOverflowPlanner.DualPane,
+                "copy-to-pane",
+                "move-to-pane",
+                "operation-history",
+                "duplicate-checker",
+                "disk-cleanup",
+                ToolbarOverflowPlanner.Profiles,
+                ToolbarOverflowPlanner.ViewOptions,
+                ToolbarOverflowPlanner.Settings,
+            ],
+            layout.VisiblePrimaryActionIds());
+        Assert.Collection(
+            layout.PrimaryToolbar,
+            item => Assert.Equal(ToolbarOverflowPlanner.New, item.Id),
+            item => Assert.Equal(ToolbarOverflowPlanner.DualPane, item.Id),
+            item => Assert.Equal("copy-to-pane", item.Id),
+            item => Assert.Equal("move-to-pane", item.Id),
+            item => Assert.Equal("operation-history", item.Id),
+            item => Assert.True(item.IsSeparator),
+            item => Assert.Equal("duplicate-checker", item.Id),
+            item => Assert.Equal("disk-cleanup", item.Id),
+            item => Assert.True(item.IsSeparator),
+            item => Assert.Equal(ToolbarOverflowPlanner.Profiles, item.Id),
+            item => Assert.Equal(ToolbarOverflowPlanner.ViewOptions, item.Id),
+            item => Assert.Equal(ToolbarOverflowPlanner.Settings, item.Id));
+    }
+
+    [Fact]
+    public void FromJson_UpgradesLegacyDefaultToolbarToCurrentDefault()
+    {
+        var layout = CommandSurfaceLayout.FromJson("""
+            {
+              "version": 1,
+              "toolbarDisplayMode": "labels",
+              "primaryToolbar": [
+                { "kind": "command", "id": "new" },
+                { "kind": "command", "id": "dual-pane" },
+                { "kind": "command", "id": "profiles" },
+                { "kind": "command", "id": "view-options" },
+                { "kind": "command", "id": "settings" }
+              ]
+            }
+            """);
+
+        Assert.Equal(ToolbarActionCatalog.IconAndLabelDisplayMode, layout.ToolbarDisplayMode);
+        Assert.Equal(CommandSurfaceLayout.DefaultPrimaryActionIds, layout.VisiblePrimaryActionIds());
+    }
+
+    [Fact]
+    public void PrimaryHideOrderForDefaultLayout_CanOverflowEveryDefaultAction()
+    {
+        var layout = CommandSurfaceLayout.CreateDefault();
+
+        var hideOrder = ToolbarOverflowPlanner.PrimaryHideOrderFor(layout);
+
+        foreach (var id in layout.VisiblePrimaryActionIds())
+        {
+            Assert.Contains(id, hideOrder);
+        }
+    }
 }

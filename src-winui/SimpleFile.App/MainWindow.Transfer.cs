@@ -23,6 +23,7 @@ public sealed partial class MainWindow
         Completed,
         Cancelled,
         Failed,
+        Skipped,
     }
 
     private string[] _dragPaths = [];
@@ -254,6 +255,11 @@ public sealed partial class MainWindow
         var finalStatus = TransferStatusToRunStatus(status);
         if (finalStatus != TransferRunStatus.NoOp && ReferenceEquals(_workspace, workspace))
         {
+            if (finalStatus == TransferRunStatus.Skipped)
+            {
+                SetStatusText(TransferProgressFormatter.SkippedReceipt(move, sources.Length, destination));
+            }
+
             workspace.RememberOperation(
                 move ? "move" : "copy",
                 $"{(move ? "Move" : "Copy")} {sources.Length} item(s) to {destination}",
@@ -282,6 +288,7 @@ public sealed partial class MainWindow
             var action = await ChooseConflictActionAsync(
                 sources,
                 destination,
+                move,
                 conflictSession,
                 cancellationToken);
             if (action is null)
@@ -333,8 +340,10 @@ public sealed partial class MainWindow
 
                     if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
                     {
-                        CompleteTransferProgress(move, sources.Length);
-                        await workspace.RefreshAsync(cancellationToken);
+                        CompleteTransferProgress(move, sources.Length, destination);
+                        await workspace.RefreshAffectedPanesAsync(
+                            TransferAffectedPaths(sources, destination, move),
+                            cancellationToken);
                     }
 
                     break;
@@ -358,7 +367,9 @@ public sealed partial class MainWindow
 
                     if (ReferenceEquals(_workspace, workspace))
                     {
-                        await workspace.RefreshAsync(cancellationToken);
+                        await workspace.RefreshAffectedPanesAsync(
+                            TransferAffectedPaths(sources, destination, move),
+                            cancellationToken);
                     }
 
                     throw;
@@ -368,6 +379,8 @@ public sealed partial class MainWindow
                     var retryAction = await ChooseConflictActionFromBackendConflictAsync(
                         exception.Message,
                         destination,
+                        move,
+                        sources.Length,
                         conflictSession,
                         cancellationToken);
                     if (retryAction is null)
@@ -402,12 +415,50 @@ public sealed partial class MainWindow
         TransferOperationStatus.Completed => TransferRunStatus.Completed,
         TransferOperationStatus.Cancelled => TransferRunStatus.Cancelled,
         TransferOperationStatus.Failed => TransferRunStatus.Failed,
+        TransferOperationStatus.Skipped => TransferRunStatus.Skipped,
         _ => TransferRunStatus.NoOp,
     };
+
+    private static IReadOnlyList<string> TransferAffectedPaths(string[] sources, string destination, bool move)
+    {
+        List<string> paths = [];
+        if (!string.IsNullOrWhiteSpace(destination))
+        {
+            paths.Add(destination);
+        }
+
+        if (move)
+        {
+            foreach (var source in sources)
+            {
+                if (string.IsNullOrWhiteSpace(source))
+                {
+                    continue;
+                }
+
+                paths.Add(source);
+                var parent = PathRules.GetParentPath(source);
+                if (!string.IsNullOrWhiteSpace(parent))
+                {
+                    paths.Add(parent);
+                }
+            }
+        }
+
+        return paths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> VisiblePanePaths(ExplorerWorkspace workspace) =>
+        workspace.DualPaneEnabled
+            ? [workspace.Primary.Path, workspace.Secondary.Path]
+            : [workspace.Active.Path];
 
     private async Task<string?> ChooseConflictActionAsync(
         string[] sources,
         string destination,
+        bool move,
         TransferConflictSession session,
         CancellationToken cancellationToken)
     {
@@ -427,7 +478,7 @@ public sealed partial class MainWindow
             return "error";
         }
 
-        return await PromptConflictActionAsync(destination, conflicts, session, cancellationToken);
+        return await PromptConflictActionAsync(destination, conflicts, move, sources.Length, session, cancellationToken);
     }
 
     private async Task<IReadOnlyList<string>?> ProbeDestinationConflictsAsync(
@@ -495,6 +546,8 @@ public sealed partial class MainWindow
     private async Task<string?> ChooseConflictActionFromBackendConflictAsync(
         string message,
         string destination,
+        bool move,
+        int sourceCount,
         TransferConflictSession session,
         CancellationToken cancellationToken)
     {
@@ -510,7 +563,7 @@ public sealed partial class MainWindow
         IReadOnlyList<string> conflicts = string.IsNullOrWhiteSpace(conflictName)
             ? Array.Empty<string>()
             : [conflictName];
-        return await PromptConflictActionAsync(destination, conflicts, session, cancellationToken);
+        return await PromptConflictActionAsync(destination, conflicts, move, sourceCount, session, cancellationToken);
     }
 
     private static string ConflictPathFromMessage(string message)
@@ -537,6 +590,8 @@ public sealed partial class MainWindow
     private async Task<string?> PromptConflictActionAsync(
         string destination,
         IReadOnlyList<string> conflicts,
+        bool move,
+        int sourceCount,
         TransferConflictSession session,
         CancellationToken cancellationToken)
     {
@@ -550,7 +605,12 @@ public sealed partial class MainWindow
         {
             cancellationToken.ThrowIfCancellationRequested();
             var dialog = new ConflictDialog { XamlRoot = Content.XamlRoot };
-            dialog.SetConflict(destination, conflicts);
+            dialog.SetConflict(new TransferConflictPromptContext(
+                Move: move,
+                SourceCount: sourceCount,
+                Destination: destination,
+                TargetPane: PaneForDestination(destination),
+                Conflicts: conflicts));
             var result = await dialog.ShowAsync();
             cancellationToken.ThrowIfCancellationRequested();
             string? action = dialog.Result == ConflictResolution.KeepBoth
@@ -573,6 +633,25 @@ public sealed partial class MainWindow
         {
             _transferPromptGate.Release();
         }
+    }
+
+    private PaneId? PaneForDestination(string destination)
+    {
+        var workspace = _workspace;
+        if (workspace is null)
+        {
+            return null;
+        }
+
+        foreach (var pane in new[] { PaneId.Primary, PaneId.Secondary })
+        {
+            if (PathRules.PathsEqual(workspace.Pane(pane).Path, destination))
+            {
+                return pane;
+            }
+        }
+
+        return null;
     }
 
     private async Task CopyOrMoveToOtherPaneAsync(bool move)
@@ -705,7 +784,7 @@ public sealed partial class MainWindow
             await fileOps.ExtractArchiveAsync(info.Path, destination, archiveCts.Token);
             if (ReferenceEquals(_workspace, workspace) && !archiveCts.IsCancellationRequested)
             {
-                await workspace.RefreshAsync(archiveCts.Token);
+                await workspace.RefreshAffectedPanesAsync([destination], archiveCts.Token);
             }
         }
         catch (OperationCanceledException)
@@ -787,7 +866,9 @@ public sealed partial class MainWindow
             workspace.Undo.PushRename(requests.Select(request => request.Path).ToArray(), renamed, fileOps);
             if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
             {
-                await workspace.RefreshAsync(utilityCts.Token);
+                await workspace.RefreshAffectedPanesAsync(
+                    [.. requests.Select(request => request.Path), .. renamed],
+                    utilityCts.Token);
             }
 
             SetStatusText(requests.Length == 1
@@ -868,7 +949,7 @@ public sealed partial class MainWindow
             await workspace.Undo.UndoAsync(utilityCts.Token);
             if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
             {
-                await workspace.RefreshAsync(utilityCts.Token);
+                await workspace.RefreshAffectedPanesAsync(VisiblePanePaths(workspace), utilityCts.Token);
                 SetStatusText("Undone");
             }
         }
@@ -900,7 +981,7 @@ public sealed partial class MainWindow
             await workspace.Undo.RedoAsync(utilityCts.Token);
             if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
             {
-                await workspace.RefreshAsync(utilityCts.Token);
+                await workspace.RefreshAffectedPanesAsync(VisiblePanePaths(workspace), utilityCts.Token);
                 SetStatusText("Redone");
             }
         }

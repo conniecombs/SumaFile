@@ -8,11 +8,7 @@ namespace SimpleFile.App;
 public sealed partial class ProgressPanel : UserControl
 {
     private TransferProgressContext _context = new(false, 0, "", "");
-    private DateTimeOffset _lastSampleAt;
-    private DateTimeOffset _startedAt;
-    private ulong _lastSampleBytes;
-    private double? _bytesPerSecond;
-    private bool _hasSample;
+    private readonly TransferProgressRateTracker _rateTracker = new();
     private string _lastCurrentItemPath = "";
     private bool _isComplete;
 
@@ -37,9 +33,8 @@ public sealed partial class ProgressPanel : UserControl
     public void Start(TransferProgressContext context)
     {
         _context = context;
-        ResetRate();
+        _rateTracker.Reset();
         _lastCurrentItemPath = "";
-        _startedAt = DateTimeOffset.UtcNow;
         Visibility = Visibility.Visible;
         CancelButton.IsEnabled = true;
         PauseButton.IsEnabled = false;
@@ -76,8 +71,7 @@ public sealed partial class ProgressPanel : UserControl
             _lastCurrentItemPath = update.CurrentItem;
         }
 
-        var speed = TrackSpeed(update);
-        var display = TransferProgressFormatter.Format(_context, update, speed, AverageFilesPerSecond(update));
+        var display = _rateTracker.Format(_context, update);
         CancelButton.IsEnabled = update.Status is "running" or "finalizing";
         PauseButton.IsEnabled = false;
         ApplyDisplay(display);
@@ -117,56 +111,6 @@ public sealed partial class ProgressPanel : UserControl
         ToolTipService.SetToolTip(CurrentItemLabel, null);
     }
 
-    private double? TrackSpeed(ProgressUpdate update)
-    {
-        if (update.Status != "running")
-        {
-            return _bytesPerSecond;
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        if (!_hasSample)
-        {
-            _hasSample = true;
-            _lastSampleAt = now;
-            _lastSampleBytes = update.Current;
-            return _bytesPerSecond;
-        }
-
-        if (update.Current < _lastSampleBytes)
-        {
-            _lastSampleAt = now;
-            _lastSampleBytes = update.Current;
-            _bytesPerSecond = null;
-            return _bytesPerSecond;
-        }
-
-        var elapsed = (now - _lastSampleAt).TotalSeconds;
-        if (elapsed < 0.25 || update.Current == _lastSampleBytes)
-        {
-            return _bytesPerSecond;
-        }
-
-        var sample = (update.Current - _lastSampleBytes) / elapsed;
-        _bytesPerSecond = _bytesPerSecond is > 0
-            ? (_bytesPerSecond.Value * 0.65) + (sample * 0.35)
-            : sample;
-        _lastSampleAt = now;
-        _lastSampleBytes = update.Current;
-        return _bytesPerSecond;
-    }
-
-    private double? AverageFilesPerSecond(ProgressUpdate update)
-    {
-        if (update.CurrentFiles == 0)
-        {
-            return null;
-        }
-
-        var elapsed = (DateTimeOffset.UtcNow - _startedAt).TotalSeconds;
-        return elapsed > 0.25 ? update.CurrentFiles / elapsed : null;
-    }
-
     private void ApplyDisplay(TransferProgressDisplay display)
     {
         OperationLabel.Text = display.Title;
@@ -197,11 +141,4 @@ public sealed partial class ProgressPanel : UserControl
         }
     }
 
-    private void ResetRate()
-    {
-        _hasSample = false;
-        _lastSampleAt = default;
-        _lastSampleBytes = 0;
-        _bytesPerSecond = null;
-    }
 }

@@ -1,16 +1,12 @@
 using System.Collections;
 using System.Collections.Specialized;
-using Microsoft.UI;
-using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Markup;
 using SimpleFile.Core;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
-using Windows.System;
-using Windows.UI.Core;
 
 namespace SimpleFile.App;
 
@@ -62,15 +58,12 @@ public sealed class DetailsFileListView : UserControl
         typeof(DetailsFileListView),
         new PropertyMetadata(PaneId.Primary));
 
-    private readonly ScrollViewer _scrollViewer;
-    private readonly StackPanel _rowsHost;
+    private readonly ListView _list;
     private readonly List<FileRow> _rows = [];
     private readonly List<FileRow> _selectedRows = [];
-    private readonly Dictionary<FileRow, Border> _containers = new();
-    private readonly Dictionary<FileRow, FileRowView> _rowViews = new();
-    private IReadOnlyList<FileListColumn> _columns = [];
     private INotifyCollectionChanged? _observableItems;
     private IEnumerable? _itemsSource;
+    private IReadOnlyList<FileListColumn> _columns = [];
     private int _iconSize = UiSettings.NormalizeIconSize((int?)null);
     private double _horizontalOffset;
     private double _viewportWidth = 1;
@@ -80,28 +73,37 @@ public sealed class DetailsFileListView : UserControl
     public DetailsFileListView()
     {
         IsTabStop = true;
-        Background = new SolidColorBrush(Colors.Transparent);
         HorizontalAlignment = HorizontalAlignment.Stretch;
         VerticalAlignment = VerticalAlignment.Stretch;
 
-        _rowsHost = new StackPanel
+        _list = new ListView
         {
-            Orientation = Orientation.Vertical,
             HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            SelectionMode = ListViewSelectionMode.Extended,
+            IsMultiSelectCheckBoxEnabled = false,
+            SingleSelectionFollowsFocus = false,
+            IsItemClickEnabled = false,
+            CanDragItems = true,
+            CanReorderItems = false,
+            AllowDrop = true,
+            ItemTemplate = CreateItemTemplate(),
+            ItemsPanel = CreateItemsPanelTemplate(),
+            Padding = new Thickness(10, 4, 0, 6),
         };
-        _scrollViewer = new ScrollViewer
-        {
-            Content = _rowsHost,
-            HorizontalScrollMode = ScrollMode.Disabled,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollMode = ScrollMode.Enabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            ZoomMode = ZoomMode.Disabled,
-        };
-        Content = _scrollViewer;
+        ScrollViewer.SetHorizontalScrollBarVisibility(_list, ScrollBarVisibility.Disabled);
+        ScrollViewer.SetHorizontalScrollMode(_list, ScrollMode.Disabled);
+        ScrollViewer.SetVerticalScrollBarVisibility(_list, ScrollBarVisibility.Auto);
 
-        KeyDown += OnKeyDown;
-        ActualThemeChanged += (_, _) => RefreshSelectionVisuals();
+        _list.SelectionChanged += OnListSelectionChanged;
+        _list.DoubleTapped += OnListDoubleTapped;
+        _list.RightTapped += OnListRightTapped;
+        _list.ContextRequested += OnListContextRequested;
+        _list.DragItemsStarting += OnListDragItemsStarting;
+        _list.DragItemsCompleted += (_, _) => RowsDragCompleted?.Invoke(this, EventArgs.Empty);
+        _list.ContainerContentChanging += OnListContainerContentChanging;
+        _list.Loaded += (_, _) => ApplyContainerStyle();
+        Content = _list;
     }
 
     public event EventHandler<DetailsFileSelectionChangedEventArgs>? SelectionChanged;
@@ -130,6 +132,7 @@ public sealed class DetailsFileListView : UserControl
                 return;
             }
 
+            var selectedPaths = SelectedPathSet();
             if (_observableItems is not null)
             {
                 _observableItems.CollectionChanged -= OnItemsChanged;
@@ -142,7 +145,9 @@ public sealed class DetailsFileListView : UserControl
                 _observableItems.CollectionChanged += OnItemsChanged;
             }
 
-            RebuildRows();
+            _list.ItemsSource = value;
+            RefreshRowsFromItemsSource();
+            RestoreSelectionByPaths(selectedPaths);
         }
     }
 
@@ -170,30 +175,21 @@ public sealed class DetailsFileListView : UserControl
         _iconSize = UiSettings.NormalizeIconSize(iconSize);
         _viewportWidth = Math.Max(1, viewportWidth);
         _horizontalOffset = Math.Max(0, horizontalOffset);
-        _rowsHost.Width = _viewportWidth;
+        _list.Width = _viewportWidth;
 
-        foreach (var (row, container) in _containers)
-        {
-            container.Width = _viewportWidth;
-            if (_rowViews.TryGetValue(row, out var rowView))
-            {
-                ApplyRowLayout(rowView);
-            }
-        }
-
-        _rowsHost.InvalidateMeasure();
-        _scrollViewer.InvalidateMeasure();
+        UpdateRealizedContainers();
+        _list.InvalidateMeasure();
         InvalidateMeasure();
     }
 
     public void ClearSelection()
     {
-        SetSelection([], notify: true);
+        _list.SelectedItems.Clear();
     }
 
     public void SelectAll()
     {
-        SetSelection(_rows, notify: true);
+        _list.SelectAll();
     }
 
     public void SelectPath(string? path)
@@ -201,11 +197,11 @@ public sealed class DetailsFileListView : UserControl
         var row = path is null
             ? null
             : _rows.FirstOrDefault(candidate => PathRules.PathsEqual(candidate.Path, path));
-        SetSelection(row is null ? [] : [row], notify: true);
+        SetSelection(row is null ? [] : [row]);
         if (row is not null)
         {
             _anchorIndex = _rows.IndexOf(row);
-            BringRowIntoView(row);
+            _list.ScrollIntoView(row);
         }
     }
 
@@ -214,8 +210,13 @@ public sealed class DetailsFileListView : UserControl
 
     public FileRow? RowFromPoint(Point point)
     {
-        foreach (var (row, container) in _containers)
+        foreach (var row in _rows)
         {
+            if (_list.ContainerFromItem(row) is not ListViewItem container)
+            {
+                continue;
+            }
+
             var bounds = container.TransformToVisual(this)
                 .TransformBounds(new Rect(0, 0, container.ActualWidth, container.ActualHeight));
             if (bounds.Contains(point))
@@ -229,7 +230,7 @@ public sealed class DetailsFileListView : UserControl
 
     public Rect? RowBounds(FileRow row, UIElement relativeTo)
     {
-        if (!_containers.TryGetValue(row, out var container))
+        if (_list.ContainerFromItem(row) is not ListViewItem container)
         {
             return null;
         }
@@ -238,143 +239,189 @@ public sealed class DetailsFileListView : UserControl
             .TransformBounds(new Rect(0, 0, container.ActualWidth, container.ActualHeight));
     }
 
-    private void OnItemsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    private static DataTemplate CreateItemTemplate()
     {
-        RebuildRows();
+        const string xaml = """
+            <DataTemplate
+                xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                xmlns:local="using:SimpleFile.App">
+                <local:FileRowView Row="{Binding}" />
+            </DataTemplate>
+            """;
+        return (DataTemplate)XamlReader.Load(xaml);
     }
 
-    private void RebuildRows()
+    private static ItemsPanelTemplate CreateItemsPanelTemplate()
     {
-        var selectedPaths = _selectedRows.Select(row => row.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _rows.Clear();
-        _containers.Clear();
-        _rowViews.Clear();
-        _rowsHost.Children.Clear();
+        const string xaml = """
+            <ItemsPanelTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+                <ItemsStackPanel Orientation="Vertical" />
+            </ItemsPanelTemplate>
+            """;
+        return (ItemsPanelTemplate)XamlReader.Load(xaml);
+    }
 
+    private void ApplyContainerStyle()
+    {
+        if (Application.Current.Resources.TryGetValue("SfFileDetailsItemStyle", out var style)
+            && style is Style itemStyle
+            && !ReferenceEquals(_list.ItemContainerStyle, itemStyle))
+        {
+            _list.ItemContainerStyle = itemStyle;
+        }
+    }
+
+    private void OnItemsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        var selectedPaths = SelectedPathSet();
+        ApplyRowsChange(e);
+        RestoreSelectionByPaths(selectedPaths);
+    }
+
+    private void ApplyRowsChange(NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is not null)
+        {
+            var insertIndex = e.NewStartingIndex >= 0 ? e.NewStartingIndex : _rows.Count;
+            foreach (var row in e.NewItems.OfType<FileRow>())
+            {
+                _rows.Insert(Math.Min(insertIndex, _rows.Count), row);
+                insertIndex++;
+            }
+            return;
+        }
+
+        if (e.Action == NotifyCollectionChangedAction.Remove && e.OldItems is not null)
+        {
+            foreach (var row in e.OldItems.OfType<FileRow>())
+            {
+                var index = _rows.FindIndex(candidate => PathRules.PathsEqual(candidate.Path, row.Path));
+                if (index >= 0)
+                {
+                    _rows.RemoveAt(index);
+                }
+            }
+            return;
+        }
+
+        if (e.Action == NotifyCollectionChangedAction.Replace
+            && e.NewItems is not null
+            && e.NewStartingIndex >= 0)
+        {
+            var index = e.NewStartingIndex;
+            foreach (var row in e.NewItems.OfType<FileRow>())
+            {
+                if (index < _rows.Count)
+                {
+                    _rows[index] = row;
+                }
+                else
+                {
+                    _rows.Add(row);
+                }
+
+                index++;
+            }
+            return;
+        }
+
+        RefreshRowsFromItemsSource();
+    }
+
+    private void RefreshRowsFromItemsSource()
+    {
+        _rows.Clear();
         if (_itemsSource is not null)
         {
-            foreach (var row in _itemsSource.OfType<FileRow>())
-            {
-                _rows.Add(row);
-                AddRow(row);
-            }
+            _rows.AddRange(_itemsSource.OfType<FileRow>());
         }
+    }
+
+    private void RestoreSelectionByPaths(HashSet<string> selectedPaths)
+    {
+        if (selectedPaths.Count == 0)
+        {
+            _suppressSelectionChanged = true;
+            try
+            {
+                _list.SelectedItems.Clear();
+                _selectedRows.Clear();
+            }
+            finally
+            {
+                _suppressSelectionChanged = false;
+            }
+            return;
+        }
+
+        SetSelection(_rows.Where(row => selectedPaths.Contains(row.Path)));
+    }
+
+    private HashSet<string> SelectedPathSet() =>
+        _selectedRows.Select(row => row.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private void SetSelection(IEnumerable<FileRow> rows)
+    {
+        var next = rows
+            .Where(row => _rows.Any(candidate => PathRules.PathsEqual(candidate.Path, row.Path)))
+            .DistinctBy(row => row.Path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         _suppressSelectionChanged = true;
         try
         {
-            _selectedRows.Clear();
-            _selectedRows.AddRange(_rows.Where(row => selectedPaths.Contains(row.Path)));
+            _list.SelectedItems.Clear();
+            foreach (var row in next)
+            {
+                _list.SelectedItems.Add(row);
+            }
         }
         finally
         {
             _suppressSelectionChanged = false;
         }
 
+        SyncSelectedRowsFromList();
+    }
+
+    private void OnListSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        SyncSelectedRowsFromList();
+        if (_suppressSelectionChanged)
+        {
+            return;
+        }
+
+        SelectionChanged?.Invoke(
+            this,
+            new DetailsFileSelectionChangedEventArgs(
+                e.AddedItems.OfType<FileRow>().ToArray(),
+                e.RemovedItems.OfType<FileRow>().ToArray()));
+    }
+
+    private void SyncSelectedRowsFromList()
+    {
+        _selectedRows.Clear();
+        _selectedRows.AddRange(_list.SelectedItems.OfType<FileRow>());
         _anchorIndex = _selectedRows.Count > 0 ? _rows.IndexOf(_selectedRows[^1]) : -1;
-        RefreshSelectionVisuals();
     }
 
-    private void AddRow(FileRow row)
+    private void OnListDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        var rowView = new FileRowView { Row = row };
-        ApplyRowLayout(rowView);
-        rowView.ContextRequested += (_, args) => RaiseContextRequested(row, rowView, args);
-
-        var container = new Border
-        {
-            Child = rowView,
-            Tag = row,
-            MinHeight = 30,
-            Width = _viewportWidth,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Background = TransparentBrush(),
-            CanDrag = true,
-        };
-        container.PointerPressed += OnRowPointerPressed;
-        container.DoubleTapped += OnRowDoubleTapped;
-        container.RightTapped += OnRowRightTapped;
-        container.DragStarting += OnRowDragStarting;
-        container.DropCompleted += (_, _) => RowsDragCompleted?.Invoke(this, EventArgs.Empty);
-        _rowViews[row] = rowView;
-        _containers[row] = container;
-        _rowsHost.Children.Add(container);
-    }
-
-    private void ApplyRowLayout(FileRowView rowView)
-    {
-        rowView.Width = _viewportWidth;
-        rowView.HorizontalAlignment = HorizontalAlignment.Left;
-        rowView.ApplyDetailsPresentation(_columns, _iconSize, _horizontalOffset);
-    }
-
-    private void OnRowPointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { Tag: FileRow row })
+        var row = RowFromSource(e.OriginalSource) ?? SelectedRow;
+        if (row is null)
         {
             return;
         }
 
-        var props = e.GetCurrentPoint(this).Properties;
-        if (!props.IsLeftButtonPressed)
-        {
-            return;
-        }
-
-        Focus(FocusState.Pointer);
-        SelectFromPointer(row, e.KeyModifiers);
+        RowInvoked?.Invoke(this, new DetailsFileRowEventArgs(row));
         e.Handled = true;
     }
 
-    private void SelectFromPointer(FileRow row, VirtualKeyModifiers modifiers)
+    private void OnListRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
-        var index = _rows.IndexOf(row);
-        if (index < 0)
-        {
-            return;
-        }
-
-        if (modifiers.HasFlag(VirtualKeyModifiers.Shift) && _anchorIndex >= 0)
-        {
-            var start = Math.Min(_anchorIndex, index);
-            var end = Math.Max(_anchorIndex, index);
-            SetSelection(_rows.Skip(start).Take(end - start + 1), notify: true);
-            return;
-        }
-
-        _anchorIndex = index;
-        if (modifiers.HasFlag(VirtualKeyModifiers.Control))
-        {
-            var next = _selectedRows.ToList();
-            var existing = next.FindIndex(selected => PathRules.PathsEqual(selected.Path, row.Path));
-            if (existing >= 0)
-            {
-                next.RemoveAt(existing);
-            }
-            else
-            {
-                next.Add(row);
-            }
-
-            SetSelection(next, notify: true);
-            return;
-        }
-
-        SetSelection([row], notify: true);
-    }
-
-    private void OnRowDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: FileRow row })
-        {
-            RowInvoked?.Invoke(this, new DetailsFileRowEventArgs(row));
-            e.Handled = true;
-        }
-    }
-
-    private void OnRowRightTapped(object sender, RightTappedRoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { Tag: FileRow row } element)
+        var row = RowFromSource(e.OriginalSource);
+        if (row is null)
         {
             return;
         }
@@ -382,22 +429,28 @@ public sealed class DetailsFileListView : UserControl
         Focus(FocusState.Pointer);
         if (!ContainsSelection(row))
         {
-            _anchorIndex = _rows.IndexOf(row);
-            SetSelection([row], notify: true);
+            SetSelection([row]);
         }
 
-        var position = e.GetPosition(this);
-        RowContextRequested?.Invoke(this, new DetailsFileRowContextEventArgs(row, position, element));
+        var anchor = AnchorForRow(row) ?? _list;
+        RowContextRequested?.Invoke(
+            this,
+            new DetailsFileRowContextEventArgs(row, e.GetPosition(this), anchor));
         e.Handled = true;
     }
 
-    private void RaiseContextRequested(FileRow row, FrameworkElement anchor, ContextRequestedEventArgs e)
+    private void OnListContextRequested(UIElement sender, ContextRequestedEventArgs e)
     {
+        var row = RowFromSource(e.OriginalSource) ?? SelectedRow;
+        if (row is null)
+        {
+            return;
+        }
+
         Focus(FocusState.Programmatic);
         if (!ContainsSelection(row))
         {
-            _anchorIndex = _rows.IndexOf(row);
-            SetSelection([row], notify: true);
+            SetSelection([row]);
         }
 
         Point? position = null;
@@ -406,107 +459,121 @@ public sealed class DetailsFileListView : UserControl
             position = requestPosition;
         }
 
-        RowContextRequested?.Invoke(this, new DetailsFileRowContextEventArgs(row, position, anchor));
+        RowContextRequested?.Invoke(
+            this,
+            new DetailsFileRowContextEventArgs(row, position, AnchorForRow(row) ?? _list));
         e.Handled = true;
     }
 
-    private void OnRowDragStarting(UIElement sender, DragStartingEventArgs args)
+    private void OnListDragItemsStarting(object sender, DragItemsStartingEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: FileRow row } && !ContainsSelection(row))
+        var rows = e.Items.OfType<FileRow>().ToArray();
+        if (rows.Length == 0)
         {
-            SetSelection([row], notify: true);
+            rows = SelectedRows.ToArray();
         }
 
-        var selected = SelectedRows;
-        var eventArgs = new DetailsFileRowsDragStartingEventArgs(selected, args.Data);
+        var eventArgs = new DetailsFileRowsDragStartingEventArgs(rows, e.Data);
         RowsDragStarting?.Invoke(this, eventArgs);
-        args.Cancel = eventArgs.Cancel;
+        e.Cancel = eventArgs.Cancel;
     }
 
-    private void OnKeyDown(object sender, KeyRoutedEventArgs e)
+    private void OnListContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
-        if (_rows.Count == 0)
+        if (args.ItemContainer is not ListViewItem item)
         {
             return;
         }
 
-        var selectedIndex = SelectedRow is { } selected ? _rows.IndexOf(selected) : -1;
-        var nextIndex = e.Key switch
+        item.Width = _viewportWidth;
+        item.MinWidth = 0;
+        item.HorizontalAlignment = HorizontalAlignment.Left;
+        if (FindDescendant<FileRowView>(item) is { } rowView)
         {
-            VirtualKey.Up => Math.Max(0, selectedIndex <= 0 ? 0 : selectedIndex - 1),
-            VirtualKey.Down => Math.Min(_rows.Count - 1, selectedIndex < 0 ? 0 : selectedIndex + 1),
-            VirtualKey.Home => 0,
-            VirtualKey.End => _rows.Count - 1,
-            _ => -1,
-        };
-        if (nextIndex < 0)
-        {
-            return;
+            rowView.Width = _viewportWidth;
+            rowView.ApplyDetailsPresentation(_columns, _iconSize, _horizontalOffset);
         }
-
-        e.Handled = true;
-        var next = _rows[nextIndex];
-        if (IsKeyDown(VirtualKey.Shift) && _anchorIndex >= 0)
-        {
-            var start = Math.Min(_anchorIndex, nextIndex);
-            var end = Math.Max(_anchorIndex, nextIndex);
-            SetSelection(_rows.Skip(start).Take(end - start + 1), notify: true);
-        }
-        else
-        {
-            _anchorIndex = nextIndex;
-            SetSelection([next], notify: true);
-        }
-
-        BringRowIntoView(next);
     }
 
-    private void BringRowIntoView(FileRow row)
+    private void UpdateRealizedContainers()
     {
-        if (_containers.TryGetValue(row, out var container))
+        foreach (var row in _rows)
         {
-            container.StartBringIntoView();
+            if (_list.ContainerFromItem(row) is ListViewItem item)
+            {
+                item.Width = _viewportWidth;
+                item.MinWidth = 0;
+                if (FindDescendant<FileRowView>(item) is { } rowView)
+                {
+                    rowView.Width = _viewportWidth;
+                    rowView.ApplyDetailsPresentation(_columns, _iconSize, _horizontalOffset);
+                }
+            }
         }
     }
 
-    private void SetSelection(IEnumerable<FileRow> rows, bool notify)
+    private FileRow? RowFromSource(object? source)
     {
-        var next = rows
-            .Where(row => _rows.Any(candidate => PathRules.PathsEqual(candidate.Path, row.Path)))
-            .DistinctBy(row => row.Path, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        var added = next
-            .Where(row => !_selectedRows.Any(selected => PathRules.PathsEqual(selected.Path, row.Path)))
-            .ToArray();
-        var removed = _selectedRows
-            .Where(row => !next.Any(selected => PathRules.PathsEqual(selected.Path, row.Path)))
-            .ToArray();
-        if (added.Length == 0 && removed.Length == 0)
+        if (source is not DependencyObject dependencyObject)
         {
-            return;
+            return null;
         }
 
-        _selectedRows.Clear();
-        _selectedRows.AddRange(next);
-        RefreshSelectionVisuals();
-        if (notify && !_suppressSelectionChanged)
+        if (source is FrameworkElement { DataContext: FileRow row })
         {
-            SelectionChanged?.Invoke(this, new DetailsFileSelectionChangedEventArgs(added, removed));
+            return row;
         }
+
+        if (FindAncestor<FileRowView>(dependencyObject) is { Row: { } rowViewRow })
+        {
+            return rowViewRow;
+        }
+
+        if (FindAncestor<ListViewItem>(dependencyObject) is { Content: FileRow itemRow })
+        {
+            return itemRow;
+        }
+
+        return null;
     }
 
-    private void RefreshSelectionVisuals()
+    private FrameworkElement? AnchorForRow(FileRow row) =>
+        _list.ContainerFromItem(row) as FrameworkElement;
+
+    private static T? FindAncestor<T>(DependencyObject start) where T : DependencyObject
     {
-        foreach (var (row, container) in _containers)
+        var current = start;
+        while (current is not null)
         {
-            container.Background = ContainsSelection(row)
-                ? ThemeResourceLookup.Brush(this, "SfBgSelectedBrush") ?? TransparentBrush()
-                : TransparentBrush();
+            if (current is T match)
+            {
+                return match;
+            }
+
+            current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current);
         }
+
+        return null;
     }
 
-    private static bool IsKeyDown(VirtualKey key) =>
-        (InputKeyboardSource.GetKeyStateForCurrentThread(key) & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
+    private static T? FindDescendant<T>(DependencyObject start) where T : DependencyObject
+    {
+        var count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(start);
+        for (var index = 0; index < count; index++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(start, index);
+            if (child is T match)
+            {
+                return match;
+            }
 
-    private static SolidColorBrush TransparentBrush() => new(Colors.Transparent);
+            var nested = FindDescendant<T>(child);
+            if (nested is not null)
+            {
+                return nested;
+            }
+        }
+
+        return null;
+    }
 }

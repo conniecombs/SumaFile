@@ -272,10 +272,52 @@ public sealed partial class MainWindow
 
         _columnEnrichmentSignature = signature;
         _columnEnrichmentCts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _columnEnrichmentCts = cts;
+        _columnEnrichmentTimer?.Stop();
         var token = Interlocked.Increment(ref _columnEnrichmentToken);
-        _ = EnrichColumnsAsync(panes, needsSizes, token, cts);
+        QueueColumnEnrichmentTimer(panes, needsSizes, token);
+    }
+
+    private void QueueColumnEnrichmentTimer(IReadOnlyList<PaneId> panes, bool needsSizes, int token)
+    {
+        _pendingColumnEnrichmentPanes = panes;
+        _pendingColumnEnrichmentNeedsSizes = needsSizes;
+        _pendingColumnEnrichmentToken = token;
+        var timer = _columnEnrichmentTimer ??= CreateColumnEnrichmentTimer();
+        timer.Stop();
+        timer.Start();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer CreateColumnEnrichmentTimer()
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(ColumnEnrichmentIdleDelayMilliseconds);
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            var cts = _columnEnrichmentCts;
+            if (cts is null || cts.IsCancellationRequested)
+            {
+                cts = new CancellationTokenSource();
+                _columnEnrichmentCts = cts;
+            }
+
+            _ = EnrichColumnsAsync(
+                _pendingColumnEnrichmentPanes,
+                _pendingColumnEnrichmentNeedsSizes,
+                _pendingColumnEnrichmentToken,
+                cts);
+        };
+        return timer;
+    }
+
+    private void CancelColumnEnrichment()
+    {
+        _columnEnrichmentTimer?.Stop();
+        _columnEnrichmentCts?.Cancel();
+        _columnEnrichmentSignature = null;
+        _pendingColumnEnrichmentPanes = [];
+        _pendingColumnEnrichmentNeedsSizes = false;
+        _pendingColumnEnrichmentToken = 0;
     }
 
     private string ColumnEnrichmentSignatureFor(PaneId pane)

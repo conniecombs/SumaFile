@@ -30,6 +30,26 @@ public sealed record TransferProgressDisplay(
 
 public static class TransferProgressFormatter
 {
+    public static string CompletionReceipt(bool move, int itemCount, string? destination)
+    {
+        var verb = move ? "Moved" : "Copied";
+        var noun = itemCount == 1 ? "item" : "items";
+        var receipt = $"{verb} {itemCount} {noun}";
+        return string.IsNullOrWhiteSpace(destination)
+            ? receipt
+            : $"{receipt} to {destination}";
+    }
+
+    public static string SkippedReceipt(bool move, int itemCount, string? destination)
+    {
+        var verb = move ? "Move" : "Copy";
+        var noun = itemCount == 1 ? "item" : "items";
+        var receipt = $"{verb} skipped for {itemCount} {noun}";
+        return string.IsNullOrWhiteSpace(destination)
+            ? receipt
+            : $"{receipt} to {destination}";
+    }
+
     public static TransferProgressDisplay Format(
         TransferProgressContext context,
         ProgressUpdate update,

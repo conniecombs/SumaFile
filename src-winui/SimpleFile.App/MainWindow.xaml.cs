@@ -20,9 +20,7 @@ namespace SimpleFile.App;
 public sealed partial class MainWindow : Window
 {
     private const int WorkspaceSyncCoalesceMilliseconds = 75;
-    private const int StartupDriveRefreshDelayMilliseconds = 5000;
-    private const int StartupDriveRefreshBusyRetryMilliseconds = 2000;
-    private const int StartupDriveRefreshBusyRetryLimit = 3;
+    private const int ColumnEnrichmentIdleDelayMilliseconds = 650;
 
     private BackendSession? _backend;
     private ExplorerWorkspace? _workspace;
@@ -34,6 +32,7 @@ public sealed partial class MainWindow : Window
     private ToolbarViewModel? _toolbar;
     private bool _quickAccessCollapsed;
     private bool _myPcCollapsed;
+    private bool _tagsCollapsed;
     private bool _editingPrimaryPath;
     private bool _editingSecondaryPath;
     private bool _reconnectDialogOpen;
@@ -61,10 +60,14 @@ public sealed partial class MainWindow : Window
     private bool _workspaceSyncPending;
     private bool _workspaceSyncTimerRunning;
     private CancellationTokenSource? _startupNavigationCts;
-    private CancellationTokenSource? _startupDriveRefreshCts;
     private readonly Dictionary<int, Style> _tileItemStyles = new();
+    private ElementTheme? _appliedTheme;
     private string? _columnEnrichmentSignature;
     private CancellationTokenSource? _columnEnrichmentCts;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _columnEnrichmentTimer;
+    private IReadOnlyList<PaneId> _pendingColumnEnrichmentPanes = [];
+    private bool _pendingColumnEnrichmentNeedsSizes;
+    private int _pendingColumnEnrichmentToken;
     private int _columnEnrichmentToken;
     private bool _acceptingPathSuggestion;
     private int _pathLostFocusToken;
@@ -228,7 +231,6 @@ public sealed partial class MainWindow : Window
             ApplyColumnWidths();
             SyncFromWorkspace();
             timer.Mark("first-sync");
-            QueueStartupDriveRefresh(_workspace);
             timer.Mark("ready");
             QueueDeferredStartupNavigation(_workspace);
         }
@@ -248,14 +250,6 @@ public sealed partial class MainWindow : Window
                     + "or set SIMPLEFILE_SERVICE_PATH to simplefile-service.exe.",
                 InfoBarSeverity.Error);
         }
-    }
-
-    private void QueueStartupDriveRefresh(ExplorerWorkspace workspace)
-    {
-        CancelStartupDriveRefresh();
-        var cts = new CancellationTokenSource();
-        _startupDriveRefreshCts = cts;
-        _ = RefreshStartupDrivesAsync(workspace, cts);
     }
 
     private void QueueDeferredStartupNavigation(ExplorerWorkspace workspace)
@@ -291,65 +285,6 @@ public sealed partial class MainWindow : Window
             if (ReferenceEquals(_startupNavigationCts, cts))
             {
                 _startupNavigationCts = null;
-            }
-
-            cts.Dispose();
-        }
-    }
-
-    private async Task RefreshStartupDrivesAsync(ExplorerWorkspace workspace, CancellationTokenSource cts)
-    {
-        var timer = new StartupTimer("MainWindow.StartupDriveRefresh");
-        timer.Mark("queued");
-        try
-        {
-            var cancellationToken = cts.Token;
-            await Task.Delay(TimeSpan.FromMilliseconds(StartupDriveRefreshDelayMilliseconds), cancellationToken);
-            if (!ReferenceEquals(_workspace, workspace))
-            {
-                timer.Mark("abandoned");
-                return;
-            }
-
-            if (!workspace.Drives.Any(drive => DrivePresentation.Status(drive) == "unknown"))
-            {
-                timer.Mark("skipped");
-                return;
-            }
-
-            for (var attempt = 0; attempt < StartupDriveRefreshBusyRetryLimit && WorkspaceHasListingInProgress(workspace); attempt++)
-            {
-                timer.Mark("postponed-listing", $"attempt={attempt + 1}");
-                await Task.Delay(TimeSpan.FromMilliseconds(StartupDriveRefreshBusyRetryMilliseconds), cancellationToken);
-                if (!ReferenceEquals(_workspace, workspace))
-                {
-                    timer.Mark("abandoned");
-                    return;
-                }
-            }
-
-            if (WorkspaceHasListingInProgress(workspace))
-            {
-                timer.Mark("skipped-busy");
-                return;
-            }
-
-            await workspace.RefreshDrivesAsync(quiet: true, cancellationToken);
-            timer.Mark("refreshed", $"count={workspace.Drives.Count}");
-        }
-        catch (OperationCanceledException)
-        {
-            timer.Mark("cancelled");
-        }
-        catch (Exception exception)
-        {
-            timer.Mark("failed", exception.Message);
-        }
-        finally
-        {
-            if (ReferenceEquals(_startupDriveRefreshCts, cts))
-            {
-                _startupDriveRefreshCts = null;
             }
 
             cts.Dispose();
@@ -443,7 +378,7 @@ public sealed partial class MainWindow : Window
 
             QueueWatchActiveDirectory();
             await _workspace.RefreshDrivesAsync();
-            await _workspace.RefreshAsync();
+            await _workspace.RefreshAffectedPanesAsync(VisiblePanePaths(_workspace));
             ShowMessage("IPC service reconnected", "The background service is running again.", InfoBarSeverity.Success);
         }
         catch (OperationCanceledException)
@@ -557,12 +492,6 @@ public sealed partial class MainWindow : Window
         _workspaceSyncTimerRunning = false;
     }
 
-    private void CancelStartupDriveRefresh()
-    {
-        _startupDriveRefreshCts?.Cancel();
-        _startupDriveRefreshCts = null;
-    }
-
     private void CancelStartupNavigation()
     {
         _startupNavigationCts?.Cancel();
@@ -621,6 +550,7 @@ public sealed partial class MainWindow : Window
 
         SetExpandGlyph(QuickAccessCollapseButton, _quickAccessCollapsed);
         SetExpandGlyph(MyPcCollapseButton, _myPcCollapsed);
+        SetExpandGlyph(TagsCollapseButton, _tagsCollapsed);
         RefreshSmartFolders();
         RefreshTags();
         BindItemsSource(FolderTreeList, _workspace.FolderTreeRows);
@@ -1290,8 +1220,8 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            if (!PathRules.PathContains(_workspace.Active.Path, change.Path)
-                && !string.Equals(_workspace.Active.Path, _watchedPath, StringComparison.OrdinalIgnoreCase))
+            var affectedPaths = FileChangeAffectedPaths(change.Path);
+            if (_workspace.AffectedVisiblePanes(affectedPaths).Count == 0)
             {
                 return;
             }
@@ -1300,11 +1230,24 @@ public sealed partial class MainWindow : Window
             SetStatusText(string.IsNullOrEmpty(name)
                 ? $"{change.Kind}: {change.Path}"
                 : $"{change.Kind}: {name}");
-            ScheduleInPlaceRefresh();
+            ScheduleInPlaceRefresh(affectedPaths);
         });
     }
 
-    private async void ScheduleInPlaceRefresh()
+    private static IReadOnlyList<string> FileChangeAffectedPaths(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return [];
+        }
+
+        var parent = PathRules.GetParentPath(path);
+        return string.IsNullOrWhiteSpace(parent)
+            ? [path]
+            : [path, parent];
+    }
+
+    private async void ScheduleInPlaceRefresh(IReadOnlyList<string> affectedPaths)
     {
         _folderRefreshCts?.Cancel();
         var cts = new CancellationTokenSource();
@@ -1319,7 +1262,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            await _workspace.RefreshAsync(cancellationToken);
+            await _workspace.RefreshAffectedPanesAsync(affectedPaths, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -1362,8 +1305,8 @@ public sealed partial class MainWindow : Window
         _paneSizeColumnRefreshTimer?.Stop();
         _paneSizeColumnRefreshTimer = null;
         StopWorkspaceSyncTimer();
+        CancelColumnEnrichment();
         CancelStartupNavigation();
-        CancelStartupDriveRefresh();
         Interlocked.Increment(ref _columnEnrichmentToken);
         _columnEnrichmentCts?.Cancel();
         _columnEnrichmentCts = null;
@@ -1377,7 +1320,6 @@ public sealed partial class MainWindow : Window
     {
         StopWorkspaceSyncTimer();
         CancelStartupNavigation();
-        CancelStartupDriveRefresh();
         _watchTargetPath = null;
         _watchedPath = null;
 

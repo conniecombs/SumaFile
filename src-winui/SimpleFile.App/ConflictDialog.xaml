@@ -6,10 +6,13 @@
     PrimaryButtonText="Replace"
     SecondaryButtonText="Skip"
     CloseButtonText="Cancel"
-    DefaultButton="Secondary">
+    DefaultButton="Close">
     <StackPanel Spacing="12">
+        <TextBlock x:Name="OperationSummary" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock x:Name="DestinationSummary" TextWrapping="Wrap" />
         <TextBlock x:Name="ConflictMessage" TextWrapping="Wrap" />
+        <TextBlock x:Name="ChoiceHint" TextWrapping="Wrap" />
         <CheckBox x:Name="ApplyToAll" Content="Apply to all remaining conflicts" />
-        <Button x:Name="KeepBothButton" Content="Keep Both" HorizontalAlignment="Stretch" />
+        <Button x:Name="KeepBothButton" Content="Keep both" HorizontalAlignment="Stretch" />
     </StackPanel>
 </ContentDialog>

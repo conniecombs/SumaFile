@@ -11,14 +11,17 @@ internal sealed class FakeExplorerBackend : IExplorerBackend
     public Dictionary<string, DirectoryListing> Listings { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, Task<DirectoryListing>> Pending { get; } = new(StringComparer.OrdinalIgnoreCase);
     public bool EmitChunks { get; set; }
+    public int ChunkSize { get; set; }
     public bool ThrowTooLargeAfterChunks { get; set; }
     public int GetHomeDirCalls { get; private set; }
     public int ListDirectoryCalls { get; private set; }
     public int ListDrivesCalls { get; private set; }
     public int ListDrivesLightCalls { get; private set; }
+    public int ListDriveCalls { get; private set; }
     public ListDirectoryOptions? LastListDirectoryOptions { get; private set; }
     public Func<CancellationToken, Task<IReadOnlyList<DriveInfo>>>? ListDrivesHandler { get; set; }
     public Func<CancellationToken, Task<IReadOnlyList<DriveInfo>>>? ListDrivesLightHandler { get; set; }
+    public Func<string, CancellationToken, Task<IReadOnlyList<DriveInfo>>>? ListDriveHandler { get; set; }
     public Func<string, CancellationToken, Task<DirectoryListing>?>? ListDirectoryHandler { get; set; }
 
     public string? CachedHomeDir => Home;
@@ -92,6 +95,15 @@ internal sealed class FakeExplorerBackend : IExplorerBackend
             ?? Task.FromResult<IReadOnlyList<DriveInfo>>(Drives);
     }
 
+    public Task<IReadOnlyList<DriveInfo>> ListDriveAsync(string path, CancellationToken cancellationToken = default)
+    {
+        ListDriveCalls += 1;
+        return ListDriveHandler?.Invoke(path, cancellationToken)
+            ?? Task.FromResult<IReadOnlyList<DriveInfo>>(Drives
+                .Where(drive => SimpleFile.Core.PathRules.PathsEqual(drive.Path, path))
+                .ToArray());
+    }
+
     public async Task<DirectoryListing> ListDirectoryAsync(
         string path,
         Action<DirectoryListingChunk>? onChunk = null,
@@ -119,13 +131,24 @@ internal sealed class FakeExplorerBackend : IExplorerBackend
 
         if (EmitChunks || ThrowTooLargeAfterChunks)
         {
-            onChunk?.Invoke(new DirectoryListingChunk
+            var chunkSize = ChunkSize > 0 ? ChunkSize : Math.Max(1, listing.Entries.Count);
+            for (var index = 0; index < listing.Entries.Count || index == 0; index += chunkSize)
             {
-                Path = listing.Path,
-                Entries = listing.Entries,
-                ChunkIndex = 0,
-                Done = true,
-            });
+                var entries = listing.Entries.Skip(index).Take(chunkSize).ToList();
+                var done = index + chunkSize >= listing.Entries.Count;
+                onChunk?.Invoke(new DirectoryListingChunk
+                {
+                    Path = listing.Path,
+                    Entries = entries,
+                    ChunkIndex = (uint)(index / chunkSize),
+                    Done = done,
+                });
+
+                if (done)
+                {
+                    break;
+                }
+            }
         }
 
         if (ThrowTooLargeAfterChunks)

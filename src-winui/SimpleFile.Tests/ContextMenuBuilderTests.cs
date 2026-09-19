@@ -54,6 +54,35 @@ public class ContextMenuBuilderTests
         Assert.Contains(archive.Children, child => child.Id == "ctx-extract-folder" && child.Label.Contains("pack/", StringComparison.Ordinal));
         Assert.Contains(selected, entry => entry.Id == "ctx-info");
     }
+
+    [Fact]
+    public void ContextMenu_SendToLabelsNameOtherPaneDestination()
+    {
+        var fromPrimary = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            SelectionCount = 2,
+            DualPaneEnabled = true,
+            MenuPane = PaneId.Primary,
+            OtherPaneHasPath = true,
+            OtherPanePath = @"D:\Sorted",
+        });
+        var primarySendTo = Assert.Single(fromPrimary, entry => entry.Id == "ctx-send-to-menu");
+        Assert.Contains(primarySendTo.Children, entry => entry.Id == "ctx-copy-to-pane" && entry.Label == @"Copy to right pane: D:\Sorted");
+        Assert.Contains(primarySendTo.Children, entry => entry.Id == "ctx-move-to-pane" && entry.Label == @"Move to right pane: D:\Sorted");
+
+        var fromSecondary = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            SelectionCount = 1,
+            DualPaneEnabled = true,
+            MenuPane = PaneId.Secondary,
+            OtherPaneHasPath = true,
+            OtherPanePath = @"R:\Inbox",
+        });
+        var secondarySendTo = Assert.Single(fromSecondary, entry => entry.Id == "ctx-send-to-menu");
+        Assert.Contains(secondarySendTo.Children, entry => entry.Id == "ctx-copy-to-pane" && entry.Label == @"Copy to left pane: R:\Inbox");
+        Assert.Contains(secondarySendTo.Children, entry => entry.Id == "ctx-move-to-pane" && entry.Label == @"Move to left pane: R:\Inbox");
+    }
+
     [Fact]
     public void ContextMenu_UsesCatalogIconsAndKeepsSubmenuChildrenQuiet()
     {
@@ -403,6 +432,23 @@ public class ContextMenuBuilderTests
         Assert.Equal("Copy", overflowed[1].Label);
         Assert.Equal("Ctrl+C", overflowed[1].Shortcut);
         Assert.Equal("overflow-settings", overflowed[2].Id);
+    }
+
+    [Fact]
+    public void PaneMoreMenu_OverflowedCrossPaneCommandsNameDestination()
+    {
+        var overflowed = ContextMenuBuilder.BuildPaneMoreMenu(new ContextMenuRequest
+        {
+            DualPaneEnabled = true,
+            MenuPane = PaneId.Primary,
+            OtherPaneHasPath = true,
+            OtherPanePath = @"D:\Sorted",
+            OverflowedToolbarIds = ["copy-to-pane", "move-to-pane"],
+            ToolbarActionOrder = ["copy-to-pane", "move-to-pane"],
+        });
+
+        Assert.Contains(overflowed, entry => entry.Id == "overflow-copy-to-pane" && entry.Label == @"Copy to right pane: D:\Sorted");
+        Assert.Contains(overflowed, entry => entry.Id == "overflow-move-to-pane" && entry.Label == @"Move to right pane: D:\Sorted");
     }
 
     private static IReadOnlyList<ContextMenuEntry> Flatten(IReadOnlyList<ContextMenuEntry> entries)

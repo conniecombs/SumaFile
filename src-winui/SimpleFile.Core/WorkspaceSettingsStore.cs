@@ -46,10 +46,12 @@ internal static class WorkspaceSettingsStore
         "sidebar.showBookmarks",
         "sidebar.showRecent",
         "sidebar.showSmartFolders",
+        "sidebar.showTags",
         "sidebar.visible",
         "sidebar.width",
         "sidebar.quickAccessCollapsed",
         "sidebar.myPcCollapsed",
+        "sidebar.tagsCollapsed",
         "thumbnailCacheMaxMb",
         "thumbnailCachePath",
         BookmarksSettingsKey,
@@ -105,11 +107,13 @@ internal static class WorkspaceSettingsStore
         settings.ShowBookmarks = ReadBoolSetting(values, "sidebar.showBookmarks", true);
         settings.ShowRecentLocations = ReadBoolSetting(values, "sidebar.showRecent", true);
         settings.ShowSmartFolders = ReadBoolSetting(values, "sidebar.showSmartFolders", true);
+        settings.ShowTags = ReadBoolSetting(values, "sidebar.showTags", true);
         settings.SidebarVisible = ReadBoolSetting(values, "sidebar.visible", true);
         settings.SidebarWidth = UiSettings.NormalizeSidebarWidth(
             ReadDoubleSetting(values, "sidebar.width", UiSettings.SidebarDefaultWidth));
         settings.QuickAccessCollapsed = ReadBoolSetting(values, "sidebar.quickAccessCollapsed", false);
         settings.MyPcCollapsed = ReadBoolSetting(values, "sidebar.myPcCollapsed", false);
+        settings.TagsCollapsed = ReadBoolSetting(values, "sidebar.tagsCollapsed", false);
         settings.ThumbnailCacheMaxMb = ReadUIntSetting(values, "thumbnailCacheMaxMb", 500);
         settings.ThumbnailCachePath = ReadSetting(values, "thumbnailCachePath") ?? "";
         var bookmarks = ReadBookmarks(values);
@@ -194,10 +198,12 @@ internal static class WorkspaceSettingsStore
         await fileOps.SetSettingAsync("sidebar.showBookmarks", settings.ShowBookmarks ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.showRecent", settings.ShowRecentLocations ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.showSmartFolders", settings.ShowSmartFolders ? "true" : "false", cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync("sidebar.showTags", settings.ShowTags ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.visible", settings.SidebarVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.width", settings.SidebarWidth.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.quickAccessCollapsed", settings.QuickAccessCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.myPcCollapsed", settings.MyPcCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync("sidebar.tagsCollapsed", settings.TagsCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("thumbnailCacheMaxMb", settings.ThumbnailCacheMaxMb.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("thumbnailCachePath", settings.ThumbnailCachePath, cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("lastPath", settings.LastPath, cancellationToken).ConfigureAwait(false);

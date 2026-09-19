@@ -22,6 +22,7 @@ public sealed partial class SettingsWindow
     public bool ShowBookmarks => ShowBookmarksSwitch.IsOn;
     public bool ShowRecentLocations => ShowRecentSwitch.IsOn;
     public bool ShowSmartFolders => ShowSmartFoldersSwitch.IsOn;
+    public bool ShowTags => ShowTagsSwitch.IsOn;
     public nint OwnerHwnd { get; set; }
     public Func<Task>? ClearRecentHistoryAction { get; set; }
 
@@ -48,6 +49,7 @@ public sealed partial class SettingsWindow
         settings.ShowBookmarks = ShowBookmarksSwitch.IsOn;
         settings.ShowRecentLocations = ShowRecentSwitch.IsOn;
         settings.ShowSmartFolders = ShowSmartFoldersSwitch.IsOn;
+        settings.ShowTags = ShowTagsSwitch.IsOn;
         settings.EnableGitIntegration = EnableGitSwitch.IsOn;
         settings.ShowFolderSizes = ShowFolderSizesSwitch.IsOn;
         settings.ShortcutOverrides = CurrentShortcutOverrides();
@@ -90,6 +92,7 @@ public sealed partial class SettingsWindow
         ShowBookmarksSwitch.IsOn = settings.ShowBookmarks;
         ShowRecentSwitch.IsOn = settings.ShowRecentLocations;
         ShowSmartFoldersSwitch.IsOn = settings.ShowSmartFolders;
+        ShowTagsSwitch.IsOn = settings.ShowTags;
 
         EnableGitSwitch.IsOn = settings.EnableGitIntegration;
         ShowFolderSizesSwitch.IsOn = settings.ShowFolderSizes;

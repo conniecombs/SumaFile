@@ -11,6 +11,34 @@ public sealed partial class ExplorerWorkspace
         await RefreshDrivesAsync(quiet, cancellationToken, lightweight: false).ConfigureAwait(false);
     }
 
+    public async Task RefreshDriveAsync(
+        string path,
+        bool quiet = false,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var drives = await _backend.ListDriveAsync(path, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_gate)
+            {
+                ApplyDriveLocked(path, drives, quiet);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            lock (_gate)
+            {
+                if (!quiet)
+                {
+                    ErrorMessage = exception.Message;
+                }
+            }
+        }
+
+        RaiseChanged();
+    }
+
     private async Task RefreshDrivesAsync(
         bool quiet,
         CancellationToken cancellationToken,
@@ -74,6 +102,39 @@ public sealed partial class ExplorerWorkspace
             StatusMessage = offline > 0
                 ? $"Drives refreshed · {offline} network mapping{(offline == 1 ? "" : "s")} need attention"
                 : "Drives refreshed";
+            ErrorMessage = null;
+        }
+    }
+
+    private void ApplyDriveLocked(string path, IReadOnlyList<DriveInfo> drives, bool quiet)
+    {
+        var drive = drives.FirstOrDefault(candidate => PathRules.PathsEqual(candidate.Path, path))
+            ?? drives.FirstOrDefault();
+        if (drive is null)
+        {
+            return;
+        }
+
+        var next = _drives.ToList();
+        var existingIndex = next.FindIndex(candidate =>
+            PathRules.PathsEqual(candidate.Path, drive.Path)
+            || PathRules.PathsEqual(candidate.Path, path));
+        if (existingIndex >= 0)
+        {
+            next[existingIndex] = drive;
+        }
+        else
+        {
+            next.Add(drive);
+            next.Sort((left, right) => string.Compare(left.Path, right.Path, StringComparison.OrdinalIgnoreCase));
+        }
+
+        _drives = next;
+        if (!quiet)
+        {
+            StatusMessage = DrivePresentation.IsAvailable(drive)
+                ? $"{drive.Name} refreshed"
+                : drive.StatusDetail ?? $"{drive.Name} is not available";
             ErrorMessage = null;
         }
     }
@@ -177,19 +238,19 @@ public sealed partial class ExplorerWorkspace
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            var refreshNetworkStatus = false;
+            string? refreshDrivePath = null;
             lock (_gate)
             {
                 var drive = DrivePresentation.FindDriveForPath(path, _drives);
                 ErrorMessage = drive is not null && DrivePresentation.IsNetwork(drive)
                     ? (drive.StatusDetail ?? exception.Message)
                     : exception.Message;
-                refreshNetworkStatus = drive is not null && DrivePresentation.IsNetwork(drive);
+                refreshDrivePath = drive is not null && DrivePresentation.IsNetwork(drive) ? drive.Path : null;
             }
 
-            if (refreshNetworkStatus)
+            if (refreshDrivePath is not null)
             {
-                await RefreshDrivesAsync(quiet: true, cancellationToken).ConfigureAwait(false);
+                await RefreshDriveAsync(refreshDrivePath, quiet: true, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -227,6 +288,58 @@ public sealed partial class ExplorerWorkspace
         return RefreshAsync(ActivePane, cancellationToken);
     }
 
+    public async Task RefreshAffectedPanesAsync(
+        IEnumerable<string?> affectedPaths,
+        CancellationToken cancellationToken = default)
+    {
+        foreach (var pane in AffectedVisiblePanes(affectedPaths))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await RefreshAsync(pane, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public IReadOnlyList<PaneId> AffectedVisiblePanes(IEnumerable<string?> affectedPaths)
+    {
+        ArgumentNullException.ThrowIfNull(affectedPaths);
+
+        var paths = affectedPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => path!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (paths.Length == 0)
+        {
+            return [];
+        }
+
+        List<PaneId> panes = [];
+        if (PanePathIsAffected(Primary.Path, paths))
+        {
+            panes.Add(PaneId.Primary);
+        }
+
+        if (DualPaneEnabled && PanePathIsAffected(Secondary.Path, paths))
+        {
+            panes.Add(PaneId.Secondary);
+        }
+
+        return panes;
+    }
+
+    private static bool PanePathIsAffected(string? panePath, IReadOnlyList<string> affectedPaths)
+    {
+        if (string.IsNullOrWhiteSpace(panePath))
+        {
+            return false;
+        }
+
+        return affectedPaths.Any(affectedPath =>
+            PathRules.PathsEqual(panePath, affectedPath)
+            || PathRules.PathContains(panePath, affectedPath)
+            || PathRules.PathContains(affectedPath, panePath));
+    }
+
     public Task NavigateSpecialAsync(string command, CancellationToken cancellationToken = default)
     {
         return NavigateSpecialAsync(command, SidebarTarget, cancellationToken);
@@ -255,7 +368,7 @@ public sealed partial class ExplorerWorkspace
             return;
         }
 
-        await RefreshDrivesAsync(quiet: true, cancellationToken).ConfigureAwait(false);
+        await RefreshDriveAsync(pending.Path, quiet: true, cancellationToken).ConfigureAwait(false);
 
         cancellationToken.ThrowIfCancellationRequested();
         await LoadSmartFoldersAsync(cancellationToken).ConfigureAwait(false);
@@ -457,7 +570,13 @@ public sealed partial class ExplorerWorkspace
         if (drive is not null && PathRules.PathsEqual(drive.Path, path))
         {
             shouldNavigate = true;
-            if (DrivePresentation.IsNetwork(drive) && !DrivePresentation.IsAvailable(drive))
+            if (DrivePresentation.IsNetwork(drive) && DrivePresentation.Status(drive) == "unknown")
+            {
+                await RefreshDriveAsync(drive.Path, quiet: true, cancellationToken).ConfigureAwait(false);
+                drive = DrivePresentation.FindDriveForPath(path, _drives);
+            }
+
+            if (drive is not null && DrivePresentation.IsNetwork(drive) && !DrivePresentation.IsAvailable(drive))
             {
                 PendingReconnect = drive;
                 PendingReconnectPane = target;

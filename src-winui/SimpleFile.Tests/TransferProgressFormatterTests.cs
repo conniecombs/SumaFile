@@ -131,6 +131,23 @@ public class TransferProgressFormatterTests
         Assert.False(display.IsIndeterminate);
         Assert.False(display.FileProgressIsIndeterminate);
     }
+
+    [Fact]
+    public void TransferProgressFormatter_CompletionReceiptIncludesDestinationWhenKnown()
+    {
+        Assert.Equal(@"Copied 3 items to V:\Stuff", TransferProgressFormatter.CompletionReceipt(false, 3, @"V:\Stuff"));
+        Assert.Equal(@"Moved 1 item to R:\Inbox", TransferProgressFormatter.CompletionReceipt(true, 1, @"R:\Inbox"));
+        Assert.Equal("Copied 2 items", TransferProgressFormatter.CompletionReceipt(false, 2, null));
+    }
+
+    [Fact]
+    public void TransferProgressFormatter_SkippedReceiptIncludesDestinationWhenKnown()
+    {
+        Assert.Equal(@"Copy skipped for 3 items to V:\Stuff", TransferProgressFormatter.SkippedReceipt(false, 3, @"V:\Stuff"));
+        Assert.Equal(@"Move skipped for 1 item to R:\Inbox", TransferProgressFormatter.SkippedReceipt(true, 1, @"R:\Inbox"));
+        Assert.Equal("Copy skipped for 2 items", TransferProgressFormatter.SkippedReceipt(false, 2, null));
+    }
+
     [Fact]
     public void TransferProgressFormatter_ErrorWithoutItem_DoesNotShowPreparing()
     {

@@ -38,7 +38,10 @@ internal sealed class PaneNavigator
                             WorkspaceNavigation.ApplyListingChunk(pane, chunk, progressive);
                         }
 
-                        _raiseChanged();
+                        if (ShouldRaiseForChunk(chunk))
+                        {
+                            _raiseChanged();
+                        }
                     },
                     cancellationToken,
                     WorkspaceNavigation.BuildStreamedListingOptions(pane))
@@ -78,7 +81,10 @@ internal sealed class PaneNavigator
                         pane.Entries = [.. progressive];
                     }
 
-                    _raiseChanged();
+                    if (ShouldRaiseForChunk(chunk))
+                    {
+                        _raiseChanged();
+                    }
                 },
                 cancellationToken,
                 WorkspaceNavigation.BuildStreamedListingOptions(pane))
@@ -88,6 +94,9 @@ internal sealed class PaneNavigator
             ? PaneNavigationResult.Completed(listing)
             : PaneNavigationResult.Abandoned();
     }
+
+    private static bool ShouldRaiseForChunk(DirectoryListingChunk chunk) =>
+        chunk.ChunkIndex == 0 || chunk.Done;
 }
 
 internal readonly record struct PaneNavigationResult(

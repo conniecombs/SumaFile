@@ -74,7 +74,7 @@ public sealed partial class ExplorerWorkspace
         cancellationToken.ThrowIfCancellationRequested();
         Undo.PushCreateShortcut(path, name, targetPath, arguments, workingDirectory, iconPath, result, ops);
         SelectPathForRefresh(target, result);
-        await RefreshAsync(target, cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync([path, result], cancellationToken).ConfigureAwait(false);
         MarkPathSelectedAfterRefresh(target, result, $"Created {PathRules.Basename(result)}");
         return result;
     }
@@ -93,7 +93,7 @@ public sealed partial class ExplorerWorkspace
         cancellationToken.ThrowIfCancellationRequested();
         Undo.PushCreate(path, name, result, isDirectory, ops);
         SelectPathForRefresh(target, result);
-        await RefreshAsync(target, cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync([path, result], cancellationToken).ConfigureAwait(false);
         MarkPathSelectedAfterRefresh(target, result, $"Created {PathRules.Basename(result)}");
         return result;
     }
@@ -104,14 +104,14 @@ public sealed partial class ExplorerWorkspace
         var recycleBinPaths = await ops.TrashAsync(selectedPaths, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         Undo.PushTrash(selectedPaths, recycleBinPaths, ops);
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync([.. selectedPaths, .. recycleBinPaths], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken cancellationToken = default)
     {
         var restored = await RequireFileOps().RestoreRecycleBinAsync(paths, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync([.. paths, .. restored], cancellationToken).ConfigureAwait(false);
         return restored;
     }
 
@@ -119,14 +119,14 @@ public sealed partial class ExplorerWorkspace
     {
         await RequireFileOps().EmptyRecycleBinAsync(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync([PathRules.RecycleBinPath], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task DeleteSelectedAsync(string path, CancellationToken cancellationToken = default)
     {
         await RequireFileOps().DeleteAsync(path, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync([path], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<string> RenameSelectedAsync(string path, string newName, CancellationToken cancellationToken = default)
@@ -137,7 +137,7 @@ public sealed partial class ExplorerWorkspace
         cancellationToken.ThrowIfCancellationRequested();
         Undo.PushRename(path, result, ops);
         SelectPathForRefresh(target, result);
-        await RefreshAsync(target, cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync([path, result], cancellationToken).ConfigureAwait(false);
         MarkPathSelectedAfterRefresh(target, result, $"Renamed to {PathRules.Basename(result)}");
         return result;
     }

@@ -597,12 +597,43 @@ public sealed partial class MainWindow
         }
 
         list.SelectedIndex = 0;
+        var statusText = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var sourceText = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.82 };
+        var destinationText = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.82 };
+        void UpdateDetails()
+        {
+            if (list.SelectedItem is not OperationHistoryRow row)
+            {
+                statusText.Text = "";
+                sourceText.Text = "";
+                destinationText.Text = "";
+                return;
+            }
+
+            statusText.Text = row.Display.StatusLabel;
+            sourceText.Text = row.Display.SourceSummary;
+            destinationText.Text = row.Display.DestinationSummary;
+        }
+
+        list.SelectionChanged += (_, _) => UpdateDetails();
+        UpdateDetails();
+        var content = new StackPanel
+        {
+            Spacing = 10,
+            Children =
+            {
+                list,
+                statusText,
+                sourceText,
+                destinationText,
+            },
+        };
 
         var dialog = new ContentDialog
         {
             Title = "Operation history",
-            Content = list,
-            PrimaryButtonText = "Retry",
+            Content = content,
+            PrimaryButtonText = OperationHistoryFormatter.RetrySelectedLabel,
             SecondaryButtonText = workspace.Undo.CanUndo ? "Undo last" : "",
             CloseButtonText = "Close",
             DefaultButton = ContentDialogButton.Primary,

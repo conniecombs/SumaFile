@@ -17,9 +17,11 @@ public sealed partial class MainWindow
         var layout = _workspace?.Settings.CommandSurface ?? CommandSurfaceLayout.CreateDefault();
         layout.Normalize();
         var signature = layout.Signature();
+        var showLabels = layout.ToolbarDisplayMode == ToolbarActionCatalog.IconAndLabelDisplayMode;
         if (string.Equals(_appliedPrimaryToolbarSignature, signature, StringComparison.Ordinal)
             && _primaryToolbarActionElements.Count > 0)
         {
+            RefreshPrimaryToolbarActionChrome(showLabels);
             ApplyPrimaryToolbarOverflow();
             return;
         }
@@ -29,7 +31,6 @@ public sealed partial class MainWindow
         PrimaryActionsHost.Children.Clear();
 
         AddPrimaryToolbarElement(ToolbarOverflowPlanner.Filter, QuickFilterBox);
-        var showLabels = layout.ToolbarDisplayMode == ToolbarActionCatalog.IconAndLabelDisplayMode;
         foreach (var item in layout.PrimaryToolbar)
         {
             if (item.IsSeparator)
@@ -112,7 +113,9 @@ public sealed partial class MainWindow
 
     private void ConfigureToolbarButton(Button button, ToolbarAction action, bool showLabels)
     {
-        button.Content = CreateToolbarButtonContent(action, showLabels);
+        var displayLabel = ToolbarDisplayLabel(action);
+        var tooltipLabel = ToolbarTooltipLabel(action, displayLabel);
+        button.Content = CreateToolbarButtonContent(action, showLabels, displayLabel);
         button.MinWidth = 30;
         button.MinHeight = 30;
         button.Height = 30;
@@ -122,11 +125,11 @@ public sealed partial class MainWindow
         button.Padding = showLabels ? new Thickness(9, 0, 10, 0) : new Thickness(0);
         button.HorizontalContentAlignment = HorizontalAlignment.Center;
         button.VerticalContentAlignment = VerticalAlignment.Center;
-        AutomationProperties.SetName(button, action.Label);
-        ToolTipService.SetToolTip(button, ToolbarTooltip(action));
+        AutomationProperties.SetName(button, tooltipLabel);
+        ToolTipService.SetToolTip(button, ToolbarTooltip(action, tooltipLabel));
     }
 
-    private static object CreateToolbarButtonContent(ToolbarAction action, bool showLabels)
+    private static object CreateToolbarButtonContent(ToolbarAction action, bool showLabels, string displayLabel)
     {
         var icon = new FontIcon
         {
@@ -149,7 +152,7 @@ public sealed partial class MainWindow
                 icon,
                 new TextBlock
                 {
-                    Text = action.Label,
+                    Text = displayLabel,
                     FontSize = 12,
                     TextTrimming = TextTrimming.CharacterEllipsis,
                     MaxWidth = 104,
@@ -157,6 +160,17 @@ public sealed partial class MainWindow
                 },
             },
         };
+    }
+
+    private void RefreshPrimaryToolbarActionChrome(bool showLabels)
+    {
+        foreach (var pair in _primaryToolbarActionElements)
+        {
+            if (pair.Value is Button button && ToolbarActionCatalog.Find(pair.Key) is { } action)
+            {
+                ConfigureToolbarButton(button, action, showLabels);
+            }
+        }
     }
 
     private Border CreateToolbarSeparator()
@@ -172,11 +186,45 @@ public sealed partial class MainWindow
         };
     }
 
-    private static string ToolbarTooltip(ToolbarAction action)
+    private static string ToolbarTooltip(ToolbarAction action, string label)
     {
         return string.IsNullOrWhiteSpace(action.Shortcut)
-            ? action.Label
-            : $"{action.Label} ({action.Shortcut})";
+            ? label
+            : $"{label} ({action.Shortcut})";
+    }
+
+    private string ToolbarDisplayLabel(ToolbarAction action)
+    {
+        var verb = CrossPaneVerb(action);
+        if (verb is null || _workspace?.DualPaneEnabled != true)
+        {
+            return action.Label;
+        }
+
+        return CrossPaneTransferFormatter.CommandLabel(verb, _workspace.OtherPane().Id);
+    }
+
+    private string ToolbarTooltipLabel(ToolbarAction action, string fallback)
+    {
+        var verb = CrossPaneVerb(action);
+        var destination = _workspace?.OtherPanePath();
+        if (verb is null || destination is null || _workspace is null)
+        {
+            return fallback;
+        }
+
+        return CrossPaneTransferFormatter.CommandLabel(verb, _workspace.OtherPane().Id, destination);
+    }
+
+    private static string? CrossPaneVerb(ToolbarAction action)
+    {
+        var commandId = action.CommandId ?? action.Id;
+        return commandId switch
+        {
+            "copy-to-pane" => "Copy",
+            "move-to-pane" => "Move",
+            _ => null,
+        };
     }
 
     private async void OnGeneratedToolbarCommandClick(object sender, RoutedEventArgs e)

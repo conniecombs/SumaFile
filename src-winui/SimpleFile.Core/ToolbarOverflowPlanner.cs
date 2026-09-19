@@ -33,9 +33,14 @@ public static class ToolbarOverflowPlanner
         Search,
         Settings,
         Profiles,
-        DualPane,
         ViewOptions,
         New,
+        "disk-cleanup",
+        "duplicate-checker",
+        "operation-history",
+        "move-to-pane",
+        "copy-to-pane",
+        DualPane,
     ];
 
     public static IReadOnlyList<string> PrimaryHideOrderFor(CommandSurfaceLayout layout)

@@ -26,6 +26,7 @@ public sealed class TransferOperationViewModel : ObservableObject
     private readonly TaskCompletionSource<TransferOperationStatus> _completion =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly string[] _potentialDestinationPaths;
+    private readonly TransferProgressRateTracker _rateTracker;
 
     private TransferOperationStatus _status = TransferOperationStatus.Queued;
     private bool _isWaitingForDestination;
@@ -35,13 +36,16 @@ public sealed class TransferOperationViewModel : ObservableObject
     private string _percentText = "";
     private string _summaryText = "Waiting to start";
     private string _currentItemText = "Preparing transfer";
+    private string _speedText = "";
+    private string _etaText = "";
     private string _errorMessage = "";
 
     internal TransferOperationViewModel(
         bool move,
         string[] sources,
         string destination,
-        TransferOperationRunner runner)
+        TransferOperationRunner runner,
+        Func<DateTimeOffset>? now = null)
     {
         Move = move;
         Sources = [.. sources];
@@ -57,6 +61,7 @@ public sealed class TransferOperationViewModel : ObservableObject
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Select(name => PathRules.JoinPath(destination, name))
             .ToArray();
+        _rateTracker = new TransferProgressRateTracker(now);
     }
 
     public string Id { get; } = Guid.NewGuid().ToString("n");
@@ -137,6 +142,30 @@ public sealed class TransferOperationViewModel : ObservableObject
         private set => SetProperty(ref _currentItemText, value);
     }
 
+    public string SpeedText
+    {
+        get => _speedText;
+        private set
+        {
+            if (SetProperty(ref _speedText, value))
+            {
+                OnPropertyChanged(nameof(StatusDetailText));
+            }
+        }
+    }
+
+    public string EtaText
+    {
+        get => _etaText;
+        private set
+        {
+            if (SetProperty(ref _etaText, value))
+            {
+                OnPropertyChanged(nameof(StatusDetailText));
+            }
+        }
+    }
+
     public string ErrorMessage
     {
         get => _errorMessage;
@@ -177,7 +206,9 @@ public sealed class TransferOperationViewModel : ObservableObject
     public string StatusDetailText =>
         Status == TransferOperationStatus.Failed && !string.IsNullOrWhiteSpace(ErrorMessage)
             ? ErrorMessage
-            : SummaryText;
+            : Status == TransferOperationStatus.Running
+                ? RunningStatusDetailText()
+                : SummaryText;
 
     public bool CanCancel => Status is TransferOperationStatus.Queued or TransferOperationStatus.Running;
 
@@ -224,12 +255,14 @@ public sealed class TransferOperationViewModel : ObservableObject
             ErrorMessage = update.Error;
         }
 
-        var display = TransferProgressFormatter.Format(Context, update, null, null);
+        var display = _rateTracker.Format(Context, update);
         IsIndeterminate = display.IsIndeterminate;
         ProgressPercent = display.ProgressPercent;
         PercentText = display.Percent;
         SummaryText = display.Summary;
         CurrentItemText = display.CurrentItemName;
+        SpeedText = update.Status is "running" or "finalizing" ? display.Speed : "";
+        EtaText = update.Status is "running" or "finalizing" ? display.Eta : "";
     }
 
     internal void MarkQueued(bool waitingForDestination)
@@ -238,6 +271,8 @@ public sealed class TransferOperationViewModel : ObservableObject
         IsWaitingForDestination = waitingForDestination;
         IsIndeterminate = true;
         PercentText = "";
+        SpeedText = "";
+        EtaText = "";
         SummaryText = waitingForDestination
             ? "Waiting for another transfer to finish"
             : "Waiting to start";
@@ -250,6 +285,9 @@ public sealed class TransferOperationViewModel : ObservableObject
         Status = TransferOperationStatus.Running;
         IsIndeterminate = true;
         PercentText = "";
+        SpeedText = "";
+        EtaText = "";
+        _rateTracker.Reset();
         SummaryText = "Starting transfer";
         CurrentItemText = "Preparing transfer";
     }
@@ -266,6 +304,8 @@ public sealed class TransferOperationViewModel : ObservableObject
         Status = TransferOperationStatus.Cancelling;
         IsIndeterminate = true;
         PercentText = "";
+        SpeedText = "";
+        EtaText = "";
         SummaryText = "Stopping transfer safely";
         CurrentItemText = "Cancelling transfer";
     }
@@ -274,6 +314,8 @@ public sealed class TransferOperationViewModel : ObservableObject
     {
         IsWaitingForDestination = false;
         Status = status;
+        SpeedText = "";
+        EtaText = "";
         switch (status)
         {
             case TransferOperationStatus.Completed:
@@ -348,6 +390,22 @@ public sealed class TransferOperationViewModel : ObservableObject
         OnPropertyChanged(nameof(CanCancel));
         OnPropertyChanged(nameof(IsTerminal));
     }
+
+    private string RunningStatusDetailText()
+    {
+        var parts = new List<string> { SummaryText };
+        if (!string.IsNullOrWhiteSpace(SpeedText))
+        {
+            parts.Add(SpeedText);
+        }
+
+        if (!string.IsNullOrWhiteSpace(EtaText))
+        {
+            parts.Add(EtaText);
+        }
+
+        return string.Join(" · ", parts);
+    }
 }
 
 public sealed class TransferManagerViewModel : ObservableObject
@@ -356,10 +414,21 @@ public sealed class TransferManagerViewModel : ObservableObject
 
     private readonly List<TransferOperationViewModel> _queued = [];
     private readonly List<TransferOperationViewModel> _running = [];
+    private readonly Func<DateTimeOffset> _now;
     private int _maxConcurrentTransfers = DefaultMaxConcurrentTransfers;
     private int _activeCount;
     private int _queuedCount;
     private bool _hasTerminalOperations;
+
+    public TransferManagerViewModel()
+        : this(() => DateTimeOffset.UtcNow)
+    {
+    }
+
+    internal TransferManagerViewModel(Func<DateTimeOffset> now)
+    {
+        _now = now ?? throw new ArgumentNullException(nameof(now));
+    }
 
     public ObservableCollection<TransferOperationViewModel> Operations { get; } = [];
 
@@ -431,7 +500,7 @@ public sealed class TransferManagerViewModel : ObservableObject
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
         ArgumentNullException.ThrowIfNull(runner);
 
-        var operation = new TransferOperationViewModel(move, sources, destination, runner);
+        var operation = new TransferOperationViewModel(move, sources, destination, runner, _now);
         Operations.Insert(0, operation);
         _queued.Add(operation);
         PumpQueue();

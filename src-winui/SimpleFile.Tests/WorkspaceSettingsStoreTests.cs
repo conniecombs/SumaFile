@@ -154,10 +154,12 @@ public class WorkspaceSettingsStoreTests
             ShowBookmarks = false,
             ShowRecentLocations = false,
             ShowSmartFolders = false,
+            ShowTags = false,
             SidebarVisible = false,
             SidebarWidth = 900,
             QuickAccessCollapsed = true,
             MyPcCollapsed = true,
+            TagsCollapsed = true,
             LastPath = @"C:\Last",
             ShortcutOverrides = new Dictionary<string, List<string>>(StringComparer.Ordinal)
             {
@@ -241,10 +243,12 @@ public class WorkspaceSettingsStoreTests
         Assert.False(state.Settings.ShowBookmarks);
         Assert.False(state.Settings.ShowRecentLocations);
         Assert.False(state.Settings.ShowSmartFolders);
+        Assert.False(state.Settings.ShowTags);
         Assert.False(state.Settings.SidebarVisible);
         Assert.Equal(UiSettings.SidebarMaxWidth, state.Settings.SidebarWidth);
         Assert.True(state.Settings.QuickAccessCollapsed);
         Assert.True(state.Settings.MyPcCollapsed);
+        Assert.True(state.Settings.TagsCollapsed);
         Assert.Equal(@"C:\Last", state.Settings.LastPath);
         Assert.Equal(["Ctrl+K", "F3"], state.Settings.ShortcutOverrides["search.focus"]);
         Assert.Equal([], state.Settings.ShortcutOverrides["tabs.close"]);

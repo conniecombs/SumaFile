@@ -37,7 +37,7 @@ public sealed partial class SidebarView : UserControl
     public TextBlock SmartFoldersEmpty => SmartFoldersEmptyText;
     public ListView SmartFolders => SmartFoldersList;
     public StackPanel TagsSectionRoot => TagsSection;
-    public Button ClearTagFilter => ClearTagFilterButton;
+    public Button TagsCollapse => TagsCollapseButton;
     public TextBlock TagsEmpty => TagsEmptyText;
     public ListView Tags => TagsList;
 
@@ -60,7 +60,7 @@ public sealed partial class SidebarView : UserControl
     public event RoutedEventHandler? SaveSmartFolder;
     public event ItemClickEventHandler? SmartFolderClicked;
     public event RoutedEventHandler? DeleteSmartFolderClicked;
-    public event RoutedEventHandler? ClearTagFilterClicked;
+    public event RoutedEventHandler? ToggleTags;
     public event ItemClickEventHandler? TagClicked;
 
     private void OnSidebarLeft(object sender, RoutedEventArgs e) => SidebarLeft?.Invoke(sender, e);
@@ -102,7 +102,7 @@ public sealed partial class SidebarView : UserControl
     private void OnDeleteSmartFolderClicked(object sender, RoutedEventArgs e) =>
         DeleteSmartFolderClicked?.Invoke(sender, e);
 
-    private void OnClearTagFilter(object sender, RoutedEventArgs e) => ClearTagFilterClicked?.Invoke(sender, e);
+    private void OnToggleTags(object sender, RoutedEventArgs e) => ToggleTags?.Invoke(sender, e);
 
     private void OnTagClicked(object sender, ItemClickEventArgs e) => TagClicked?.Invoke(sender, e);
 }

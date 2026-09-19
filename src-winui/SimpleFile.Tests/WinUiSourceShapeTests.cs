@@ -95,21 +95,33 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
-    public void MainWindow_DefersStartupDriveRefreshPastFirstInteraction()
+    public void MainWindow_DefersColumnEnrichmentUntilIdle()
     {
         var root = FindRepoRoot();
         var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
 
-        Assert.Contains("StartupDriveRefreshDelayMilliseconds = 5000", mainWindow);
-        Assert.Contains("RefreshStartupDrivesAsync(workspace, cts)", mainWindow);
+        Assert.Contains("ColumnEnrichmentIdleDelayMilliseconds = 650", mainWindow);
+        Assert.Contains("CreateColumnEnrichmentTimer", mainWindow);
+        Assert.Contains("timer.Interval = TimeSpan.FromMilliseconds(ColumnEnrichmentIdleDelayMilliseconds)", mainWindow);
+        Assert.Contains("QueueColumnEnrichmentTimer", mainWindow);
+        Assert.Contains("CancelColumnEnrichment();", mainWindow);
+        Assert.Contains("private void CancelColumnEnrichment()", mainWindow);
+        Assert.DoesNotContain("_ = EnrichColumnsAsync(panes, needsSizes, token, cts);", mainWindow);
+    }
+
+    [Fact]
+    public void MainWindow_RefreshesUnknownDrivesOnlyOnDemand()
+    {
+        var root = FindRepoRoot();
+        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
+
         Assert.Contains("InitializeAsync(deferInitialNavigation: true)", mainWindow);
         Assert.Contains("QueueDeferredStartupNavigation(_workspace)", mainWindow);
         Assert.Contains("RunDeferredStartupNavigationAsync", mainWindow);
-        Assert.Contains("var cancellationToken = cts.Token", mainWindow);
-        Assert.Contains("WorkspaceHasListingInProgress(workspace)", mainWindow);
-        Assert.Contains("postponed-listing", mainWindow);
-        Assert.Contains("skipped-busy", mainWindow);
-        Assert.Contains("workspace.RefreshDrivesAsync(quiet: true, cancellationToken)", mainWindow);
+        Assert.Contains("RefreshDriveAsync(row.Path, quiet: true", mainWindow);
+        Assert.DoesNotContain("QueueStartupDriveRefresh(_workspace)", mainWindow);
+        Assert.DoesNotContain("RefreshStartupDrivesAsync", mainWindow);
+        Assert.DoesNotContain("MainWindow.StartupDriveRefresh", mainWindow);
         Assert.DoesNotContain("Task.Delay(TimeSpan.FromMilliseconds(150))", mainWindow);
     }
 
@@ -142,6 +154,11 @@ public class WinUiSourceShapeTests
         Assert.Contains("FirstCancellableTransfer()", mainWindow);
 
         Assert.Contains("x:Name=\"TagsSection\"", sidebar);
+        Assert.Contains("x:Name=\"TagsCollapseButton\"", sidebar);
+        Assert.DoesNotContain("ClearTagFilterButton", sidebar);
+        Assert.Contains("OnToggleTags", mainWindow);
+        Assert.Contains("_workspace.Settings.TagsCollapsed", mainWindow);
+        Assert.Contains("x:Name=\"ShowTagsSwitch\"", File.ReadAllText(Path.Combine(root, "SimpleFile.App", "SettingsWindow.xaml")));
         Assert.Contains("OnTagClicked", mainWindow);
         Assert.Contains("_workspace.SetTagFilter(tag.Id)", mainWindow);
         Assert.Contains("clear-tag-filter", File.ReadAllText(Path.Combine(root, "SimpleFile.Core", "AppCommandCatalog.cs")));
@@ -203,7 +220,7 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
-    public void DetailsFileList_UsesDeterministicCustomSurfaceForSelectionAndRows()
+    public void DetailsFileList_UsesVirtualizedListViewForSelectionAndRows()
     {
         var root = FindRepoRoot();
         var details = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "DetailsFileListView.cs"));
@@ -211,17 +228,19 @@ public class WinUiSourceShapeTests
         var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
 
         Assert.Contains("public sealed class DetailsFileListView : UserControl", details);
-        Assert.Contains("private readonly StackPanel _rowsHost", details);
-        Assert.Contains("private readonly Dictionary<FileRow, FileRowView> _rowViews", details);
+        Assert.Contains("private readonly ListView _list", details);
+        Assert.Contains("ContainerContentChanging", details);
+        Assert.Contains("ItemsStackPanel", details);
         Assert.Contains("public void ApplyDetailsLayout", details);
-        Assert.Contains("rowView.ApplyDetailsPresentation", details);
         Assert.Contains("public void ApplyDetailsPresentation", fileRowView);
         Assert.Contains("_explicitColumns", fileRowView);
         Assert.Contains("_explicitHorizontalOffset", fileRowView);
-        Assert.Contains("new FileRowView { Row = row }", details);
         Assert.Contains("RowFromPoint(Point point)", details);
         Assert.Contains("SelectedRows => _selectedRows.ToArray()", details);
         Assert.Contains("RowsDragStarting", details);
+        Assert.DoesNotContain("private readonly StackPanel _rowsHost", details);
+        Assert.DoesNotContain("_rowsHost.Children.Clear()", details);
+        Assert.DoesNotContain("new FileRowView { Row = row }", details);
         Assert.Contains("PrimaryDetailsFileList.ItemsSource = PrimaryFiles", mainWindow);
         Assert.Contains("SecondaryDetailsFileList.ItemsSource = SecondaryFiles", mainWindow);
         Assert.Contains("SelectedRowsForPane(PaneId pane)", mainWindow);
@@ -495,6 +514,8 @@ public class WinUiSourceShapeTests
 
         Assert.DoesNotContain("\"light\" => ElementTheme.Light", commands);
         Assert.Contains("RootGrid.ActualThemeChanged += OnRootActualThemeChanged;", mainWindowCode);
+        Assert.Contains("private ElementTheme? _appliedTheme", mainWindowCode);
+        Assert.Contains("if (_appliedTheme == next && RootGrid.RequestedTheme == next)", commands);
         Assert.Contains("RefreshGeneratedThemeResources", commands);
         Assert.Contains("ThemeResourceLookup.Brush(RootGrid, key)", mainWindowCode);
         Assert.Contains("ThemeResourceLookup.Brush(this, key)", fileRows);

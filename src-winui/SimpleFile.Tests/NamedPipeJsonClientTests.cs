@@ -552,6 +552,26 @@ public class NamedPipeJsonClientTests
                 },
             });
         Assert.Equal("unknown", Assert.Single(await light).DriveStatus);
+
+        var single = client.ListDriveAsync(@"X:\");
+        var singleRequest = await server.ReadRequestAsync();
+        Assert.Equal(Protocol.ListDrivesMethod, singleRequest.Method);
+        var singleParams = Assert.IsType<JsonElement>(singleRequest.Params);
+        Assert.Equal("drive", singleParams.GetProperty("mode").GetString());
+        Assert.Equal(@"X:\", singleParams.GetProperty("path").GetString());
+        await server.SendResultAsync(
+            singleRequest.Id,
+            new[]
+            {
+                new DriveInfo
+                {
+                    Name = "Team Share (X:)",
+                    Path = @"X:\",
+                    DriveType = "Network",
+                    DriveStatus = "available",
+                },
+            });
+        Assert.Equal("available", Assert.Single(await single).DriveStatus);
     }
 
     [Fact]

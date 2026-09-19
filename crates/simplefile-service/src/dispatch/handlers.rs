@@ -60,6 +60,14 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Ok(p) if p.mode.as_deref() == Some("light") => {
                 reply_result(request, simplefile_core::drives::list_drives_light())
             }
+            Ok(p) if p.mode.as_deref() == Some("drive") => match p.path {
+                Some(path) => reply_result(request, simplefile_core::drives::list_drive(&path)),
+                None => Dispatch::Reply(JsonRpcResponse::error(
+                    request.id.clone(),
+                    ERR_INVALID_PARAMS,
+                    "list_drives drive mode requires path",
+                )),
+            },
             Ok(_) => reply_result(request, simplefile_core::drives::list_drives()),
             Err(response) => Dispatch::Reply(response),
         },

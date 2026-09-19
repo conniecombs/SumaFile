@@ -41,7 +41,7 @@ public sealed class CommandSurfaceLayout
     public string ToolbarDisplayMode { get; set; } = ToolbarActionCatalog.IconOnlyDisplayMode;
     public List<CommandSurfaceItem> PrimaryToolbar { get; set; } = DefaultPrimaryToolbarItems();
 
-    public static IReadOnlyList<string> DefaultPrimaryActionIds { get; } =
+    private static readonly string[] LegacyDefaultPrimaryActionIds =
     [
         ToolbarOverflowPlanner.New,
         ToolbarOverflowPlanner.DualPane,
@@ -50,12 +50,37 @@ public sealed class CommandSurfaceLayout
         ToolbarOverflowPlanner.Settings,
     ];
 
+    public static IReadOnlyList<string> DefaultPrimaryActionIds { get; } =
+    [
+        ToolbarOverflowPlanner.New,
+        ToolbarOverflowPlanner.DualPane,
+        "copy-to-pane",
+        "move-to-pane",
+        "operation-history",
+        "duplicate-checker",
+        "disk-cleanup",
+        ToolbarOverflowPlanner.Profiles,
+        ToolbarOverflowPlanner.ViewOptions,
+        ToolbarOverflowPlanner.Settings,
+    ];
+
     public static CommandSurfaceLayout CreateDefault() => new();
 
     public static List<CommandSurfaceItem> DefaultPrimaryToolbarItems() =>
-        DefaultPrimaryActionIds
-            .Select(CommandSurfaceItem.Command)
-            .ToList();
+    [
+        CommandSurfaceItem.Command(ToolbarOverflowPlanner.New),
+        CommandSurfaceItem.Command(ToolbarOverflowPlanner.DualPane),
+        CommandSurfaceItem.Command("copy-to-pane"),
+        CommandSurfaceItem.Command("move-to-pane"),
+        CommandSurfaceItem.Command("operation-history"),
+        CommandSurfaceItem.Separator(),
+        CommandSurfaceItem.Command("duplicate-checker"),
+        CommandSurfaceItem.Command("disk-cleanup"),
+        CommandSurfaceItem.Separator(),
+        CommandSurfaceItem.Command(ToolbarOverflowPlanner.Profiles),
+        CommandSurfaceItem.Command(ToolbarOverflowPlanner.ViewOptions),
+        CommandSurfaceItem.Command(ToolbarOverflowPlanner.Settings),
+    ];
 
     public static CommandSurfaceLayout FromJson(string? json)
     {
@@ -68,6 +93,7 @@ public sealed class CommandSurfaceLayout
         {
             var layout = JsonSerializer.Deserialize<CommandSurfaceLayout>(json, SerializerOptions) ?? CreateDefault();
             layout.Normalize();
+            layout.UpgradeLegacyDefaultToolbar();
             return layout;
         }
         catch
@@ -128,6 +154,23 @@ public sealed class CommandSurfaceLayout
         PrimaryToolbar = normalized.Count == 0
             ? DefaultPrimaryToolbarItems()
             : normalized;
+    }
+
+    private void UpgradeLegacyDefaultToolbar()
+    {
+        if (PrimaryToolbar.Any(item => item.IsSeparator))
+        {
+            return;
+        }
+
+        var actionIds = PrimaryToolbar
+            .Where(item => item.IsCommand)
+            .Select(item => item.Id)
+            .ToList();
+        if (actionIds.SequenceEqual(LegacyDefaultPrimaryActionIds, StringComparer.Ordinal))
+        {
+            PrimaryToolbar = DefaultPrimaryToolbarItems();
+        }
     }
 
     public IReadOnlyList<string> VisiblePrimaryActionIds()

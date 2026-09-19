@@ -44,6 +44,8 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default) => throw NotConfigured();
 
+    public virtual Task<IReadOnlyList<DriveInfo>> ListDriveAsync(string path, CancellationToken cancellationToken = default) => throw NotConfigured();
+
     public virtual Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default) => throw NotConfigured();
 
     public virtual Task ShowMainWindowAsync(CancellationToken cancellationToken = default) => throw NotConfigured();

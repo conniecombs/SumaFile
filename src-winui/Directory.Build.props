@@ -8,6 +8,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Keep transient NuGet audit metadata outages from breaking local restores. -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1900</WarningsNotAsErrors>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 </Project>

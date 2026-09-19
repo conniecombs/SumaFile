@@ -21,9 +21,14 @@ public class ToolbarOverflowPlannerTests
             [ToolbarOverflowPlanner.Search] = ToolbarOverflowPlanner.SearchOverflowWidthFor(1200),
             [ToolbarOverflowPlanner.Settings] = 32,
             [ToolbarOverflowPlanner.Profiles] = 32,
-            [ToolbarOverflowPlanner.DualPane] = 32,
             [ToolbarOverflowPlanner.ViewOptions] = 32,
             [ToolbarOverflowPlanner.New] = 32,
+            ["disk-cleanup"] = 32,
+            ["duplicate-checker"] = 32,
+            ["operation-history"] = 32,
+            ["move-to-pane"] = 32,
+            ["copy-to-pane"] = 32,
+            [ToolbarOverflowPlanner.DualPane] = 32,
         };
         var reserved = 360;
 
@@ -33,9 +38,14 @@ public class ToolbarOverflowPlannerTests
                 ToolbarOverflowPlanner.Search,
                 ToolbarOverflowPlanner.Settings,
                 ToolbarOverflowPlanner.Profiles,
-                ToolbarOverflowPlanner.DualPane,
                 ToolbarOverflowPlanner.ViewOptions,
                 ToolbarOverflowPlanner.New,
+                "disk-cleanup",
+                "duplicate-checker",
+                "operation-history",
+                "move-to-pane",
+                "copy-to-pane",
+                ToolbarOverflowPlanner.DualPane,
             ],
             ToolbarOverflowPlanner.PrimaryHideOrder);
 

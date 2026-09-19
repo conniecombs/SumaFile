@@ -747,14 +747,15 @@ internal sealed partial class FileOperationDialogService
             var archiveCts = _beginArchiveOperation();
             try
             {
+                var archivePath = Path.Combine(dialog.TargetDirectory, dialog.ArchiveName);
                 await fileOps.CreateArchiveAsync(
                     dialog.SelectedPaths,
-                    Path.Combine(dialog.TargetDirectory, dialog.ArchiveName),
+                    archivePath,
                     dialog.ArchiveFormat,
                     archiveCts.Token);
                 if (ReferenceEquals(_workspace(), workspace) && !archiveCts.IsCancellationRequested)
                 {
-                    await workspace.RefreshAsync(archiveCts.Token);
+                    await workspace.RefreshAffectedPanesAsync([dialog.TargetDirectory, archivePath], archiveCts.Token);
                 }
             }
             catch (OperationCanceledException)
@@ -853,7 +854,7 @@ internal sealed partial class FileOperationDialogService
 
                 if (ReferenceEquals(_workspace(), workspace) && !token.IsCancellationRequested)
                 {
-                    await workspace.RefreshAsync(token);
+                    await workspace.RefreshAffectedPanesAsync(trash, token);
                 }
             },
             exception =>
@@ -986,7 +987,7 @@ internal sealed partial class FileOperationDialogService
                 await fileOps.ExtractArchiveAsync(info.Path, dialog.Destination, archiveCts.Token);
                 if (ReferenceEquals(_workspace(), workspace) && !archiveCts.IsCancellationRequested)
                 {
-                    await workspace.RefreshAsync(archiveCts.Token);
+                    await workspace.RefreshAffectedPanesAsync([dialog.Destination], archiveCts.Token);
                 }
             }
             catch (OperationCanceledException)

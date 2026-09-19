@@ -37,6 +37,7 @@ public sealed partial class ExplorerWorkspace
     private readonly List<ClosedFileTab> _closedTabs = [];
     private List<DriveInfo> _drives = [];
     private string? _deferredStartupNavigationPath;
+    private WorkspaceLayout? _deferredStartupLayout;
 
     private sealed class ClosedFileTab
     {
@@ -601,6 +602,37 @@ public sealed partial class ExplorerWorkspace
         return PathRules.PathsEqual(left, right);
     }
 
+    private static IReadOnlyList<string> TransferAffectedPaths(string[] sources, string destination, bool move)
+    {
+        List<string> paths = [];
+        if (!string.IsNullOrWhiteSpace(destination))
+        {
+            paths.Add(destination);
+        }
+
+        if (move)
+        {
+            foreach (var source in sources)
+            {
+                if (string.IsNullOrWhiteSpace(source))
+                {
+                    continue;
+                }
+
+                paths.Add(source);
+                var parent = PathRules.GetParentPath(source);
+                if (!string.IsNullOrWhiteSpace(parent))
+                {
+                    paths.Add(parent);
+                }
+            }
+        }
+
+        return paths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     private FileOperationService RequireFileOps()
         => FileOps ?? throw new InvalidOperationException(
             "FileOperationService is required for file operations.");
@@ -885,7 +917,9 @@ public sealed partial class ExplorerWorkspace
             await FileOps.CopyAsync(record.Sources, record.Destination, "keep-both", ct: cancellationToken).ConfigureAwait(false);
         }
 
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync(
+            TransferAffectedPaths(record.Sources, record.Destination, record.Move),
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task UpdateTagAsync(long id, string name, string color)
@@ -997,6 +1031,95 @@ public sealed partial class ExplorerWorkspace
         }
     }
 
+    public async Task<bool> TryPrimeDeferredWorkspaceLayoutAsync(CancellationToken cancellationToken = default)
+    {
+        var layout = await LoadWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false);
+        if (layout is null)
+        {
+            return false;
+        }
+
+        PrimeDeferredWorkspaceLayout(layout);
+        return true;
+    }
+
+    private void PrimeDeferredWorkspaceLayout(WorkspaceLayout layout)
+    {
+        _deferredStartupNavigationPath = null;
+        _deferredStartupLayout = layout;
+        DualPaneEnabled = layout.DualPaneEnabled;
+        var legacySortBy = string.IsNullOrWhiteSpace(layout.SortBy) ? "name" : layout.SortBy;
+        RestorePaneViewOptions(Primary, layout.Primary, legacySortBy, layout.SortAscending);
+        RestorePaneViewOptions(Secondary, layout.Secondary, legacySortBy, layout.SortAscending);
+        RestorePaneTabs(Primary, layout.Primary);
+        RestorePaneTabs(Secondary, layout.Secondary);
+
+        var primaryPath = string.IsNullOrWhiteSpace(layout.Primary.Path) ? HomePath : layout.Primary.Path;
+        lock (_gate)
+        {
+            if (!string.IsNullOrWhiteSpace(primaryPath))
+            {
+                PrimePaneForDeferredNavigationLocked(PaneId.Primary, Primary, primaryPath);
+            }
+
+            if (DualPaneEnabled && !string.IsNullOrWhiteSpace(layout.Secondary.Path))
+            {
+                PrimePaneForDeferredNavigationLocked(PaneId.Secondary, Secondary, layout.Secondary.Path);
+            }
+            else
+            {
+                Secondary.IsNavigating = false;
+                Secondary.ListingInProgress = false;
+            }
+
+            ActivePane = DualPaneEnabled && layout.ActivePane == PaneId.Secondary
+                ? PaneId.Secondary
+                : PaneId.Primary;
+        }
+
+        RaiseChanged();
+    }
+
+    private void PrimePaneForDeferredNavigationLocked(PaneId pane, ExplorerPane state, string path)
+    {
+        state.NextNavigationToken();
+        state.IsNavigating = true;
+        state.ListingInProgress = true;
+        state.Path = path;
+        state.Entries = [];
+        state.SelectedPath = null;
+        state.PathIsNetwork = PathRules.IsNetworkFsPath(path, _drives);
+        ApplyFolderViewSettingsForPathLocked(pane, path);
+        state.EnsureActiveTab(path);
+    }
+
+    private async Task RunDeferredWorkspaceLayoutNavigationAsync(
+        WorkspaceLayout layout,
+        CancellationToken cancellationToken)
+    {
+        var primaryPath = string.IsNullOrWhiteSpace(layout.Primary.Path) ? HomePath : layout.Primary.Path;
+        if (!string.IsNullOrWhiteSpace(primaryPath))
+        {
+            await NavigatePaneAsync(PaneId.Primary, primaryPath, HistoryMode.ReplaceCurrent, activate: false, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (DualPaneEnabled && !string.IsNullOrWhiteSpace(layout.Secondary.Path))
+        {
+            await NavigatePaneAsync(PaneId.Secondary, layout.Secondary.Path, HistoryMode.ReplaceCurrent, activate: false, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (DualPaneEnabled)
+        {
+            ActivatePane(layout.ActivePane);
+        }
+        else
+        {
+            ActivatePane(PaneId.Primary);
+        }
+    }
+
     public async Task SaveWorkspaceLayoutAsync(CancellationToken cancellationToken = default)
     {
         if (FileOps is null)
@@ -1012,9 +1135,21 @@ public sealed partial class ExplorerWorkspace
 
     public async Task<bool> TryRestoreWorkspaceLayoutAsync(CancellationToken cancellationToken = default)
     {
-        if (FileOps is null)
+        var layout = await LoadWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false);
+        if (layout is null)
         {
             return false;
+        }
+
+        await ApplyLayoutAsync(layout, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task<WorkspaceLayout?> LoadWorkspaceLayoutAsync(CancellationToken cancellationToken)
+    {
+        if (FileOps is null)
+        {
+            return null;
         }
 
         try
@@ -1022,21 +1157,17 @@ public sealed partial class ExplorerWorkspace
             var json = await FileOps.GetSettingAsync(WorkspaceLayout.SettingsKey, cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(json))
             {
-                return false;
+                return null;
             }
 
             var layout = System.Text.Json.JsonSerializer.Deserialize<WorkspaceLayout>(json);
-            if (layout is null || string.IsNullOrWhiteSpace(layout.Primary.Path))
-            {
-                return false;
-            }
-
-            await ApplyLayoutAsync(layout, cancellationToken).ConfigureAwait(false);
-            return true;
+            return layout is null || string.IsNullOrWhiteSpace(layout.Primary.Path)
+                ? null
+                : layout;
         }
         catch
         {
-            return false;
+            return null;
         }
     }
 
@@ -1051,7 +1182,7 @@ public sealed partial class ExplorerWorkspace
         cancellationToken.ThrowIfCancellationRequested();
         await FileOps.MoveAsync(sources, created, "keep-both", ct: cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync([Active.Path, created, .. sources], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task UnpackFolderAsync(string folderPath, CancellationToken cancellationToken = default)
@@ -1078,7 +1209,7 @@ public sealed partial class ExplorerWorkspace
 
         await FileOps.DeleteAsync(folderPath, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync([folderPath, parent, .. children], cancellationToken).ConfigureAwait(false);
     }
 
     private async Task LoadUiSettingsAsync(CancellationToken cancellationToken)
@@ -1217,7 +1348,9 @@ public sealed partial class ExplorerWorkspace
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+        await RefreshAffectedPanesAsync(
+            TransferAffectedPaths(sources, destination, move),
+            cancellationToken).ConfigureAwait(false);
         if (DualPaneEnabled)
         {
             cancellationToken.ThrowIfCancellationRequested();

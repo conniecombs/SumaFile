@@ -95,6 +95,11 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
         return UseClientAsync(client => client.ListDrivesLightAsync(cancellationToken), cancellationToken);
     }
 
+    public Task<IReadOnlyList<DriveInfo>> ListDriveAsync(string path, CancellationToken cancellationToken = default)
+    {
+        return UseClientAsync(client => client.ListDriveAsync(path, cancellationToken), cancellationToken);
+    }
+
     public Task<DirectoryListing> ListDirectoryAsync(
         string path,
         Action<DirectoryListingChunk>? onChunk = null,

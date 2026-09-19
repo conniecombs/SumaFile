@@ -27,6 +27,8 @@ pub(super) struct PathParams {
 pub(super) struct DriveListParams {
     #[serde(default)]
     pub(super) mode: Option<String>,
+    #[serde(default)]
+    pub(super) path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

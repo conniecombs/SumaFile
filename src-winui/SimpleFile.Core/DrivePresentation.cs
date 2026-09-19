@@ -69,6 +69,11 @@ public static class DrivePresentation
             return "Stale mapping · Remap or remove";
         }
 
+        if (status == "unknown")
+        {
+            return drive.StatusDetail ?? "Details refresh on demand";
+        }
+
         if (type == "network")
         {
             return drive.RemotePath ?? drive.StatusDetail ?? "Network share";

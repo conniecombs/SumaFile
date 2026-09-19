@@ -30,6 +30,7 @@ public sealed class UiSettings
     public bool ShowBookmarks { get; set; } = true;
     public bool ShowRecentLocations { get; set; } = true;
     public bool ShowSmartFolders { get; set; } = true;
+    public bool ShowTags { get; set; } = true;
     public bool SidebarVisible { get; set; } = true;
     public double SidebarWidth { get; set; } = SidebarDefaultWidth;
     public bool ShowFolderSizes { get; set; }
@@ -46,6 +47,7 @@ public sealed class UiSettings
     public double DualPanePrimaryWidth { get; set; }
     public bool QuickAccessCollapsed { get; set; }
     public bool MyPcCollapsed { get; set; }
+    public bool TagsCollapsed { get; set; }
     public int PhotoFolderImageThreshold { get; set; } = 70;
     /// <summary>Primary pane column preset. Settings dialog edits this and mirrors to secondary.</summary>
     public string ColumnPreset { get; set; } = "default";

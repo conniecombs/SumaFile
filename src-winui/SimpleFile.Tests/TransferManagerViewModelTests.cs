@@ -202,6 +202,44 @@ public class TransferManagerViewModelTests
         await operation.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task ApplyProgress_AddsLiveSpeedAndEtaToStatusDetail()
+    {
+        var now = new DateTimeOffset(2026, 9, 18, 12, 0, 0, TimeSpan.Zero);
+        var manager = new TransferManagerViewModel(() => now);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operation = manager.Enqueue(
+            [@"V:\Movies\movie.mkv"],
+            @"R:\Movies",
+            move: false,
+            Runner("copy", new ConcurrentQueue<string>(), release));
+
+        operation.ApplyProgress(new ProgressUpdate
+        {
+            OperationId = operation.OperationId ?? "copy-1",
+            OperationType = "copy",
+            Current = 0,
+            Total = 100UL * 1024 * 1024,
+            CurrentItem = @"V:\Movies\movie.mkv",
+            Status = "running",
+        });
+        now = now.AddSeconds(1);
+        operation.ApplyProgress(new ProgressUpdate
+        {
+            OperationId = operation.OperationId ?? "copy-1",
+            OperationType = "copy",
+            Current = 50UL * 1024 * 1024,
+            Total = 100UL * 1024 * 1024,
+            CurrentItem = @"V:\Movies\movie.mkv",
+            Status = "running",
+        });
+
+        Assert.Equal("50 MB of 100 MB · 50 MB/s · 1s remaining", operation.StatusDetailText);
+
+        release.SetResult();
+        await operation.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private static TransferOperationRunner Runner(
         string name,
         ConcurrentQueue<string> started,

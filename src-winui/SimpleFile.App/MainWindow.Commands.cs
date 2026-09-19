@@ -30,16 +30,21 @@ internal sealed class ClipboardHistoryRow
 
 internal sealed class OperationHistoryRow
 {
+    private readonly OperationHistoryDisplay _display;
+
     public OperationHistoryRow(OperationRecord record)
     {
         Record = record;
+        _display = OperationHistoryFormatter.Format(record);
     }
 
     public OperationRecord Record { get; }
 
+    public OperationHistoryDisplay Display => _display;
+
     public override string ToString()
     {
-        return $"{Record.Status} · {Record.Description}";
+        return _display.RowText;
     }
 }
 
@@ -275,6 +280,12 @@ public sealed partial class MainWindow
             "dark" => ElementTheme.Dark,
             _ => ElementTheme.Default,
         };
+        if (_appliedTheme == next && RootGrid.RequestedTheme == next)
+        {
+            return;
+        }
+
+        _appliedTheme = next;
         if (RootGrid.RequestedTheme != next)
         {
             RootGrid.RequestedTheme = next;
@@ -952,13 +963,15 @@ public sealed partial class MainWindow
         IReadOnlyCollection<string>? overflowedToolbarIds = null)
     {
         var selectedFile = selected.Count == 1 && !selected[0].IsDir ? selected[0] : null;
+        var otherPanePath = _workspace?.OtherPanePath();
         return new ContextMenuRequest
         {
             SelectionCount = selected.Count,
             HasClipboard = _workspace?.Clipboard.HasItems == true || HasWindowsFileClipboardContent(),
             DualPaneEnabled = _workspace?.DualPaneEnabled == true,
             MenuPane = _workspace?.ActivePane ?? PaneId.Primary,
-            OtherPaneHasPath = _workspace?.OtherPanePath() is not null,
+            OtherPaneHasPath = otherPanePath is not null,
+            OtherPanePath = otherPanePath,
             SelectedIsDirectory = selected.Count == 1 && selected[0].IsDir,
             SelectedDirectoryPath = selected.Count == 1 && selected[0].IsDir ? selected[0].Path : null,
             HasFolderSelection = selected.Any(row => row.IsDir),

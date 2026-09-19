@@ -31,7 +31,7 @@ public sealed partial class MainWindow
     private TextBlock SmartFoldersEmptyText => SidebarPanel.SmartFoldersEmpty;
     private ListView SmartFoldersList => SidebarPanel.SmartFolders;
     private StackPanel TagsSection => SidebarPanel.TagsSectionRoot;
-    private Button ClearTagFilterButton => SidebarPanel.ClearTagFilter;
+    private Button TagsCollapseButton => SidebarPanel.TagsCollapse;
     private TextBlock TagsEmptyText => SidebarPanel.TagsEmpty;
     private ListView TagsList => SidebarPanel.Tags;
 
@@ -174,7 +174,7 @@ public sealed partial class MainWindow
         SidebarPanel.SaveSmartFolder += OnSaveSmartFolder;
         SidebarPanel.SmartFolderClicked += OnSmartFolderClicked;
         SidebarPanel.DeleteSmartFolderClicked += OnDeleteSmartFolderClicked;
-        SidebarPanel.ClearTagFilterClicked += OnClearTagFilter;
+        SidebarPanel.ToggleTags += OnToggleTags;
         SidebarPanel.TagClicked += OnTagClicked;
 
         PrimaryToolbarPanel.PrimaryToolbarSizeChanged += OnPrimaryToolbarSizeChanged;

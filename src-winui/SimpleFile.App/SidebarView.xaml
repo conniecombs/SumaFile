@@ -434,12 +434,11 @@
                             <Grid Margin="4,0,0,4">
                                 <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Tags" />
                                 <Button
-                                    x:Name="ClearTagFilterButton"
+                                    x:Name="TagsCollapseButton"
                                     Style="{StaticResource SfSidebarIconButtonStyle}"
-                                    AutomationProperties.Name="Clear tag filter"
-                                    Click="OnClearTagFilter"
-                                    ToolTipService.ToolTip="Clear tag filter">
-                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE711;" />
+                                    AutomationProperties.Name="Collapse Tags"
+                                    Click="OnToggleTags">
+                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="10" Glyph="&#xE70D;" />
                                 </Button>
                             </Grid>
                             <TextBlock

@@ -145,6 +145,7 @@
                         <ToggleSwitch x:Name="ShowBookmarksSwitch" Header="Show Bookmarks" />
                         <ToggleSwitch x:Name="ShowRecentSwitch" Header="Show Recent" />
                         <ToggleSwitch x:Name="ShowSmartFoldersSwitch" Header="Show Smart folders" />
+                        <ToggleSwitch x:Name="ShowTagsSwitch" Header="Show Tags" />
                         <Button
                             x:Name="ClearRecentHistoryButton"
                             HorizontalAlignment="Left"

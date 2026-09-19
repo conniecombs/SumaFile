@@ -26,6 +26,7 @@ public sealed class ContextMenuRequest
     public bool DualPaneEnabled { get; init; }
     public PaneId MenuPane { get; init; } = PaneId.Primary;
     public bool OtherPaneHasPath { get; init; }
+    public string? OtherPanePath { get; init; }
     public bool SelectedIsDirectory { get; init; }
     public string? SelectedDirectoryPath { get; init; }
     public bool HasFolderSelection { get; init; }
@@ -242,7 +243,7 @@ public static class ContextMenuBuilder
                             break;
                         }
 
-                        items.Add(Item($"overflow-{id}", action.Label, shortcut: action.Shortcut, iconGlyph: action.IconGlyph));
+                        items.Add(Item($"overflow-{id}", ToolbarOverflowLabel(action, request), shortcut: action.Shortcut, iconGlyph: action.IconGlyph));
                     }
 
                     break;
@@ -302,6 +303,26 @@ public static class ContextMenuBuilder
         }
 
         return visible;
+    }
+
+    private static string ToolbarOverflowLabel(ToolbarAction action, ContextMenuRequest request)
+    {
+        var commandId = action.CommandId ?? action.Id;
+        var verb = commandId switch
+        {
+            "copy-to-pane" => "Copy",
+            "move-to-pane" => "Move",
+            _ => null,
+        };
+        if (verb is null || !request.DualPaneEnabled || !request.OtherPaneHasPath)
+        {
+            return action.Label;
+        }
+
+        return CrossPaneTransferFormatter.CommandLabel(
+            verb,
+            CrossPaneTransferFormatter.OtherPaneFor(request.MenuPane),
+            request.OtherPanePath);
     }
 
     private static ContextMenuEntry Item(
@@ -395,6 +416,14 @@ public static class ContextMenuBuilder
 
     private static ContextMenuEntry SendToMenu(ContextMenuRequest request, bool hasOtherPane)
     {
+        var targetPane = CrossPaneTransferFormatter.OtherPaneFor(request.MenuPane);
+        var copyLabel = hasOtherPane
+            ? CrossPaneTransferFormatter.CommandLabel("Copy", targetPane, request.OtherPanePath)
+            : "Copy to other pane";
+        var moveLabel = hasOtherPane
+            ? CrossPaneTransferFormatter.CommandLabel("Move", targetPane, request.OtherPanePath)
+            : "Move to other pane";
+
         return new ContextMenuEntry
         {
             Id = "ctx-send-to-menu",
@@ -405,8 +434,8 @@ public static class ContextMenuBuilder
                 Item("ctx-copy-path", "Copy path", request.SelectionCount == 0, "Ctrl+Shift+C", showIcon: false),
                 Item("ctx-bookmark", "Bookmark folder", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+B", showIcon: false),
                 Divider(),
-                Item("ctx-copy-to-pane", "Copy to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+C", showIcon: false),
-                Item("ctx-move-to-pane", "Move to other pane", request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+M", showIcon: false),
+                Item("ctx-copy-to-pane", copyLabel, request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+C", showIcon: false),
+                Item("ctx-move-to-pane", moveLabel, request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+M", showIcon: false),
             ],
         };
     }

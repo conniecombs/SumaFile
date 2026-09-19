@@ -31,6 +31,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
 
     Task<IReadOnlyList<DriveInfo>> ListDrivesAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<DriveInfo>> ListDriveAsync(string path, CancellationToken cancellationToken = default);
 
     Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default);
 

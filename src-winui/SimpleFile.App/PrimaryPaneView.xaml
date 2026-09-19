@@ -60,6 +60,8 @@
                                             FontSize="11"
                                             FontWeight="SemiBold"
                                             Foreground="{ThemeResource SfTextMutedBrush}"
+                                            MaxWidth="132"
+                                            TextTrimming="CharacterEllipsis"
                                             Text="Left" />
                                     </StackPanel>
                                     <ScrollViewer

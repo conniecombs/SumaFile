@@ -16,6 +16,9 @@ public interface IExplorerBackend
     Task<IReadOnlyList<DriveInfo>> ListDrivesLightAsync(CancellationToken cancellationToken = default) =>
         ListDrivesAsync(cancellationToken);
 
+    Task<IReadOnlyList<DriveInfo>> ListDriveAsync(string path, CancellationToken cancellationToken = default) =>
+        ListDrivesAsync(cancellationToken);
+
     Task<DirectoryListing> ListDirectoryAsync(
         string path,
         Action<DirectoryListingChunk>? onChunk = null,

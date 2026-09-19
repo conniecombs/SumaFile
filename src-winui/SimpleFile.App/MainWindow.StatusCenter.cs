@@ -96,11 +96,15 @@ public sealed partial class MainWindow
         {
             rows.AddRange(_workspace.OperationLog
                 .Take(5 - rows.Count)
-                .Select(operation => new StatusCenterTaskRow
+                .Select(operation =>
                 {
-                    Title = operation.Description,
-                    Detail = operation.At.ToLocalTime().ToString("g"),
-                    Badge = operation.Status,
+                    var display = OperationHistoryFormatter.Format(operation);
+                    return new StatusCenterTaskRow
+                    {
+                        Title = display.RowText,
+                        Detail = $"{display.DestinationSummary} - {operation.At.ToLocalTime():g}",
+                        Badge = display.StatusLabel,
+                    };
                 }));
         }
 

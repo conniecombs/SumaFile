@@ -100,6 +100,7 @@ public class ColumnLayoutTests
             ShowBookmarks = true,
             ShowRecentLocations = true,
             ShowSmartFolders = true,
+            ShowTags = true,
         };
 
         Assert.True(SidebarSectionVisibility.QuickAccess(settings));
@@ -110,13 +111,18 @@ public class ColumnLayoutTests
         Assert.True(SidebarSectionVisibility.Recent(settings, rowCount: 2));
         Assert.False(SidebarSectionVisibility.SmartFolders(settings, rowCount: 0, searchActive: false));
         Assert.True(SidebarSectionVisibility.SmartFolders(settings, rowCount: 0, searchActive: true));
+        Assert.False(SidebarSectionVisibility.Tags(settings, rowCount: 0, activeTagFilter: false));
+        Assert.True(SidebarSectionVisibility.Tags(settings, rowCount: 3, activeTagFilter: false));
+        Assert.True(SidebarSectionVisibility.Tags(settings, rowCount: 0, activeTagFilter: true));
 
         settings.ShowFolderTree = false;
         settings.ShowRecentLocations = false;
         settings.ShowSmartFolders = false;
+        settings.ShowTags = false;
 
         Assert.False(SidebarSectionVisibility.FolderTree(settings, rowCount: 3));
         Assert.False(SidebarSectionVisibility.Recent(settings, rowCount: 2));
         Assert.False(SidebarSectionVisibility.SmartFolders(settings, rowCount: 1, searchActive: true));
+        Assert.False(SidebarSectionVisibility.Tags(settings, rowCount: 2, activeTagFilter: true));
     }
 }

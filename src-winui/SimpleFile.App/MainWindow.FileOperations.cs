@@ -166,17 +166,15 @@ public sealed partial class MainWindow
         operation.ApplyProgress(update);
     }
 
-    private void CompleteTransferProgress(bool move, int itemCount)
+    private void CompleteTransferProgress(bool move, int itemCount, string? destination = null)
     {
         if (!DispatcherQueue.HasThreadAccess)
         {
-            DispatcherQueue.TryEnqueue(() => CompleteTransferProgress(move, itemCount));
+            DispatcherQueue.TryEnqueue(() => CompleteTransferProgress(move, itemCount, destination));
             return;
         }
 
-        var verb = move ? "Moved" : "Copied";
-        var noun = itemCount == 1 ? "item" : "items";
-        SetStatusText($"{verb} {itemCount} {noun}");
+        SetStatusText(TransferProgressFormatter.CompletionReceipt(move, itemCount, destination));
     }
 
     private void OnFileProgressCancelRequested(TransferOperationViewModel operation)

@@ -164,6 +164,9 @@ public sealed class WorkspaceChromeLayout
     [JsonPropertyName("myPcCollapsed")]
     public bool MyPcCollapsed { get; set; }
 
+    [JsonPropertyName("tagsCollapsed")]
+    public bool TagsCollapsed { get; set; }
+
     [JsonPropertyName("columnPreset")]
     public string ColumnPreset { get; set; } = "default";
 
@@ -200,6 +203,7 @@ public sealed class WorkspaceChromeLayout
             DualPanePrimaryWidth = UiSettings.NormalizeDualPanePrimaryWidth(settings.DualPanePrimaryWidth),
             QuickAccessCollapsed = settings.QuickAccessCollapsed,
             MyPcCollapsed = settings.MyPcCollapsed,
+            TagsCollapsed = settings.TagsCollapsed,
             ColumnPreset = UiSettings.NormalizeColumnPreset(settings.ColumnPreset),
             VisibleColumnIds = primaryColumns.SnapshotVisibleIds(),
             ColumnWidths = primaryColumns.SnapshotWidths(),
@@ -223,6 +227,7 @@ public sealed class WorkspaceChromeLayout
         settings.DualPanePrimaryWidth = DualPanePrimaryWidth;
         settings.QuickAccessCollapsed = QuickAccessCollapsed;
         settings.MyPcCollapsed = MyPcCollapsed;
+        settings.TagsCollapsed = TagsCollapsed;
 
         settings.ColumnPreset = ColumnPreset;
         settings.ColumnWidths = new Dictionary<string, double>(ColumnWidths, StringComparer.Ordinal);

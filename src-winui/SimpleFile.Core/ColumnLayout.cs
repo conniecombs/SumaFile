@@ -244,4 +244,7 @@ public static class SidebarSectionVisibility
 
     public static bool SmartFolders(UiSettings settings, int rowCount, bool searchActive) =>
         settings.ShowSmartFolders && (rowCount > 0 || searchActive);
+
+    public static bool Tags(UiSettings settings, int rowCount, bool activeTagFilter) =>
+        settings.ShowTags && (rowCount > 0 || activeTagFilter);
 }

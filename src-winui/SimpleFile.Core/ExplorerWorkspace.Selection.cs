@@ -40,6 +40,14 @@ public sealed partial class ExplorerWorkspace
         timer.Mark("settings");
 
         var startMode = UiSettings.NormalizeStartLocation(Settings.StartLocation);
+        if (startMode == "last"
+            && deferInitialNavigation
+            && await TryPrimeDeferredWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false))
+        {
+            timer.Mark("primed-layout");
+            return;
+        }
+
         if (startMode == "last" && await TryRestoreWorkspaceLayoutAsync(cancellationToken).ConfigureAwait(false))
         {
             timer.Mark("restored-layout");
@@ -61,6 +69,13 @@ public sealed partial class ExplorerWorkspace
 
     public Task RunDeferredStartupNavigationAsync(CancellationToken cancellationToken = default)
     {
+        var layout = _deferredStartupLayout;
+        if (layout is not null)
+        {
+            _deferredStartupLayout = null;
+            return RunDeferredWorkspaceLayoutNavigationAsync(layout, cancellationToken);
+        }
+
         var path = _deferredStartupNavigationPath;
         if (string.IsNullOrWhiteSpace(path))
         {

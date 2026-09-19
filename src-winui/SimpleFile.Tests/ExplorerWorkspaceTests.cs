@@ -91,6 +91,72 @@ public class ExplorerWorkspaceTests
         Assert.Equal("Startup Light (Z:)", Assert.Single(workspace.Drives).Name);
     }
 
+    [Fact]
+    public async Task CreateFileInCurrentPane_RefreshesAllVisiblePanesShowingAffectedFolder()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var ipc = new ConfigurableIpc();
+        ipc.CreateFileHandler = (path, name, _) =>
+        {
+            var createdPath = PathRules.JoinPath(path, name);
+            var listing = backend.Listings[path];
+            backend.Listings[path] = new DirectoryListing
+            {
+                Path = listing.Path,
+                Parent = listing.Parent,
+                Entries =
+                [
+                    .. listing.Entries,
+                    new FileEntry { Name = name, Path = createdPath, Extension = "txt" },
+                ],
+            };
+
+            return Task.FromResult(createdPath);
+        };
+
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(ipc));
+        await workspace.InitializeAsync();
+        await workspace.ToggleDualPaneAsync();
+
+        await workspace.CreateFileInCurrentPaneAsync("draft.txt");
+
+        Assert.Contains(workspace.VisibleEntriesFor(PaneId.Primary), entry => entry.Name == "draft.txt");
+        Assert.Contains(workspace.VisibleEntriesFor(PaneId.Secondary), entry => entry.Name == "draft.txt");
+    }
+
+    [Fact]
+    public async Task TrashSelected_RefreshesAllVisiblePanesShowingAffectedFolder()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var ipc = new ConfigurableIpc();
+        ipc.MoveToTrashHandler = (paths, _) =>
+        {
+            var trashedPath = Assert.Single(paths);
+            var parent = PathRules.GetParentPath(trashedPath)!;
+            var listing = backend.Listings[parent];
+            backend.Listings[parent] = new DirectoryListing
+            {
+                Path = listing.Path,
+                Parent = listing.Parent,
+                Entries =
+                [
+                    .. listing.Entries.Where(entry => !PathRules.PathsEqual(entry.Path, trashedPath)),
+                ],
+            };
+
+            return Task.FromResult(new[] { @"recycle-bin:\notes.txt" });
+        };
+
+        var workspace = new ExplorerWorkspace(backend, new FileOperationService(ipc));
+        await workspace.InitializeAsync();
+        await workspace.ToggleDualPaneAsync();
+
+        await workspace.TrashSelectedAsync([@"C:\Users\test\notes.txt"]);
+
+        Assert.DoesNotContain(workspace.VisibleEntriesFor(PaneId.Primary), entry => entry.Name == "notes.txt");
+        Assert.DoesNotContain(workspace.VisibleEntriesFor(PaneId.Secondary), entry => entry.Name == "notes.txt");
+    }
+
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -644,6 +710,47 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
+    public async Task RefreshDrive_UpdatesOnlyRequestedDrive()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.Drives.Add(new DriveInfo
+        {
+            Name = "Network Drive (X:)",
+            Path = @"X:\",
+            DriveType = "Network",
+            DriveStatus = "unknown",
+            StatusDetail = "Network drive details will refresh on demand.",
+        });
+        backend.ListDriveHandler = (path, _) => Task.FromResult<IReadOnlyList<DriveInfo>>(
+        [
+            new DriveInfo
+            {
+                Name = "Team Share (X:)",
+                Path = path,
+                DriveType = "Network",
+                DriveStatus = "available",
+                StatusDetail = "Connected to \\\\server\\team",
+                RemotePath = @"\\server\team",
+                TotalSpace = 1000,
+                FreeSpace = 750,
+            },
+        ]);
+        var workspace = new ExplorerWorkspace(backend);
+        await workspace.InitializeAsync();
+        var cDrive = workspace.Drives.Single(drive => drive.Path == @"C:\");
+
+        await workspace.RefreshDriveAsync(@"X:\", quiet: true);
+
+        Assert.Equal(0, backend.ListDrivesCalls);
+        Assert.Equal(1, backend.ListDriveCalls);
+        Assert.Same(cDrive, workspace.Drives.Single(drive => drive.Path == @"C:\"));
+        var refreshed = workspace.Drives.Single(drive => drive.Path == @"X:\");
+        Assert.Equal("available", refreshed.DriveStatus);
+        Assert.Equal(750UL, refreshed.FreeSpace);
+        Assert.Equal(@"\\server\team", refreshed.RemotePath);
+    }
+
+    [Fact]
     public async Task NavigateNetworkFailure_CanceledBeforeRecoverySkipsDriveRefreshAndError()
     {
         var backend = FakeExplorerBackend.Typical();
@@ -710,6 +817,42 @@ public class ExplorerWorkspaceTests
         Assert.Equal(2, workspace.VisibleEntries.Count);
         Assert.Equal("light", backend.LastListDirectoryOptions?.Mode);
         Assert.False(backend.LastListDirectoryOptions?.FinalEntries ?? true);
+    }
+
+    [Fact]
+    public async Task ListDirectoryChunks_CoalescesIntermediateRepaintRequests()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        backend.EmitChunks = true;
+        backend.ChunkSize = 1;
+        backend.Listings[@"C:\Many"] = new DirectoryListing
+        {
+            Path = @"C:\Many",
+            Parent = @"C:\",
+            Entries = Enumerable.Range(1, 8)
+                .Select(index => new FileEntry
+                {
+                    Name = $"file-{index}.txt",
+                    Path = $@"C:\Many\file-{index}.txt",
+                    Extension = "txt",
+                    Size = (ulong)index,
+                })
+                .ToList(),
+        };
+        var workspace = new ExplorerWorkspace(backend);
+        var listingRepaints = 0;
+        workspace.Changed += (_, _) =>
+        {
+            if (workspace.Primary.ListingInProgress && workspace.Primary.Entries.Count > 0)
+            {
+                listingRepaints += 1;
+            }
+        };
+
+        await workspace.NavigateToAsync(@"C:\Many");
+
+        Assert.Equal(2, listingRepaints);
+        Assert.Equal(8, workspace.VisibleEntries.Count);
     }
 
     [Fact]
@@ -921,6 +1064,51 @@ public class ExplorerWorkspaceTests
         Assert.True(second.Primary.Tabs.Count >= 1);
         var activePrimaryTab = second.Primary.Tabs.First(tab => tab.Id == second.Primary.ActiveTabId);
         Assert.Equal(second.Primary.Path, activePrimaryTab.Path);
+    }
+
+    [Fact]
+    public async Task Initialize_DeferStartupRestoresLayoutWithoutListingUntilDeferredNavigationRuns()
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var settingsIpc = new ConfigurableIpc();
+        settingsIpc.Settings["startLocation"] = "last";
+        var fileOps = new FileOperationService(settingsIpc);
+        var first = new ExplorerWorkspace(backend, fileOps);
+        await first.InitializeAsync();
+        await first.OpenNewTabAsync(PaneId.Primary, @"C:\Users\test\Desktop");
+        await first.ToggleDualPaneAsync();
+        await first.NavigatePaneAsync(PaneId.Secondary, @"C:\", HistoryMode.ReplaceCurrent);
+        first.SetFileListView(PaneId.Primary, "content");
+        first.SetFileListIconSize(PaneId.Primary, 48);
+        first.SetFileListView(PaneId.Secondary, "tiles");
+        first.SetFileListIconSize(PaneId.Secondary, 96);
+        await first.SaveWorkspaceLayoutAsync();
+
+        var second = new ExplorerWorkspace(backend, fileOps);
+        var callsBeforeDeferredInit = backend.ListDirectoryCalls;
+
+        await second.InitializeAsync(deferInitialNavigation: true);
+
+        Assert.Equal(callsBeforeDeferredInit, backend.ListDirectoryCalls);
+        Assert.True(second.DualPaneEnabled);
+        Assert.Equal(@"C:\Users\test\Desktop", second.Primary.Path);
+        Assert.Equal(@"C:\", second.Secondary.Path);
+        Assert.True(second.Primary.ListingInProgress);
+        Assert.True(second.Secondary.ListingInProgress);
+        Assert.Empty(second.Primary.Entries);
+        Assert.Empty(second.Secondary.Entries);
+        Assert.Equal("content", second.ViewFor(PaneId.Primary));
+        Assert.Equal(48, second.IconSizeFor(PaneId.Primary));
+        Assert.Equal("tiles", second.ViewFor(PaneId.Secondary));
+        Assert.Equal(96, second.IconSizeFor(PaneId.Secondary));
+
+        await second.RunDeferredStartupNavigationAsync();
+
+        Assert.Equal(callsBeforeDeferredInit + 2, backend.ListDirectoryCalls);
+        Assert.False(second.Primary.ListingInProgress);
+        Assert.False(second.Secondary.ListingInProgress);
+        Assert.Equal(["shot.png"], second.VisibleEntriesFor(PaneId.Primary).Select(entry => entry.Name));
+        Assert.Equal(["Users"], second.VisibleEntriesFor(PaneId.Secondary).Select(entry => entry.Name));
     }
 
     [Fact]
@@ -1181,6 +1369,7 @@ public class ExplorerWorkspaceTests
         settings.ShowBookmarks = false;
         settings.ShowRecentLocations = false;
         settings.ShowSmartFolders = false;
+        settings.ShowTags = false;
         settings.SidebarVisible = false;
         settings.SidebarWidth = 344;
         settings.PreviewWidth = 420;
@@ -1188,6 +1377,7 @@ public class ExplorerWorkspaceTests
         settings.DualPanePrimaryWidth = 410;
         settings.QuickAccessCollapsed = true;
         settings.MyPcCollapsed = true;
+        settings.TagsCollapsed = true;
         first.ApplyUiSettings(settings);
         first.PrimaryColumns.Resize("path", 360);
         first.SecondaryColumns.Resize("name", 275);
@@ -1212,6 +1402,7 @@ public class ExplorerWorkspaceTests
         Assert.False(second.Settings.ShowBookmarks);
         Assert.False(second.Settings.ShowRecentLocations);
         Assert.False(second.Settings.ShowSmartFolders);
+        Assert.False(second.Settings.ShowTags);
         Assert.False(second.Settings.SidebarVisible);
         Assert.Equal(344, second.Settings.SidebarWidth);
         Assert.Equal(420, second.Settings.PreviewWidth);
@@ -1219,6 +1410,7 @@ public class ExplorerWorkspaceTests
         Assert.Equal(410, second.Settings.DualPanePrimaryWidth);
         Assert.True(second.Settings.QuickAccessCollapsed);
         Assert.True(second.Settings.MyPcCollapsed);
+        Assert.True(second.Settings.TagsCollapsed);
         Assert.Equal("tiles", settingsIpc.Settings["defaultView"]);
         Assert.Equal("96", settingsIpc.Settings["defaultIconSize"]);
         Assert.Equal("false", settingsIpc.Settings["sidebar.showQuickAccess"]);
@@ -1226,8 +1418,10 @@ public class ExplorerWorkspaceTests
         Assert.Equal("false", settingsIpc.Settings["sidebar.showBookmarks"]);
         Assert.Equal("false", settingsIpc.Settings["sidebar.showRecent"]);
         Assert.Equal("false", settingsIpc.Settings["sidebar.showSmartFolders"]);
+        Assert.Equal("false", settingsIpc.Settings["sidebar.showTags"]);
         Assert.Equal("false", settingsIpc.Settings["sidebar.visible"]);
         Assert.Equal("344", settingsIpc.Settings["sidebar.width"]);
+        Assert.Equal("true", settingsIpc.Settings["sidebar.tagsCollapsed"]);
         Assert.Equal("420", settingsIpc.Settings["preview.width"]);
         Assert.Equal("35", settingsIpc.Settings["dualPane.primaryPercent"]);
     }

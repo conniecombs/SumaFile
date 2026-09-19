@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SimpleFile.Core;
 
 namespace SimpleFile.App;
 
@@ -31,24 +32,33 @@ public sealed partial class ConflictDialog : ContentDialog
 
     public void SetConflictPath(string path)
     {
-        ConflictMessage.Text = $"A file or folder with the same name already exists at:\n{path}\n\nWhat would you like to do?";
+        var destination = PathRules.GetParentPath(path) ?? "";
+        var name = PathRules.Basename(path);
+        SetConflict(new TransferConflictPromptContext(
+            Move: false,
+            SourceCount: 1,
+            Destination: destination,
+            TargetPane: null,
+            Conflicts: string.IsNullOrWhiteSpace(name) ? [] : [name]));
     }
 
     public void SetConflict(string destination, IReadOnlyList<string> conflicts)
     {
-        if (conflicts.Count == 1)
-        {
-            SetConflictPath(SimpleFile.Core.PathRules.JoinPath(destination, conflicts[0]));
-            return;
-        }
+        SetConflict(new TransferConflictPromptContext(
+            Move: false,
+            SourceCount: Math.Max(conflicts.Count, 1),
+            Destination: destination,
+            TargetPane: null,
+            Conflicts: conflicts));
+    }
 
-        var preview = string.Join(Environment.NewLine, conflicts.Take(6).Select(name => $"- {name}"));
-        var extra = conflicts.Count > 6
-            ? $"{Environment.NewLine}- ...and {conflicts.Count - 6} more"
-            : "";
-        ConflictMessage.Text =
-            $"{conflicts.Count} items have names that conflict in:{Environment.NewLine}{destination}"
-            + $"{Environment.NewLine}{Environment.NewLine}{preview}{extra}"
-            + $"{Environment.NewLine}{Environment.NewLine}What would you like to do?";
+    public void SetConflict(TransferConflictPromptContext context)
+    {
+        var text = TransferConflictPromptFormatter.Format(context);
+        Title = text.Title;
+        OperationSummary.Text = text.OperationSummary;
+        DestinationSummary.Text = text.DestinationSummary;
+        ConflictMessage.Text = text.ConflictSummary;
+        ChoiceHint.Text = text.ChoiceHint;
     }
 }

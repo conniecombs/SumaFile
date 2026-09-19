@@ -200,7 +200,6 @@ public sealed partial class MainWindow
         SmartFoldersEmptyText.Visibility = _workspace.SmartFolders.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         TagsEmptyText.Visibility = _workspace.AllTags.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         ClearRecentsButton.IsEnabled = _workspace.RecentPaths.Count > 0;
-        ClearTagFilterButton.IsEnabled = _workspace.ActiveTagFilter is not null;
     }
 
     private void ApplySidebarSectionVisibility()
@@ -218,12 +217,14 @@ public sealed partial class MainWindow
         SmartFoldersSection.Visibility = SidebarSectionVisibility.SmartFolders(settings, _workspace.SmartFolders.Count, _search?.IsActive == true)
             ? Visibility.Visible
             : Visibility.Collapsed;
-        TagsSection.Visibility = _workspace.AllTags.Count > 0 || _workspace.ActiveTagFilter is not null
+        TagsSection.Visibility = SidebarSectionVisibility.Tags(settings, _workspace.AllTags.Count, _workspace.ActiveTagFilter is not null)
             ? Visibility.Visible
             : Visibility.Collapsed;
 
         QuickAccessList.Visibility = _quickAccessCollapsed ? Visibility.Collapsed : Visibility.Visible;
         DriveList.Visibility = _myPcCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        TagsEmptyText.Visibility = _tagsCollapsed || _workspace.AllTags.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
+        TagsList.Visibility = _tagsCollapsed ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void ApplySidebarLayout()
@@ -303,6 +304,26 @@ public sealed partial class MainWindow
         SecondaryPaneCaptionText.Foreground = Brush(secondaryActive ? "SfAccentBrush" : "SfTextMutedBrush");
         PrimaryPaneCaptionRail.Visibility = primaryActive ? Visibility.Visible : Visibility.Collapsed;
         SecondaryPaneCaptionRail.Visibility = secondaryActive ? Visibility.Visible : Visibility.Collapsed;
+        ApplyPaneRoleChrome(PaneId.Primary, PrimaryPaneHeader, PrimaryPathBar, PrimaryPaneCaptionText);
+        ApplyPaneRoleChrome(PaneId.Secondary, SecondaryPaneHeader, SecondaryPathBar, SecondaryPaneCaptionText);
+    }
+
+    private void ApplyPaneRoleChrome(PaneId pane, Grid header, Grid pathBar, TextBlock captionText)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        var text = PaneRoleFormatter.Format(
+            pane,
+            _workspace.ActivePane,
+            _workspace.DualPaneEnabled,
+            _workspace.Pane(pane).Path);
+        captionText.Text = text.Caption;
+        ToolTipService.SetToolTip(header, text.Tooltip);
+        ToolTipService.SetToolTip(pathBar, text.Tooltip);
+        AutomationProperties.SetName(header, text.AutomationName);
     }
 
     private void ApplyCaptionButtonColors(ElementTheme theme)
@@ -353,6 +374,7 @@ public sealed partial class MainWindow
 
         _quickAccessCollapsed = _workspace.Settings.QuickAccessCollapsed;
         _myPcCollapsed = _workspace.Settings.MyPcCollapsed;
+        _tagsCollapsed = _workspace.Settings.TagsCollapsed;
     }
 
     private void SyncQuickFilterFromWorkspace()
