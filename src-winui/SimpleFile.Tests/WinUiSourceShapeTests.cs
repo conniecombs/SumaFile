@@ -113,8 +113,15 @@ public class WinUiSourceShapeTests
         var windowCode = File.ReadAllText(windowCodePath);
         Assert.Contains("x:Name=\"RemoteProfileList\"", windowXaml);
         Assert.Contains("x:Name=\"RemoteEntryList\"", windowXaml);
+        Assert.Contains("ItemClick=\"OnRemoteEntryItemClick\"", windowXaml);
+        Assert.Contains("x:Name=\"RemoteTransferList\"", windowXaml);
         Assert.Contains("RemoteManagerViewModel", windowCode);
         Assert.Contains("LoadProfilesAsync", windowCode);
+        Assert.Contains("NavigateRemoteEntryAsync", windowCode);
+        Assert.Contains("SaveSecretCheckBox", windowCode);
+        Assert.Contains("Windows Credential Manager", windowCode);
+        Assert.Contains("Pick private key", windowCode);
+        Assert.Contains("SettingsRemoteManagerButton", File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml")));
     }
 
     [Fact]

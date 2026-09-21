@@ -59,6 +59,17 @@ public sealed partial class RemoteManagerWindow : Window
     private async void OnRefreshRemoteClicked(object sender, RoutedEventArgs e) =>
         await RunRemoteActionAsync(() => _viewModel.RefreshRemoteDirectoryAsync());
 
+    private async void OnRemoteUpClicked(object sender, RoutedEventArgs e) =>
+        await RunRemoteActionAsync(() => _viewModel.GoToParentRemoteDirectoryAsync());
+
+    private async void OnRemoteEntryItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is FileEntry entry && entry.IsDir)
+        {
+            await RunRemoteActionAsync(() => _viewModel.NavigateRemoteEntryAsync(entry));
+        }
+    }
+
     private async void OnNewProfileClicked(object sender, RoutedEventArgs e)
     {
         var result = await ShowProfileDialogAsync(null);
@@ -210,6 +221,20 @@ public sealed partial class RemoteManagerWindow : Window
         return files.Select(file => file.Path).Where(path => !string.IsNullOrWhiteSpace(path)).ToArray();
     }
 
+    private async Task<string?> PickPrivateKeyFileAsync()
+    {
+        var picker = new FileOpenPicker
+        {
+            SuggestedStartLocation = PickerLocationId.ComputerFolder,
+        };
+        picker.FileTypeFilter.Add("*");
+
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+        var file = await picker.PickSingleFileAsync();
+        return file?.Path;
+    }
+
     private async Task RunRemoteActionAsync(Func<Task> action)
     {
         try
@@ -326,11 +351,47 @@ public sealed partial class RemoteManagerWindow : Window
             Header = "Password or passphrase",
             PlaceholderText = profile is null ? "" : "Leave blank to keep saved secret",
         };
+        var saveSecretBox = new CheckBox
+        {
+            Name = "SaveSecretCheckBox",
+            Content = "Save password/passphrase in Windows Credential Manager",
+            IsChecked = true,
+        };
+        var secretHelpBlock = new TextBlock
+        {
+            Foreground = App.Current.Resources["SfTextMutedBrush"] as Brush,
+            FontSize = 12,
+            Text = "Profile settings are saved in SumaFile. Typed secrets are saved separately in Windows Credential Manager when enabled.",
+            TextWrapping = TextWrapping.Wrap,
+        };
         var privateKeyPathBox = new TextBox
         {
             Header = "Private key path",
             Text = profile?.PrivateKeyPath ?? "",
             PlaceholderText = @"C:\Users\you\.ssh\id_ed25519",
+        };
+        var privateKeyPickerButton = new Button
+        {
+            Content = "Pick private key",
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Style = App.Current.Resources["SfGhostButtonStyle"] as Style,
+        };
+        privateKeyPickerButton.Click += async (_, _) =>
+        {
+            var path = await PickPrivateKeyFileAsync();
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                privateKeyPathBox.Text = path;
+            }
+        };
+        var privateKeyPanel = new StackPanel
+        {
+            Spacing = 6,
+            Children =
+            {
+                privateKeyPathBox,
+                privateKeyPickerButton,
+            },
         };
         var fingerprintBox = new TextBox
         {
@@ -374,7 +435,9 @@ public sealed partial class RemoteManagerWindow : Window
                 rootBox,
                 authBox,
                 secretBox,
-                privateKeyPathBox,
+                saveSecretBox,
+                secretHelpBlock,
+                privateKeyPanel,
                 fingerprintBox,
                 credentialBox,
                 passiveBox,
@@ -451,7 +514,7 @@ public sealed partial class RemoteManagerWindow : Window
                 credentialBox,
                 privateKeyPathBox,
                 fingerprintBox),
-            string.IsNullOrWhiteSpace(secretBox.Password) ? null : secretBox.Password)
+            SecretToSave(secretBox, saveSecretBox))
         {
             LastTested = testedResult,
         };
@@ -522,6 +585,16 @@ public sealed partial class RemoteManagerWindow : Window
         combo.SelectedItem is ComboBoxItem item && item.Tag is not null
             ? item.Tag.ToString() ?? fallback
             : fallback;
+
+    private static string? SecretToSave(PasswordBox secretBox, CheckBox saveSecretBox)
+    {
+        if (saveSecretBox.IsChecked != true || string.IsNullOrWhiteSpace(secretBox.Password))
+        {
+            return null;
+        }
+
+        return secretBox.Password;
+    }
 
     private sealed record RemoteProfileDialogResult(RemoteProfileInput Profile, string? Secret)
     {

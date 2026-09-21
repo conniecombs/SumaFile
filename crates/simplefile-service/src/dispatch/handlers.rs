@@ -184,20 +184,24 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(response) => Dispatch::Reply(response),
         },
         METHOD_REMOTE_TEST_PROFILE => match parse_params::<RemoteProfileParams>(request) {
-            Ok(p) => {
-                let _secret_was_supplied =
-                    p.secret.as_ref().is_some_and(|secret| !secret.is_empty());
-                match simplefile_core::remote::profiles::validate_profile_input(&p.profile) {
-                    Ok(()) => reply_ok(
-                        request,
-                        crate::remote::session::RemoteConnectionTestResult::valid_profile(),
-                    ),
-                    Err(message) => Dispatch::Reply(JsonRpcResponse::application_error(
-                        request.id.clone(),
-                        message,
-                    )),
+            Ok(p) => match simplefile_core::remote::profiles::prepare_profile_input(p.profile) {
+                Ok(profile) => {
+                    let secret = p
+                        .secret
+                        .filter(|secret| !secret.is_empty())
+                        .and_then(|secret| secret_for_profile(&profile, secret))
+                        .or_else(|| {
+                            profile.credential_target.as_deref().and_then(|target| {
+                                state.remote_secrets.read_secret(target).ok().flatten()
+                            })
+                        });
+                    reply_ok(request, state.remote_sessions.test_profile(profile, secret))
                 }
-            }
+                Err(message) => Dispatch::Reply(JsonRpcResponse::application_error(
+                    request.id.clone(),
+                    message,
+                )),
+            },
             Err(response) => Dispatch::Reply(response),
         },
         METHOD_REMOTE_CONNECT => match parse_params::<RemoteConnectParams>(request) {

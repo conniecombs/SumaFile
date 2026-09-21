@@ -22,6 +22,8 @@ public sealed class RemoteManagerViewModel : ObservableObject
 
     public ObservableCollection<FileEntry> RemoteEntries { get; } = [];
 
+    public ObservableCollection<RemoteTransferRecord> Transfers { get; } = [];
+
     public RemoteProfile? SelectedProfile
     {
         get => _selectedProfile;
@@ -237,6 +239,60 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
     }
 
+    public async Task NavigateRemoteEntryAsync(FileEntry? entry, CancellationToken ct = default)
+    {
+        if (CurrentSession is null)
+        {
+            StatusText = "Connect to a remote profile first";
+            return;
+        }
+
+        if (entry is null)
+        {
+            StatusText = "Select a remote folder";
+            return;
+        }
+
+        if (!entry.IsDir)
+        {
+            StatusText = entry.Name;
+            return;
+        }
+
+        await NavigateRemotePathAsync(entry.Path, ct);
+    }
+
+    public async Task NavigateRemotePathAsync(string path, CancellationToken ct = default)
+    {
+        if (CurrentSession is null)
+        {
+            StatusText = "Connect to a remote profile first";
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            await RefreshRemoteDirectoryCoreAsync(path, ct);
+            StatusText = $"Remote path: {RemotePath}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public async Task GoToParentRemoteDirectoryAsync(CancellationToken ct = default)
+    {
+        if (CurrentSession is null)
+        {
+            StatusText = "Connect to a remote profile first";
+            return;
+        }
+
+        await NavigateRemotePathAsync(ParentRemotePath(RemotePath), ct);
+    }
+
     public async Task DisconnectAsync(CancellationToken ct = default)
     {
         if (CurrentSession is null)
@@ -405,11 +461,21 @@ public sealed class RemoteManagerViewModel : ObservableObject
             foreach (var entry in files)
             {
                 var localPath = Path.Combine(localDirectory.Trim(), entry.Name);
-                await _fileOperations.RemoteDownloadFileAsync(
-                    CurrentSession.SessionId,
-                    entry.Path,
-                    localPath,
-                    ct);
+                var record = AddTransfer("Download", entry.Path, localPath);
+                try
+                {
+                    await _fileOperations.RemoteDownloadFileAsync(
+                        CurrentSession.SessionId,
+                        entry.Path,
+                        localPath,
+                        ct);
+                    record.Complete();
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    record.Fail(exception.Message);
+                    throw;
+                }
             }
 
             StatusText = files.Length == 1
@@ -448,11 +514,21 @@ public sealed class RemoteManagerViewModel : ObservableObject
             {
                 var name = Path.GetFileName(localPath);
                 var remotePath = CombineRemotePath(RemotePath, name);
-                uploaded.Add(await _fileOperations.RemoteUploadFileAsync(
-                    CurrentSession.SessionId,
-                    localPath,
-                    remotePath,
-                    ct));
+                var record = AddTransfer("Upload", remotePath, localPath);
+                try
+                {
+                    uploaded.Add(await _fileOperations.RemoteUploadFileAsync(
+                        CurrentSession.SessionId,
+                        localPath,
+                        remotePath,
+                        ct));
+                    record.Complete();
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    record.Fail(exception.Message);
+                    throw;
+                }
             }
 
             ReplaceRemoteEntries(RemoteEntries
@@ -550,5 +626,68 @@ public sealed class RemoteManagerViewModel : ObservableObject
         return string.IsNullOrEmpty(normalizedParent)
             ? "/" + cleanName
             : normalizedParent + "/" + cleanName;
+    }
+
+    private RemoteTransferRecord AddTransfer(string direction, string remotePath, string localPath)
+    {
+        var record = new RemoteTransferRecord(direction, remotePath, localPath);
+        Transfers.Insert(0, record);
+        return record;
+    }
+
+    private static string ParentRemotePath(string path)
+    {
+        var normalized = NormalizeRemotePath(path).TrimEnd('/');
+        if (string.IsNullOrEmpty(normalized) || string.Equals(normalized, "/", StringComparison.Ordinal))
+        {
+            return "/";
+        }
+
+        var lastSlash = normalized.LastIndexOf('/');
+        return lastSlash <= 0 ? "/" : normalized[..lastSlash];
+    }
+}
+
+public sealed class RemoteTransferRecord : ObservableObject
+{
+    private string _status = "Pending";
+    private string _detail = "";
+
+    public RemoteTransferRecord(string direction, string remotePath, string localPath)
+    {
+        Direction = direction;
+        RemotePath = remotePath;
+        LocalPath = localPath;
+    }
+
+    public string Direction { get; }
+    public string RemotePath { get; }
+    public string LocalPath { get; }
+    public string FileName => string.IsNullOrWhiteSpace(RemotePath)
+        ? Path.GetFileName(LocalPath)
+        : RemotePath.TrimEnd('/').Split('/').LastOrDefault() ?? RemotePath;
+
+    public string Status
+    {
+        get => _status;
+        private set => SetProperty(ref _status, value);
+    }
+
+    public string Detail
+    {
+        get => _detail;
+        private set => SetProperty(ref _detail, value);
+    }
+
+    public void Complete()
+    {
+        Status = "Completed";
+        Detail = "";
+    }
+
+    public void Fail(string message)
+    {
+        Status = "Failed";
+        Detail = message;
     }
 }

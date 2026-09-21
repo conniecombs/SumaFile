@@ -948,6 +948,61 @@ impl RemoteProviderFactory for SecretCheckingProviderFactory {
     }
 }
 
+#[test]
+fn remote_test_profile_connects_provider_and_reports_live_capabilities() {
+    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let db_path = temp_file("remote-test-profile-db", b"");
+    fs::remove_file(&db_path).expect("remove seed temp file");
+    let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
+    let mut state = SessionState::with_remote_provider_factory(DispatchFakeProviderFactory);
+    state.handshake_done = true;
+
+    let test = dispatch(
+        &mut state,
+        &request(
+            "remote_test_profile",
+            109,
+            json!({
+                "profile": {
+                    "id": null,
+                    "name": "Production SFTP",
+                    "protocol": "sftp",
+                    "host": "files.example.com",
+                    "port": 22,
+                    "username": "deploy",
+                    "root_path": "/",
+                    "auth_kind": "password",
+                    "insecure_plain_ftp": false,
+                    "passive_mode": true,
+                    "credential_target": null,
+                    "trusted_host_fingerprint": null
+                },
+                "secret": "not-returned"
+            }),
+        ),
+    );
+    let Dispatch::Reply(test_response) = test else {
+        panic!("expected remote_test_profile reply");
+    };
+    assert!(
+        test_response.error.is_none(),
+        "unexpected test error: {:?}",
+        test_response.error
+    );
+    let result = test_response.result.expect("test result");
+    assert_eq!(result["ok"], true);
+    assert!(result["message"]
+        .as_str()
+        .expect("message")
+        .contains("Connection succeeded"));
+    assert_eq!(
+        result["capabilities"],
+        json!(["browse", "mutate", "transfer"])
+    );
+
+    let _ = fs::remove_file(db_path);
+}
+
 struct PrivateKeySecretCheckingProviderFactory;
 
 impl RemoteProviderFactory for PrivateKeySecretCheckingProviderFactory {

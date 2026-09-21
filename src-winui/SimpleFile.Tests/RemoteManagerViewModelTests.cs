@@ -221,12 +221,97 @@ public class RemoteManagerViewModelTests
 
         Assert.Equal(("remote-session-1", "/incoming/app.txt", @"C:\Downloads\app.txt"), ipc.DownloadedFile);
         Assert.Equal("Downloaded 1 remote file", viewModel.StatusText);
+        var downloadRecord = Assert.Single(viewModel.Transfers);
+        Assert.Equal("Download", downloadRecord.Direction);
+        Assert.Equal("Completed", downloadRecord.Status);
+        Assert.Equal("/incoming/app.txt", downloadRecord.RemotePath);
+        Assert.Equal(@"C:\Downloads\app.txt", downloadRecord.LocalPath);
 
         await viewModel.UploadLocalFilesAsync([@"C:\Uploads\report.pdf"]);
 
         Assert.Equal(("remote-session-1", @"C:\Uploads\report.pdf", "/incoming/report.pdf"), ipc.UploadedFile);
         Assert.Contains(viewModel.RemoteEntries, entry => entry.Name == "report.pdf");
         Assert.Equal("Uploaded 1 file", viewModel.StatusText);
+        var uploadRecord = Assert.Single(viewModel.Transfers, transfer => transfer.Direction == "Upload");
+        Assert.Equal("Completed", uploadRecord.Status);
+        Assert.Equal("/incoming/report.pdf", uploadRecord.RemotePath);
+        Assert.Equal(@"C:\Uploads\report.pdf", uploadRecord.LocalPath);
+    }
+
+    [Fact]
+    public async Task RemoteNavigationMethods_BrowseFoldersAndParents()
+    {
+        var ipc = new RemoteProfileIpc(
+        [
+            new RemoteProfile
+            {
+                Id = "prod",
+                Name = "Production",
+                Protocol = "sftp",
+                Host = "example.com",
+                Port = 22,
+                Username = "deploy",
+                RootPath = "/",
+                AuthKind = "password",
+            },
+        ])
+        {
+            Session = new RemoteSession
+            {
+                SessionId = "remote-session-1",
+                ProfileId = "prod",
+                Protocol = "sftp",
+                RootPath = "/",
+            },
+            ListingsByPath =
+            {
+                ["/"] = new DirectoryListing
+                {
+                    Path = "/",
+                    Parent = null,
+                    IsNetwork = true,
+                    Entries =
+                    [
+                        new FileEntry
+                        {
+                            Name = "incoming",
+                            Path = "/incoming",
+                            IsDir = true,
+                            Modified = "2026-09-21T00:00:00Z",
+                        },
+                    ],
+                },
+                ["/incoming"] = new DirectoryListing
+                {
+                    Path = "/incoming",
+                    Parent = "/",
+                    IsNetwork = true,
+                    Entries =
+                    [
+                        new FileEntry
+                        {
+                            Name = "app.txt",
+                            Path = "/incoming/app.txt",
+                            Modified = "2026-09-21T00:00:00Z",
+                        },
+                    ],
+                },
+            },
+        };
+        var viewModel = new RemoteManagerViewModel(new FileOperationService(ipc));
+        await viewModel.LoadProfilesAsync();
+        await viewModel.ConnectSelectedProfileAsync();
+
+        var folder = Assert.Single(viewModel.RemoteEntries);
+        await viewModel.NavigateRemoteEntryAsync(folder);
+
+        Assert.Equal("/incoming", viewModel.RemotePath);
+        Assert.Equal("app.txt", Assert.Single(viewModel.RemoteEntries).Name);
+
+        await viewModel.GoToParentRemoteDirectoryAsync();
+
+        Assert.Equal("/", viewModel.RemotePath);
+        Assert.Equal(["/", "/incoming", "/"], ipc.ListedPaths);
     }
 
 
@@ -336,6 +421,8 @@ public class RemoteManagerViewModelTests
         public (string RemoteSessionId, string[] Paths)? DeletedEntries { get; private set; }
         public (string RemoteSessionId, string RemotePath, string LocalPath)? DownloadedFile { get; private set; }
         public (string RemoteSessionId, string LocalPath, string RemotePath)? UploadedFile { get; private set; }
+        public List<string> ListedPaths { get; } = [];
+        public Dictionary<string, DirectoryListing> ListingsByPath { get; init; } = [];
         public RemoteSession Session { get; init; } = new();
         public DirectoryListing Listing { get; init; } = new();
         public RemoteConnectionTestResult TestResult { get; init; } = new()
@@ -408,6 +495,12 @@ public class RemoteManagerViewModelTests
             CancellationToken ct = default)
         {
             Assert.Equal(Session.SessionId, remoteSessionId);
+            ListedPaths.Add(path);
+            if (ListingsByPath.TryGetValue(path, out var listing))
+            {
+                return Task.FromResult(listing);
+            }
+
             Assert.Equal(string.IsNullOrWhiteSpace(Listing.Path) ? "/" : Listing.Path, path);
             return Task.FromResult(Listing);
         }

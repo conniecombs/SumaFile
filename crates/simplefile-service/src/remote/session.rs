@@ -27,6 +27,28 @@ impl RemoteConnectionTestResult {
             ],
         }
     }
+
+    pub fn connection_succeeded() -> Self {
+        Self {
+            ok: true,
+            message:
+                "Connection succeeded. The profile can browse, mutate, and transfer remote files."
+                    .to_string(),
+            capabilities: vec![
+                "browse".to_string(),
+                "mutate".to_string(),
+                "transfer".to_string(),
+            ],
+        }
+    }
+
+    pub fn connection_failed(message: String) -> Self {
+        Self {
+            ok: false,
+            message,
+            capabilities: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -80,6 +102,20 @@ impl RemoteSessionRegistry {
         );
 
         Ok(session)
+    }
+
+    pub fn test_profile(
+        &self,
+        profile: RemoteProfile,
+        secret: Option<RemoteSecret>,
+    ) -> RemoteConnectionTestResult {
+        match self.factory.connect(&profile, secret.as_ref()) {
+            Ok(mut provider) => match provider.disconnect() {
+                Ok(()) => RemoteConnectionTestResult::connection_succeeded(),
+                Err(message) => RemoteConnectionTestResult::connection_failed(message),
+            },
+            Err(message) => RemoteConnectionTestResult::connection_failed(message),
+        }
     }
 
     pub fn list_directory(

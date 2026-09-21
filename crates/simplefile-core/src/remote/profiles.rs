@@ -24,6 +24,10 @@ pub fn validate_profile_input(input: &RemoteProfileInput) -> Result<(), String> 
     normalize_profile_input(input.clone()).map(|_| ())
 }
 
+pub fn prepare_profile_input(input: RemoteProfileInput) -> Result<RemoteProfile, String> {
+    normalize_profile_input(input)
+}
+
 pub fn list_profiles_at(path: &Path) -> Result<Vec<RemoteProfile>, String> {
     let connection = open_remote_db_at(path)?;
     let mut statement = connection
