@@ -121,6 +121,13 @@ public class WinUiSourceShapeTests
         Assert.Contains("SaveSecretCheckBox", windowCode);
         Assert.Contains("Windows Credential Manager", windowCode);
         Assert.Contains("Pick private key", windowCode);
+        Assert.Contains("ProfileDialogScrollViewer", windowCode);
+        Assert.Contains("Connection", windowCode);
+        Assert.Contains("Authentication", windowCode);
+        Assert.Contains("Advanced", windowCode);
+        Assert.Contains("ApplyProfileDialogVisibility", windowCode);
+        Assert.Contains("authBox.SelectionChanged", windowCode);
+        Assert.Contains("protocolBox.SelectionChanged", windowCode);
         Assert.Contains("SettingsRemoteManagerButton", File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml")));
     }
 

@@ -414,6 +414,33 @@ public sealed partial class RemoteManagerWindow : Window
             Content = "Allow plain FTP",
             IsChecked = profile?.InsecurePlainFtp ?? false,
         };
+        var sftpTrustPanel = new StackPanel
+        {
+            Spacing = 6,
+            Children =
+            {
+                fingerprintBox,
+            },
+        };
+        var secretPanel = new StackPanel
+        {
+            Spacing = 6,
+            Children =
+            {
+                secretBox,
+                saveSecretBox,
+                secretHelpBlock,
+            },
+        };
+        var ftpOptionsPanel = new StackPanel
+        {
+            Spacing = 6,
+            Children =
+            {
+                passiveBox,
+                insecureBox,
+            },
+        };
         var statusBlock = new TextBlock
         {
             Foreground = App.Current.Resources["SfTextMutedBrush"] as Brush,
@@ -423,39 +450,82 @@ public sealed partial class RemoteManagerWindow : Window
 
         var form = new StackPanel
         {
-            MinWidth = 420,
-            Spacing = 10,
+            MinWidth = 460,
+            Spacing = 14,
             Children =
             {
-                nameBox,
-                protocolBox,
-                hostBox,
-                portBox,
-                usernameBox,
-                rootBox,
-                authBox,
-                secretBox,
-                saveSecretBox,
-                secretHelpBlock,
-                privateKeyPanel,
-                fingerprintBox,
-                credentialBox,
-                passiveBox,
-                insecureBox,
+                CreateProfileDialogSection(
+                    "Connection",
+                    nameBox,
+                    protocolBox,
+                    hostBox,
+                    portBox,
+                    usernameBox,
+                    rootBox),
+                CreateProfileDialogSection(
+                    "Authentication",
+                    authBox,
+                    secretPanel,
+                    privateKeyPanel,
+                    sftpTrustPanel),
+                CreateProfileDialogSection(
+                    "Advanced",
+                    credentialBox,
+                    ftpOptionsPanel),
                 statusBlock,
             },
+        };
+        var scrollViewer = new ScrollViewer
+        {
+            Name = "ProfileDialogScrollViewer",
+            Content = form,
+            MaxHeight = 440,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollMode = ScrollMode.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollMode = ScrollMode.Disabled,
         };
 
         var dialog = new ContentDialog
         {
             XamlRoot = Root.XamlRoot,
             Title = profile is null ? "New remote profile" : "Edit remote profile",
-            Content = form,
+            Content = scrollViewer,
             PrimaryButtonText = "Save",
             SecondaryButtonText = "Test",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
         };
+        protocolBox.SelectionChanged += (_, _) => ApplyProfileDialogVisibility(
+            protocolBox,
+            authBox,
+            usernameBox,
+            secretBox,
+            secretPanel,
+            privateKeyPanel,
+            sftpTrustPanel,
+            ftpOptionsPanel,
+            insecureBox);
+        authBox.SelectionChanged += (_, _) => ApplyProfileDialogVisibility(
+            protocolBox,
+            authBox,
+            usernameBox,
+            secretBox,
+            secretPanel,
+            privateKeyPanel,
+            sftpTrustPanel,
+            ftpOptionsPanel,
+            insecureBox);
+        ApplyProfileDialogVisibility(
+            protocolBox,
+            authBox,
+            usernameBox,
+            secretBox,
+            secretPanel,
+            privateKeyPanel,
+            sftpTrustPanel,
+            ftpOptionsPanel,
+            insecureBox);
 
         RemoteProfileDialogResult? testedResult = null;
         dialog.SecondaryButtonClick += async (_, args) =>
@@ -532,6 +602,75 @@ public sealed partial class RemoteManagerWindow : Window
             DefaultButton = ContentDialogButton.Close,
         };
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
+    }
+
+    private static StackPanel CreateProfileDialogSection(string title, params UIElement[] children)
+    {
+        var section = new StackPanel
+        {
+            Spacing = 8,
+        };
+        section.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        });
+        foreach (var child in children)
+        {
+            section.Children.Add(child);
+        }
+
+        return section;
+    }
+
+    private static void ApplyProfileDialogVisibility(
+        ComboBox protocolBox,
+        ComboBox authBox,
+        TextBox usernameBox,
+        PasswordBox secretBox,
+        StackPanel secretPanel,
+        StackPanel privateKeyPanel,
+        StackPanel sftpTrustPanel,
+        StackPanel ftpOptionsPanel,
+        CheckBox insecureBox)
+    {
+        var protocol = ComboTag(protocolBox, "sftp");
+        var usesFtpFamily = StringComparer.OrdinalIgnoreCase.Equals(protocol, "ftp")
+            || StringComparer.OrdinalIgnoreCase.Equals(protocol, "ftps");
+        foreach (var item in authBox.Items.OfType<ComboBoxItem>())
+        {
+            var tag = item.Tag?.ToString() ?? "";
+            item.IsEnabled = !usesFtpFamily
+                || StringComparer.OrdinalIgnoreCase.Equals(tag, "password")
+                || StringComparer.OrdinalIgnoreCase.Equals(tag, "anonymous");
+        }
+
+        var auth = ComboTag(authBox, "password");
+        if (usesFtpFamily
+            && !StringComparer.OrdinalIgnoreCase.Equals(auth, "password")
+            && !StringComparer.OrdinalIgnoreCase.Equals(auth, "anonymous"))
+        {
+            SelectCombo(authBox, "password");
+            auth = "password";
+        }
+
+        var usesPassword = StringComparer.OrdinalIgnoreCase.Equals(auth, "password");
+        var usesPrivateKey = StringComparer.OrdinalIgnoreCase.Equals(auth, "private-key");
+        var usesAnonymous = StringComparer.OrdinalIgnoreCase.Equals(auth, "anonymous");
+        usernameBox.Header = usesAnonymous ? "Username (optional)" : "Username";
+        secretBox.Header = usesPrivateKey ? "Private key passphrase" : "Password";
+        secretPanel.Visibility = usesPassword || usesPrivateKey ? Visibility.Visible : Visibility.Collapsed;
+        privateKeyPanel.Visibility = usesPrivateKey ? Visibility.Visible : Visibility.Collapsed;
+        sftpTrustPanel.Visibility = usesFtpFamily ? Visibility.Collapsed : Visibility.Visible;
+        ftpOptionsPanel.Visibility = usesFtpFamily ? Visibility.Visible : Visibility.Collapsed;
+        insecureBox.Visibility = StringComparer.OrdinalIgnoreCase.Equals(protocol, "ftp")
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (!StringComparer.OrdinalIgnoreCase.Equals(protocol, "ftp"))
+        {
+            insecureBox.IsChecked = false;
+        }
     }
 
     private static RemoteProfileInput BuildRemoteProfileInput(
