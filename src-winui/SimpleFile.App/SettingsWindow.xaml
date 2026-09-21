@@ -517,6 +517,16 @@
                 <StackPanel x:Name="ToolsPanel" Spacing="16" Visibility="Collapsed">
                     <TextBlock Text="Tools" FontSize="18" FontWeight="SemiBold" />
                     <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
+                        <TextBlock Text="FTP/SFTP Connections" FontWeight="SemiBold" />
+                        <TextBlock Text="Create saved FTP, FTPS, and SFTP profiles, manage credentials, and browse remote folders." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
+                        <Button
+                            x:Name="SettingsRemoteManagerButton"
+                            HorizontalAlignment="Left"
+                            Content="Open FTP/SFTP Manager"
+                            Click="OnOpenRemoteManagerClicked" />
+                        <TextBlock x:Name="ToolsStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
                         <TextBlock Text="Archive Support" FontWeight="SemiBold" />
                         <TextBlock Text="ZIP, TAR, TAR.GZ, 7z, and RAR extraction are handled by SumaFile. RAR creation is not supported." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
                     </StackPanel>

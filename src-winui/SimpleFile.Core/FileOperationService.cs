@@ -529,6 +529,74 @@ public sealed class FileOperationService : ISettingsBackend
     }
 
     public Task SetSettingAsync(string key, string value, CancellationToken ct = default) => _ipc.SetDbSettingAsync(key, value, ct);
+
+    public Task<RemoteProfile[]> RemoteListProfilesAsync(CancellationToken ct = default) =>
+        _ipc.RemoteListProfilesAsync(ct);
+
+    public Task<RemoteProfile> RemoteSaveProfileAsync(
+        RemoteProfileInput profile,
+        string? secret = null,
+        CancellationToken ct = default) =>
+        _ipc.RemoteSaveProfileAsync(profile, secret, ct);
+
+    public Task RemoteDeleteProfileAsync(string profileId, CancellationToken ct = default) =>
+        _ipc.RemoteDeleteProfileAsync(profileId, ct);
+
+    public Task<RemoteConnectionTestResult> RemoteTestProfileAsync(
+        RemoteProfileInput profile,
+        string? secret = null,
+        CancellationToken ct = default) =>
+        _ipc.RemoteTestProfileAsync(profile, secret, ct);
+
+    public Task<RemoteSession> RemoteConnectAsync(
+        string profileId,
+        string? secret = null,
+        CancellationToken ct = default) =>
+        _ipc.RemoteConnectAsync(profileId, secret, ct);
+
+    public Task RemoteDisconnectAsync(string remoteSessionId, CancellationToken ct = default) =>
+        _ipc.RemoteDisconnectAsync(remoteSessionId, ct);
+
+    public Task<DirectoryListing> RemoteListDirectoryAsync(
+        string remoteSessionId,
+        string path,
+        CancellationToken ct = default) =>
+        _ipc.RemoteListDirectoryAsync(remoteSessionId, path, ct);
+
+    public Task<FileEntry> RemoteCreateDirectoryAsync(
+        string remoteSessionId,
+        string path,
+        string name,
+        CancellationToken ct = default) =>
+        _ipc.RemoteCreateDirectoryAsync(remoteSessionId, path, name, ct);
+
+    public Task<FileEntry> RemoteRenameEntryAsync(
+        string remoteSessionId,
+        string path,
+        string newName,
+        CancellationToken ct = default) =>
+        _ipc.RemoteRenameEntryAsync(remoteSessionId, path, newName, ct);
+
+    public Task<string[]> RemoteDeleteEntriesAsync(
+        string remoteSessionId,
+        string[] paths,
+        CancellationToken ct = default) =>
+        _ipc.RemoteDeleteEntriesAsync(remoteSessionId, paths, ct);
+
+    public Task<string> RemoteDownloadFileAsync(
+        string remoteSessionId,
+        string remotePath,
+        string localPath,
+        CancellationToken ct = default) =>
+        _ipc.RemoteDownloadFileAsync(remoteSessionId, remotePath, localPath, ct);
+
+    public Task<FileEntry> RemoteUploadFileAsync(
+        string remoteSessionId,
+        string localPath,
+        string remotePath,
+        CancellationToken ct = default) =>
+        _ipc.RemoteUploadFileAsync(remoteSessionId, localPath, remotePath, ct);
+
     public Task<string> GetAppVersionAsync(CancellationToken ct = default) => _ipc.GetAppVersionAsync(ct);
 
     public Task<CleanupResult> DiskCleanupAsync(

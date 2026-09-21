@@ -3,6 +3,7 @@
 mod binary;
 pub mod dispatch;
 pub mod progress;
+pub mod remote;
 mod scheduler;
 pub mod search;
 pub mod session;

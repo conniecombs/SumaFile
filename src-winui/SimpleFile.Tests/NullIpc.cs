@@ -58,6 +58,61 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task SetDbSettingAsync(string key, string value, CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<RemoteProfile[]> RemoteListProfilesAsync(CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<RemoteProfile> RemoteSaveProfileAsync(
+        RemoteProfileInput profile,
+        string? secret = null,
+        CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task RemoteDeleteProfileAsync(string profileId, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<RemoteConnectionTestResult> RemoteTestProfileAsync(
+        RemoteProfileInput profile,
+        string? secret = null,
+        CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<RemoteSession> RemoteConnectAsync(
+        string profileId,
+        string? secret = null,
+        CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task RemoteDisconnectAsync(string remoteSessionId, CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<DirectoryListing> RemoteListDirectoryAsync(
+        string remoteSessionId,
+        string path,
+        CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<FileEntry> RemoteCreateDirectoryAsync(
+        string remoteSessionId,
+        string path,
+        string name,
+        CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<FileEntry> RemoteRenameEntryAsync(
+        string remoteSessionId,
+        string path,
+        string newName,
+        CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<string[]> RemoteDeleteEntriesAsync(
+        string remoteSessionId,
+        string[] paths,
+        CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<string> RemoteDownloadFileAsync(
+        string remoteSessionId,
+        string remotePath,
+        string localPath,
+        CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<FileEntry> RemoteUploadFileAsync(
+        string remoteSessionId,
+        string localPath,
+        string remotePath,
+        CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default) => throw NotConfigured();

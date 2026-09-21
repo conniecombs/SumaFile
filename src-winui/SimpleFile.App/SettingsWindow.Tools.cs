@@ -12,6 +12,7 @@ public sealed partial class SettingsWindow
     private const string RepositoryUrl = "https://github.com/conniecombs/SumaFile";
     private FileOperationService? _fileOps;
     private bool _checkedUpdateIsInstallable;
+    private RemoteManagerWindow? _settingsRemoteManagerWindow;
 
     private async Task LoadVersionAsync(FileOperationService fileOps, CancellationToken cancellationToken = default)
     {
@@ -147,5 +148,31 @@ public sealed partial class SettingsWindow
                 link.IsEnabled = true;
             }
         }
+    }
+
+    private void OnOpenRemoteManagerClicked(object sender, RoutedEventArgs e)
+    {
+        if (_fileOps is null)
+        {
+            ToolsStatusText.Text = "The backend service is not ready yet.";
+            return;
+        }
+
+        if (_settingsRemoteManagerWindow is { IsClosed: false } existing)
+        {
+            existing.Activate();
+            return;
+        }
+
+        _settingsRemoteManagerWindow = new RemoteManagerWindow(new RemoteManagerViewModel(_fileOps));
+        _settingsRemoteManagerWindow.Closed += (closedSender, _) =>
+        {
+            if (ReferenceEquals(_settingsRemoteManagerWindow, closedSender))
+            {
+                _settingsRemoteManagerWindow = null;
+            }
+        };
+        _settingsRemoteManagerWindow.Activate();
+        ToolsStatusText.Text = "FTP/SFTP manager opened.";
     }
 }

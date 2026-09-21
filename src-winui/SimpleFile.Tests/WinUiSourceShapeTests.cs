@@ -95,6 +95,36 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
+    public void FtpSftpManager_HasCommandRouteAndWindowShell()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var commandRouting = File.ReadAllText(Path.Combine(appRoot, "MainWindow.CommandRouting.cs"));
+        var mainWindow = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+        var windowXamlPath = Path.Combine(appRoot, "RemoteManagerWindow.xaml");
+        var windowCodePath = Path.Combine(appRoot, "RemoteManagerWindow.xaml.cs");
+
+        Assert.Contains("[\"ftp-sftp-manager\"] = () => RunSyncCommand(ShowRemoteManagerWindow)", commandRouting);
+        Assert.Contains("private RemoteManagerWindow? _remoteManagerWindow;", mainWindow);
+        Assert.True(File.Exists(windowXamlPath));
+        Assert.True(File.Exists(windowCodePath));
+
+        var windowXaml = File.ReadAllText(windowXamlPath);
+        var windowCode = File.ReadAllText(windowCodePath);
+        Assert.Contains("x:Name=\"RemoteProfileList\"", windowXaml);
+        Assert.Contains("x:Name=\"RemoteEntryList\"", windowXaml);
+        Assert.Contains("ItemClick=\"OnRemoteEntryItemClick\"", windowXaml);
+        Assert.Contains("x:Name=\"RemoteTransferList\"", windowXaml);
+        Assert.Contains("RemoteManagerViewModel", windowCode);
+        Assert.Contains("LoadProfilesAsync", windowCode);
+        Assert.Contains("NavigateRemoteEntryAsync", windowCode);
+        Assert.Contains("SaveSecretCheckBox", windowCode);
+        Assert.Contains("Windows Credential Manager", windowCode);
+        Assert.Contains("Pick private key", windowCode);
+        Assert.Contains("SettingsRemoteManagerButton", File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml")));
+    }
+
+    [Fact]
     public void MainWindow_DefersColumnEnrichmentUntilIdle()
     {
         var root = FindRepoRoot();

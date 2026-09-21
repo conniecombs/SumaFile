@@ -51,6 +51,7 @@ public static class AppCommandCatalog
         new("new-shortcut", "New shortcut", "File"),
         new("create-archive", "Create archive", "Archive"),
         new("terminal", "Open terminal", "Tools", "F4"),
+        new("ftp-sftp-manager", "FTP/SFTP manager", "Tools"),
         new("preview", "Toggle preview pane", "View"),
         new("toggle-hidden", "Show or hide hidden files", "View", "Ctrl+H"),
         new("toggle-side-menu", "Toggle side menu", "View"),

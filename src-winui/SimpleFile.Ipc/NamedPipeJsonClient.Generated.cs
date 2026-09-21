@@ -50,6 +50,42 @@ public sealed partial class NamedPipeJsonClient
     public Task SetDbSettingAsync(string key, string value, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.SetDbSettingMethod, new { key, value }, ct);
 
+    public Task<RemoteProfile[]> RemoteListProfilesAsync(CancellationToken ct = default)
+        => InvokeAsync<RemoteProfile[]>(Protocol.RemoteListProfilesMethod, new { }, ct);
+
+    public Task<RemoteProfile> RemoteSaveProfileAsync(RemoteProfileInput profile, string? secret = null, CancellationToken ct = default)
+        => InvokeAsync<RemoteProfile>(Protocol.RemoteSaveProfileMethod, new { profile, secret }, ct);
+
+    public Task RemoteDeleteProfileAsync(string profileId, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.RemoteDeleteProfileMethod, new { profileId }, ct);
+
+    public Task<RemoteConnectionTestResult> RemoteTestProfileAsync(RemoteProfileInput profile, string? secret = null, CancellationToken ct = default)
+        => InvokeAsync<RemoteConnectionTestResult>(Protocol.RemoteTestProfileMethod, new { profile, secret }, ct);
+
+    public Task<RemoteSession> RemoteConnectAsync(string profileId, string? secret = null, CancellationToken ct = default)
+        => InvokeAsync<RemoteSession>(Protocol.RemoteConnectMethod, new { profileId, secret }, ct);
+
+    public Task RemoteDisconnectAsync(string remoteSessionId, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.RemoteDisconnectMethod, new { remoteSessionId }, ct);
+
+    public Task<DirectoryListing> RemoteListDirectoryAsync(string remoteSessionId, string path, CancellationToken ct = default)
+        => InvokeAsync<DirectoryListing>(Protocol.RemoteListDirectoryMethod, new { remoteSessionId, path }, ct);
+
+    public Task<FileEntry> RemoteCreateDirectoryAsync(string remoteSessionId, string path, string name, CancellationToken ct = default)
+        => InvokeAsync<FileEntry>(Protocol.RemoteCreateDirectoryMethod, new { remoteSessionId, path, name }, ct);
+
+    public Task<FileEntry> RemoteRenameEntryAsync(string remoteSessionId, string path, string newName, CancellationToken ct = default)
+        => InvokeAsync<FileEntry>(Protocol.RemoteRenameEntryMethod, new { remoteSessionId, path, newName }, ct);
+
+    public Task<string[]> RemoteDeleteEntriesAsync(string remoteSessionId, string[] paths, CancellationToken ct = default)
+        => InvokeAsync<string[]>(Protocol.RemoteDeleteEntriesMethod, new { remoteSessionId, paths }, ct);
+
+    public Task<string> RemoteDownloadFileAsync(string remoteSessionId, string remotePath, string localPath, CancellationToken ct = default)
+        => InvokeAsync<string>(Protocol.RemoteDownloadFileMethod, new { remoteSessionId, remotePath, localPath }, ct);
+
+    public Task<FileEntry> RemoteUploadFileAsync(string remoteSessionId, string localPath, string remotePath, CancellationToken ct = default)
+        => InvokeAsync<FileEntry>(Protocol.RemoteUploadFileMethod, new { remoteSessionId, localPath, remotePath }, ct);
+
     public Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default)
         => InvokeAsync<string>(Protocol.CreateDirectoryMethod, new { path, name }, ct);
 

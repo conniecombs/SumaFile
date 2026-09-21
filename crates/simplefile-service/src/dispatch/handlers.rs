@@ -3,17 +3,24 @@ use super::params::{
     parse_params, BatchRenameParams, CompareParams, CopyMoveParams, CreateArchiveParams,
     DriveListParams, ExternalUrlParams, ExtractArchiveParams, GetFilesWithTagParams,
     GitCommitParams, GitDiffPathParams, GitPathsParams, HandshakeParams, NameParams,
-    OpenWithParams, PathParams, PathsParams, PreviewParams, RenameParams, ResolvedCopyMoveParams,
+    OpenWithParams, PathParams, PathsParams, PreviewParams, RemoteConnectParams,
+    RemoteCreateDirectoryParams, RemoteDeleteEntriesParams, RemoteDownloadFileParams,
+    RemoteListDirectoryParams, RemoteProfileIdParams, RemoteProfileParams, RemoteRenameEntryParams,
+    RemoteSessionIdParams, RemoteUploadFileParams, RenameParams, ResolvedCopyMoveParams,
     SetTagsForPathParams, SettingKeyParams, SettingKeysParams, SettingValueParams, ShortcutParams,
     SmartFolderIdParams, SmartFolderParams, TagCreateParams, TagForPathParams, TagIdParams,
     TagUpdateParams,
 };
 use super::{async_ops, Dispatch, SessionState, APP_VERSION};
+use crate::remote::secrets::RemoteSecret;
 use serde::Serialize;
 use serde_json::{json, Value};
+use simplefile_core::remote::{RemoteAuthKind, RemoteProfile};
 use simplefile_core::utils::dirs_home;
 use simplefile_ipc::rpc::{JsonRpcRequest, JsonRpcResponse};
 use simplefile_ipc::*;
+use std::fs;
+use std::path::Path;
 use std::sync::atomic::Ordering;
 
 pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Dispatch {
@@ -103,6 +110,222 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                     message,
                 )),
             },
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_REMOTE_LIST_PROFILES => {
+            reply_result(request, simplefile_core::remote::profiles::list_profiles())
+        }
+        METHOD_REMOTE_SAVE_PROFILE => match parse_params::<RemoteProfileParams>(request) {
+            Ok(p) => match simplefile_core::remote::profiles::save_profile(p.profile) {
+                Ok(profile) => {
+                    if let Some(secret) = p
+                        .secret
+                        .filter(|secret| !secret.is_empty())
+                        .and_then(|secret| secret_for_profile(&profile, secret))
+                    {
+                        match profile.credential_target.as_deref() {
+                            Some(target) => {
+                                if let Err(message) =
+                                    state.remote_secrets.write_secret(target, &secret)
+                                {
+                                    return Dispatch::Reply(JsonRpcResponse::application_error(
+                                        request.id.clone(),
+                                        message,
+                                    ));
+                                }
+                            }
+                            None => {
+                                return Dispatch::Reply(JsonRpcResponse::application_error(
+                                    request.id.clone(),
+                                    "saved remote profile did not include a credential target",
+                                ));
+                            }
+                        }
+                    }
+
+                    reply_ok(request, profile)
+                }
+                Err(message) => Dispatch::Reply(JsonRpcResponse::application_error(
+                    request.id.clone(),
+                    message,
+                )),
+            },
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_REMOTE_DELETE_PROFILE => match parse_params::<RemoteProfileIdParams>(request) {
+            Ok(p) => {
+                let credential_target = simplefile_core::remote::profiles::list_profiles()
+                    .ok()
+                    .and_then(|profiles| {
+                        profiles
+                            .into_iter()
+                            .find(|profile| profile.id == p.profile_id)
+                            .and_then(|profile| profile.credential_target)
+                    });
+                match simplefile_core::remote::profiles::delete_profile(&p.profile_id) {
+                    Ok(()) => {
+                        if let Some(target) = credential_target.as_deref() {
+                            if let Err(message) = state.remote_secrets.delete_secret(target) {
+                                return Dispatch::Reply(JsonRpcResponse::application_error(
+                                    request.id.clone(),
+                                    message,
+                                ));
+                            }
+                        }
+
+                        Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
+                    }
+                    Err(message) => Dispatch::Reply(JsonRpcResponse::application_error(
+                        request.id.clone(),
+                        message,
+                    )),
+                }
+            }
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_REMOTE_TEST_PROFILE => match parse_params::<RemoteProfileParams>(request) {
+            Ok(p) => match simplefile_core::remote::profiles::prepare_profile_input(p.profile) {
+                Ok(profile) => {
+                    let secret = p
+                        .secret
+                        .filter(|secret| !secret.is_empty())
+                        .and_then(|secret| secret_for_profile(&profile, secret))
+                        .or_else(|| {
+                            profile.credential_target.as_deref().and_then(|target| {
+                                state.remote_secrets.read_secret(target).ok().flatten()
+                            })
+                        });
+                    reply_ok(request, state.remote_sessions.test_profile(profile, secret))
+                }
+                Err(message) => Dispatch::Reply(JsonRpcResponse::application_error(
+                    request.id.clone(),
+                    message,
+                )),
+            },
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_REMOTE_CONNECT => match parse_params::<RemoteConnectParams>(request) {
+            Ok(p) => {
+                let profile =
+                    simplefile_core::remote::profiles::list_profiles().and_then(|profiles| {
+                        profiles
+                            .into_iter()
+                            .find(|profile| profile.id == p.profile_id)
+                            .ok_or_else(|| format!("remote profile not found: {}", p.profile_id))
+                    });
+                match profile {
+                    Ok(profile) => {
+                        let secret = match p
+                            .secret
+                            .filter(|secret| !secret.is_empty())
+                            .and_then(|secret| secret_for_profile(&profile, secret))
+                        {
+                            Some(secret) => Some(secret),
+                            None => match profile.credential_target.as_deref() {
+                                Some(target) => match state.remote_secrets.read_secret(target) {
+                                    Ok(secret) => secret,
+                                    Err(message) => {
+                                        return Dispatch::Reply(
+                                            JsonRpcResponse::application_error(
+                                                request.id.clone(),
+                                                message,
+                                            ),
+                                        );
+                                    }
+                                },
+                                None => None,
+                            },
+                        };
+                        reply_result(
+                            request,
+                            state.remote_sessions.connect_profile(profile, secret),
+                        )
+                    }
+                    Err(message) => Dispatch::Reply(JsonRpcResponse::application_error(
+                        request.id.clone(),
+                        message,
+                    )),
+                }
+            }
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_REMOTE_DISCONNECT => match parse_params::<RemoteSessionIdParams>(request) {
+            Ok(p) => match state.remote_sessions.disconnect(&p.remote_session_id) {
+                Ok(()) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null)),
+                Err(message) => Dispatch::Reply(JsonRpcResponse::application_error(
+                    request.id.clone(),
+                    message,
+                )),
+            },
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_REMOTE_LIST_DIRECTORY => match parse_params::<RemoteListDirectoryParams>(request) {
+            Ok(p) => reply_result(
+                request,
+                state
+                    .remote_sessions
+                    .list_directory(&p.remote_session_id, &p.path),
+            ),
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_REMOTE_CREATE_DIRECTORY => {
+            match parse_params::<RemoteCreateDirectoryParams>(request) {
+                Ok(p) => reply_result(
+                    request,
+                    state
+                        .remote_sessions
+                        .create_directory(&p.remote_session_id, &p.path, &p.name),
+                ),
+                Err(response) => Dispatch::Reply(response),
+            }
+        }
+        METHOD_REMOTE_RENAME_ENTRY => match parse_params::<RemoteRenameEntryParams>(request) {
+            Ok(p) => reply_result(
+                request,
+                state
+                    .remote_sessions
+                    .rename_entry(&p.remote_session_id, &p.path, &p.new_name),
+            ),
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_REMOTE_DELETE_ENTRIES => match parse_params::<RemoteDeleteEntriesParams>(request) {
+            Ok(p) => reply_result(
+                request,
+                state
+                    .remote_sessions
+                    .delete_entries(&p.remote_session_id, &p.paths),
+            ),
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_REMOTE_DOWNLOAD_FILE => match parse_params::<RemoteDownloadFileParams>(request) {
+            Ok(p) => {
+                let result: Result<String, String> = (|| {
+                    let bytes = state
+                        .remote_sessions
+                        .read_file(&p.remote_session_id, &p.remote_path)?;
+                    if let Some(parent) = Path::new(&p.local_path).parent() {
+                        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                    }
+                    fs::write(&p.local_path, bytes).map_err(|error| error.to_string())?;
+                    Ok(p.local_path)
+                })();
+                reply_result(request, result)
+            }
+            Err(response) => Dispatch::Reply(response),
+        },
+        METHOD_REMOTE_UPLOAD_FILE => match parse_params::<RemoteUploadFileParams>(request) {
+            Ok(p) => {
+                let result = fs::read(&p.local_path)
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| {
+                        state.remote_sessions.write_file(
+                            &p.remote_session_id,
+                            &p.remote_path,
+                            &bytes,
+                        )
+                    });
+                reply_result(request, result)
+            }
             Err(response) => Dispatch::Reply(response),
         },
         METHOD_LIST_DIRECTORY => async_ops::list_directory(request),
@@ -689,6 +912,14 @@ where
             request.id.clone(),
             message.to_string(),
         )),
+    }
+}
+
+fn secret_for_profile(profile: &RemoteProfile, secret: String) -> Option<RemoteSecret> {
+    match profile.auth_kind {
+        RemoteAuthKind::Password => Some(RemoteSecret::Password(secret)),
+        RemoteAuthKind::PrivateKey => Some(RemoteSecret::PrivateKeyPassphrase(secret)),
+        RemoteAuthKind::Agent | RemoteAuthKind::Anonymous => None,
     }
 }
 

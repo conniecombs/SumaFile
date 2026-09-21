@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 84;
+    public const int DomainMethodCount = 96;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -64,6 +64,18 @@ public static partial class Protocol
     public const string GetDbSettingMethod = "get_db_setting";
     public const string GetDbSettingsMethod = "get_db_settings";
     public const string SetDbSettingMethod = "set_db_setting";
+    public const string RemoteListProfilesMethod = "remote_list_profiles";
+    public const string RemoteSaveProfileMethod = "remote_save_profile";
+    public const string RemoteDeleteProfileMethod = "remote_delete_profile";
+    public const string RemoteTestProfileMethod = "remote_test_profile";
+    public const string RemoteConnectMethod = "remote_connect";
+    public const string RemoteDisconnectMethod = "remote_disconnect";
+    public const string RemoteListDirectoryMethod = "remote_list_directory";
+    public const string RemoteCreateDirectoryMethod = "remote_create_directory";
+    public const string RemoteRenameEntryMethod = "remote_rename_entry";
+    public const string RemoteDeleteEntriesMethod = "remote_delete_entries";
+    public const string RemoteDownloadFileMethod = "remote_download_file";
+    public const string RemoteUploadFileMethod = "remote_upload_file";
     public const string GetGitRepositoryStatusMethod = "get_git_repository_status";
     public const string GitStagePathsMethod = "git_stage_paths";
     public const string GitUnstagePathsMethod = "git_unstage_paths";
@@ -158,6 +170,18 @@ public static partial class Protocol
         "get_db_setting",
         "get_db_settings",
         "set_db_setting",
+        "remote_list_profiles",
+        "remote_save_profile",
+        "remote_delete_profile",
+        "remote_test_profile",
+        "remote_connect",
+        "remote_disconnect",
+        "remote_list_directory",
+        "remote_create_directory",
+        "remote_rename_entry",
+        "remote_delete_entries",
+        "remote_download_file",
+        "remote_upload_file",
         "get_git_repository_status",
         "git_stage_paths",
         "git_unstage_paths",
