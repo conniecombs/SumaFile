@@ -46,9 +46,11 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-panel");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-stage-selected");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-discard-selected");
+        Assert.Contains(AppCommandCatalog.All, command => command.Id == "ftp-sftp-manager");
         Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
         Assert.Equal("Alt+Enter", AppCommandCatalog.Find("properties")?.Shortcut);
         Assert.Equal("Disk cleanup", AppCommandCatalog.Find("disk-cleanup")?.Label);
+        Assert.Equal("FTP/SFTP manager", AppCommandCatalog.Find("ftp-sftp-manager")?.Label);
         Assert.Equal("Transfers", AppCommandCatalog.Find("transfers")?.Label);
         Assert.Equal("Open or close second pane", AppCommandCatalog.Find("dual-pane")?.Label);
         Assert.Equal("Manage workspace profiles", AppCommandCatalog.Find("profile-manage")?.Label);
@@ -62,6 +64,8 @@ public class AppCommandCatalogTests
         var git = AppCommandCatalog.Filter("git");
         Assert.Equal(10, git.Count);
         Assert.All(git, command => Assert.StartsWith("git-", command.Id, StringComparison.Ordinal));
+        Assert.Equal("ftp-sftp-manager", Assert.Single(AppCommandCatalog.Filter("ftp")).Id);
+        Assert.Equal("ftp-sftp-manager", Assert.Single(AppCommandCatalog.Filter("sftp")).Id);
         Assert.Equal(7, AppCommandCatalog.Filter("icon size").Count);
         Assert.Equal(7, AppCommandCatalog.Filter("profile").Count);
         Assert.Equal("toggle-side-menu", Assert.Single(AppCommandCatalog.Filter("side menu")).Id);

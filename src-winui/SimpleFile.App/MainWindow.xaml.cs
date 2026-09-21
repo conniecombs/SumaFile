@@ -48,6 +48,7 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _transferPromptGate = new(1, 1);
     private int _watchRequestToken;
     private TransferProgressWindow? _transferProgressWindow;
+    private RemoteManagerWindow? _remoteManagerWindow;
     private CancellationTokenSource? _archiveCts;
     private CancellationTokenSource? _utilityCts;
     private bool _applyingWorkspace;
@@ -1301,6 +1302,7 @@ public sealed partial class MainWindow : Window
         CancelArchiveOperation();
         _transfer?.Reset();
         CloseTransferProgressWindow();
+        CloseRemoteManagerWindow();
         _search?.ClearState(notifyHost: false);
         _paneSizeColumnRefreshTimer?.Stop();
         _paneSizeColumnRefreshTimer = null;

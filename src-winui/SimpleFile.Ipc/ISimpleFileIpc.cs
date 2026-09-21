@@ -42,6 +42,18 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default);
     Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default);
     Task SetDbSettingAsync(string key, string value, CancellationToken ct = default);
+    Task<RemoteProfile[]> RemoteListProfilesAsync(CancellationToken ct = default);
+    Task<RemoteProfile> RemoteSaveProfileAsync(RemoteProfileInput profile, string? secret = null, CancellationToken ct = default);
+    Task RemoteDeleteProfileAsync(string profileId, CancellationToken ct = default);
+    Task<RemoteConnectionTestResult> RemoteTestProfileAsync(RemoteProfileInput profile, string? secret = null, CancellationToken ct = default);
+    Task<RemoteSession> RemoteConnectAsync(string profileId, string? secret = null, CancellationToken ct = default);
+    Task RemoteDisconnectAsync(string remoteSessionId, CancellationToken ct = default);
+    Task<DirectoryListing> RemoteListDirectoryAsync(string remoteSessionId, string path, CancellationToken ct = default);
+    Task<FileEntry> RemoteCreateDirectoryAsync(string remoteSessionId, string path, string name, CancellationToken ct = default);
+    Task<FileEntry> RemoteRenameEntryAsync(string remoteSessionId, string path, string newName, CancellationToken ct = default);
+    Task<string[]> RemoteDeleteEntriesAsync(string remoteSessionId, string[] paths, CancellationToken ct = default);
+    Task<string> RemoteDownloadFileAsync(string remoteSessionId, string remotePath, string localPath, CancellationToken ct = default);
+    Task<FileEntry> RemoteUploadFileAsync(string remoteSessionId, string localPath, string remotePath, CancellationToken ct = default);
 
     Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default);
     Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default);

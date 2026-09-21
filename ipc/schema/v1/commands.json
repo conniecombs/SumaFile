@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 84,
+  "domainMethodCount": 96,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -142,6 +142,45 @@
     "get_db_setting": { "params": { "key": "string" }, "result": "string?" },
     "get_db_settings": { "params": { "keys": "string[]" }, "result": "SettingMap" },
     "set_db_setting": { "params": { "key": "string", "value": "string" }, "result": "null" },
+    "remote_list_profiles": { "params": null, "result": "RemoteProfile[]" },
+    "remote_save_profile": {
+      "params": { "profile": "RemoteProfileInput", "secret": "string?" },
+      "result": "RemoteProfile"
+    },
+    "remote_delete_profile": { "params": { "profileId": "string" }, "result": "null" },
+    "remote_test_profile": {
+      "params": { "profile": "RemoteProfileInput", "secret": "string?" },
+      "result": "RemoteConnectionTestResult"
+    },
+    "remote_connect": {
+      "params": { "profileId": "string", "secret": "string?" },
+      "result": "RemoteSession"
+    },
+    "remote_disconnect": { "params": { "remoteSessionId": "string" }, "result": "null" },
+    "remote_list_directory": {
+      "params": { "remoteSessionId": "string", "path": "string" },
+      "result": "DirectoryListing"
+    },
+    "remote_create_directory": {
+      "params": { "remoteSessionId": "string", "path": "string", "name": "string" },
+      "result": "FileEntry"
+    },
+    "remote_rename_entry": {
+      "params": { "remoteSessionId": "string", "path": "string", "newName": "string" },
+      "result": "FileEntry"
+    },
+    "remote_delete_entries": {
+      "params": { "remoteSessionId": "string", "paths": "string[]" },
+      "result": "string[]"
+    },
+    "remote_download_file": {
+      "params": { "remoteSessionId": "string", "remotePath": "string", "localPath": "string" },
+      "result": "string"
+    },
+    "remote_upload_file": {
+      "params": { "remoteSessionId": "string", "localPath": "string", "remotePath": "string" },
+      "result": "FileEntry"
+    },
     "get_git_repository_status": { "params": { "path": "string" }, "result": "GitRepositoryStatus" },
     "git_stage_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
     "git_unstage_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },

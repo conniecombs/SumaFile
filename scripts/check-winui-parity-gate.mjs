@@ -93,8 +93,8 @@ for (const status of statuses) {
 }
 
 const commands = activeServiceCommands(serviceDispatch, rustMethodConstants(protocolGeneratedRs));
-if (commands.length !== 84) {
-  fail(`expected 84 domain commands, found ${commands.length}.`);
+if (commands.length !== 96) {
+  fail(`expected 96 domain commands, found ${commands.length}.`);
 }
 
 for (const command of commands) {

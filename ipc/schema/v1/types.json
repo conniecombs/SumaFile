@@ -12,6 +12,9 @@
     "ProgressStatus": ["running", "finalizing", "completed", "error", "cancelled"],
     "FileChangeKind": ["create", "modify", "remove", "rename"],
     "ArchiveFormat": ["zip", "7z", "tar", "tar.gz", "tgz", "rar"]
+    ,
+    "RemoteProtocol": ["sftp", "ftp", "ftps"],
+    "RemoteAuthKind": ["password", "private-key", "agent", "anonymous"]
   },
   "frontendOnlyFields": {
     "FileEntry": ["itemCount"],
@@ -165,6 +168,24 @@
     "ArchiveCapabilities": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["formats"]
+    },
+    "RemoteProfile": {
+      "source": "crates/simplefile-core/src/remote/models.rs",
+      "fields": ["id", "name", "protocol", "host", "port", "username", "root_path", "auth_kind", "insecure_plain_ftp", "passive_mode", "credential_target", "private_key_path", "trusted_host_fingerprint"],
+      "optional": ["credential_target", "private_key_path", "trusted_host_fingerprint"]
+    },
+    "RemoteProfileInput": {
+      "source": "crates/simplefile-core/src/remote/models.rs",
+      "fields": ["id", "name", "protocol", "host", "port", "username", "root_path", "auth_kind", "insecure_plain_ftp", "passive_mode", "credential_target", "private_key_path", "trusted_host_fingerprint"],
+      "optional": ["id", "credential_target", "private_key_path", "trusted_host_fingerprint"]
+    },
+    "RemoteConnectionTestResult": {
+      "source": "crates/simplefile-service/src/remote/session.rs",
+      "fields": ["ok", "message", "capabilities"]
+    },
+    "RemoteSession": {
+      "source": "crates/simplefile-service/src/remote/session.rs",
+      "fields": ["session_id", "profile_id", "protocol", "root_path"]
     },
     "RenameRequest": {
       "source": "crates/simplefile-core/src/file_ops.rs",

@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use simplefile_core::dir_list::{ListDirectoryOptions, ListingMode};
 use simplefile_core::models::SearchOptions;
+use simplefile_core::remote::RemoteProfileInput;
 use simplefile_ipc::rpc::{JsonRpcRequest, JsonRpcResponse};
 use simplefile_ipc::ERR_INVALID_PARAMS;
 
@@ -207,6 +208,84 @@ pub(super) struct SettingKeysParams {
 pub(super) struct SettingValueParams {
     pub(super) key: String,
     pub(super) value: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RemoteProfileParams {
+    pub(super) profile: RemoteProfileInput,
+    #[serde(default)]
+    pub(super) secret: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RemoteProfileIdParams {
+    #[serde(rename = "profileId")]
+    pub(super) profile_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RemoteConnectParams {
+    #[serde(rename = "profileId")]
+    pub(super) profile_id: String,
+    #[serde(default)]
+    pub(super) secret: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RemoteSessionIdParams {
+    #[serde(rename = "remoteSessionId")]
+    pub(super) remote_session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RemoteListDirectoryParams {
+    #[serde(rename = "remoteSessionId")]
+    pub(super) remote_session_id: String,
+    pub(super) path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RemoteCreateDirectoryParams {
+    #[serde(rename = "remoteSessionId")]
+    pub(super) remote_session_id: String,
+    pub(super) path: String,
+    pub(super) name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RemoteRenameEntryParams {
+    #[serde(rename = "remoteSessionId")]
+    pub(super) remote_session_id: String,
+    pub(super) path: String,
+    #[serde(rename = "newName")]
+    pub(super) new_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RemoteDeleteEntriesParams {
+    #[serde(rename = "remoteSessionId")]
+    pub(super) remote_session_id: String,
+    pub(super) paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RemoteDownloadFileParams {
+    #[serde(rename = "remoteSessionId")]
+    pub(super) remote_session_id: String,
+    #[serde(rename = "remotePath")]
+    pub(super) remote_path: String,
+    #[serde(rename = "localPath")]
+    pub(super) local_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RemoteUploadFileParams {
+    #[serde(rename = "remoteSessionId")]
+    pub(super) remote_session_id: String,
+    #[serde(rename = "localPath")]
+    pub(super) local_path: String,
+    #[serde(rename = "remotePath")]
+    pub(super) remote_path: String,
 }
 
 #[derive(Debug, Deserialize)]

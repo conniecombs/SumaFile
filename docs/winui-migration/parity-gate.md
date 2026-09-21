@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
-**Contract:** [`inventory.md`](inventory.md) (84 commands / emitted events / Svelte workflows)
+**Contract:** [`inventory.md`](inventory.md) (96 commands / emitted events / Svelte workflows)
 **Hosts:** WinUI 3 + `simplefile-service` is the shipping app. Svelte/Tauri UI and packaging glue have been retired.
 
 This is the **retirement lock**. Required `OPEN` rows are none. `MANUAL` rows stay as human smoke coverage. Retired `src-tauri/` domain now lives solely in `crates/simplefile-core`.
@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 84-command schema vs Rust/C#
+npm run check:ipc-schema      # 96-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (84)
+## 2. IPC commands (96)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -172,6 +172,23 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `get_app_about_info` | About | Settings About + dialog | IPC | About panel | `MANUAL` |
 | `check_for_update` | Check updates | Settings Updates | Rust signed-metadata tests + schema | Check for updates | `PASS` |
 | `install_update` | Install + restart handshake | Settings install | Rust verify path + FileOperationService progress tests | Signed build smoke | `PASS` |
+
+### 2.6 FTP/SFTP manager
+
+| ID | Feature | WinUI verification | Automated | Manual | Status |
+| --- | --- | --- | --- | --- | --- |
+| `remote_list_profiles` | Saved remote profile list | `RemoteManagerViewModel.LoadProfilesAsync` | Remote manager tests + service dispatch tests | Open FTP/SFTP manager | `PASS` |
+| `remote_save_profile` | Save remote profile metadata without secret material | IPC/profile persistence | Rust profile tests + named-pipe client tests | Save a profile | `PASS` |
+| `remote_delete_profile` | Delete remote profile metadata | IPC/profile persistence | Rust profile tests + named-pipe client tests | Delete a profile | `PASS` |
+| `remote_test_profile` | Validate profile fields before connect | IPC validation result | Service dispatch tests | Test profile settings | `PASS` |
+| `remote_connect` | Create an opaque remote session | Remote manager connect path | Fake-provider service tests + named-pipe client tests | Connect to a configured FTP/SFTP profile | `MANUAL` |
+| `remote_disconnect` | Close an opaque remote session | Remote manager disconnect path | Fake-provider service tests + named-pipe client tests | Disconnect from a configured FTP/SFTP profile | `MANUAL` |
+| `remote_list_directory` | List a directory through an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Browse a configured FTP/SFTP profile | `MANUAL` |
+| `remote_create_directory` | Create a directory in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Create a remote folder | `MANUAL` |
+| `remote_rename_entry` | Rename a file or directory in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Rename a remote item | `MANUAL` |
+| `remote_delete_entries` | Delete files or directories in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Delete selected remote items | `MANUAL` |
+| `remote_download_file` | Download a remote file into a chosen local folder | Remote manager download action | Fake-provider service tests + named-pipe client tests | Download selected remote files | `MANUAL` |
+| `remote_upload_file` | Upload local files into the active remote directory | Remote manager upload action | Fake-provider service tests + named-pipe client tests | Upload local files | `MANUAL` |
 
 ---
 
@@ -325,6 +342,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `folder-metrics` | Metrics | Dialog | Catalog | — | `MANUAL` |
 | `disk-cleanup` | Cleanup | Dialog | Catalog | — | `MANUAL` |
 | `duplicate-checker` | Duplicates | Dialog | Catalog | — | `MANUAL` |
+| `ftp-sftp-manager` | FTP/SFTP manager | Manager command shell | Catalog + remote manager tests | Open manager | `MANUAL` |
 | `settings` | Settings | Dialog | Catalog | Ctrl+Shift+S | `MANUAL` |
 | `customize-toolbar` `toggle-toolbar-labels` | Toolbar customization | Pane More toolbar submenu + Settings Toolbar page | Catalog + context menu tests | More > Toolbar | `PASS` |
 | `command-palette` | Open command palette | Handler | Catalog test | Ctrl+Shift+P | `PASS` |
@@ -408,7 +426,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 84 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 96 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |

@@ -606,6 +606,55 @@ public sealed class SmartFolder
     [JsonPropertyName("search_options")] public SearchOptions SearchOptions { get; set; } = new();
 }
 
+public sealed class RemoteProfile
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("protocol")] public string Protocol { get; set; } = "";
+    [JsonPropertyName("host")] public string Host { get; set; } = "";
+    [JsonPropertyName("port")] public int Port { get; set; }
+    [JsonPropertyName("username")] public string Username { get; set; } = "";
+    [JsonPropertyName("root_path")] public string RootPath { get; set; } = "/";
+    [JsonPropertyName("auth_kind")] public string AuthKind { get; set; } = "";
+    [JsonPropertyName("insecure_plain_ftp")] public bool InsecurePlainFtp { get; set; }
+    [JsonPropertyName("passive_mode")] public bool PassiveMode { get; set; }
+    [JsonPropertyName("credential_target")] public string? CredentialTarget { get; set; }
+    [JsonPropertyName("private_key_path")] public string? PrivateKeyPath { get; set; }
+    [JsonPropertyName("trusted_host_fingerprint")] public string? TrustedHostFingerprint { get; set; }
+}
+
+public sealed class RemoteProfileInput
+{
+    [JsonPropertyName("id")] public string? Id { get; set; }
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("protocol")] public string Protocol { get; set; } = "";
+    [JsonPropertyName("host")] public string Host { get; set; } = "";
+    [JsonPropertyName("port")] public int Port { get; set; }
+    [JsonPropertyName("username")] public string Username { get; set; } = "";
+    [JsonPropertyName("root_path")] public string RootPath { get; set; } = "/";
+    [JsonPropertyName("auth_kind")] public string AuthKind { get; set; } = "";
+    [JsonPropertyName("insecure_plain_ftp")] public bool InsecurePlainFtp { get; set; }
+    [JsonPropertyName("passive_mode")] public bool PassiveMode { get; set; } = true;
+    [JsonPropertyName("credential_target")] public string? CredentialTarget { get; set; }
+    [JsonPropertyName("private_key_path")] public string? PrivateKeyPath { get; set; }
+    [JsonPropertyName("trusted_host_fingerprint")] public string? TrustedHostFingerprint { get; set; }
+}
+
+public sealed class RemoteConnectionTestResult
+{
+    [JsonPropertyName("ok")] public bool Ok { get; set; }
+    [JsonPropertyName("message")] public string Message { get; set; } = "";
+    [JsonPropertyName("capabilities")] public string[] Capabilities { get; set; } = [];
+}
+
+public sealed class RemoteSession
+{
+    [JsonPropertyName("session_id")] public string SessionId { get; set; } = "";
+    [JsonPropertyName("profile_id")] public string ProfileId { get; set; } = "";
+    [JsonPropertyName("protocol")] public string Protocol { get; set; } = "";
+    [JsonPropertyName("root_path")] public string RootPath { get; set; } = "/";
+}
+
 public sealed class CleanupFile
 {
     [JsonPropertyName("path")] public string Path { get; set; } = "";

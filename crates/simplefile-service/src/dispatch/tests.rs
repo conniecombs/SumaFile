@@ -1,12 +1,17 @@
 use super::handlers::{auth_token_matches, constant_time_eq};
 use super::*;
+use crate::remote::provider::{RemoteProvider, RemoteProviderFactory};
+use crate::remote::secrets::{MemoryRemoteSecretStore, RemoteSecret, RemoteSecretStore};
 use serde_json::{json, Value};
+use simplefile_core::models::{DirectoryListing, FileEntry};
+use simplefile_core::remote::RemoteProfile;
 use simplefile_ipc::rpc::JsonRpcRequest;
 use simplefile_ipc::{
     ERR_HOST_OWNED, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, HANDSHAKE_METHOD, PREFIX_HOST_OWNED,
 };
 use std::ffi::OsString;
 use std::fs;
+use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -736,4 +741,726 @@ fn tags_and_smart_folders_round_trip_through_core() {
 
     let _ = fs::remove_file(db_path);
     let _ = fs::remove_dir_all(app_data);
+}
+
+#[test]
+fn remote_profile_ipc_saves_and_lists_profiles_without_secret_material() {
+    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let db_path = temp_file("remote-profiles-db", b"");
+    fs::remove_file(&db_path).expect("remove seed temp file");
+    let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
+    let mut state = SessionState {
+        handshake_done: true,
+        ..SessionState::default()
+    };
+
+    let save = dispatch(
+        &mut state,
+        &request(
+            "remote_save_profile",
+            80,
+            json!({
+                "profile": {
+                    "id": null,
+                    "name": "Production SFTP",
+                    "protocol": "sftp",
+                    "host": "files.example.com",
+                    "port": 22,
+                    "username": "deploy",
+                    "root_path": "var/www",
+                    "auth_kind": "password",
+                    "insecure_plain_ftp": false,
+                    "passive_mode": true,
+                    "credential_target": null,
+                    "trusted_host_fingerprint": null
+                },
+                "secret": "not-returned"
+            }),
+        ),
+    );
+    let Dispatch::Reply(save_response) = save else {
+        panic!("expected remote_save_profile reply");
+    };
+    assert!(
+        save_response.error.is_none(),
+        "unexpected save error: {:?}",
+        save_response.error
+    );
+    let saved = save_response.result.expect("saved profile");
+    assert_eq!(saved["name"], "Production SFTP");
+    assert_eq!(saved["root_path"], "/var/www");
+    assert!(saved["id"].as_str().is_some_and(|value| !value.is_empty()));
+    assert!(saved.get("secret").is_none());
+
+    let list = dispatch(&mut state, &request("remote_list_profiles", 81, json!({})));
+    let Dispatch::Reply(list_response) = list else {
+        panic!("expected remote_list_profiles reply");
+    };
+    assert!(
+        list_response.error.is_none(),
+        "unexpected list error: {:?}",
+        list_response.error
+    );
+    let profiles = list_response
+        .result
+        .expect("profile list")
+        .as_array()
+        .expect("profiles array")
+        .clone();
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0]["credential_target"], saved["credential_target"]);
+    assert!(profiles[0].get("secret").is_none());
+
+    let _ = fs::remove_file(db_path);
+}
+
+struct DispatchFakeProvider;
+
+impl RemoteProvider for DispatchFakeProvider {
+    fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
+        Ok(DirectoryListing {
+            path: path.to_string(),
+            parent: None,
+            entries: vec![FileEntry {
+                name: "release".to_string(),
+                path: "/release".to_string(),
+                is_dir: true,
+                is_symlink: false,
+                is_hidden: false,
+                is_system: false,
+                size: 0,
+                modified: "2026-09-21T00:00:00Z".to_string(),
+                extension: "".to_string(),
+                permissions: None,
+                symlink_target: None,
+                git_status: None,
+            }],
+            is_network: true,
+        })
+    }
+
+    fn create_directory(&mut self, path: &str, name: &str) -> Result<FileEntry, String> {
+        if path != "/" || name != "incoming" {
+            return Err(format!("unexpected create {path}/{name}"));
+        }
+
+        Ok(FileEntry {
+            name: "incoming".to_string(),
+            path: "/incoming".to_string(),
+            is_dir: true,
+            is_symlink: false,
+            is_hidden: false,
+            is_system: false,
+            size: 0,
+            modified: "2026-09-21T00:00:00Z".to_string(),
+            extension: "".to_string(),
+            permissions: None,
+            symlink_target: None,
+            git_status: None,
+        })
+    }
+
+    fn rename_entry(&mut self, path: &str, new_name: &str) -> Result<FileEntry, String> {
+        if path != "/incoming" || new_name != "archive" {
+            return Err(format!("unexpected rename {path} -> {new_name}"));
+        }
+
+        Ok(FileEntry {
+            name: "archive".to_string(),
+            path: "/archive".to_string(),
+            is_dir: true,
+            is_symlink: false,
+            is_hidden: false,
+            is_system: false,
+            size: 0,
+            modified: "2026-09-21T00:00:00Z".to_string(),
+            extension: "".to_string(),
+            permissions: None,
+            symlink_target: None,
+            git_status: None,
+        })
+    }
+
+    fn delete_entries(&mut self, paths: &[String]) -> Result<Vec<String>, String> {
+        if paths != ["/archive"] {
+            return Err(format!("unexpected delete {paths:?}"));
+        }
+
+        Ok(paths.to_vec())
+    }
+
+    fn read_file(&mut self, path: &str) -> Result<Vec<u8>, String> {
+        if path != "/release/app.txt" {
+            return Err(format!("unexpected read {path}"));
+        }
+
+        Ok(b"remote bytes".to_vec())
+    }
+
+    fn write_file(&mut self, path: &str, bytes: &[u8]) -> Result<FileEntry, String> {
+        if path != "/incoming/app.txt" || bytes != b"local bytes" {
+            return Err(format!("unexpected write {path} {bytes:?}"));
+        }
+
+        Ok(FileEntry {
+            name: "app.txt".to_string(),
+            path: "/incoming/app.txt".to_string(),
+            is_dir: false,
+            is_symlink: false,
+            is_hidden: false,
+            is_system: false,
+            size: bytes.len() as u64,
+            modified: "2026-09-21T00:00:00Z".to_string(),
+            extension: "txt".to_string(),
+            permissions: None,
+            symlink_target: None,
+            git_status: None,
+        })
+    }
+}
+
+struct DispatchFakeProviderFactory;
+
+impl RemoteProviderFactory for DispatchFakeProviderFactory {
+    fn connect(
+        &self,
+        _profile: &RemoteProfile,
+        _secret: Option<&RemoteSecret>,
+    ) -> Result<Box<dyn RemoteProvider>, String> {
+        Ok(Box::new(DispatchFakeProvider))
+    }
+}
+
+struct SecretCheckingProviderFactory;
+
+impl RemoteProviderFactory for SecretCheckingProviderFactory {
+    fn connect(
+        &self,
+        _profile: &RemoteProfile,
+        secret: Option<&RemoteSecret>,
+    ) -> Result<Box<dyn RemoteProvider>, String> {
+        match secret {
+            Some(RemoteSecret::Password(value)) if value == "saved-secret" => {
+                Ok(Box::new(DispatchFakeProvider))
+            }
+            other => Err(format!("unexpected remote secret: {other:?}")),
+        }
+    }
+}
+
+struct PrivateKeySecretCheckingProviderFactory;
+
+impl RemoteProviderFactory for PrivateKeySecretCheckingProviderFactory {
+    fn connect(
+        &self,
+        _profile: &RemoteProfile,
+        secret: Option<&RemoteSecret>,
+    ) -> Result<Box<dyn RemoteProvider>, String> {
+        match secret {
+            Some(RemoteSecret::PrivateKeyPassphrase(value)) if value == "key-passphrase" => {
+                Ok(Box::new(DispatchFakeProvider))
+            }
+            other => Err(format!("unexpected private key secret: {other:?}")),
+        }
+    }
+}
+
+#[test]
+fn remote_session_ipc_connects_lists_and_disconnects_with_provider() {
+    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let db_path = temp_file("remote-session-db", b"");
+    fs::remove_file(&db_path).expect("remove seed temp file");
+    let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
+    let mut state = SessionState::with_remote_provider_factory(DispatchFakeProviderFactory);
+    state.handshake_done = true;
+
+    let save = dispatch(
+        &mut state,
+        &request(
+            "remote_save_profile",
+            90,
+            json!({
+                "profile": {
+                    "id": null,
+                    "name": "Production SFTP",
+                    "protocol": "sftp",
+                    "host": "files.example.com",
+                    "port": 22,
+                    "username": "deploy",
+                    "root_path": "/",
+                    "auth_kind": "password",
+                    "insecure_plain_ftp": false,
+                    "passive_mode": true,
+                    "credential_target": null,
+                    "trusted_host_fingerprint": null
+                },
+                "secret": "not-returned"
+            }),
+        ),
+    );
+    let Dispatch::Reply(save_response) = save else {
+        panic!("expected remote_save_profile reply");
+    };
+    let saved = save_response.result.expect("saved profile");
+    let profile_id = saved["id"].as_str().expect("profile id");
+
+    let connect = dispatch(
+        &mut state,
+        &request(
+            "remote_connect",
+            91,
+            json!({ "profileId": profile_id, "secret": "not-returned" }),
+        ),
+    );
+    let Dispatch::Reply(connect_response) = connect else {
+        panic!("expected remote_connect reply");
+    };
+    assert!(
+        connect_response.error.is_none(),
+        "unexpected connect error: {:?}",
+        connect_response.error
+    );
+    let session = connect_response.result.expect("remote session");
+    assert_eq!(session["profile_id"], profile_id);
+    let session_id = session["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+
+    let list = dispatch(
+        &mut state,
+        &request(
+            "remote_list_directory",
+            92,
+            json!({ "remoteSessionId": session_id, "path": "/" }),
+        ),
+    );
+    let Dispatch::Reply(list_response) = list else {
+        panic!("expected remote_list_directory reply");
+    };
+    assert!(list_response.error.is_none());
+    let listing = list_response.result.expect("remote listing");
+    assert_eq!(listing["path"], "/");
+    assert_eq!(listing["entries"][0]["name"], "release");
+    assert_eq!(listing["is_network"], true);
+
+    let disconnect = dispatch(
+        &mut state,
+        &request(
+            "remote_disconnect",
+            93,
+            json!({ "remoteSessionId": session_id }),
+        ),
+    );
+    let Dispatch::Reply(disconnect_response) = disconnect else {
+        panic!("expected remote_disconnect reply");
+    };
+    assert!(disconnect_response.error.is_none());
+
+    let after_disconnect = dispatch(
+        &mut state,
+        &request(
+            "remote_list_directory",
+            94,
+            json!({ "remoteSessionId": session_id, "path": "/" }),
+        ),
+    );
+    let Dispatch::Reply(after_disconnect_response) = after_disconnect else {
+        panic!("expected remote_list_directory reply");
+    };
+    let error = after_disconnect_response
+        .error
+        .expect("missing session error");
+    assert!(error.message.contains("remote session not found"));
+
+    let _ = fs::remove_file(db_path);
+}
+
+#[test]
+fn remote_profile_ipc_stores_uses_and_deletes_secrets_by_credential_target() {
+    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let db_path = temp_file("remote-secret-db", b"");
+    fs::remove_file(&db_path).expect("remove seed temp file");
+    let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
+    let secret_store = Arc::new(MemoryRemoteSecretStore::default());
+    let mut state = SessionState::with_remote_provider_factory_and_secret_store(
+        SecretCheckingProviderFactory,
+        secret_store.clone(),
+    );
+    state.handshake_done = true;
+
+    let save = dispatch(
+        &mut state,
+        &request(
+            "remote_save_profile",
+            110,
+            json!({
+                "profile": {
+                    "id": null,
+                    "name": "Production SFTP",
+                    "protocol": "sftp",
+                    "host": "files.example.com",
+                    "port": 22,
+                    "username": "deploy",
+                    "root_path": "/",
+                    "auth_kind": "password",
+                    "insecure_plain_ftp": false,
+                    "passive_mode": true,
+                    "credential_target": null,
+                    "trusted_host_fingerprint": null
+                },
+                "secret": "saved-secret"
+            }),
+        ),
+    );
+    let Dispatch::Reply(save_response) = save else {
+        panic!("expected remote_save_profile reply");
+    };
+    assert!(
+        save_response.error.is_none(),
+        "unexpected save error: {:?}",
+        save_response.error
+    );
+    let saved = save_response.result.expect("saved profile");
+    let profile_id = saved["id"].as_str().expect("profile id");
+    let credential_target = saved["credential_target"]
+        .as_str()
+        .expect("credential target")
+        .to_string();
+    assert_eq!(
+        secret_store
+            .read_secret(&credential_target)
+            .expect("read saved secret"),
+        Some(RemoteSecret::Password("saved-secret".to_string()))
+    );
+
+    let connect = dispatch(
+        &mut state,
+        &request("remote_connect", 111, json!({ "profileId": profile_id })),
+    );
+    let Dispatch::Reply(connect_response) = connect else {
+        panic!("expected remote_connect reply");
+    };
+    assert!(
+        connect_response.error.is_none(),
+        "unexpected connect error: {:?}",
+        connect_response.error
+    );
+
+    let delete = dispatch(
+        &mut state,
+        &request(
+            "remote_delete_profile",
+            112,
+            json!({ "profileId": profile_id }),
+        ),
+    );
+    let Dispatch::Reply(delete_response) = delete else {
+        panic!("expected remote_delete_profile reply");
+    };
+    assert!(delete_response.error.is_none());
+    assert_eq!(
+        secret_store
+            .read_secret(&credential_target)
+            .expect("read deleted secret"),
+        None
+    );
+
+    let _ = fs::remove_file(db_path);
+}
+
+#[test]
+fn remote_profile_ipc_stores_private_key_passphrases_by_credential_target() {
+    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let db_path = temp_file("remote-private-key-secret-db", b"");
+    fs::remove_file(&db_path).expect("remove seed temp file");
+    let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
+    let secret_store = Arc::new(MemoryRemoteSecretStore::default());
+    let mut state = SessionState::with_remote_provider_factory_and_secret_store(
+        PrivateKeySecretCheckingProviderFactory,
+        secret_store.clone(),
+    );
+    state.handshake_done = true;
+
+    let save = dispatch(
+        &mut state,
+        &request(
+            "remote_save_profile",
+            113,
+            json!({
+                "profile": {
+                    "id": null,
+                    "name": "Production SFTP Key",
+                    "protocol": "sftp",
+                    "host": "files.example.com",
+                    "port": 22,
+                    "username": "deploy",
+                    "root_path": "/",
+                    "auth_kind": "private-key",
+                    "insecure_plain_ftp": false,
+                    "passive_mode": true,
+                    "credential_target": null,
+                    "private_key_path": "C:\\Users\\raz00\\.ssh\\id_ed25519",
+                    "trusted_host_fingerprint": null
+                },
+                "secret": "key-passphrase"
+            }),
+        ),
+    );
+    let Dispatch::Reply(save_response) = save else {
+        panic!("expected remote_save_profile reply");
+    };
+    assert!(
+        save_response.error.is_none(),
+        "unexpected save error: {:?}",
+        save_response.error
+    );
+    let saved = save_response.result.expect("saved profile");
+    let profile_id = saved["id"].as_str().expect("profile id");
+    let credential_target = saved["credential_target"]
+        .as_str()
+        .expect("credential target")
+        .to_string();
+    assert_eq!(
+        secret_store
+            .read_secret(&credential_target)
+            .expect("read saved secret"),
+        Some(RemoteSecret::PrivateKeyPassphrase(
+            "key-passphrase".to_string()
+        ))
+    );
+
+    let connect = dispatch(
+        &mut state,
+        &request("remote_connect", 114, json!({ "profileId": profile_id })),
+    );
+    let Dispatch::Reply(connect_response) = connect else {
+        panic!("expected remote_connect reply");
+    };
+    assert!(
+        connect_response.error.is_none(),
+        "unexpected connect error: {:?}",
+        connect_response.error
+    );
+
+    let _ = fs::remove_file(db_path);
+}
+
+#[test]
+fn remote_session_ipc_creates_renames_and_deletes_entries_with_provider() {
+    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let db_path = temp_file("remote-mutation-db", b"");
+    fs::remove_file(&db_path).expect("remove seed temp file");
+    let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
+    let mut state = SessionState::with_remote_provider_factory(DispatchFakeProviderFactory);
+    state.handshake_done = true;
+
+    let save = dispatch(
+        &mut state,
+        &request(
+            "remote_save_profile",
+            100,
+            json!({
+                "profile": {
+                    "id": null,
+                    "name": "Production SFTP",
+                    "protocol": "sftp",
+                    "host": "files.example.com",
+                    "port": 22,
+                    "username": "deploy",
+                    "root_path": "/",
+                    "auth_kind": "password",
+                    "insecure_plain_ftp": false,
+                    "passive_mode": true,
+                    "credential_target": null,
+                    "trusted_host_fingerprint": null
+                },
+                "secret": "not-returned"
+            }),
+        ),
+    );
+    let Dispatch::Reply(save_response) = save else {
+        panic!("expected remote_save_profile reply");
+    };
+    let saved = save_response.result.expect("saved profile");
+    let profile_id = saved["id"].as_str().expect("profile id");
+
+    let connect = dispatch(
+        &mut state,
+        &request(
+            "remote_connect",
+            101,
+            json!({ "profileId": profile_id, "secret": "not-returned" }),
+        ),
+    );
+    let Dispatch::Reply(connect_response) = connect else {
+        panic!("expected remote_connect reply");
+    };
+    let session = connect_response.result.expect("remote session");
+    let session_id = session["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+
+    let create = dispatch(
+        &mut state,
+        &request(
+            "remote_create_directory",
+            102,
+            json!({ "remoteSessionId": session_id, "path": "/", "name": "incoming" }),
+        ),
+    );
+    let Dispatch::Reply(create_response) = create else {
+        panic!("expected remote_create_directory reply");
+    };
+    assert!(
+        create_response.error.is_none(),
+        "unexpected create error: {:?}",
+        create_response.error
+    );
+    let created = create_response.result.expect("created entry");
+    assert_eq!(created["name"], "incoming");
+    assert_eq!(created["path"], "/incoming");
+    assert_eq!(created["is_dir"], true);
+
+    let rename = dispatch(
+        &mut state,
+        &request(
+            "remote_rename_entry",
+            103,
+            json!({ "remoteSessionId": session_id, "path": "/incoming", "newName": "archive" }),
+        ),
+    );
+    let Dispatch::Reply(rename_response) = rename else {
+        panic!("expected remote_rename_entry reply");
+    };
+    assert!(rename_response.error.is_none());
+    let renamed = rename_response.result.expect("renamed entry");
+    assert_eq!(renamed["name"], "archive");
+    assert_eq!(renamed["path"], "/archive");
+
+    let delete = dispatch(
+        &mut state,
+        &request(
+            "remote_delete_entries",
+            104,
+            json!({ "remoteSessionId": session_id, "paths": ["/archive"] }),
+        ),
+    );
+    let Dispatch::Reply(delete_response) = delete else {
+        panic!("expected remote_delete_entries reply");
+    };
+    assert!(delete_response.error.is_none());
+    assert_eq!(
+        delete_response.result.expect("deleted paths"),
+        json!(["/archive"])
+    );
+
+    let _ = fs::remove_file(db_path);
+}
+
+#[test]
+fn remote_transfer_ipc_downloads_and_uploads_files_with_provider() {
+    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let db_path = temp_file("remote-transfer-db", b"");
+    fs::remove_file(&db_path).expect("remove seed temp file");
+    let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
+    let mut state = SessionState::with_remote_provider_factory(DispatchFakeProviderFactory);
+    state.handshake_done = true;
+
+    let save = dispatch(
+        &mut state,
+        &request(
+            "remote_save_profile",
+            120,
+            json!({
+                "profile": {
+                    "id": null,
+                    "name": "Production SFTP",
+                    "protocol": "sftp",
+                    "host": "files.example.com",
+                    "port": 22,
+                    "username": "deploy",
+                    "root_path": "/",
+                    "auth_kind": "password",
+                    "insecure_plain_ftp": false,
+                    "passive_mode": true,
+                    "credential_target": null,
+                    "trusted_host_fingerprint": null
+                },
+                "secret": "not-returned"
+            }),
+        ),
+    );
+    let Dispatch::Reply(save_response) = save else {
+        panic!("expected remote_save_profile reply");
+    };
+    let saved = save_response.result.expect("saved profile");
+    let profile_id = saved["id"].as_str().expect("profile id");
+
+    let connect = dispatch(
+        &mut state,
+        &request(
+            "remote_connect",
+            121,
+            json!({ "profileId": profile_id, "secret": "not-returned" }),
+        ),
+    );
+    let Dispatch::Reply(connect_response) = connect else {
+        panic!("expected remote_connect reply");
+    };
+    let session = connect_response.result.expect("remote session");
+    let session_id = session["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+
+    let download_path = temp_file("remote-download", b"");
+    fs::remove_file(&download_path).expect("remove seed download file");
+    let download = dispatch(
+        &mut state,
+        &request(
+            "remote_download_file",
+            122,
+            json!({
+                "remoteSessionId": session_id,
+                "remotePath": "/release/app.txt",
+                "localPath": download_path
+            }),
+        ),
+    );
+    let Dispatch::Reply(download_response) = download else {
+        panic!("expected remote_download_file reply");
+    };
+    assert!(download_response.error.is_none());
+    assert_eq!(
+        fs::read(&download_path).expect("read downloaded file"),
+        b"remote bytes"
+    );
+
+    let upload_path = temp_file("remote-upload", b"local bytes");
+    let upload = dispatch(
+        &mut state,
+        &request(
+            "remote_upload_file",
+            123,
+            json!({
+                "remoteSessionId": session_id,
+                "localPath": upload_path,
+                "remotePath": "/incoming/app.txt"
+            }),
+        ),
+    );
+    let Dispatch::Reply(upload_response) = upload else {
+        panic!("expected remote_upload_file reply");
+    };
+    assert!(upload_response.error.is_none());
+    let uploaded = upload_response.result.expect("uploaded entry");
+    assert_eq!(uploaded["name"], "app.txt");
+    assert_eq!(uploaded["path"], "/incoming/app.txt");
+    assert_eq!(uploaded["size"], 11);
+
+    let _ = fs::remove_file(upload_path);
+    let _ = fs::remove_file(download_path);
+    let _ = fs::remove_file(db_path);
 }
