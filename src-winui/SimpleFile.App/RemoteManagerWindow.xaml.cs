@@ -36,6 +36,20 @@ public sealed partial class RemoteManagerWindow : Window
 
     public bool IsClosed { get; private set; }
 
+    public void RequestProfileSelection(string? profileId)
+    {
+        if (_viewModel.IsConnected)
+        {
+            return;
+        }
+
+        _viewModel.RequestProfileSelection(profileId);
+        if (_loaded)
+        {
+            _ = RunRemoteActionAsync(() => _viewModel.LoadProfilesAsync());
+        }
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (_loaded)
@@ -59,14 +73,28 @@ public sealed partial class RemoteManagerWindow : Window
     private async void OnRefreshRemoteClicked(object sender, RoutedEventArgs e) =>
         await RunRemoteActionAsync(() => _viewModel.RefreshRemoteDirectoryAsync());
 
+    private async void OnRefreshLocalClicked(object sender, RoutedEventArgs e) =>
+        await RunRemoteActionAsync(() => _viewModel.RefreshLocalDirectoryAsync());
+
     private async void OnRemoteUpClicked(object sender, RoutedEventArgs e) =>
         await RunRemoteActionAsync(() => _viewModel.GoToParentRemoteDirectoryAsync());
+
+    private async void OnLocalUpClicked(object sender, RoutedEventArgs e) =>
+        await RunRemoteActionAsync(() => _viewModel.GoToParentLocalDirectoryAsync());
 
     private async void OnRemoteEntryItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is FileEntry entry && entry.IsDir)
         {
             await RunRemoteActionAsync(() => _viewModel.NavigateRemoteEntryAsync(entry));
+        }
+    }
+
+    private async void OnLocalEntryItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is FileEntry entry && entry.IsDir)
+        {
+            await RunRemoteActionAsync(() => _viewModel.NavigateLocalEntryAsync(entry));
         }
     }
 
@@ -164,6 +192,23 @@ public sealed partial class RemoteManagerWindow : Window
         await RunRemoteActionAsync(() => _viewModel.DeleteRemoteEntriesAsync(entries));
     }
 
+    private async void OnChooseLocalFolderClicked(object sender, RoutedEventArgs e)
+    {
+        var localDirectory = await PickDownloadFolderAsync();
+        if (localDirectory is null)
+        {
+            return;
+        }
+
+        await RunRemoteActionAsync(() => _viewModel.NavigateLocalPathAsync(localDirectory));
+    }
+
+    private async void OnDownloadSelectedRemoteEntriesClicked(object sender, RoutedEventArgs e)
+    {
+        var entries = RemoteEntryList.SelectedItems.OfType<FileEntry>().ToArray();
+        await RunRemoteActionAsync(() => _viewModel.DownloadRemoteEntriesToLocalAsync(entries));
+    }
+
     private async void OnDownloadRemoteEntriesClicked(object sender, RoutedEventArgs e)
     {
         var entries = RemoteEntryList.SelectedItems.OfType<FileEntry>().ToArray();
@@ -180,6 +225,12 @@ public sealed partial class RemoteManagerWindow : Window
         }
 
         await RunRemoteActionAsync(() => _viewModel.DownloadRemoteEntriesAsync(entries, localDirectory));
+    }
+
+    private async void OnUploadSelectedLocalEntriesClicked(object sender, RoutedEventArgs e)
+    {
+        var entries = LocalEntryList.SelectedItems.OfType<FileEntry>().ToArray();
+        await RunRemoteActionAsync(() => _viewModel.UploadLocalEntriesToRemoteAsync(entries));
     }
 
     private async void OnUploadLocalFilesClicked(object sender, RoutedEventArgs e)

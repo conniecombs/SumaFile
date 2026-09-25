@@ -322,6 +322,11 @@ public sealed class FileOperationService : ISettingsBackend
         await _ipc.WatchDirectoryAsync(path, ct).ConfigureAwait(false);
     }
 
+    public Task<DirectoryListing> ListDirectoryAsync(string path, CancellationToken ct = default)
+    {
+        return _ipc.ListDirectoryAsync(path, cancellationToken: ct);
+    }
+
     public async Task UnwatchDirectoryAsync(CancellationToken ct = default)
     {
         await _ipc.UnwatchDirectoryAsync(ct).ConfigureAwait(false);

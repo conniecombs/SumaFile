@@ -88,6 +88,7 @@ public sealed partial class MainWindow : Window
     public ObservableCollection<FileRow> SecondaryFiles { get; } = [];
     public ObservableCollection<DriveRow> Drives { get; } = [];
     public ObservableCollection<QuickAccessRow> QuickAccess { get; } = [];
+    public ObservableCollection<RemoteProfileSidebarRow> RemoteProfiles { get; } = [];
 
     public MainWindow()
     {
@@ -186,6 +187,7 @@ public sealed partial class MainWindow : Window
         AttachPaneActivationHandlers();
         DriveList.ItemsSource = Drives;
         QuickAccessList.ItemsSource = QuickAccess;
+        RemoteProfileList.ItemsSource = RemoteProfiles;
         Closed += OnClosed;
         Activated += OnActivated;
     }
@@ -228,6 +230,8 @@ public sealed partial class MainWindow : Window
             timer.Mark("open-with-preferences");
             ApplyTheme(_workspace.Settings.Theme);
             SyncSidebarCollapseStateFromSettings();
+            await RefreshRemoteProfilesForSidebarAsync(CancellationToken.None);
+            timer.Mark("remote-profiles");
             ApplyPreviewVisibility();
             ApplyColumnWidths();
             SyncFromWorkspace();

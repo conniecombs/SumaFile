@@ -195,6 +195,7 @@ public sealed partial class MainWindow
         }
 
         FolderTreeEmptyText.Visibility = _workspace.FolderTreeRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        RemoteProfilesEmptyText.Visibility = RemoteProfiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         BookmarksEmptyText.Visibility = _workspace.Bookmarks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         RecentsEmptyText.Visibility = _workspace.RecentPaths.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         SmartFoldersEmptyText.Visibility = _workspace.SmartFolders.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -212,6 +213,8 @@ public sealed partial class MainWindow
         var settings = _workspace.Settings;
         QuickAccessSection.Visibility = SidebarSectionVisibility.QuickAccess(settings) ? Visibility.Visible : Visibility.Collapsed;
         FolderTreeSection.Visibility = SidebarSectionVisibility.FolderTree(settings, _workspace.FolderTreeRows.Count) ? Visibility.Visible : Visibility.Collapsed;
+        RemoteProfilesSection.Visibility = Visibility.Visible;
+        RemoteProfileList.Visibility = RemoteProfiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         BookmarksSection.Visibility = SidebarSectionVisibility.Bookmarks(settings) ? Visibility.Visible : Visibility.Collapsed;
         RecentSection.Visibility = SidebarSectionVisibility.Recent(settings, _workspace.RecentPaths.Count) ? Visibility.Visible : Visibility.Collapsed;
         SmartFoldersSection.Visibility = SidebarSectionVisibility.SmartFolders(settings, _workspace.SmartFolders.Count, _search?.IsActive == true)

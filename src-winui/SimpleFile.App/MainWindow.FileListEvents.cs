@@ -179,6 +179,16 @@ public sealed partial class MainWindow
         }
     }
 
+    private void OnManageRemoteProfiles(object sender, RoutedEventArgs e) => ShowRemoteManagerWindow();
+
+    private void OnRemoteProfileClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is RemoteProfileSidebarRow row)
+        {
+            ShowRemoteManagerWindow(row.ProfileId);
+        }
+    }
+
     private async void OnBreadcrumbClick(object sender, RoutedEventArgs e)
     {
         if (_workspace is not null && sender is Button { Tag: PanePath target })

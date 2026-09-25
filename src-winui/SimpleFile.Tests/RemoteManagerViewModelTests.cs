@@ -54,6 +54,43 @@ public class RemoteManagerViewModelTests
     }
 
     [Fact]
+    public async Task LoadProfilesAsync_SelectsRequestedProfileWhenOpenedFromSidebar()
+    {
+        var viewModel = new RemoteManagerViewModel(new FileOperationService(new RemoteProfileIpc(
+        [
+            new RemoteProfile
+            {
+                Id = "staging",
+                Name = "Staging",
+                Protocol = "ftp",
+                Host = "staging.example.com",
+                Port = 21,
+                Username = "web",
+                RootPath = "/incoming",
+                AuthKind = "password",
+            },
+            new RemoteProfile
+            {
+                Id = "prod",
+                Name = "Production",
+                Protocol = "sftp",
+                Host = "example.com",
+                Port = 22,
+                Username = "deploy",
+                RootPath = "/var/www",
+                AuthKind = "password",
+            },
+        ])));
+
+        viewModel.RequestProfileSelection("prod");
+        await viewModel.LoadProfilesAsync();
+
+        Assert.Equal("prod", viewModel.SelectedProfile?.Id);
+        Assert.Equal("Production", viewModel.SelectedProfile?.Name);
+        Assert.Equal("Production - sftp://deploy@example.com:22/var/www", viewModel.SelectedProfileSummary);
+    }
+
+    [Fact]
     public async Task ConnectSelectedProfileAsync_ConnectsAndLoadsRemoteListing()
     {
         var ipc = new RemoteProfileIpc(
@@ -314,6 +351,144 @@ public class RemoteManagerViewModelTests
         Assert.Equal(["/", "/incoming", "/"], ipc.ListedPaths);
     }
 
+    [Fact]
+    public async Task LocalNavigationMethods_LoadBrowseAndReturnToParent()
+    {
+        var ipc = new RemoteProfileIpc([])
+        {
+            LocalListingsByPath =
+            {
+                [@"C:\Work"] = new DirectoryListing
+                {
+                    Path = @"C:\Work",
+                    Parent = @"C:\",
+                    Entries =
+                    [
+                        new FileEntry
+                        {
+                            Name = "site",
+                            Path = @"C:\Work\site",
+                            IsDir = true,
+                            Modified = "2026-09-21T00:00:00Z",
+                        },
+                    ],
+                },
+                [@"C:\Work\site"] = new DirectoryListing
+                {
+                    Path = @"C:\Work\site",
+                    Parent = @"C:\Work",
+                    Entries =
+                    [
+                        new FileEntry
+                        {
+                            Name = "index.html",
+                            Path = @"C:\Work\site\index.html",
+                            Modified = "2026-09-21T00:00:00Z",
+                        },
+                    ],
+                },
+                [@"C:\"] = new DirectoryListing
+                {
+                    Path = @"C:\",
+                    Parent = null,
+                    Entries = [],
+                },
+            },
+        };
+        var viewModel = new RemoteManagerViewModel(new FileOperationService(ipc));
+
+        await viewModel.NavigateLocalPathAsync(@"C:\Work");
+
+        Assert.Equal(@"C:\Work", viewModel.LocalPath);
+        Assert.Equal("site", Assert.Single(viewModel.LocalEntries).Name);
+        Assert.Equal("Local path: C:\\Work", viewModel.StatusText);
+
+        await viewModel.NavigateLocalEntryAsync(Assert.Single(viewModel.LocalEntries));
+
+        Assert.Equal(@"C:\Work\site", viewModel.LocalPath);
+        Assert.Equal("index.html", Assert.Single(viewModel.LocalEntries).Name);
+
+        await viewModel.GoToParentLocalDirectoryAsync();
+
+        Assert.Equal(@"C:\Work", viewModel.LocalPath);
+        Assert.Equal([@"C:\Work", @"C:\Work\site", @"C:\Work"], ipc.LocalListedPaths);
+    }
+
+    [Fact]
+    public async Task WorkspaceTransferMethods_UseCurrentLocalAndRemoteFolders()
+    {
+        var ipc = new RemoteProfileIpc(
+        [
+            new RemoteProfile
+            {
+                Id = "prod",
+                Name = "Production",
+                Protocol = "sftp",
+                Host = "example.com",
+                Port = 22,
+                Username = "deploy",
+                RootPath = "/incoming",
+                AuthKind = "password",
+            },
+        ])
+        {
+            Session = new RemoteSession
+            {
+                SessionId = "remote-session-1",
+                ProfileId = "prod",
+                Protocol = "sftp",
+                RootPath = "/incoming",
+            },
+            Listing = new DirectoryListing
+            {
+                Path = "/incoming",
+                Parent = "/",
+                IsNetwork = true,
+                Entries =
+                [
+                    new FileEntry
+                    {
+                        Name = "server.log",
+                        Path = "/incoming/server.log",
+                        Modified = "2026-09-21T00:00:00Z",
+                    },
+                ],
+            },
+            LocalListingsByPath =
+            {
+                [@"C:\Deploy"] = new DirectoryListing
+                {
+                    Path = @"C:\Deploy",
+                    Parent = @"C:\",
+                    Entries =
+                    [
+                        new FileEntry
+                        {
+                            Name = "index.html",
+                            Path = @"C:\Deploy\index.html",
+                            Modified = "2026-09-21T00:00:00Z",
+                        },
+                    ],
+                },
+            },
+        };
+        var viewModel = new RemoteManagerViewModel(new FileOperationService(ipc));
+        await viewModel.LoadProfilesAsync();
+        await viewModel.ConnectSelectedProfileAsync();
+        await viewModel.NavigateLocalPathAsync(@"C:\Deploy");
+
+        await viewModel.DownloadRemoteEntriesToLocalAsync(viewModel.RemoteEntries);
+
+        Assert.Equal(("remote-session-1", "/incoming/server.log", @"C:\Deploy\server.log"), ipc.DownloadedFile);
+        Assert.Equal("Downloaded 1 remote file to C:\\Deploy", viewModel.StatusText);
+
+        await viewModel.UploadLocalEntriesToRemoteAsync(viewModel.LocalEntries);
+
+        Assert.Equal(("remote-session-1", @"C:\Deploy\index.html", "/incoming/index.html"), ipc.UploadedFile);
+        Assert.Contains(viewModel.RemoteEntries, entry => entry.Name == "index.html");
+        Assert.Equal("Uploaded 1 local file to /incoming", viewModel.StatusText);
+    }
+
 
     [Fact]
     public async Task SaveProfileAsync_AddsSavedProfileAndSelectsIt()
@@ -422,7 +597,9 @@ public class RemoteManagerViewModelTests
         public (string RemoteSessionId, string RemotePath, string LocalPath)? DownloadedFile { get; private set; }
         public (string RemoteSessionId, string LocalPath, string RemotePath)? UploadedFile { get; private set; }
         public List<string> ListedPaths { get; } = [];
+        public List<string> LocalListedPaths { get; } = [];
         public Dictionary<string, DirectoryListing> ListingsByPath { get; init; } = [];
+        public Dictionary<string, DirectoryListing> LocalListingsByPath { get; init; } = [];
         public RemoteSession Session { get; init; } = new();
         public DirectoryListing Listing { get; init; } = new();
         public RemoteConnectionTestResult TestResult { get; init; } = new()
@@ -503,6 +680,21 @@ public class RemoteManagerViewModelTests
 
             Assert.Equal(string.IsNullOrWhiteSpace(Listing.Path) ? "/" : Listing.Path, path);
             return Task.FromResult(Listing);
+        }
+
+        public override Task<DirectoryListing> ListDirectoryAsync(
+            string path,
+            Action<DirectoryListingChunk>? onChunk = null,
+            CancellationToken cancellationToken = default,
+            ListDirectoryOptions? options = null)
+        {
+            LocalListedPaths.Add(path);
+            if (LocalListingsByPath.TryGetValue(path, out var listing))
+            {
+                return Task.FromResult(listing);
+            }
+
+            throw new InvalidOperationException($"No local listing configured for {path}.");
         }
 
         public override Task<FileEntry> RemoteCreateDirectoryAsync(

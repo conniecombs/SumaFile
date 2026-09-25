@@ -6,7 +6,7 @@ namespace SimpleFile.App;
 
 public sealed partial class MainWindow
 {
-    private void ShowRemoteManagerWindow()
+    private void ShowRemoteManagerWindow(string? profileId = null)
     {
         if (_workspace?.FileOps is null)
         {
@@ -16,11 +16,13 @@ public sealed partial class MainWindow
 
         if (_remoteManagerWindow is { IsClosed: false } existing)
         {
+            existing.RequestProfileSelection(profileId);
             existing.Activate();
             return;
         }
 
         var viewModel = new RemoteManagerViewModel(_workspace.FileOps);
+        viewModel.RequestProfileSelection(profileId);
         _remoteManagerWindow = new RemoteManagerWindow(viewModel);
         _remoteManagerWindow.Closed += OnRemoteManagerWindowClosed;
         _remoteManagerWindow.Activate();
@@ -32,7 +34,49 @@ public sealed partial class MainWindow
         {
             _remoteManagerWindow = null;
         }
+
+        _ = RefreshRemoteProfilesForSidebarAsync();
     }
+
+    private async Task RefreshRemoteProfilesForSidebarAsync(CancellationToken ct = default)
+    {
+        if (_workspace?.FileOps is null)
+        {
+            RemoteProfiles.Clear();
+            UpdateSidebarEmptyStates();
+            ApplySidebarSectionVisibility();
+            return;
+        }
+
+        try
+        {
+            var profiles = await _workspace.FileOps.RemoteListProfilesAsync(ct);
+            var rows = profiles
+                .OrderBy(profile => profile.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(profile => profile.Host, StringComparer.OrdinalIgnoreCase)
+                .Select(RemoteProfileSidebarRow.From)
+                .ToList();
+            ReplaceIfChanged(RemoteProfiles, rows, SameRemoteProfileSidebarRow);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            RemoteProfiles.Clear();
+        }
+
+        UpdateSidebarEmptyStates();
+        ApplySidebarSectionVisibility();
+    }
+
+    private static bool SameRemoteProfileSidebarRow(RemoteProfileSidebarRow left, RemoteProfileSidebarRow right) =>
+        left.ProfileId == right.ProfileId
+        && left.Name == right.Name
+        && left.Protocol == right.Protocol
+        && left.Host == right.Host
+        && left.Description == right.Description;
 
     private void CloseRemoteManagerWindow()
     {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.UI.Xaml;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
@@ -210,5 +211,38 @@ public sealed class QuickAccessRow
                 _ => homePath,
             };
         }
+    }
+}
+
+public sealed class RemoteProfileSidebarRow
+{
+    public string ProfileId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Protocol { get; set; } = "";
+    public string Host { get; set; } = "";
+    public string Description { get; set; } = "";
+
+    public static RemoteProfileSidebarRow From(RemoteProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        return new RemoteProfileSidebarRow
+        {
+            ProfileId = profile.Id,
+            Name = string.IsNullOrWhiteSpace(profile.Name) ? profile.Host : profile.Name,
+            Protocol = profile.Protocol.ToUpperInvariant(),
+            Host = profile.Host,
+            Description = FormatDescription(profile),
+        };
+    }
+
+    private static string FormatDescription(RemoteProfile profile)
+    {
+        var protocol = string.IsNullOrWhiteSpace(profile.Protocol)
+            ? "remote"
+            : profile.Protocol.ToLowerInvariant();
+        var userPrefix = string.IsNullOrWhiteSpace(profile.Username) ? "" : profile.Username + "@";
+        var port = profile.Port > 0 ? ":" + profile.Port.ToString(CultureInfo.InvariantCulture) : "";
+        var root = string.IsNullOrWhiteSpace(profile.RootPath) ? "/" : profile.RootPath;
+        return $"{protocol}://{userPrefix}{profile.Host}{port}{root}";
     }
 }

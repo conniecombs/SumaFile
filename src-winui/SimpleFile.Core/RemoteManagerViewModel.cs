@@ -11,6 +11,9 @@ public sealed class RemoteManagerViewModel : ObservableObject
     private RemoteSession? _currentSession;
     private bool _isBusy;
     private string _statusText = "No remote profiles";
+    private string? _requestedProfileId;
+    private string _localPath = "";
+    private string? _localParentPath;
     private string _remotePath = "/";
 
     public RemoteManagerViewModel(FileOperationService fileOperations)
@@ -19,6 +22,8 @@ public sealed class RemoteManagerViewModel : ObservableObject
     }
 
     public ObservableCollection<RemoteProfile> Profiles { get; } = [];
+
+    public ObservableCollection<FileEntry> LocalEntries { get; } = [];
 
     public ObservableCollection<FileEntry> RemoteEntries { get; } = [];
 
@@ -52,6 +57,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
                 OnPropertyChanged(nameof(CanDeleteProfile));
                 OnPropertyChanged(nameof(CanEditProfile));
                 OnPropertyChanged(nameof(CanMutateRemoteEntries));
+                OnPropertyChanged(nameof(CanUseWorkspaceTransfers));
             }
         }
     }
@@ -70,6 +76,19 @@ public sealed class RemoteManagerViewModel : ObservableObject
                 OnPropertyChanged(nameof(CanDeleteProfile));
                 OnPropertyChanged(nameof(CanEditProfile));
                 OnPropertyChanged(nameof(CanMutateRemoteEntries));
+                OnPropertyChanged(nameof(CanUseWorkspaceTransfers));
+            }
+        }
+    }
+
+    public string LocalPath
+    {
+        get => _localPath;
+        private set
+        {
+            if (SetProperty(ref _localPath, value))
+            {
+                OnPropertyChanged(nameof(CanUseWorkspaceTransfers));
             }
         }
     }
@@ -104,12 +123,16 @@ public sealed class RemoteManagerViewModel : ObservableObject
 
     public bool CanMutateRemoteEntries => IsConnected && !IsBusy;
 
+    public bool CanUseWorkspaceTransfers => CanMutateRemoteEntries && !string.IsNullOrWhiteSpace(LocalPath);
+
     public async Task LoadProfilesAsync(CancellationToken ct = default)
     {
         IsBusy = true;
         try
         {
-            var selectedId = SelectedProfile?.Id;
+            var selectedId = string.IsNullOrWhiteSpace(_requestedProfileId)
+                ? SelectedProfile?.Id
+                : _requestedProfileId;
             var profiles = await _fileOperations.RemoteListProfilesAsync(ct);
 
             Profiles.Clear();
@@ -120,11 +143,32 @@ public sealed class RemoteManagerViewModel : ObservableObject
 
             SelectedProfile = Profiles.FirstOrDefault(profile => profile.Id == selectedId)
                 ?? Profiles.FirstOrDefault();
+            if (SelectedProfile is not null && StringComparer.Ordinal.Equals(SelectedProfile.Id, _requestedProfileId))
+            {
+                _requestedProfileId = null;
+            }
+
             StatusText = FormatProfileCount(Profiles.Count);
         }
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    public void RequestProfileSelection(string? profileId)
+    {
+        _requestedProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId.Trim();
+        if (_requestedProfileId is null)
+        {
+            return;
+        }
+
+        var profile = Profiles.FirstOrDefault(candidate => StringComparer.Ordinal.Equals(candidate.Id, _requestedProfileId));
+        if (profile is not null)
+        {
+            SelectedProfile = profile;
+            _requestedProfileId = null;
         }
     }
 
@@ -237,6 +281,81 @@ public sealed class RemoteManagerViewModel : ObservableObject
         {
             IsBusy = false;
         }
+    }
+
+    public async Task NavigateLocalPathAsync(string path, CancellationToken ct = default)
+    {
+        var trimmed = path.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            StatusText = "Enter a local folder";
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            await RefreshLocalDirectoryCoreAsync(trimmed, ct);
+            StatusText = $"Local path: {LocalPath}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public async Task RefreshLocalDirectoryAsync(CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(LocalPath))
+        {
+            StatusText = "Enter a local folder";
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            await RefreshLocalDirectoryCoreAsync(LocalPath, ct);
+            StatusText = $"Local path: {LocalPath}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    public async Task NavigateLocalEntryAsync(FileEntry? entry, CancellationToken ct = default)
+    {
+        if (entry is null)
+        {
+            StatusText = "Select a local folder";
+            return;
+        }
+
+        if (!entry.IsDir)
+        {
+            StatusText = entry.Name;
+            return;
+        }
+
+        await NavigateLocalPathAsync(entry.Path, ct);
+    }
+
+    public async Task GoToParentLocalDirectoryAsync(CancellationToken ct = default)
+    {
+        var parent = _localParentPath;
+        if (string.IsNullOrWhiteSpace(parent) && !string.IsNullOrWhiteSpace(LocalPath))
+        {
+            parent = Directory.GetParent(LocalPath)?.FullName;
+        }
+
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            StatusText = "No local parent folder";
+            return;
+        }
+
+        await NavigateLocalPathAsync(parent, ct);
     }
 
     public async Task NavigateRemoteEntryAsync(FileEntry? entry, CancellationToken ct = default)
@@ -434,6 +553,66 @@ public sealed class RemoteManagerViewModel : ObservableObject
         string localDirectory,
         CancellationToken ct = default)
     {
+        await DownloadRemoteEntriesCoreAsync(
+            entries,
+            localDirectory,
+            completedStatus: count => count == 1
+                ? "Downloaded 1 remote file"
+                : $"Downloaded {count} remote files",
+            ct);
+    }
+
+    public async Task DownloadRemoteEntriesToLocalAsync(
+        IReadOnlyList<FileEntry> entries,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(LocalPath))
+        {
+            StatusText = "Enter a local download folder";
+            return;
+        }
+
+        await DownloadRemoteEntriesCoreAsync(
+            entries,
+            LocalPath,
+            completedStatus: count => count == 1
+                ? $"Downloaded 1 remote file to {LocalPath}"
+                : $"Downloaded {count} remote files to {LocalPath}",
+            ct);
+    }
+
+    public async Task UploadLocalFilesAsync(IReadOnlyList<string> localPaths, CancellationToken ct = default)
+    {
+        await UploadLocalFilesCoreAsync(
+            localPaths,
+            completedStatus: count => count == 1
+                ? "Uploaded 1 file"
+                : $"Uploaded {count} files",
+            ct);
+    }
+
+    public async Task UploadLocalEntriesToRemoteAsync(
+        IReadOnlyList<FileEntry> entries,
+        CancellationToken ct = default)
+    {
+        var localPaths = entries
+            .Where(entry => !entry.IsDir && !string.IsNullOrWhiteSpace(entry.Path))
+            .Select(entry => entry.Path)
+            .ToArray();
+        await UploadLocalFilesCoreAsync(
+            localPaths,
+            completedStatus: count => count == 1
+                ? $"Uploaded 1 local file to {RemotePath}"
+                : $"Uploaded {count} local files to {RemotePath}",
+            ct);
+    }
+
+    private async Task DownloadRemoteEntriesCoreAsync(
+        IReadOnlyList<FileEntry> entries,
+        string localDirectory,
+        Func<int, string> completedStatus,
+        CancellationToken ct = default)
+    {
         if (CurrentSession is null)
         {
             StatusText = "Connect to a remote profile first";
@@ -478,9 +657,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
                 }
             }
 
-            StatusText = files.Length == 1
-                ? "Downloaded 1 remote file"
-                : $"Downloaded {files.Length} remote files";
+            StatusText = completedStatus(files.Length);
         }
         finally
         {
@@ -488,7 +665,10 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
     }
 
-    public async Task UploadLocalFilesAsync(IReadOnlyList<string> localPaths, CancellationToken ct = default)
+    private async Task UploadLocalFilesCoreAsync(
+        IReadOnlyList<string> localPaths,
+        Func<int, string> completedStatus,
+        CancellationToken ct = default)
     {
         if (CurrentSession is null)
         {
@@ -534,14 +714,20 @@ public sealed class RemoteManagerViewModel : ObservableObject
             ReplaceRemoteEntries(RemoteEntries
                 .Where(entry => uploaded.All(upload => !StringComparer.Ordinal.Equals(upload.Path, entry.Path)))
                 .Concat(uploaded));
-            StatusText = uploaded.Count == 1
-                ? "Uploaded 1 file"
-                : $"Uploaded {uploaded.Count} files";
+            StatusText = completedStatus(uploaded.Count);
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    private async Task RefreshLocalDirectoryCoreAsync(string path, CancellationToken ct)
+    {
+        var listing = await _fileOperations.ListDirectoryAsync(path, ct).ConfigureAwait(false);
+        LocalPath = string.IsNullOrWhiteSpace(listing.Path) ? path : listing.Path;
+        _localParentPath = listing.Parent;
+        ReplaceLocalEntries(listing.Entries);
     }
 
     private async Task RefreshRemoteDirectoryCoreAsync(string path, CancellationToken ct)
@@ -566,6 +752,15 @@ public sealed class RemoteManagerViewModel : ObservableObject
         foreach (var entry in entries.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase))
         {
             RemoteEntries.Add(entry);
+        }
+    }
+
+    private void ReplaceLocalEntries(IEnumerable<FileEntry> entries)
+    {
+        LocalEntries.Clear();
+        foreach (var entry in entries.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            LocalEntries.Add(entry);
         }
     }
 

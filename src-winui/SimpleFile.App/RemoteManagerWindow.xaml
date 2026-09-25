@@ -5,7 +5,7 @@
     Title="FTP/SFTP Manager">
     <Grid
         x:Name="Root"
-        MinWidth="860"
+        MinWidth="1120"
         MinHeight="520"
         Padding="16"
         Background="{ThemeResource SfBgSecondaryBrush}"
@@ -82,7 +82,8 @@
             Grid.Row="1"
             ColumnSpacing="12">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="300" />
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
@@ -182,6 +183,107 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox
+                            x:Name="LocalPathBox"
+                            IsReadOnly="True"
+                            PlaceholderText="Choose a local folder"
+                            Style="{StaticResource SfTextBoxStyle}"
+                            Text="{Binding LocalPath, Mode=OneWay}" />
+                        <Button
+                            Grid.Column="1"
+                            Click="OnLocalUpClicked"
+                            Style="{StaticResource SfGhostButtonStyle}"
+                            ToolTipService.ToolTip="Go to parent local folder">
+                            <FontIcon
+                                FontFamily="{StaticResource SfIconFont}"
+                                FontSize="11"
+                                Glyph="&#xE74A;" />
+                        </Button>
+                        <Button
+                            Grid.Column="2"
+                            Click="OnChooseLocalFolderClicked"
+                            Style="{StaticResource SfGhostButtonStyle}"
+                            ToolTipService.ToolTip="Choose local folder">
+                            <FontIcon
+                                FontFamily="{StaticResource SfIconFont}"
+                                FontSize="11"
+                                Glyph="&#xE8B7;" />
+                        </Button>
+                        <Button
+                            Grid.Column="3"
+                            Click="OnUploadSelectedLocalEntriesClicked"
+                            IsEnabled="{Binding CanUseWorkspaceTransfers}"
+                            Style="{StaticResource SfGhostButtonStyle}"
+                            ToolTipService.ToolTip="Upload selected local files to remote pane">
+                            <FontIcon
+                                FontFamily="{StaticResource SfIconFont}"
+                                FontSize="11"
+                                Glyph="&#xE898;" />
+                        </Button>
+                        <Button
+                            Grid.Column="4"
+                            Click="OnRefreshLocalClicked"
+                            Style="{StaticResource SfGhostButtonStyle}"
+                            ToolTipService.ToolTip="Refresh local folder">
+                            <FontIcon
+                                FontFamily="{StaticResource SfIconFont}"
+                                FontSize="11"
+                                Glyph="&#xE72C;" />
+                        </Button>
+                    </Grid>
+                    <ListView
+                        x:Name="LocalEntryList"
+                        Grid.Row="1"
+                        IsItemClickEnabled="True"
+                        ItemClick="OnLocalEntryItemClick"
+                        ItemsSource="{Binding LocalEntries}"
+                        SelectionMode="Extended">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid MinWidth="0" ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="96" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock
+                                        FontSize="13"
+                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                        Text="{Binding Name}"
+                                        TextTrimming="CharacterEllipsis" />
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Right"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                        Text="{Binding Modified}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+
+            <Border
+                Grid.Column="2"
+                Padding="12"
+                Background="{ThemeResource SfBgPrimaryBrush}"
+                BorderBrush="{ThemeResource SfBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="8">
+                <Grid RowSpacing="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid ColumnSpacing="8">
@@ -224,10 +326,10 @@
                         </Button>
                         <Button
                             Grid.Column="3"
-                            Click="OnUploadLocalFilesClicked"
-                            IsEnabled="{Binding CanMutateRemoteEntries}"
+                            Click="OnUploadSelectedLocalEntriesClicked"
+                            IsEnabled="{Binding CanUseWorkspaceTransfers}"
                             Style="{StaticResource SfGhostButtonStyle}"
-                            ToolTipService.ToolTip="Upload local files">
+                            ToolTipService.ToolTip="Upload selected local files to remote pane">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
                                 FontSize="11"
@@ -235,10 +337,10 @@
                         </Button>
                         <Button
                             Grid.Column="4"
-                            Click="OnDownloadRemoteEntriesClicked"
-                            IsEnabled="{Binding CanMutateRemoteEntries}"
+                            Click="OnDownloadSelectedRemoteEntriesClicked"
+                            IsEnabled="{Binding CanUseWorkspaceTransfers}"
                             Style="{StaticResource SfGhostButtonStyle}"
-                            ToolTipService.ToolTip="Download selected remote files">
+                            ToolTipService.ToolTip="Download selected remote files to local pane">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
                                 FontSize="11"

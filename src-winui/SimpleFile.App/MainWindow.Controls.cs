@@ -17,6 +17,9 @@ public sealed partial class MainWindow
     private Button RefreshDrivesButton => SidebarPanel.RefreshDrives;
     private Button MyPcCollapseButton => SidebarPanel.MyPcCollapse;
     private ListView DriveList => SidebarPanel.DriveItems;
+    private StackPanel RemoteProfilesSection => SidebarPanel.RemoteProfilesSectionRoot;
+    private TextBlock RemoteProfilesEmptyText => SidebarPanel.RemoteProfilesEmpty;
+    private ListView RemoteProfileList => SidebarPanel.RemoteProfiles;
     private StackPanel FolderTreeSection => SidebarPanel.FolderTreeSectionRoot;
     private TextBlock FolderTreeEmptyText => SidebarPanel.FolderTreeEmpty;
     private ListView FolderTreeList => SidebarPanel.FolderTree;
@@ -163,6 +166,8 @@ public sealed partial class MainWindow
         SidebarPanel.RefreshDrivesClick += OnRefreshDrives;
         SidebarPanel.ToggleMyPc += OnToggleMyPc;
         SidebarPanel.DriveClick += OnDriveClick;
+        SidebarPanel.ManageRemoteProfiles += OnManageRemoteProfiles;
+        SidebarPanel.RemoteProfileClick += OnRemoteProfileClick;
         SidebarPanel.RefreshFolderTree += OnRefreshFolderTree;
         SidebarPanel.FolderTreeClick += OnFolderTreeClick;
         SidebarPanel.FolderTreeToggle += OnFolderTreeToggle;
