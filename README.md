@@ -12,8 +12,8 @@
 SumaFile is a native Windows file manager for people who work across several
 folders at once and need more than a basic file list. It pairs a WinUI 3 desktop
 shell with a Rust filesystem service so browsing, transfers, search, previews,
-archives, checksums, Git status, and cleanup tools can stay responsive in one
-local-first app.
+archives, checksums, Git status, remote FTP/SFTP profiles, and cleanup tools can
+stay responsive in one local-first app.
 
 **Repository topics:** `windows`, `file-manager`, `winui-3`, `rust`,
 `named-pipe-ipc`, `dual-pane`, `tabs`, `file-preview`, `advanced-rename`,
@@ -95,7 +95,7 @@ repositories can be reviewed without jumping between Explorer and a terminal.
 | UI | Unpackaged WinUI 3 desktop app |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
 | Release artifacts | NSIS setup, MSI, portable ZIP, updater manifest |
-| Storage scope | Local folders, local drives, removable media, mapped network shares, archives |
+| Storage scope | Local folders, local drives, removable media, mapped network shares, archives, FTP/FTPS/SFTP profile browser |
 | License | [MIT](LICENSE) |
 
 The active application is the WinUI host under `src-winui/` plus the Rust crates
@@ -113,6 +113,7 @@ but the Svelte/Tauri surface is not the shipping UI for this branch.
 | Organize messy folders | Tags, bookmarks, recents, smart folders, duplicate finder, cleanup, and Advanced Rename |
 | Work with archives | Create, list, view, extract, pack, and unpack supported archives |
 | Handle developer folders | Git status column, dockable Git workbench, terminal launch, and Open With preferences |
+| Reach remote servers | FTP, FTPS, and SFTP profile manager with test, browse, upload, download, rename, and delete actions |
 | Stay Windows-native | Drive labels, network-share status, shell icons, Windows installers, and Windows shortcuts |
 
 ## Install
@@ -149,7 +150,9 @@ the app. Builds without complete trusted metadata fall back to the release page.
    Look on the selected item.
 6. Use right-click menus, toolbar buttons, or `Ctrl+Shift+P` for command
    palette access.
-7. Save repeatable pane/tab/column setups from View options -> Profiles.
+7. Open Tools -> FTP/SFTP Manager when you need a saved FTP, FTPS, or SFTP
+   profile.
+8. Save repeatable pane/tab/column setups from View options -> Profiles.
 
 ## Feature Reference
 
@@ -191,7 +194,8 @@ the app. Builds without complete trusted metadata fall back to the release page.
 | Video | MP4, WebM, AVI, MOV, MKV, FLV, WMV, OGG |
 | Audio | MP3, WAV, FLAC, OGG, AAC, WMA, M4A, AIFF |
 | Text and code | Plain text, source files, scripts, config, logs |
-| Markdown | Text preview |
+| Markdown | Raw text or rendered Markdown with GitHub-flavored tables and task lists |
+| Data text | Rendered HTML, JSON/JSONL, CSV/TSV, XML/XAML, YAML, TOML, AsciiDoc, and reStructuredText views |
 | Fonts | TTF, OTF, WOFF, WOFF2 |
 | Other files | Shell icon and basic metadata fallback |
 
@@ -207,6 +211,9 @@ Inspection tools include:
 - Text diff for two small UTF-8 files
 - Binary comparison with hex/ASCII rows for images, executables, oversized text,
   invalid UTF-8, or other binary content
+- A persisted Rendered toggle for Markdown and data files. Markdown task-list
+  checkboxes are preview-only controls; change the source file to update task
+  state.
 
 ### Search and Smart Folders
 
@@ -259,6 +266,16 @@ links and special entries that could escape the destination.
 - Pinned and recent Open With apps per extension
 - Command palette with searchable app commands
 
+### FTP/SFTP Manager
+
+- Saved FTP, FTPS, and SFTP profiles
+- Password, anonymous, SSH agent, and private-key authentication modes
+- Optional Windows Credential Manager storage for passwords and passphrases
+- Profile test before save
+- Remote folder browsing with create folder, upload, download, rename, delete,
+  refresh, and disconnect actions
+- Plain FTP requires an explicit insecure-connection acknowledgement
+
 ## Settings and State
 
 Settings is organized into:
@@ -267,9 +284,11 @@ Settings is organized into:
 | --- | --- |
 | Appearance | Theme, default view, icon size, column preset, hidden files |
 | Navigation | Start location, custom path, new-tab behavior, sidebar sections, recent history |
-| Behavior | Delete confirmation, folder sorting, folder sizes, Git integration |
-| Shortcuts | Live shortcut list |
-| Tools | Archive support summary |
+| Behavior | Delete confirmation, folder sorting, folder sizes, rendered previews, video playback previews, Git integration |
+| Storage & Cache | Thumbnail cache enablement, cache size, and cache location |
+| Shortcuts | Searchable shortcut list with edit, reset, import, and export |
+| Toolbar | Toolbar label mode, command order, separators, removed commands, and reset |
+| Tools | FTP/SFTP manager launcher and archive support summary |
 | Updates | Version, update check, install action |
 | About | Product, version, repository, and build metadata |
 
@@ -349,7 +368,7 @@ Press `F1` or `Ctrl+?` in SumaFile for the live shortcut list.
 | Windows SDK | 10.0.19041+ | WinUI target platform |
 | NSIS | Optional | NSIS setup executable |
 | WiX v3 | Optional | MSI package |
-| 7-Zip | Optional | `.7z` archive operations |
+| Bundled 7-Zip files | In repo | `.7z` archive operations and packaged payload checks |
 
 ### Run Locally
 
@@ -410,12 +429,12 @@ SumaFile.exe
         | length-prefixed named-pipe JSON-RPC
         v
 simplefile-service.exe
-  dispatcher, watcher, search, progress, cancellation
+  dispatcher, watcher, search, progress, cancellation, remote providers
         |
         v
 simplefile-core
-  file ops, archive, preview, metadata, checksum, compare,
-  drives, tags, smart folders, Git, updater, shell helpers
+  file ops, archive, preview data, metadata, checksum, compare,
+  drives, tags, smart folders, Git, updater, remote profiles, shell helpers
 ```
 
 Important contracts:
@@ -436,13 +455,13 @@ Important contracts:
 SumaFile/
 |-- src-winui/
 |   |-- SimpleFile.App/       WinUI window, dialogs, preview, toolbar, panes
-|   |-- SimpleFile.Core/      Workspace, settings, menus, transfers, layout state
+|   |-- SimpleFile.Core/      Workspace, settings, menus, transfers, preview helpers, layout state
 |   |-- SimpleFile.Ipc/       Named-pipe JSON-RPC client and generated bindings
 |   `-- SimpleFile.Tests/     xUnit tests for WinUI/core/IPC behavior
 |-- crates/
-|   |-- simplefile-core/      Filesystem, archive, preview, metadata, Git logic
+|   |-- simplefile-core/      Filesystem, archive, preview, metadata, Git, remote profile logic
 |   |-- simplefile-ipc/       Protocol constants, framing, schema tests
-|   `-- simplefile-service/   Rust named-pipe service process
+|   `-- simplefile-service/   Rust named-pipe service process and remote providers
 |-- ipc/schema/v1/            JSON-RPC command, type, event, and golden files
 |-- packaging/winui/          NSIS, WiX, and Windows assets
 |-- scripts/                  Checks, release scripts, smoke tests, codegen
@@ -569,8 +588,11 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
   newer published release with signed `latest-winui.json` metadata.
 - RAR archives can be listed and extracted, but RAR creation and in-place RAR
   rewrites are not supported.
-- Account-backed storage integrations are intentionally out of scope for
-  this branch.
+- Account-backed storage integrations are intentionally out of scope for this
+  branch. FTP/FTPS/SFTP profiles are available in the separate Tools manager,
+  not mounted into the main panes.
+- Rendered Markdown task-list checkboxes are read-only preview controls; editing
+  task state requires editing the Markdown source.
 - Some Windows-reserved shortcuts may not be assignable; shortcut remapping,
   import, and export live in Settings -> Shortcuts.
 

@@ -5,7 +5,7 @@ namespace SimpleFile.App;
 
 internal sealed partial class PreviewPresenter
 {
-    private bool TryRenderHtmlPreview(
+    private async Task<bool> TryRenderHtmlPreviewAsync(
         string path,
         FilePreview preview,
         int token,
@@ -29,8 +29,14 @@ internal sealed partial class PreviewPresenter
             _mediaPlayer.Source = null;
             _mediaPlayer.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
             HideVideoFrameControls();
-            _pdfView.NavigateToString(PreviewHtmlRenderer.RenderDocument(path, preview));
             _pdfView.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+            await _pdfView.EnsureCoreWebView2Async();
+            if (!IsCurrent(path, token, cancellationToken))
+            {
+                return true;
+            }
+
+            _pdfView.NavigateToString(PreviewHtmlRenderer.RenderDocument(path, preview));
             _emptyText.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
             return true;
         }

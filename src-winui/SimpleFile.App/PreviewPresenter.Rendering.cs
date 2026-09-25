@@ -11,7 +11,7 @@ internal sealed partial class PreviewPresenter
         var path = row.Path;
         var settings = _workspace()?.Settings ?? UiSettings.CreateDefault();
         if (PreviewCapabilities.ShouldRenderHtml(settings, path, preview)
-            && TryRenderHtmlPreview(path, preview, token, cancellationToken))
+            && await TryRenderHtmlPreviewAsync(path, preview, token, cancellationToken))
         {
             return;
         }

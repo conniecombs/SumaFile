@@ -614,6 +614,7 @@ public class WinUiSourceShapeTests
         Assert.Contains("TryRenderPdfPreview", presenter);
         Assert.Contains("TryRenderMediaPreview", presenter);
         Assert.Contains("TryRenderHtmlPreview", presenter);
+        Assert.Contains("EnsureCoreWebView2Async", presenter);
         Assert.Contains("TryRenderVideoPosterPreview", presenter);
         Assert.Contains("PreviewCapabilities.ShouldRenderHtml", presenter);
         Assert.Contains("PreviewCapabilities.ShouldPreviewVideo", presenter);
@@ -633,11 +634,14 @@ public class WinUiSourceShapeTests
         Assert.Contains("ChecksumsText", inspectionDetails);
         Assert.DoesNotContain("const PDF_MAX", backendPreview);
 
-        var renderer = File.ReadAllText(Path.Combine(appRoot, "PreviewHtmlRenderer.cs"));
+        var renderer = File.ReadAllText(Path.Combine(coreRoot, "PreviewHtmlRenderer.cs"));
         var capabilities = File.ReadAllText(Path.Combine(coreRoot, "PreviewCapabilities.cs"));
         var pathSupport = File.ReadAllText(Path.Combine(coreRoot, "PreviewPathSupport.cs"));
 
         Assert.Contains("Content-Security-Policy", renderer);
+        Assert.Contains("MarkdownPipelineBuilder", renderer);
+        Assert.Contains("UseAdvancedExtensions", renderer);
+        Assert.Contains("DisableHtml", renderer);
         Assert.Contains("RenderMarkdown", renderer);
         Assert.Contains("SanitizeHtmlFragment", renderer);
         Assert.Contains("RenderableHtml", capabilities);

@@ -2,15 +2,20 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using SimpleFile.Core;
+using Markdig;
 using SimpleFile.Ipc;
 
-namespace SimpleFile.App;
+namespace SimpleFile.Core;
 
 internal static partial class PreviewHtmlRenderer
 {
     private const int MaxTableRows = 80;
     private const int MaxTableColumns = 16;
+
+    private static readonly MarkdownPipeline MarkdownPipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .DisableHtml()
+        .Build();
 
     public static string RenderDocument(string path, FilePreview preview)
     {
@@ -68,156 +73,8 @@ internal static partial class PreviewHtmlRenderer
             """;
     }
 
-    private static string RenderMarkdown(string markdown)
-    {
-        var html = new StringBuilder();
-        var paragraph = new List<string>();
-        string? listTag = null;
-        var inCode = false;
-        var code = new StringBuilder();
-
-        void FlushParagraph()
-        {
-            if (paragraph.Count == 0)
-            {
-                return;
-            }
-
-            html.Append("<p>");
-            html.Append(string.Join("<br>", paragraph.Select(RenderInlineMarkdown)));
-            html.AppendLine("</p>");
-            paragraph.Clear();
-        }
-
-        void CloseList()
-        {
-            if (listTag is null)
-            {
-                return;
-            }
-
-            html.Append("</");
-            html.Append(listTag);
-            html.AppendLine(">");
-            listTag = null;
-        }
-
-        foreach (var rawLine in NormalizeLines(markdown))
-        {
-            var line = rawLine.TrimEnd();
-            var trimmed = line.Trim();
-            if (trimmed.StartsWith("```", StringComparison.Ordinal))
-            {
-                if (inCode)
-                {
-                    html.Append("<pre><code>");
-                    html.Append(WebUtility.HtmlEncode(code.ToString().TrimEnd('\r', '\n')));
-                    html.AppendLine("</code></pre>");
-                    code.Clear();
-                    inCode = false;
-                }
-                else
-                {
-                    FlushParagraph();
-                    CloseList();
-                    inCode = true;
-                }
-
-                continue;
-            }
-
-            if (inCode)
-            {
-                code.AppendLine(line);
-                continue;
-            }
-
-            if (trimmed.Length == 0)
-            {
-                FlushParagraph();
-                CloseList();
-                continue;
-            }
-
-            var heading = HeadingRegex().Match(trimmed);
-            if (heading.Success)
-            {
-                FlushParagraph();
-                CloseList();
-                var level = heading.Groups[1].Value.Length;
-                html.Append("<h");
-                html.Append(level);
-                html.Append('>');
-                html.Append(RenderInlineMarkdown(heading.Groups[2].Value.Trim()));
-                html.Append("</h");
-                html.Append(level);
-                html.AppendLine(">");
-                continue;
-            }
-
-            if (trimmed.StartsWith("> ", StringComparison.Ordinal))
-            {
-                FlushParagraph();
-                CloseList();
-                html.Append("<blockquote>");
-                html.Append(RenderInlineMarkdown(trimmed[2..].Trim()));
-                html.AppendLine("</blockquote>");
-                continue;
-            }
-
-            var unordered = UnorderedListRegex().Match(trimmed);
-            var ordered = OrderedListRegex().Match(trimmed);
-            if (unordered.Success || ordered.Success)
-            {
-                FlushParagraph();
-                var targetList = unordered.Success ? "ul" : "ol";
-                if (!string.Equals(listTag, targetList, StringComparison.Ordinal))
-                {
-                    CloseList();
-                    listTag = targetList;
-                    html.Append('<');
-                    html.Append(listTag);
-                    html.AppendLine(">");
-                }
-
-                var item = unordered.Success ? unordered.Groups[1].Value : ordered.Groups[1].Value;
-                html.Append("<li>");
-                html.Append(RenderInlineMarkdown(item.Trim()));
-                html.AppendLine("</li>");
-                continue;
-            }
-
-            paragraph.Add(line.Trim());
-        }
-
-        if (inCode)
-        {
-            html.Append("<pre><code>");
-            html.Append(WebUtility.HtmlEncode(code.ToString().TrimEnd('\r', '\n')));
-            html.AppendLine("</code></pre>");
-        }
-
-        FlushParagraph();
-        CloseList();
-        return html.ToString();
-    }
-
-    private static string RenderInlineMarkdown(string text)
-    {
-        var encoded = WebUtility.HtmlEncode(text);
-        encoded = InlineCodeRegex().Replace(encoded, "<code>$1</code>");
-        encoded = BoldRegex().Replace(encoded, "<strong>$1</strong>");
-        encoded = ItalicRegex().Replace(encoded, "<em>$1</em>");
-        encoded = LinkRegex().Replace(encoded, match =>
-        {
-            var label = match.Groups["label"].Value;
-            var href = WebUtility.HtmlDecode(match.Groups["href"].Value).Trim();
-            return IsSafeHref(href)
-                ? $"""<a href="{WebUtility.HtmlEncode(href)}">{label}</a>"""
-                : label;
-        });
-        return encoded;
-    }
+    private static string RenderMarkdown(string markdown) =>
+        SanitizeHtmlFragment(Markdown.ToHtml(markdown, MarkdownPipeline));
 
     private static string RenderJson(string text)
     {
@@ -347,33 +204,6 @@ internal static partial class PreviewHtmlRenderer
 
     private static IEnumerable<string> NormalizeLines(string text) =>
         text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-
-    private static bool IsSafeHref(string value) =>
-        Uri.TryCreate(value, UriKind.Absolute, out var uri)
-            && (uri.Scheme == Uri.UriSchemeHttp
-                || uri.Scheme == Uri.UriSchemeHttps
-                || uri.Scheme == Uri.UriSchemeMailto);
-
-    [GeneratedRegex("^(#{1,6})\\s+(.+)$")]
-    private static partial Regex HeadingRegex();
-
-    [GeneratedRegex("^[*+-]\\s+(.+)$")]
-    private static partial Regex UnorderedListRegex();
-
-    [GeneratedRegex("^\\d+[.)]\\s+(.+)$")]
-    private static partial Regex OrderedListRegex();
-
-    [GeneratedRegex("`([^`]+)`")]
-    private static partial Regex InlineCodeRegex();
-
-    [GeneratedRegex("\\*\\*([^*]+)\\*\\*")]
-    private static partial Regex BoldRegex();
-
-    [GeneratedRegex("(?<!\\*)\\*([^*]+)\\*(?!\\*)")]
-    private static partial Regex ItalicRegex();
-
-    [GeneratedRegex("\\[(?<label>[^\\]]+)\\]\\((?<href>[^\\)]+)\\)")]
-    private static partial Regex LinkRegex();
 
     [GeneratedRegex("<\\s*(script|iframe|object|embed|link|meta)[^>]*>.*?<\\s*/\\s*\\1\\s*>|<\\s*(script|iframe|object|embed|link|meta)[^>]*/?\\s*>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex UnsafeElementRegex();
