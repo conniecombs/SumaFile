@@ -164,3 +164,155 @@ A cache hit is valid only when the underlying source has not changed.
 6. Adaptive budgets, diagnostics, and settings
 
 Do not move to the next phase until the prior phase shows a measurable warm-path improvement without a meaningful regression in memory use, data freshness, or UI responsiveness.
+
+
+## Performance Roadmap Beyond Session Cache
+
+The session-only RAM cache is the first warm-path improvement. The following work targets the cold path, sustained responsiveness, and large or slow locations. Complete it in priority order and keep every change behind a benchmark.
+
+### Priority 1 — Progressive, virtualized folder loading
+
+**Problem:** A file manager feels slow when it waits to fully enumerate, sort, decorate, and create UI objects before it displays anything.
+
+**Plan:**
+
+1. Enumerate directories in pages and send the first useful batch immediately.
+2. Render only rows in or near the viewport; recycle UI containers while scrolling.
+3. Apply metadata, icons, Git status, and thumbnails after the filename/path rows are visible.
+4. Sort incrementally when a full sort is expensive: show initial results quickly, then reconcile once the complete listing is ready.
+5. Preserve selection, focus, and scroll position during background updates.
+
+**Success measure:** First useful file rows appear in under 150 ms for a local folder and the UI remains responsive while a 100,000-item folder continues loading.
+
+### Priority 2 — Foreground-first work scheduler
+
+**Problem:** Background work such as thumbnails, folder sizes, Git scans, preview generation, and network probing can compete with what the user is trying to do now.
+
+**Plan:**
+
+1. Classify work into four queues: user input/navigation, visible content, near-visible prefetch, and background maintenance.
+2. Always service navigation and visible rows before prefetch or maintenance.
+3. Set bounded concurrency independently for disk I/O, CPU-heavy work, network I/O, thumbnail decodes, and archive operations.
+4. Pause or reduce low-priority work during scrolling, typing, drag-and-drop, transfers, battery saver, or high CPU use.
+5. Coalesce duplicate work and cancel stale jobs when the active folder, search, selection, or preview changes.
+
+**Success measure:** Starting a search, changing folders, or opening a context menu never waits behind thumbnail, Git, or background scan work.
+
+### Priority 3 — IPC batching, paging, and change deltas
+
+**Problem:** The WinUI/Rust service split can lose responsiveness when it sends many small requests or repeatedly transmits full result sets.
+
+**Plan:**
+
+1. Use batch requests for visible-range metadata, icons, thumbnails, and selection details.
+2. Page large directory and search results rather than transferring every row upfront.
+3. Send only changed fields after the initial listing; do not resend unchanged rows.
+4. Continue using binary frames for image-like payloads and extend compact typed frames to large repeated data where profiling proves JSON serialization is material.
+5. Rate-limit progress updates and UI notifications to a smooth cadence rather than emitting one per low-level operation.
+
+**Success measure:** IPC bytes and request count decrease on large folders without delaying the first visible result.
+
+### Priority 4 — Demand-driven enrichment and predictive prefetch
+
+**Problem:** Features can waste time calculating information the user may never see.
+
+**Plan:**
+
+1. Defer recursive folder sizes, hashes, media metadata, archive contents, Git status, and rich previews until the item is visible, selected, or explicitly requested.
+2. Prefetch only likely next work: a small scroll-ahead window, the other pane's visible range, or recent back/forward history.
+3. Stop prefetch immediately when the user reverses direction, changes folders, or starts an interactive operation.
+4. Keep per-provider policies: no aggressive prefetch on network shares, removable drives, or remote accounts.
+
+**Success measure:** Initial navigation requires fewer filesystem calls while common next actions still feel immediate.
+
+### Priority 5 — Fast startup and staged feature activation
+
+**Problem:** A slow first window makes the entire app feel slow even when later operations are fast.
+
+**Plan:**
+
+1. Measure process launch, first window, first interactive frame, service handshake, and first folder paint separately.
+2. Start only the minimum required for the first window and initial directory.
+3. Delay settings migration, update checks, remote-provider initialization, Git discovery, plug-in discovery, archive capability checks, and non-visible toolbar assets until after first interaction.
+4. Reuse a single long-lived Rust service connection instead of repeatedly starting or reconnecting it.
+5. Avoid synchronous disk or network access on the WinUI startup path.
+
+**Success measure:** The first usable window appears before optional services finish initializing.
+
+### Priority 6 — File-operation pipeline tuning
+
+**Problem:** Copy, move, delete, and archive work can monopolize the system or delay the first visible progress update.
+
+**Plan:**
+
+1. Show the operation and first progress state before expensive validation and enumeration finish.
+2. Stream large files with reusable, bounded buffers; never load a whole file into memory.
+3. Select concurrency based on source and destination: limit same-disk parallelism, permit controlled parallelism across independent drives, and use conservative limits for network/removable media.
+4. Preserve sparse files, timestamps, and metadata without introducing unnecessary extra passes.
+5. Separate planning, execution, progress reporting, and post-operation cache invalidation.
+6. Benchmark against Windows Explorer for local SSD, HDD, external USB, network-share, and many-small-file transfers.
+
+**Success measure:** Copy/move begins promptly, sustains throughput, and leaves browsing and cancellation responsive.
+
+### Priority 7 — Database/index-backed search for opt-in instant search
+
+**Problem:** Repeated recursive search is inherently slow because it must walk the filesystem.
+
+**Plan:**
+
+1. Add an optional, clearly labeled Windows Search integration for indexed locations.
+2. Maintain SumaFile's own lightweight per-session result cache for locations not covered by Windows Search.
+3. Fall back to cancellable streaming filesystem search for unindexed, removable, network, or user-excluded locations.
+4. Show the search source and freshness state so users understand whether a result is indexed or live.
+
+**Success measure:** Indexed searches return initial results nearly immediately without weakening correctness for live searches.
+
+### Priority 8 — Allocation and rendering hygiene
+
+**Problem:** Frequent allocations, string formatting, collection resets, and binding churn cause stutters even when I/O is fast.
+
+**Plan:**
+
+1. Profile allocations and garbage-collection pauses while scrolling, sorting, and receiving directory updates.
+2. Reuse buffers and collections in Rust; use object pooling only where profiles show significant churn.
+3. Batch observable-collection updates and property notifications.
+4. Avoid recreating images, brushes, styles, converters, or formatted strings for every row.
+5. Make expensive formatting lazy and visible-range only.
+6. Add frame-time instrumentation around scrolling, selection, pane resize, and view changes.
+
+**Success measure:** Smooth scrolling and input under large-folder load, with no recurring long UI-thread frames.
+
+### Priority 9 — Adaptive slow-location policy
+
+**Problem:** Network shares, offline drives, cloud providers, archives, and failing devices can cause long stalls that should not be treated like local SSD folders.
+
+**Plan:**
+
+1. Detect provider and storage characteristics at request start.
+2. Use shorter metadata budgets, lower concurrency, no speculative prefetch, and clear cancellation on slow/remote locations.
+3. Timebox optional calls such as free-space lookup, Git detection, preview generation, and archive probing.
+4. Surface an unobtrusive loading state instead of freezing the pane.
+5. Cache negative/transient outcomes briefly to prevent repeated timeouts, then retry with backoff.
+
+**Success measure:** An unavailable or slow source degrades gracefully without blocking the rest of the application.
+
+## Cross-cutting performance guardrails
+
+- Add a release-build benchmark suite and run it in CI on stable fixture sets.
+- Require a before/after measurement for every claimed performance improvement.
+- Track p50, p95, and p99 latency—not just averages.
+- Test with Defender enabled, because real Windows users commonly have file scanning active.
+- Test cold cache, warm Windows cache, warm SumaFile cache, and memory-pressure conditions separately.
+- Prefer algorithmic, scheduling, batching, and rendering improvements before lower-level micro-optimizations.
+- Keep an escape hatch for every optimization: users must be able to disable previews, background enrichment, prefetch, and large cache budgets.
+
+## Combined rollout order
+
+1. Measurement baseline and trace tooling
+2. Progressive/virtualized directory loading
+3. Foreground-first scheduler and cancellation audit
+4. Session RAM cache and thumbnail LRU improvements
+5. IPC batching and result paging
+6. Demand-driven enrichment and limited prefetch
+7. Startup staging and file-operation pipeline tuning
+8. Indexed-search integration, adaptive slow-location policy, and continuous regression benchmarks
