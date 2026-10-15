@@ -284,7 +284,7 @@ The session-only RAM cache is the first warm-path improvement. The following wor
 
 ### Priority 9 — Adaptive slow-location policy
 
-**Problem:** Network shares, offline drives, cloud providers, archives, and failing devices can cause long stalls that should not be treated like local SSD folders.
+**Problem:** Network shares, offline drives, remote storage providers, archives, and failing devices can cause long stalls that should not be treated like local SSD folders.
 
 **Plan:**
 
