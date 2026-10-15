@@ -15,6 +15,28 @@ public sealed class RemoteManagerViewModel : ObservableObject
     private string _localPath = "";
     private string? _localParentPath;
     private string _remotePath = "/";
+    private CancellationTokenSource? _transferCancellation;
+    private string[] _retrySources = [];
+    private string _retryDirection = "";
+    private string _retryDestination = "";
+    private string _retryProfileId = "";
+    private string _transferProgressText = "";
+    public string ConflictAction { get; set; } = "error";
+    public bool CanCancelTransfer => _transferCancellation is not null && !_transferCancellation.IsCancellationRequested;
+    public bool CanRetryTransfers => !IsBusy && CurrentSession is not null
+        && CurrentSession.ProfileId == _retryProfileId && _retrySources.Length > 0;
+    public string TransferProgressText { get => _transferProgressText; private set => SetProperty(ref _transferProgressText, value); }
+
+    public void CancelTransfer()
+    {
+        _transferCancellation?.Cancel();
+        OnPropertyChanged(nameof(CanCancelTransfer));
+        if (_transferCancellation is not null) TransferProgressText = "Cancelling and cleaning up partial files...";
+    }
+
+    public Task RetryTransfersAsync(CancellationToken ct = default) => CanRetryTransfers
+        ? RunTransfersAsync(_retryDirection, _retrySources, _retryDestination, ct)
+        : Task.CompletedTask;
 
     public RemoteManagerViewModel(FileOperationService fileOperations)
     {
@@ -58,6 +80,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
                 OnPropertyChanged(nameof(CanEditProfile));
                 OnPropertyChanged(nameof(CanMutateRemoteEntries));
                 OnPropertyChanged(nameof(CanUseWorkspaceTransfers));
+                OnPropertyChanged(nameof(CanRetryTransfers));
             }
         }
     }
@@ -77,6 +100,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
                 OnPropertyChanged(nameof(CanEditProfile));
                 OnPropertyChanged(nameof(CanMutateRemoteEntries));
                 OnPropertyChanged(nameof(CanUseWorkspaceTransfers));
+                OnPropertyChanged(nameof(CanRetryTransfers));
             }
         }
     }
@@ -89,6 +113,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             if (SetProperty(ref _localPath, value))
             {
                 OnPropertyChanged(nameof(CanUseWorkspaceTransfers));
+                OnPropertyChanged(nameof(CanRetryTransfers));
             }
         }
     }
@@ -556,9 +581,6 @@ public sealed class RemoteManagerViewModel : ObservableObject
         await DownloadRemoteEntriesCoreAsync(
             entries,
             localDirectory,
-            completedStatus: count => count == 1
-                ? "Downloaded 1 remote file"
-                : $"Downloaded {count} remote files",
             ct);
     }
 
@@ -575,9 +597,6 @@ public sealed class RemoteManagerViewModel : ObservableObject
         await DownloadRemoteEntriesCoreAsync(
             entries,
             LocalPath,
-            completedStatus: count => count == 1
-                ? $"Downloaded 1 remote file to {LocalPath}"
-                : $"Downloaded {count} remote files to {LocalPath}",
             ct);
     }
 
@@ -585,9 +604,6 @@ public sealed class RemoteManagerViewModel : ObservableObject
     {
         await UploadLocalFilesCoreAsync(
             localPaths,
-            completedStatus: count => count == 1
-                ? "Uploaded 1 file"
-                : $"Uploaded {count} files",
             ct);
     }
 
@@ -596,135 +612,98 @@ public sealed class RemoteManagerViewModel : ObservableObject
         CancellationToken ct = default)
     {
         var localPaths = entries
-            .Where(entry => !entry.IsDir && !string.IsNullOrWhiteSpace(entry.Path))
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Path))
             .Select(entry => entry.Path)
             .ToArray();
         await UploadLocalFilesCoreAsync(
             localPaths,
-            completedStatus: count => count == 1
-                ? $"Uploaded 1 local file to {RemotePath}"
-                : $"Uploaded {count} local files to {RemotePath}",
             ct);
     }
 
     private async Task DownloadRemoteEntriesCoreAsync(
-        IReadOnlyList<FileEntry> entries,
-        string localDirectory,
-        Func<int, string> completedStatus,
+        IReadOnlyList<FileEntry> entries, string localDirectory,
         CancellationToken ct = default)
     {
-        if (CurrentSession is null)
-        {
-            StatusText = "Connect to a remote profile first";
-            return;
-        }
-
-        var files = entries
-            .Where(entry => !entry.IsDir && !string.IsNullOrWhiteSpace(entry.Path))
-            .ToArray();
-        if (files.Length == 0)
-        {
-            StatusText = "Select remote files";
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(localDirectory))
-        {
-            StatusText = "Enter a local download folder";
-            return;
-        }
-
-        IsBusy = true;
-        try
-        {
-            foreach (var entry in files)
-            {
-                var localPath = Path.Combine(localDirectory.Trim(), entry.Name);
-                var record = AddTransfer("Download", entry.Path, localPath);
-                try
-                {
-                    await _fileOperations.RemoteDownloadFileAsync(
-                        CurrentSession.SessionId,
-                        entry.Path,
-                        localPath,
-                        ct);
-                    record.Complete();
-                }
-                catch (Exception exception) when (exception is not OperationCanceledException)
-                {
-                    record.Fail(exception.Message);
-                    throw;
-                }
-            }
-
-            StatusText = completedStatus(files.Length);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        await RunTransfersAsync("download", entries.Select(entry => entry.Path).ToArray(), localDirectory, ct);
     }
 
     private async Task UploadLocalFilesCoreAsync(
-        IReadOnlyList<string> localPaths,
-        Func<int, string> completedStatus,
-        CancellationToken ct = default)
+        IReadOnlyList<string> localPaths, CancellationToken ct = default)
     {
-        if (CurrentSession is null)
-        {
-            StatusText = "Connect to a remote profile first";
-            return;
-        }
+        await RunTransfersAsync("upload", localPaths.ToArray(), RemotePath, ct);
+    }
 
-        var files = localPaths
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (files.Length == 0)
-        {
-            StatusText = "Enter local files to upload";
-            return;
-        }
-
+    private async Task RunTransfersAsync(string direction, string[] sources, string destination, CancellationToken ct)
+    {
+        if (CurrentSession is null) { StatusText = "Connect to a remote profile first"; return; }
+        if (IsBusy) return;
+        sources = sources.Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(direction == "upload" ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
+        if (sources.Length == 0) { StatusText = "Select files or folders to transfer"; return; }
+        if (string.IsNullOrWhiteSpace(destination)) { StatusText = "Choose a destination folder"; return; }
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _transferCancellation = cancellation;
+        _retryProfileId = CurrentSession.ProfileId;
+        _retrySources = sources;
+        _retryDirection = direction;
+        _retryDestination = destination;
         IsBusy = true;
+        OnPropertyChanged(nameof(CanCancelTransfer));
+        TransferProgressText = "Preparing transfer...";
         try
         {
-            var uploaded = new List<FileEntry>();
-            foreach (var localPath in files)
+            var progress = new Progress<ProgressUpdate>(update =>
             {
-                var name = Path.GetFileName(localPath);
-                var remotePath = CombineRemotePath(RemotePath, name);
-                var record = AddTransfer("Upload", remotePath, localPath);
-                try
-                {
-                    uploaded.Add(await _fileOperations.RemoteUploadFileAsync(
-                        CurrentSession.SessionId,
-                        localPath,
-                        remotePath,
-                        ct));
-                    record.Complete();
-                }
-                catch (Exception exception) when (exception is not OperationCanceledException)
-                {
-                    record.Fail(exception.Message);
-                    throw;
-                }
+                if (!ReferenceEquals(_transferCancellation, cancellation) || cancellation.IsCancellationRequested) return;
+                TransferProgressText = $"{update.CurrentFiles} files | {update.Current:N0} bytes | {update.CurrentItem}";
+            });
+            var outcome = await _fileOperations.RemoteTransferEntriesAsync(CurrentSession.SessionId,
+                direction, sources, destination, ConflictAction, progress, cancellation.Token);
+            _retrySources = outcome.RetrySources;
+            foreach (var item in outcome.Items)
+            {
+                var remotePath = direction == "upload" ? item.Destination : item.Source;
+                var localPath = direction == "upload" ? item.Source : item.Destination;
+                var record = AddTransfer(direction == "upload" ? "Upload" : "Download", remotePath, localPath);
+                record.Apply(item.Status, item.Error ?? $"{item.Bytes:N0} bytes");
             }
-
-            ReplaceRemoteEntries(RemoteEntries
-                .Where(entry => uploaded.All(upload => !StringComparer.Ordinal.Equals(upload.Path, entry.Path)))
-                .Concat(uploaded));
-            StatusText = completedStatus(uploaded.Count);
+            var completed = outcome.Items.Count(item => item.Status == "completed" && !item.IsDir);
+            var skipped = outcome.Items.Count(item => item.Status == "skipped");
+            StatusText = outcome.Cancelled
+                ? $"Transfer cancelled: {completed} files completed; retry is available"
+                : $"Transfer finished: {completed} files completed, {skipped} skipped, {outcome.RetrySources.Length} selections need retry";
+            TransferProgressText = StatusText;
+            // Refresh only after the service has committed results and released the session.
+            try
+            {
+                if (direction == "upload") await RefreshRemoteDirectoryCoreAsync(RemotePath, CancellationToken.None);
+                else if (PathRules.PathsEqual(LocalPath, destination)) await RefreshLocalDirectoryCoreAsync(LocalPath, CancellationToken.None);
+            }
+            catch (Exception error) { StatusText += $". Refresh failed: {error.Message}"; }
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Transfer cancelled; retry is available";
+            TransferProgressText = StatusText;
+        }
+        catch (Exception error)
+        {
+            StatusText = $"Transfer failed: {error.Message}. Retry is available";
+            TransferProgressText = StatusText;
+            throw;
         }
         finally
         {
+            _transferCancellation = null;
             IsBusy = false;
+            OnPropertyChanged(nameof(CanCancelTransfer));
+            OnPropertyChanged(nameof(CanRetryTransfers));
         }
     }
 
     private async Task RefreshLocalDirectoryCoreAsync(string path, CancellationToken ct)
     {
-        var listing = await _fileOperations.ListDirectoryAsync(path, ct).ConfigureAwait(false);
+        var listing = await _fileOperations.ListDirectoryAsync(path, ct);
         LocalPath = string.IsNullOrWhiteSpace(listing.Path) ? path : listing.Path;
         _localParentPath = listing.Parent;
         ReplaceLocalEntries(listing.Entries);
@@ -814,15 +793,6 @@ public sealed class RemoteManagerViewModel : ObservableObject
             : "/" + trimmed;
     }
 
-    private static string CombineRemotePath(string parent, string name)
-    {
-        var normalizedParent = NormalizeRemotePath(parent).TrimEnd('/');
-        var cleanName = name.Trim().Trim('/');
-        return string.IsNullOrEmpty(normalizedParent)
-            ? "/" + cleanName
-            : normalizedParent + "/" + cleanName;
-    }
-
     private RemoteTransferRecord AddTransfer(string direction, string remotePath, string localPath)
     {
         var record = new RemoteTransferRecord(direction, remotePath, localPath);
@@ -872,6 +842,12 @@ public sealed class RemoteTransferRecord : ObservableObject
     {
         get => _detail;
         private set => SetProperty(ref _detail, value);
+    }
+
+    public void Apply(string status, string detail)
+    {
+        Status = status.Length == 0 ? "Unknown" : char.ToUpperInvariant(status[0]) + status[1..];
+        Detail = detail;
     }
 
     public void Complete()

@@ -57,6 +57,25 @@ where
 
         match action {
             Dispatch::Reply(response) => write_json(&writer, &response).await?,
+            Dispatch::RemoteTransfer {
+                id,
+                provider,
+                request,
+            } => {
+                let cancel = operations.register(&request.operation_id).await;
+                jobs::spawn_remote_transfer(
+                    writer.clone(),
+                    operations.clone(),
+                    scheduler.clone(),
+                    events.clone(),
+                    jobs::RemoteTransferJob {
+                        id,
+                        provider,
+                        request,
+                        cancel,
+                    },
+                );
+            }
             Dispatch::ListDirectory { id, path, options } => {
                 spawn_list_directory(
                     writer.clone(),

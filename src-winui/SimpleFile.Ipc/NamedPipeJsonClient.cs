@@ -132,7 +132,7 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
         var requestId = AllocateId();
         var streamedEntries = new List<FileEntry>();
         IDisposable? subscription = null;
-        if (onChunk is not null)
+        if (onChunk is not null || options?.FinalEntries == false)
         {
             subscription = On<DirectoryListingChunkNotification>(
                 Protocol.ListDirectoryChunkEvent,
@@ -149,7 +149,7 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
                             }
                         }
 
-                        onChunk(chunk);
+                        onChunk?.Invoke(chunk);
                     }
                 });
         }

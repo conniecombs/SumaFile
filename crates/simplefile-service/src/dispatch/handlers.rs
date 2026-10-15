@@ -19,8 +19,6 @@ use simplefile_core::remote::{RemoteAuthKind, RemoteProfile};
 use simplefile_core::utils::dirs_home;
 use simplefile_ipc::rpc::{JsonRpcRequest, JsonRpcResponse};
 use simplefile_ipc::*;
-use std::fs;
-use std::path::Path;
 use std::sync::atomic::Ordering;
 
 pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Dispatch {
@@ -300,13 +298,17 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         METHOD_REMOTE_DOWNLOAD_FILE => match parse_params::<RemoteDownloadFileParams>(request) {
             Ok(p) => {
                 let result: Result<String, String> = (|| {
-                    let bytes = state
+                    state
                         .remote_sessions
-                        .read_file(&p.remote_session_id, &p.remote_path)?;
-                    if let Some(parent) = Path::new(&p.local_path).parent() {
-                        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-                    }
-                    fs::write(&p.local_path, bytes).map_err(|error| error.to_string())?;
+                        .provider(&p.remote_session_id)?
+                        .with(|provider| {
+                            crate::remote::transfer::transfer_single(
+                                provider,
+                                false,
+                                &p.remote_path,
+                                &p.local_path,
+                            )
+                        })?;
                     Ok(p.local_path)
                 })();
                 reply_result(request, result)
@@ -315,19 +317,54 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_REMOTE_UPLOAD_FILE => match parse_params::<RemoteUploadFileParams>(request) {
             Ok(p) => {
-                let result = fs::read(&p.local_path)
-                    .map_err(|error| error.to_string())
-                    .and_then(|bytes| {
-                        state.remote_sessions.write_file(
-                            &p.remote_session_id,
-                            &p.remote_path,
-                            &bytes,
-                        )
+                let result = state
+                    .remote_sessions
+                    .provider(&p.remote_session_id)
+                    .and_then(|handle| {
+                        handle.with(|provider| {
+                            crate::remote::transfer::transfer_single(
+                                provider,
+                                true,
+                                &p.local_path,
+                                &p.remote_path,
+                            )?;
+                            let parent = crate::remote::path::parent_remote_path(&p.remote_path)
+                                .unwrap_or_else(|| "/".into());
+                            provider
+                                .list_directory(&parent)?
+                                .entries
+                                .into_iter()
+                                .find(|entry| entry.path == p.remote_path)
+                                .ok_or_else(|| {
+                                    "Uploaded file was not found in the refreshed listing"
+                                        .to_string()
+                                })
+                        })
                     });
                 reply_result(request, result)
             }
             Err(response) => Dispatch::Reply(response),
         },
+        METHOD_REMOTE_TRANSFER_ENTRIES => {
+            match parse_params::<crate::remote::transfer::RemoteTransferRequest>(request) {
+                Ok(params) => {
+                    let provider = crate::remote::transfer::validate_request(&params)
+                        .and_then(|()| state.remote_sessions.provider(&params.remote_session_id));
+                    match provider {
+                        Ok(provider) => Dispatch::RemoteTransfer {
+                            id: request.id.clone(),
+                            provider,
+                            request: params,
+                        },
+                        Err(error) => Dispatch::Reply(JsonRpcResponse::application_error(
+                            request.id.clone(),
+                            error,
+                        )),
+                    }
+                }
+                Err(response) => Dispatch::Reply(response),
+            }
+        }
         METHOD_LIST_DIRECTORY => async_ops::list_directory(request),
         METHOD_SELECT_DIRECTORY => Dispatch::Reply(JsonRpcResponse::error(
             request.id.clone(),

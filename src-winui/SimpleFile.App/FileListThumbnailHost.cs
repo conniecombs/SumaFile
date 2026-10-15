@@ -10,9 +10,11 @@ namespace SimpleFile.App;
 internal static class FileListThumbnailHost
 {
     private const int MaxCachedThumbnails = 512;
+    private const long MaxCachedThumbnailBytes = 64L * 1024 * 1024;
     private const int MaxInFlightThumbnails = 128;
 
-    private static readonly ConcurrentDictionary<string, ImageSource> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly BoundedLruCache<string, ImageSource> Cache = new(
+        MaxCachedThumbnails, MaxCachedThumbnailBytes, StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, Task<ImageSource?>> InFlight = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, VideoThumbnailFrame> VideoFramePreferences = new(StringComparer.OrdinalIgnoreCase);
     private static readonly SemaphoreSlim LoadGate = new(4, 4);
@@ -145,12 +147,7 @@ internal static class FileListThumbnailHost
                 var source = await LoadCoreAsync(path, extension, requestSize, videoFrame);
                 if (source is not null)
                 {
-                    if (Cache.Count > MaxCachedThumbnails)
-                    {
-                        Cache.Clear();
-                    }
-
-                    Cache[key] = source;
+                    Cache.Set(key, source, (long)requestSize * requestSize * 4 + key.Length * 2L);
                 }
 
                 return source;

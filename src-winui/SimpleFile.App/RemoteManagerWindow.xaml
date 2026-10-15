@@ -340,7 +340,7 @@
                             Click="OnDownloadSelectedRemoteEntriesClicked"
                             IsEnabled="{Binding CanUseWorkspaceTransfers}"
                             Style="{StaticResource SfGhostButtonStyle}"
-                            ToolTipService.ToolTip="Download selected remote files to local pane">
+                            ToolTipService.ToolTip="Download selected remote files and folders to local pane">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
                                 FontSize="11"
@@ -442,7 +442,7 @@
                                         HorizontalAlignment="Right"
                                         FontSize="12"
                                         Foreground="{ThemeResource SfTextMutedBrush}"
-                                        Text="{Binding Status}" />
+                                        Text="{Binding Status}" ToolTipService.ToolTip="{Binding Detail}" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -451,10 +451,19 @@
             </Border>
         </Grid>
 
-        <TextBlock
-            Grid.Row="2"
-            FontSize="12"
-            Foreground="{ThemeResource SfTextMutedBrush}"
-            Text="{Binding StatusText}" />
+        <StackPanel Grid.Row="2" Spacing="6">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <ComboBox SelectedIndex="0" SelectionChanged="OnConflictPolicyChanged" AutomationProperties.Name="Existing destination files" ToolTipService.ToolTip="Existing folders are merged. This policy applies to files with matching names.">
+                    <ComboBoxItem Content="Existing files: report conflict" Tag="error" />
+                    <ComboBoxItem Content="Existing files: skip" Tag="skip" />
+                    <ComboBoxItem Content="Existing files: replace safely" Tag="replace" />
+                    <ComboBoxItem Content="Existing files: keep both" Tag="keep-both" />
+                </ComboBox>
+                <Button Content="Cancel transfer" Click="OnCancelTransferClicked" IsEnabled="{Binding CanCancelTransfer}" />
+                <Button Content="Retry incomplete" Click="OnRetryTransfersClicked" IsEnabled="{Binding CanRetryTransfers}" />
+            </StackPanel>
+            <TextBlock FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="{Binding TransferProgressText}" TextTrimming="CharacterEllipsis" />
+            <TextBlock FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="{Binding StatusText}" TextTrimming="CharacterEllipsis" />
+        </StackPanel>
     </Grid>
 </Window>

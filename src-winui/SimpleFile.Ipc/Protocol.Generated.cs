@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 96;
+    public const int DomainMethodCount = 97;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -74,6 +74,7 @@ public static partial class Protocol
     public const string RemoteCreateDirectoryMethod = "remote_create_directory";
     public const string RemoteRenameEntryMethod = "remote_rename_entry";
     public const string RemoteDeleteEntriesMethod = "remote_delete_entries";
+    public const string RemoteTransferEntriesMethod = "remote_transfer_entries";
     public const string RemoteDownloadFileMethod = "remote_download_file";
     public const string RemoteUploadFileMethod = "remote_upload_file";
     public const string GetGitRepositoryStatusMethod = "get_git_repository_status";
@@ -180,6 +181,7 @@ public static partial class Protocol
         "remote_create_directory",
         "remote_rename_entry",
         "remote_delete_entries",
+        "remote_transfer_entries",
         "remote_download_file",
         "remote_upload_file",
         "get_git_repository_status",

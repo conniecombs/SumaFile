@@ -50,6 +50,46 @@ pub(super) struct CopyMoveJob {
     pub(super) is_copy: bool,
 }
 
+pub(super) struct RemoteTransferJob {
+    pub id: Option<Value>,
+    pub provider: crate::remote::session::SharedRemoteProvider,
+    pub request: crate::remote::transfer::RemoteTransferRequest,
+    pub cancel: Arc<AtomicBool>,
+}
+
+pub(super) fn spawn_remote_transfer(
+    writer: OutboundSink,
+    registry: Arc<OperationRegistry>,
+    scheduler: BlockingScheduler,
+    events: EventSink,
+    job: RemoteTransferJob,
+) {
+    tokio::spawn(async move {
+        let operation_id = job.request.operation_id.clone();
+        let id = job.id;
+        let result = scheduler
+            .run_transfer(move || {
+                job.provider.with(|provider| {
+                    crate::remote::transfer::transfer_entries(
+                        provider,
+                        &job.request,
+                        &job.cancel,
+                        &|update| events.emit_progress(&update),
+                    )
+                })
+            })
+            .await;
+        let response = scheduled_result_response(
+            id,
+            result,
+            "remote transfer",
+            "failed to serialize remote transfer results",
+        );
+        let _ = write_json(&writer, &response).await;
+        registry.remove(&operation_id).await;
+    });
+}
+
 impl EventSink {
     pub(super) fn new(outbound: OutboundSink, binary_hot_frames: Arc<AtomicBool>) -> Self {
         Self {
@@ -256,17 +296,19 @@ pub(super) async fn list_directory_and_reply(
 ) -> Result<(), String> {
     let start = std::time::Instant::now();
     let binary_request_id = binary_response_id(&binary_hot_frames, &id);
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    // Backpressure keeps a fast enumeration from queuing the entire directory
+    // while a slow client is still rendering the first pages.
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
     let join = tokio::spawn(async move {
         scheduler
             .run_general(move || {
                 if let Some(options) = options {
                     simplefile_core::dir_list::list_directory_with_options(path, options, |chunk| {
-                        tx.send(chunk).map_err(|error| error.to_string())
+                        tx.blocking_send(chunk).map_err(|error| error.to_string())
                     })
                 } else {
                     simplefile_core::dir_list::list_directory(path, |chunk| {
-                        tx.send(chunk).map_err(|error| error.to_string())
+                        tx.blocking_send(chunk).map_err(|error| error.to_string())
                     })
                 }
             })
@@ -276,7 +318,12 @@ pub(super) async fn list_directory_and_reply(
     while let Some(chunk) = rx.recv().await {
         if let Some(request_id) = binary_request_id {
             let payload = crate::binary::encode_directory_listing_chunk(request_id, &chunk)?;
-            queue_payload(writer, &payload).await?;
+            // Flush each small batch before allowing enumeration to run ahead.
+            if chunk.chunk_index % 4 == 0 || chunk.done {
+                writer.write_payload(payload).await?;
+            } else {
+                queue_payload(writer, &payload).await?;
+            }
         } else {
             let mut params = serde_json::to_value(&chunk)
                 .map_err(|error| format!("failed to serialize listing chunk: {error}"))?;

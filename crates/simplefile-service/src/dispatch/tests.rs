@@ -814,10 +814,42 @@ fn remote_profile_ipc_saves_and_lists_profiles_without_secret_material() {
     let _ = fs::remove_file(db_path);
 }
 
-struct DispatchFakeProvider;
+#[derive(Default)]
+struct DispatchFakeProvider {
+    files: std::collections::HashMap<String, Vec<u8>>,
+}
+
+fn dispatch_fake_file(path: &str, size: u64) -> FileEntry {
+    FileEntry {
+        name: path.rsplit('/').next().unwrap().into(),
+        path: path.into(),
+        is_dir: false,
+        is_symlink: false,
+        is_hidden: false,
+        is_system: false,
+        size,
+        modified: "".into(),
+        extension: "txt".into(),
+        permissions: None,
+        symlink_target: None,
+        git_status: None,
+    }
+}
 
 impl RemoteProvider for DispatchFakeProvider {
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
+        if path == "/incoming" {
+            return Ok(DirectoryListing {
+                path: path.into(),
+                parent: Some("/".into()),
+                is_network: true,
+                entries: self
+                    .files
+                    .iter()
+                    .map(|(path, bytes)| dispatch_fake_file(path, bytes.len() as u64))
+                    .collect(),
+            });
+        }
         Ok(DirectoryListing {
             path: path.to_string(),
             parent: None,
@@ -861,6 +893,12 @@ impl RemoteProvider for DispatchFakeProvider {
     }
 
     fn rename_entry(&mut self, path: &str, new_name: &str) -> Result<FileEntry, String> {
+        if let Some(bytes) = self.files.remove(path) {
+            let target = format!("/incoming/{new_name}");
+            let entry = dispatch_fake_file(&target, bytes.len() as u64);
+            self.files.insert(target, bytes);
+            return Ok(entry);
+        }
         if path != "/incoming" || new_name != "archive" {
             return Err(format!("unexpected rename {path} -> {new_name}"));
         }
@@ -882,6 +920,12 @@ impl RemoteProvider for DispatchFakeProvider {
     }
 
     fn delete_entries(&mut self, paths: &[String]) -> Result<Vec<String>, String> {
+        if paths.iter().all(|path| self.files.contains_key(path)) {
+            for path in paths {
+                self.files.remove(path);
+            }
+            return Ok(paths.to_vec());
+        }
         if paths != ["/archive"] {
             return Err(format!("unexpected delete {paths:?}"));
         }
@@ -889,33 +933,28 @@ impl RemoteProvider for DispatchFakeProvider {
         Ok(paths.to_vec())
     }
 
-    fn read_file(&mut self, path: &str) -> Result<Vec<u8>, String> {
+    fn download(
+        &mut self,
+        path: &str,
+        destination: &mut dyn std::io::Write,
+    ) -> Result<u64, String> {
         if path != "/release/app.txt" {
             return Err(format!("unexpected read {path}"));
         }
-
-        Ok(b"remote bytes".to_vec())
+        destination
+            .write_all(b"remote bytes")
+            .map_err(|e| e.to_string())?;
+        Ok(12)
     }
-
-    fn write_file(&mut self, path: &str, bytes: &[u8]) -> Result<FileEntry, String> {
-        if path != "/incoming/app.txt" || bytes != b"local bytes" {
-            return Err(format!("unexpected write {path} {bytes:?}"));
+    fn upload(&mut self, path: &str, source: &mut dyn std::io::Read) -> Result<u64, String> {
+        let mut bytes = Vec::new();
+        source.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        if bytes != b"local bytes" {
+            return Err("unexpected upload contents".into());
         }
-
-        Ok(FileEntry {
-            name: "app.txt".to_string(),
-            path: "/incoming/app.txt".to_string(),
-            is_dir: false,
-            is_symlink: false,
-            is_hidden: false,
-            is_system: false,
-            size: bytes.len() as u64,
-            modified: "2026-09-21T00:00:00Z".to_string(),
-            extension: "txt".to_string(),
-            permissions: None,
-            symlink_target: None,
-            git_status: None,
-        })
+        let size = bytes.len() as u64;
+        self.files.insert(path.into(), bytes);
+        Ok(size)
     }
 }
 
@@ -927,7 +966,7 @@ impl RemoteProviderFactory for DispatchFakeProviderFactory {
         _profile: &RemoteProfile,
         _secret: Option<&RemoteSecret>,
     ) -> Result<Box<dyn RemoteProvider>, String> {
-        Ok(Box::new(DispatchFakeProvider))
+        Ok(Box::new(DispatchFakeProvider::default()))
     }
 }
 
@@ -941,7 +980,7 @@ impl RemoteProviderFactory for SecretCheckingProviderFactory {
     ) -> Result<Box<dyn RemoteProvider>, String> {
         match secret {
             Some(RemoteSecret::Password(value)) if value == "saved-secret" => {
-                Ok(Box::new(DispatchFakeProvider))
+                Ok(Box::new(DispatchFakeProvider::default()))
             }
             other => Err(format!("unexpected remote secret: {other:?}")),
         }
@@ -1013,7 +1052,7 @@ impl RemoteProviderFactory for PrivateKeySecretCheckingProviderFactory {
     ) -> Result<Box<dyn RemoteProvider>, String> {
         match secret {
             Some(RemoteSecret::PrivateKeyPassphrase(value)) if value == "key-passphrase" => {
-                Ok(Box::new(DispatchFakeProvider))
+                Ok(Box::new(DispatchFakeProvider::default()))
             }
             other => Err(format!("unexpected private key secret: {other:?}")),
         }

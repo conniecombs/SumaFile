@@ -101,6 +101,8 @@ internal abstract class NullIpc : ISimpleFileIpc
         string[] paths,
         CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<RemoteTransferOutcome> RemoteTransferEntriesAsync(string remoteSessionId, string direction, string[] sources, string destination, string conflictAction, string operationId, CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task<string> RemoteDownloadFileAsync(
         string remoteSessionId,
         string remotePath,

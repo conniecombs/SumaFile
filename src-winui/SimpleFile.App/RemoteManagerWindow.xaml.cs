@@ -31,7 +31,7 @@ public sealed partial class RemoteManagerWindow : Window
 
         Root.DataContext = _viewModel;
         Root.Loaded += OnLoaded;
-        Closed += (_, _) => IsClosed = true;
+        Closed += (_, _) => { _viewModel.CancelTransfer(); IsClosed = true; };
     }
 
     public bool IsClosed { get; private set; }
@@ -212,7 +212,7 @@ public sealed partial class RemoteManagerWindow : Window
     private async void OnDownloadRemoteEntriesClicked(object sender, RoutedEventArgs e)
     {
         var entries = RemoteEntryList.SelectedItems.OfType<FileEntry>().ToArray();
-        if (entries.Length == 0 || entries.All(entry => entry.IsDir))
+        if (entries.Length == 0)
         {
             await RunRemoteActionAsync(() => _viewModel.DownloadRemoteEntriesAsync(entries, ""));
             return;
@@ -286,6 +286,17 @@ public sealed partial class RemoteManagerWindow : Window
         return file?.Path;
     }
 
+    private void OnCancelTransferClicked(object sender, RoutedEventArgs e) => _viewModel.CancelTransfer();
+
+    private async void OnRetryTransfersClicked(object sender, RoutedEventArgs e) =>
+        await RunRemoteActionAsync(() => _viewModel.RetryTransfersAsync());
+
+    private void OnConflictPolicyChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ComboBox { SelectedItem: ComboBoxItem { Tag: string policy } })
+            _viewModel.ConflictAction = policy;
+    }
+
     private async Task RunRemoteActionAsync(Func<Task> action)
     {
         try
@@ -297,7 +308,7 @@ public sealed partial class RemoteManagerWindow : Window
         }
         catch (Exception exception)
         {
-            await ShowErrorAsync(exception.Message);
+            if (!IsClosed) await ShowErrorAsync(exception.Message);
         }
     }
 

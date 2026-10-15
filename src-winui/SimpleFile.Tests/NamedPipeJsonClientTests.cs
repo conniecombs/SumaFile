@@ -133,8 +133,10 @@ public class NamedPipeJsonClientTests
         Assert.Equal("notes.txt", seen[0].Entries[0].Name);
     }
 
-    [Fact]
-    public async Task ListDirectory_LightStreamedRequestMergesMetadataOnlyResult()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ListDirectory_LightStreamedRequestMergesMetadataOnlyResult(bool observeChunks)
     {
         var (server, client) = await FakeIpcServer.ConnectAsync();
         await using var serverLifetime = server;
@@ -143,7 +145,7 @@ public class NamedPipeJsonClientTests
         var seen = new List<DirectoryListingChunk>();
         var listingTask = client.ListDirectoryAsync(
             @"C:\Users\Public",
-            seen.Add,
+            observeChunks ? seen.Add : null,
             options: new ListDirectoryOptions
             {
                 Mode = "light",
@@ -193,9 +195,13 @@ public class NamedPipeJsonClientTests
         Assert.True(folder.IsDir);
         Assert.Equal(@"C:\Users\Public\Documents", folder.Path);
         Assert.Equal("", folder.Extension);
-        Assert.Single(seen);
-        Assert.Equal(@"C:\Users\Public\notes.txt", seen[0].Entries[0].Path);
-        Assert.Equal(@"C:\Users\Public\Documents", seen[0].Entries[1].Path);
+        if (observeChunks)
+        {
+            Assert.Single(seen);
+            Assert.Equal(@"C:\Users\Public\notes.txt", seen[0].Entries[0].Path);
+            Assert.Equal(@"C:\Users\Public\Documents", seen[0].Entries[1].Path);
+        }
+        else Assert.Empty(seen);
     }
 
     [Fact]

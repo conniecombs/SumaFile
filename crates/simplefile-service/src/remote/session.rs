@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use simplefile_core::models::{DirectoryListing, FileEntry};
 use simplefile_core::remote::{RemoteProfile, RemoteProtocol};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct RemoteConnectionTestResult {
@@ -67,7 +68,7 @@ pub struct RemoteSessionRegistry {
 
 struct RemoteSessionHandle {
     session: RemoteSession,
-    provider: Box<dyn RemoteProvider>,
+    provider: SharedRemoteProvider,
 }
 
 impl RemoteSessionRegistry {
@@ -97,7 +98,7 @@ impl RemoteSessionRegistry {
             session.session_id.clone(),
             RemoteSessionHandle {
                 session: session.clone(),
-                provider,
+                provider: SharedRemoteProvider(Arc::new(Mutex::new(provider))),
             },
         );
 
@@ -127,7 +128,9 @@ impl RemoteSessionRegistry {
             .sessions
             .get_mut(session_id)
             .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle.provider.list_directory(path)
+        handle
+            .provider
+            .with(|provider| provider.list_directory(path))
     }
 
     pub fn create_directory(
@@ -140,7 +143,9 @@ impl RemoteSessionRegistry {
             .sessions
             .get_mut(session_id)
             .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle.provider.create_directory(path, name)
+        handle
+            .provider
+            .with(|provider| provider.create_directory(path, name))
     }
 
     pub fn rename_entry(
@@ -153,7 +158,9 @@ impl RemoteSessionRegistry {
             .sessions
             .get_mut(session_id)
             .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle.provider.rename_entry(path, new_name)
+        handle
+            .provider
+            .with(|provider| provider.rename_entry(path, new_name))
     }
 
     pub fn delete_entries(
@@ -165,39 +172,55 @@ impl RemoteSessionRegistry {
             .sessions
             .get_mut(session_id)
             .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle.provider.delete_entries(paths)
+        handle
+            .provider
+            .with(|provider| provider.delete_entries(paths))
     }
 
-    pub fn read_file(&mut self, session_id: &str, path: &str) -> Result<Vec<u8>, String> {
-        let handle = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle.provider.read_file(path)
-    }
-
-    pub fn write_file(
-        &mut self,
-        session_id: &str,
-        path: &str,
-        bytes: &[u8],
-    ) -> Result<FileEntry, String> {
-        let handle = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle.provider.write_file(path, bytes)
+    pub fn provider(&self, session_id: &str) -> Result<SharedRemoteProvider, String> {
+        self.sessions
+            .get(session_id)
+            .map(|handle| handle.provider.clone())
+            .ok_or_else(|| format!("remote session not found: {session_id}"))
     }
 
     pub fn disconnect(&mut self, session_id: &str) -> Result<(), String> {
-        let mut handle = self
-            .sessions
-            .remove(session_id)
-            .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle.provider.disconnect()
+        self.provider(session_id)?.with(|provider| {
+            // A lost connection must still be removable so the user can reconnect
+            // and retry. Failure to acquire the busy-session lock still propagates.
+            if let Err(error) = provider.disconnect() {
+                log::warn!("Remote disconnect cleanup failed for {session_id}: {error}");
+            }
+            Ok(())
+        })?;
+        self.sessions.remove(session_id);
+        Ok(())
     }
 
     pub fn get(&self, session_id: &str) -> Option<&RemoteSession> {
         self.sessions.get(session_id).map(|handle| &handle.session)
+    }
+}
+
+#[derive(Clone)]
+pub struct SharedRemoteProvider(Arc<Mutex<Box<dyn RemoteProvider>>>);
+
+impl std::fmt::Debug for SharedRemoteProvider {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SharedRemoteProvider")
+    }
+}
+
+impl SharedRemoteProvider {
+    pub fn with<T>(
+        &self,
+        action: impl FnOnce(&mut dyn RemoteProvider) -> Result<T, String>,
+    ) -> Result<T, String> {
+        // Never block the IPC reader behind a transfer: it must still accept Cancel.
+        let mut provider = self
+            .0
+            .try_lock()
+            .map_err(|_| "Remote session is busy; wait for or cancel its transfer".to_string())?;
+        action(provider.as_mut())
     }
 }

@@ -4,3 +4,4 @@ pub mod provider;
 pub mod secrets;
 pub mod session;
 pub mod sftp;
+pub mod transfer;

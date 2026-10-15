@@ -257,7 +257,7 @@ public class RemoteManagerViewModelTests
         await viewModel.DownloadRemoteEntriesAsync([remoteEntry], @"C:\Downloads");
 
         Assert.Equal(("remote-session-1", "/incoming/app.txt", @"C:\Downloads\app.txt"), ipc.DownloadedFile);
-        Assert.Equal("Downloaded 1 remote file", viewModel.StatusText);
+        Assert.StartsWith("Transfer finished: 1 files completed", viewModel.StatusText);
         var downloadRecord = Assert.Single(viewModel.Transfers);
         Assert.Equal("Download", downloadRecord.Direction);
         Assert.Equal("Completed", downloadRecord.Status);
@@ -268,7 +268,7 @@ public class RemoteManagerViewModelTests
 
         Assert.Equal(("remote-session-1", @"C:\Uploads\report.pdf", "/incoming/report.pdf"), ipc.UploadedFile);
         Assert.Contains(viewModel.RemoteEntries, entry => entry.Name == "report.pdf");
-        Assert.Equal("Uploaded 1 file", viewModel.StatusText);
+        Assert.StartsWith("Transfer finished: 1 files completed", viewModel.StatusText);
         var uploadRecord = Assert.Single(viewModel.Transfers, transfer => transfer.Direction == "Upload");
         Assert.Equal("Completed", uploadRecord.Status);
         Assert.Equal("/incoming/report.pdf", uploadRecord.RemotePath);
@@ -480,13 +480,13 @@ public class RemoteManagerViewModelTests
         await viewModel.DownloadRemoteEntriesToLocalAsync(viewModel.RemoteEntries);
 
         Assert.Equal(("remote-session-1", "/incoming/server.log", @"C:\Deploy\server.log"), ipc.DownloadedFile);
-        Assert.Equal("Downloaded 1 remote file to C:\\Deploy", viewModel.StatusText);
+        Assert.StartsWith("Transfer finished: 1 files completed", viewModel.StatusText);
 
         await viewModel.UploadLocalEntriesToRemoteAsync(viewModel.LocalEntries);
 
         Assert.Equal(("remote-session-1", @"C:\Deploy\index.html", "/incoming/index.html"), ipc.UploadedFile);
         Assert.Contains(viewModel.RemoteEntries, entry => entry.Name == "index.html");
-        Assert.Equal("Uploaded 1 local file to /incoming", viewModel.StatusText);
+        Assert.StartsWith("Transfer finished: 1 files completed", viewModel.StatusText);
     }
 
 
@@ -581,8 +581,97 @@ public class RemoteManagerViewModelTests
         Assert.Equal("Profile settings are valid.", viewModel.StatusText);
     }
 
+    [Fact]
+    public async Task FolderSelectionsReachBackendAndRetryIncludesOnlyIncompleteSelections()
+    {
+        var ipc = new RemoteProfileIpc([new RemoteProfile { Id = "test" }])
+        {
+            Session = new RemoteSession { SessionId = "session", ProfileId = "test", RootPath = "/" },
+            Listing = new DirectoryListing { Path = "/" },
+            TransferHandler = sources => Task.FromResult(new RemoteTransferOutcome
+            {
+                RetrySources = [sources[1]],
+                Items = [new RemoteTransferItem { Source = sources[0], Destination = "/done", IsDir = true, Status = "completed" },
+                    new RemoteTransferItem { Source = sources[1], Destination = "/failed", Status = "failed", Error = "Network interrupted" }],
+            }),
+        };
+        var vm = new RemoteManagerViewModel(new FileOperationService(ipc)) { ConflictAction = "skip" };
+        await vm.LoadProfilesAsync(); await vm.ConnectSelectedProfileAsync();
+        await vm.UploadLocalEntriesToRemoteAsync([new FileEntry { Path = @"C:\site", IsDir = true }, new FileEntry { Path = @"C:\other", IsDir = true }]);
+        Assert.Equal([@"C:\site", @"C:\other"], ipc.LastTransferSources);
+        Assert.Equal("skip", ipc.LastConflictAction);
+        Assert.True(vm.CanRetryTransfers);
+        Assert.Contains(vm.Transfers, record => record.Detail == "Network interrupted");
+        await vm.DisconnectAsync();
+        Assert.False(vm.CanRetryTransfers);
+        ipc.Session.SessionId = "reconnected-session";
+        await vm.ConnectSelectedProfileAsync();
+        Assert.True(vm.CanRetryTransfers);
+        ipc.TransferHandler = sources => Task.FromResult(new RemoteTransferOutcome());
+        await vm.RetryTransfersAsync();
+        Assert.Equal([@"C:\other"], ipc.LastTransferSources);
+        Assert.False(vm.CanRetryTransfers);
+    }
+
+    [Fact]
+    public async Task CancelWaitsForBackendCleanupAndRetainsPartialResults()
+    {
+        var finished = new TaskCompletionSource<RemoteTransferOutcome>();
+        var ipc = new RemoteProfileIpc([new RemoteProfile { Id = "test" }])
+        {
+            Session = new RemoteSession { SessionId = "session", RootPath = "/" },
+            Listing = new DirectoryListing { Path = "/" }, TransferHandler = _ => finished.Task,
+        };
+        var vm = new RemoteManagerViewModel(new FileOperationService(ipc));
+        await vm.LoadProfilesAsync(); await vm.ConnectSelectedProfileAsync();
+        var running = vm.UploadLocalFilesAsync([@"C:\a.bin"]);
+        Assert.True(vm.CanCancelTransfer);
+        vm.CancelTransfer();
+        Assert.NotNull(ipc.CancelledOperation);
+        Assert.True(vm.IsBusy);
+        Assert.False(running.IsCompleted);
+        finished.SetResult(new RemoteTransferOutcome { Cancelled = true, RetrySources = [@"C:\a.bin"],
+            Items = [new RemoteTransferItem { Source = @"C:\a.bin", Destination = "/a.bin", Status = "cancelled" }] });
+        await running;
+        Assert.False(vm.IsBusy);
+        Assert.True(vm.CanRetryTransfers);
+        Assert.Equal("Cancelled", Assert.Single(vm.Transfers).Status);
+    }
+
     private sealed class RemoteProfileIpc(RemoteProfile[] profiles) : NullIpc
     {
+        public string[] LastTransferSources { get; private set; } = [];
+        public string? LastConflictAction { get; private set; }
+        public string? CancelledOperation { get; private set; }
+        public Func<string[], Task<RemoteTransferOutcome>>? TransferHandler { get; set; }
+        private sealed class Subscription : IDisposable { public void Dispose() { } }
+        public override IDisposable On<T>(string eventName, Action<T> handler) => new Subscription();
+        public override Task RemoteDisconnectAsync(string remoteSessionId, CancellationToken ct = default) => Task.CompletedTask;
+        public override Task<bool> CancelOperationAsync(string operationId, CancellationToken ct = default)
+        {
+            CancelledOperation = operationId;
+            return Task.FromResult(true);
+        }
+        public override async Task<RemoteTransferOutcome> RemoteTransferEntriesAsync(string remoteSessionId,
+            string direction, string[] sources, string destination, string conflictAction, string operationId, CancellationToken ct = default)
+        {
+            LastTransferSources = sources;
+            LastConflictAction = conflictAction;
+            if (TransferHandler is not null) return await TransferHandler(sources);
+            var items = new List<RemoteTransferItem>();
+            foreach (var source in sources)
+            {
+                var target = direction == "download" ? Path.Combine(destination, source.Split('/').Last()) : destination.TrimEnd('/') + "/" + Path.GetFileName(source);
+                if (direction == "download") await RemoteDownloadFileAsync(remoteSessionId, source, target, ct);
+                else
+                {
+                    var entry = await RemoteUploadFileAsync(remoteSessionId, source, target, ct);
+                    Listing.Entries = Listing.Entries.Where(old => old.Path != target).Append(entry).ToList();
+                }
+                items.Add(new RemoteTransferItem { Source = source, Destination = target, Status = "completed" });
+            }
+            return new RemoteTransferOutcome { Items = items.ToArray() };
+        }
         public int ListCalls { get; private set; }
         public string? ConnectedProfileId { get; private set; }
         public string? ConnectedSecret { get; private set; }

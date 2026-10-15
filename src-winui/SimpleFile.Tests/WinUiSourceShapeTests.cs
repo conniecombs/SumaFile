@@ -136,7 +136,7 @@ public class WinUiSourceShapeTests
         Assert.Contains("x:Name=\"RemoteEntryList\"", windowXaml);
         Assert.Contains("ItemClick=\"OnRemoteEntryItemClick\"", windowXaml);
         Assert.Contains("x:Name=\"RemoteTransferList\"", windowXaml);
-        Assert.Contains("Download selected remote files to local pane", windowXaml);
+        Assert.Contains("Download selected remote files and folders to local pane", windowXaml);
         Assert.Contains("Upload selected local files to remote pane", windowXaml);
         Assert.Contains("RemoteManagerViewModel", windowCode);
         Assert.Contains("LoadProfilesAsync", windowCode);

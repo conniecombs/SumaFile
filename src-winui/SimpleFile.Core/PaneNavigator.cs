@@ -1,4 +1,5 @@
 using SimpleFile.Ipc;
+using System.Diagnostics;
 
 namespace SimpleFile.Core;
 
@@ -22,6 +23,7 @@ internal sealed class PaneNavigator
         CancellationToken cancellationToken)
     {
         List<FileEntry> progressive = [];
+        var lastPublished = Stopwatch.GetTimestamp();
         try
         {
             var listing = await _backend.ListDirectoryAsync(
@@ -33,12 +35,13 @@ internal sealed class PaneNavigator
                             return;
                         }
 
+                        var publish = ShouldRaiseForChunk(chunk, ref lastPublished);
                         lock (_gate)
                         {
-                            WorkspaceNavigation.ApplyListingChunk(pane, chunk, progressive);
+                            WorkspaceNavigation.ApplyListingChunk(pane, chunk, progressive, publish);
                         }
 
-                        if (ShouldRaiseForChunk(chunk))
+                        if (publish)
                         {
                             _raiseChanged();
                         }
@@ -53,6 +56,10 @@ internal sealed class PaneNavigator
         }
         catch (IpcException exception) when (exception.IsResultTooLarge && progressive.Count > 0)
         {
+            lock (_gate)
+            {
+                if (token == pane.NavigationToken) pane.Entries = [.. progressive];
+            }
             return token == pane.NavigationToken
                 ? PaneNavigationResult.Partial(exception.Message)
                 : PaneNavigationResult.Abandoned();
@@ -66,6 +73,7 @@ internal sealed class PaneNavigator
         CancellationToken cancellationToken)
     {
         List<FileEntry> progressive = [];
+        var lastPublished = Stopwatch.GetTimestamp();
         var listing = await _backend.ListDirectoryAsync(
                 path,
                 chunk =>
@@ -75,13 +83,14 @@ internal sealed class PaneNavigator
                         return;
                     }
 
+                    var publish = ShouldRaiseForChunk(chunk, ref lastPublished);
                     lock (_gate)
                     {
                         progressive.AddRange(chunk.Entries);
-                        pane.Entries = [.. progressive];
+                        if (publish) pane.Entries = [.. progressive];
                     }
 
-                    if (ShouldRaiseForChunk(chunk))
+                    if (publish)
                     {
                         _raiseChanged();
                     }
@@ -95,8 +104,13 @@ internal sealed class PaneNavigator
             : PaneNavigationResult.Abandoned();
     }
 
-    private static bool ShouldRaiseForChunk(DirectoryListingChunk chunk) =>
-        chunk.ChunkIndex == 0 || chunk.Done;
+    private static bool ShouldRaiseForChunk(DirectoryListingChunk chunk, ref long lastPublished)
+    {
+        if (chunk.ChunkIndex != 0 && !chunk.Done && Stopwatch.GetElapsedTime(lastPublished).TotalMilliseconds < 100)
+            return false;
+        lastPublished = Stopwatch.GetTimestamp();
+        return true;
+    }
 }
 
 internal readonly record struct PaneNavigationResult(

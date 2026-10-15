@@ -17,7 +17,7 @@ use simplefile_core::remote::{RemoteAuthKind, RemoteProfile};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::{Builder, Runtime};
 
 const REMOTE_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -114,35 +114,71 @@ impl RemoteProvider for SftpRemoteProvider {
         Ok(deleted)
     }
 
-    fn read_file(&mut self, path: &str) -> Result<Vec<u8>, String> {
-        let path = normalize_remote_path(path);
-        block_on_runtime(&self.runtime, self.sftp.read(path.clone()))
-            .map_err(|error| format!("SFTP download failed for {path}: {error}"))
-    }
-
-    fn write_file(&mut self, path: &str, bytes: &[u8]) -> Result<FileEntry, String> {
-        let path = normalize_remote_path(path);
-        let data = bytes.to_vec();
+    fn download(
+        &mut self,
+        path: &str,
+        destination: &mut dyn std::io::Write,
+    ) -> Result<u64, String> {
         block_on_runtime(&self.runtime, async {
             let mut file = self
                 .sftp
-                .create(path.clone())
+                .open(normalize_remote_path(path))
                 .await
-                .map_err(|error| format!("SFTP upload open failed for {path}: {error}"))?;
-            file.write_all(&data)
+                .map_err(|e| e.to_string())?;
+            let result = async {
+                let mut buffer = vec![0; super::transfer::TRANSFER_BUFFER_SIZE];
+                let mut count = 0;
+                loop {
+                    // Call write directly: write_all skips the writer for empty buffers.
+                    destination.write(&[]).map_err(|e| e.to_string())?;
+                    let read = tokio::time::timeout(REMOTE_CONNECT_TIMEOUT, file.read(&mut buffer))
+                        .await
+                        .map_err(|_| "SFTP read timed out".to_string())?
+                        .map_err(|e| e.to_string())?;
+                    if read == 0 {
+                        break;
+                    }
+                    destination
+                        .write_all(&buffer[..read])
+                        .map_err(|e| e.to_string())?;
+                    count += read as u64;
+                }
+                Ok(count)
+            }
+            .await;
+            let closed = file.close().await.map_err(|e| e.to_string());
+            result.and_then(|count| closed.map(|()| count))
+        })
+    }
+
+    fn upload(&mut self, path: &str, source: &mut dyn std::io::Read) -> Result<u64, String> {
+        block_on_runtime(&self.runtime, async {
+            let mut file = self
+                .sftp
+                .create(normalize_remote_path(path))
                 .await
-                .map_err(|error| format!("SFTP upload write failed for {path}: {error}"))?;
-            file.close()
-                .await
-                .map_err(|error| format!("SFTP upload close failed for {path}: {error}"))
-        })?;
-        let metadata = block_on_runtime(&self.runtime, self.sftp.metadata(path.clone()))
-            .map_err(|error| format!("SFTP stat failed for {path}: {error}"))?;
-        Ok(file_entry_from_sftp_metadata(
-            &parent_remote_path(&path).unwrap_or_else(|| "/".to_string()),
-            &path,
-            metadata,
-        ))
+                .map_err(|e| e.to_string())?;
+            let result = async {
+                let mut buffer = vec![0; super::transfer::TRANSFER_BUFFER_SIZE];
+                let mut count = 0;
+                loop {
+                    let read = source.read(&mut buffer).map_err(|e| e.to_string())?;
+                    if read == 0 {
+                        break;
+                    }
+                    tokio::time::timeout(REMOTE_CONNECT_TIMEOUT, file.write_all(&buffer[..read]))
+                        .await
+                        .map_err(|_| "SFTP write timed out".to_string())?
+                        .map_err(|e| e.to_string())?;
+                    count += read as u64;
+                }
+                Ok(count)
+            }
+            .await;
+            // Close on failure as well, before the caller tries to remove staging.
+            let closed = file.close().await.map_err(|e| e.to_string());
+            result.and_then(|count| closed.map(|()| count))
+        })
     }
 
     fn disconnect(&mut self) -> Result<(), String> {

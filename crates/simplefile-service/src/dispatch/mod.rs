@@ -108,6 +108,11 @@ fn default_remote_secret_store() -> Arc<dyn RemoteSecretStore> {
 #[derive(Debug)]
 pub(crate) enum Dispatch {
     Reply(JsonRpcResponse),
+    RemoteTransfer {
+        id: Option<Value>,
+        provider: crate::remote::session::SharedRemoteProvider,
+        request: crate::remote::transfer::RemoteTransferRequest,
+    },
     ListDirectory {
         id: Option<Value>,
         path: String,

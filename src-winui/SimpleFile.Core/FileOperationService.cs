@@ -324,7 +324,8 @@ public sealed class FileOperationService : ISettingsBackend
 
     public Task<DirectoryListing> ListDirectoryAsync(string path, CancellationToken ct = default)
     {
-        return _ipc.ListDirectoryAsync(path, cancellationToken: ct);
+        return _ipc.ListDirectoryAsync(path, cancellationToken: ct,
+            options: new ListDirectoryOptions { FinalEntries = false });
     }
 
     public async Task UnwatchDirectoryAsync(CancellationToken ct = default)
@@ -537,6 +538,26 @@ public sealed class FileOperationService : ISettingsBackend
 
     public Task<RemoteProfile[]> RemoteListProfilesAsync(CancellationToken ct = default) =>
         _ipc.RemoteListProfilesAsync(ct);
+
+    public async Task<RemoteTransferOutcome> RemoteTransferEntriesAsync(
+        string remoteSessionId, string direction, string[] sources, string destination,
+        string conflictAction, IProgress<ProgressUpdate>? progress, CancellationToken ct = default)
+    {
+        var ipc = _ipc;
+        var operationId = GenerateOperationId();
+        using var subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
+        {
+            if (update.OperationId == operationId) progress?.Report(update);
+        });
+        ct.ThrowIfCancellationRequested();
+        // Send the request before registering cancellation, so the service sees
+        // the operation before its cancel message. Keep awaiting the final result
+        // after cancellation, including partial successes and staging cleanup.
+        var transfer = ipc.RemoteTransferEntriesAsync(remoteSessionId, direction, sources,
+            destination, conflictAction, operationId, CancellationToken.None);
+        using var registration = ct.Register(() => _ = CancelOperationBestEffortAsync(ipc, operationId));
+        return await transfer.ConfigureAwait(false);
+    }
 
     public Task<RemoteProfile> RemoteSaveProfileAsync(
         RemoteProfileInput profile,

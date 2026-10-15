@@ -274,6 +274,16 @@ links and special entries that could escape the destination.
 - Profile test before save
 - Remote folder browsing with create folder, upload, download, rename, delete,
   refresh, and disconnect actions
+- Recursive folder uploads and downloads, including empty folders
+- Streamed transfers with byte progress, cancellation, per-item outcomes, and
+  retry of incomplete selections; existing files are preserved until transfer
+  completion using temporary files and replacement backups
+- File conflict choices: report, skip, replace, or keep both. Existing folders
+  merge; the selected policy applies to files inside them. When retrying a
+  partially completed folder, choose skip to keep files already transferred
+- Retry remains available after reconnecting to the same profile; transfers
+  restart incomplete files from the beginning
+- Symbolic links are reported as unsupported during folder transfers
 - Plain FTP requires an explicit insecure-connection acknowledgement
 
 ## Settings and State

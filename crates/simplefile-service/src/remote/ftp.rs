@@ -7,8 +7,8 @@ use super::secrets::RemoteSecret;
 use simplefile_core::models::{DirectoryListing, FileEntry};
 use simplefile_core::remote::{RemoteAuthKind, RemoteProfile, RemoteProtocol};
 use std::convert::TryFrom;
-use std::io::Cursor;
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 use suppaftp::list::{File as FtpListFile, PosixPexQuery};
 use suppaftp::{FtpStream, NativeTlsConnector, NativeTlsFtpStream};
@@ -25,10 +25,21 @@ pub fn connect(
 
     let (username, password) = ftp_credentials(profile, secret)?;
     let address = first_socket_addr(profile)?;
+    // Configure the control socket before reading the greeting or negotiating TLS.
+    // Data completion and cleanup commands must also stop on an unresponsive server.
+    let socket = TcpStream::connect_timeout(&address, REMOTE_CONNECT_TIMEOUT)
+        .map_err(|error| format!("FTP connection failed: {error}"))?;
+    socket
+        .set_read_timeout(Some(REMOTE_CONNECT_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    socket
+        .set_write_timeout(Some(REMOTE_CONNECT_TIMEOUT))
+        .map_err(|e| e.to_string())?;
     let client = match profile.protocol {
         RemoteProtocol::Ftp => {
-            let mut stream = FtpStream::connect_timeout(address, REMOTE_CONNECT_TIMEOUT)
+            let mut stream = FtpStream::connect_with_stream(socket)
                 .map_err(|error| format!("FTP connection failed: {error}"))?;
+            stream = stream.passive_stream_builder(connect_data_socket);
             if !profile.passive_mode {
                 stream = stream.active_mode(REMOTE_CONNECT_TIMEOUT);
             }
@@ -38,8 +49,9 @@ pub fn connect(
             FtpClient::Plain(stream)
         }
         RemoteProtocol::Ftps => {
-            let mut stream = NativeTlsFtpStream::connect_timeout(address, REMOTE_CONNECT_TIMEOUT)
+            let mut stream = NativeTlsFtpStream::connect_with_stream(socket)
                 .map_err(|error| format!("FTPS connection failed: {error}"))?;
+            stream = stream.passive_stream_builder(connect_data_socket);
             if !profile.passive_mode {
                 stream = stream.active_mode(REMOTE_CONNECT_TIMEOUT);
             }
@@ -64,6 +76,18 @@ pub fn connect(
 
 struct FtpRemoteProvider {
     client: FtpClient,
+}
+
+fn connect_data_socket(address: SocketAddr) -> suppaftp::FtpResult<TcpStream> {
+    let socket = TcpStream::connect_timeout(&address, REMOTE_CONNECT_TIMEOUT)
+        .map_err(suppaftp::FtpError::ConnectionError)?;
+    socket
+        .set_read_timeout(Some(REMOTE_CONNECT_TIMEOUT))
+        .map_err(suppaftp::FtpError::ConnectionError)?;
+    socket
+        .set_write_timeout(Some(REMOTE_CONNECT_TIMEOUT))
+        .map_err(suppaftp::FtpError::ConnectionError)?;
+    Ok(socket)
 }
 
 impl RemoteProvider for FtpRemoteProvider {
@@ -126,24 +150,13 @@ impl RemoteProvider for FtpRemoteProvider {
         Ok(deleted)
     }
 
-    fn read_file(&mut self, path: &str) -> Result<Vec<u8>, String> {
-        let path = normalize_remote_path(path);
+    fn download(&mut self, path: &str, destination: &mut dyn Write) -> Result<u64, String> {
         self.client
-            .retr_as_buffer(&path)
-            .map(|cursor| cursor.into_inner())
-            .map_err(|error| format!("FTP download failed for {path}: {error}"))
+            .download(&normalize_remote_path(path), destination)
     }
 
-    fn write_file(&mut self, path: &str, bytes: &[u8]) -> Result<FileEntry, String> {
-        let path = normalize_remote_path(path);
-        let mut cursor = Cursor::new(bytes);
-        self.client
-            .put_file(&path, &mut cursor)
-            .map_err(|error| format!("FTP upload failed for {path}: {error}"))?;
-        match self.find_entry(&path) {
-            Ok(entry) => Ok(entry),
-            Err(_) => Ok(basic_remote_entry(&path, false, bytes.len() as u64)),
-        }
+    fn upload(&mut self, path: &str, source: &mut dyn Read) -> Result<u64, String> {
+        self.client.upload(&normalize_remote_path(path), source)
     }
 
     fn disconnect(&mut self) -> Result<(), String> {
@@ -205,17 +218,43 @@ impl FtpClient {
         }
     }
 
-    fn retr_as_buffer(&mut self, path: &str) -> suppaftp::FtpResult<Cursor<Vec<u8>>> {
+    fn download(&mut self, path: &str, destination: &mut dyn Write) -> Result<u64, String> {
+        macro_rules! transfer {
+            ($client:expr) => {{
+                let mut stream = $client.retr_as_stream(path).map_err(|e| e.to_string())?;
+                stream
+                    .get_ref()
+                    .get_ref()
+                    .set_read_timeout(Some(REMOTE_CONNECT_TIMEOUT))
+                    .map_err(|e| e.to_string())?;
+                let result = super::transfer::copy_stream(&mut stream, destination);
+                let finished = stream.finish().map_err(|e| e.to_string());
+                result.and_then(|count| finished.map(|()| count))
+            }};
+        }
         match self {
-            Self::Plain(stream) => stream.retr_as_buffer(path),
-            Self::Tls(stream) => stream.retr_as_buffer(path),
+            Self::Plain(client) => transfer!(client),
+            Self::Tls(client) => transfer!(client),
         }
     }
 
-    fn put_file(&mut self, path: &str, cursor: &mut Cursor<&[u8]>) -> suppaftp::FtpResult<u64> {
+    fn upload(&mut self, path: &str, source: &mut dyn Read) -> Result<u64, String> {
+        macro_rules! transfer {
+            ($client:expr) => {{
+                let mut stream = $client.put_with_stream(path).map_err(|e| e.to_string())?;
+                stream
+                    .get_ref()
+                    .get_ref()
+                    .set_write_timeout(Some(REMOTE_CONNECT_TIMEOUT))
+                    .map_err(|e| e.to_string())?;
+                let result = super::transfer::copy_stream(source, &mut stream);
+                let finished = stream.finish().map_err(|e| e.to_string());
+                result.and_then(|count| finished.map(|()| count))
+            }};
+        }
         match self {
-            Self::Plain(stream) => stream.put_file(path, cursor),
-            Self::Tls(stream) => stream.put_file(path, cursor),
+            Self::Plain(client) => transfer!(client),
+            Self::Tls(client) => transfer!(client),
         }
     }
 
@@ -331,6 +370,108 @@ fn ftp_permissions(file: &FtpListFile) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streams_binary_data_and_checks_server_completion_over_ftp() {
+        use std::io::{BufRead, BufReader, Cursor};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut control, _) = listener.accept().unwrap();
+            control
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            control
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(control.try_clone().unwrap());
+            control.write_all(b"220 Local transfer test\r\n").unwrap();
+            let mut passive = None;
+            let mut uploaded = Vec::new();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap() == 0 {
+                    break;
+                }
+                let (command, argument) = line
+                    .trim_end()
+                    .split_once(' ')
+                    .unwrap_or((line.trim_end(), ""));
+                match command {
+                    "USER" => control.write_all(b"230 Logged in\r\n").unwrap(),
+                    "TYPE" => control.write_all(b"200 Binary mode\r\n").unwrap(),
+                    "PASV" => {
+                        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                        let port = listener.local_addr().unwrap().port();
+                        write!(
+                            control,
+                            "227 Entering Passive Mode (127,0,0,1,{},{})\r\n",
+                            port / 256,
+                            port % 256
+                        )
+                        .unwrap();
+                        passive = Some(listener);
+                    }
+                    "STOR" | "RETR" => {
+                        control
+                            .write_all(b"150 Opening data connection\r\n")
+                            .unwrap();
+                        let (mut data, _) = passive.take().unwrap().accept().unwrap();
+                        data.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                        data.set_write_timeout(Some(Duration::from_secs(5)))
+                            .unwrap();
+                        if command == "STOR" {
+                            uploaded.clear();
+                            data.read_to_end(&mut uploaded).unwrap();
+                        } else {
+                            data.write_all(&uploaded).unwrap();
+                        }
+                        drop(data);
+                        control
+                            .write_all(if argument == "/rejected" {
+                                b"426 Transfer failed\r\n"
+                            } else {
+                                b"226 Transfer complete\r\n"
+                            })
+                            .unwrap();
+                    }
+                    "QUIT" => {
+                        control.write_all(b"221 Goodbye\r\n").unwrap();
+                        break;
+                    }
+                    _ => panic!("Unexpected FTP command: {line}"),
+                }
+            }
+        });
+        let socket = connect_data_socket(address).unwrap();
+        let mut stream = FtpStream::connect_with_stream(socket)
+            .unwrap()
+            .passive_stream_builder(connect_data_socket);
+        stream.login("test", "test").unwrap();
+        let mut client = FtpClient::Plain(stream);
+        let bytes: Vec<u8> = (0..super::super::transfer::TRANSFER_BUFFER_SIZE * 19 + 7)
+            .map(|index| (index % 256) as u8)
+            .collect();
+        assert_eq!(
+            client.upload("/data", &mut Cursor::new(&bytes)).unwrap(),
+            bytes.len() as u64
+        );
+        let mut downloaded = Vec::new();
+        assert_eq!(
+            client.download("/data", &mut downloaded).unwrap(),
+            bytes.len() as u64
+        );
+        assert_eq!(downloaded, bytes);
+        // A successful data copy is insufficient when the server rejects completion.
+        assert!(client.download("/rejected", &mut std::io::sink()).is_err());
+        assert!(client
+            .upload("/rejected", &mut Cursor::new(&bytes))
+            .is_err());
+        client.quit().unwrap();
+        server.join().unwrap();
+    }
 
     #[test]
     fn parses_posix_ftp_list_entries_into_file_entries() {

@@ -58,6 +58,122 @@ async fn call(client: &mut tokio::io::DuplexStream, method: &str, id: u64, param
     serde_json::from_slice(&response).unwrap()
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_transfer_accepts_health_and_cancel_while_streaming_and_cleans_partial_file() {
+    use crate::remote::provider::{RemoteProvider, RemoteProviderFactory};
+    use simplefile_core::models::{DirectoryListing, FileEntry};
+    struct SlowProvider;
+    impl RemoteProvider for SlowProvider {
+        fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
+            Ok(DirectoryListing {
+                path: path.into(),
+                parent: None,
+                is_network: true,
+                entries: vec![FileEntry {
+                    name: "slow.bin".into(),
+                    path: "/slow.bin".into(),
+                    is_dir: false,
+                    is_symlink: false,
+                    is_hidden: false,
+                    is_system: false,
+                    size: 1000000,
+                    modified: "".into(),
+                    extension: "bin".into(),
+                    permissions: None,
+                    symlink_target: None,
+                    git_status: None,
+                }],
+            })
+        }
+        fn create_directory(&mut self, _: &str, _: &str) -> Result<FileEntry, String> {
+            unreachable!()
+        }
+        fn rename_entry(&mut self, _: &str, _: &str) -> Result<FileEntry, String> {
+            unreachable!()
+        }
+        fn delete_entries(&mut self, _: &[String]) -> Result<Vec<String>, String> {
+            unreachable!()
+        }
+        fn download(
+            &mut self,
+            _: &str,
+            destination: &mut dyn std::io::Write,
+        ) -> Result<u64, String> {
+            for _ in 0..1000 {
+                destination
+                    .write_all(&[1; 1024])
+                    .map_err(|e| e.to_string())?;
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Ok(1024000)
+        }
+        fn upload(&mut self, _: &str, _: &mut dyn std::io::Read) -> Result<u64, String> {
+            unreachable!()
+        }
+    }
+    struct Factory;
+    impl RemoteProviderFactory for Factory {
+        fn connect(
+            &self,
+            _: &simplefile_core::remote::RemoteProfile,
+            _: Option<&crate::remote::secrets::RemoteSecret>,
+        ) -> Result<Box<dyn RemoteProvider>, String> {
+            Ok(Box::new(SlowProvider))
+        }
+    }
+    let destination = std::env::temp_dir().join(crate::progress::generate_transfer_operation_id());
+    std::fs::create_dir(&destination).unwrap();
+    let mut state = SessionState::with_remote_provider_factory(Factory);
+    state.handshake_done = true;
+    let profile = serde_json::from_value(json!({ "id":"test", "name":"test", "protocol":"sftp", "host":"localhost", "port":22,
+        "username":"test", "root_path":"/", "auth_kind":"password", "insecure_plain_ftp":false, "passive_mode":true })).unwrap();
+    let session = state
+        .remote_sessions
+        .connect_profile(profile, None)
+        .unwrap();
+    let (mut client, server) = duplex(64 * 1024);
+    let (reader, writer) = tokio::io::split(server);
+    let serving = tokio::spawn(serve_connection(reader, writer, state));
+    send_request(&mut client, "remote_transfer_entries", 1, json!({ "remoteSessionId":session.session_id, "direction":"download",
+        "sources":["/slow.bin"], "destination":destination.to_string_lossy(), "conflictAction":"replace", "operationId":"remote-cancel-test" })).await;
+    // Wait until the transfer has started, then exercise the same IPC reader.
+    let notification: Value =
+        serde_json::from_slice(&read_frame(&mut client).await.unwrap()).unwrap();
+    assert_eq!(notification["method"], "operation-progress");
+    send_request(&mut client, HEALTH_METHOD, 2, json!({})).await;
+    send_request(
+        &mut client,
+        "cancel_operation",
+        3,
+        json!({ "operationId":"remote-cancel-test" }),
+    )
+    .await;
+    let responses = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        let mut replies = std::collections::HashMap::new();
+        while replies.len() < 3 {
+            let reply: Value =
+                serde_json::from_slice(&read_frame(&mut client).await.unwrap()).unwrap();
+            if let Some(id) = reply["id"].as_u64() {
+                replies.insert(id, reply);
+            }
+        }
+        replies
+    })
+    .await
+    .unwrap();
+    assert!(responses[&2].get("error").is_none());
+    assert_eq!(responses[&3]["result"], true);
+    assert_eq!(responses[&1]["result"]["cancelled"], true);
+    assert_eq!(
+        responses[&1]["result"]["retry_sources"],
+        json!(["/slow.bin"])
+    );
+    assert_eq!(std::fs::read_dir(&destination).unwrap().count(), 0);
+    drop(client);
+    serving.await.unwrap().unwrap();
+    std::fs::remove_dir(&destination).unwrap();
+}
+
 #[tokio::test]
 async fn writer_loop_batches_ready_frames() {
     let writer = RecordingWriter::default();

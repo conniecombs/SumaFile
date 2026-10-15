@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 96,
+  "domainMethodCount": 97,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -172,6 +172,11 @@
     "remote_delete_entries": {
       "params": { "remoteSessionId": "string", "paths": "string[]" },
       "result": "string[]"
+    },
+    "remote_transfer_entries": {
+      "params": { "remoteSessionId": "string", "direction": "string", "sources": "string[]", "destination": "string", "conflictAction": "string", "operationId": "string" },
+      "result": "RemoteTransferOutcome",
+      "progressEvent": "operation-progress"
     },
     "remote_download_file": {
       "params": { "remoteSessionId": "string", "remotePath": "string", "localPath": "string" },

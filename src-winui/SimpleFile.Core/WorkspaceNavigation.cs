@@ -35,7 +35,8 @@ internal static class WorkspaceNavigation
     public static void ApplyListingChunk(
         ExplorerPane pane,
         DirectoryListingChunk chunk,
-        List<FileEntry> progressiveEntries)
+        List<FileEntry> progressiveEntries,
+        bool publishSnapshot = true)
     {
         if (chunk.IsNetwork)
         {
@@ -48,7 +49,7 @@ internal static class WorkspaceNavigation
         }
 
         progressiveEntries.AddRange(chunk.Entries);
-        pane.Entries = [.. progressiveEntries];
+        if (publishSnapshot) pane.Entries = [.. progressiveEntries];
         if (progressiveEntries.Count > 0)
         {
             pane.IsNavigating = false;

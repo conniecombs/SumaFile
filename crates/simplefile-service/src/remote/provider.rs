@@ -1,6 +1,7 @@
 use super::secrets::RemoteSecret;
 use simplefile_core::models::{DirectoryListing, FileEntry};
 use simplefile_core::remote::{RemoteProfile, RemoteProtocol};
+use std::io::{Read, Write};
 
 pub trait RemoteProvider: Send {
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String>;
@@ -11,9 +12,9 @@ pub trait RemoteProvider: Send {
 
     fn delete_entries(&mut self, paths: &[String]) -> Result<Vec<String>, String>;
 
-    fn read_file(&mut self, path: &str) -> Result<Vec<u8>, String>;
+    fn download(&mut self, path: &str, destination: &mut dyn Write) -> Result<u64, String>;
 
-    fn write_file(&mut self, path: &str, bytes: &[u8]) -> Result<FileEntry, String>;
+    fn upload(&mut self, path: &str, source: &mut dyn Read) -> Result<u64, String>;
 
     fn disconnect(&mut self) -> Result<(), String> {
         Ok(())

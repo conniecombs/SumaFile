@@ -80,6 +80,9 @@ public sealed partial class NamedPipeJsonClient
     public Task<string[]> RemoteDeleteEntriesAsync(string remoteSessionId, string[] paths, CancellationToken ct = default)
         => InvokeAsync<string[]>(Protocol.RemoteDeleteEntriesMethod, new { remoteSessionId, paths }, ct);
 
+    public Task<RemoteTransferOutcome> RemoteTransferEntriesAsync(string remoteSessionId, string direction, string[] sources, string destination, string conflictAction, string operationId, CancellationToken ct = default)
+        => InvokeAsync<RemoteTransferOutcome>(Protocol.RemoteTransferEntriesMethod, new { remoteSessionId, direction, sources, destination, conflictAction, operationId }, ct);
+
     public Task<string> RemoteDownloadFileAsync(string remoteSessionId, string remotePath, string localPath, CancellationToken ct = default)
         => InvokeAsync<string>(Protocol.RemoteDownloadFileMethod, new { remoteSessionId, remotePath, localPath }, ct);
 

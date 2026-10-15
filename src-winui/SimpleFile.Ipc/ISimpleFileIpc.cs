@@ -52,6 +52,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<FileEntry> RemoteCreateDirectoryAsync(string remoteSessionId, string path, string name, CancellationToken ct = default);
     Task<FileEntry> RemoteRenameEntryAsync(string remoteSessionId, string path, string newName, CancellationToken ct = default);
     Task<string[]> RemoteDeleteEntriesAsync(string remoteSessionId, string[] paths, CancellationToken ct = default);
+    Task<RemoteTransferOutcome> RemoteTransferEntriesAsync(string remoteSessionId, string direction, string[] sources, string destination, string conflictAction, string operationId, CancellationToken ct = default);
     Task<string> RemoteDownloadFileAsync(string remoteSessionId, string remotePath, string localPath, CancellationToken ct = default);
     Task<FileEntry> RemoteUploadFileAsync(string remoteSessionId, string localPath, string remotePath, CancellationToken ct = default);
 

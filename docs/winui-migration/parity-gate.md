@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
-**Contract:** [`inventory.md`](inventory.md) (96 commands / emitted events / Svelte workflows)
+**Contract:** [`inventory.md`](inventory.md) (97 commands / emitted events / Svelte workflows)
 **Hosts:** WinUI 3 + `simplefile-service` is the shipping app. Svelte/Tauri UI and packaging glue have been retired.
 
 This is the **retirement lock**. Required `OPEN` rows are none. `MANUAL` rows stay as human smoke coverage. Retired `src-tauri/` domain now lives solely in `crates/simplefile-core`.
@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 96-command schema vs Rust/C#
+npm run check:ipc-schema      # 97-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (96)
+## 2. IPC commands (97)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -188,6 +188,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `remote_rename_entry` | Rename a file or directory in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Rename a remote item | `MANUAL` |
 | `remote_delete_entries` | Delete files or directories in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Delete selected remote items | `MANUAL` |
 | `remote_download_file` | Download a remote file into a chosen local folder | Remote manager download action | Fake-provider service tests + named-pipe client tests | Download selected remote files | `MANUAL` |
+| `remote_transfer_entries` | Stream files and folders with conflict policy, cancellation, and per-item results | Remote manager transfer controls | Remote transfer tests | Transfer files and folders | `MANUAL` |
 | `remote_upload_file` | Upload local files into the active remote directory | Remote manager upload action | Fake-provider service tests + named-pipe client tests | Upload local files | `MANUAL` |
 
 ---
@@ -426,7 +427,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 96 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 97 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |

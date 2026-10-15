@@ -4,9 +4,18 @@ use simplefile_service::remote::provider::{RemoteProvider, RemoteProviderFactory
 use simplefile_service::remote::secrets::RemoteSecret;
 use simplefile_service::remote::session::RemoteSessionRegistry;
 
-struct FakeProvider;
+struct FakeProvider {
+    fail_disconnect: bool,
+}
 
 impl RemoteProvider for FakeProvider {
+    fn disconnect(&mut self) -> Result<(), String> {
+        if self.fail_disconnect {
+            Err("connection was lost".into())
+        } else {
+            Ok(())
+        }
+    }
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
         if path != "/" {
             return Err(format!("missing fake path {path}"));
@@ -83,33 +92,26 @@ impl RemoteProvider for FakeProvider {
         Ok(paths.to_vec())
     }
 
-    fn read_file(&mut self, path: &str) -> Result<Vec<u8>, String> {
+    fn download(
+        &mut self,
+        path: &str,
+        destination: &mut dyn std::io::Write,
+    ) -> Result<u64, String> {
         if path != "/release/app.txt" {
             return Err(format!("unexpected read {path}"));
         }
-
-        Ok(b"remote bytes".to_vec())
+        destination
+            .write_all(b"remote bytes")
+            .map_err(|e| e.to_string())?;
+        Ok(12)
     }
-
-    fn write_file(&mut self, path: &str, bytes: &[u8]) -> Result<FileEntry, String> {
+    fn upload(&mut self, path: &str, source: &mut dyn std::io::Read) -> Result<u64, String> {
+        let mut bytes = Vec::new();
+        source.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
         if path != "/incoming/app.txt" || bytes != b"local bytes" {
-            return Err(format!("unexpected write {path} {bytes:?}"));
+            return Err(format!("unexpected write {path}"));
         }
-
-        Ok(FileEntry {
-            name: "app.txt".to_string(),
-            path: "/incoming/app.txt".to_string(),
-            is_dir: false,
-            is_symlink: false,
-            is_hidden: false,
-            is_system: false,
-            size: bytes.len() as u64,
-            modified: "2026-09-21T00:00:00Z".to_string(),
-            extension: "txt".to_string(),
-            permissions: None,
-            symlink_target: None,
-            git_status: None,
-        })
+        Ok(bytes.len() as u64)
     }
 }
 
@@ -125,7 +127,9 @@ impl RemoteProviderFactory for FakeFactory {
             return Err("unexpected profile".to_string());
         }
 
-        Ok(Box::new(FakeProvider))
+        Ok(Box::new(FakeProvider {
+            fail_disconnect: profile.host == "disconnected.example.com",
+        }))
     }
 }
 
@@ -148,7 +152,9 @@ fn remote_session_registry_connects_lists_and_disconnects() {
     };
     let mut registry = RemoteSessionRegistry::new(FakeFactory);
 
-    let session = registry.connect_profile(profile, None).expect("connect");
+    let session = registry
+        .connect_profile(profile.clone(), None)
+        .expect("connect");
 
     assert!(!session.session_id.is_empty());
     assert_eq!(session.profile_id, "prod");
@@ -168,6 +174,16 @@ fn remote_session_registry_connects_lists_and_disconnects() {
         .list_directory(&session.session_id, "/")
         .expect_err("session should be gone");
     assert!(missing.contains("remote session not found"));
+
+    let mut disconnected_profile = profile;
+    disconnected_profile.host = "disconnected.example.com".into();
+    let failed_session = registry
+        .connect_profile(disconnected_profile, None)
+        .unwrap();
+    registry
+        .disconnect(&failed_session.session_id)
+        .expect("remove lost connection");
+    assert!(registry.get(&failed_session.session_id).is_none());
 }
 
 #[test]
@@ -229,15 +245,22 @@ fn remote_session_registry_reads_and_writes_files_through_provider() {
     let mut registry = RemoteSessionRegistry::new(FakeFactory);
     let session = registry.connect_profile(profile, None).expect("connect");
 
-    let bytes = registry
-        .read_file(&session.session_id, "/release/app.txt")
-        .expect("read remote file");
+    let mut bytes = Vec::new();
+    registry
+        .provider(&session.session_id)
+        .unwrap()
+        .with(|provider| provider.download("/release/app.txt", &mut bytes))
+        .unwrap();
     assert_eq!(bytes, b"remote bytes");
-
     let written = registry
-        .write_file(&session.session_id, "/incoming/app.txt", b"local bytes")
-        .expect("write remote file");
-    assert_eq!(written.name, "app.txt");
-    assert_eq!(written.path, "/incoming/app.txt");
-    assert_eq!(written.size, 11);
+        .provider(&session.session_id)
+        .unwrap()
+        .with(|provider| {
+            provider.upload(
+                "/incoming/app.txt",
+                &mut std::io::Cursor::new(b"local bytes"),
+            )
+        })
+        .unwrap();
+    assert_eq!(written, 11);
 }

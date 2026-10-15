@@ -647,6 +647,23 @@ public sealed class RemoteConnectionTestResult
     [JsonPropertyName("capabilities")] public string[] Capabilities { get; set; } = [];
 }
 
+public sealed class RemoteTransferItem
+{
+    [JsonPropertyName("source")] public string Source { get; set; } = "";
+    [JsonPropertyName("destination")] public string Destination { get; set; } = "";
+    [JsonPropertyName("is_dir")] public bool IsDir { get; set; }
+    [JsonPropertyName("status")] public string Status { get; set; } = "";
+    [JsonPropertyName("bytes")] public ulong Bytes { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+}
+
+public sealed class RemoteTransferOutcome
+{
+    [JsonPropertyName("items")] public RemoteTransferItem[] Items { get; set; } = [];
+    [JsonPropertyName("retry_sources")] public string[] RetrySources { get; set; } = [];
+    [JsonPropertyName("cancelled")] public bool Cancelled { get; set; }
+}
+
 public sealed class RemoteSession
 {
     [JsonPropertyName("session_id")] public string SessionId { get; set; } = "";
