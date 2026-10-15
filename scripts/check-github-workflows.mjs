@@ -55,7 +55,7 @@ const actionPins = Object.freeze({
     checkout: 'uses: actions/checkout@v7',
     setupNode: 'uses: actions/setup-node@v7',
     setupDotnet: 'uses: actions/setup-dotnet@v5',
-    uploadArtifact: 'uses: actions/upload-artifact@v4',
+    uploadArtifact: 'uses: actions/upload-artifact@v7',
 });
 
 const ciSnippets = [
