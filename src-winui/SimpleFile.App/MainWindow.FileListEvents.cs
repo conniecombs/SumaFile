@@ -28,8 +28,14 @@ public sealed partial class MainWindow
 
     private void HandleFileListWheel(PointerRoutedEventArgs e, PaneId pane)
     {
-        if (_workspace is null || !e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control))
+        if (_workspace is null)
         {
+            return;
+        }
+
+        if (!e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control))
+        {
+            _workspace.ForegroundScheduler.RecordActivity(ForegroundActivityKind.Scrolling);
             return;
         }
 

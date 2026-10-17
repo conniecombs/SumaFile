@@ -31,8 +31,15 @@ public sealed partial class ExplorerWorkspace
     public void ClearStatus() =>
         _selection.ClearStatus(this);
 
+    public ForegroundTaskScheduler ForegroundScheduler { get; } = ForegroundTaskScheduler.Shared;
+
     public IReadOnlyList<FileEntry> VisibleEntriesFor(PaneId pane) =>
         _selection.VisibleEntriesFor(this, pane);
+
+    public IReadOnlyList<FileEntry> VisibleViewportEntriesFor(
+        PaneId pane,
+        int progressiveViewportLimit = EntryPresentation.DefaultProgressiveViewportCount) =>
+        _selection.VisibleViewportEntriesFor(this, pane, progressiveViewportLimit);
 
     public string FilterQueryFor(PaneId pane) =>
         _selection.FilterQueryFor(this, pane);

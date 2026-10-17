@@ -36,6 +36,7 @@ where
     let scheduler = BlockingScheduler::default();
     let mut watcher_state = WatcherState::default();
     let binary_hot_frames = state.binary_hot_frames.clone();
+    let cache = state.cache.clone();
     let events = EventSink::new(writer.clone(), binary_hot_frames.clone());
 
     loop {
@@ -68,6 +69,7 @@ where
                     operations.clone(),
                     scheduler.clone(),
                     events.clone(),
+                    cache.clone(),
                     jobs::RemoteTransferJob {
                         id,
                         provider,
@@ -81,6 +83,7 @@ where
                     writer.clone(),
                     scheduler.clone(),
                     binary_hot_frames.clone(),
+                    cache.clone(),
                     id,
                     path,
                     options,
@@ -97,6 +100,7 @@ where
                     operations.clone(),
                     scheduler.clone(),
                     events.clone(),
+                    cache.clone(),
                     CopyMoveJob {
                         id,
                         params,
@@ -117,6 +121,7 @@ where
                     operations.clone(),
                     scheduler.clone(),
                     events.clone(),
+                    cache.clone(),
                     CopyMoveJob {
                         id,
                         params,
@@ -146,8 +151,10 @@ where
             }
             Dispatch::WatchDirectory { id, path } => {
                 let events = events.clone();
+                let cache_for_watch = cache.clone();
                 let result =
                     crate::watcher::watch_directory(path, &mut watcher_state, move |change| {
+                        cache_for_watch.invalidate_path(&change.path);
                         events.emit_file_change(&change);
                     });
                 let response = match result {
@@ -230,6 +237,7 @@ where
                     writer.clone(),
                     scheduler.clone(),
                     binary_hot_frames.clone(),
+                    cache.clone(),
                     id,
                     path,
                     size,
@@ -240,19 +248,41 @@ where
                     writer.clone(),
                     scheduler.clone(),
                     binary_hot_frames.clone(),
+                    cache.clone(),
                     id,
                     paths,
                     size,
                 );
             }
             Dispatch::CalculateFolderSize { id, path, cancel } => {
-                spawn_folder_size(writer.clone(), scheduler.clone(), id, path, cancel);
+                spawn_folder_size(
+                    writer.clone(),
+                    scheduler.clone(),
+                    cache.clone(),
+                    id,
+                    path,
+                    cancel,
+                );
             }
             Dispatch::CountFolderItems { id, path, cancel } => {
-                spawn_folder_item_count(writer.clone(), scheduler.clone(), id, path, cancel);
+                spawn_folder_item_count(
+                    writer.clone(),
+                    scheduler.clone(),
+                    cache.clone(),
+                    id,
+                    path,
+                    cancel,
+                );
             }
             Dispatch::GetFolderMetrics { id, path, cancel } => {
-                spawn_folder_metrics(writer.clone(), scheduler.clone(), id, path, cancel);
+                spawn_folder_metrics(
+                    writer.clone(),
+                    scheduler.clone(),
+                    cache.clone(),
+                    id,
+                    path,
+                    cancel,
+                );
             }
             Dispatch::Shutdown(response) => {
                 crate::watcher::unwatch_directory(&mut watcher_state);

@@ -9,6 +9,7 @@ use crate::remote::secrets::RemoteSecretStore;
 #[cfg(not(test))]
 use crate::remote::secrets::WindowsRemoteSecretStore;
 use crate::remote::session::RemoteSessionRegistry;
+use crate::session_cache::SessionCache;
 use serde_json::Value;
 use simplefile_core::dir_list::ListDirectoryOptions;
 use simplefile_core::models::SearchOptions;
@@ -32,6 +33,7 @@ pub struct SessionState {
     pub count_items_cancel: Arc<AtomicBool>,
     pub remote_sessions: RemoteSessionRegistry,
     pub remote_secrets: Arc<dyn RemoteSecretStore>,
+    pub cache: SessionCache,
 }
 
 impl Default for SessionState {
@@ -48,6 +50,7 @@ impl Default for SessionState {
             count_items_cancel: Arc::new(AtomicBool::new(false)),
             remote_sessions: RemoteSessionRegistry::new(DefaultRemoteProviderFactory),
             remote_secrets: default_remote_secret_store(),
+            cache: SessionCache::new(),
         }
     }
 }

@@ -380,7 +380,10 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         // File operations
         METHOD_CREATE_DIRECTORY => match parse_params::<NameParams>(request) {
             Ok(p) => match simplefile_core::file_ops::create_directory(&p.path, &p.name) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => {
+                    state.cache.invalidate_paths([p.path.as_str(), r.as_str()]);
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                }
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -389,7 +392,10 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_CREATE_FILE => match parse_params::<NameParams>(request) {
             Ok(p) => match simplefile_core::file_ops::create_file(&p.path, &p.name) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => {
+                    state.cache.invalidate_paths([p.path.as_str(), r.as_str()]);
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                }
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -397,17 +403,28 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_CREATE_SHORTCUT => match parse_params::<ShortcutParams>(request) {
-            Ok(p) => match simplefile_core::file_ops::create_shortcut(p) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+            Ok(p) => {
+                let parent_path = p.path.clone();
+                match simplefile_core::file_ops::create_shortcut(p) {
+                    Ok(r) => {
+                        state
+                            .cache
+                            .invalidate_paths([parent_path.as_str(), r.as_str()]);
+                        Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                    }
+                    Err(m) => {
+                        Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                    }
                 }
-            },
+            }
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_DELETE_ENTRY => match parse_params::<PathParams>(request) {
             Ok(p) => match simplefile_core::file_ops::delete_entry(&p.path) {
-                Ok(()) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null)),
+                Ok(()) => {
+                    state.cache.invalidate_path(&p.path);
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
+                }
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -416,7 +433,10 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_MOVE_TO_TRASH => match parse_params::<PathsParams>(request) {
             Ok(p) => match simplefile_core::file_ops::move_to_trash(&p.paths) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => {
+                    state.cache.invalidate_paths(&p.paths);
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                }
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -425,7 +445,11 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_RESTORE_RECYCLE_BIN => match parse_params::<PathsParams>(request) {
             Ok(p) => match simplefile_core::recycle_bin::restore_recycle_bin(&p.paths) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => {
+                    state.cache.invalidate_paths(&p.paths);
+                    state.cache.invalidate_paths(&r);
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                }
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -438,7 +462,10 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_RENAME_ENTRY => match parse_params::<RenameParams>(request) {
             Ok(p) => match simplefile_core::file_ops::rename_entry(&p.path, &p.new_name) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => {
+                    state.cache.invalidate_paths([p.path.as_str(), r.as_str()]);
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                }
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -446,17 +473,30 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_BATCH_RENAME => match parse_params::<BatchRenameParams>(request) {
-            Ok(p) => match simplefile_core::file_ops::batch_rename(p.entries) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+            Ok(p) => {
+                let old_paths: Vec<String> =
+                    p.entries.iter().map(|entry| entry.path.clone()).collect();
+                match simplefile_core::file_ops::batch_rename(p.entries) {
+                    Ok(r) => {
+                        state.cache.invalidate_paths(&old_paths);
+                        state.cache.invalidate_paths(&r);
+                        Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                    }
+                    Err(m) => {
+                        Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                    }
                 }
-            },
+            }
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_COPY_ENTRY => match parse_params::<CopyMoveParams>(request) {
             Ok(p) => match simplefile_core::file_ops::copy_entry(&p.source, &p.destination) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => {
+                    state
+                        .cache
+                        .invalidate_paths([p.destination.as_str(), r.as_str()]);
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                }
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -465,7 +505,14 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_MOVE_ENTRY => match parse_params::<CopyMoveParams>(request) {
             Ok(p) => match simplefile_core::file_ops::move_entry(&p.source, &p.destination) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => {
+                    state.cache.invalidate_paths([
+                        p.source.as_str(),
+                        p.destination.as_str(),
+                        r.as_str(),
+                    ]);
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                }
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -478,7 +525,12 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                 &p.destination,
                 &p.conflict_action,
             ) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => {
+                    state
+                        .cache
+                        .invalidate_paths([p.destination.as_str(), r.as_str()]);
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                }
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -491,7 +543,14 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                 &p.destination,
                 &p.conflict_action,
             ) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r))),
+                Ok(r) => {
+                    state.cache.invalidate_paths([
+                        p.source.as_str(),
+                        p.destination.as_str(),
+                        r.as_str(),
+                    ]);
+                    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
+                }
                 Err(m) => {
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
@@ -499,27 +558,49 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_GET_ENTRY_INFO => match parse_params::<PathParams>(request) {
-            Ok(p) => match simplefile_core::file_ops::get_entry_info_simple(&p.path) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
-                    request.id.clone(),
-                    serde_json::to_value(r).unwrap_or(Value::Null),
-                )),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+            Ok(p) => {
+                if let Some(cached) = state.cache.get_entry_info(&p.path) {
+                    return Dispatch::Reply(JsonRpcResponse::result(
+                        request.id.clone(),
+                        serde_json::to_value(cached).unwrap_or(Value::Null),
+                    ));
                 }
-            },
+                match simplefile_core::file_ops::get_entry_info_simple(&p.path) {
+                    Ok(r) => {
+                        state.cache.put_entry_info(&p.path, r.clone());
+                        Dispatch::Reply(JsonRpcResponse::result(
+                            request.id.clone(),
+                            serde_json::to_value(r).unwrap_or(Value::Null),
+                        ))
+                    }
+                    Err(m) => {
+                        Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                    }
+                }
+            }
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_LIST_SUBDIRECTORIES => match parse_params::<PathParams>(request) {
-            Ok(p) => match simplefile_core::file_ops::list_subdirectories(&p.path) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
-                    request.id.clone(),
-                    serde_json::to_value(r).unwrap_or(Value::Null),
-                )),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+            Ok(p) => {
+                if let Some(cached) = state.cache.get_subdirectories(&p.path) {
+                    return Dispatch::Reply(JsonRpcResponse::result(
+                        request.id.clone(),
+                        serde_json::to_value(cached).unwrap_or(Value::Null),
+                    ));
                 }
-            },
+                match simplefile_core::file_ops::list_subdirectories(&p.path) {
+                    Ok(r) => {
+                        state.cache.put_subdirectories(&p.path, r.clone());
+                        Dispatch::Reply(JsonRpcResponse::result(
+                            request.id.clone(),
+                            serde_json::to_value(r).unwrap_or(Value::Null),
+                        ))
+                    }
+                    Err(m) => {
+                        Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                    }
+                }
+            }
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_OPEN_FILE => match parse_params::<PathParams>(request) {
@@ -628,15 +709,23 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_GIT_DISCARD_PATHS => match parse_params::<GitPathsParams>(request) {
-            Ok(p) => match simplefile_core::git::git_discard_paths(p.path, p.paths) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
-                    request.id.clone(),
-                    serde_json::to_value(r).unwrap_or(Value::Null),
-                )),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+            Ok(p) => {
+                let repo_path = p.path.clone();
+                let paths = p.paths.clone();
+                match simplefile_core::git::git_discard_paths(p.path, p.paths) {
+                    Ok(r) => {
+                        state.cache.invalidate_path(&repo_path);
+                        state.cache.invalidate_paths(&paths);
+                        Dispatch::Reply(JsonRpcResponse::result(
+                            request.id.clone(),
+                            serde_json::to_value(r).unwrap_or(Value::Null),
+                        ))
+                    }
+                    Err(m) => {
+                        Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                    }
                 }
-            },
+            }
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_GIT_DIFF_PATH => match parse_params::<GitDiffPathParams>(request) {
@@ -673,15 +762,21 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_GIT_PULL => match parse_params::<PathParams>(request) {
-            Ok(p) => match simplefile_core::git::git_pull(p.path) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
-                    request.id.clone(),
-                    serde_json::to_value(r).unwrap_or(Value::Null),
-                )),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+            Ok(p) => {
+                let repo_path = p.path.clone();
+                match simplefile_core::git::git_pull(p.path) {
+                    Ok(r) => {
+                        state.cache.invalidate_path(&repo_path);
+                        Dispatch::Reply(JsonRpcResponse::result(
+                            request.id.clone(),
+                            serde_json::to_value(r).unwrap_or(Value::Null),
+                        ))
+                    }
+                    Err(m) => {
+                        Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                    }
                 }
-            },
+            }
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_GIT_PUSH => match parse_params::<PathParams>(request) {
@@ -713,19 +808,26 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             simplefile_core::archive::get_archive_capabilities(),
         ),
         METHOD_EXTRACT_ARCHIVE => match parse_params::<ExtractArchiveParams>(request) {
-            Ok(p) => match simplefile_core::archive::extract_archive(p.archive_path, p.destination)
-            {
-                Ok(()) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null)),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+            Ok(p) => {
+                let destination = p.destination.clone();
+                match simplefile_core::archive::extract_archive(p.archive_path, p.destination) {
+                    Ok(()) => {
+                        state.cache.invalidate_path(&destination);
+                        Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
+                    }
+                    Err(m) => {
+                        Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                    }
                 }
-            },
+            }
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_CREATE_ARCHIVE => match parse_params::<CreateArchiveParams>(request) {
             Ok(p) => {
+                let archive_path = p.archive_path.clone();
                 match simplefile_core::archive::create_archive(p.paths, p.archive_path, p.format) {
                     Ok(()) => {
+                        state.cache.invalidate_path(&archive_path);
                         Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
                     }
                     Err(m) => {
@@ -759,27 +861,51 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_GET_IMAGE_METADATA => match parse_params::<PathParams>(request) {
-            Ok(p) => match simplefile_core::metadata::get_image_metadata(p.path) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
-                    request.id.clone(),
-                    serde_json::to_value(r).unwrap_or(Value::Null),
-                )),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+            Ok(p) => {
+                if let Some(cached) = state.cache.get_image_metadata(&p.path) {
+                    return Dispatch::Reply(JsonRpcResponse::result(
+                        request.id.clone(),
+                        serde_json::to_value(cached).unwrap_or(Value::Null),
+                    ));
                 }
-            },
+                let path = p.path.clone();
+                match simplefile_core::metadata::get_image_metadata(p.path) {
+                    Ok(r) => {
+                        state.cache.put_image_metadata(&path, r.clone());
+                        Dispatch::Reply(JsonRpcResponse::result(
+                            request.id.clone(),
+                            serde_json::to_value(r).unwrap_or(Value::Null),
+                        ))
+                    }
+                    Err(m) => {
+                        Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                    }
+                }
+            }
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_GET_FILE_METADATA => match parse_params::<PathParams>(request) {
-            Ok(p) => match simplefile_core::metadata::get_file_metadata(p.path) {
-                Ok(r) => Dispatch::Reply(JsonRpcResponse::result(
-                    request.id.clone(),
-                    serde_json::to_value(r).unwrap_or(Value::Null),
-                )),
-                Err(m) => {
-                    Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+            Ok(p) => {
+                if let Some(cached) = state.cache.get_file_metadata(&p.path) {
+                    return Dispatch::Reply(JsonRpcResponse::result(
+                        request.id.clone(),
+                        serde_json::to_value(cached).unwrap_or(Value::Null),
+                    ));
                 }
-            },
+                let path = p.path.clone();
+                match simplefile_core::metadata::get_file_metadata(p.path) {
+                    Ok(r) => {
+                        state.cache.put_file_metadata(&path, r.clone());
+                        Dispatch::Reply(JsonRpcResponse::result(
+                            request.id.clone(),
+                            serde_json::to_value(r).unwrap_or(Value::Null),
+                        ))
+                    }
+                    Err(m) => {
+                        Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
+                    }
+                }
+            }
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_OPEN_FILE_WITH => match parse_params::<OpenWithParams>(request) {

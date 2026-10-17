@@ -121,6 +121,7 @@ internal sealed class WorkspaceSelectionController
             return;
         }
 
+        workspace.ForegroundScheduler.RecordActivity(ForegroundActivityKind.Typing);
         workspace.NotifyChanged();
     }
 
@@ -188,9 +189,27 @@ internal sealed class WorkspaceSelectionController
         return workspace.TagsController.FilterEntries(entries);
     }
 
+    public IReadOnlyList<FileEntry> VisibleViewportEntriesFor(
+        ExplorerWorkspace workspace,
+        PaneId pane,
+        int progressiveViewportLimit = EntryPresentation.DefaultProgressiveViewportCount)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        var target = workspace.Normalize(pane);
+        var state = workspace.Pane(target);
+        var keepFoldersOnTop = workspace.Settings.KeepFoldersOnTop;
+        var entries = state.VisibleViewportEntries(
+            workspace.ShowHiddenFiles,
+            FilterQueryFor(workspace, target),
+            keepFoldersOnTop,
+            progressiveViewportLimit);
+        return workspace.TagsController.FilterEntries(entries);
+    }
+
     public FileEntry? MatchTypeAhead(ExplorerWorkspace workspace, char character)
     {
         ArgumentNullException.ThrowIfNull(workspace);
+        workspace.ForegroundScheduler.RecordActivity(ForegroundActivityKind.Typing);
         var buffer = workspace.TypeAheadBuffer.Append(character, TimeSpan.FromSeconds(1));
         var visible = VisibleEntriesFor(workspace, workspace.ActivePane);
         var index = TypeAhead.MatchIndex(visible, buffer);

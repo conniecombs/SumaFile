@@ -115,12 +115,34 @@ public static class EntryPresentation
             || (!string.IsNullOrEmpty(entry.Name) && entry.Name[0] == '.');
     }
 
+    public const int DefaultProgressiveViewportCount = 256;
+
     public static IReadOnlyList<FileEntry> FilterEntries(
         IEnumerable<FileEntry> entries,
         string query = "",
         bool showHidden = false)
     {
-        var normalizedQuery = query.Trim().ToLowerInvariant();
+        var normalizedQuery = query.Trim();
+        var hasQuery = normalizedQuery.Length > 0;
+        if (entries is ICollection<FileEntry> collection)
+        {
+            var list = new List<FileEntry>(collection.Count);
+            foreach (var entry in entries)
+            {
+                if (!showHidden && IsHiddenFromUser(entry))
+                {
+                    continue;
+                }
+
+                if (!hasQuery || entry.Name.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase))
+                {
+                    list.Add(entry);
+                }
+            }
+
+            return list;
+        }
+
         return entries.Where(entry =>
         {
             if (!showHidden && IsHiddenFromUser(entry))
@@ -128,7 +150,7 @@ public static class EntryPresentation
                 return false;
             }
 
-            return normalizedQuery.Length == 0
+            return !hasQuery
                 || entry.Name.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase);
         }).ToList();
     }
@@ -139,22 +161,25 @@ public static class EntryPresentation
         bool sortAsc = true,
         bool keepFoldersOnTop = true)
     {
-        var direction = sortAsc ? 1 : -1;
-        var columnComparer = Comparer<object>.Create((left, right) =>
+        var list = entries is List<FileEntry> ownedList ? [.. ownedList] : entries.ToList();
+        SortEntriesInPlace(list, sortBy, sortAsc, keepFoldersOnTop);
+        return list;
+    }
+
+    internal static void SortEntriesInPlace(
+        List<FileEntry> list,
+        string sortBy = "name",
+        bool sortAsc = true,
+        bool keepFoldersOnTop = true)
+    {
+        if (list.Count <= 1)
         {
-            var compared = Comparer<object>.Default.Compare(left, right);
-            return compared * direction;
-        });
+            return;
+        }
 
-        var ordered = keepFoldersOnTop
-            ? entries
-                .OrderBy(entry => entry.IsDir ? 0 : 1)
-                .ThenBy(entry => SortValue(entry, sortBy), columnComparer)
-            : entries.OrderBy(entry => SortValue(entry, sortBy), columnComparer);
-
-        return ordered
-            .ThenBy(entry => entry.Name, StringComparer.CurrentCultureIgnoreCase)
-            .ToList();
+        var direction = sortAsc ? 1 : -1;
+        var normalizedSortBy = (sortBy ?? "name").Trim().ToLowerInvariant();
+        list.Sort((left, right) => CompareEntries(left, right, normalizedSortBy, direction, keepFoldersOnTop));
     }
 
     public static IReadOnlyList<FileEntry> VisibleEntries(
@@ -165,7 +190,59 @@ public static class EntryPresentation
         bool sortAsc = true,
         bool keepFoldersOnTop = true)
     {
-        return SortEntries(FilterEntries(entries, filterQuery, showHidden), sortBy, sortAsc, keepFoldersOnTop);
+        var filtered = FilterEntries(entries, filterQuery, showHidden);
+        if (filtered is List<FileEntry> list)
+        {
+            SortEntriesInPlace(list, sortBy, sortAsc, keepFoldersOnTop);
+            return list;
+        }
+
+        return SortEntries(filtered, sortBy, sortAsc, keepFoldersOnTop);
+    }
+
+    /// <summary>
+    /// Streams the initial viewport rows during progressive directory enumeration of large folders
+    /// so the UI does not wait for a full scan/sort pass before rendering the first screenful.
+    /// </summary>
+    public static IReadOnlyList<FileEntry> VisibleViewportEntries(
+        IEnumerable<FileEntry> entries,
+        string filterQuery = "",
+        bool showHidden = false,
+        string sortBy = "name",
+        bool sortAsc = true,
+        bool keepFoldersOnTop = true,
+        bool listingInProgress = false,
+        int progressiveViewportLimit = DefaultProgressiveViewportCount)
+    {
+        if (!listingInProgress || progressiveViewportLimit <= 0)
+        {
+            return VisibleEntries(entries, filterQuery, showHidden, sortBy, sortAsc, keepFoldersOnTop);
+        }
+
+        var normalizedQuery = filterQuery.Trim();
+        var hasQuery = normalizedQuery.Length > 0;
+        var viewportEntries = new List<FileEntry>(Math.Min(progressiveViewportLimit, DefaultProgressiveViewportCount));
+        foreach (var entry in entries)
+        {
+            if (!showHidden && IsHiddenFromUser(entry))
+            {
+                continue;
+            }
+
+            if (hasQuery && !entry.Name.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            viewportEntries.Add(entry);
+            if (viewportEntries.Count >= progressiveViewportLimit)
+            {
+                break;
+            }
+        }
+
+        SortEntriesInPlace(viewportEntries, sortBy, sortAsc, keepFoldersOnTop);
+        return viewportEntries;
     }
 
     /// <summary>
@@ -181,32 +258,68 @@ public static class EntryPresentation
         return FilterEntries(entries, filterQuery, showHidden);
     }
 
-    private static object SortValue(FileEntry entry, string sortBy)
+    private static int CompareEntries(
+        FileEntry left,
+        FileEntry right,
+        string normalizedSortBy,
+        int direction,
+        bool keepFoldersOnTop)
     {
-        switch (sortBy)
+        if (keepFoldersOnTop && left.IsDir != right.IsDir)
+        {
+            return left.IsDir ? -1 : 1;
+        }
+
+        var primary = CompareColumn(left, right, normalizedSortBy) * direction;
+        if (primary != 0)
+        {
+            return primary;
+        }
+
+        return StringComparer.CurrentCultureIgnoreCase.Compare(left.Name, right.Name);
+    }
+
+    private static int CompareColumn(FileEntry left, FileEntry right, string normalizedSortBy)
+    {
+        switch (normalizedSortBy)
         {
             case "size":
-                return entry.Size;
+                return left.Size.CompareTo(right.Size);
             case "modified":
             case "date":
-                return DateTimeOffset.TryParse(entry.Modified, out var date) ? date.ToUnixTimeMilliseconds() : 0L;
+                return ParseModifiedMillis(left.Modified).CompareTo(ParseModifiedMillis(right.Modified));
             case "extension":
-                return (entry.Extension ?? "").ToLowerInvariant();
+                return StringComparer.CurrentCultureIgnoreCase.Compare(left.Extension ?? "", right.Extension ?? "");
             case "type":
-                return entry.IsDir ? "folder" : (entry.Extension ?? "").ToLowerInvariant();
+            {
+                var leftType = left.IsDir ? "folder" : (left.Extension ?? "");
+                var rightType = right.IsDir ? "folder" : (right.Extension ?? "");
+                return StringComparer.CurrentCultureIgnoreCase.Compare(leftType, rightType);
+            }
             case "items":
-                return entry.ItemCount ?? 0UL;
+                return (left.ItemCount ?? 0UL).CompareTo(right.ItemCount ?? 0UL);
             case "git":
-                return (entry.GitStatus ?? "").ToLowerInvariant();
+                return StringComparer.CurrentCultureIgnoreCase.Compare(left.GitStatus ?? "", right.GitStatus ?? "");
             case "path":
-                return (entry.Path ?? "").ToLowerInvariant();
+                return StringComparer.CurrentCultureIgnoreCase.Compare(left.Path ?? "", right.Path ?? "");
             case "parent":
-                return (PathRules.GetParentPath(entry.Path) ?? "").ToLowerInvariant();
+                return StringComparer.CurrentCultureIgnoreCase.Compare(
+                    PathRules.GetParentPath(left.Path) ?? "",
+                    PathRules.GetParentPath(right.Path) ?? "");
             case "symlink":
-                return (entry.SymlinkTarget ?? "").ToLowerInvariant();
+                return StringComparer.CurrentCultureIgnoreCase.Compare(
+                    left.SymlinkTarget ?? "",
+                    right.SymlinkTarget ?? "");
             default:
-                return entry.Name.ToLowerInvariant();
+                return StringComparer.CurrentCultureIgnoreCase.Compare(left.Name, right.Name);
         }
+    }
+
+    private static long ParseModifiedMillis(string? modified)
+    {
+        return !string.IsNullOrEmpty(modified) && DateTimeOffset.TryParse(modified, out var date)
+            ? date.ToUnixTimeMilliseconds()
+            : 0L;
     }
 
     private static string FormatExtension(FileEntry entry)

@@ -7,6 +7,7 @@ pub mod remote;
 mod scheduler;
 pub mod search;
 pub mod session;
+pub mod session_cache;
 pub mod shared_memory;
 pub mod shell;
 mod transfer_staging;
@@ -14,6 +15,7 @@ pub mod watcher;
 
 pub use dispatch::SessionState;
 pub use session::serve_connection;
+pub use session_cache::SessionCache;
 
 pub fn pipe_path(name: &str) -> String {
     if name.starts_with(r"\\.\pipe\") {

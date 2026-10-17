@@ -337,3 +337,108 @@ async fn binary_hot_frames_emit_listing_chunks_and_result() {
     let _ = call(&mut client, "ipc.shutdown", 3, json!({})).await;
     let _ = server.await;
 }
+
+#[tokio::test]
+async fn session_cache_serves_repeated_listings_and_invalidates_on_file_mutation() {
+    let temp_root = std::env::temp_dir().join(format!(
+        "simplefile-session-cache-e2e-{}",
+        crate::progress::generate_transfer_operation_id()
+    ));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let initial_file = temp_root.join("alpha.txt");
+    std::fs::write(&initial_file, b"hello").unwrap();
+
+    let state = SessionState {
+        expected_token: Some("dev".to_string()),
+        ..SessionState::default()
+    };
+    let cache_handle = state.cache.clone();
+
+    let (mut client, server) = duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server);
+    let server = tokio::spawn(serve_connection(server_read, server_write, state));
+
+    let _ = call(
+        &mut client,
+        HANDSHAKE_METHOD,
+        1,
+        json!({
+            "protocolVersion": PROTOCOL_VERSION,
+            "clientName": "test",
+            "authToken": "dev"
+        }),
+    )
+    .await;
+
+    async fn read_listing_response(client: &mut tokio::io::DuplexStream) -> Value {
+        loop {
+            let raw = read_frame(client).await.unwrap();
+            let msg: Value = serde_json::from_slice(&raw).unwrap();
+            if msg.get("method").and_then(Value::as_str) != Some(LIST_DIRECTORY_CHUNK) {
+                return msg;
+            }
+        }
+    }
+
+    // First listing populates the session cache
+    send_request(
+        &mut client,
+        "list_directory",
+        2,
+        json!({ "path": temp_root.to_string_lossy() }),
+    )
+    .await;
+    let first = read_listing_response(&mut client).await;
+    assert_eq!(first["result"]["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(cache_handle.directory_listing_stats().count, 1);
+
+    // Second listing hits the session cache
+    send_request(
+        &mut client,
+        "list_directory",
+        3,
+        json!({ "path": temp_root.to_string_lossy() }),
+    )
+    .await;
+    let second = read_listing_response(&mut client).await;
+    assert_eq!(second["result"]["entries"].as_array().unwrap().len(), 1);
+    assert!(cache_handle.directory_listing_stats().hits >= 1);
+
+    // Folder metrics caches both metrics and subdirectories
+    let metrics = call(
+        &mut client,
+        "get_folder_metrics",
+        4,
+        json!({ "path": temp_root.to_string_lossy() }),
+    )
+    .await;
+    assert_eq!(metrics["result"]["size"], 5);
+    assert_eq!(cache_handle.folder_metrics_stats().count, 1);
+
+    // Creating a new file via IPC selectively invalidates parent directory listing and folder metrics
+    let created = call(
+        &mut client,
+        "create_file",
+        5,
+        json!({ "path": temp_root.to_string_lossy(), "name": "bravo.txt" }),
+    )
+    .await;
+    assert!(created.get("error").is_none());
+    assert_eq!(cache_handle.directory_listing_stats().count, 0);
+    assert_eq!(cache_handle.folder_metrics_stats().count, 0);
+
+    // Subsequent listing reflects the newly created file
+    send_request(
+        &mut client,
+        "list_directory",
+        6,
+        json!({ "path": temp_root.to_string_lossy() }),
+    )
+    .await;
+    let third = read_listing_response(&mut client).await;
+    assert_eq!(third["result"]["entries"].as_array().unwrap().len(), 2);
+
+    let _ = call(&mut client, "ipc.shutdown", 7, json!({})).await;
+    let _ = server.await;
+    let _ = std::fs::remove_dir_all(&temp_root);
+}

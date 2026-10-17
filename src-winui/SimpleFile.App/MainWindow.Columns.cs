@@ -139,7 +139,7 @@ public sealed partial class MainWindow
         var headerText = column.Id == "date" ? "Date modified" : column.Label;
         var width = MeasureTextWidth(headerText, 11, semiBold: true) + extra;
         var fontSize = columnId == "name" ? 13d : 12d;
-        foreach (var row in rows)
+        foreach (var row in rows.Take(EntryPresentation.DefaultProgressiveViewportCount))
         {
             width = Math.Max(width, MeasureTextWidth(row.ColumnText(columnId), fontSize, semiBold: false) + extra);
         }
@@ -340,6 +340,12 @@ public sealed partial class MainWindow
         int token,
         CancellationTokenSource cts)
     {
+        using var preemptionRegistration = (_workspace?.ForegroundScheduler ?? ForegroundTaskScheduler.Shared)
+            .RegisterPreemptibleBackground(
+                cts,
+                preemptOnNavigation: true,
+                preemptOnScrolling: true,
+                preemptOnTyping: true);
         try
         {
             var workspace = _workspace;

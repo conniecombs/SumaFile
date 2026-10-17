@@ -247,6 +247,156 @@ pub fn list_directory_with_options(
     })
 }
 
+/// Enumerates a directory while capturing the raw (unfiltered, full-metadata) `DirectoryListing`
+/// for session-only RAM caching when the path is a local filesystem directory.
+pub fn list_directory_capturing_raw(
+    path: String,
+    options: Option<ListDirectoryOptions>,
+    mut on_chunk: impl FnMut(DirectoryListingChunk) -> Result<(), String>,
+) -> Result<(DirectoryListing, Option<DirectoryListing>), String> {
+    let Some(options) = options else {
+        let listing = list_directory(path, on_chunk)?;
+        let cacheable = if !listing.is_network
+            && !crate::recycle_bin::is_recycle_bin_path(&listing.path)
+            && crate::archive::list_archive_directory(&listing.path)
+                .ok()
+                .flatten()
+                .is_none()
+        {
+            Some(listing.clone())
+        } else {
+            None
+        };
+        return Ok((listing, cacheable));
+    };
+
+    if crate::recycle_bin::is_recycle_bin_path(&path)
+        || crate::archive::list_archive_directory(&path)?.is_some()
+    {
+        let listing = list_directory_with_options(path, options, on_chunk)?;
+        return Ok((listing, None));
+    }
+
+    let path_buf = validate_existing_path_no_resolve(&path)?;
+    if !path_buf.is_dir() {
+        return Err(format!("Path is not a directory: {path}"));
+    }
+
+    let current_path = path_buf.to_string_lossy().to_string();
+    let parent = path_buf.parent().map(|p| p.to_string_lossy().to_string());
+    let is_network = is_network_path(&path_buf);
+
+    if !options.final_entries {
+        let mut raw_entries = Vec::new();
+        let listing = list_directory_streaming_options_internal(
+            &path_buf,
+            current_path.clone(),
+            parent.clone(),
+            is_network,
+            &options,
+            if is_network {
+                None
+            } else {
+                Some(&mut raw_entries)
+            },
+            &mut on_chunk,
+        )?;
+        let raw_listing = if is_network {
+            None
+        } else {
+            Some(DirectoryListing {
+                path: current_path,
+                parent,
+                entries: raw_entries,
+                is_network: false,
+            })
+        };
+        return Ok((listing, raw_listing));
+    }
+
+    let mut raw_entries = Vec::new();
+    enumerate_directory(&path_buf, &mut |entry| {
+        raw_entries.push(entry);
+        Ok(())
+    })?;
+    let raw_listing = if is_network {
+        None
+    } else {
+        Some(DirectoryListing {
+            path: current_path.clone(),
+            parent: parent.clone(),
+            entries: raw_entries.clone(),
+            is_network: false,
+        })
+    };
+
+    let mut entries = prepare_entries(raw_entries, &options);
+    emit_prepared_chunks(
+        &current_path,
+        parent.as_deref(),
+        is_network,
+        &entries,
+        &mut on_chunk,
+    )?;
+    if !options.final_entries {
+        entries.clear();
+    }
+
+    Ok((
+        DirectoryListing {
+            path: current_path,
+            parent,
+            entries,
+            is_network,
+        },
+        raw_listing,
+    ))
+}
+
+/// Replays a cached raw `DirectoryListing` with the requested `ListDirectoryOptions`,
+/// emitting progressive chunks and returning the final `DirectoryListing`.
+pub fn emit_cached_directory_listing(
+    cached: &DirectoryListing,
+    options: Option<ListDirectoryOptions>,
+    mut on_chunk: impl FnMut(DirectoryListingChunk) -> Result<(), String>,
+) -> Result<DirectoryListing, String> {
+    let Some(options) = options else {
+        let mut entries = cached.entries.clone();
+        emit_prepared_chunks(
+            &cached.path,
+            cached.parent.as_deref(),
+            cached.is_network,
+            &entries,
+            &mut on_chunk,
+        )?;
+        entries.sort_by_cached_key(|e| crate::native_accel::dirs_first_name_key(e.is_dir, &e.name));
+        return Ok(DirectoryListing {
+            path: cached.path.clone(),
+            parent: cached.parent.clone(),
+            entries,
+            is_network: cached.is_network,
+        });
+    };
+
+    let mut entries = prepare_entries(cached.entries.clone(), &options);
+    emit_prepared_chunks(
+        &cached.path,
+        cached.parent.as_deref(),
+        cached.is_network,
+        &entries,
+        &mut on_chunk,
+    )?;
+    if !options.final_entries {
+        entries.clear();
+    }
+    Ok(DirectoryListing {
+        path: cached.path.clone(),
+        parent: cached.parent.clone(),
+        entries,
+        is_network: cached.is_network,
+    })
+}
+
 fn enumerate_directory(
     path: &Path,
     on_entry: &mut dyn FnMut(FileEntry) -> Result<(), String>,
@@ -273,16 +423,39 @@ fn list_directory_streaming_options(
     options: &ListDirectoryOptions,
     on_chunk: &mut dyn FnMut(DirectoryListingChunk) -> Result<(), String>,
 ) -> Result<DirectoryListing, String> {
+    list_directory_streaming_options_internal(
+        path_buf,
+        current_path,
+        parent,
+        is_network,
+        options,
+        None,
+        on_chunk,
+    )
+}
+
+fn list_directory_streaming_options_internal(
+    path_buf: &Path,
+    current_path: String,
+    parent: Option<String>,
+    is_network: bool,
+    options: &ListDirectoryOptions,
+    mut raw_sink: Option<&mut Vec<FileEntry>>,
+    on_chunk: &mut dyn FnMut(DirectoryListingChunk) -> Result<(), String>,
+) -> Result<DirectoryListing, String> {
     let filter = normalized_filter(options);
     let mut pending: Vec<FileEntry> = Vec::with_capacity(FIRST_CHUNK_SIZE);
     let mut chunk_index: u32 = 0;
 
-    enumerate_directory(path_buf, &mut |mut entry| {
+    enumerate_directory(path_buf, &mut |entry| {
+        if let Some(raw) = raw_sink.as_deref_mut() {
+            raw.push(entry.clone());
+        }
+
         if !entry_matches_options(&entry, options, filter.as_deref()) {
             return Ok(());
         }
 
-        apply_light_mode(&mut entry, options.mode);
         pending.push(entry);
         let threshold = if chunk_index == 0 {
             FIRST_CHUNK_SIZE
@@ -294,6 +467,7 @@ fn list_directory_streaming_options(
                 &current_path,
                 parent.as_deref(),
                 is_network,
+                options,
                 &mut pending,
                 &mut chunk_index,
                 false,
@@ -306,6 +480,7 @@ fn list_directory_streaming_options(
         &current_path,
         parent.as_deref(),
         is_network,
+        options,
         &mut pending,
         &mut chunk_index,
         true,
@@ -320,10 +495,12 @@ fn list_directory_streaming_options(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn flush_streaming_options_chunk(
     path: &str,
     parent: Option<&str>,
     is_network: bool,
+    options: &ListDirectoryOptions,
     entries: &mut Vec<FileEntry>,
     chunk_index: &mut u32,
     done: bool,
@@ -333,7 +510,13 @@ fn flush_streaming_options_chunk(
         return Ok(());
     }
 
-    let chunk_entries = std::mem::take(entries);
+    let mut chunk_entries = std::mem::take(entries);
+    if chunk_entries.len() > 1 {
+        sort_entries(&mut chunk_entries, options);
+    }
+    for entry in &mut chunk_entries {
+        apply_light_mode(entry, options.mode);
+    }
     on_chunk(DirectoryListingChunk {
         path: path.to_string(),
         parent: parent.map(str::to_string),

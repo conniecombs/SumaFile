@@ -37,7 +37,11 @@ internal static class VideoThumbnailExtractor
             }
 
             thumbnail.Seek(0);
-            var bitmap = new BitmapImage();
+            var bitmap = new BitmapImage
+            {
+                DecodePixelWidth = scaledSize,
+                DecodePixelType = DecodePixelType.Physical,
+            };
             await bitmap.SetSourceAsync(thumbnail);
             return bitmap;
         }

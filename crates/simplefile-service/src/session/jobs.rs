@@ -5,11 +5,14 @@ use super::io::{
 use crate::dispatch::ProgressCopyMoveParams;
 use crate::progress::OperationRegistry;
 use crate::scheduler::BlockingScheduler;
+use crate::session_cache::SessionCache;
 use serde::Serialize;
 use serde_json::{json, Value};
 use simplefile_core::cleanup::{scan_disk_cleanup, scan_duplicate_check, DuplicateScanOptions};
 use simplefile_core::dir_list::ListDirectoryOptions;
-use simplefile_core::models::{FileChangeEvent, ProgressUpdate, SearchOptions, SearchResult};
+use simplefile_core::models::{
+    FileChangeEvent, ProgressUpdate, SearchOptions, SearchResult, ThumbnailResult,
+};
 use simplefile_ipc::rpc::{JsonRpcNotification, JsonRpcResponse};
 use simplefile_ipc::{
     FILE_CHANGE, LIST_DIRECTORY_CHUNK, OPERATION_PROGRESS, SEARCH_COMPLETE, SEARCH_RESULTS_BATCH,
@@ -62,10 +65,13 @@ pub(super) fn spawn_remote_transfer(
     registry: Arc<OperationRegistry>,
     scheduler: BlockingScheduler,
     events: EventSink,
+    cache: SessionCache,
     job: RemoteTransferJob,
 ) {
     tokio::spawn(async move {
         let operation_id = job.request.operation_id.clone();
+        let destination_for_cache = job.request.destination.clone();
+        let sources_for_cache = job.request.sources.clone();
         let id = job.id;
         let result = scheduler
             .run_transfer(move || {
@@ -79,6 +85,8 @@ pub(super) fn spawn_remote_transfer(
                 })
             })
             .await;
+        cache.invalidate_path(&destination_for_cache);
+        cache.invalidate_paths(&sources_for_cache);
         let response = scheduled_result_response(
             id,
             result,
@@ -216,17 +224,39 @@ pub(super) fn spawn_install_update(
 pub(super) fn spawn_folder_size(
     writer: OutboundSink,
     scheduler: BlockingScheduler,
+    cache: SessionCache,
     id: Option<Value>,
     path: String,
     cancel: Arc<AtomicBool>,
 ) {
     tokio::spawn(async move {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = write_json(
+                &writer,
+                &JsonRpcResponse::application_error(id, "cancelled".to_string()),
+            )
+            .await;
+            return;
+        }
+        if let Some(metrics) = cache.get_folder_metrics(&path) {
+            let _ = write_json(&writer, &JsonRpcResponse::result(id, json!(metrics.size))).await;
+            return;
+        }
+
+        let path_for_task = path.clone();
         let result = scheduler
-            .run_general(move || simplefile_core::file_ops::calculate_folder_size(&path, &cancel))
+            .run_background(move || {
+                simplefile_core::file_ops::get_folder_metrics(&path_for_task, &cancel)
+            })
             .await;
 
         let response = match result {
-            Ok(Some(size)) => JsonRpcResponse::result(id, json!(size)),
+            Ok(Some(metrics)) => {
+                let size = metrics.size;
+                cache.put_subdirectories(&path, metrics.subdirectories.clone());
+                cache.put_folder_metrics(&path, metrics);
+                JsonRpcResponse::result(id, json!(size))
+            }
             Ok(None) => JsonRpcResponse::application_error(id, "cancelled".to_string()),
             Err(error) => {
                 JsonRpcResponse::application_error(id, format!("folder size task failed: {error}"))
@@ -239,13 +269,39 @@ pub(super) fn spawn_folder_size(
 pub(super) fn spawn_folder_item_count(
     writer: OutboundSink,
     scheduler: BlockingScheduler,
+    cache: SessionCache,
     id: Option<Value>,
     path: String,
     cancel: Arc<AtomicBool>,
 ) {
     tokio::spawn(async move {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = write_json(
+                &writer,
+                &JsonRpcResponse::application_error(id, "cancelled".to_string()),
+            )
+            .await;
+            return;
+        }
+        if let Some(metrics) = cache.get_folder_metrics(&path) {
+            let _ = write_json(
+                &writer,
+                &JsonRpcResponse::result(id, json!(metrics.item_count)),
+            )
+            .await;
+            return;
+        }
+        if let Some(listing) = cache.get_directory_listing(&path) {
+            let _ = write_json(
+                &writer,
+                &JsonRpcResponse::result(id, json!(listing.entries.len() as u64)),
+            )
+            .await;
+            return;
+        }
+
         let result = scheduler
-            .run_general(move || simplefile_core::file_ops::count_folder_items(&path, &cancel))
+            .run_background(move || simplefile_core::file_ops::count_folder_items(&path, &cancel))
             .await;
 
         let response = match result {
@@ -263,17 +319,38 @@ pub(super) fn spawn_folder_item_count(
 pub(super) fn spawn_folder_metrics(
     writer: OutboundSink,
     scheduler: BlockingScheduler,
+    cache: SessionCache,
     id: Option<Value>,
     path: String,
     cancel: Arc<AtomicBool>,
 ) {
     tokio::spawn(async move {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = write_json(
+                &writer,
+                &JsonRpcResponse::application_error(id, "cancelled".to_string()),
+            )
+            .await;
+            return;
+        }
+        if let Some(metrics) = cache.get_folder_metrics(&path) {
+            let response =
+                json_result_response(id, metrics, "failed to serialize folder metrics result");
+            let _ = write_json(&writer, &response).await;
+            return;
+        }
+
+        let path_for_task = path.clone();
         let result = scheduler
-            .run_general(move || simplefile_core::file_ops::get_folder_metrics(&path, &cancel))
+            .run_background(move || {
+                simplefile_core::file_ops::get_folder_metrics(&path_for_task, &cancel)
+            })
             .await;
 
         let response = match result {
             Ok(Some(metrics)) => {
+                cache.put_subdirectories(&path, metrics.subdirectories.clone());
+                cache.put_folder_metrics(&path, metrics.clone());
                 json_result_response(id, metrics, "failed to serialize folder metrics result")
             }
             Ok(None) => JsonRpcResponse::application_error(id, "cancelled".to_string()),
@@ -290,6 +367,7 @@ pub(super) async fn list_directory_and_reply(
     writer: &OutboundSink,
     scheduler: BlockingScheduler,
     binary_hot_frames: Arc<AtomicBool>,
+    cache: SessionCache,
     id: Option<Value>,
     path: String,
     options: Option<ListDirectoryOptions>,
@@ -299,17 +377,34 @@ pub(super) async fn list_directory_and_reply(
     // Backpressure keeps a fast enumeration from queuing the entire directory
     // while a slow client is still rendering the first pages.
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let cached_raw = cache.get_directory_listing(&path);
+    let path_for_cache = path.clone();
+    let cache_for_task = cache.clone();
+
     let join = tokio::spawn(async move {
         scheduler
-            .run_general(move || {
-                if let Some(options) = options {
-                    simplefile_core::dir_list::list_directory_with_options(path, options, |chunk| {
-                        tx.blocking_send(chunk).map_err(|error| error.to_string())
-                    })
+            .run_foreground(move || {
+                if let Some(raw_listing) = cached_raw {
+                    simplefile_core::dir_list::emit_cached_directory_listing(
+                        &raw_listing,
+                        options,
+                        |chunk| tx.blocking_send(chunk).map_err(|error| error.to_string()),
+                    )
                 } else {
-                    simplefile_core::dir_list::list_directory(path, |chunk| {
-                        tx.blocking_send(chunk).map_err(|error| error.to_string())
-                    })
+                    let result = simplefile_core::dir_list::list_directory_capturing_raw(
+                        path,
+                        options,
+                        |chunk| tx.blocking_send(chunk).map_err(|error| error.to_string()),
+                    )?;
+                    let (listing, maybe_raw) = result;
+                    if let Some(raw_listing) = maybe_raw {
+                        cache_for_task
+                            .put_directory_listing(&raw_listing.path, raw_listing.clone());
+                        if !raw_listing.path.eq_ignore_ascii_case(&path_for_cache) {
+                            cache_for_task.put_directory_listing(&path_for_cache, raw_listing);
+                        }
+                    }
+                    Ok(listing)
                 }
             })
             .await
@@ -379,15 +474,23 @@ pub(super) fn spawn_list_directory(
     writer: OutboundSink,
     scheduler: BlockingScheduler,
     binary_hot_frames: Arc<AtomicBool>,
+    cache: SessionCache,
     id: Option<Value>,
     path: String,
     options: Option<ListDirectoryOptions>,
 ) {
     tokio::spawn(async move {
         let response_id = id.clone();
-        let result =
-            list_directory_and_reply(&writer, scheduler, binary_hot_frames, id, path, options)
-                .await;
+        let result = list_directory_and_reply(
+            &writer,
+            scheduler,
+            binary_hot_frames,
+            cache,
+            id,
+            path,
+            options,
+        )
+        .await;
 
         if let Err(message) = result {
             let _ = write_json(
@@ -406,14 +509,27 @@ pub(super) async fn generate_thumbnail_and_reply(
     writer: &OutboundSink,
     scheduler: BlockingScheduler,
     binary_hot_frames: Arc<AtomicBool>,
+    cache: SessionCache,
     id: Option<Value>,
     path: String,
     size: Option<u32>,
 ) -> Result<(), String> {
     let start = std::time::Instant::now();
-    let result = scheduler
-        .run_general(move || simplefile_core::preview::generate_thumbnail(path, size))
-        .await;
+    let result: Result<Result<Vec<u8>, String>, String> =
+        if let Some(cached) = cache.get_thumbnail(&path, size) {
+            Ok(Ok(cached))
+        } else {
+            let path_for_task = path.clone();
+            let cache_for_task = cache.clone();
+            scheduler
+                .run_background(move || {
+                    let bytes =
+                        simplefile_core::preview::generate_thumbnail(path_for_task.clone(), size)?;
+                    cache_for_task.put_thumbnail(&path_for_task, size, bytes.clone());
+                    Ok(bytes)
+                })
+                .await
+        };
     let run_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     match result {
@@ -454,15 +570,23 @@ pub(super) fn spawn_generate_thumbnail(
     writer: OutboundSink,
     scheduler: BlockingScheduler,
     binary_hot_frames: Arc<AtomicBool>,
+    cache: SessionCache,
     id: Option<Value>,
     path: String,
     size: Option<u32>,
 ) {
     tokio::spawn(async move {
         let response_id = id.clone();
-        let result =
-            generate_thumbnail_and_reply(&writer, scheduler, binary_hot_frames, id, path, size)
-                .await;
+        let result = generate_thumbnail_and_reply(
+            &writer,
+            scheduler,
+            binary_hot_frames,
+            cache,
+            id,
+            path,
+            size,
+        )
+        .await;
 
         if let Err(message) = result {
             let _ = write_json(
@@ -481,13 +605,46 @@ pub(super) async fn generate_thumbnails_and_reply(
     writer: &OutboundSink,
     scheduler: BlockingScheduler,
     binary_hot_frames: Arc<AtomicBool>,
+    cache: SessionCache,
     id: Option<Value>,
     paths: Vec<String>,
     size: Option<u32>,
 ) -> Result<(), String> {
     let start = std::time::Instant::now();
+    let scheduler_for_task = scheduler.clone();
     let result = scheduler
-        .run_general(move || simplefile_core::preview::generate_thumbnails(paths, size))
+        .run_background(move || {
+            let mut results = Vec::with_capacity(paths.len());
+            for path in paths {
+                if let Some(cached) = cache.get_thumbnail(&path, size) {
+                    results.push(ThumbnailResult {
+                        path,
+                        data: Some(cached),
+                        error: None,
+                    });
+                    continue;
+                }
+                scheduler_for_task.yield_if_foreground_active_blocking();
+                match simplefile_core::preview::generate_thumbnail(path.clone(), size) {
+                    Ok(data) => {
+                        cache.put_thumbnail(&path, size, data.clone());
+                        results.push(ThumbnailResult {
+                            path,
+                            data: Some(data),
+                            error: None,
+                        });
+                    }
+                    Err(error) => {
+                        results.push(ThumbnailResult {
+                            path,
+                            data: None,
+                            error: Some(error),
+                        });
+                    }
+                }
+            }
+            results
+        })
         .await;
     let run_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -534,15 +691,23 @@ pub(super) fn spawn_generate_thumbnails(
     writer: OutboundSink,
     scheduler: BlockingScheduler,
     binary_hot_frames: Arc<AtomicBool>,
+    cache: SessionCache,
     id: Option<Value>,
     paths: Vec<String>,
     size: Option<u32>,
 ) {
     tokio::spawn(async move {
         let response_id = id.clone();
-        let result =
-            generate_thumbnails_and_reply(&writer, scheduler, binary_hot_frames, id, paths, size)
-                .await;
+        let result = generate_thumbnails_and_reply(
+            &writer,
+            scheduler,
+            binary_hot_frames,
+            cache,
+            id,
+            paths,
+            size,
+        )
+        .await;
 
         if let Err(message) = result {
             let _ = write_json(
@@ -562,6 +727,7 @@ pub(super) fn spawn_copy_move_with_progress(
     registry: std::sync::Arc<OperationRegistry>,
     scheduler: BlockingScheduler,
     events: EventSink,
+    cache: SessionCache,
     job: CopyMoveJob,
 ) {
     tokio::spawn(async move {
@@ -578,6 +744,8 @@ pub(super) fn spawn_copy_move_with_progress(
         let operation_type = if is_copy { "copy" } else { "move" };
         let events_for_task = events.clone();
         let op_id_for_task = op_id.clone();
+        let sources_for_cache = sources.clone();
+        let destination_for_cache = destination.clone();
 
         let result = scheduler
             .run_transfer(move || {
@@ -593,6 +761,17 @@ pub(super) fn spawn_copy_move_with_progress(
                 )
             })
             .await;
+
+        cache.invalidate_path(&destination_for_cache);
+        if !is_copy {
+            cache.invalidate_paths(&sources_for_cache);
+        }
+        if let Ok(Ok(ref transfer_results)) = result {
+            for item in transfer_results {
+                cache.invalidate_path(&item.source);
+                cache.invalidate_path(&item.destination);
+            }
+        }
 
         let response = transfer_result_response(id, result);
 
@@ -622,7 +801,7 @@ pub(super) fn spawn_search_files(
         let events_for_task = events.clone();
         let search_id_for_task = search_id.clone();
         let result = scheduler
-            .run_general(move || {
+            .run_foreground(move || {
                 let emit_batch = |batch: Vec<SearchResult>| {
                     events_for_task.emit_search_results_batch(search_id_for_task.as_deref(), &batch)
                 };
@@ -712,9 +891,11 @@ pub(super) fn spawn_duplicate_check(
             error: None,
         });
         let start = std::time::Instant::now();
+        let scheduler_for_task = scheduler.clone();
         let result = scheduler
-            .run_general(move || {
+            .run_background(move || {
                 let emit = |current, total, item: &str| {
+                    scheduler_for_task.yield_if_foreground_active_blocking();
                     events_for_task.emit_progress(&ProgressUpdate {
                         operation_id: operation_id_for_task.clone(),
                         operation_type: "duplicate-check".to_string(),
@@ -786,9 +967,11 @@ pub(super) fn spawn_disk_cleanup(
             status: "queued".to_string(),
             error: None,
         });
+        let scheduler_for_task = scheduler.clone();
         let result = scheduler
-            .run_general(move || {
+            .run_background(move || {
                 let emit = |current, total, item: &str| {
+                    scheduler_for_task.yield_if_foreground_active_blocking();
                     events_for_task.emit_progress(&ProgressUpdate {
                         operation_id: operation_id_for_task.clone(),
                         operation_type: "cleanup".to_string(),

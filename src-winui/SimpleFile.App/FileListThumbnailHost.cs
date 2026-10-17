@@ -9,21 +9,30 @@ namespace SimpleFile.App;
 
 internal static class FileListThumbnailHost
 {
-    private const int MaxCachedThumbnails = 512;
-    private const long MaxCachedThumbnailBytes = 64L * 1024 * 1024;
+    public const int MaxCachedImageThumbnails = 2048;
+    public const long MaxCachedImageThumbnailBytes = 96L * 1024 * 1024;
+    public const int MaxCachedVideoThumbnails = 512;
+    public const long MaxCachedVideoThumbnailBytes = 32L * 1024 * 1024;
     private const int MaxInFlightThumbnails = 128;
 
-    private static readonly BoundedLruCache<string, ImageSource> Cache = new(
-        MaxCachedThumbnails, MaxCachedThumbnailBytes, StringComparer.OrdinalIgnoreCase);
+    private static readonly BoundedLruCache<string, ImageSource> ImageCache = new(
+        MaxCachedImageThumbnails, MaxCachedImageThumbnailBytes, StringComparer.OrdinalIgnoreCase);
+    private static readonly BoundedLruCache<string, ImageSource> VideoCache = new(
+        MaxCachedVideoThumbnails, MaxCachedVideoThumbnailBytes, StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, Task<ImageSource?>> InFlight = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, VideoThumbnailFrame> VideoFramePreferences = new(StringComparer.OrdinalIgnoreCase);
     private static readonly SemaphoreSlim LoadGate = new(4, 4);
+    private static readonly SemaphoreSlim VideoLoadGate = new(2, 2);
 
     private static Func<string, uint, CancellationToken, Task<byte[]>>? _loadImageThumbnailAsync;
     private static bool _primaryEnabled;
     private static bool _secondaryEnabled;
 
     public static event EventHandler? Changed;
+
+    public static BoundedLruCacheStats ImageCacheStats => ImageCache.SnapshotStats();
+
+    public static BoundedLruCacheStats VideoCacheStats => VideoCache.SnapshotStats();
 
     public static void Configure(Func<string, uint, CancellationToken, Task<byte[]>>? loadImageThumbnailAsync)
     {
@@ -34,9 +43,35 @@ internal static class FileListThumbnailHost
             _secondaryEnabled = false;
         }
 
-        Cache.Clear();
+        ImageCache.Clear();
+        VideoCache.Clear();
         InFlight.Clear();
         Changed?.Invoke(null, EventArgs.Empty);
+    }
+
+    public static int InvalidatePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return 0;
+        }
+
+        var removed = ImageCache.RemoveWhere(key => ThumbnailCacheKey.MatchesPathOrSubtree(key, path))
+            + VideoCache.RemoveWhere(key => ThumbnailCacheKey.MatchesPathOrSubtree(key, path));
+        ShellIconLoader.InvalidatePath(path);
+        return removed;
+    }
+
+    public static int InvalidatePaths(IEnumerable<string?> paths)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        var removed = 0;
+        foreach (var path in paths)
+        {
+            removed += InvalidatePath(path);
+        }
+
+        return removed;
     }
 
     public static VideoThumbnailFrame VideoFrameForPath(string path) =>
@@ -96,10 +131,16 @@ internal static class FileListThumbnailHost
 
     public static ImageSource? CachedThumbnail(FileRow row, int iconSize)
     {
-        return ShouldUseThumbnails(row, iconSize)
-            && Cache.TryGetValue(CacheKey(row, iconSize), out var source)
-                ? source
-                : null;
+        if (!ShouldUseThumbnails(row, iconSize))
+        {
+            return null;
+        }
+
+        var extension = ExtensionFor(row);
+        var cache = CacheForExtension(extension);
+        return cache.TryGetValue(CacheKey(row, iconSize, extension), out var source)
+            ? source
+            : null;
     }
 
     public static async Task<ImageSource?> LoadThumbnailAsync(FileRow row, int iconSize, CancellationToken cancellationToken)
@@ -109,16 +150,18 @@ internal static class FileListThumbnailHost
             return null;
         }
 
-        var key = CacheKey(row, iconSize);
-        if (Cache.TryGetValue(key, out var cached))
+        var extension = ExtensionFor(row);
+        var cache = CacheForExtension(extension);
+        var key = CacheKey(row, iconSize, extension);
+        if (cache.TryGetValue(key, out var cached))
         {
             return cached;
         }
 
         var path = row.Path;
-        var extension = ExtensionFor(row);
         var requestSize = ThumbnailSizeFor(iconSize);
-        var videoFrame = IsVideoThumbnail(extension)
+        var isVideo = IsVideoThumbnail(extension);
+        var videoFrame = isVideo
             ? VideoFrameForPath(path)
             : VideoThumbnailFrame.Default;
         if (InFlight.Count >= MaxInFlightThumbnails && !InFlight.ContainsKey(key))
@@ -126,35 +169,63 @@ internal static class FileListThumbnailHost
             return null;
         }
 
+        if (isVideo || ForegroundTaskScheduler.Shared.IsForegroundActive)
+        {
+            await ForegroundTaskScheduler.Shared.YieldOrThrottleAsync(cancellationToken).ConfigureAwait(false);
+            if (cache.TryGetValue(key, out cached))
+            {
+                return cached;
+            }
+        }
+
         var task = InFlight.GetOrAdd(
             key,
-            _ => LoadAndCacheThumbnailAsync(key, path, extension, requestSize, videoFrame));
+            _ => LoadAndCacheThumbnailAsync(cache, key, path, extension, requestSize, videoFrame, isVideo));
         return await task.WaitAsync(cancellationToken);
     }
 
+    private static BoundedLruCache<string, ImageSource> CacheForExtension(string extension) =>
+        IsVideoThumbnail(extension) ? VideoCache : ImageCache;
+
     private static async Task<ImageSource?> LoadAndCacheThumbnailAsync(
+        BoundedLruCache<string, ImageSource> cache,
         string key,
         string path,
         string extension,
         int requestSize,
-        VideoThumbnailFrame videoFrame)
+        VideoThumbnailFrame videoFrame,
+        bool isVideo)
     {
         try
         {
-            await LoadGate.WaitAsync();
+            var gate = isVideo ? VideoLoadGate : LoadGate;
+            await gate.WaitAsync();
             try
             {
-                var source = await LoadCoreAsync(path, extension, requestSize, videoFrame);
+                if (isVideo && ForegroundTaskScheduler.Shared.IsForegroundActive)
+                {
+                    await ForegroundTaskScheduler.Shared.YieldOrThrottleAsync(CancellationToken.None);
+                }
+
+                if (cache.TryGetValue(key, out var existing))
+                {
+                    return existing;
+                }
+
+                var (source, encodedBytes) = await LoadCoreAsync(path, extension, requestSize, videoFrame);
                 if (source is not null)
                 {
-                    Cache.Set(key, source, (long)requestSize * requestSize * 4 + key.Length * 2L);
+                    cache.Set(
+                        key,
+                        source,
+                        ThumbnailCacheKey.EstimateDecodedBytes(requestSize, key, encodedBytes));
                 }
 
                 return source;
             }
             finally
             {
-                LoadGate.Release();
+                gate.Release();
             }
         }
         finally
@@ -163,7 +234,7 @@ internal static class FileListThumbnailHost
         }
     }
 
-    private static async Task<ImageSource?> LoadCoreAsync(
+    private static async Task<(ImageSource? Source, int EncodedBytes)> LoadCoreAsync(
         string path,
         string extension,
         int requestSize,
@@ -174,7 +245,7 @@ internal static class FileListThumbnailHost
             var source = await VideoThumbnailExtractor.LoadAsync(path, requestSize, videoFrame);
             if (source is not null)
             {
-                return source;
+                return (source, 0);
             }
         }
 
@@ -185,7 +256,8 @@ internal static class FileListThumbnailHost
                 var bytes = await _loadImageThumbnailAsync(path, (uint)requestSize, CancellationToken.None);
                 if (bytes is not null && bytes.Length > 0)
                 {
-                    return await PreviewImageSourceFactory.FromBytesAsync(bytes, path);
+                    var source = await PreviewImageSourceFactory.FromBytesAsync(bytes, path, requestSize);
+                    return (source, bytes.Length);
                 }
             }
             catch
@@ -194,9 +266,13 @@ internal static class FileListThumbnailHost
             }
         }
 
-        return CanUseWindowsThumbnail(extension)
-            ? await LoadWindowsThumbnailAsync(path, requestSize)
-            : null;
+        if (CanUseWindowsThumbnail(extension))
+        {
+            var source = await LoadWindowsThumbnailAsync(path, requestSize);
+            return (source, 0);
+        }
+
+        return (null, 0);
     }
 
     private static async Task<ImageSource?> LoadWindowsThumbnailAsync(string path, int requestSize)
@@ -213,7 +289,11 @@ internal static class FileListThumbnailHost
                 return null;
             }
 
-            var bitmap = new BitmapImage();
+            var bitmap = new BitmapImage
+            {
+                DecodePixelWidth = requestSize,
+                DecodePixelType = DecodePixelType.Physical,
+            };
             await bitmap.SetSourceAsync(thumbnail);
             return bitmap;
         }
@@ -223,14 +303,14 @@ internal static class FileListThumbnailHost
         }
     }
 
-    private static string CacheKey(FileRow row, int iconSize)
+    private static string CacheKey(FileRow row, int iconSize, string? resolvedExtension = null)
     {
         var size = ThumbnailSizeFor(iconSize);
-        var extension = ExtensionFor(row);
+        var extension = resolvedExtension ?? ExtensionFor(row);
         var videoFrame = IsVideoThumbnail(extension)
-            ? $"|video:{VideoFrameForPath(row.Path).CacheToken}"
-            : "";
-        return $"{size}|{row.Path}|{row.Size}|{row.ModifiedText}{videoFrame}";
+            ? VideoFrameForPath(row.Path).CacheToken
+            : null;
+        return ThumbnailCacheKey.Create(row.Path, row.Size, row.ModifiedText, size, videoFrame);
     }
 
     private static int ThumbnailSizeFor(int iconSize) =>
@@ -259,3 +339,4 @@ internal static class FileListThumbnailHost
             or "ppt" or "pptx" or "pptm" or "odp"
             or "psd" or "ai" or "eps";
 }
+

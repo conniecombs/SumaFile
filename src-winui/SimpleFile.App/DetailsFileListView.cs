@@ -69,6 +69,10 @@ public sealed class DetailsFileListView : UserControl
     private double _viewportWidth = 1;
     private int _anchorIndex = -1;
     private bool _suppressSelectionChanged;
+    private int _updateDepth;
+    private bool _pendingUpdateChanged;
+    private HashSet<string>? _pendingUpdateSelectedPaths;
+    private ScrollViewer? _scrollViewer;
 
     public DetailsFileListView()
     {
@@ -102,7 +106,11 @@ public sealed class DetailsFileListView : UserControl
         _list.DragItemsStarting += OnListDragItemsStarting;
         _list.DragItemsCompleted += (_, _) => RowsDragCompleted?.Invoke(this, EventArgs.Empty);
         _list.ContainerContentChanging += OnListContainerContentChanging;
-        _list.Loaded += (_, _) => ApplyContainerStyle();
+        _list.Loaded += (_, _) =>
+        {
+            ApplyContainerStyle();
+            AttachScrollViewerActivityHook();
+        };
         Content = _list;
     }
 
@@ -271,8 +279,75 @@ public sealed class DetailsFileListView : UserControl
         }
     }
 
+    private void AttachScrollViewerActivityHook()
+    {
+        var scrollViewer = FindDescendant<ScrollViewer>(_list);
+        if (ReferenceEquals(_scrollViewer, scrollViewer))
+        {
+            return;
+        }
+
+        if (_scrollViewer is not null)
+        {
+            _scrollViewer.ViewChanged -= OnScrollViewerViewChanged;
+        }
+
+        _scrollViewer = scrollViewer;
+        if (_scrollViewer is not null)
+        {
+            _scrollViewer.ViewChanged += OnScrollViewerViewChanged;
+        }
+    }
+
+    private static void OnScrollViewerViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        ForegroundTaskScheduler.Shared.RecordActivity(ForegroundActivityKind.Scrolling);
+    }
+
+    public void BeginUpdate()
+    {
+        if (_updateDepth == 0)
+        {
+            _pendingUpdateSelectedPaths = SelectedPathSet();
+            _pendingUpdateChanged = false;
+        }
+
+        _updateDepth++;
+    }
+
+    public void EndUpdate()
+    {
+        if (_updateDepth <= 0)
+        {
+            return;
+        }
+
+        _updateDepth--;
+        if (_updateDepth > 0)
+        {
+            return;
+        }
+
+        var selectedPaths = _pendingUpdateSelectedPaths;
+        var changed = _pendingUpdateChanged;
+        _pendingUpdateSelectedPaths = null;
+        _pendingUpdateChanged = false;
+
+        if (changed)
+        {
+            RefreshRowsFromItemsSource();
+            RestoreSelectionByPaths(selectedPaths ?? []);
+        }
+    }
+
     private void OnItemsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        if (_updateDepth > 0)
+        {
+            _pendingUpdateChanged = true;
+            return;
+        }
+
         var selectedPaths = SelectedPathSet();
         ApplyRowsChange(e);
         RestoreSelectionByPaths(selectedPaths);

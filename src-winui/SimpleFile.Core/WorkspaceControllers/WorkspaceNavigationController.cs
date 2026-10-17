@@ -142,6 +142,7 @@ internal sealed class WorkspaceNavigationController
             return;
         }
 
+        using var foregroundScope = workspace.ForegroundScheduler.BeginForegroundScope(ForegroundActivityKind.Navigation);
         var target = workspace.Normalize(pane);
         var state = workspace.Pane(target);
         if (activate && workspace.DualPaneEnabled)
@@ -420,6 +421,7 @@ internal sealed class WorkspaceNavigationController
             return;
         }
 
+        using var foregroundScope = workspace.ForegroundScheduler.BeginForegroundScope(ForegroundActivityKind.Navigation);
         var selected = state.SelectedPath;
         var token = state.NextNavigationToken();
 

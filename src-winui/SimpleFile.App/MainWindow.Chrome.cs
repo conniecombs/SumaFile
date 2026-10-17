@@ -649,13 +649,15 @@ public sealed partial class MainWindow
             return false;
         }
 
-        var entries = rows.Select(row => new FileEntry
-        {
-            Name = row.Name,
-            Path = row.Path,
-            IsDir = row.IsDir,
-            Extension = row.Extension,
-        });
+        var entries = rows
+            .Take(EntryPresentation.DefaultProgressiveViewportCount)
+            .Select(row => new FileEntry
+            {
+                Name = row.Name,
+                Path = row.Path,
+                IsDir = row.IsDir,
+                Extension = row.Extension,
+            });
         return MediaFolder.IsMediaFolder(entries, _workspace.Settings.PhotoFolderImageThreshold);
     }
 

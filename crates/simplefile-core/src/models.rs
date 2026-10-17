@@ -32,7 +32,7 @@ pub struct FileEntry {
 }
 
 /// Represents the result of a directory listing
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirectoryListing {
     pub path: String,
     pub parent: Option<String>,
@@ -351,7 +351,7 @@ pub struct ThumbnailResult {
 /// (e.g. "ISO Speed Ratings") and `value` is its value. If no EXIF
 /// metadata is present or the file could not be parsed, the `exif`
 /// vector will be empty.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ImageMetadata {
     pub width: u32,
     pub height: u32,

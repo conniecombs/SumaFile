@@ -30,10 +30,25 @@ public sealed class ExplorerPane
     public string SortBy { get; set; } = "name";
     public bool SortAscending { get; set; } = true;
     private int _navigationToken;
+    private int _contentVersion;
+
+    private IReadOnlyList<FileEntry>? _cachedVisibleEntries;
+    private List<FileEntry>? _cachedEntriesRef;
+    private int _cachedEntriesCount = -1;
+    private int _cachedContentVersion = -1;
+    private string _cachedSortBy = "";
+    private bool _cachedSortAscending;
+    private bool _cachedShowHidden;
+    private string _cachedFilterQuery = "";
+    private bool _cachedKeepFoldersOnTop;
 
     public int NextNavigationToken() => Interlocked.Increment(ref _navigationToken);
 
     public int NavigationToken => Volatile.Read(ref _navigationToken);
+
+    public int ContentVersion => Volatile.Read(ref _contentVersion);
+
+    public int BumpContentVersion() => Interlocked.Increment(ref _contentVersion);
 
     public bool CanGoBack => HistoryIndex > 0;
     public bool CanGoForward => HistoryIndex >= 0 && HistoryIndex < History.Count - 1;
@@ -48,12 +63,87 @@ public sealed class ExplorerPane
         string filterQuery,
         bool keepFoldersOnTop = true)
     {
-        return EntryPresentation.VisibleEntries(Entries, filterQuery, showHidden, sortBy, sortAscending, keepFoldersOnTop);
+        var entries = Entries;
+        var count = entries.Count;
+        var version = ContentVersion;
+        var normalizedFilter = filterQuery ?? "";
+        var normalizedSortBy = sortBy ?? "name";
+
+        if (_cachedVisibleEntries is not null
+            && ReferenceEquals(_cachedEntriesRef, entries)
+            && _cachedEntriesCount == count
+            && _cachedContentVersion == version
+            && string.Equals(_cachedSortBy, normalizedSortBy, StringComparison.OrdinalIgnoreCase)
+            && _cachedSortAscending == sortAscending
+            && _cachedShowHidden == showHidden
+            && string.Equals(_cachedFilterQuery, normalizedFilter, StringComparison.Ordinal)
+            && _cachedKeepFoldersOnTop == keepFoldersOnTop)
+        {
+            return _cachedVisibleEntries;
+        }
+
+        var computed = EntryPresentation.VisibleEntries(
+            entries,
+            normalizedFilter,
+            showHidden,
+            normalizedSortBy,
+            sortAscending,
+            keepFoldersOnTop);
+
+        _cachedEntriesRef = entries;
+        _cachedEntriesCount = count;
+        _cachedContentVersion = version;
+        _cachedSortBy = normalizedSortBy;
+        _cachedSortAscending = sortAscending;
+        _cachedShowHidden = showHidden;
+        _cachedFilterQuery = normalizedFilter;
+        _cachedKeepFoldersOnTop = keepFoldersOnTop;
+        _cachedVisibleEntries = computed;
+        return computed;
     }
 
     public IReadOnlyList<FileEntry> VisibleEntries(bool showHidden, string filterQuery, bool keepFoldersOnTop = true)
     {
         return VisibleEntries(SortBy, SortAscending, showHidden, filterQuery, keepFoldersOnTop);
+    }
+
+    public IReadOnlyList<FileEntry> VisibleViewportEntries(
+        string sortBy,
+        bool sortAscending,
+        bool showHidden,
+        string filterQuery,
+        bool keepFoldersOnTop = true,
+        int progressiveViewportLimit = EntryPresentation.DefaultProgressiveViewportCount)
+    {
+        if (!ListingInProgress)
+        {
+            return VisibleEntries(sortBy, sortAscending, showHidden, filterQuery, keepFoldersOnTop);
+        }
+
+        return EntryPresentation.VisibleViewportEntries(
+            Entries,
+            filterQuery ?? "",
+            showHidden,
+            sortBy ?? "name",
+            sortAscending,
+            keepFoldersOnTop,
+            listingInProgress: true,
+            progressiveViewportLimit: progressiveViewportLimit);
+    }
+
+    public IReadOnlyList<FileEntry> VisibleViewportEntries(
+        bool showHidden,
+        string filterQuery,
+        bool keepFoldersOnTop = true,
+        int progressiveViewportLimit = EntryPresentation.DefaultProgressiveViewportCount)
+    {
+        return VisibleViewportEntries(
+            SortBy,
+            SortAscending,
+            showHidden,
+            filterQuery,
+            keepFoldersOnTop,
+            progressiveViewportLimit);
     }
 
     public void ApplyViewDefaults(UiSettings settings)

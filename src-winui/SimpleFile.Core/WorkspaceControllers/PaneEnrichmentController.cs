@@ -8,7 +8,8 @@ internal sealed class PaneEnrichmentController
         ExplorerPane state,
         FileOperationService? fileOps,
         bool enableGitIntegration,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ForegroundTaskScheduler? scheduler = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         if (!enableGitIntegration)
@@ -21,10 +22,17 @@ internal sealed class PaneEnrichmentController
             return false;
         }
 
+        var activeScheduler = scheduler ?? ForegroundTaskScheduler.Shared;
         var path = state.Path;
         var navigationToken = state.NavigationToken;
         try
         {
+            await activeScheduler.YieldOrThrottleAsync(cancellationToken).ConfigureAwait(false);
+            if (navigationToken != state.NavigationToken || !PathRules.PathsEqual(state.Path, path))
+            {
+                return false;
+            }
+
             var statuses = await fileOps.GetGitFileStatusesAsync(path, cancellationToken).ConfigureAwait(false);
             var map = statuses.ToDictionary(
                 entry => entry.Path,
@@ -40,6 +48,7 @@ internal sealed class PaneEnrichmentController
                 entry.GitStatus = map.TryGetValue(entry.Path, out var status) ? status : null;
             }
 
+            state.BumpContentVersion();
             return true;
         }
         catch
@@ -69,6 +78,11 @@ internal sealed class PaneEnrichmentController
             }
         }
 
+        if (changed)
+        {
+            state.BumpContentVersion();
+        }
+
         return changed;
     }
 
@@ -77,7 +91,8 @@ internal sealed class PaneEnrichmentController
         FileOperationService? fileOps,
         bool includeSizes,
         bool includeItemCounts,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ForegroundTaskScheduler? scheduler = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         if (fileOps is null || (!includeSizes && !includeItemCounts) || state.PathIsNetwork)
@@ -85,6 +100,7 @@ internal sealed class PaneEnrichmentController
             return false;
         }
 
+        var activeScheduler = scheduler ?? ForegroundTaskScheduler.Shared;
         var path = state.Path;
         var navigationToken = state.NavigationToken;
         var folders = state.Entries.Where(item => item.IsDir).Take(MaxFolderMetricEntries).ToList();
@@ -103,6 +119,12 @@ internal sealed class PaneEnrichmentController
 
             try
             {
+                await activeScheduler.YieldOrThrottleAsync(cancellationToken).ConfigureAwait(false);
+                if (!IsCurrent())
+                {
+                    return false;
+                }
+
                 if (includeSizes && includeItemCounts)
                 {
                     var metrics = await fileOps.GetFolderMetricsAsync(entry.Path, cancellationToken).ConfigureAwait(false);
@@ -113,6 +135,7 @@ internal sealed class PaneEnrichmentController
 
                     entry.Size = metrics.Size;
                     entry.ItemCount = metrics.ItemCount;
+                    state.BumpContentVersion();
                     changed = true;
                     continue;
                 }
@@ -126,6 +149,7 @@ internal sealed class PaneEnrichmentController
                     }
 
                     entry.Size = size;
+                    state.BumpContentVersion();
                     changed = true;
                 }
 
@@ -138,8 +162,13 @@ internal sealed class PaneEnrichmentController
                     }
 
                     entry.ItemCount = itemCount;
+                    state.BumpContentVersion();
                     changed = true;
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return false;
             }
             catch
             {
@@ -156,8 +185,13 @@ internal sealed class PaneEnrichmentController
         CancellationToken cancellationToken = default)
     {
         var state = workspace.Pane(workspace.Normalize(pane));
-        if (await ApplyGitStatusesAsync(state, workspace.FileOps, workspace.Settings.EnableGitIntegration, cancellationToken)
-                .ConfigureAwait(false))
+        if (await ApplyGitStatusesAsync(
+                state,
+                workspace.FileOps,
+                workspace.Settings.EnableGitIntegration,
+                cancellationToken,
+                workspace.ForegroundScheduler)
+            .ConfigureAwait(false))
         {
             workspace.NotifyChanged();
         }
@@ -179,8 +213,14 @@ internal sealed class PaneEnrichmentController
         CancellationToken cancellationToken = default)
     {
         var state = workspace.Pane(workspace.Normalize(pane));
-        if (await FillFolderMetricsAsync(state, workspace.FileOps, includeSizes, includeItemCounts, cancellationToken)
-                .ConfigureAwait(false))
+        if (await FillFolderMetricsAsync(
+                state,
+                workspace.FileOps,
+                includeSizes,
+                includeItemCounts,
+                cancellationToken,
+                workspace.ForegroundScheduler)
+            .ConfigureAwait(false))
         {
             workspace.NotifyChanged();
         }

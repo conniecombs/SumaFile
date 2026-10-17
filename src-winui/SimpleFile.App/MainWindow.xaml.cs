@@ -517,18 +517,35 @@ public sealed partial class MainWindow : Window
 
         _search?.CheckSearchRootDrift();
 
-        ReplaceIfChanged(
-            PrimaryFiles,
-            (_search?.IsActiveForPane(PaneId.Primary) == true
-                ? _search.Results.Select(result => SearchRowFrom(result, PaneId.Primary))
-                : _workspace.VisibleEntriesFor(PaneId.Primary).Select(entry => ToFileRow(entry, PaneId.Primary))).ToList(),
-            SameFileRow);
-        ReplaceIfChanged(
-            SecondaryFiles,
-            (_search?.IsActiveForPane(PaneId.Secondary) == true
-                ? _search.Results.Select(result => SearchRowFrom(result, PaneId.Secondary))
-                : _workspace.VisibleEntriesFor(PaneId.Secondary).Select(entry => ToFileRow(entry, PaneId.Secondary))).ToList(),
-            SameFileRow);
+        PrimaryDetailsFileList.BeginUpdate();
+        try
+        {
+            ReplaceIfChanged(
+                PrimaryFiles,
+                (_search?.IsActiveForPane(PaneId.Primary) == true
+                    ? _search.Results.Select(result => SearchRowFrom(result, PaneId.Primary))
+                    : _workspace.VisibleViewportEntriesFor(PaneId.Primary).Select(entry => ToFileRow(entry, PaneId.Primary))).ToList(),
+                SameFileRow);
+        }
+        finally
+        {
+            PrimaryDetailsFileList.EndUpdate();
+        }
+
+        SecondaryDetailsFileList.BeginUpdate();
+        try
+        {
+            ReplaceIfChanged(
+                SecondaryFiles,
+                (_search?.IsActiveForPane(PaneId.Secondary) == true
+                    ? _search.Results.Select(result => SearchRowFrom(result, PaneId.Secondary))
+                    : _workspace.VisibleViewportEntriesFor(PaneId.Secondary).Select(entry => ToFileRow(entry, PaneId.Secondary))).ToList(),
+                SameFileRow);
+        }
+        finally
+        {
+            SecondaryDetailsFileList.EndUpdate();
+        }
         ReplaceIfChanged(
             Drives,
             _workspace.Drives.Select(drive => DriveRow.From(drive, _workspace.Pane(_workspace.SidebarTarget).Path)).ToList(),
@@ -1226,6 +1243,8 @@ public sealed partial class MainWindow : Window
             }
 
             var affectedPaths = FileChangeAffectedPaths(change.Path);
+            FileListThumbnailHost.InvalidatePaths(affectedPaths);
+            ShellIconLoader.InvalidatePath(change.Path);
             if (_workspace.AffectedVisiblePanes(affectedPaths).Count == 0)
             {
                 return;
