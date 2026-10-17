@@ -1,0 +1,34 @@
+<Project>
+  <PropertyGroup>
+    <_UserNuGetCacheDir>$([MSBuild]::NormalizeDirectory('$(UserProfile)', '.nuget', 'packages'))</_UserNuGetCacheDir>
+    <!-- Allow offline / firewall-restricted restores to resolve cached packages from ~/.nuget/packages
+         without failing when api.nuget.org is unreachable. -->
+    <RestoreAdditionalProjectSources Condition="Exists('$(_UserNuGetCacheDir)')">$(RestoreAdditionalProjectSources);$(_UserNuGetCacheDir)</RestoreAdditionalProjectSources>
+    <RestoreIgnoreFailedSources>true</RestoreIgnoreFailedSources>
+  </PropertyGroup>
+
+  <!-- When a newly installed .NET 10 SDK (e.g. 10.0.402 -> runtime 10.0.13) runs offline before
+       the new self-contained runtime pack has been downloaded into the NuGet cache, fall back to
+       the cached 10.0.12 runtime pack if present. -->
+  <Target Name="_FallbackToCachedNet10RuntimePackWhenOffline"
+          BeforeTargets="ProcessFrameworkReferences"
+          Condition="!Exists('$(_UserNuGetCacheDir)microsoft.netcore.app.runtime.win-x64\10.0.13') and Exists('$(_UserNuGetCacheDir)microsoft.netcore.app.runtime.win-x64\10.0.12')">
+    <ItemGroup>
+      <KnownFrameworkReference Update="Microsoft.NETCore.App"
+                               Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0'"
+                               LatestRuntimeFrameworkVersion="10.0.12" />
+      <KnownFrameworkReference Update="Microsoft.WindowsDesktop.App"
+                               Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0'"
+                               LatestRuntimeFrameworkVersion="10.0.12" />
+      <KnownFrameworkReference Update="Microsoft.WindowsDesktop.App.WPF"
+                               Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0'"
+                               LatestRuntimeFrameworkVersion="10.0.12" />
+      <KnownFrameworkReference Update="Microsoft.WindowsDesktop.App.WindowsForms"
+                               Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0'"
+                               LatestRuntimeFrameworkVersion="10.0.12" />
+      <KnownFrameworkReference Update="Microsoft.AspNetCore.App"
+                               Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0'"
+                               LatestRuntimeFrameworkVersion="10.0.12" />
+    </ItemGroup>
+  </Target>
+</Project>
