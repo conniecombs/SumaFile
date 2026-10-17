@@ -69,16 +69,20 @@ Wired in `ConnectAsync` (`AppServices.Configure` then `_search` / `_transfer` / 
 
 ---
 
-## 3. `ExplorerWorkspace.cs` is a domain god class
+## 3. `ExplorerWorkspace.cs` is a domain god class - completed
 
-**File:** `src-winui/SimpleFile.Core/ExplorerWorkspace.cs` (~2,100 lines)
+**Files**
 
-One type owns dual-pane/tabs, settings persistence, bookmarks/recents, tags/smart folders, git, folder metrics, tree merge, clipboard/operation log, layout restore, pack/unpack, and cross-pane copy/move. Shared `_gate` + `RaiseChanged()` still appears across the workspace, but navigation listing fetch/stream application now lives in the owned `PaneNavigator` helper.
+- `src-winui/SimpleFile.Core/ExplorerWorkspace.cs` (~160-line stub)
+- `src-winui/SimpleFile.Core/ExplorerWorkspace.{FileOps,Navigation,PanesTabs,Profiles,Selection}.cs` (1-line delegation partials)
+- `src-winui/SimpleFile.Core/WorkspaceControllers/*.cs` (13 focused sub-controllers)
+
+`ExplorerWorkspace.cs` is now a thin state and controller wiring stub, and its partial files forward public members in 1-line delegations to focused domain controllers in `src-winui/SimpleFile.Core/WorkspaceControllers/` (`PlacesController`, `WorkspaceTagController`, `FolderTreeController`, `PaneEnrichmentController`, `FolderViewController`, `WorkspaceLayoutController`, `DriveController`, `ClosedTabController`, `OperationLogController`, `DualPaneTabController`, `WorkspaceNavigationController`, `WorkspaceFileOpsController`, `WorkspaceSelectionController`).
 
 **Options**
 
 - **A:** Partials on the same class (`Navigation`, `Tabs`, `Settings`, `Places`, `Tags`). Same lock/events; safest.
-- **B:** Extract helpers that the workspace owns (`WorkspaceSettingsStore`, `PlacesController`, `PaneNavigator`) without changing the public API.
+- **B:** Extract helpers that the workspace owns (`WorkspaceSettingsStore`, `PlacesController`, `PaneNavigator`, `WorkspaceControllers/*`) without changing the public API.
 - **C:** Leave it. Readable enough if you only touch one method at a time.
 
 ---
@@ -460,7 +464,7 @@ Record chosen options here when a cleanup pass starts.
 | --- | --- | --- |
 | 1 MainWindow | C + A | Completed: extracted preview rendering/actions into split `PreviewPresenter.*.cs` partials, dialog-driven file operations into `FileOperationDialogService`, current search event/result glue into `MainWindow.Search.cs`, and app-command routing into `MainWindow.CommandRouting.cs`; `MainWindow` now delegates those workflows while preserving XAML event names. |
 | 2 Unused ViewModels | B | Completed: finished the ViewModel cutover so `SearchViewModel` owns live search state/results/cancellation, `TransferViewModel` owns transfer operation identity/progress/cancellation, and `ToolbarViewModel` owns toolbar/status snapshots; removed the app-side `SearchHost` duplicate. |
-| 3 ExplorerWorkspace | B | Completed for profiles/layouts/navigation: extracted workspace profile persistence, saved layout persistence, and pane listing navigation into owned services while keeping the existing `ExplorerWorkspace` public API. |
+| 3 ExplorerWorkspace | B + A | Completed: decomposed `ExplorerWorkspace` into a ~160-line core stub (`ExplorerWorkspace.cs`) plus 1-line delegation partials backed by 13 focused controllers in `src-winui/SimpleFile.Core/WorkspaceControllers/` (`PlacesController`, `WorkspaceTagController`, `FolderTreeController`, `PaneEnrichmentController`, `FolderViewController`, `WorkspaceLayoutController`, `DriveController`, `ClosedTabController`, `OperationLogController`, `DualPaneTabController`, `WorkspaceNavigationController`, `WorkspaceFileOpsController`, `WorkspaceSelectionController`). |
 | 4 dispatch.rs | B | Completed: split the service dispatcher into `dispatch/{mod,params,handlers,async_ops,tests}.rs`, moved async arm construction behind `async_ops`, kept `dispatch()` re-exported from the module, replaced domain match arms with generated `METHOD_*` constants, and updated schema/parity checks for the split module. |
 | 5 archive.rs | A | Completed: split archive handling into `archive/{mod,path,list,extract,mutate,create,tests}.rs` with public functions re-exported from `archive/mod.rs`; kept `resolve_rar_binary` on the archive API and did not move RAR installer behavior in this pass. |
 | 6 Copy/conflict engines | B | Completed for matching helpers: added `simplefile-core::path_conflict` for no-follow existence, collision keys, same-entry checks, keep-both aliases, and exclusive directory creation; left divergent unique-name loops local. |

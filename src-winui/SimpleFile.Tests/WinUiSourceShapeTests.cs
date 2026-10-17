@@ -768,6 +768,29 @@ public class WinUiSourceShapeTests
         Assert.Contains("WorkspaceProfileService _profiles", workspace);
         Assert.DoesNotContain("SavedWorkspaceLayoutService", workspace);
         Assert.DoesNotContain("_savedLayouts", workspace);
+        Assert.True(File.ReadAllLines(Path.Combine(coreRoot, "ExplorerWorkspace.cs")).Length <= 200);
+        foreach (var controllerFile in new[]
+                 {
+                     "ClosedTabController.cs",
+                     "DriveController.cs",
+                     "DualPaneTabController.cs",
+                     "FolderTreeController.cs",
+                     "FolderViewController.cs",
+                     "OperationLogController.cs",
+                     "PaneEnrichmentController.cs",
+                     "PlacesController.cs",
+                     "WorkspaceFileOpsController.cs",
+                     "WorkspaceLayoutController.cs",
+                     "WorkspaceNavigationController.cs",
+                     "WorkspaceSelectionController.cs",
+                     "WorkspaceTagController.cs",
+                 })
+        {
+            Assert.True(
+                File.Exists(Path.Combine(coreRoot, "WorkspaceControllers", controllerFile)),
+                $"Expected {controllerFile} in SimpleFile.Core/WorkspaceControllers/.");
+        }
+
         Assert.Contains("internal sealed class WorkspaceProfileService", profileService);
         Assert.Contains("SavedWorkspaceLayoutsDocument", legacyLayoutDocument);
         Assert.Contains("WorkspaceProfilesDocument.FromLegacyLayouts", profileService);

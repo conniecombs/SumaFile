@@ -4,176 +4,152 @@ namespace SimpleFile.Core;
 
 public sealed partial class ExplorerWorkspace
 {
+    public ClipboardHistory ClipboardHistory => _operationLog.ClipboardHistory;
+    public List<OperationRecord> OperationLog => _operationLog.Entries;
 
-    public string SuggestedNameForNewItem(NewItemTemplate template, PaneId? pane = null)
-    {
-        ArgumentNullException.ThrowIfNull(template);
-        var target = Normalize(pane.GetValueOrDefault(ActivePane));
-        List<FileEntry> entries;
-        lock (_gate)
-        {
-            entries = [.. Pane(target).Entries];
-        }
+    public string SuggestedNameForNewItem(NewItemTemplate template, PaneId? pane = null) =>
+        _fileOpsController.SuggestedNameForNewItem(this, template, pane);
 
-        return template.SuggestedName(entries);
-    }
-
-    public string SuggestedShortcutNameForTarget(string targetPath, PaneId? pane = null)
-    {
-        var target = Normalize(pane.GetValueOrDefault(ActivePane));
-        List<FileEntry> entries;
-        lock (_gate)
-        {
-            entries = [.. Pane(target).Entries];
-        }
-
-        return NewItemTemplate.SuggestedShortcutName(targetPath, entries);
-    }
+    public string SuggestedShortcutNameForTarget(string targetPath, PaneId? pane = null) =>
+        _fileOpsController.SuggestedShortcutNameForTarget(this, targetPath, pane);
 
     public Task<string> CreateNewItemInCurrentPaneAsync(
         NewItemTemplate template,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(template);
-        if (template.IsShortcut)
-        {
-            throw new InvalidOperationException("Shortcut creation requires a target path.");
-        }
+        CancellationToken cancellationToken = default) =>
+        _fileOpsController.CreateNewItemInCurrentPaneAsync(this, template, cancellationToken);
 
-        var name = SuggestedNameForNewItem(template, ActivePane);
-        return template.IsDirectory
-            ? CreateFolderInCurrentPaneAsync(name, cancellationToken)
-            : CreateFileInCurrentPaneAsync(name, cancellationToken);
-    }
+    public Task<string> CreateFolderInCurrentPaneAsync(string name, CancellationToken cancellationToken = default) =>
+        _fileOpsController.CreateEntryInCurrentPaneAsync(this, name, isDirectory: true, cancellationToken);
 
-    public async Task<string> CreateFolderInCurrentPaneAsync(string name, CancellationToken cancellationToken = default)
-        => await CreateEntryInCurrentPaneAsync(name, isDirectory: true, cancellationToken).ConfigureAwait(false);
+    public Task<string> CreateFileInCurrentPaneAsync(string name, CancellationToken cancellationToken = default) =>
+        _fileOpsController.CreateEntryInCurrentPaneAsync(this, name, isDirectory: false, cancellationToken);
 
-    public async Task<string> CreateFileInCurrentPaneAsync(string name, CancellationToken cancellationToken = default)
-        => await CreateEntryInCurrentPaneAsync(name, isDirectory: false, cancellationToken).ConfigureAwait(false);
-
-    public async Task<string> CreateShortcutInCurrentPaneAsync(
+    public Task<string> CreateShortcutInCurrentPaneAsync(
         string name,
         string targetPath,
         string? arguments = null,
         string? workingDirectory = null,
         string? iconPath = null,
-        CancellationToken cancellationToken = default)
-    {
-        var ops = RequireFileOps();
-        var target = Normalize(ActivePane);
-        var path = Pane(target).Path;
-        var result = await ops.CreateShortcutAsync(
-            path,
+        CancellationToken cancellationToken = default) =>
+        _fileOpsController.CreateShortcutInCurrentPaneAsync(
+            this,
             name,
             targetPath,
             arguments,
             workingDirectory,
             iconPath,
-            cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        Undo.PushCreateShortcut(path, name, targetPath, arguments, workingDirectory, iconPath, result, ops);
-        SelectPathForRefresh(target, result);
-        await RefreshAffectedPanesAsync([path, result], cancellationToken).ConfigureAwait(false);
-        MarkPathSelectedAfterRefresh(target, result, $"Created {PathRules.Basename(result)}");
-        return result;
-    }
+            cancellationToken);
 
-    private async Task<string> CreateEntryInCurrentPaneAsync(
+    public Task TrashSelectedAsync(string[] selectedPaths, CancellationToken cancellationToken = default) =>
+        _fileOpsController.TrashSelectedAsync(this, selectedPaths, cancellationToken);
+
+    public Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken cancellationToken = default) =>
+        _fileOpsController.RestoreRecycleBinAsync(this, paths, cancellationToken);
+
+    public Task EmptyRecycleBinAsync(CancellationToken cancellationToken = default) =>
+        _fileOpsController.EmptyRecycleBinAsync(this, cancellationToken);
+
+    public Task DeleteSelectedAsync(string path, CancellationToken cancellationToken = default) =>
+        _fileOpsController.DeleteSelectedAsync(this, path, cancellationToken);
+
+    public Task<string> RenameSelectedAsync(string path, string newName, CancellationToken cancellationToken = default) =>
+        _fileOpsController.RenameSelectedAsync(this, path, newName, cancellationToken);
+
+    public Task OpenFileAsync(string path, CancellationToken cancellationToken = default) =>
+        RequireFileOps().OpenFileAsync(path, cancellationToken);
+
+    public Task RevealInFolderAsync(string path, CancellationToken cancellationToken = default) =>
+        RequireFileOps().RevealInFolderAsync(path, cancellationToken);
+
+    public Task PackIntoFolderAsync(string[] sources, string folderName, CancellationToken cancellationToken = default) =>
+        _fileOpsController.PackIntoFolderAsync(this, sources, folderName, cancellationToken);
+
+    public Task UnpackFolderAsync(string folderPath, CancellationToken cancellationToken = default) =>
+        _fileOpsController.UnpackFolderAsync(this, folderPath, cancellationToken);
+
+    public Task CopyOrMoveToOtherPaneAsync(
+        string[] sources,
+        bool move,
+        string conflictAction = "keep-both",
+        CancellationToken cancellationToken = default) =>
+        _fileOpsController.CopyOrMoveToOtherPaneAsync(this, sources, move, conflictAction, cancellationToken);
+
+    public void RememberClipboard() =>
+        _operationLog.RememberClipboard(Clipboard);
+
+    public void RememberOperation(
+        string kind,
+        string description,
+        string[] sources,
+        string destination,
+        bool move,
+        string status = "completed") =>
+        _operationLog.RememberOperation(kind, description, sources, destination, move, status);
+
+    public Task RetryOperationAsync(OperationRecord record, CancellationToken cancellationToken = default) =>
+        _fileOpsController.RetryOperationAsync(this, record, cancellationToken);
+
+    public void AddBookmark(string path) =>
+        _places.AddBookmark(this, path);
+
+    public void RemoveBookmark(string path) =>
+        _places.RemoveBookmark(this, path);
+
+    public void ClearRecentHistory() =>
+        _places.ClearRecentHistory(this);
+
+    public Task SaveSmartFolderAsync(SmartFolder folder, CancellationToken cancellationToken = default) =>
+        _places.SaveSmartFolderAsync(this, folder, cancellationToken);
+
+    public Task DeleteSmartFolderAsync(string id, CancellationToken cancellationToken = default) =>
+        _places.DeleteSmartFolderAsync(this, id, cancellationToken);
+
+    public Task SaveCurrentSearchAsSmartFolderAsync(
         string name,
-        bool isDirectory,
-        CancellationToken cancellationToken)
-    {
-        var ops = RequireFileOps();
-        var target = Normalize(ActivePane);
-        var path = Pane(target).Path;
-        var result = isDirectory
-            ? await ops.CreateFolderAsync(path, name, cancellationToken).ConfigureAwait(false)
-            : await ops.CreateFileAsync(path, name, cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        Undo.PushCreate(path, name, result, isDirectory, ops);
-        SelectPathForRefresh(target, result);
-        await RefreshAffectedPanesAsync([path, result], cancellationToken).ConfigureAwait(false);
-        MarkPathSelectedAfterRefresh(target, result, $"Created {PathRules.Basename(result)}");
-        return result;
-    }
+        SearchOptions options,
+        CancellationToken cancellationToken = default) =>
+        _places.SaveSearchAsSmartFolderAsync(this, name, options, cancellationToken);
 
-    public async Task TrashSelectedAsync(string[] selectedPaths, CancellationToken cancellationToken = default)
-    {
-        var ops = RequireFileOps();
-        var recycleBinPaths = await ops.TrashAsync(selectedPaths, cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        Undo.PushTrash(selectedPaths, recycleBinPaths, ops);
-        await RefreshAffectedPanesAsync([.. selectedPaths, .. recycleBinPaths], cancellationToken).ConfigureAwait(false);
-    }
+    public Task SetColorLabelAsync(string[] paths, long tagId, CancellationToken cancellationToken = default) =>
+        _tags.SetColorLabelAsync(this, paths, tagId, cancellationToken);
 
-    public async Task<string[]> RestoreRecycleBinAsync(string[] paths, CancellationToken cancellationToken = default)
-    {
-        var restored = await RequireFileOps().RestoreRecycleBinAsync(paths, cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        await RefreshAffectedPanesAsync([.. paths, .. restored], cancellationToken).ConfigureAwait(false);
-        return restored;
-    }
+    public Task RemoveColorLabelAsync(string[] paths, CancellationToken cancellationToken = default) =>
+        _tags.RemoveColorLabelAsync(this, paths, cancellationToken);
 
-    public async Task EmptyRecycleBinAsync(CancellationToken cancellationToken = default)
-    {
-        await RequireFileOps().EmptyRecycleBinAsync(cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        await RefreshAffectedPanesAsync([PathRules.RecycleBinPath], cancellationToken).ConfigureAwait(false);
-    }
+    public void SetTagFilter(long? tagId) =>
+        _tags.SetTagFilter(this, tagId);
 
-    public async Task DeleteSelectedAsync(string path, CancellationToken cancellationToken = default)
-    {
-        await RequireFileOps().DeleteAsync(path, cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        await RefreshAffectedPanesAsync([path], cancellationToken).ConfigureAwait(false);
-    }
+    public Task UpdateTagAsync(long id, string name, string color) =>
+        _tags.UpdateTagAsync(this, id, name, color);
 
-    public async Task<string> RenameSelectedAsync(string path, string newName, CancellationToken cancellationToken = default)
-    {
-        var ops = RequireFileOps();
-        var target = Normalize(ActivePane);
-        var result = await ops.RenameAsync(path, newName, cancellationToken).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-        Undo.PushRename(path, result, ops);
-        SelectPathForRefresh(target, result);
-        await RefreshAffectedPanesAsync([path, result], cancellationToken).ConfigureAwait(false);
-        MarkPathSelectedAfterRefresh(target, result, $"Renamed to {PathRules.Basename(result)}");
-        return result;
-    }
+    public Task DeleteTagDefinitionAsync(long id) =>
+        _tags.DeleteTagDefinitionAsync(this, id);
 
-    public async Task OpenFileAsync(string path, CancellationToken cancellationToken = default)
-    {
-        await RequireFileOps().OpenFileAsync(path, cancellationToken).ConfigureAwait(false);
-    }
+    public IReadOnlyList<string> FilesWithTag(long tagId) =>
+        _tags.FilesWithTag(tagId);
 
-    public async Task RevealInFolderAsync(string path, CancellationToken cancellationToken = default)
-    {
-        await RequireFileOps().RevealInFolderAsync(path, cancellationToken).ConfigureAwait(false);
-    }
+    public Task LoadTreeChildrenAsync(string path, CancellationToken cancellationToken = default) =>
+        _folderTree.LoadChildrenAsync(this, path, cancellationToken);
 
-    public void AddBookmark(string path)
-    {
-        Bookmarks = PlacesStore.AddBookmark(Bookmarks, path);
-        RaiseChanged();
-    }
+    public void ToggleTreeExpanded(string path) =>
+        _folderTree.ToggleExpanded(this, path);
 
-    public void RemoveBookmark(string path)
-    {
-        Bookmarks = PlacesStore.RemoveBookmark(Bookmarks, path);
-        RaiseChanged();
-    }
+    public Task ApplyGitStatusesAsync(CancellationToken cancellationToken = default) =>
+        ApplyGitStatusesAsync(ActivePane, cancellationToken);
 
-    public void ClearRecentHistory()
-    {
-        if (RecentPaths.Count == 0)
-        {
-            return;
-        }
+    public Task ApplyGitStatusesAsync(PaneId pane, CancellationToken cancellationToken = default) =>
+        _enrichment.ApplyGitStatusesAsync(this, pane, cancellationToken);
 
-        RecentPaths = [];
-        RaiseChanged();
-    }
+    public void ClearGitStatuses() =>
+        _enrichment.ClearGitStatuses(this);
 
+    public Task FillFolderSizesAsync(CancellationToken cancellationToken = default) =>
+        FillFolderMetricsAsync(ActivePane, includeSizes: Settings.ShowFolderSizes, includeItemCounts: false, cancellationToken);
+
+    public Task FillFolderMetricsAsync(
+        PaneId pane,
+        bool includeSizes,
+        bool includeItemCounts,
+        CancellationToken cancellationToken = default) =>
+        _enrichment.FillFolderMetricsAsync(this, pane, includeSizes, includeItemCounts, cancellationToken);
 }
-

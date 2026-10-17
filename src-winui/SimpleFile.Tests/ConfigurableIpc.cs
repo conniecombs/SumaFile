@@ -356,6 +356,64 @@ internal sealed class ConfigurableIpc : NullIpc
         return CancelFolderMetricsHandler?.Invoke(ct) ?? Task.CompletedTask;
     }
 
+    public List<Tag> Tags { get; } = [];
+    public Dictionary<string, Tag> FileTags { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public override Task<Tag[]> GetAllTagsAsync(CancellationToken ct = default)
+        => Task.FromResult(Tags.ToArray());
+
+    public override Task<Tag> CreateTagAsync(string name, string color, CancellationToken ct = default)
+    {
+        var tag = new Tag
+        {
+            Id = Tags.Count + 1,
+            Name = name,
+            Color = color,
+        };
+        Tags.Add(tag);
+        return Task.FromResult(tag);
+    }
+
+    public override Task<Tag> UpdateTagAsync(long id, string name, string color, CancellationToken ct = default)
+    {
+        var tag = Tags.First(candidate => candidate.Id == id);
+        tag.Name = name;
+        tag.Color = color;
+        return Task.FromResult(tag);
+    }
+
+    public override Task DeleteTagAsync(long id, CancellationToken ct = default)
+    {
+        Tags.RemoveAll(candidate => candidate.Id == id);
+        foreach (var key in FileTags.Where(pair => pair.Value.Id == id).Select(pair => pair.Key).ToArray())
+        {
+            FileTags.Remove(key);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public override Task SetTagsForPathAsync(string path, long[] tagIds, CancellationToken ct = default)
+    {
+        if (tagIds.Length == 0)
+        {
+            FileTags.Remove(path);
+        }
+        else
+        {
+            var tag = Tags.FirstOrDefault(candidate => candidate.Id == tagIds[0]);
+            if (tag is not null)
+            {
+                FileTags[path] = tag;
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public override Task<Dictionary<string, Tag>> GetAllFileTagsAsync(CancellationToken ct = default)
+        => Task.FromResult(new Dictionary<string, Tag>(FileTags, StringComparer.OrdinalIgnoreCase));
+
     public override Task<SmartFolder[]> LoadSmartFoldersAsync(CancellationToken ct = default)
         => LoadSmartFoldersHandler?.Invoke(ct) ?? throw NotConfigured();
 
