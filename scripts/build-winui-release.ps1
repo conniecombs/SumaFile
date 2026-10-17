@@ -178,26 +178,37 @@ function Copy-BundledArchiveTools {
 }
 
 function Get-Sha256Hash {
-    param([Parameter(Mandatory = $true)][string]$Path)
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$Attempts = 10,
+        [int]$DelayMilliseconds = 500
+    )
 
-    $fileHashCommand = Get-Command "Get-FileHash" -ErrorAction SilentlyContinue
-    if ($fileHashCommand) {
-        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
-    }
-
-    $stream = [System.IO.File]::OpenRead($Path)
-    try {
-        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
         try {
-            $hashBytes = $sha256.ComputeHash($stream)
-            return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
+            $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+            try {
+                $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $hashBytes = $sha256.ComputeHash($stream)
+                    return ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
+                }
+                finally {
+                    $sha256.Dispose()
+                }
+            }
+            finally {
+                $stream.Dispose()
+            }
         }
-        finally {
-            $sha256.Dispose()
+        catch {
+            if ($attempt -lt $Attempts) {
+                Start-Sleep -Milliseconds $DelayMilliseconds
+                continue
+            }
+            throw
         }
-    }
-    finally {
-        $stream.Dispose()
     }
 }
 
