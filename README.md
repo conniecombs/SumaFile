@@ -416,6 +416,7 @@ Run these from the repository root.
 | `npm run dev` | Build service and run the WinUI app |
 | `npm run build:winui` | Build the WinUI solution in Debug |
 | `npm run check:winui` | Run the WinUI xUnit suite |
+| `npm run check:winui-release-hash` | Verify production release artifact hashing |
 | `npm run check:rust` | Rust format check, tests, and Clippy with warnings denied |
 | `npm run check` | Repo guard scripts for IPC, identity, updater, workflows, packaging, and parity |
 | `npm run check:release` | `check` + Rust checks + dependency audit |
@@ -423,6 +424,7 @@ Run these from the repository root.
 | `npm run release:build` | Local release pipeline alias |
 | `npm run generate:ipc-bindings` | Regenerate schema-derived Rust/C# IPC bindings |
 | `npm run smoke:winui` | Launch smoke for built payload |
+| `npm run smoke:winui-ui` | Real WinUI rendering, large-folder measurements, layout, navigation, and cancellation checks |
 | `npm run smoke:winui-file-ops` | File operation smoke |
 | `npm run smoke:winui-msi` | MSI extraction/launch smoke |
 | `npm run smoke:winui-installer` | NSIS install/launch/uninstall smoke |
@@ -490,6 +492,8 @@ Recommended local development gate:
 ```powershell
 npm run build:winui
 npm run check:winui
+npm run check:winui-release-hash
+npm run smoke:winui-ui
 npm run check
 npm run check:rust
 git diff --check
@@ -519,6 +523,8 @@ npm run smoke:winui-upgrade
 | `check:winui-packaging` | NSIS/MSI/release-script contracts |
 | `check:winui-parity-gate` | WinUI parity rows remain PASS/WAIVED |
 | `check:winui` | xUnit app/core/IPC tests |
+| `check:winui-release-hash` | Production SHA-256 known vectors and artifact access/error behavior |
+| `smoke:winui-ui` | Real Debug host/service rendering, virtualization, layout, selection, navigation, and cancellation; see [runtime verification](docs/WINUI_RUNTIME_VERIFICATION.md) |
 | `check:rust` | Rust fmt, tests, and Clippy |
 | `check:security` | Rust dependency audit |
 

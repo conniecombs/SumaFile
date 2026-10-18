@@ -44,6 +44,47 @@ fn write_test_zip(zip_path: &Path, entries: &[(&str, &[u8])]) {
     zip.finish().expect("finish test zip");
 }
 
+#[test]
+fn zip_unicode_names_round_trip_through_listing_and_extraction() {
+    let root = unique_temp_dir("zip-unicode-name");
+    let archive = root.join("unicode.zip");
+    write_test_zip(&archive, &[("café/資料.txt", b"unicode content")]);
+    let listing = list_archive(archive.to_string_lossy().into_owned()).expect("list Unicode ZIP");
+    assert!(listing.unsafe_entries.is_empty());
+    assert_eq!(listing.entries[0].path, "café/資料.txt");
+    let destination = root.join("out");
+    fs::create_dir(&destination).expect("create output");
+    extract_zip(&archive.to_string_lossy(), &destination).expect("extract Unicode ZIP");
+    assert_eq!(
+        fs::read(destination.join("café/資料.txt")).unwrap(),
+        b"unicode content"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn zip_legacy_cp437_names_round_trip_through_listing_and_extraction() {
+    let root = unique_temp_dir("zip-cp437-name");
+    let archive = root.join("legacy.zip");
+    write_test_zip(&archive, &[("cafx.txt", b"payload")]);
+    let mut bytes = fs::read(&archive).unwrap();
+    // Legacy ZIP names are not necessarily UTF-8: 0x82 is e-acute in CP437.
+    for offset in 0..bytes.len() - 7 {
+        if &bytes[offset..offset + 8] == b"cafx.txt" {
+            bytes[offset + 3] = 0x82;
+        }
+    }
+    fs::write(&archive, bytes).unwrap();
+    let listing = list_archive(archive.to_string_lossy().into_owned()).expect("list legacy ZIP");
+    assert!(listing.unsafe_entries.is_empty());
+    assert_eq!(listing.entries[0].path, "café.txt");
+    let destination = root.join("out");
+    fs::create_dir(&destination).unwrap();
+    extract_zip(&archive.to_string_lossy(), &destination).expect("extract legacy ZIP");
+    assert_eq!(fs::read(destination.join("café.txt")).unwrap(), b"payload");
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn write_test_tar(tar_path: &Path, entries: &[(&str, &[u8])]) {
     let file = fs::File::create(tar_path).expect("create test tar");
     let mut archive = tar::Builder::new(file);

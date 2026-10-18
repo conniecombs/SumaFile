@@ -144,5 +144,23 @@ jobs:
       - name: Run WinUI tests
         run: npm run check:winui
 
+      - name: Build WinUI application and XAML
+        run: npm run build:winui
+
+      - name: Verify release artifact hashing
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-winui-release-hash.ps1
+
+      - name: Smoke WinUI rendering, layout, and cancellation
+        run: npm run smoke:winui-ui -- -Counts 10000
+
+      - name: Upload WinUI runtime reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sumafile-winui-runtime
+          path: test-results/ui-smoke/**/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Check WinUI packaging surface
         run: node scripts/check-winui-packaging.mjs

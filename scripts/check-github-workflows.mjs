@@ -79,6 +79,10 @@ const ciSnippets = [
     actionPins.setupDotnet,
     'dotnet-version: 10.0.x',
     'npm run check:winui',
+    'npm run build:winui',
+    'scripts/check-winui-release-hash.ps1',
+    'npm run smoke:winui-ui -- -Counts 10000',
+    'test-results/ui-smoke/**/report.json',
     'cargo build -p simplefile-service --locked --release',
 ];
 
@@ -176,6 +180,8 @@ for (const snippet of releaseBuildSnippets) {
 }
 
 const installerSmokeSnippets = [
+    'npm run smoke:winui-ui',
+    'test-results/ui-smoke/**/report.json',
     'workflow_dispatch:',
     'schedule:',
     "cron: '0 6 * * *'",

@@ -66,19 +66,6 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
-    public void FileListStackModes_AvoidVirtualizingPanelArrangeDrift()
-    {
-        var root = FindRepoRoot();
-        var app = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "App.xaml"));
-        var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
-
-        Assert.Contains("<ItemsPanelTemplate x:Key=\"SfStackItemsPanelTemplate\">", app);
-        Assert.Contains("<StackPanel Orientation=\"Vertical\" />", app);
-        Assert.DoesNotContain("<ItemsStackPanel Orientation=\"Vertical\" />", app);
-        Assert.Contains("var itemsPanelKey = usesTiles ? \"SfWrapItemsPanelTemplate\" : \"SfStackItemsPanelTemplate\"", mainWindow);
-    }
-
-    [Fact]
     public void MainWindow_CoalescesWorkspaceSyncDuringDirectoryListings()
     {
         var root = FindRepoRoot();

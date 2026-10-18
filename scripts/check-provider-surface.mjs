@@ -10,6 +10,7 @@ const ignoredDirectories = new Set([
   'dist',
   'build',
   'build_notes',
+  'test-results',
 ]);
 
 const ignoredFiles = new Set([
@@ -96,7 +97,7 @@ function collectFiles(directory) {
     if (shouldSkip(rel)) continue;
 
     if (entry.isDirectory()) {
-      files.push(...collectFiles(absolute));
+      for (const file of collectFiles(absolute)) files.push(file);
     } else if (
       entry.isFile()
       && (searchableExtensions.has(extname(entry.name).toLowerCase()) || searchableFiles.has(rel))

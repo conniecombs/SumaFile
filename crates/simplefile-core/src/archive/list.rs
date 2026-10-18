@@ -34,18 +34,23 @@ fn list_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
     let mut compressed_size = 0u64;
     for i in 0..archive.len() {
         let file = archive.by_index(i).map_err(|e| e.to_string())?;
-        let entry_path = file.name().to_string();
+        let entry_path = match file.name() {
+            Ok(name) => name.into_owned(),
+            Err(_) => {
+                unsafe_entries.push(String::from_utf8_lossy(file.name_raw()).into_owned());
+                continue;
+            }
+        };
         if listing_entry_relative_path(ArchiveFormat::Zip, &entry_path).is_err() {
             unsafe_entries.push(entry_path);
             continue;
         }
 
         let entry = ArchiveEntry {
-            name: file
-                .name()
+            name: entry_path
                 .split('/')
                 .next_back()
-                .unwrap_or(file.name())
+                .unwrap_or(&entry_path)
                 .to_string(),
             path: entry_path,
             is_dir: file.is_dir(),

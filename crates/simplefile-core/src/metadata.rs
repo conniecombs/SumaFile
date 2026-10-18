@@ -892,7 +892,9 @@ fn extract_zip_archive_metadata(path: &Path, format_label: &str) -> Result<FileM
             uncompressed = uncompressed.saturating_add(file.size());
             compressed = compressed.saturating_add(file.compressed_size());
             if names.len() < 8 {
-                names.push(file.name().replace('\\', "/"));
+                if let Ok(name) = file.name() {
+                    names.push(name.replace('\\', "/"));
+                }
             }
         }
     }
@@ -1278,7 +1280,8 @@ fn count_zip_prefix<R: Read + Seek>(archive: &mut ZipArchive<R>, prefix: &str) -
     let mut count = 0usize;
     for index in 0..archive.len() {
         if let Ok(file) = archive.by_index(index) {
-            let name = file.name().replace('\\', "/");
+            let Ok(name) = file.name() else { continue };
+            let name = name.replace('\\', "/");
             if name.starts_with(prefix)
                 && name.ends_with(".xml")
                 && !name.contains("/_rels/")
@@ -1295,7 +1298,8 @@ fn count_zip_suffixes<R: Read + Seek>(archive: &mut ZipArchive<R>, suffixes: &[&
     let mut count = 0usize;
     for index in 0..archive.len() {
         if let Ok(file) = archive.by_index(index) {
-            let name = file.name().to_ascii_lowercase();
+            let Ok(name) = file.name() else { continue };
+            let name = name.to_ascii_lowercase();
             if suffixes.iter().any(|suffix| name.ends_with(suffix)) {
                 count += 1;
             }
@@ -1310,7 +1314,8 @@ fn find_zip_entry_by_suffix<R: Read + Seek>(
 ) -> Option<String> {
     for index in 0..archive.len() {
         if let Ok(file) = archive.by_index(index) {
-            let name = file.name().replace('\\', "/");
+            let Ok(name) = file.name() else { continue };
+            let name = name.replace('\\', "/");
             if name.to_ascii_lowercase().ends_with(suffix) {
                 return Some(name);
             }

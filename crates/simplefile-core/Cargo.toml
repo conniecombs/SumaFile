@@ -28,7 +28,7 @@ unrar = "0.5"
 exif = { package = "kamadak-exif", version = "0.6" }
 lopdf = { version = "0.45", default-features = false }
 lofty = "0.25"
-zip = { version = "8", default-features = false, features = ["bzip2", "deflate64", "deflate", "lzma", "ppmd", "time", "zstd", "xz"] }
+zip = { version = "9", default-features = false, features = ["bzip2", "deflate64", "deflate", "lzma", "ppmd", "time", "zstd", "xz"] }
 ureq = "3"
 
 [target.'cfg(windows)'.dependencies]

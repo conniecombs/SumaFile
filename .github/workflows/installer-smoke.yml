@@ -125,6 +125,9 @@ jobs:
       - name: Smoke WinUI packaged file operations
         run: npm run smoke:winui-file-ops
 
+      - name: Smoke WinUI large-folder rendering and layout
+        run: npm run smoke:winui-ui
+
       - name: Smoke WinUI MSI extract and launch
         run: npm run smoke:winui-msi
 
@@ -149,5 +152,6 @@ jobs:
             dist/winui/SumaFile_*_x64-winui-setup.exe
             dist/winui/SumaFile_*_x64-winui.msi
             dist/winui/latest-winui.json
+            test-results/ui-smoke/**/report.json
           if-no-files-found: warn
           retention-days: 14

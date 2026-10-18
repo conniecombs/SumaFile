@@ -178,7 +178,7 @@
             </Style>
 
             <ItemsPanelTemplate x:Key="SfStackItemsPanelTemplate">
-                <StackPanel Orientation="Vertical" />
+                <ItemsStackPanel Orientation="Vertical" />
             </ItemsPanelTemplate>
 
             <ItemsPanelTemplate x:Key="SfWrapItemsPanelTemplate">

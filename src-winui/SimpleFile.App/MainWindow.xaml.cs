@@ -212,7 +212,12 @@ public sealed partial class MainWindow : Window
             timer.Mark("backend-started", backend.ServicePath);
             var client = backend.Client
                 ?? throw new InvalidOperationException("IPC service started without an active client.");
-            var fileOps = new FileOperationService(client, OperationJournal.CreateDefault());
+            var journal = OperationJournal.CreateDefault();
+#if DEBUG
+            if (UiSmokeRoot() is { } smokeRoot)
+                journal = new OperationJournal(System.IO.Path.Combine(smokeRoot, "operations.jsonl"));
+#endif
+            var fileOps = new FileOperationService(client, journal);
             _workspace = new ExplorerWorkspace(_backend, fileOps);
             AppServices.Configure(_workspace);
             _search = AppServices.GetRequired<SearchViewModel>();
@@ -237,12 +242,24 @@ public sealed partial class MainWindow : Window
             SyncFromWorkspace();
             timer.Mark("first-sync");
             timer.Mark("ready");
+#if DEBUG
+            if (await RunUiSmokeIfRequestedAsync()) return;
+#endif
             QueueDeferredStartupNavigation(_workspace);
         }
         catch (Exception exception)
         {
             timer.Mark("failed", exception.Message);
             await CleanupSessionAsync(saveWorkspace: false, unwatchDirectory: true);
+#if DEBUG
+            if (UiSmokeRoot() is { } smokeRoot)
+            {
+                await File.WriteAllTextAsync(System.IO.Path.Combine(smokeRoot, "report.json"),
+                    System.Text.Json.JsonSerializer.Serialize(new { passed = false, failure = exception.ToString() }));
+                Close();
+                return;
+            }
+#endif
             ShowMessage(
                 "Could not start or reach the IPC service.",
                 exception.Message

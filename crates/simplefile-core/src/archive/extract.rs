@@ -41,7 +41,10 @@ pub(super) fn extract_zip(path: &str, dest: &Path) -> Result<(), String> {
     let mut planned_paths = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
         let file = archive.by_index(i).map_err(|e| e.to_string())?;
-        planned_paths.push(zip_entry_relative_path(file.name())?);
+        let name = file
+            .name()
+            .map_err(|e| format!("Invalid ZIP entry name: {e}"))?;
+        planned_paths.push(zip_entry_relative_path(&name)?);
     }
 
     let root_remap = top_level_remap(&dest_canonical, &planned_paths);
@@ -304,7 +307,10 @@ fn extract_zip_entry(
     let mut declared_total = 0u64;
     for i in 0..archive.len() {
         let file = archive.by_index(i).map_err(|e| e.to_string())?;
-        let relative_path = zip_entry_relative_path(file.name())?;
+        let name = file
+            .name()
+            .map_err(|e| format!("Invalid ZIP entry name: {e}"))?;
+        let relative_path = zip_entry_relative_path(&name)?;
         if !path_is_within_prefix(&relative_path, inner_path) {
             continue;
         }
