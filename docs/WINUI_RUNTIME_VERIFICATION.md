@@ -9,6 +9,7 @@ smaller PR-sized run:
 ```powershell
 npm run smoke:winui-ui
 npm run smoke:winui-ui -- -SkipBuild -Counts 10000
+npm run smoke:winui-ui -- -SkipBuild -Counts 10000 -MaxWindowWidth 1000
 ```
 
 The harness exists only in Debug builds. It starts after the normal backend
@@ -30,8 +31,11 @@ contain the scenario runner. No user settings or folders are modified.
   late chunks from the previous folder cannot repaint the pane.
 - Both panes are exercised at logical window widths 1,000, 1,280 and 1,920 while
   changing List, Tiles and Details views. Details may use its existing narrow
-  pane fallback; at least one real Details view and one narrow-pane fallback
-  must run. Window sizes account for DPI scaling and the divider is recentered
+  pane fallback. A full-width single pane also cycles through all views and
+  must render real Details; narrow dual panes must exercise the fallback.
+  Requested window sizes may be capped by the desktop. `-MaxWindowWidth 1000`
+  reproduces that constraint locally without changing the desktop resolution.
+  Window sizes account for DPI scaling and the divider is recentered
   at each size (the product normally preserves its stored pixel width).
   Actual pane widths and the effective view are included in the report. These
   checks replace the former source-text assertion requiring a nonvirtualized

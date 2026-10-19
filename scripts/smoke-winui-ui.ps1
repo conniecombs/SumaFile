@@ -4,6 +4,8 @@ param(
     [int[]]$Counts = @(10000, 100000),
     [switch]$SkipBuild,
     [switch]$Baseline,
+    [ValidateRange(1000, 3840)]
+    [int]$MaxWindowWidth = 3840,
     [int]$TimeoutSeconds = 600
 )
 $ErrorActionPreference = 'Stop'
@@ -42,6 +44,7 @@ $start.WorkingDirectory = Split-Path -Parent $exe
 $start.UseShellExecute = $false
 $start.EnvironmentVariables['SIMPLEFILE_UI_SMOKE_ROOT'] = $testRoot
 $start.EnvironmentVariables['SIMPLEFILE_UI_SMOKE_BASELINE'] = $(if ($Baseline) { '1' } else { '0' })
+$start.EnvironmentVariables['SIMPLEFILE_UI_SMOKE_MAX_WIDTH'] = [string]$MaxWindowWidth
 $start.EnvironmentVariables['SIMPLEFILE_SERVICE_PATH'] = $service
 $start.EnvironmentVariables['SIMPLEFILE_APP_DATA_DIR'] = Join-Path $testRoot 'state'
 $start.EnvironmentVariables['SIMPLEFILE_METADATA_DB'] = Join-Path $testRoot 'state\metadata.db'

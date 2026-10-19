@@ -1,0 +1,102 @@
+name: Bounded maintenance
+on:
+  workflow_run:
+    workflows: [CI, Installer smoke]
+    types: [completed]
+  schedule:
+    - cron: '30 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      recipe:
+        description: Bounded maintenance recipe
+        type: choice
+        options: [toolchains, generated, rustfmt, release]
+        default: toolchains
+      version:
+        description: Version for release preparation only (does not publish a release)
+        type: string
+        required: false
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: bounded-maintenance
+  cancel-in-progress: false
+jobs:
+  assess:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-22.04
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+      recipe: ${{ steps.plan.outputs.recipe }}
+      source: ${{ steps.plan.outputs.source }}
+      run_id: ${{ steps.plan.outputs.run_id }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - id: plan
+        run: node scripts/plan-maintenance.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Flag failures needing review
+        if: steps.plan.outputs.action == 'review'
+        run: exit 1
+  retry:
+    needs: assess
+    if: needs.assess.outputs.action == 'retry'
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Retry failed jobs once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ needs.assess.outputs.run_id }}
+        run: node scripts/retry-maintenance.mjs
+  prepare:
+    needs: assess
+    if: needs.assess.outputs.action == 'prepare'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      MAINTENANCE_RECIPE: ${{ needs.assess.outputs.recipe }}
+      MAINTENANCE_SOURCE: ${{ needs.assess.outputs.source }}
+      RELEASE_VERSION: ${{ needs.assess.outputs.version }}
+    steps:
+      - name: Checkout assessed default-branch commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.assess.outputs.source }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - uses: ./.github/actions/setup-rust
+      - run: npm ci --ignore-scripts
+      - name: Apply the bounded recipe
+        run: node scripts/prepare-maintenance.mjs
+      - name: Check generated proposal
+        run: |
+          npm run check
+          npm run test:maintenance
+      - name: Open or recover one proposal and dispatch full CI
+        run: node scripts/publish-maintenance.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}

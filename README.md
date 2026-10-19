@@ -372,9 +372,9 @@ Press `F1` or `Ctrl+?` in SumaFile for the live shortcut list.
 | Tool | Version | Purpose |
 | --- | --- | --- |
 | Windows | Windows 10 2004+ or Windows 11 x64 | Target platform |
-| Node.js | 24+ | Root scripts and checks |
-| Rust | Stable MSVC toolchain | `simplefile-core`, `simplefile-ipc`, `simplefile-service` |
-| .NET SDK | 10+ | WinUI solution and tests |
+| Node.js | Exact version in `.node-version` | Root scripts and checks; run `npm ci --ignore-scripts` |
+| Rust | Exact MSVC toolchain in `rust-toolchain.toml` | `simplefile-core`, `simplefile-ipc`, `simplefile-service` |
+| .NET SDK | Exact version in `global.json` | WinUI solution and tests |
 | Windows SDK | 10.0.19041+ | WinUI target platform |
 | NSIS | Optional | NSIS setup executable |
 | WiX v3 | Optional | MSI package |
@@ -420,6 +420,10 @@ Run these from the repository root.
 | `npm run check:rust` | Rust format check, tests, and Clippy with warnings denied |
 | `npm run check` | Repo guard scripts for IPC, identity, updater, workflows, packaging, and parity |
 | `npm run check:release` | `check` + Rust checks + dependency audit |
+| `npm run test:maintenance` | Failure classification, required gates, update/merge policy, and mocked PR recovery |
+| `npm run maintenance:plan` | Offline preview of GitHub protection/settings; applies nothing |
+| `npm run maintenance:toolchains` | Read-only preview from official toolchain release feeds |
+| `npm run release:prepare -- VERSION` | Preview a coordinated release-version change; add `--write` to apply locally |
 | `npm run build` | Build release payload/installers through the WinUI release script |
 | `npm run release:build` | Local release pipeline alias |
 | `npm run generate:ipc-bindings` | Regenerate schema-derived Rust/C# IPC bindings |
@@ -577,6 +581,7 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Near-term priorities and branch scope |
 | [docs/FEATURE_OPPORTUNITIES.md](docs/FEATURE_OPPORTUNITIES.md) | Candidate product gaps and recently closed gaps |
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Contributor workflow and expectations |
+| [docs/CI_MAINTENANCE.md](docs/CI_MAINTENANCE.md) | Pinned toolchains, bounded repair, update PRs, merge gates, and separate activation steps |
 | [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
 | [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
 | [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | Signed updater releases |

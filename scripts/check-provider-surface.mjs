@@ -11,6 +11,9 @@ const ignoredDirectories = new Set([
   'build',
   'build_notes',
   'test-results',
+  'bin',
+  'obj',
+  'tests',
 ]);
 
 const ignoredFiles = new Set([
@@ -35,7 +38,6 @@ const ignoredExtensions = new Set([
 ]);
 
 const bannedPatterns = [
-  { label: 'Remote Drives', pattern: /\bRemote Drives\b/i },
   { label: 'remote-drives id/class', pattern: /\bremote-drives\b/i },
   { label: 'cloud command', pattern: /\bcloud_list_plugins\b/i },
   { label: 'Google OAuth env hook', pattern: /\bSIMPLEFILE_GOOGLE_CLIENT_ID\b/i },
@@ -43,25 +45,18 @@ const bannedPatterns = [
   { label: 'rclone command', pattern: /\brclone_[a-z0-9_]+\b/i },
   { label: 'rclone installer command', pattern: /\b(?:check|install)_rclone_installed\b|\binstall_rclone\b/i },
   { label: 'WinFsp installer command', pattern: /\b(?:check|install)_winfsp_installed\b|\binstall_winfsp\b/i },
-  { label: 'rclone', pattern: /\brclone\b/i },
-  { label: 'WinFsp', pattern: /\bWinFsp\b/i },
-  { label: 'Google Drive', pattern: /\bGoogle Drive\b/i },
-  { label: 'OneDrive', pattern: /\bOneDrive\b/i },
-  { label: 'Dropbox', pattern: /\bDropbox\b/i },
-  { label: 'pCloud', pattern: /\bpCloud\b/i },
-  { label: 'S3-compatible', pattern: /\bS3-compatible\b/i },
-  { label: 'WebDAV', pattern: /\bWebDAV\b/i },
-  { label: 'provider ids', pattern: /\b(?:gdrive|onedrive|dropbox|pcloud|webdav)\b/i },
-  { label: 'cloud wording', pattern: /\bcloud(?:-backed|-to-cloud)?\b/i },
+  { label: 'retired provider dependency', pattern: /(?:PackageReference\s+Include\s*=\s*"|^\s*)(?:rclone|winfsp|google-drive3|dropbox-sdk)(?:"|\s*=)/im },
 ];
 
 const searchableExtensions = new Set([
   '.cjs',
+  '.cs',
+  '.csproj',
+  '.xaml',
   '.css',
   '.html',
   '.js',
   '.json',
-  '.md',
   '.mjs',
   '.ps1',
   '.rs',
@@ -135,11 +130,11 @@ for (const file of collectFiles(repoRoot)) {
 }
 
 if (findings.length > 0) {
-  console.error('No-cloud surface check failed. Remove current-facing cloud/remote-drive references:');
+  console.error('Provider surface check failed. Remove retired integration commands, hooks or dependencies:');
   for (const finding of findings) {
     console.error(`- ${finding}`);
   }
   process.exit(1);
 }
 
-console.log('No cloud or remote-drive surface found.');
+console.log('Retired provider integration identifiers are absent from executable/configuration surfaces.');

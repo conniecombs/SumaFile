@@ -8,6 +8,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
+    <!-- Keep Debug restore and self-contained release publish on the same lock graph. -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <!-- Keep transient NuGet audit metadata outages from breaking local restores. -->
     <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1900</WarningsNotAsErrors>
     <LangVersion>latest</LangVersion>

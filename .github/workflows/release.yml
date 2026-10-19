@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release, for example v1.0.1'
-        required: true
+        description: 'Optional expected version; blank uses the checked-out manifests'
+        required: false
         type: string
       draft:
         description: 'Create the GitHub release as a draft'
@@ -38,48 +38,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
       - name: Resolve version
         id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-            DRAFT="${{ github.event.inputs.draft }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-            DRAFT="true"
-          fi
-
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Version must look like v1.0.1 or v1.0.1-beta.1" >&2
-            exit 1
-          fi
-
-          CORE_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' crates/simplefile-core/Cargo.toml | head -n1)"
-          IPC_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' crates/simplefile-ipc/Cargo.toml | head -n1)"
-          SERVICE_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' crates/simplefile-service/Cargo.toml | head -n1)"
-          WINUI_VERSION="$(python3 -c 'import re,sys; t=open("src-winui/Directory.Build.props").read(); print(re.search(r"<Version>([^<]+)</Version>", t).group(1))')"
-          TAG_VERSION="${VERSION#v}"
-
-          if [ "$CORE_VERSION" != "$TAG_VERSION" ] || [ "$IPC_VERSION" != "$TAG_VERSION" ] || [ "$SERVICE_VERSION" != "$TAG_VERSION" ] || [ "$WINUI_VERSION" != "$TAG_VERSION" ]; then
-            echo "Version mismatch: tag=$TAG_VERSION crates/simplefile-core/Cargo.toml=$CORE_VERSION crates/simplefile-ipc/Cargo.toml=$IPC_VERSION crates/simplefile-service/Cargo.toml=$SERVICE_VERSION Directory.Build.props=$WINUI_VERSION" >&2
-            exit 1
-          fi
-
-          if [[ "$VERSION" == *-* ]]; then
-            PRERELEASE="true"
-          else
-            PRERELEASE="false"
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
-          echo "draft=$DRAFT" >> "$GITHUB_OUTPUT"
+        run: node scripts/release-version.mjs --resolve
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_DRAFT: ${{ inputs.draft }}
 
   checks:
     name: Release quality gates
     needs: validate
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -87,14 +61,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
 
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .node-version
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -111,8 +85,14 @@ jobs:
       - name: Run Rust tests
         run: cargo test --locked --all-features
 
+      - name: Install repo tooling
+        run: npm ci --ignore-scripts
+
       - name: Run repo checks
         run: npm run check
+
+      - name: Test maintenance and release policy
+        run: npm run test:maintenance
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@v2
@@ -131,7 +111,7 @@ jobs:
       matrix:
         include:
           - name: Windows x64
-            os: windows-latest
+            os: windows-2025
             target: x86_64-pc-windows-msvc
 
     steps:
@@ -141,14 +121,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.target }}
 
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .node-version
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -193,7 +173,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: Install NSIS
         shell: pwsh

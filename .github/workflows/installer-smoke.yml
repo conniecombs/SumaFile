@@ -1,10 +1,10 @@
 name: Installer smoke
 
 # Builds unsigned WinUI NSIS/MSI packages and runs the WinUI smoke scripts.
-# Not on every PR: full packaging is expensive.
-# Trigger manually or via the nightly schedule before a release.
+# Also required by CI for dependency and maintenance proposals before automerge.
 
 on:
+  workflow_call:
   workflow_dispatch:
   schedule:
     # 06:00 UTC daily
@@ -23,7 +23,7 @@ env:
 jobs:
   windows-installer-smoke:
     name: Windows NSIS and MSI smoke
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 120
 
     steps:
@@ -33,14 +33,14 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
         with:
           targets: x86_64-pc-windows-msvc
 
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .node-version
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -85,7 +85,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: Install NSIS
         shell: pwsh

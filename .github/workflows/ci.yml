@@ -21,13 +21,13 @@ env:
 jobs:
   quality:
     name: Rust quality gate
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
 
@@ -55,10 +55,16 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .node-version
+
+      - name: Install repo tooling
+        run: npm ci --ignore-scripts
 
       - name: Run repo checks
         run: npm run check
+
+      - name: Test maintenance policies
+        run: npm run test:maintenance
 
   security:
     name: Security checks
@@ -70,10 +76,10 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .node-version
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@v2
@@ -93,7 +99,7 @@ jobs:
       matrix:
         include:
           - name: Windows x64
-            os: windows-latest
+            os: windows-2025
             target: x86_64-pc-windows-msvc
 
     steps:
@@ -101,7 +107,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.target }}
 
@@ -116,14 +122,19 @@ jobs:
 
   winui:
     name: WinUI host
-    runs-on: windows-latest
+    runs-on: windows-2025
     needs: [quality]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
         with:
           targets: x86_64-pc-windows-msvc
 
@@ -136,7 +147,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: Build Rust IPC service
         run: cargo build -p simplefile-service --locked --release
@@ -164,3 +175,22 @@ jobs:
 
       - name: Check WinUI packaging surface
         run: node scripts/check-winui-packaging.mjs
+
+  installer:
+    name: Installer verification
+    needs: [quality, repo-checks, security, build, winui]
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref, 'connie/maintenance/')
+    uses: ./.github/workflows/installer-smoke.yml
+
+  required:
+    name: CI required
+    if: always()
+    needs: [quality, repo-checks, security, build, winui, installer]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require every gate to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          REQUIRE_INSTALLER: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref, 'connie/maintenance/') }}
+        run: |
+          node -e 'const r = JSON.parse(process.env.RESULTS); for (const [name, job] of Object.entries(r)) { if (name === "installer" && process.env.REQUIRE_INSTALLER === "false" && job.result === "skipped") continue; if (job.result !== "success") throw new Error(`${name}: ${job.result}`); }'

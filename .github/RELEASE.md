@@ -10,13 +10,22 @@ Releases are automated with GitHub Actions through `.github/workflows/release.ym
 
 ## Windows Build Prerequisites
 
-Local release validation requires Node.js 24 or newer, stable Rust, .NET SDK 10,
-and optional NSIS / WiX for installer artifacts. GitHub-hosted `windows-latest`
+Local release validation uses the exact Node.js version in `.node-version`, Rust
+in `rust-toolchain.toml`, and .NET SDK in `global.json`, plus NSIS / WiX for
+installer artifacts. Run `npm ci --ignore-scripts` first. GitHub-hosted `windows-2025`
 runners provide the Windows SDK.
 
 ### 1. Update Version Numbers
 
-The user-facing version is 1.0.1. Keep display and numeric identities in sync:
+Preview and apply a coordinated version change locally:
+
+```powershell
+npm run release:prepare -- 1.0.2
+npm run release:prepare -- 1.0.2 --write
+```
+
+The current user-facing version comes from `Directory.Build.props`. The command
+keeps these display and numeric identities in sync:
 
 - `src-winui/Directory.Build.props` — `<InformationalVersion>` and `<Version>`
 - `crates/simplefile-core/Cargo.toml` — package `version` field (must match `<Version>`)
@@ -24,7 +33,12 @@ The user-facing version is 1.0.1. Keep display and numeric identities in sync:
 - `crates/simplefile-core/src/lib.rs` — `APP_DISPLAY_VERSION` (must match InformationalVersion)
 - `crates/simplefile-service/Cargo.toml` — package `version` field (must match `<Version>`)
 - [`README.md`](../README.md) — version badge
-- [`docs/CHANGELOG.md`](../docs/CHANGELOG.md) — release notes and compare links
+
+Edit [`docs/CHANGELOG.md`](../docs/CHANGELOG.md) separately for release notes and
+compare links. The command also updates workspace entries in `Cargo.lock` and
+project-reference versions in the NuGet lockfiles.
+The maintenance workflow can prepare the same change as a PR; see
+[CI maintenance](../docs/CI_MAINTENANCE.md).
 
 Release workflow validation fails if the tag/manual version does not match the
 WinUI version or any workspace Cargo package version. Root `Cargo.lock` must
@@ -80,7 +94,8 @@ You can also trigger a release manually:
 
 1. Go to Actions → Release.
 2. Click **Run workflow**.
-3. Enter the version, for example `v1.0.1`.
+3. Leave the version blank to use the checked-out manifest version, or enter an
+   expected version such as `v1.0.1` to verify that it matches.
 4. Choose whether to create a draft release.
 
 If `draft` is set to `false`, the workflow publishes the release after the

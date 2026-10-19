@@ -102,7 +102,9 @@ public sealed partial class MainWindow
             foreach (var width in new[] { 1000, 1280, 1920 })
             {
                 var scale = RootGrid.XamlRoot.RasterizationScale;
-                AppWindow.Resize(new SizeInt32((int)Math.Round(width * scale), (int)Math.Round(840 * scale)));
+                var appliedWidth = int.TryParse(Environment.GetEnvironmentVariable("SIMPLEFILE_UI_SMOKE_MAX_WIDTH"), out var maximum)
+                    ? Math.Min(width, maximum) : width;
+                AppWindow.Resize(new SizeInt32((int)Math.Round(appliedWidth * scale), (int)Math.Round(840 * scale)));
                 await Task.Delay(200);
                 // The product preserves the primary pane's pixel width on resize.
                 // Recenter the divider for each test size so both panes get tested.
@@ -128,11 +130,38 @@ public sealed partial class MainWindow
                         var inner = SmokeDescendants<ListView>(details).Single();
                         await SmokeCheckListAsync(inner, baseline);
                     }
-                    results.Add(new { scenario = "dual-pane-layout", width, requestedView = view,
+                    results.Add(new { scenario = "dual-pane-layout", width, appliedWidth, requestedView = view,
+                        actualWindowWidth = RootGrid.ActualWidth,
                         primaryViewportWidth = PrimaryFileViewport.ActualWidth,
                         secondaryViewportWidth = SecondaryFileViewport.ActualWidth,
                         effectivePrimary = EffectiveFileListViewForPane(PaneId.Primary), passed = true });
                 }
+            }
+
+            // Hosted Windows desktops can clamp the requested window to about 1024px.
+            // Verify the real Details surface in a full-width pane on those desktops,
+            // using the same product layout rules rather than lowering its threshold.
+            await workspace.ToggleDualPaneAsync();
+            ApplyDualPaneLayout();
+            await SmokeWaitAsync(() => SecondaryPaneRoot.Visibility == Visibility.Collapsed
+                && PrimaryFileViewport.ActualWidth >= DetailsPaneMinimumStableWidth, "full-width pane for Details");
+            foreach (var view in new[] { "list", "tiles", "details", "list" })
+            {
+                workspace.SetFileListView(PaneId.Primary, view);
+                ApplyColumnWidths();
+                ApplyFileListViewPresentation();
+                await Task.Delay(200);
+                if (view == "details")
+                {
+                    SmokeAssert(EffectiveFileListViewForPane(PaneId.Primary) == "details",
+                        $"Full-width Details is unavailable at {PrimaryFileViewport.ActualWidth}px");
+                    sawDetails = true;
+                    await SmokeCheckListAsync(SmokeDescendants<ListView>(PrimaryDetailsFileList).Single(), baseline);
+                }
+                else await SmokeCheckListAsync(PrimaryFileList, baseline);
+                results.Add(new { scenario = "single-pane-layout", requestedView = view,
+                    primaryViewportWidth = PrimaryFileViewport.ActualWidth,
+                    effectivePrimary = EffectiveFileListViewForPane(PaneId.Primary), passed = true });
             }
             SmokeAssert(sawDetails && sawDetailsFallback, "Layout scenarios must exercise real Details view and its narrow-pane fallback");
 

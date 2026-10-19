@@ -36,7 +36,7 @@ env:
 jobs:
   windows-release-build:
     name: Windows release build
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 120
 
     steps:
@@ -46,7 +46,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
         with:
           targets: x86_64-pc-windows-msvc
           components: rustfmt, clippy
@@ -54,7 +54,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .node-version
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -70,7 +70,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: Install WiX Toolset (MSI)
         shell: pwsh

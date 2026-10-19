@@ -1,0 +1,21 @@
+name: Setup pinned Rust
+description: Install the repository toolchain without a second version declaration
+inputs:
+  targets:
+    description: Additional Rust targets
+    default: ''
+  components:
+    description: Rust components
+    default: rustfmt, clippy
+runs:
+  using: composite
+  steps:
+    - id: toolchain
+      shell: bash
+      run: |
+        node -e 'const fs = require("node:fs"); const m = /^channel\s*=\s*"(\d+\.\d+\.\d+)"/m.exec(fs.readFileSync("rust-toolchain.toml", "utf8")); if (!m) throw new Error("Expected an exact Rust version"); fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${m[1]}\n`);'
+    - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+      with:
+        toolchain: ${{ steps.toolchain.outputs.version }}
+        targets: ${{ inputs.targets }}
+        components: ${{ inputs.components }}
