@@ -9,7 +9,8 @@ if (args.includes('--resolve')) {
   const requested = process.env.RELEASE_VERSION?.trim()
     || (process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : '') || version.tag;
   if (requested !== version.tag) throw new Error(`Version mismatch: requested=${requested}, repository=${version.tag}`);
-  const draft = process.env.RELEASE_DRAFT === 'false' ? 'false' : 'true';
+  const isTagPush = process.env.GITHUB_EVENT_NAME === 'push' && process.env.GITHUB_REF_TYPE === 'tag';
+  const draft = isTagPush || process.env.RELEASE_DRAFT === 'false' ? 'false' : 'true';
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT,
     `version=${version.tag}\nprerelease=${version.prerelease}\ndraft=${draft}\n`);
   console.log(JSON.stringify({ ...version, draft }));

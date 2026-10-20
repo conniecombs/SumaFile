@@ -82,11 +82,13 @@ The release workflow will:
    `SumaFile_*_x64-winui-setup.exe`, `SumaFile_*_x64-winui.msi`,
    `SumaFile_*_x64-winui-portable.zip` (inner `SumaFile.exe` +
    `simplefile-service.exe`), signed update metadata, and `latest-winui.json`.
-5. Keep tag-triggered releases as drafts by default so assets can be reviewed
-   before publishing.
-6. Run NSIS install and previous-version upgrade smoke before asset upload.
-7. Publish the release only after the Windows build succeeds when manual
-   `draft=false` is selected.
+5. A version-tag push publishes the release automatically after the quality
+   gates, Windows build, and smoke tests succeed. The workflow creates the
+   release as a draft during asset upload, then publishes it in a separate job.
+6. Manual dispatch defaults to a draft for review. Select `draft=false` to
+   publish after the Windows build succeeds.
+7. The separate `Release build` workflow only uploads an Actions artifact; it
+   never creates or publishes a GitHub Release.
 
 ### 5. Manual Release
 
@@ -137,7 +139,7 @@ See [`docs/UPDATER_RELEASE.md`](../docs/UPDATER_RELEASE.md) for the operational 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | Push/PR to `main`, manual dispatch | Rust format, Clippy, tests, repo checks, Rust dependency audit, service build, WinUI tests |
-| `release.yml` | Tag push (`v*`), manual dispatch | Version validation, release quality gates, WinUI/NSIS/MSI packaging, asset upload, optional publishing |
+| `release.yml` | Tag push (`v*`), manual dispatch | Version validation, release quality gates, WinUI/NSIS/MSI packaging, asset upload, automatic publishing for tag pushes; manual publish opt-in |
 | `dependabot.yml` | Weekly schedule | Dependency update pull requests for Cargo, npm, and GitHub Actions |
 
 ## Code Signing

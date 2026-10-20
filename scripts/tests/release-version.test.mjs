@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { nugetLocks, parseVersion, planReleaseVersion, readReleaseVersion } from '../lib/release-version.mjs';
 
@@ -38,4 +39,36 @@ test('release preview is read-only and applying it keeps every identity in sync'
 });
 test('reject malformed or nonnumeric installer versions', () => {
   for (const value of ['1.2', '1.2.3;echo bad', '01.2.3', '256.0.0', '1.256.0', '1.0.65536', '1.2.3\nextra']) assert.throws(() => parseVersion(value));
+});
+
+function resolveWorkflowRelease(overrides) {
+  const result = spawnSync(process.execPath, [resolve(sourceRoot, 'scripts/release-version.mjs'), '--resolve'], {
+    cwd: sourceRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GITHUB_OUTPUT: '',
+      RELEASE_VERSION: '',
+      ...overrides,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+test('version-tag pushes publish after release gates pass', () => {
+  const version = readReleaseVersion(sourceRoot);
+  const resolved = resolveWorkflowRelease({
+    GITHUB_EVENT_NAME: 'push',
+    GITHUB_REF_TYPE: 'tag',
+    GITHUB_REF_NAME: version.tag,
+    RELEASE_DRAFT: '',
+  });
+  assert.equal(resolved.draft, 'false');
+});
+
+test('manual releases remain drafts by default and can explicitly publish', () => {
+  const manual = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF_TYPE: 'branch', GITHUB_REF_NAME: 'main' };
+  assert.equal(resolveWorkflowRelease({ ...manual, RELEASE_DRAFT: '' }).draft, 'true');
+  assert.equal(resolveWorkflowRelease({ ...manual, RELEASE_DRAFT: 'false' }).draft, 'false');
 });
