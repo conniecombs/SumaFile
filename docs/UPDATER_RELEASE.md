@@ -43,8 +43,11 @@ after the user-facing product name changed to SumaFile.
 4. The release workflow runs quality gates, builds the WinUI host and Rust IPC
    service, signs the NSIS setup executable, uploads NSIS/MSI/portable
    artifacts, and uploads `latest-winui.json`.
-5. Publish the GitHub release when ready. Draft releases are not returned by the
-   `releases/latest` endpoint, so installed apps only see published releases.
+5. Pushing a version tag publishes its release automatically after the
+   quality gates, Windows build, and smoke tests pass. Manual dispatch defaults
+   to a draft; select `draft=false` to publish after a successful build.
+   Draft releases are not returned by the `releases/latest` endpoint, so
+   installed apps only see published releases.
 
 ## Validation
 
