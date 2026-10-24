@@ -19,9 +19,6 @@ namespace SimpleFile.App;
 
 public sealed partial class MainWindow
 {
-    private const double DetailsPaneMinimumStableWidth = 720;
-    private const double DetailsPaneOverflowBuffer = 120;
-
     private void UpdateDualPaneButton(bool dualPaneEnabled)
     {
         var label = dualPaneEnabled ? "Close right pane" : "Open second pane";
@@ -442,24 +439,9 @@ public sealed partial class MainWindow
             return UiSettings.NormalizeDefaultView(null);
         }
 
-        var requested = _workspace.ViewFor(pane);
-        if (!string.Equals(requested, "details", StringComparison.Ordinal))
-        {
-            return requested;
-        }
-
-        var paneWidth = pane == PaneId.Secondary ? SecondaryPaneRoot.ActualWidth : PrimaryPaneRoot.ActualWidth;
-        var viewportWidth = FileViewportWidthForPane(pane, paneWidth);
-        if (viewportWidth <= 0)
-        {
-            return "details";
-        }
-
-        var columns = EffectiveColumnsForPane(_workspace.ColumnsFor(pane), pane);
-        var stableDetailsWidth = Math.Max(
-            DetailsPaneMinimumStableWidth,
-            DetailsContentWidth(columns) + DetailsPaneOverflowBuffer);
-        return viewportWidth < stableDetailsWidth ? "list" : "details";
+        // Details remains Details when a pane narrows. Compact column widths and
+        // the synchronized horizontal scrollbar handle overflow without changing views.
+        return _workspace.ViewFor(pane);
     }
 
     private double FileViewportWidthForPane(PaneId pane, double fallbackWidth = 0)
@@ -714,6 +696,7 @@ public sealed partial class MainWindow
 
     private void UpdateEmptyStates()
     {
+        UpdatePaneContextBars();
         if (_workspace is null)
         {
             return;

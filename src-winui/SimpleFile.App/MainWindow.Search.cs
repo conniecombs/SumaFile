@@ -34,6 +34,7 @@ public sealed partial class MainWindow
         {
             UpdateSearchCancelButtons();
         }
+        UpdatePaneContextBars();
     }
 
     private void OnViewModelMessageRequested(object? sender, ViewModelMessageEventArgs e)
@@ -85,6 +86,7 @@ public sealed partial class MainWindow
         SetCountText(_search.ResultCount == 1
             ? $"1 search result{suffix}"
             : $"{_search.ResultCount} search results{suffix}");
+        UpdateEmptyStates();
     }
 
     private Task CancelActiveSearchAsync() =>

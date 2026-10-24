@@ -155,7 +155,7 @@ public sealed partial class MainWindow
                     Text = displayLabel,
                     FontSize = 12,
                     TextTrimming = TextTrimming.CharacterEllipsis,
-                    MaxWidth = 104,
+                    MaxWidth = 140,
                     VerticalAlignment = VerticalAlignment.Center,
                 },
             },

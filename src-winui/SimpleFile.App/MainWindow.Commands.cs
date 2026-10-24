@@ -238,7 +238,15 @@ public sealed partial class MainWindow
             return;
         }
 
-        workspace.Settings.PreviewVisible = !workspace.Settings.PreviewVisible;
+        if (PreviewRail.Visibility == Visibility.Visible)
+        {
+            _previewManuallyExpanded = true;
+        }
+        else
+        {
+            workspace.Settings.PreviewVisible = !workspace.Settings.PreviewVisible;
+            _previewManuallyExpanded = workspace.Settings.PreviewVisible;
+        }
         ApplyPreviewVisibility();
         await RunUiActionAsync("Preview pane", () => workspace.SaveUiSettingsAsync());
     }
@@ -246,6 +254,9 @@ public sealed partial class MainWindow
     private void ApplyPreviewVisibility()
     {
         var visible = _workspace?.Settings.PreviewVisible != false;
+        var collapsed = _workspace is not null && SimpleFile.Core.PreviewLayoutPolicy.ShouldCollapse(
+            _workspace.Settings, PreviewHasContent(), _workspace.DualPaneEnabled,
+            ExplorerContentGrid.ActualWidth, _previewManuallyExpanded);
         var width = UiSettings.NormalizePreviewWidth(
             _workspace?.Settings.PreviewWidth ?? UiSettings.PreviewDefaultWidth);
         if (_workspace is not null)
@@ -253,14 +264,16 @@ public sealed partial class MainWindow
             _workspace.Settings.PreviewWidth = width;
         }
 
-        PreviewPane.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        PreviewDivider.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        PreviewPanel.Visibility = visible && !collapsed ? Visibility.Visible : Visibility.Collapsed;
+        PreviewPanel.Pinned = _workspace?.Settings.PreviewPinned == true;
+        PreviewRail.Visibility = visible && collapsed ? Visibility.Visible : Visibility.Collapsed;
+        PreviewDivider.Visibility = visible && !collapsed ? Visibility.Visible : Visibility.Collapsed;
         if (visible)
         {
-            PreviewColumn.MinWidth = UiSettings.PreviewMinWidth;
-            PreviewColumn.MaxWidth = UiSettings.PreviewMaxWidth;
-            PreviewColumn.Width = new GridLength(width);
-            PreviewDividerColumn.Width = new GridLength(UiSettings.DualPaneDividerWidth);
+            PreviewColumn.MinWidth = collapsed ? 40 : UiSettings.PreviewMinWidth;
+            PreviewColumn.MaxWidth = collapsed ? 40 : UiSettings.PreviewMaxWidth;
+            PreviewColumn.Width = new GridLength(collapsed ? 40 : width);
+            PreviewDividerColumn.Width = new GridLength(collapsed ? 0 : UiSettings.DualPaneDividerWidth);
         }
         else
         {
@@ -270,7 +283,7 @@ public sealed partial class MainWindow
             PreviewDividerColumn.Width = new GridLength(0);
         }
 
-        ToolTipService.SetToolTip(PreviewToggleButton, visible ? "Hide preview pane" : "Show preview pane");
+        ToolTipService.SetToolTip(PreviewToggleButton, visible && !collapsed ? "Hide preview pane" : "Show preview pane");
     }
 
     private void ApplyTheme(string? theme)

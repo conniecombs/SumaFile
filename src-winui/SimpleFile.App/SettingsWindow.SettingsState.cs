@@ -43,6 +43,7 @@ public sealed partial class SettingsWindow
         settings.OpenInNewTab = OpenInNewTabSwitch.IsOn;
         settings.PreviewRenderHtml = PreviewRenderHtmlSwitch.IsOn;
         settings.PreviewVideoPlaybackEnabled = PreviewVideoPlaybackSwitch.IsOn;
+        settings.PreviewAutoCollapse = PreviewAutoCollapseSwitch.IsOn;
         settings.SidebarVisible = ShowSideMenuSwitch.IsOn;
         settings.ShowQuickAccess = ShowQuickAccessSwitch.IsOn;
         settings.ShowFolderTree = ShowFolderTreeSwitch.IsOn;
@@ -85,6 +86,7 @@ public sealed partial class SettingsWindow
         OpenInNewTabSwitch.IsOn = settings.OpenInNewTab;
         PreviewRenderHtmlSwitch.IsOn = settings.PreviewRenderHtml;
         PreviewVideoPlaybackSwitch.IsOn = settings.PreviewVideoPlaybackEnabled;
+        PreviewAutoCollapseSwitch.IsOn = settings.PreviewAutoCollapse;
 
         ShowSideMenuSwitch.IsOn = settings.SidebarVisible;
         ShowQuickAccessSwitch.IsOn = settings.ShowQuickAccess;

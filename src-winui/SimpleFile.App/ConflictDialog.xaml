@@ -5,13 +5,16 @@
     Title="File Conflict"
     PrimaryButtonText="Replace"
     SecondaryButtonText="Skip"
-    CloseButtonText="Cancel"
+    CloseButtonText="Cancel transfer"
     DefaultButton="Close">
     <StackPanel Spacing="12">
         <TextBlock x:Name="OperationSummary" FontWeight="SemiBold" TextWrapping="Wrap" />
         <TextBlock x:Name="DestinationSummary" TextWrapping="Wrap" />
         <TextBlock x:Name="ConflictMessage" TextWrapping="Wrap" />
         <TextBlock x:Name="ChoiceHint" TextWrapping="Wrap" />
+        <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="ComparisonCards" Spacing="12" />
+        </ScrollViewer>
         <CheckBox x:Name="ApplyToAll" Content="Apply to all remaining conflicts" />
         <Button x:Name="KeepBothButton" Content="Keep both" HorizontalAlignment="Stretch" />
     </StackPanel>

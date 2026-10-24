@@ -98,7 +98,7 @@ public sealed partial class MainWindow
             if (!workspace.DualPaneEnabled) await workspace.ToggleDualPaneAsync();
             await workspace.NavigatePaneAsync(PaneId.Secondary, sample);
             var sawDetails = false;
-            var sawDetailsFallback = false;
+            var sawNarrowDetails = false;
             foreach (var width in new[] { 1000, 1280, 1920 })
             {
                 var scale = RootGrid.XamlRoot.RasterizationScale;
@@ -121,7 +121,8 @@ public sealed partial class MainWindow
                     if (view == "details")
                     {
                         sawDetails |= EffectiveFileListViewForPane(PaneId.Primary) == "details";
-                        sawDetailsFallback |= EffectiveFileListViewForPane(PaneId.Primary) == "list";
+                        SmokeAssert(EffectiveFileListViewForPane(PaneId.Primary) == "details", "Resizing changed the requested Details view");
+                        sawNarrowDetails |= PrimaryFileViewport.ActualWidth < 720;
                     }
                     foreach (var list in new[] { PrimaryFileList, SecondaryFileList }.Where(list => list.Visibility == Visibility.Visible))
                         await SmokeCheckListAsync(list, baseline);
@@ -138,13 +139,11 @@ public sealed partial class MainWindow
                 }
             }
 
-            // Hosted Windows desktops can clamp the requested window to about 1024px.
-            // Verify the real Details surface in a full-width pane on those desktops,
-            // using the same product layout rules rather than lowering its threshold.
+            // Also exercise Details after switching back to a full-width pane.
             await workspace.ToggleDualPaneAsync();
             ApplyDualPaneLayout();
             await SmokeWaitAsync(() => SecondaryPaneRoot.Visibility == Visibility.Collapsed
-                && PrimaryFileViewport.ActualWidth >= DetailsPaneMinimumStableWidth, "full-width pane for Details");
+                && PrimaryFileViewport.ActualWidth >= 400, "full-width pane for Details");
             foreach (var view in new[] { "list", "tiles", "details", "list" })
             {
                 workspace.SetFileListView(PaneId.Primary, view);
@@ -163,7 +162,8 @@ public sealed partial class MainWindow
                     primaryViewportWidth = PrimaryFileViewport.ActualWidth,
                     effectivePrimary = EffectiveFileListViewForPane(PaneId.Primary), passed = true });
             }
-            SmokeAssert(sawDetails && sawDetailsFallback, "Layout scenarios must exercise real Details view and its narrow-pane fallback");
+            SmokeAssert(sawDetails && sawNarrowDetails, "Layout scenarios must exercise Details in wide and narrow panes");
+            await SmokeUiPolishAsync(root, sample, results);
 
             // Use the same transfer runner, progress model, and cancel route as the UI.
             var destination = Path.Combine(root, "destination");

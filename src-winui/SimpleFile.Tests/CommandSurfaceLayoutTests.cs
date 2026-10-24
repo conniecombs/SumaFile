@@ -51,7 +51,7 @@ public class CommandSurfaceLayoutTests
     }
 
     [Fact]
-    public void CreateDefault_PrioritizesTransferHistoryAndInspectionActions()
+    public void CreateDefault_PrioritizesEverydayActionsWithLabels()
     {
         var layout = CommandSurfaceLayout.CreateDefault();
 
@@ -61,11 +61,6 @@ public class CommandSurfaceLayoutTests
                 ToolbarOverflowPlanner.DualPane,
                 "copy-to-pane",
                 "move-to-pane",
-                "operation-history",
-                "ftp-sftp-manager",
-                "duplicate-checker",
-                "disk-cleanup",
-                ToolbarOverflowPlanner.Profiles,
                 ToolbarOverflowPlanner.ViewOptions,
                 ToolbarOverflowPlanner.Settings,
             ],
@@ -76,15 +71,10 @@ public class CommandSurfaceLayoutTests
             item => Assert.Equal(ToolbarOverflowPlanner.DualPane, item.Id),
             item => Assert.Equal("copy-to-pane", item.Id),
             item => Assert.Equal("move-to-pane", item.Id),
-            item => Assert.Equal("operation-history", item.Id),
-            item => Assert.Equal("ftp-sftp-manager", item.Id),
             item => Assert.True(item.IsSeparator),
-            item => Assert.Equal("duplicate-checker", item.Id),
-            item => Assert.Equal("disk-cleanup", item.Id),
-            item => Assert.True(item.IsSeparator),
-            item => Assert.Equal(ToolbarOverflowPlanner.Profiles, item.Id),
             item => Assert.Equal(ToolbarOverflowPlanner.ViewOptions, item.Id),
             item => Assert.Equal(ToolbarOverflowPlanner.Settings, item.Id));
+        Assert.Equal(ToolbarActionCatalog.IconAndLabelDisplayMode, layout.ToolbarDisplayMode);
     }
 
     [Fact]
@@ -119,5 +109,22 @@ public class CommandSurfaceLayoutTests
         {
             Assert.Contains(id, hideOrder);
         }
+    }
+
+    [Fact]
+    public void FromJson_SimplifiesPreviousDefaultButPreservesCustomLayoutsAndDisplayPreference()
+    {
+        var previous = new CommandSurfaceLayout
+        {
+            ToolbarDisplayMode = ToolbarActionCatalog.IconOnlyDisplayMode,
+            PrimaryToolbar = [.. new[] { "new", "dual-pane", "copy-to-pane", "move-to-pane", "operation-history", "ftp-sftp-manager", "|", "duplicate-checker", "disk-cleanup", "|", "profiles", "view-options", "settings" }
+                .Select(id => id == "|" ? CommandSurfaceItem.Separator() : CommandSurfaceItem.Command(id))],
+        };
+        var migrated = CommandSurfaceLayout.FromJson(previous.ToJson());
+        Assert.Equal(CommandSurfaceLayout.DefaultPrimaryActionIds, migrated.VisiblePrimaryActionIds());
+        Assert.Equal(ToolbarActionCatalog.IconOnlyDisplayMode, migrated.ToolbarDisplayMode);
+        previous.PrimaryToolbar.Reverse();
+        var custom = CommandSurfaceLayout.FromJson(previous.ToJson());
+        Assert.Equal(previous.VisiblePrimaryActionIds(), custom.VisiblePrimaryActionIds());
     }
 }

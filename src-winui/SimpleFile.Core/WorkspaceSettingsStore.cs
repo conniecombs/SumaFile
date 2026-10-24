@@ -30,6 +30,8 @@ internal static class WorkspaceSettingsStore
         "progressQueue.visible",
         "showFolderSizes",
         "previewVisible",
+        "preview.pinned",
+        "preview.autoCollapse",
         "preview.width",
         "preview.renderHtml",
         "preview.videoPlayback",
@@ -83,6 +85,8 @@ internal static class WorkspaceSettingsStore
         settings.ProgressQueueVisible = ReadBoolSetting(values, "progressQueue.visible", false);
         settings.ShowFolderSizes = ReadBoolSetting(values, "showFolderSizes", false);
         settings.PreviewVisible = ReadBoolSetting(values, "previewVisible", true);
+        settings.PreviewPinned = ReadBoolSetting(values, "preview.pinned", false);
+        settings.PreviewAutoCollapse = ReadBoolSetting(values, "preview.autoCollapse", true);
         settings.PreviewWidth = UiSettings.NormalizePreviewWidth(
             ReadDoubleSetting(values, "preview.width", UiSettings.PreviewDefaultWidth));
         settings.PreviewRenderHtml = ReadBoolSetting(values, "preview.renderHtml", false);
@@ -164,6 +168,8 @@ internal static class WorkspaceSettingsStore
         await fileOps.SetSettingAsync("progressQueue.visible", settings.ProgressQueueVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("showFolderSizes", settings.ShowFolderSizes ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("previewVisible", settings.PreviewVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync("preview.pinned", settings.PreviewPinned ? "true" : "false", cancellationToken).ConfigureAwait(false);
+        await fileOps.SetSettingAsync("preview.autoCollapse", settings.PreviewAutoCollapse ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("preview.width", settings.PreviewWidth.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("preview.renderHtml", settings.PreviewRenderHtml ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("preview.videoPlayback", settings.PreviewVideoPlaybackEnabled ? "true" : "false", cancellationToken).ConfigureAwait(false);

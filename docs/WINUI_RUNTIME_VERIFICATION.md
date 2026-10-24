@@ -30,9 +30,10 @@ contain the scenario runner. No user settings or folders are modified.
 - Two pending navigations must leave only the newer folder's rows visible;
   late chunks from the previous folder cannot repaint the pane.
 - Both panes are exercised at logical window widths 1,000, 1,280 and 1,920 while
-  changing List, Tiles and Details views. Details may use its existing narrow
-  pane fallback. A full-width single pane also cycles through all views and
-  must render real Details; narrow dual panes must exercise the fallback.
+  changing List, Tiles and Details views. Details retains its column layout
+  in both narrow and wide panes, with compact leading columns and horizontal
+  scrolling for additional columns. A full-width single pane cycles through
+  all views as well; resizing must never silently substitute List for Details.
   Requested window sizes may be capped by the desktop. `-MaxWindowWidth 1000`
   reproduces that constraint locally without changing the desktop resolution.
   Window sizes account for DPI scaling and the divider is recentered
@@ -43,6 +44,17 @@ contain the scenario runner. No user settings or folders are modified.
 - A real copy runs through the application's transfer queue, progress window,
   service and cancellation route. Cancellation must occur while running,
   reach the cancelled terminal UI state and remove staging paths.
+- Pane-local filters remain visible across pane/omnibar changes; Clear filter
+  affects only its pane. A real search exposes Return to folder and that button
+  restores the listing.
+- Unpinned empty preview collapses, the rail reopens it, and the pin button
+  keeps it open. The toolbar reserves the omnibar's minimum usable width.
+- The conflict dialog renders incoming/existing metadata and Keep both names.
+  Choosing Keep both is checked against an actual backend copy without
+  overwriting the existing file.
+- Advanced Rename renders its Before/After rows, preserves extensions, and
+  updates the rename scope. The run captures `workspace-polish.png`,
+  `conflict-polish.png`, and `rename-polish.png` alongside the JSON report.
 
 ## Measurements and evidence
 

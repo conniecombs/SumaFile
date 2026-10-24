@@ -38,7 +38,7 @@ public sealed class CommandSurfaceLayout
     };
 
     public int Version { get; set; } = CurrentVersion;
-    public string ToolbarDisplayMode { get; set; } = ToolbarActionCatalog.IconOnlyDisplayMode;
+    public string ToolbarDisplayMode { get; set; } = ToolbarActionCatalog.IconAndLabelDisplayMode;
     public List<CommandSurfaceItem> PrimaryToolbar { get; set; } = DefaultPrimaryToolbarItems();
 
     private static readonly string[] LegacyDefaultPrimaryActionIds =
@@ -56,11 +56,6 @@ public sealed class CommandSurfaceLayout
         ToolbarOverflowPlanner.DualPane,
         "copy-to-pane",
         "move-to-pane",
-        "operation-history",
-        "ftp-sftp-manager",
-        "duplicate-checker",
-        "disk-cleanup",
-        ToolbarOverflowPlanner.Profiles,
         ToolbarOverflowPlanner.ViewOptions,
         ToolbarOverflowPlanner.Settings,
     ];
@@ -73,13 +68,7 @@ public sealed class CommandSurfaceLayout
         CommandSurfaceItem.Command(ToolbarOverflowPlanner.DualPane),
         CommandSurfaceItem.Command("copy-to-pane"),
         CommandSurfaceItem.Command("move-to-pane"),
-        CommandSurfaceItem.Command("operation-history"),
-        CommandSurfaceItem.Command("ftp-sftp-manager"),
         CommandSurfaceItem.Separator(),
-        CommandSurfaceItem.Command("duplicate-checker"),
-        CommandSurfaceItem.Command("disk-cleanup"),
-        CommandSurfaceItem.Separator(),
-        CommandSurfaceItem.Command(ToolbarOverflowPlanner.Profiles),
         CommandSurfaceItem.Command(ToolbarOverflowPlanner.ViewOptions),
         CommandSurfaceItem.Command(ToolbarOverflowPlanner.Settings),
     ];
@@ -160,6 +149,13 @@ public sealed class CommandSurfaceLayout
 
     private void UpgradeLegacyDefaultToolbar()
     {
+        var previousDefault = "new,dual-pane,copy-to-pane,move-to-pane,operation-history,ftp-sftp-manager,|,duplicate-checker,disk-cleanup,|,profiles,view-options,settings";
+        var storedOrder = string.Join(",", PrimaryToolbar.Select(item => item.IsSeparator ? "|" : item.Id));
+        if (storedOrder == previousDefault)
+        {
+            PrimaryToolbar = DefaultPrimaryToolbarItems();
+            return;
+        }
         if (PrimaryToolbar.Any(item => item.IsSeparator))
         {
             return;
@@ -264,7 +260,9 @@ public static class ToolbarActionCatalog
             return 32;
         }
 
-        return Math.Clamp(48 + (action.Label.Length * 6), 74, 164);
+        // Transfer labels include a destination direction, e.g. "Copy to right pane".
+        var labelLength = id is "copy-to-pane" or "move-to-pane" ? 18 : action.Label.Length;
+        return Math.Clamp(48 + (labelLength * 6), 74, 180);
     }
 
     private static IReadOnlyList<ToolbarAction> BuildAll()

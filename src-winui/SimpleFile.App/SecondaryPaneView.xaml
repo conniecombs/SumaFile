@@ -14,11 +14,12 @@
                             Visibility="Collapsed">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <Border
                                 x:Name="SecondaryActivePaneRail"
-                                Grid.RowSpan="2"
+                                Grid.RowSpan="3"
                                 Width="3"
                                 HorizontalAlignment="Left"
                                 Background="{ThemeResource SfAccentBrush}"
@@ -116,9 +117,10 @@
                                     </Button>
                                 </Grid>
                             </Grid>
+                            <local:PaneContextBar x:Name="SecondaryContextBar" Grid.Row="1" Visibility="Collapsed" />
                             <Grid
                                 x:Name="SecondaryFileSurface"
-                                Grid.Row="1"
+                                Grid.Row="2"
                                 MinHeight="0">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />

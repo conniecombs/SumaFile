@@ -78,14 +78,14 @@ public class ColumnLayoutTests
         Assert.Equal(420, wide.WidthOf("name"));
 
         var compact = columns.EffectiveForPaneWidth(520, dualPane: true, gitEnabled: true);
-        Assert.Equal(["name", "size", "date", "git"], compact.SnapshotVisibleIds());
+        Assert.Equal(["name", "size", "date", "git", "extension", "symlink", "path"], compact.SnapshotVisibleIds());
         Assert.Equal(86, compact.WidthOf("size"));
         Assert.Equal(136, compact.WidthOf("date"));
         Assert.Equal(82, compact.WidthOf("git"));
         Assert.Equal(180, compact.WidthOf("name"));
 
         var compactWithoutGit = columns.EffectiveForPaneWidth(520, dualPane: true, gitEnabled: false);
-        Assert.Equal(["name", "size", "date"], compactWithoutGit.SnapshotVisibleIds());
+        Assert.Equal(["name", "size", "date", "extension", "symlink", "path"], compactWithoutGit.SnapshotVisibleIds());
         Assert.Equal(["name", "size", "date", "extension", "git", "symlink", "path"], columns.SnapshotVisibleIds());
         Assert.Equal(420, columns.WidthOf("name"));
     }

@@ -167,6 +167,10 @@ the app. Builds without complete trusted metadata fall back to the release page.
 - Per-pane view style, icon size, sort column, and sort direction
 - Column presets: default, details, media, developer, and photo
 - Explorer-style column resizing, size-to-fit, and horizontal scrolling
+- Details stays selected in narrow panes, with compact leading columns and
+  horizontal access to the remaining columns
+- Persistent pane-local filter counts, Clear filter, and search result banners
+  with Return to folder
 - Marquee selection, multi-selection, type-ahead selection, and live directory
   refresh
 - Recycle Bin as a browsable location with restore, permanent delete, and empty
@@ -180,6 +184,8 @@ the app. Builds without complete trusted metadata fall back to the release page.
 - Transfer progress with bytes, totals, rate, ETA, cancellation, and operation
   history
 - Conflict handling for skip, replace, keep both, or fail
+- Overwrite comparisons show incoming/existing paths, sizes, modification
+  dates, and a preview of the Keep both filename
 - Recycle Bin delete and permanent delete
 - Undo/redo for create, rename, copy, move, and Recycle Bin delete flows
 - Clipboard history for recent copy/cut sets
@@ -203,6 +209,8 @@ Inspection tools include:
 
 - Preview pane with Open, Open With, Reveal in folder, Compare, and Checksum
   actions
+- Pin preview open, or let unpinned preview collapse when empty or panes are
+  cramped; automatic collapsing can be disabled in Settings -> Behavior
 - Quick Look for focused inspection
 - Properties dialog with path, type, size, timestamps, and attributes
 - Image dimensions and EXIF where available
@@ -250,6 +258,8 @@ links and special entries that could escape the destination.
 - Folder metrics
 - Duplicate finder
 - Advanced Rename with live preview and collision checks
+- Rename preview shows full Before/After names, highlights changes, and labels
+  each target Ready, Unchanged, or Conflict
 - Settings-controlled hidden/system file visibility
 - Keep-folders-on-top sorting mode
 

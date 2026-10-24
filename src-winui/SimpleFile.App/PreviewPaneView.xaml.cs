@@ -44,6 +44,9 @@ public sealed partial class PreviewPaneView : UserControl
     public TextBlock ChecksumText => PreviewChecksumText;
 
     public event RoutedEventHandler? TogglePreview;
+    public event RoutedEventHandler? PinPreview;
+    public bool Pinned { get => PreviewPinButton.IsChecked == true; set => PreviewPinButton.IsChecked = value; }
+    private void OnPinPreview(object sender, RoutedEventArgs e) => PinPreview?.Invoke(sender, e);
     public event RoutedEventHandler? PreviewOpenClick;
     public event RoutedEventHandler? PreviewOpenWithClick;
     public event RoutedEventHandler? PreviewRevealClick;

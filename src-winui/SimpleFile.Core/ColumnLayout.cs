@@ -191,6 +191,11 @@ public sealed class ColumnLayout
             compactIds.Add("name");
         }
 
+        // Keep every chosen column accessible by horizontal scrolling. Only the
+        // leading columns and widths adapt; the saved layout is never rewritten.
+        compactIds.AddRange(VisibleIds.Where(id => !compactIds.Contains(id, StringComparer.Ordinal)
+            && (gitEnabled || id != "git")));
+
         effective.RestoreVisibleIds(compactIds);
         ApplyCompactWidths(effective, paneWidth);
         return effective;
@@ -221,7 +226,7 @@ public sealed class ColumnLayout
         columns.Resize("git", Math.Min(columns.WidthOf("git"), 82));
 
         var supportingWidth = columns.VisibleColumns
-            .Where(column => !string.Equals(column.Id, "name", StringComparison.Ordinal))
+            .Where(column => column.Id is "size" or "date" or "git")
             .Sum(column => column.Width);
         var availableNameWidth = double.IsNaN(paneWidth) || paneWidth <= 0
             ? 220

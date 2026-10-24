@@ -368,6 +368,7 @@ public class ContextMenuBuilderTests
     {
         var overflowed = ContextMenuBuilder.BuildPaneMoreMenu(new ContextMenuRequest
         {
+            ToolbarActionOrder = ["new", "dual-pane", "profiles", "view-options", "settings"],
             OverflowedToolbarIds =
             [
                 ToolbarOverflowPlanner.Search,

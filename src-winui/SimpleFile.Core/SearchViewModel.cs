@@ -61,6 +61,7 @@ public sealed partial class SearchViewModel : ObservableObject
     public IReadOnlyList<SearchResult> Results => _results;
 
     public string? Root => _searchRoot;
+    public string ExecutedQuery { get; private set; } = "";
 
     /// <summary>
     /// True when the last search was served by the Windows Search Index
@@ -295,6 +296,7 @@ public sealed partial class SearchViewModel : ObservableObject
         IsActive = true;
         Pane = pane;
         _searchRoot = root;
+        ExecutedQuery = options.Query ?? "";
         _results.Clear();
         CanCancel = true;
         StatusText = initialStatus;

@@ -79,7 +79,7 @@
                     IsOpen="False"
                     Severity="Informational" />
 
-                <Grid x:Name="ExplorerContentGrid" Grid.Row="1">
+                <Grid x:Name="ExplorerContentGrid" Grid.Row="1" SizeChanged="OnExplorerContentSizeChanged">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" MinWidth="240" />
                         <ColumnDefinition x:Name="PreviewDividerColumn" Width="8" />
@@ -150,6 +150,12 @@
                     </local:PaneResizeGrip>
 
                     <local:PreviewPaneView x:Name="PreviewPanel" Grid.Column="2" />
+                    <Button x:Name="PreviewRail" Grid.Column="2" Visibility="Collapsed"
+                        VerticalAlignment="Top" Margin="2,8" Padding="6,10"
+                        Style="{StaticResource SfGhostButtonStyle}" Click="OnExpandPreview"
+                        AutomationProperties.Name="Open preview" ToolTipService.ToolTip="Open preview">
+                        <FontIcon FontFamily="{StaticResource SfIconFont}" Glyph="&#xE8A7;" FontSize="16" />
+                    </Button>
                 </Grid>
 
                 <Grid

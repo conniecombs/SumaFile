@@ -103,6 +103,8 @@ public sealed partial class MainWindow : Window
         }
 
         AttachControlEvents();
+        InitializePaneContextBars();
+        InitializePreviewLayout();
         ApplyKeyboardShortcuts();
 
         _previewPresenter = new PreviewPresenter(
@@ -792,6 +794,7 @@ public sealed partial class MainWindow : Window
 
         var reserved = MeasuredWidth(PrimaryNavHost)
             + MeasuredWidth(PrimaryMoreButton)
+            + OmnibarHost.MinWidth
             + (PrimaryToolbar.Padding.Left + PrimaryToolbar.Padding.Right)
             + (4 * ToolbarOverflowPlanner.ColumnSpacing);
 

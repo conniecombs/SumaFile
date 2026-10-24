@@ -102,6 +102,7 @@ public sealed partial class MainWindow
                 await ExecuteOmnibarCommandAsync(intent.Value);
                 break;
         }
+        SyncOmnibarFromWorkspace(force: true);
     }
 
     private async Task ExecuteOmnibarCommandAsync(string query)

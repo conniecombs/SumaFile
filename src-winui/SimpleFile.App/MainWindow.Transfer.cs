@@ -293,9 +293,7 @@ public sealed partial class MainWindow
                 cancellationToken);
             if (action is null)
             {
-                return cancellationToken.IsCancellationRequested
-                    ? TransferOperationStatus.Cancelled
-                    : TransferOperationStatus.Skipped;
+                return TransferOperationStatus.Cancelled;
             }
 
             var progress = new Progress<ProgressUpdate>(update => OnTransferProgress(operation, update));
@@ -380,14 +378,12 @@ public sealed partial class MainWindow
                         exception.Message,
                         destination,
                         move,
-                        sources.Length,
+                        sources,
                         conflictSession,
                         cancellationToken);
                     if (retryAction is null)
                     {
-                        return cancellationToken.IsCancellationRequested
-                            ? TransferOperationStatus.Cancelled
-                            : TransferOperationStatus.Skipped;
+                        return TransferOperationStatus.Cancelled;
                     }
 
                     action = retryAction;
@@ -478,7 +474,7 @@ public sealed partial class MainWindow
             return "error";
         }
 
-        return await PromptConflictActionAsync(destination, conflicts, move, sources.Length, session, cancellationToken);
+        return await PromptConflictActionAsync(destination, conflicts, move, sources, session, cancellationToken);
     }
 
     private async Task<IReadOnlyList<string>?> ProbeDestinationConflictsAsync(
@@ -547,7 +543,7 @@ public sealed partial class MainWindow
         string message,
         string destination,
         bool move,
-        int sourceCount,
+        string[] sources,
         TransferConflictSession session,
         CancellationToken cancellationToken)
     {
@@ -563,7 +559,7 @@ public sealed partial class MainWindow
         IReadOnlyList<string> conflicts = string.IsNullOrWhiteSpace(conflictName)
             ? Array.Empty<string>()
             : [conflictName];
-        return await PromptConflictActionAsync(destination, conflicts, move, sourceCount, session, cancellationToken);
+        return await PromptConflictActionAsync(destination, conflicts, move, sources, session, cancellationToken, conflictPath);
     }
 
     private static string ConflictPathFromMessage(string message)
@@ -591,9 +587,10 @@ public sealed partial class MainWindow
         string destination,
         IReadOnlyList<string> conflicts,
         bool move,
-        int sourceCount,
+        string[] sources,
         TransferConflictSession session,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? existingConflictPath = null)
     {
         if (session.TryGetSticky(out var sticky))
         {
@@ -607,10 +604,15 @@ public sealed partial class MainWindow
             var dialog = new ConflictDialog { XamlRoot = Content.XamlRoot };
             dialog.SetConflict(new TransferConflictPromptContext(
                 Move: move,
-                SourceCount: sourceCount,
+                SourceCount: sources.Length,
                 Destination: destination,
                 TargetPane: PaneForDestination(destination),
                 Conflicts: conflicts));
+            var comparisons = await Task.Run(() => TransferConflictComparisonLoader.Load(
+                sources, destination, conflicts, cancellationToken, existingConflictPath), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            dialog.SetComparisons(comparisons);
+            using var cancelDialog = cancellationToken.Register(() => DispatcherQueue.TryEnqueue(dialog.Hide));
             var result = await dialog.ShowAsync();
             cancellationToken.ThrowIfCancellationRequested();
             string? action = dialog.Result == ConflictResolution.KeepBoth

@@ -22,6 +22,7 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock
                                         x:Name="PreviewTitle"
@@ -31,13 +32,20 @@
                                         Text="Preview"
                                         TextTrimming="CharacterEllipsis" />
                                     <Button
-                                        Grid.Column="1"
+                                        Grid.Column="2"
                                         Style="{StaticResource SfSidebarIconButtonStyle}"
                                         AutomationProperties.Name="Hide preview pane"
                                         Click="OnTogglePreview"
                                         ToolTipService.ToolTip="Hide preview pane">
                                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="11" Glyph="&#xE711;" />
                                     </Button>
+                                    <ToggleButton x:Name="PreviewPinButton" Grid.Column="1"
+                                        MinWidth="30" Height="30" Padding="4" Background="Transparent" BorderThickness="0"
+                                        AutomationProperties.Name="Pin preview open"
+                                        ToolTipService.ToolTip="Pin preview open"
+                                        Click="OnPinPreview">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="13" Glyph="&#xE718;" />
+                                    </ToggleButton>
                                 </Grid>
                                 <TextBlock
                                     x:Name="PreviewSubtitle"

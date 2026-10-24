@@ -237,11 +237,9 @@ public class WinUiSourceShapeTests
         Assert.Contains("SecondaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
         Assert.Contains("PrimaryPane.DetailsHorizontalScrollChanged += OnPrimaryDetailsHorizontalScrollChanged", mainWindow);
         Assert.Contains("SecondaryPane.DetailsHorizontalScrollChanged += OnSecondaryDetailsHorizontalScrollChanged", mainWindow);
-        Assert.Contains("DetailsPaneMinimumStableWidth = 720", mainWindow);
-        Assert.Contains("DetailsPaneOverflowBuffer = 120", mainWindow);
         Assert.Contains("EffectiveFileListViewForPane", mainWindow);
-        Assert.Contains("DetailsContentWidth(columns) + DetailsPaneOverflowBuffer", mainWindow);
-        Assert.Contains("viewportWidth < stableDetailsWidth ? \"list\" : \"details\"", mainWindow);
+        Assert.Contains("return _workspace.ViewFor(pane);", mainWindow);
+        Assert.DoesNotContain("viewportWidth < stableDetailsWidth ? \"list\" : \"details\"", mainWindow);
         Assert.Contains("FileViewportWidthForPane", mainWindow);
         Assert.Contains("ApplyFileListSurfaceVisibility(PaneId.Primary", mainWindow);
         Assert.Contains("ApplyFileListSurfaceVisibility(PaneId.Secondary", mainWindow);

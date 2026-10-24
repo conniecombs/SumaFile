@@ -40,6 +40,8 @@ public sealed class UiSettings
     public string CustomPath { get; set; } = "";
     public string LastPath { get; set; } = "";
     public bool PreviewVisible { get; set; } = true;
+    public bool PreviewPinned { get; set; }
+    public bool PreviewAutoCollapse { get; set; } = true;
     public double PreviewWidth { get; set; } = PreviewDefaultWidth;
     public bool PreviewRenderHtml { get; set; }
     public bool PreviewVideoPlaybackEnabled { get; set; }

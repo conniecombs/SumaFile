@@ -142,6 +142,8 @@ public class WorkspaceSettingsStoreTests
             ProgressQueueVisible = true,
             ShowFolderSizes = true,
             PreviewVisible = false,
+            PreviewPinned = true,
+            PreviewAutoCollapse = false,
             PreviewRenderHtml = true,
             PreviewVideoPlaybackEnabled = true,
             PreviewWidth = 2000,
@@ -227,6 +229,8 @@ public class WorkspaceSettingsStoreTests
         Assert.True(state.Settings.ProgressQueueVisible);
         Assert.True(state.Settings.ShowFolderSizes);
         Assert.False(state.Settings.PreviewVisible);
+        Assert.True(state.Settings.PreviewPinned);
+        Assert.False(state.Settings.PreviewAutoCollapse);
         Assert.True(state.Settings.PreviewRenderHtml);
         Assert.True(state.Settings.PreviewVideoPlaybackEnabled);
         Assert.Equal(UiSettings.PreviewMaxWidth, state.Settings.PreviewWidth);

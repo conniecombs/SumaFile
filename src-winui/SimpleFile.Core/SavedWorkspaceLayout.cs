@@ -143,6 +143,12 @@ public sealed class WorkspaceChromeLayout
     [JsonPropertyName("previewVisible")]
     public bool PreviewVisible { get; set; } = true;
 
+    [JsonPropertyName("previewPinned")]
+    public bool PreviewPinned { get; set; }
+
+    [JsonPropertyName("previewAutoCollapse")]
+    public bool PreviewAutoCollapse { get; set; } = true;
+
     [JsonPropertyName("previewWidth")]
     public double PreviewWidth { get; set; } = UiSettings.PreviewDefaultWidth;
 
@@ -196,6 +202,8 @@ public sealed class WorkspaceChromeLayout
             EnableGitIntegration = settings.EnableGitIntegration,
             ProgressQueueVisible = settings.ProgressQueueVisible,
             PreviewVisible = settings.PreviewVisible,
+            PreviewPinned = settings.PreviewPinned,
+            PreviewAutoCollapse = settings.PreviewAutoCollapse,
             PreviewWidth = UiSettings.NormalizePreviewWidth(settings.PreviewWidth),
             SidebarVisible = settings.SidebarVisible,
             SidebarWidth = UiSettings.NormalizeSidebarWidth(settings.SidebarWidth),
@@ -220,6 +228,8 @@ public sealed class WorkspaceChromeLayout
         settings.EnableGitIntegration = EnableGitIntegration;
         settings.ProgressQueueVisible = ProgressQueueVisible;
         settings.PreviewVisible = PreviewVisible;
+        settings.PreviewPinned = PreviewPinned;
+        settings.PreviewAutoCollapse = PreviewAutoCollapse;
         settings.PreviewWidth = PreviewWidth;
         settings.SidebarVisible = SidebarVisible;
         settings.SidebarWidth = SidebarWidth;

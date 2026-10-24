@@ -478,16 +478,19 @@ public sealed partial class MainWindow
 
     private void QueuePreviewFromSelection()
     {
+        ApplyPreviewVisibility();
         _previewPresenter.QueueFromSelection();
     }
 
     private void QueuePreview(FileRow row)
     {
+        ApplyPreviewVisibility();
         _previewPresenter.Queue(row);
     }
 
     private void ClearPreview()
     {
+        ApplyPreviewVisibility();
         _previewPresenter.Clear();
     }
 

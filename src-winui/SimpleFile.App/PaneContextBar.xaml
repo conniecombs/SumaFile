@@ -1,0 +1,29 @@
+<UserControl
+    x:Class="SimpleFile.App.PaneContextBar"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Padding="10,6" Spacing="6" Background="{ThemeResource SfBgSecondaryBrush}">
+        <Grid x:Name="FilterRow" ColumnSpacing="8" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center" Spacing="2">
+                <TextBlock x:Name="FilterText" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" />
+                <TextBlock x:Name="FilterCount" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" />
+            </StackPanel>
+            <Button x:Name="FilterClearButton" Grid.Column="1" Content="Clear filter" Style="{StaticResource SfGhostButtonStyle}" Click="OnClearFilter" />
+        </Grid>
+        <Grid x:Name="SearchRow" ColumnSpacing="8" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center" Spacing="2">
+                <TextBlock x:Name="SearchText" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" />
+                <TextBlock x:Name="SearchScope" TextTrimming="CharacterEllipsis" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" />
+            </StackPanel>
+            <Button x:Name="ReturnFolderButton" Grid.Column="1" Content="Return to folder" Style="{StaticResource SfGhostButtonStyle}" Click="OnReturnToFolder" />
+        </Grid>
+    </StackPanel>
+</UserControl>

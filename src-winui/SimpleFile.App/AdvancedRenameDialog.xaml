@@ -529,18 +529,34 @@
                         Padding="10,8"
                         BorderBrush="{ThemeResource SfBorderBrush}"
                         BorderThickness="0,0,0,1">
-                        <Grid>
-                            <TextBlock FontWeight="SemiBold" Text="Preview" />
-                            <TextBlock
-                                x:Name="PreviewCountText"
-                                HorizontalAlignment="Right"
-                                Foreground="{ThemeResource SfTextMutedBrush}" />
-                        </Grid>
+                        <StackPanel Spacing="6">
+                            <Grid>
+                                <TextBlock Text="Preview" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" />
+                                <TextBlock x:Name="PreviewCountText" HorizontalAlignment="Right" Foreground="{ThemeResource SfTextMutedBrush}" />
+                            </Grid>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="16" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="BeforeHeaderText" FontWeight="SemiBold" Text="Before" />
+                                <TextBlock x:Name="AfterHeaderText" Grid.Column="2" FontWeight="SemiBold" Text="After" />
+                            </Grid>
+                        </StackPanel>
                     </Border>
                     <ListView
                         x:Name="PreviewList"
                         Grid.Row="1"
+                        Padding="0"
                         SelectionMode="None">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
                             <DataTemplate>
                                 <Grid Padding="10,6" RowSpacing="3">
@@ -551,29 +567,31 @@
                                     <Grid ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="16" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock
+                                        <local:RenamePreviewName
                                             Foreground="{ThemeResource SfTextMutedBrush}"
-                                            Text="{Binding OldName}"
-                                            TextTrimming="CharacterEllipsis" />
+                                            Before="{Binding OldName}"
+                                            After="{Binding NewName}" />
                                         <TextBlock
                                             Grid.Column="1"
                                             Foreground="{ThemeResource SfTextMutedBrush}"
                                             Text="-&gt;" />
-                                        <TextBlock
+                                        <local:RenamePreviewName
                                             Grid.Column="2"
-                                            FontWeight="SemiBold"
-                                            Text="{Binding NewName}"
-                                            TextTrimming="CharacterEllipsis" />
+                                            Before="{Binding OldName}"
+                                            After="{Binding NewName}"
+                                            ShowAfter="True" />
                                     </Grid>
                                     <TextBlock
                                         Grid.Row="1"
                                         FontSize="12"
                                         Foreground="{ThemeResource SfTextMutedBrush}"
                                         Text="{Binding DetailText}"
-                                        TextTrimming="CharacterEllipsis" />
+                                        ToolTipService.ToolTip="{Binding DetailText}"
+                                        IsTextSelectionEnabled="True"
+                                        TextWrapping="Wrap" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>

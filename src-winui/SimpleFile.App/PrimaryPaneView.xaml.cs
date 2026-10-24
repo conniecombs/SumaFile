@@ -21,6 +21,7 @@ public sealed partial class PrimaryPaneView : UserControl
     }
 
     public Grid Root => PrimaryPaneRoot;
+    public PaneContextBar ContextBar => PrimaryContextBar;
     public Border ActivePaneRail => PrimaryActivePaneRail;
     public Grid PaneHeader => PrimaryPaneHeader;
     public StackPanel PaneCaption => PrimaryPaneCaption;

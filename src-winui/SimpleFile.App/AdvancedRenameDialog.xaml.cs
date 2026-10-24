@@ -369,7 +369,8 @@ public sealed partial class AdvancedRenameDialog : Window
             var invalidText = preview.InvalidCount > 0
                 ? $" · {preview.InvalidCount} invalid"
                 : "";
-            SummaryText.Text = $"{targetText} ready · {changedText}{invalidText}.";
+            var unchangedCount = preview.AllRows.Count(row => !row.Changed && row.Error is null);
+            SummaryText.Text = $"{targetText} · {changedText} · {unchangedCount} unchanged{invalidText}.";
             PreviewCountText.Text = preview.ExtraCount > 0
                 ? $"Showing {preview.Rows.Count} of {preview.TotalRows}"
                 : $"{preview.TotalRows}";
@@ -378,6 +379,7 @@ public sealed partial class AdvancedRenameDialog : Window
         RenameButton.IsEnabled = preview.Mode == "rows"
             && preview.InvalidCount == 0
             && RenameRequests.Length > 0;
+        RenameButton.Content = $"Rename {RenameRequests.Length:N0} {(RenameRequests.Length == 1 ? "item" : "items")}";
     }
 
     private void ClampOptionsPaneWidth()
@@ -423,7 +425,8 @@ public sealed partial class AdvancedRenameDialog : Window
         {
             OldName = row.OldName;
             NewName = row.NewName;
-            DetailText = row.Error ?? row.Detail;
+            var status = row.Error is not null ? "Conflict" : row.Changed ? "Ready" : "Unchanged";
+            DetailText = $"{status} · {row.Error ?? row.Detail}";
         }
 
         public string DetailText { get; }
