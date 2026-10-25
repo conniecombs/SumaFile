@@ -75,7 +75,7 @@
                                 </Grid>
                                 <Grid
                                     Grid.Row="1"
-                                    Margin="0,6,0,6"
+                                    Margin="0,4,0,4"
                                     ColumnSpacing="6">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -84,12 +84,13 @@
                                     <Grid
                                         x:Name="SecondaryPathBar"
                                         Grid.Column="0"
-                                        MinHeight="34"
-                                        Padding="6,2"
+                                        MinHeight="30"
+                                        Padding="6,1"
                                         Background="{ThemeResource SfBgTertiaryBrush}"
                                         BorderBrush="{ThemeResource SfBorderBrush}"
                                         BorderThickness="1"
-                                        CornerRadius="4">
+                                        CornerRadius="6"
+                                        PointerPressed="OnSecondaryPathBarPointerPressed">
                                         <ScrollViewer
                                             x:Name="SecondaryBreadcrumbScroller"
                                             VerticalAlignment="Center"

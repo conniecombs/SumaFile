@@ -401,8 +401,13 @@ internal sealed partial class PreviewPresenter
 
                 _currentPreview = preview;
                 ConfigurePreviewOptions(row, preview);
-                AddMetadataSection("Preview");
-                AddMetadataRows(InspectionDetails.PreviewRows(preview));
+                var previewRows = InspectionDetails.PreviewRows(preview, row.Size);
+                if (previewRows.Count > 0)
+                {
+                    AddMetadataSection("Preview");
+                    AddMetadataRows(previewRows);
+                }
+
                 await RenderContentAsync(row, preview, token, cancellationToken);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)

@@ -8,7 +8,7 @@
                         <Grid
                             x:Name="PrimaryToolbar"
                             Grid.Row="0"
-                            Padding="10,6,10,8"
+                            Padding="10,4,10,6"
                             ColumnSpacing="8"
                             SizeChanged="OnPrimaryToolbarSizeChanged">
                             <Grid.ColumnDefinitions>
@@ -64,7 +64,7 @@
                                     Padding="116,4,34,4"
                                     VerticalAlignment="Center"
                                     AutomationProperties.Name="Omnibar"
-                                    CornerRadius="4"
+                                    CornerRadius="6"
                                     GotFocus="OnOmnibarGotFocus"
                                     KeyDown="OnOmnibarKeyDown"
                                     LostFocus="OnOmnibarLostFocus"
@@ -81,6 +81,7 @@
                                         Height="28"
                                         MinWidth="28"
                                         Padding="0"
+                                        CornerRadius="4"
                                         Background="Transparent"
                                         BorderThickness="0"
                                         AutomationProperties.Name="Path mode"
@@ -95,6 +96,7 @@
                                         Height="28"
                                         MinWidth="28"
                                         Padding="0"
+                                        CornerRadius="4"
                                         Background="Transparent"
                                         BorderThickness="0"
                                         AutomationProperties.Name="Search mode"
@@ -108,6 +110,7 @@
                                         Height="28"
                                         MinWidth="28"
                                         Padding="0"
+                                        CornerRadius="4"
                                         Background="Transparent"
                                         BorderThickness="0"
                                         AutomationProperties.Name="Filter mode"
@@ -121,6 +124,7 @@
                                         Height="28"
                                         MinWidth="28"
                                         Padding="0"
+                                        CornerRadius="4"
                                         Background="Transparent"
                                         BorderThickness="0"
                                         AutomationProperties.Name="Command mode"
@@ -155,7 +159,7 @@
                                     Padding="30,4,56,4"
                                     VerticalAlignment="Center"
                                     AutomationProperties.Name="Find in folder"
-                                    CornerRadius="4"
+                                    CornerRadius="6"
                                     KeyDown="OnSearchKeyDown"
                                     PlaceholderText="Find in folder" />
                                 <Button
@@ -185,6 +189,7 @@
                                         Height="28"
                                         MinWidth="28"
                                         Padding="0"
+                                        CornerRadius="4"
                                         Background="Transparent"
                                         BorderThickness="0"
                                         AutomationProperties.Name="Search file contents"

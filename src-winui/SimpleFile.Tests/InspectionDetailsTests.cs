@@ -188,6 +188,60 @@ public class InspectionDetailsTests
         Assert.Contains(normalRows, detail => detail.Label == "Link target");
     }
 
+    [Fact]
+    public void PreviewRows_OmitsRedundantSizeWhenEqualToSelectionSize()
+    {
+        var preview = new FilePreview
+        {
+            FileType = "image",
+            MimeType = "image/png",
+            Size = 4096,
+        };
+
+        var deduplicated = InspectionDetails.PreviewRows(preview, selectionSize: 4096);
+        Assert.DoesNotContain(deduplicated, row => row.Label == "Preview size");
+
+        var distinct = InspectionDetails.PreviewRows(
+            new FilePreview
+            {
+                FileType = "text",
+                MimeType = "text/plain",
+                Size = 2_000_000,
+            },
+            selectionSize: 5_000_000);
+        Assert.Contains(distinct, row => row.Label == "Preview size");
+    }
+
+    [Fact]
+    public void NormalizeMetadataKey_AndSummaryRedundancy_UnifyDimensionSigns()
+    {
+        Assert.Equal(
+            InspectionDetails.NormalizeMetadataKey("Dimensions", "520 x 320"),
+            InspectionDetails.NormalizeMetadataKey("Dimensions", "520 \u00d7 320"));
+
+        var redundantImage = new FileMetadata
+        {
+            Kind = "image",
+            Summary = "520 \u00d7 320",
+            Fields =
+            [
+                ["Dimensions", "520 x 320"],
+            ],
+        };
+        Assert.True(InspectionDetails.IsSummaryRedundantWithFields(redundantImage));
+
+        var distinctAudio = new FileMetadata
+        {
+            Kind = "audio",
+            Summary = "Connie - Glass Notes (3:05)",
+            Fields =
+            [
+                ["Title", "Glass Notes"],
+            ],
+        };
+        Assert.False(InspectionDetails.IsSummaryRedundantWithFields(distinctAudio));
+    }
+
     private sealed class InspectionRow : IInspectionEntryPresentation
     {
         public string Name { get; init; } = "";

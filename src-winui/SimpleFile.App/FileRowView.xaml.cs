@@ -166,6 +166,10 @@ public sealed partial class FileRowView : UserControl
         {
             var value = isTileView ? Row.ModifiedText : SecondaryText(Row);
             _secondaryText.Text = value;
+            _secondaryText.Foreground = Brush(
+                !isTileView && !string.IsNullOrWhiteSpace(Row.GitText) && string.IsNullOrWhiteSpace(Row.SymlinkText)
+                    ? EntryPresentation.GitStatusBrushKey(Row.GitText)
+                    : "SfTextMutedBrush");
             ToolTipService.SetToolTip(_secondaryText, string.IsNullOrWhiteSpace(value) ? null : value);
         }
 
@@ -173,6 +177,14 @@ public sealed partial class FileRowView : UserControl
         {
             var value = Row.ColumnText(id);
             text.Text = value;
+            if (string.Equals(id, "git", StringComparison.OrdinalIgnoreCase))
+            {
+                text.Foreground = Brush(EntryPresentation.GitStatusBrushKey(value));
+                text.FontWeight = string.IsNullOrWhiteSpace(value)
+                    ? Microsoft.UI.Text.FontWeights.Normal
+                    : Microsoft.UI.Text.FontWeights.SemiBold;
+            }
+
             ToolTipService.SetToolTip(text, string.IsNullOrWhiteSpace(value) ? null : value);
         }
 
@@ -619,8 +631,11 @@ public sealed partial class FileRowView : UserControl
 
     private static string SecondaryText(FileRow row)
     {
-        return string.Join("  ", new[] { row.PathText, row.GitText, row.SymlinkText }
-            .Where(part => !string.IsNullOrWhiteSpace(part)));
+        return EntryPresentation.ContentSecondaryText(
+            row.ParentText,
+            row.GitText,
+            row.SymlinkText,
+            row.ExtensionText);
     }
 
     private void ApplyTagPip(string color)
@@ -659,12 +674,19 @@ public sealed partial class FileRowView : UserControl
 
         if (_secondaryText is not null)
         {
-            _secondaryText.Foreground = Brush("SfTextMutedBrush");
+            var isTileView = Row is not null && ViewFor(Row.Pane) == "tiles";
+            _secondaryText.Foreground = Brush(
+                Row is not null && !isTileView && !string.IsNullOrWhiteSpace(Row.GitText) && string.IsNullOrWhiteSpace(Row.SymlinkText)
+                    ? EntryPresentation.GitStatusBrushKey(Row.GitText)
+                    : "SfTextMutedBrush");
         }
 
-        foreach (var text in _textCells.Values)
+        foreach (var (id, text) in _textCells)
         {
-            text.Foreground = Brush("SfTextMutedBrush");
+            text.Foreground = Brush(
+                string.Equals(id, "git", StringComparison.OrdinalIgnoreCase)
+                    ? EntryPresentation.GitStatusBrushKey(text.Text)
+                    : "SfTextMutedBrush");
         }
     }
 

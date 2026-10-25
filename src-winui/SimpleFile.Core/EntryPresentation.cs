@@ -108,6 +108,65 @@ public static class EntryPresentation
         return entry.IsDir ? "\uE8B7" : "\uE8A5";
     }
 
+    public static string GitStatusBrushKey(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return "SfTextMutedBrush";
+        }
+
+        var normalized = status.Trim().ToLowerInvariant();
+        if (normalized.StartsWith("git:", StringComparison.Ordinal))
+        {
+            normalized = normalized["git:".Length..].Trim();
+        }
+
+        return normalized switch
+        {
+            "added" or "staged" or "a" => "SfGitAddedBrush",
+            "modified" or "renamed" or "copied" or "m" or "r" => "SfGitModifiedBrush",
+            "untracked" or "?" or "??" => "SfGitUntrackedBrush",
+            "deleted" or "conflict" or "unmerged" or "d" or "u" => "SfGitDeletedBrush",
+            _ => "SfTextMutedBrush",
+        };
+    }
+
+    public static string ContentSecondaryText(
+        string? parentText,
+        string? gitText,
+        string? symlinkText,
+        string? extensionText = null,
+        bool includeParent = false)
+    {
+        var parts = new List<string>(3);
+        if (!string.IsNullOrWhiteSpace(gitText))
+        {
+            var trimmedGit = gitText.Trim();
+            parts.Add(trimmedGit.StartsWith("Git:", StringComparison.OrdinalIgnoreCase)
+                ? trimmedGit
+                : $"Git: {trimmedGit}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(symlinkText))
+        {
+            var trimmedSymlink = symlinkText.Trim();
+            parts.Add(trimmedSymlink.StartsWith("→", StringComparison.Ordinal)
+                ? trimmedSymlink
+                : $"→ {trimmedSymlink}");
+        }
+
+        if ((includeParent || parts.Count == 0) && !string.IsNullOrWhiteSpace(parentText))
+        {
+            parts.Add(parentText.Trim());
+        }
+        else if (parts.Count == 0 && !string.IsNullOrWhiteSpace(extensionText))
+        {
+            parts.Add(extensionText.Trim());
+        }
+
+        return string.Join("  •  ", parts);
+    }
+
     public static bool IsHiddenFromUser(FileEntry entry)
     {
         return entry.IsHidden

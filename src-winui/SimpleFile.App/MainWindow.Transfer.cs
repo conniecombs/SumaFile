@@ -106,7 +106,26 @@ public sealed partial class MainWindow
 
     private void OnFileDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs e)
     {
+        ClearPaneDragHighlights();
         _dragPaths = [];
+    }
+
+    private void SetPaneDragHighlight(PaneId pane, bool active)
+    {
+        var primaryHighlighted = active && pane == PaneId.Primary;
+        var secondaryHighlighted = active && pane == PaneId.Secondary;
+        PrimaryPaneRoot.BorderBrush = Brush(primaryHighlighted ? "SfAccentBrush" : "SfBorderBrush");
+        PrimaryPaneRoot.BorderThickness = new Thickness(primaryHighlighted ? 1.5 : 0);
+        SecondaryPaneRoot.BorderBrush = Brush(secondaryHighlighted ? "SfAccentBrush" : "SfBorderBrush");
+        SecondaryPaneRoot.BorderThickness = new Thickness(secondaryHighlighted ? 1.5 : 0);
+    }
+
+    private void ClearPaneDragHighlights()
+    {
+        PrimaryPaneRoot.BorderBrush = Brush("SfBorderBrush");
+        PrimaryPaneRoot.BorderThickness = new Thickness(0);
+        SecondaryPaneRoot.BorderBrush = Brush("SfBorderBrush");
+        SecondaryPaneRoot.BorderThickness = new Thickness(0);
     }
 
     private void OnPrimaryFileDragOver(object sender, DragEventArgs e) => HandleFileDragOver(e, PaneId.Primary);
@@ -115,6 +134,7 @@ public sealed partial class MainWindow
 
     private void OnFileDragLeave(object sender, DragEventArgs e)
     {
+        ClearPaneDragHighlights();
         e.AcceptedOperation = DataPackageOperation.None;
     }
 
@@ -138,6 +158,7 @@ public sealed partial class MainWindow
         var valid = sources.Length == 0 || DropDestination.IsValidDrop(sources, target.Destination);
         var copy = (e.Modifiers & Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Control) != 0
             || sources.Length == 0;
+        SetPaneDragHighlight(pane, valid);
         e.AcceptedOperation = valid
             ? (copy ? DataPackageOperation.Copy : DataPackageOperation.Move)
             : DataPackageOperation.None;
@@ -147,6 +168,7 @@ public sealed partial class MainWindow
 
     private async Task HandleFileDropAsync(DragEventArgs e, PaneId pane)
     {
+        ClearPaneDragHighlights();
         if (_workspace?.FileOps is null)
         {
             return;

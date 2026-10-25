@@ -619,6 +619,8 @@
                 x:Name="RenameButton"
                 Grid.Column="2"
                 MinWidth="160"
+                Background="{ThemeResource SfAccentBrush}"
+                BorderBrush="{ThemeResource SfAccentBrush}"
                 Click="OnRenameClicked"
                 Content="Rename"
                 Style="{StaticResource AccentButtonStyle}" />

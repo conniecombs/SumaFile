@@ -40,7 +40,7 @@
                                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="11" Glyph="&#xE711;" />
                                     </Button>
                                     <ToggleButton x:Name="PreviewPinButton" Grid.Column="1"
-                                        MinWidth="30" Height="30" Padding="4" Background="Transparent" BorderThickness="0"
+                                        MinWidth="30" Height="30" Padding="4" CornerRadius="4" Background="Transparent" BorderThickness="0"
                                         AutomationProperties.Name="Pin preview open"
                                         ToolTipService.ToolTip="Pin preview open"
                                         Click="OnPinPreview">
@@ -221,11 +221,10 @@
                                         Foreground="{ThemeResource SfTextMutedBrush}"
                                         Text="No preview loaded."
                                         TextWrapping="Wrap" />
-                                    <TextBlock
-                                        FontSize="12"
-                                        FontWeight="SemiBold"
-                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                        Text="Metadata" />
+                                    <Border
+                                        Height="1"
+                                        Margin="0,2,0,2"
+                                        Background="{ThemeResource SfBorderBrush}" />
                                     <StackPanel x:Name="PreviewMetadataRows" Spacing="5" />
                                     <TextBlock
                                         x:Name="PreviewChecksumText"

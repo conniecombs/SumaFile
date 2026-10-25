@@ -132,13 +132,56 @@ public static class InspectionDetails
         ];
     }
 
-    public static IReadOnlyList<InspectionDetailRow> PreviewRows(FilePreview preview)
+    public static IReadOnlyList<InspectionDetailRow> PreviewRows(FilePreview preview, ulong? selectionSize = null)
     {
         var rows = new List<InspectionDetailRow>();
         Add(rows, "Preview type", preview.FileType);
         Add(rows, "MIME", preview.MimeType);
-        Add(rows, "Preview size", EntryPresentation.FormatFileSize(preview.Size, isDirectory: false));
+        if (selectionSize is null || selectionSize.Value != preview.Size)
+        {
+            Add(rows, "Preview size", EntryPresentation.FormatFileSize(preview.Size, isDirectory: false));
+        }
+
         return rows;
+    }
+
+    public static bool IsSummaryRedundantWithFields(FileMetadata metadata)
+    {
+        if (string.IsNullOrWhiteSpace(metadata.Summary))
+        {
+            return true;
+        }
+
+        var normalizedSummary = NormalizeMetadataValue(metadata.Summary);
+        foreach (var field in metadata.Fields)
+        {
+            if (field.Length >= 2 && string.Equals(
+                NormalizeMetadataValue(field[1]),
+                normalizedSummary,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static string NormalizeMetadataKey(string label, string value) =>
+        $"{label.Trim().ToLowerInvariant()}\u001f{NormalizeMetadataValue(value).ToLowerInvariant()}";
+
+    public static string NormalizeMetadataValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "";
+        }
+
+        var trimmed = value.Trim();
+        return System.Text.RegularExpressions.Regex.Replace(
+            trimmed,
+            @"(?<=\d)\s*[xX]\s*(?=\d)",
+            " \u00d7 ");
     }
 
     public static string MetadataHeading(FileMetadata metadata)

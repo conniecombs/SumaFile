@@ -25,8 +25,8 @@ internal sealed partial class PreviewPresenter
 
             AddMetadataSections(InspectionDetails.MetadataSections(
                 metadata,
-                includeSummary: true,
-                includeKind: true,
+                includeSummary: !InspectionDetails.IsSummaryRedundantWithFields(metadata),
+                includeKind: false,
                 maxFields: 24));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -52,7 +52,7 @@ internal sealed partial class PreviewPresenter
             }
 
             AddMetadataSection("Image");
-            AddMetadataRow("Dimensions", $"{image.Width} x {image.Height}");
+            AddMetadataRow("Dimensions", $"{image.Width} \u00d7 {image.Height}");
             AddMetadataRows(InspectionDetails.RawRows(image.Exif.Take(12)));
         }
         catch
@@ -109,7 +109,7 @@ internal sealed partial class PreviewPresenter
             return;
         }
 
-        var key = $"{label.Trim()}\u001f{value.Trim()}";
+        var key = InspectionDetails.NormalizeMetadataKey(label, value);
         if (!_metadataKeys.Add(key))
         {
             return;

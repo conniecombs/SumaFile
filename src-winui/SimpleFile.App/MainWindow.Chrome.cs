@@ -298,8 +298,14 @@ public sealed partial class MainWindow
         SecondaryActivePaneRail.Visibility = secondaryActive ? Visibility.Visible : Visibility.Collapsed;
         PrimaryPaneCaption.Visibility = dual ? Visibility.Visible : Visibility.Collapsed;
         SecondaryPaneCaption.Visibility = dual ? Visibility.Visible : Visibility.Collapsed;
+        PrimaryPaneRoot.Background = Brush(!dual || primaryActive ? "SfBgPrimaryBrush" : "SfPaneInactiveBgBrush");
+        SecondaryPaneRoot.Background = Brush(secondaryActive ? "SfBgPrimaryBrush" : "SfPaneInactiveBgBrush");
         PrimaryPaneHeader.Background = Brush(primaryActive ? "SfBgTertiaryBrush" : "SfBgSecondaryBrush");
         SecondaryPaneHeader.Background = Brush(secondaryActive ? "SfBgTertiaryBrush" : "SfBgSecondaryBrush");
+        PrimaryPaneHeader.Opacity = !dual || primaryActive ? 1.0 : 0.78;
+        SecondaryPaneHeader.Opacity = secondaryActive ? 1.0 : 0.78;
+        PrimaryPathBar.BorderBrush = Brush(dual && primaryActive ? "SfActivePaneBorderBrush" : "SfBorderBrush");
+        SecondaryPathBar.BorderBrush = Brush(secondaryActive ? "SfActivePaneBorderBrush" : "SfBorderBrush");
         PrimaryPaneCaptionText.Foreground = Brush(primaryActive ? "SfAccentBrush" : "SfTextMutedBrush");
         SecondaryPaneCaptionText.Foreground = Brush(secondaryActive ? "SfAccentBrush" : "SfTextMutedBrush");
         PrimaryPaneCaptionRail.Visibility = primaryActive ? Visibility.Visible : Visibility.Collapsed;

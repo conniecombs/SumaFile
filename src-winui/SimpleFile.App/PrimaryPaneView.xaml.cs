@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
 
@@ -79,6 +80,27 @@ public sealed partial class PrimaryPaneView : UserControl
     private void OnPrimaryPathTextChanged(object sender, TextChangedEventArgs e) => PathTextChanged?.Invoke(sender, e);
 
     private void OnEditPrimaryPath(object sender, RoutedEventArgs e) => EditPath?.Invoke(sender, e);
+
+    private void OnPrimaryPathBarPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (PrimaryPathInput.Visibility == Visibility.Visible)
+        {
+            return;
+        }
+
+        for (var current = e.OriginalSource as DependencyObject;
+            current is not null && !ReferenceEquals(current, PrimaryPathBar);
+            current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is ButtonBase or TextBox)
+            {
+                return;
+            }
+        }
+
+        e.Handled = true;
+        EditPath?.Invoke(this, new RoutedEventArgs());
+    }
 
     private void OnPrimaryDetailsHorizontalScrollChanged(object sender, RangeBaseValueChangedEventArgs e) =>
         DetailsHorizontalScrollChanged?.Invoke(sender, e);

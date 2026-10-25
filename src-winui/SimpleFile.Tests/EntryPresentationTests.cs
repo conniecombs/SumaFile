@@ -121,4 +121,39 @@ public class EntryPresentationTests
         Assert.Equal("modified", EntryPresentation.ColumnText(file, "git"));
         Assert.Equal(@"C:\Projects\App\notes.txt", EntryPresentation.ColumnText(file, "path"));
     }
+
+    [Theory]
+    [InlineData("added", "SfGitAddedBrush")]
+    [InlineData("staged", "SfGitAddedBrush")]
+    [InlineData("modified", "SfGitModifiedBrush")]
+    [InlineData("Git: modified", "SfGitModifiedBrush")]
+    [InlineData("untracked", "SfGitUntrackedBrush")]
+    [InlineData("deleted", "SfGitDeletedBrush")]
+    [InlineData("conflict", "SfGitDeletedBrush")]
+    [InlineData("", "SfTextMutedBrush")]
+    [InlineData(null, "SfTextMutedBrush")]
+    public void GitStatusBrushKey_MapsSemanticStatusColors(string? status, string expectedBrushKey)
+    {
+        Assert.Equal(expectedBrushKey, EntryPresentation.GitStatusBrushKey(status));
+    }
+
+    [Fact]
+    public void ContentSecondaryText_AvoidsRepeatingFullFilePathAndFormatsGitAndSymlink()
+    {
+        Assert.Equal(
+            "Git: modified  •  → D:\\Target\\notes.txt",
+            EntryPresentation.ContentSecondaryText(
+                parentText: @"C:\Projects\App",
+                gitText: "modified",
+                symlinkText: @"D:\Target\notes.txt",
+                extensionText: ".txt"));
+
+        Assert.Equal(
+            @"C:\Projects\App",
+            EntryPresentation.ContentSecondaryText(
+                parentText: @"C:\Projects\App",
+                gitText: "",
+                symlinkText: "",
+                extensionText: ".txt"));
+    }
 }

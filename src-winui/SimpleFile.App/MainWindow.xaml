@@ -42,7 +42,7 @@
             </Grid>
         </Grid>
 
-        <Grid Grid.Row="1" Background="{ThemeResource SfBgPrimaryBrush}">
+        <Grid Grid.Row="1" Background="{ThemeResource SfBgSecondaryBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="SidebarColumn" Width="232" MinWidth="180" MaxWidth="520" />
                 <ColumnDefinition x:Name="SidebarDividerColumn" Width="8" />
@@ -160,7 +160,7 @@
 
                 <Grid
                     Grid.Row="2"
-                    Padding="12,6"
+                    Padding="12,4"
                     Background="{ThemeResource SfBgSecondaryBrush}"
                     BorderBrush="{ThemeResource SfBorderBrush}"
                     BorderThickness="0,1,0,0">
