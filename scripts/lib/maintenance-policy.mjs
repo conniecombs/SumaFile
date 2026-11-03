@@ -8,11 +8,12 @@ export const generatedFiles = [
 export const releaseFiles = ['README.md', 'Cargo.lock', 'src-winui/Directory.Build.props',
   'crates/simplefile-core/src/lib.rs', ...['core', 'ipc', 'service'].map(name => `crates/simplefile-${name}/Cargo.toml`),
   ...['App', 'Core', 'Ipc', 'Tests'].map(name => `src-winui/SimpleFile.${name}/packages.lock.json`)];
-export const recipes = ['rustfmt', 'generated', 'toolchains', 'release'];
+export const recipes = ['rustfmt', 'generated', 'toolchains', 'release', 'security'];
 export const limits = { files: 30, changedLines: 1500, fileBytes: 1_000_000 };
 
 export function allowedRepairPath(recipe, path) {
   if (typeof path !== 'string' || path.includes('..') || path.includes('\\') || path.startsWith('/')) return false;
+  if (recipe === 'security') return path === 'Cargo.lock';
   if (recipe === 'generated') return generatedFiles.includes(path);
   if (recipe === 'rustfmt') return /^crates\/simplefile-(core|ipc|service)\/(src|tests)\/[\w/.-]+\.rs$/.test(path);
   if (recipe === 'toolchains') return ['rust-toolchain.toml', 'global.json', '.node-version'].includes(path);
@@ -42,6 +43,12 @@ export function classifyFailure({ run, jobs, log, repository, mainSha, branchHea
       || run.status !== 'completed' || run.conclusion !== 'failure') return { action: 'none', reason: 'Not a supported failed run' };
   if (!steps.length || typeof log !== 'string' || !log.trim()) return review('Failure evidence is incomplete');
   if (branchHead !== run.head_sha) return review('Run no longer matches its current branch head');
+  // Even a failed PR only triggers a fresh audit of trusted current main.
+  // Never derive package names, versions or commands from PR logs.
+  if (steps.length === 1 && steps[0] === 'Security checks: Audit Rust dependencies'
+      && /RUSTSEC-\d{4}-\d+|vulnerabilit(?:y|ies) found|denied warning found/i.test(log)) {
+    return { action: 'prepare', recipe: 'security', reason: 'Re-audit current main and propose bounded Cargo patches', baseline, failedSteps: steps };
+  }
   // A deterministic error wins even when an unrelated download also failed.
   if (/error\[E\d+\]|error (?:CS|NU)\d+|test result: FAILED|Failed!\s+-\s+Failed:|panicked at|Assertion failed|RUSTSEC-\d{4}-\d+|vulnerabilit(?:y|ies) found/i.test(log)) {
     return review('Compiler, assertion, package or security failure requires review');

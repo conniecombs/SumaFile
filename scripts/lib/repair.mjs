@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 
 export function runRecipe(recipe, version, cwd = process.cwd()) {
   const commands = {
+    security: [[process.execPath, ['scripts/update-security.mjs']]],
     rustfmt: [['cargo', ['fmt', '--all']]],
     generated: [[process.execPath, ['scripts/generate-ipc-bindings.mjs']], [process.execPath, ['scripts/generate-open-with-policy.mjs']]],
     toolchains: [[process.execPath, ['scripts/update-toolchains.mjs', '--write']]],

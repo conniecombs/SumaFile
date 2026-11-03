@@ -132,7 +132,11 @@ export function validateWorkflows(workflows, dependabot) {
     'Automerge must execute trusted default-branch policy');
   check(action(merge?.jobs?.automerge, 'actions/checkout')?.with?.['persist-credentials'] === false, 'Automerge checkout must not retain credentials');
   command('dependabot-automerge.yml', 'automerge', /^node scripts\/automerge-dependencies\.mjs$/, 'current-head merge policy');
+  check(action(merge?.jobs?.automerge, 'taiki-e/install-action')?.with?.tool === 'cargo-audit', 'Automerge needs cargo-audit to replay security updates');
   const maintenance = workflows['maintenance.yml'];
+  check(list(maintenance?.on?.schedule).some(item => item.cron === '30 10 * * *'), 'Maintenance: daily security schedule required');
+  check(list(maintenance?.on?.workflow_dispatch?.inputs?.recipe?.options).includes('security'), 'Maintenance: security recipe required');
+  check(action(maintenance?.jobs?.prepare, 'taiki-e/install-action')?.with?.tool === 'cargo-audit', 'Maintenance: security repair needs cargo-audit');
   check(list(maintenance?.on?.workflow_run?.workflows).includes('CI') && list(maintenance?.on?.schedule).length > 0, 'Maintenance: failure and scheduled triggers required');
   check(action(maintenance?.jobs?.assess, 'actions/checkout')?.with?.ref === '${{ github.event.repository.default_branch }}', 'Maintenance assessment must use trusted policy');
   check(action(maintenance?.jobs?.prepare, 'actions/checkout')?.with?.ref === '${{ needs.assess.outputs.source }}', 'Maintenance repair must use the assessed default-branch commit');

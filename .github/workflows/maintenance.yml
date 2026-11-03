@@ -5,13 +5,14 @@ on:
     types: [completed]
   schedule:
     - cron: '30 9 * * 1'
+    - cron: '30 10 * * *'
   workflow_dispatch:
     inputs:
       recipe:
         description: Bounded maintenance recipe
         type: choice
-        options: [toolchains, generated, rustfmt, release]
-        default: toolchains
+        options: [security, toolchains, generated, rustfmt, release]
+        default: security
       version:
         description: Version for release preparation only (does not publish a release)
         type: string
@@ -89,6 +90,11 @@ jobs:
         with:
           node-version-file: .node-version
       - uses: ./.github/actions/setup-rust
+      - name: Install cargo-audit
+        if: env.MAINTENANCE_RECIPE == 'security'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - run: npm ci --ignore-scripts
       - name: Apply the bounded recipe
         run: node scripts/prepare-maintenance.mjs
