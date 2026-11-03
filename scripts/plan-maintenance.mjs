@@ -24,8 +24,8 @@ if (process.env.GITHUB_EVENT_NAME === 'workflow_run') {
   plan = classifyFailure({ run, jobs, log, repository, mainSha: main, branchHead, baseJobs: baseline ? jobsFor(baseline) : [] });
   plan.run_id = String(run.id);
 } else {
-  const recipe = event.inputs?.recipe ?? 'toolchains';
-  if (!['toolchains', 'release', 'rustfmt', 'generated'].includes(recipe)) throw new Error('Unsupported maintenance recipe');
+  const recipe = event.inputs?.recipe ?? (event.schedule === '30 9 * * 1' ? 'toolchains' : 'security');
+  if (!['toolchains', 'release', 'rustfmt', 'generated', 'security'].includes(recipe)) throw new Error('Unsupported maintenance recipe');
   if (recipe === 'release') parseVersion(event.inputs?.version ?? '');
   plan = { action: 'prepare', recipe, reason: `${recipe} maintenance requested`, version: event.inputs?.version ?? '' };
 }

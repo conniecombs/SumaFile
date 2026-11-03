@@ -35,10 +35,17 @@ export function publishMaintenance({ api, repository, source, recipe, files }) {
     } });
     api(`${repo}/git/refs`, { method: 'POST', body: { ref: `refs/heads/${branch}`, sha: commit.sha } });
   }
-  const pr = api(`${repo}/pulls`, { method: 'POST', body: {
+  let pr;
+  try { pr = api(`${repo}/pulls`, { method: 'POST', body: {
     title: `Maintenance: ${recipe}`, head: branch, base: 'main',
     body: `Applies the bounded ${recipe} recipe to main at ${source}.\n\nCI must validate this exact head, including Windows UI and installer checks. Automatic merging also requires enforced, strict branch protection. Release version changes require human review.`,
   } });
+  } catch (error) {
+    if (/GitHub Actions is not permitted to create or approve pull requests/i.test(error.message)) {
+      throw new Error(`Repository setup is incomplete: enable "Allow GitHub Actions to create and approve pull requests" at https://github.com/${repository}/settings/actions, or run node scripts/configure-maintenance.mjs --apply --permissions-only with repository Administration write access. Existing proposal branches are recoverable.`, { cause: error });
+    }
+    throw error;
+  }
   // GITHUB_TOKEN-created PR events do not start CI. Dispatch is the documented
   // exception; the successful run then invokes the separate trusted merge gate.
   api(`${repo}/actions/workflows/ci.yml/dispatches`, { method: 'POST', body: { ref: branch } });

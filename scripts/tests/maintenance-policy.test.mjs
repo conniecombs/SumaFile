@@ -98,3 +98,14 @@ test('publication deduplicates closed PRs and recovers a missing CI dispatch on 
     if (state === 'open') assert.ok(writes[0].path.endsWith('/dispatches'));
   }
 });
+
+test('publication explains disabled workflow PR creation and preserves recovery branch', () => {
+  const mock = fakeApi();
+  const api = (path, options = {}) => {
+    if (path.endsWith('/pulls') && options.method === 'POST') throw new Error('GitHub Actions is not permitted to create or approve pull requests. (HTTP 403)');
+    return mock.api(path, options);
+  };
+  assert.throws(() => publishMaintenance({ ...proposal(), api }), /--permissions-only/);
+  assert.ok(mock.calls.some(c => c.path.endsWith('/git/refs')));
+  assert.equal(mock.calls.some(c => c.path.endsWith('/dispatches')), false);
+});

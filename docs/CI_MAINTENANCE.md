@@ -69,9 +69,10 @@ not proof of an identical root cause.
 | Recognized connection/DNS/HTTP 502–504 error in setup/download/cache/restore steps | Retry failed jobs once; a second failure requires review |
 | Current main fails its Rust formatting check | Run the pinned formatter and propose a repair PR |
 | Current main reports stale IPC/Open With generated files | Regenerate from existing schemas and propose a repair PR |
+| Daily security check or an audit-only failure on a current same-repository branch | Re-audit trusted current main and propose Cargo patch updates |
 | Weekly toolchain check | Propose stable updates within current major versions |
 | Explicit release-version preparation | Propose a consistent version change; human merge required |
-| PR code failure, old main failure, fork, security/compiler/test failure, missing logs, or unknown cause | Record the diagnosis in the workflow summary and fail the assessment for attention |
+| PR code failure, old main failure, fork, mixed security/compiler/test failure, missing logs, or unknown cause | Record the diagnosis in the workflow summary and fail the assessment for attention |
 
 Write-capable jobs only check out an assessed main commit. They never execute
 PR code. Repair proposals are restricted to existing files in recipe-specific
@@ -107,24 +108,60 @@ For partial retries, the merge policy uses the latest result for each job across
 attempts of the same run and SHA. A newer failure or skip overrides an older
 success. See GitHub's [workflow jobs API](https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run-attempt).
 
+## Security repair boundaries
+
+The security recipe uses the same advisory exceptions and denied-warning policy
+as the release audit (`scripts/lib/audit-policy.mjs`). It audits trusted main
+again; PR logs supply no package names or executable commands. Only vulnerable, actionable-warning,
+or yanked stable crates.io packages are targeted, using non-yanked updates within
+the existing major/minor version. Cargo writes the lockfile. Any transitive
+changes must also be patch updates; added/removed packages or source changes
+require review. A failed lookup, resolution, graph check, or final audit restores
+the original lockfile and fails the job. An unchanged, clean main produces no PR.
+
+Only `Cargo.lock` may be proposed. Tests, manifests, workflows, and advisory
+exceptions cannot be modified by this recipe. Daily checks also detect advisories
+without a new commit. Identical proposals are deduplicated and receive the full CI
+and installer gates. The merge job independently replays the security recipe
+from trusted main; changes in upstream versions or advisories can defer merging.
+
+To run this locally (writes Cargo.lock when patches are needed):
+
+```powershell
+node scripts/update-security.mjs
+```
+
 ## Activation after local review
 
-These are future deployment steps, not actions performed by local preparation:
+A repository permission is separate from the workflow's `pull-requests: write`.
+If GitHub returns HTTP 403 saying Actions cannot create or approve pull requests,
+enable **Settings → Actions → General → Workflow permissions → Allow GitHub
+Actions to create and approve pull requests**. GitHub exposes creation and approval
+as one setting; these workflows do not submit approving reviews. This setting
+can be repaired even while main is failing or branch protection already exists:
 
-1. Publish the reviewed files and obtain a successful `CI required` run on main.
-2. Review `npm run maintenance:plan` and any existing organization/repository
-   rules. The plan enables strict required checks, administrator enforcement,
-   blocks force pushes/deletion, and permits workflow PR creation. Its zero
-   required review count allows explicitly eligible bot updates to merge;
-   unknown and major updates still need a human decision.
-3. With repository administration access, deliberately run
-   `node scripts/configure-maintenance.mjs --apply`. This is a remote mutation.
-   It refuses to overwrite existing protection, requires the successful gate
-   first, and verifies the resulting required-check rule. Organization policy
-   can prevent a repository setting from taking effect.
-4. Exercise a toolchain proposal or controlled repair in GitHub and inspect its
-   dispatched CI, installer evidence, and merge decision. Local tests mock API
-   writes; they do not prove hosted permissions or end-to-end event delivery.
+```powershell
+node scripts/configure-maintenance.mjs --plan --permissions-only
+node scripts/configure-maintenance.mjs --apply --permissions-only
+```
+
+Use an authenticated GitHub CLI with repository Administration write access.
+The command preserves default token permissions and all branch protection,
+verifies the setting after applying it, and is safe to repeat. Organization
+policy can block activation. The workflow token cannot grant itself this setting.
+The PR creation error now provides the exact setting and recovery command.
+An interrupted proposal can recover its existing branch on the next run.
+
+After this PR is merged and `CI required` is green on main, full setup is available
+with `node scripts/configure-maintenance.mjs --apply`. Existing protection is
+validated and preserved, including extra checks/review requirements. If absent,
+the baseline is installed only after a successful main gate. Incompatible existing
+protection requires manual review. Repository auto-merge settings are unchanged;
+the trusted merge workflow performs its own guarded merge.
+
+Exercise the security recipe through **Bounded maintenance → Run workflow →
+security** after activation and inspect its audit, PR, dispatched CI, installer
+results and merge decision. Local mocked tests cannot establish hosted permissions.
 
 Automatic merging refuses to proceed until protection is verifiable. There is
 no safe promise of completely unattended fixes for arbitrary future bugs or
