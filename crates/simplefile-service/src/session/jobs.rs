@@ -76,11 +76,12 @@ pub(super) fn spawn_remote_transfer(
         let result = scheduler
             .run_transfer(move || {
                 job.provider.with(|provider| {
-                    crate::remote::transfer::transfer_entries(
+                    crate::remote::transfer::transfer_entries_with_tuning(
                         provider,
                         &job.request,
                         &job.cancel,
                         &|update| events.emit_progress(&update),
+                        &|update| events.emit("transfer-tuning", &update),
                     )
                 })
             })
@@ -750,7 +751,7 @@ pub(super) fn spawn_copy_move_with_progress(
         let result = scheduler
             .run_transfer(move || {
                 let emit = |update| events_for_task.emit_progress(&update);
-                crate::progress::transfer_with_progress_blocking(
+                crate::progress::transfer_with_tuning_blocking(
                     operation_type,
                     sources,
                     destination,
@@ -758,6 +759,7 @@ pub(super) fn spawn_copy_move_with_progress(
                     conflict_action,
                     cancel,
                     &emit,
+                    &|update| events_for_task.emit("transfer-tuning", &update),
                 )
             })
             .await;

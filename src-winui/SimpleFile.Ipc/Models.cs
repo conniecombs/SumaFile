@@ -198,6 +198,30 @@ public sealed class ProgressUpdate
     public string? Error { get; set; }
 }
 
+public sealed class ActiveFile
+{
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = "";
+    [JsonPropertyName("current")]
+    public ulong Current { get; set; }
+    [JsonPropertyName("total")]
+    public ulong Total { get; set; }
+}
+
+public sealed class TuningUpdate
+{
+    [JsonPropertyName("operation_id")]
+    public string OperationId { get; set; } = "";
+    [JsonPropertyName("mode")]
+    public string Mode { get; set; } = "automatic";
+    [JsonPropertyName("concurrency")]
+    public int Concurrency { get; set; }
+    [JsonPropertyName("explanation")]
+    public string Explanation { get; set; } = "";
+    [JsonPropertyName("active_files")]
+    public ActiveFile[] ActiveFiles { get; set; } = [];
+}
+
 public sealed class FileChangeEvent
 {
     [JsonPropertyName("path")]

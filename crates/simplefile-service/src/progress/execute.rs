@@ -100,6 +100,9 @@ pub(crate) fn copy_file_attempt(
         if read == 0 {
             break;
         }
+        if let Some(limiter) = ctx.progress.rate_limit {
+            limiter.wait(read, ctx.progress.cancel)?;
+        }
         writer
             .write_all(&buffer[..read])
             .map_err(|error| format!("Failed to write destination file: {error}"))?;
@@ -211,6 +214,9 @@ pub(crate) fn copy_file_with_progress(
                     return Err(error);
                 }
                 Err(error) => {
+                    if let Some(retries) = ctx.progress.retry_count {
+                        retries.fetch_add(1, Ordering::Relaxed);
+                    }
                     copied = Err(error);
                 }
             }
@@ -333,6 +339,7 @@ pub(crate) fn copy_plan_with_progress(
     plan: &TransferPlan,
     ctx: &ProgressContext,
     completed_bytes: &mut u64,
+    session: &mut super::adaptive::Session<'_>,
 ) -> Result<(), String> {
     ensure_destination_available(plan)?;
 
@@ -353,12 +360,13 @@ pub(crate) fn copy_plan_with_progress(
             network: plan.network,
             resume_existing: true,
         };
-        let result = copy_item_with_progress(
+        let result = super::parallel::copy_tree(
             &plan.source_path,
             &staged_dest,
             &resumable_ctx,
             completed_bytes,
             false,
+            session,
         );
         result?;
         ctx.finalizing(
@@ -369,16 +377,38 @@ pub(crate) fn copy_plan_with_progress(
             let _ = remove_path(&staged_dest, "partial destination directory");
             return Err(error);
         }
-        promote_staged_path(&staged_dest, &plan.final_dest, false)?;
+        if let Err(error) = promote_staged_path(&staged_dest, &plan.final_dest, false) {
+            let _ = remove_path(&staged_dest, "partial destination directory");
+            return Err(error);
+        }
         Ok(())
     } else {
-        copy_item_with_progress(
-            &plan.source_path,
-            &plan.final_dest,
-            &copy_ctx,
-            completed_bytes,
-            plan.replace_existing,
-        )
+        if source_meta.file_type().is_dir() {
+            return super::parallel::copy_tree(
+                &plan.source_path,
+                &plan.final_dest,
+                &copy_ctx,
+                completed_bytes,
+                plan.replace_existing,
+                session,
+            );
+        }
+        let task = super::parallel::FileTask {
+            source: plan.source_path.clone(),
+            destination: plan.final_dest.clone(),
+            size: if source_meta.file_type().is_symlink() {
+                0
+            } else {
+                source_meta.len()
+            },
+            network: plan.network,
+            replace_existing: plan.replace_existing,
+            resume_existing: false,
+            symlink: source_meta.file_type().is_symlink(),
+        };
+        let copied = super::parallel::copy_files(&[task], ctx, session, *completed_bytes);
+        *completed_bytes = completed_bytes.saturating_add(copied.bytes);
+        copied.failed.map_or(Ok(()), |(_, error)| Err(error))
     }
 }
 
@@ -386,6 +416,7 @@ pub(crate) fn move_plan_with_progress(
     plan: &TransferPlan,
     ctx: &ProgressContext,
     completed_bytes: &mut u64,
+    session: &mut super::adaptive::Session<'_>,
 ) -> Result<(), String> {
     ensure_destination_available(plan)?;
 
@@ -425,12 +456,13 @@ pub(crate) fn move_plan_with_progress(
             network: plan.network,
             resume_existing: true,
         };
-        let result = copy_item_with_progress(
+        let result = super::parallel::copy_tree(
             &plan.source_path,
             &staged_dest,
             &resumable_ctx,
             completed_bytes,
             false,
+            session,
         );
         result?;
         ctx.finalizing(
@@ -441,15 +473,36 @@ pub(crate) fn move_plan_with_progress(
             let _ = remove_path(&staged_dest, "partial destination directory");
             return Err(error);
         }
-        promote_staged_path(&staged_dest, &plan.final_dest, false)?;
+        if let Err(error) = promote_staged_path(&staged_dest, &plan.final_dest, false) {
+            let _ = remove_path(&staged_dest, "partial destination directory");
+            return Err(error);
+        }
     } else {
-        copy_item_with_progress(
-            &plan.source_path,
-            &plan.final_dest,
-            &copy_ctx,
-            completed_bytes,
-            plan.replace_existing,
-        )?;
+        if source_meta.file_type().is_dir() {
+            super::parallel::copy_tree(
+                &plan.source_path,
+                &plan.final_dest,
+                &copy_ctx,
+                completed_bytes,
+                plan.replace_existing,
+                session,
+            )?;
+        } else {
+            let task = super::parallel::FileTask {
+                source: plan.source_path.clone(),
+                destination: plan.final_dest.clone(),
+                size: source_meta.len(),
+                network: plan.network,
+                replace_existing: plan.replace_existing,
+                resume_existing: false,
+                symlink: source_meta.file_type().is_symlink(),
+            };
+            let copied = super::parallel::copy_files(&[task], ctx, session, *completed_bytes);
+            *completed_bytes = completed_bytes.saturating_add(copied.bytes);
+            if let Some((_, error)) = copied.failed {
+                return Err(error);
+            }
+        }
     }
 
     remove_path(&plan.source_path, "source")

@@ -1,0 +1,498 @@
+//! Bounded concurrency feedback and expiring route history. No transfer data or
+//! credentials are stored. Measurements are supplied by the copy coordinator.
+
+use serde::{Deserialize, Serialize};
+use simplefile_core::settings_store::{get_db_setting, set_db_setting};
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+pub(crate) const POLICY_KEY: &str = "transfer.policy";
+const HISTORY_KEY: &str = "transfer.learning.v1";
+const MAX_HISTORY: usize = 64;
+const MAX_AGE: u64 = 30 * 24 * 60 * 60;
+static HISTORY_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Mode {
+    #[default]
+    Automatic,
+    Conservative,
+    Maximum,
+    Manual,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub(crate) struct Policy {
+    pub mode: Mode,
+    pub max_concurrency: usize,
+    pub manual_concurrency: usize,
+    pub memory_budget_mb: usize,
+    pub bandwidth_mib: usize,
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Self {
+            mode: Mode::Automatic,
+            max_concurrency: 16,
+            manual_concurrency: 4,
+            memory_budget_mb: 192,
+            bandwidth_mib: 0,
+        }
+    }
+}
+
+impl Policy {
+    pub fn load() -> Self {
+        get_db_setting(POLICY_KEY.into())
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn for_operation(operation_id: &str) -> Self {
+        // The UI keeps this document bounded and expires abandoned overrides.
+        #[derive(Deserialize)]
+        struct Override {
+            policy: Policy,
+            updated: u64,
+        }
+        let overrides: BTreeMap<String, Override> = get_db_setting("transfer.overrides.v1".into())
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let now = now_seconds();
+        overrides
+            .into_iter()
+            .find_map(|(id, value)| {
+                (id == operation_id && value.updated <= now && now - value.updated < 86400)
+                    .then_some(value.policy)
+            })
+            .unwrap_or_else(Self::load)
+    }
+
+    pub fn limit(&self, buffer_bytes: usize) -> usize {
+        // The current copier owns a read buffer, write buffer, and copy buffer.
+        let memory_limit = self.memory_budget_mb.clamp(16, 512) * 1024 * 1024
+            / buffer_bytes.max(1).saturating_mul(3);
+        let mode_limit = if self.mode == Mode::Conservative {
+            4
+        } else {
+            32
+        };
+        self.max_concurrency
+            .clamp(1, 32)
+            .min(mode_limit)
+            .min(memory_limit.max(1))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct Learned {
+    concurrency: usize,
+    updated: u64,
+}
+
+#[derive(Default, Deserialize, Serialize)]
+struct History {
+    routes: BTreeMap<String, Learned>,
+}
+
+impl History {
+    fn prune(&mut self, now: u64) {
+        self.routes.retain(|_, v| {
+            v.concurrency > 0
+                && v.concurrency <= 32
+                && v.updated <= now
+                && now - v.updated <= MAX_AGE
+        });
+        while self.routes.len() > MAX_HISTORY {
+            let oldest = self
+                .routes
+                .iter()
+                .min_by_key(|(_, v)| v.updated)
+                .map(|(k, _)| k.clone());
+            if let Some(key) = oldest {
+                self.routes.remove(&key);
+            }
+        }
+    }
+}
+
+fn now_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn read_history() -> History {
+    get_db_setting(HISTORY_KEY.into())
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub(crate) fn recall(key: &str) -> Option<usize> {
+    let _guard = HISTORY_LOCK.lock().ok()?;
+    let mut history = read_history();
+    history.prune(now_seconds());
+    history.routes.get(key).map(|v| v.concurrency)
+}
+
+pub(crate) fn remember(key: &str, concurrency: usize) -> Result<(), String> {
+    let _guard = HISTORY_LOCK.lock().map_err(|e| e.to_string())?;
+    let mut history = read_history();
+    let now = now_seconds();
+    history.routes.insert(
+        key.into(),
+        Learned {
+            concurrency: concurrency.clamp(1, 32),
+            updated: now,
+        },
+    );
+    history.prune(now);
+    set_db_setting(
+        HISTORY_KEY.into(),
+        serde_json::to_string(&history).map_err(|e| e.to_string())?,
+    )
+}
+
+/// Ordered endpoints preserve direction. The endpoint identity should include
+/// the actual mapped share / volume identity, not just its mutable drive letter.
+pub(crate) fn route_key(source: &str, destination: &str, bytes: u64, files: u64) -> String {
+    let average = bytes / files.max(1);
+    let workload = if average < 1024 * 1024 {
+        "small"
+    } else if average < 16 * 1024 * 1024 {
+        "medium"
+    } else {
+        "large"
+    };
+    let input = format!("copy-v1\0{source}\0{destination}\0{workload}");
+    // Stable hash rather than storing account/share names or filesystem paths.
+    let hash = input.bytes().fold(0xcbf29ce484222325u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
+    });
+    format!("{hash:016x}")
+}
+
+pub(crate) struct Controller {
+    pub policy: Policy,
+    pub concurrency: usize,
+    pub explanation: &'static str,
+    limit: usize,
+    best_concurrency: usize,
+    best_rate: f64,
+    previous_rate: Option<f64>,
+    probing: bool,
+    cooldown: usize,
+    learned: bool,
+    try_lower: bool,
+    lower_tested: bool,
+    stalled: usize,
+}
+
+impl Controller {
+    pub fn new(policy: Policy, buffer_bytes: usize, remembered: Option<usize>) -> Self {
+        let limit = policy.limit(buffer_bytes);
+        let concurrency = if policy.mode == Mode::Manual {
+            policy.manual_concurrency.clamp(1, limit)
+        } else {
+            remembered
+                .unwrap_or(match policy.mode {
+                    Mode::Conservative => 2,
+                    Mode::Maximum => 8,
+                    _ => 4,
+                })
+                .min(8)
+                .clamp(1, limit)
+        };
+        let explanation = if policy.mode == Mode::Manual {
+            "Manual limit"
+        } else if remembered.is_some() {
+            "Rechecking remembered setting"
+        } else {
+            "Measuring transfer speed"
+        };
+        Self {
+            policy,
+            concurrency,
+            explanation,
+            limit,
+            best_concurrency: concurrency,
+            best_rate: 0.0,
+            previous_rate: None,
+            probing: false,
+            cooldown: 0,
+            learned: false,
+            try_lower: false,
+            lower_tested: false,
+            stalled: 0,
+        }
+    }
+
+    pub fn update_policy(&mut self, policy: Policy, buffer_bytes: usize) {
+        let limit = policy.limit(buffer_bytes);
+        if policy.mode != self.policy.mode
+            || limit != self.limit
+            || policy.manual_concurrency != self.policy.manual_concurrency
+        {
+            *self = Self::new(policy, buffer_bytes, Some(self.concurrency.min(limit)));
+        } else {
+            self.policy = policy;
+        }
+    }
+
+    /// Samples must span at least five seconds and have enough queued work to
+    /// keep the chosen number busy. Tail-drain and partial warm-up samples do not
+    /// become evidence for a higher/lower concurrency setting.
+    pub fn sample(&mut self, bytes: u64, elapsed: Duration, saturated: bool, retries: u64) {
+        if retries > 0 {
+            self.concurrency = (self.concurrency / 2).max(1);
+            self.best_concurrency = self.concurrency;
+            self.best_rate = 0.0;
+            self.previous_rate = None;
+            self.probing = false;
+            self.learned = false;
+            self.cooldown = 6;
+            self.explanation = "Reduced concurrency after an I/O retry";
+            return;
+        }
+        if self.policy.mode == Mode::Manual {
+            self.explanation = "Manual limit";
+            return;
+        }
+        if elapsed < Duration::from_secs(5) || !saturated {
+            self.previous_rate = None;
+            return;
+        }
+        let rate = bytes as f64 / elapsed.as_secs_f64();
+        if rate <= 0.0 {
+            self.previous_rate = None;
+            self.stalled += 1;
+            if self.stalled >= 2 && self.concurrency > 1 {
+                self.concurrency = (self.concurrency / 2).max(1);
+                self.best_concurrency = self.concurrency;
+                self.best_rate = 0.0;
+                self.learned = false;
+                self.probing = false;
+                self.explanation = "Reduced concurrency while storage is stalled";
+                self.stalled = 0;
+            }
+            return;
+        }
+        self.stalled = 0;
+        let Some(previous) = self.previous_rate.replace(rate) else {
+            return;
+        };
+        // Mixed file sizes and background traffic can produce noisy samples.
+        if (rate - previous).abs() / rate.max(previous) > 0.30 {
+            return;
+        }
+        self.previous_rate = None;
+        let rate = (rate + previous) / 2.0;
+        if self.probing {
+            let lower = self.concurrency < self.best_concurrency;
+            if rate >= self.best_rate * (if lower { 0.95 } else { 1.08 }) {
+                self.best_rate = rate;
+                self.best_concurrency = self.concurrency;
+                self.explanation = if lower {
+                    "Similar speed with fewer simultaneous files"
+                } else {
+                    "Higher concurrency improved throughput"
+                };
+            } else {
+                self.concurrency = self.best_concurrency;
+                self.cooldown = 6;
+                self.explanation = "Keeping the faster stable setting";
+                self.try_lower = !lower && !self.lower_tested;
+            }
+            self.probing = false;
+            self.learned = true;
+        } else if self.best_rate > 0.0 && rate < self.best_rate * 0.70 && self.concurrency > 1 {
+            self.concurrency = (self.concurrency / 2).max(1);
+            self.best_concurrency = self.concurrency;
+            self.best_rate = 0.0;
+            self.learned = false;
+            self.cooldown = 2;
+            self.explanation = "Rechecking after throughput dropped";
+        } else {
+            self.best_rate = rate;
+            self.best_concurrency = self.concurrency;
+            self.learned = true;
+            if self.cooldown > 0 {
+                self.cooldown -= 1;
+            } else if self.try_lower && self.concurrency > 1 {
+                self.concurrency = (self.concurrency / 2).max(1);
+                self.probing = true;
+                self.try_lower = false;
+                self.lower_tested = true;
+                self.explanation = "Testing whether fewer files reduce contention";
+            } else if self.concurrency < self.limit {
+                self.concurrency =
+                    (self.concurrency + (self.concurrency / 2).max(1)).min(self.limit);
+                self.probing = true;
+                self.explanation = "Testing more simultaneous files";
+            } else {
+                self.explanation = "At the configured concurrency limit";
+            }
+        }
+    }
+
+    pub fn learned_concurrency(&self) -> Option<usize> {
+        (self.learned && self.policy.mode != Mode::Manual).then_some(self.best_concurrency)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn observe(c: &mut Controller, rate: u64) {
+        for _ in 0..2 {
+            c.sample(rate * 5, Duration::from_secs(5), true, 0);
+        }
+    }
+
+    #[test]
+    fn explores_and_rolls_back_a_slower_probe() {
+        let mut c = Controller::new(Policy::default(), 4 << 20, None);
+        observe(&mut c, 1000);
+        assert_eq!(c.concurrency, 6);
+        observe(&mut c, 900);
+        assert_eq!(c.concurrency, 4);
+        assert_eq!(c.learned_concurrency(), Some(4));
+    }
+
+    #[test]
+    fn remembers_improvement_but_not_an_unfinished_probe() {
+        let mut c = Controller::new(Policy::default(), 4 << 20, None);
+        observe(&mut c, 1000);
+        assert_eq!(c.learned_concurrency(), Some(4));
+        observe(&mut c, 1200);
+        assert_eq!(c.learned_concurrency(), Some(6));
+    }
+
+    #[test]
+    fn errors_reduce_concurrency_immediately_and_invalidate_learning() {
+        let mut c = Controller::new(Policy::default(), 4 << 20, Some(8));
+        c.sample(0, Duration::from_millis(1), false, 1);
+        assert_eq!(c.concurrency, 4);
+        assert_eq!(c.learned_concurrency(), None);
+    }
+
+    #[test]
+    fn tail_and_noisy_samples_do_not_teach_the_controller() {
+        let mut c = Controller::new(Policy::default(), 4 << 20, None);
+        c.sample(1000, Duration::from_secs(5), false, 0);
+        c.sample(100, Duration::from_secs(5), true, 0);
+        c.sample(1000, Duration::from_secs(5), true, 0);
+        assert_eq!(c.concurrency, 4);
+        assert_eq!(c.learned_concurrency(), None);
+    }
+
+    #[test]
+    fn policy_caps_memory_and_manual_settings() {
+        let policy = Policy {
+            mode: Mode::Manual,
+            manual_concurrency: 32,
+            memory_budget_mb: 24,
+            ..Policy::default()
+        };
+        let mut c = Controller::new(policy, 4 << 20, None);
+        assert_eq!(c.concurrency, 2);
+        observe(&mut c, 1000);
+        assert_eq!(c.concurrency, 2);
+        assert_eq!(c.learned_concurrency(), None);
+        c.update_policy(
+            Policy {
+                mode: Mode::Conservative,
+                ..Policy::default()
+            },
+            4 << 20,
+        );
+        for _ in 0..10 {
+            observe(&mut c, 1000);
+        }
+        assert!(c.concurrency <= 4);
+    }
+
+    #[test]
+    fn history_is_bounded_expires_and_rejects_future_records() {
+        let now = MAX_AGE + 100;
+        let mut h = History::default();
+        for i in 0..80 {
+            h.routes.insert(
+                i.to_string(),
+                Learned {
+                    concurrency: 4,
+                    updated: now - i,
+                },
+            );
+        }
+        h.routes.insert(
+            "stale".into(),
+            Learned {
+                concurrency: 4,
+                updated: 1,
+            },
+        );
+        h.routes.insert(
+            "future".into(),
+            Learned {
+                concurrency: 4,
+                updated: now + 1,
+            },
+        );
+        h.prune(now);
+        assert_eq!(h.routes.len(), MAX_HISTORY);
+        assert!(!h.routes.contains_key("stale"));
+        assert!(!h.routes.contains_key("future"));
+        let roundtrip: History = serde_json::from_str(&serde_json::to_string(&h).unwrap()).unwrap();
+        assert_eq!(roundtrip.routes.len(), MAX_HISTORY);
+    }
+
+    #[test]
+    fn learning_is_direction_and_workload_specific() {
+        assert_ne!(
+            route_key("cloud", "nas", 100, 1),
+            route_key("nas", "cloud", 100, 1)
+        );
+        assert_ne!(
+            route_key("cloud", "nas", 100, 1),
+            route_key("cloud", "nas", 32 << 20, 1)
+        );
+        assert_ne!(
+            route_key("share1", "nas", 100, 1),
+            route_key("share2", "nas", 100, 1)
+        );
+    }
+
+    #[test]
+    fn slower_storage_can_choose_fewer_workers_after_a_plateau() {
+        let mut c = Controller::new(Policy::default(), 4 << 20, None);
+        observe(&mut c, 1000); // Probe 6 from the baseline of 4.
+        observe(&mut c, 1000); // Roll back and schedule a lower probe.
+        for _ in 0..7 {
+            observe(&mut c, 1000);
+        }
+        assert_eq!(c.concurrency, 2);
+        observe(&mut c, 990);
+        assert_eq!(c.learned_concurrency(), Some(2));
+    }
+
+    #[test]
+    fn sustained_stalls_reduce_concurrency_without_learning() {
+        let mut c = Controller::new(Policy::default(), 4 << 20, None);
+        c.sample(0, Duration::from_secs(5), true, 0);
+        c.sample(0, Duration::from_secs(5), true, 0);
+        assert_eq!(c.concurrency, 2);
+        assert_eq!(c.learned_concurrency(), None);
+    }
+}

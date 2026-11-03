@@ -28,6 +28,8 @@ pub(crate) struct ProgressContext<'a> {
     pub(crate) total_files: &'a Arc<AtomicU64>,
     pub(crate) completed_files: &'a Arc<AtomicU64>,
     pub(crate) last_running_emit: StdMutex<Instant>,
+    pub(crate) retry_count: Option<&'a AtomicU64>,
+    pub(crate) rate_limit: Option<&'a super::resources::RateLimit>,
 }
 
 impl ProgressContext<'_> {

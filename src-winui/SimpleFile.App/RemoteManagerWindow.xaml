@@ -461,8 +461,10 @@
                 </ComboBox>
                 <Button Content="Cancel transfer" Click="OnCancelTransferClicked" IsEnabled="{Binding CanCancelTransfer}" />
                 <Button Content="Retry incomplete" Click="OnRetryTransfersClicked" IsEnabled="{Binding CanRetryTransfers}" />
+                <Button Content="Transfer defaults" Click="OnTransferDefaultsClicked" />
             </StackPanel>
             <TextBlock FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="{Binding TransferProgressText}" TextTrimming="CharacterEllipsis" />
+            <TextBlock FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="{Binding TransferTuningText}" TextWrapping="Wrap" />
             <TextBlock FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" Text="{Binding StatusText}" TextTrimming="CharacterEllipsis" />
         </StackPanel>
     </Grid>

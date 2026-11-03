@@ -285,7 +285,7 @@ public class FileOperationServiceTests
                     Status = "running",
                 });
             cts.Cancel();
-            return Task.FromCanceled<TransferResult[]>(ct);
+            return Task.FromCanceled<TransferResult[]>(cts.Token);
         };
         var service = new FileOperationService(stub);
 
@@ -385,11 +385,12 @@ public class FileOperationServiceTests
     }
 
     [Fact]
-    public async Task CopyAsync_TokenCancel_CallsBackendCancel()
+    public async Task CopyAsync_TokenCancel_CallsBackendCancelAndWaitsForWorkerCleanup()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelRequested = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         string? copyOperationId = null;
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelCalls = 0;
         var stub = new ConfigurableIpc
         {
@@ -397,7 +398,8 @@ public class FileOperationServiceTests
             {
                 copyOperationId = operationId;
                 started.SetResult();
-                await Task.Delay(Timeout.Infinite, ct);
+                Assert.False(ct.CanBeCanceled);
+                await cleanup.Task;
                 return Array.Empty<TransferResult>();
             },
             CancelOperationHandler = (operationId, ct) =>
@@ -418,8 +420,10 @@ public class FileOperationServiceTests
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cts.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => copyTask);
         var cancelled = await cancelRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(copyTask.IsCompleted);
+        cleanup.SetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => copyTask);
         Assert.Equal(copyOperationId, cancelled);
         Assert.False(string.IsNullOrEmpty(cancelled));
         Assert.Equal(1, Volatile.Read(ref cancelCalls));
@@ -490,11 +494,12 @@ public class FileOperationServiceTests
     }
 
     [Fact]
-    public async Task MoveAsync_TokenCancel_CallsBackendCancel()
+    public async Task MoveAsync_TokenCancel_CallsBackendCancelAndWaitsForWorkerCleanup()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelRequested = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         string? moveOperationId = null;
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelCalls = 0;
         var stub = new ConfigurableIpc
         {
@@ -502,7 +507,8 @@ public class FileOperationServiceTests
             {
                 moveOperationId = operationId;
                 started.SetResult();
-                await Task.Delay(Timeout.Infinite, ct);
+                Assert.False(ct.CanBeCanceled);
+                await cleanup.Task;
                 return Array.Empty<TransferResult>();
             },
             CancelOperationHandler = (operationId, ct) =>
@@ -523,8 +529,10 @@ public class FileOperationServiceTests
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cts.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => moveTask);
         var cancelled = await cancelRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(moveTask.IsCompleted);
+        cleanup.SetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => moveTask);
         Assert.Equal(moveOperationId, cancelled);
         Assert.False(string.IsNullOrEmpty(cancelled));
         Assert.Equal(1, Volatile.Read(ref cancelCalls));
@@ -738,7 +746,7 @@ public class FileOperationServiceTests
             CopyWithProgressHandler = (sources, destination, operationId, conflictAction, ct) =>
             {
                 cts.Cancel();
-                return Task.FromCanceled<TransferResult[]>(ct);
+                return Task.FromCanceled<TransferResult[]>(cts.Token);
             },
             CancelOperationHandler = (operationId, ct) => Task.CompletedTask,
             InstallUpdateHandler = ct => throw new InvalidOperationException("signature mismatch"),

@@ -16,6 +16,7 @@ pub const BINARY_THUMBNAILS_RESULT: u8 = 8;
 pub const HANDSHAKE_METHOD: &str = "ipc.handshake";
 pub const HEALTH_METHOD: &str = "ipc.health";
 pub const SHUTDOWN_METHOD: &str = "ipc.shutdown";
+pub const TRANSFER_TUNING: &str = "transfer-tuning";
 pub const FILE_CHANGE: &str = "file-change";
 pub const OPERATION_PROGRESS: &str = "operation-progress";
 pub const SEARCH_RESULTS_BATCH: &str = "search-results-batch";

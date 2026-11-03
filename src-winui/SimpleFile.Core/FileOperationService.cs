@@ -110,7 +110,9 @@ public sealed class FileOperationService : ISettingsBackend
         string conflictAction,
         IProgress<ProgressUpdate>? progress = null,
         Action<string>? operationStarted = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IProgress<TuningUpdate>? tuning = null,
+        TransferPolicy? policy = null)
     {
         return RunTransferAsync(
             "copy",
@@ -120,7 +122,7 @@ public sealed class FileOperationService : ISettingsBackend
                 sources, destination, operationId, conflictAction, token),
             progress,
             operationStarted,
-            ct);
+            ct, tuning, policy);
     }
 
     // Move items to a destination with conflict resolution.
@@ -130,7 +132,9 @@ public sealed class FileOperationService : ISettingsBackend
         string conflictAction,
         IProgress<ProgressUpdate>? progress = null,
         Action<string>? operationStarted = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IProgress<TuningUpdate>? tuning = null,
+        TransferPolicy? policy = null)
     {
         return RunTransferAsync(
             "move",
@@ -140,7 +144,7 @@ public sealed class FileOperationService : ISettingsBackend
                 sources, destination, operationId, conflictAction, token),
             progress,
             operationStarted,
-            ct);
+            ct, tuning, policy);
     }
 
     private async Task<TransferResult[]> RunTransferAsync(
@@ -150,13 +154,19 @@ public sealed class FileOperationService : ISettingsBackend
         Func<ISimpleFileIpc, string, CancellationToken, Task<TransferResult[]>> invoke,
         IProgress<ProgressUpdate>? progress,
         Action<string>? operationStarted,
-        CancellationToken ct)
+        CancellationToken ct,
+        IProgress<TuningUpdate>? tuning,
+        TransferPolicy? policy)
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
         _journal?.Started(operationType, operationId, sources, destination);
         operationStarted?.Invoke(operationId);
         IDisposable? subscription = null;
+        using var tuningSubscription = tuning is null ? null : ipc.On<TuningUpdate>(Protocol.TransferTuningEvent, update =>
+        {
+            if (update.OperationId == operationId) tuning.Report(update);
+        });
         IDisposable? cancelRegistration = null;
         var cancellationLock = new object();
         Task? backendCancellation = null;
@@ -178,19 +188,17 @@ public sealed class FileOperationService : ISettingsBackend
             });
         }
 
-        // JSON-RPC cancellation does not abort the backend copy/move. Always
-        // pair a cancelled wait with cancel_operation.
-        if (ct.CanBeCanceled)
-        {
-            cancelRegistration = ct.Register(() =>
-            {
-                _ = RequestBackendCancellationAsync();
-            });
-        }
-
         try
         {
-            var results = await invoke(ipc, operationId, ct).ConfigureAwait(false);
+            if (policy is not null) await TransferPolicyStore.SetOverrideAsync(this, operationId, policy, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            // Keep awaiting the backend result after cancellation so all workers
+            // have joined and staging cleanup is finished before the UI is terminal.
+            // Register after sending, preventing cancel from preceding the operation.
+            var transfer = invoke(ipc, operationId, CancellationToken.None);
+            if (ct.CanBeCanceled)
+                cancelRegistration = ct.Register(() => _ = RequestBackendCancellationAsync());
+            var results = await transfer.ConfigureAwait(false);
             if (ct.IsCancellationRequested)
             {
                 _journal?.Cancelled(operationType, operationId);
@@ -224,6 +232,8 @@ public sealed class FileOperationService : ISettingsBackend
         {
             cancelRegistration?.Dispose();
             subscription?.Dispose();
+            try { await TransferPolicyStore.SetOverrideAsync(this, operationId, null).ConfigureAwait(false); }
+            catch (Exception exception) { System.Diagnostics.Debug.WriteLine($"Transfer override cleanup: {exception.Message}"); }
         }
     }
 
@@ -541,10 +551,15 @@ public sealed class FileOperationService : ISettingsBackend
 
     public async Task<RemoteTransferOutcome> RemoteTransferEntriesAsync(
         string remoteSessionId, string direction, string[] sources, string destination,
-        string conflictAction, IProgress<ProgressUpdate>? progress, CancellationToken ct = default)
+        string conflictAction, IProgress<ProgressUpdate>? progress, CancellationToken ct = default,
+        IProgress<TuningUpdate>? tuning = null)
     {
         var ipc = _ipc;
         var operationId = GenerateOperationId();
+        using var tuningSubscription = ipc.On<TuningUpdate>(Protocol.TransferTuningEvent, update =>
+        {
+            if (update.OperationId == operationId) tuning?.Report(update);
+        });
         using var subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
         {
             if (update.OperationId == operationId) progress?.Report(update);

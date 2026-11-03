@@ -21,6 +21,9 @@ public sealed class RemoteManagerViewModel : ObservableObject
     private string _retryDestination = "";
     private string _retryProfileId = "";
     private string _transferProgressText = "";
+    private string _transferTuningText = "";
+    public string TransferTuningText { get => _transferTuningText; private set => SetProperty(ref _transferTuningText, value); }
+    public ISettingsBackend TransferSettingsBackend => _fileOperations;
     public string ConflictAction { get; set; } = "error";
     public bool CanCancelTransfer => _transferCancellation is not null && !_transferCancellation.IsCancellationRequested;
     public bool CanRetryTransfers => !IsBusy && CurrentSession is not null
@@ -658,7 +661,8 @@ public sealed class RemoteManagerViewModel : ObservableObject
                 TransferProgressText = $"{update.CurrentFiles} files | {update.Current:N0} bytes | {update.CurrentItem}";
             });
             var outcome = await _fileOperations.RemoteTransferEntriesAsync(CurrentSession.SessionId,
-                direction, sources, destination, ConflictAction, progress, cancellation.Token);
+                direction, sources, destination, ConflictAction, progress, cancellation.Token,
+                new Progress<TuningUpdate>(update => TransferTuningText = $"{update.Mode} · {update.Explanation}"));
             _retrySources = outcome.RetrySources;
             foreach (var item in outcome.Items)
             {

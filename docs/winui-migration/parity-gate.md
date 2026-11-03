@@ -199,6 +199,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | --- | --- | --- | --- | --- | --- |
 | `file-change` | Watcher refresh | MainWindow subscription | Client `On<T>` | External create/delete | `MANUAL` |
 | `operation-progress` | Copy/move/cleanup/dup | Progress panel | `FileOperationServiceTests` | Watch bar + cancel | `PASS` |
+| `transfer-tuning` | Transfer policy and active files | Transfer options and active file list | `TransferPolicyTests`, parallel worker tests, adaptive UI smoke | Change policy while copying | `PASS` |
 | `search-results-batch` | Incremental search | Search box batches | Client | Search streams rows | `MANUAL` |
 | `search-complete` | Count notification | Status text | Client complete callback | Search finishes | `PASS` |
 | `update-chunk` | Updater download | Settings install progress | FileOperationService progress subscription test | Signed update smoke | `PASS` |

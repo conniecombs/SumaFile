@@ -1,11 +1,19 @@
 //! Progress tracking and cancellation for bulk file transfers.
 
+mod adaptive;
 mod execute;
+mod parallel;
 mod plan;
 mod registry;
 mod reporting;
+mod resources;
+mod tuning;
 
+pub(crate) use parallel::{ActiveFile, TuningUpdate};
 pub use registry::OperationRegistry;
+pub(crate) use resources::Permit as TransferPermit;
+pub(crate) use resources::RateLimit;
+pub(crate) use tuning::Policy;
 
 pub(crate) use plan::prepare_transfer_inputs;
 pub(crate) use reporting::ProgressContext;
@@ -67,6 +75,63 @@ pub fn transfer_with_progress_blocking(
     cancel: Arc<AtomicBool>,
     emit: &dyn Fn(ProgressUpdate),
 ) -> Result<Vec<TransferResult>, TransferBatchError> {
+    transfer_with_tuning_blocking(
+        operation_type,
+        sources,
+        destination,
+        operation_id,
+        conflict_action,
+        cancel,
+        emit,
+        &|_| {},
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn transfer_with_tuning_blocking(
+    operation_type: &'static str,
+    sources: Vec<String>,
+    destination: String,
+    operation_id: String,
+    conflict_action: String,
+    cancel: Arc<AtomicBool>,
+    emit: &dyn Fn(ProgressUpdate),
+    emit_tuning: &dyn Fn(parallel::TuningUpdate),
+) -> Result<Vec<TransferResult>, TransferBatchError> {
+    let policy_id = operation_id.clone();
+    transfer_with_policy_blocking(
+        operation_type,
+        sources,
+        destination,
+        operation_id,
+        conflict_action,
+        cancel,
+        emit,
+        emit_tuning,
+        &|| tuning::Policy::for_operation(&policy_id),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transfer_with_policy_blocking(
+    operation_type: &'static str,
+    sources: Vec<String>,
+    destination: String,
+    operation_id: String,
+    conflict_action: String,
+    cancel: Arc<AtomicBool>,
+    emit: &dyn Fn(ProgressUpdate),
+    emit_tuning: &dyn Fn(parallel::TuningUpdate),
+    policy: &dyn Fn() -> tuning::Policy,
+) -> Result<Vec<TransferResult>, TransferBatchError> {
+    let mut session = adaptive::Session::new(
+        &operation_id,
+        operation_type,
+        &sources,
+        &destination,
+        policy,
+        emit_tuning,
+    );
     let (mut plans, _dest_path) = prepare_transfer_inputs(sources, destination, &conflict_action)
         .map_err(|error| {
         TransferBatchError::failed(
@@ -97,6 +162,8 @@ pub fn transfer_with_progress_blocking(
         total_files: &total_files,
         completed_files: &completed_files,
         last_running_emit: StdMutex::new(Instant::now()),
+        retry_count: None,
+        rate_limit: None,
     };
 
     progress.emit_now(0, 0, "Preparing transfer...".to_string(), "running", None);
@@ -143,19 +210,120 @@ pub fn transfer_with_progress_blocking(
     }
 
     let outcome = (|| -> TransferOutcome {
+        let mut done = HashSet::new();
+        let mut attempted = HashSet::new();
         for index in 0..plans.len() {
+            if done.contains(&index) {
+                continue;
+            }
             let mut plan = plans[index].clone();
             if cancel.load(Ordering::Relaxed) {
                 return TransferOutcome::Cancelled(transferred);
             }
             let source = plan.source_path.to_string_lossy().to_string();
-            let pending_after_current = pending_sources(&plans, index + 1);
             let mut completed_plan = false;
 
-            for _ in 0..100 {
-                match operation_type {
-                    "copy" => match copy_plan_with_progress(&plan, &progress, &mut completed_bytes)
+            let streamed_move = operation_type == "move"
+                && plan.source_path.components().next() != plan.final_dest.components().next();
+            if (operation_type == "copy" || streamed_move) && !attempted.contains(&index) {
+                let mut tasks = Vec::new();
+                for candidate in plans.iter().skip(index).take(128) {
+                    let Ok(metadata) = std::fs::symlink_metadata(&candidate.source_path) else {
+                        break;
+                    };
+                    if !metadata.file_type().is_file() {
+                        break;
+                    }
+                    if streamed_move
+                        && candidate.source_path.components().next()
+                            == candidate.final_dest.components().next()
                     {
+                        break;
+                    }
+                    tasks.push(parallel::FileTask {
+                        source: candidate.source_path.clone(),
+                        destination: candidate.final_dest.clone(),
+                        size: metadata.len(),
+                        network: candidate.network,
+                        replace_existing: candidate.replace_existing,
+                        resume_existing: false,
+                        symlink: false,
+                    });
+                }
+                if !tasks.is_empty() {
+                    let mut result =
+                        parallel::copy_files(&tasks, &progress, &mut session, completed_bytes);
+                    completed_bytes = completed_bytes.saturating_add(result.bytes);
+                    attempted.extend(index..index + tasks.len());
+                    for completed in result.completed {
+                        let absolute = index + completed;
+                        if streamed_move {
+                            if let Err(error) = crate::transfer_staging::remove_path(
+                                &plans[absolute].source_path,
+                                "source",
+                            ) {
+                                if result.failed.is_none() {
+                                    result.failed = Some((
+                                        completed,
+                                        format!("Copied but failed to delete source: {error}"),
+                                    ));
+                                }
+                                continue;
+                            }
+                        }
+                        done.insert(absolute);
+                        transferred.push(TransferResult {
+                            source: plans[absolute].source_path.to_string_lossy().into(),
+                            destination: plans[absolute].final_dest.to_string_lossy().into(),
+                        });
+                    }
+                    if let Some((failed, error)) = result.failed {
+                        if error == "Operation cancelled" {
+                            return TransferOutcome::Cancelled(transferred);
+                        }
+                        if !keep_both || !error.starts_with("CONFLICT:") {
+                            return TransferOutcome::Failed {
+                                error,
+                                source: plans[index + failed].source_path.to_string_lossy().into(),
+                                committed: transferred,
+                                pending: plans
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(i, _)| !done.contains(i) && *i != index + failed)
+                                    .map(|(_, p)| p.source_path.to_string_lossy().into())
+                                    .collect(),
+                            };
+                        }
+                        // Retain successful files and resolve raced conflicts
+                        // individually through the established keep-both path.
+                    }
+                    if done.contains(&index) {
+                        continue;
+                    }
+                }
+            }
+
+            let pending_after_current = plans
+                .iter()
+                .enumerate()
+                .skip(index + 1)
+                .filter(|(i, _)| !done.contains(i))
+                .map(|(_, p)| p.source_path.to_string_lossy().into())
+                .collect::<Vec<String>>();
+            for _ in 0..100 {
+                let before_attempt = (
+                    completed_bytes,
+                    completed_files.load(Ordering::Relaxed),
+                    total_bytes.load(Ordering::Relaxed),
+                    total_files.load(Ordering::Relaxed),
+                );
+                match operation_type {
+                    "copy" => match copy_plan_with_progress(
+                        &plan,
+                        &progress,
+                        &mut completed_bytes,
+                        &mut session,
+                    ) {
                         Ok(()) => {
                             completed_plan = true;
                             break;
@@ -164,6 +332,11 @@ pub fn transfer_with_progress_blocking(
                             return TransferOutcome::Cancelled(transferred);
                         }
                         Err(error) if keep_both && error.starts_with("CONFLICT:") => {
+                            completed_bytes = before_attempt.0;
+                            completed_files.store(before_attempt.1, Ordering::Relaxed);
+                            total_bytes.store(before_attempt.2, Ordering::Relaxed);
+                            total_files.store(before_attempt.3, Ordering::Relaxed);
+                            session.restart_after_conflict(completed_bytes);
                             if let Err(resolve_error) = choose_next_keep_both_destination(
                                 &mut plan,
                                 &mut reserved_destinations,
@@ -185,8 +358,12 @@ pub fn transfer_with_progress_blocking(
                             };
                         }
                     },
-                    "move" => match move_plan_with_progress(&plan, &progress, &mut completed_bytes)
-                    {
+                    "move" => match move_plan_with_progress(
+                        &plan,
+                        &progress,
+                        &mut completed_bytes,
+                        &mut session,
+                    ) {
                         Ok(()) => {
                             completed_plan = true;
                             break;
@@ -195,6 +372,11 @@ pub fn transfer_with_progress_blocking(
                             return TransferOutcome::Cancelled(transferred);
                         }
                         Err(error) if keep_both && error.starts_with("CONFLICT:") => {
+                            completed_bytes = before_attempt.0;
+                            completed_files.store(before_attempt.1, Ordering::Relaxed);
+                            total_bytes.store(before_attempt.2, Ordering::Relaxed);
+                            total_files.store(before_attempt.3, Ordering::Relaxed);
+                            session.restart_after_conflict(completed_bytes);
                             if let Err(resolve_error) = choose_next_keep_both_destination(
                                 &mut plan,
                                 &mut reserved_destinations,
@@ -241,11 +423,16 @@ pub fn transfer_with_progress_blocking(
                 source,
                 destination: plan.final_dest.to_string_lossy().to_string(),
             });
+            done.insert(index);
         }
         TransferOutcome::Completed(transferred)
     })();
 
     let final_total = total_bytes.load(Ordering::Relaxed);
+    session.display(Vec::new(), true);
+    if matches!(&outcome, TransferOutcome::Completed(_)) {
+        session.save();
+    }
 
     match outcome {
         TransferOutcome::Completed(transferred) => {
@@ -284,14 +471,6 @@ pub fn transfer_with_progress_blocking(
             ))
         }
     }
-}
-
-fn pending_sources(plans: &[plan::TransferPlan], start: usize) -> Vec<String> {
-    plans
-        .iter()
-        .skip(start)
-        .map(|plan| plan.source_path.to_string_lossy().to_string())
-        .collect()
 }
 
 impl TransferBatchError {
@@ -413,7 +592,7 @@ mod tests {
         let conflict_for_emit = conflict.clone();
         let cancel = Arc::new(AtomicBool::new(false));
 
-        let error = transfer_with_progress_blocking(
+        let error = super::transfer_with_policy_blocking(
             "copy",
             vec![
                 first.to_string_lossy().to_string(),
@@ -430,6 +609,12 @@ mod tests {
                 {
                     fs::write(&conflict_for_emit, b"conflict").unwrap();
                 }
+            },
+            &|_| {},
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 1,
+                ..super::tuning::Policy::default()
             },
         )
         .expect_err("second item should fail after first commits");
@@ -664,6 +849,8 @@ mod tests {
             total_files: &total_files,
             completed_files: &completed_files,
             last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -713,6 +900,8 @@ mod tests {
             total_files: &total_files,
             completed_files: &completed_files,
             last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -782,50 +971,118 @@ mod tests {
     }
 
     #[test]
-    fn directory_copy_cancel_during_finalizing_does_not_promote_staging() {
-        let src_root = unique_temp_path("finalizing_cancel_src");
-        let dst_root = unique_temp_path("finalizing_cancel_dst");
-        let source = src_root.join("Movie");
-        let final_destination = dst_root.join("Movie");
+    fn directory_copy_and_move_cancel_before_promotion_preserve_source_and_clean_staging() {
+        for operation in ["copy", "move"] {
+            let src_root = unique_temp_path("finalizing_cancel_src");
+            let dst_root = unique_temp_path("finalizing_cancel_dst");
+            let source = src_root.join("Movie");
+            let final_destination = dst_root.join("Movie");
+            fs::create_dir_all(&source).unwrap();
+            fs::create_dir_all(&dst_root).unwrap();
+            fs::write(source.join("feature.mkv"), b"feature").unwrap();
+
+            let operation_id = "op_finalizing_cancel_test";
+            let staging = resumable_staging_path_for(&final_destination, operation_id).unwrap();
+            let final_destination_text = final_destination.to_string_lossy().to_string();
+            let cancel = Arc::new(AtomicBool::new(false));
+            let cancel_for_emit = cancel.clone();
+            let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
+            let updates_target = updates.clone();
+
+            let result = transfer_with_progress_blocking(
+                operation,
+                vec![source.to_string_lossy().to_string()],
+                dst_root.to_string_lossy().to_string(),
+                operation_id.to_string(),
+                "keep-both".to_string(),
+                cancel,
+                &|update| {
+                    if update.status == "finalizing"
+                        && update.current_item == final_destination_text
+                    {
+                        cancel_for_emit.store(true, Ordering::Relaxed);
+                    }
+                    updates_target.lock().unwrap().push(update);
+                },
+            )
+            .expect("cancelled directory copy should return partial results");
+
+            assert!(result.is_empty());
+            assert!(!final_destination.exists());
+            assert!(!staging.exists());
+            assert_eq!(fs::read(source.join("feature.mkv")).unwrap(), b"feature");
+            let updates = updates.lock().unwrap();
+            assert!(updates.iter().any(|update| {
+                update.status == "finalizing" && update.current_item == final_destination_text
+            }));
+            assert!(updates.iter().any(|update| update.status == "cancelled"));
+
+            let _ = fs::remove_dir_all(&src_root);
+            let _ = fs::remove_dir_all(&dst_root);
+        }
+    }
+
+    #[test]
+    fn concurrent_failure_partitions_every_selection_and_preserves_conflicting_data() {
+        let source = unique_temp_path("concurrent_failure_src");
+        let destination = unique_temp_path("concurrent_failure_dst");
         fs::create_dir_all(&source).unwrap();
-        fs::create_dir_all(&dst_root).unwrap();
-        fs::write(source.join("feature.mkv"), b"feature").unwrap();
-
-        let operation_id = "op_finalizing_cancel_test";
-        let staging = resumable_staging_path_for(&final_destination, operation_id).unwrap();
-        let final_destination_text = final_destination.to_string_lossy().to_string();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let cancel_for_emit = cancel.clone();
-        let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
-        let updates_target = updates.clone();
-
-        let result = transfer_with_progress_blocking(
+        fs::create_dir_all(&destination).unwrap();
+        let sources: Vec<_> = (0..8)
+            .map(|index| {
+                let path = source.join(format!("{index}.bin"));
+                fs::write(&path, vec![index as u8; 65536]).unwrap();
+                path.to_string_lossy().into_owned()
+            })
+            .collect();
+        let conflict = destination.join("1.bin");
+        let error = super::transfer_with_policy_blocking(
             "copy",
-            vec![source.to_string_lossy().to_string()],
-            dst_root.to_string_lossy().to_string(),
-            operation_id.to_string(),
-            "error".to_string(),
-            cancel,
+            sources.clone(),
+            destination.to_string_lossy().into(),
+            "concurrent-failure".into(),
+            "error".into(),
+            Arc::new(AtomicBool::new(false)),
             &|update| {
-                if update.status == "finalizing" && update.current_item == final_destination_text {
-                    cancel_for_emit.store(true, Ordering::Relaxed);
+                if update.current_item == "Preparing transfer..." {
+                    fs::write(&conflict, b"keep existing").unwrap();
                 }
-                updates_target.lock().unwrap().push(update);
+            },
+            &|_| {},
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 3,
+                ..super::tuning::Policy::default()
             },
         )
-        .expect("cancelled directory copy should return partial results");
-
-        assert!(result.is_empty());
-        assert!(!final_destination.exists());
-        assert!(!staging.exists());
-        let updates = updates.lock().unwrap();
-        assert!(updates.iter().any(|update| {
-            update.status == "finalizing" && update.current_item == final_destination_text
-        }));
-        assert!(updates.iter().any(|update| update.status == "cancelled"));
-
-        let _ = fs::remove_dir_all(&src_root);
-        let _ = fs::remove_dir_all(&dst_root);
+        .expect_err("conflict must fail safely");
+        let reported: Vec<_> = error
+            .outcome
+            .committed
+            .iter()
+            .map(|item| item.source.clone())
+            .chain(error.outcome.failed.iter().map(|item| item.source.clone()))
+            .chain(error.outcome.pending.clone())
+            .collect();
+        assert_eq!(reported.len(), sources.len());
+        assert_eq!(
+            reported.iter().collect::<std::collections::HashSet<_>>(),
+            sources.iter().collect()
+        );
+        assert_eq!(fs::read(&conflict).unwrap(), b"keep existing");
+        for item in error.outcome.committed {
+            assert_eq!(
+                fs::read(item.source).unwrap(),
+                fs::read(item.destination).unwrap()
+            );
+        }
+        assert!(!fs::read_dir(&destination).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("sumafile-partial")));
+        fs::remove_dir_all(&source).unwrap();
+        fs::remove_dir_all(&destination).unwrap();
     }
 
     #[test]
@@ -846,6 +1103,8 @@ mod tests {
             total_files: &total_files,
             completed_files: &completed_files,
             last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
         };
 
         progress.emit_with_total(1, 100, "first".to_string(), "running", None);

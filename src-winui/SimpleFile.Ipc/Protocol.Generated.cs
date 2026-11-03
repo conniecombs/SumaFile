@@ -118,6 +118,7 @@ public static partial class Protocol
     public const string GetAllFileTagsMethod = "get_all_file_tags";
     public const string GetFilesWithTagMethod = "get_files_with_tag";
 
+    public const string TransferTuningEvent = "transfer-tuning";
     public const string FileChangeEvent = "file-change";
     public const string OperationProgressEvent = "operation-progress";
     public const string SearchResultsBatchEvent = "search-results-batch";

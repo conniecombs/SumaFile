@@ -140,7 +140,7 @@ public sealed partial class MainWindow
         }
 
         var window = EnsureTransferProgressWindow();
-        window.Start(_transfer);
+        window.Start(_transfer, _workspace?.FileOps);
     }
 
     private void StartTransferProgress(TransferOperationViewModel operation, string operationId)

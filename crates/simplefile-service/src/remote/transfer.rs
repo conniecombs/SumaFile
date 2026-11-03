@@ -1,5 +1,6 @@
 use super::path::{join_remote_path, normalize_remote_path, parent_remote_path};
 use super::provider::RemoteProvider;
+use crate::progress::{ActiveFile, Policy, RateLimit, TuningUpdate};
 use serde::{Deserialize, Serialize};
 use simplefile_core::models::{FileEntry, ProgressUpdate};
 use std::fs::{self, File, OpenOptions};
@@ -71,11 +72,24 @@ struct Progress<'a> {
     files: u64,
     current: String,
     last: Instant,
+    tuning: &'a dyn Fn(TuningUpdate),
+    policy: Policy,
+    limiter: RateLimit,
+    policy_checked: Instant,
+    file_start: u64,
 }
 
 impl Progress<'_> {
     fn report(&mut self, bytes: u64) -> std::io::Result<()> {
         check_cancel(self.cancel).map_err(std::io::Error::other)?;
+        if self.policy_checked.elapsed() >= Duration::from_secs(5) {
+            self.policy = Policy::for_operation(&self.request.operation_id);
+            self.limiter.update(self.policy.bandwidth_mib);
+            self.policy_checked = Instant::now();
+        }
+        self.limiter
+            .wait(bytes as usize, self.cancel)
+            .map_err(std::io::Error::other)?;
         self.bytes += bytes;
         if self.last.elapsed() >= Duration::from_millis(100) {
             self.send("running", None);
@@ -95,6 +109,22 @@ impl Progress<'_> {
             current_item: self.current.clone(),
             status: status.into(),
             error,
+        });
+        (self.tuning)(TuningUpdate {
+            operation_id: self.request.operation_id.clone(),
+            mode: self.policy.mode,
+            concurrency: 1,
+            explanation: "This FTP/SFTP session supports one file stream; bandwidth limits apply"
+                .into(),
+            active_files: if status == "running" && self.current != "Preparing transfer" {
+                vec![ActiveFile {
+                    path: self.current.clone(),
+                    current: self.bytes.saturating_sub(self.file_start),
+                    total: 0,
+                }]
+            } else {
+                Vec::new()
+            },
         });
     }
 }
@@ -228,6 +258,9 @@ fn transfer_file(
 ) -> Result<(String, u64, bool), String> {
     check_cancel(progress.cancel)?;
     progress.current = source.to_string();
+    let _permit =
+        crate::progress::TransferPermit::acquire(TRANSFER_BUFFER_SIZE * 3, progress.cancel)?;
+    progress.file_start = progress.bytes;
     progress.send("running", None);
     let upload = progress.request.direction == "upload";
     let policy = progress.request.conflict_action.as_str();
@@ -557,6 +590,16 @@ pub fn transfer_entries(
     cancel: &AtomicBool,
     emit: &dyn Fn(ProgressUpdate),
 ) -> Result<RemoteTransferOutcome, String> {
+    transfer_entries_with_tuning(provider, request, cancel, emit, &|_| {})
+}
+
+pub(crate) fn transfer_entries_with_tuning(
+    provider: &mut dyn RemoteProvider,
+    request: &RemoteTransferRequest,
+    cancel: &AtomicBool,
+    emit: &dyn Fn(ProgressUpdate),
+    tuning: &dyn Fn(TuningUpdate),
+) -> Result<RemoteTransferOutcome, String> {
     validate_request(request)?;
     let destination = if request.direction == "download" {
         fs::canonicalize(&request.destination)
@@ -574,6 +617,11 @@ pub fn transfer_entries(
         files: 0,
         current: "Preparing transfer".into(),
         last: Instant::now(),
+        tuning,
+        policy: Policy::for_operation(&request.operation_id),
+        limiter: RateLimit::new(Policy::for_operation(&request.operation_id).bandwidth_mib),
+        policy_checked: Instant::now(),
+        file_start: 0,
     };
     progress.send("running", None);
     let mut outcome = RemoteTransferOutcome::default();
@@ -663,6 +711,11 @@ pub fn transfer_single(
         files: 0,
         current: source.into(),
         last: Instant::now(),
+        tuning: &|_| {},
+        policy: Policy::load(),
+        limiter: RateLimit::new(Policy::load().bandwidth_mib),
+        policy_checked: Instant::now(),
+        file_start: 0,
     };
     if !upload {
         if let Some(parent) = Path::new(destination).parent() {

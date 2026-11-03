@@ -39,6 +39,26 @@ public sealed class TransferOperationViewModel : ObservableObject
     private string _speedText = "";
     private string _etaText = "";
     private string _errorMessage = "";
+    private string _tuningText = "Automatic tuning starts when files are copied";
+    public string TuningText { get => _tuningText; private set => SetProperty(ref _tuningText, value); }
+    public ObservableCollection<ActiveTransferFile> ActiveFiles { get; } = [];
+    public TransferPolicy? PolicyOverride { get; set; }
+
+    public void ApplyTuning(TuningUpdate update)
+    {
+        if (IsTerminal || update.OperationId != OperationId) return;
+        var mode = update.Mode switch { "manual" => "Custom", "conservative" => "Conservative", "maximum" => "Maximum throughput", _ => "Automatic" };
+        TuningText = $"{mode} · up to {update.Concurrency} {(update.Concurrency == 1 ? "file" : "files")} · {update.Explanation}";
+        var paths = update.ActiveFiles.Select(file => file.Path).ToHashSet(StringComparer.Ordinal);
+        for (var i = ActiveFiles.Count - 1; i >= 0; i--)
+            if (!paths.Contains(ActiveFiles[i].Path)) ActiveFiles.RemoveAt(i);
+        foreach (var file in update.ActiveFiles.Take(32))
+        {
+            var row = ActiveFiles.FirstOrDefault(item => item.Path == file.Path);
+            if (row is null) { row = new ActiveTransferFile(file.Path); ActiveFiles.Add(row); }
+            row.Update(file);
+        }
+    }
 
     internal TransferOperationViewModel(
         bool move,
@@ -312,6 +332,8 @@ public sealed class TransferOperationViewModel : ObservableObject
 
     internal void Complete(TransferOperationStatus status)
     {
+        ActiveFiles.Clear();
+        TuningText = "";
         IsWaitingForDestination = false;
         Status = status;
         SpeedText = "";
@@ -406,6 +428,16 @@ public sealed class TransferOperationViewModel : ObservableObject
 
         return string.Join(" · ", parts);
     }
+}
+
+public sealed class ActiveTransferFile(string path) : ObservableObject
+{
+    private string _progress = "Starting";
+    public string Path { get; } = path;
+    public string Name => System.IO.Path.GetFileName(Path);
+    public string Progress { get => _progress; private set => SetProperty(ref _progress, value); }
+    public void Update(ActiveFile file) => Progress = file.Total == 0 ? "Finalizing" :
+        $"{TransferProgressFormatter.FormatBytes(file.Current)} / {TransferProgressFormatter.FormatBytes(file.Total)}";
 }
 
 public sealed class TransferManagerViewModel : ObservableObject

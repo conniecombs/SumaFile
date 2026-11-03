@@ -8,12 +8,13 @@ namespace SimpleFile.App;
 
 public sealed partial class TransferProgressWindow : Window
 {
+    private ISettingsBackend? _settings;
     public TransferProgressWindow()
     {
         InitializeComponent();
         Title = "Transfers";
         AppIcon.ApplyTo(this);
-        AppWindow.Resize(new SizeInt32(700, 460));
+        AppWindow.Resize(new SizeInt32(800, 620));
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.IsResizable = true;
@@ -30,11 +31,23 @@ public sealed partial class TransferProgressWindow : Window
     public event Action? ClearCompletedRequested;
     public event Action? CloseRequested;
 
-    public void Start(TransferManagerViewModel manager)
+    public void Start(TransferManagerViewModel manager, ISettingsBackend? settings = null)
     {
+        _settings = settings;
         Root.DataContext = manager;
         TransferList.ItemsSource = manager.Operations;
         Activate();
+    }
+
+    private async void OnDefaultsClicked(object sender, RoutedEventArgs e)
+    {
+        if (_settings is not null) await TransferOptionsDialog.ShowAsync(Root.XamlRoot, _settings);
+    }
+
+    private async void OnTaskOptionsClicked(object sender, RoutedEventArgs e)
+    {
+        if (_settings is not null && sender is Button { Tag: TransferOperationViewModel operation })
+            await TransferOptionsDialog.ShowAsync(Root.XamlRoot, _settings, operation);
     }
 
     private void OnCancelOperationClicked(object sender, RoutedEventArgs e)

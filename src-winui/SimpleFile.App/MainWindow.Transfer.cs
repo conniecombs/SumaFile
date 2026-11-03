@@ -319,6 +319,7 @@ public sealed partial class MainWindow
             }
 
             var progress = new Progress<ProgressUpdate>(update => OnTransferProgress(operation, update));
+            var tuning = new Progress<TuningUpdate>(operation.ApplyTuning);
             var canRegisterUndo = !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
             while (true)
             {
@@ -333,7 +334,7 @@ public sealed partial class MainWindow
                             action,
                             progress,
                             operationId => StartTransferProgress(operation, operationId),
-                            cancellationToken);
+                            cancellationToken, tuning, operation.PolicyOverride);
                         if (canRegisterUndo
                             && ReferenceEquals(_workspace, workspace)
                             && !cancellationToken.IsCancellationRequested)
@@ -349,7 +350,7 @@ public sealed partial class MainWindow
                             action,
                             progress,
                             operationId => StartTransferProgress(operation, operationId),
-                            cancellationToken);
+                            cancellationToken, tuning, operation.PolicyOverride);
                         if (canRegisterUndo
                             && ReferenceEquals(_workspace, workspace)
                             && !cancellationToken.IsCancellationRequested)

@@ -60,6 +60,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <Grid ColumnSpacing="12">
@@ -90,6 +91,28 @@
                                     Foreground="{ThemeResource SfTextPrimaryBrush}"
                                     Text="{Binding StatusLabel}" />
                             </Grid>
+                            <StackPanel Grid.Row="3" Spacing="6">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding TuningText}" TextWrapping="Wrap" FontSize="12"
+                                               Foreground="{ThemeResource SfTextMutedBrush}" />
+                                    <Button Grid.Column="1" Content="Options" Click="OnTaskOptionsClicked" Tag="{Binding}"
+                                            IsEnabled="{Binding CanCancel}" Style="{StaticResource SfGhostButtonStyle}" />
+                                </Grid>
+                                <ScrollViewer MaxHeight="180" HorizontalScrollBarVisibility="Disabled">
+                                    <ItemsControl ItemsSource="{Binding ActiveFiles}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid ColumnSpacing="12" Margin="0,2">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" FontSize="12" ToolTipService.ToolTip="{Binding Path}" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding Progress}" FontSize="12" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </StackPanel>
 
                             <Grid Grid.Row="1">
                                 <ProgressBar
@@ -155,6 +178,7 @@
             HorizontalAlignment="Right"
             Orientation="Horizontal"
             Spacing="8">
+            <Button Content="Transfer defaults" Click="OnDefaultsClicked" Style="{StaticResource SfGhostButtonStyle}" />
             <Button
                 x:Name="ClearCompletedButton"
                 Click="OnClearCompletedClicked"

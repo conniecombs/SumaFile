@@ -81,7 +81,7 @@ function activeServiceCommands(source, rustConstants) {
 }
 
 function rustStructFields(source, structName) {
-  const start = source.indexOf(`pub struct ${structName}`);
+  const start = source.search(new RegExp(`pub(?:\\(crate\\))? struct ${structName}\\b`, 'u'));
   if (start === -1) return null;
   const brace = source.indexOf('{', start);
   const end = source.indexOf('\n}', brace);
@@ -158,6 +158,7 @@ if (protocol.handshake.method !== 'ipc.handshake') {
 const requiredEmitted = [
   'file-change',
   'operation-progress',
+  'transfer-tuning',
   'search-results-batch',
   'search-complete',
   'update-chunk',
@@ -232,6 +233,8 @@ const rustCheckedTypes = [
   'DirectoryListing',
   'DirectoryListingChunk',
   'ProgressUpdate',
+  'TuningUpdate',
+  'ActiveFile',
   'TreeNode',
   'FolderMetrics',
   'SearchOptions',
@@ -246,7 +249,7 @@ const rustCheckedTypes = [
 ];
 for (const typeName of rustCheckedTypes) {
   const schemaFields = types.types?.[typeName]?.fields;
-  const rustFields = rustStructFields(models, typeName);
+  const rustFields = rustStructFields(readRepo(types.types[typeName].source), typeName);
   if (!schemaFields || !rustFields) {
     fail(`could not compare fields for ${typeName}`);
     continue;

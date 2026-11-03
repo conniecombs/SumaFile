@@ -29,6 +29,7 @@ stay responsive in one local-first app.
 - [Use SumaFile](#use-sumafile)
 - [Feature Reference](#feature-reference)
 - [Settings and State](#settings-and-state)
+- [Transfer tuning](docs/TRANSFER_TUNING.md)
 - [Development](#development)
 - [Architecture](#architecture)
 - [Testing and Verification](#testing-and-verification)

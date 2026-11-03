@@ -21,6 +21,14 @@
     "Tag": ["emoji", "label"]
   },
   "types": {
+    "ActiveFile": {
+      "source": "crates/simplefile-service/src/progress/parallel.rs",
+      "fields": ["path", "current", "total"]
+    },
+    "TuningUpdate": {
+      "source": "crates/simplefile-service/src/progress/parallel.rs",
+      "fields": ["operation_id", "mode", "concurrency", "explanation", "active_files"]
+    },
     "FileEntry": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["name", "path", "is_dir", "is_symlink", "is_hidden", "is_system", "size", "modified", "extension", "permissions", "symlink_target", "git_status"],

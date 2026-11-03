@@ -1,6 +1,10 @@
 {
   "protocolVersion": 1,
   "emitted": {
+    "transfer-tuning": {
+      "params": "TuningUpdate",
+      "source": "crates/simplefile-service/src/progress/parallel.rs"
+    },
     "file-change": {
       "params": "FileChangeEvent",
       "source": "crates/simplefile-service/src/watcher.rs",

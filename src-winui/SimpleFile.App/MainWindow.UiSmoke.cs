@@ -181,6 +181,7 @@ public sealed partial class MainWindow
                 .Any(path => path.Contains(".sumafile-partial", StringComparison.Ordinal)), "Cancellation left staging files");
             SmokeAssert(Directory.GetFiles(source).Length == int.Parse(Path.GetFileName(source)), "Cancellation changed the source files");
             results.Add(new { scenario = "transfer-cancellation", status = operation.Status.ToString(), passed = true });
+            await SmokeAdaptiveTransfersAsync(root, source, results);
             CloseTransferProgressWindow();
         }
         catch (Exception exception) { failure = exception.ToString(); }
