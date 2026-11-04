@@ -109,11 +109,16 @@ pub(crate) fn copy_tree(
         }
         Ok(())
     })();
-    if result.is_err() {
+    if let Err(original) = result {
         // Match the established cleanup contract; never remove merged directories.
+        let mut failure = original;
         for (_, dst) in directories.iter().rev() {
-            let _ = crate::transfer_staging::remove_path(dst, "partial destination directory");
+            if let Err(error) = crate::transfer_staging::cleanup_owned_path(dst) {
+                log::warn!("{error}");
+                failure = format!("{failure}; {error}");
+            }
         }
+        return Err(failure);
     }
     result
 }
@@ -214,6 +219,7 @@ fn copy_files_using(
     let mut last_display = Instant::now();
     let mut last_retries = 0;
     let operation_id = ctx.operation_id;
+    let operation_type = ctx.operation_type;
     if let Some(first) = tasks.first() {
         ctx.emit_now(
             offset,
@@ -249,7 +255,7 @@ fn copy_files_using(
                     let progress = ProgressContext {
                         emit: &emit,
                         operation_id,
-                        operation_type: "copy",
+                        operation_type,
                         cancel,
                         total_bytes: &total_bytes,
                         total_files: &total_files,
@@ -296,7 +302,7 @@ fn copy_files_using(
                 }
                 next += 1;
             }
-            if active.is_empty() {
+            if active.is_empty() && (next == tasks.len() || worker_cancel.load(Ordering::Relaxed)) {
                 break;
             }
             if first_snapshot {
@@ -485,6 +491,127 @@ mod tests {
         assert!(snapshots.iter().any(|s| s.active_files.len() == 3));
         assert!(snapshots.last().unwrap().active_files.is_empty());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn delayed_filesystem_transfer(operation: &'static str, network: bool) {
+        use crate::transfer_test_io::DelayedIo;
+        for mode in [
+            Mode::Automatic,
+            Mode::Conservative,
+            Mode::Maximum,
+            Mode::Manual,
+        ] {
+            let root = std::env::temp_dir().join(format!(
+                "sumafile_latency_{}",
+                crate::progress::generate_transfer_operation_id()
+            ));
+            fs::create_dir_all(root.join("src")).unwrap();
+            fs::create_dir_all(root.join("dst")).unwrap();
+            let bytes: Vec<u8> = (0..256 * 1024).map(|n| (n % 251) as u8).collect();
+            let tasks: Vec<_> = (0..8)
+                .map(|index| {
+                    let source = root.join("src").join(format!("{index}.bin"));
+                    fs::write(&source, &bytes).unwrap();
+                    FileTask {
+                        source,
+                        destination: root.join("dst").join(format!("{index}.bin")),
+                        size: bytes.len() as u64,
+                        network,
+                        replace_existing: false,
+                        resume_existing: false,
+                        symlink: false,
+                    }
+                })
+                .collect();
+            let cancel = Arc::new(AtomicBool::new(false));
+            let total = Arc::new(AtomicU64::new((bytes.len() * tasks.len()) as u64));
+            let files = Arc::new(AtomicU64::new(tasks.len() as u64));
+            let completed = Arc::new(AtomicU64::new(0));
+            let ctx = ProgressContext {
+                emit: &|_| {},
+                operation_id: "latency-job",
+                operation_type: operation,
+                cancel: &cancel,
+                total_bytes: &total,
+                total_files: &files,
+                completed_files: &completed,
+                last_running_emit: Mutex::new(Instant::now()),
+                retry_count: None,
+                rate_limit: None,
+            };
+            let snapshots = Mutex::new(Vec::new());
+            let emit = |update| snapshots.lock().unwrap().push(update);
+            let policy = || Policy {
+                mode,
+                max_concurrency: 4,
+                manual_concurrency: 4,
+                ..Policy::default()
+            };
+            let mut session = Session::new(
+                "latency-job",
+                operation,
+                &[],
+                &root.to_string_lossy(),
+                &policy,
+                &emit,
+            );
+            let started = Instant::now();
+            let copy = |task: &FileTask, context: &CopyContext<'_>, copied: &mut u64| {
+                let mut input = DelayedIo::new(fs::File::open(&task.source).unwrap(), true);
+                let mut output = DelayedIo::new(fs::File::create(&task.destination).unwrap(), true);
+                *copied = super::super::execute::copy_file_stream(
+                    &mut input,
+                    &mut output,
+                    &task.source,
+                    &task.destination,
+                    context,
+                    0,
+                    0,
+                    task.size,
+                    context.buffer_size(),
+                )
+                .map_err(String::from)?;
+                Ok(())
+            };
+            let result = copy_files_using(&tasks, &ctx, &mut session, 0, &copy);
+            assert!(result.failed.is_none(), "{:?}", result.failed);
+            assert_eq!(result.completed.len(), tasks.len());
+            assert_eq!(result.bytes, (bytes.len() * tasks.len()) as u64);
+            for task in &tasks {
+                assert_eq!(fs::read(&task.destination).unwrap(), bytes);
+            }
+            let snapshots = snapshots.lock().unwrap();
+            assert!(snapshots
+                .iter()
+                .all(|s| !s.explanation.contains("safety limit")
+                    && !s.explanation.contains("Retrying")));
+            if mode == Mode::Manual {
+                assert!(snapshots.iter().all(|s| s.concurrency == 4));
+            }
+            // After repeated >750 ms successful I/O, unlimited still means unlimited.
+            let wait = Instant::now();
+            session.limiter.wait(64 * 1024 * 1024, &cancel).unwrap();
+            assert!(wait.elapsed() < Duration::from_millis(100));
+            eprintln!("latency filesystem operation={operation} network={network} mode={mode:?}: 8 files, exact contents, no hidden cap, {:.2}s", started.elapsed().as_secs_f64());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn local_copy_with_cloud_read_and_nas_write_latency() {
+        delayed_filesystem_transfer("copy", false);
+    }
+    #[test]
+    fn mounted_copy_with_cloud_read_and_nas_write_latency() {
+        delayed_filesystem_transfer("copy", true);
+    }
+    #[test]
+    fn local_move_stream_with_cloud_read_and_nas_write_latency() {
+        delayed_filesystem_transfer("move", false);
+    }
+    #[test]
+    fn mounted_move_stream_with_cloud_read_and_nas_write_latency() {
+        delayed_filesystem_transfer("move", true);
     }
 
     #[test]

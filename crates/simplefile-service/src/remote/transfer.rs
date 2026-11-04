@@ -1,6 +1,7 @@
 use super::path::{join_remote_path, normalize_remote_path, parent_remote_path};
 use super::provider::RemoteProvider;
 use crate::progress::{ActiveFile, Policy, RateLimit, TuningUpdate};
+use crate::transfer_reliability::{Failure, Retry};
 use serde::{Deserialize, Serialize};
 use simplefile_core::models::{FileEntry, ProgressUpdate};
 use std::fs::{self, File, OpenOptions};
@@ -39,20 +40,28 @@ pub struct RemoteTransferOutcome {
     pub cancelled: bool,
 }
 
-pub fn copy_stream(source: &mut dyn Read, destination: &mut dyn Write) -> Result<u64, String> {
+pub fn copy_stream(source: &mut dyn Read, destination: &mut dyn Write) -> Result<u64, Failure> {
     let mut buffer = vec![0; TRANSFER_BUFFER_SIZE];
     let mut count = 0;
     loop {
-        let read = source.read(&mut buffer).map_err(|e| e.to_string())?;
+        // Gives a download destination a chance to apply backpressure before the next network read.
+        destination
+            .write(&[])
+            .map_err(|e| Failure::io("Prepare destination", "stream", e))?;
+        let read = source
+            .read(&mut buffer)
+            .map_err(|e| Failure::io("Read source", "stream", e))?;
         if read == 0 {
             break;
         }
         destination
             .write_all(&buffer[..read])
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| Failure::io("Write destination", "stream", e))?;
         count += read as u64;
     }
-    destination.flush().map_err(|e| e.to_string())?;
+    destination
+        .flush()
+        .map_err(|e| Failure::io("Flush destination", "stream", e))?;
     Ok(count)
 }
 
@@ -76,6 +85,7 @@ struct Progress<'a> {
     policy: Policy,
     limiter: RateLimit,
     policy_checked: Instant,
+    read_policy: &'a dyn Fn() -> Policy,
     file_start: u64,
 }
 
@@ -83,13 +93,10 @@ impl Progress<'_> {
     fn report(&mut self, bytes: u64) -> std::io::Result<()> {
         check_cancel(self.cancel).map_err(std::io::Error::other)?;
         if self.policy_checked.elapsed() >= Duration::from_secs(5) {
-            self.policy = Policy::for_operation(&self.request.operation_id);
+            self.policy = (self.read_policy)();
             self.limiter.update(self.policy.bandwidth_mib);
             self.policy_checked = Instant::now();
         }
-        self.limiter
-            .wait(bytes as usize, self.cancel)
-            .map_err(std::io::Error::other)?;
         self.bytes += bytes;
         if self.last.elapsed() >= Duration::from_millis(100) {
             self.send("running", None);
@@ -114,8 +121,9 @@ impl Progress<'_> {
             operation_id: self.request.operation_id.clone(),
             mode: self.policy.mode,
             concurrency: 1,
-            explanation: "This FTP/SFTP session supports one file stream; bandwidth limits apply"
-                .into(),
+            explanation: self.limiter.explanation().unwrap_or_else(|| {
+                "One remote file stream; configured bandwidth limit applies".into()
+            }),
             active_files: if status == "running" && self.current != "Preparing transfer" {
                 vec![ActiveFile {
                     path: self.current.clone(),
@@ -136,7 +144,15 @@ struct ObservedReader<'a, 'b> {
 impl Read for ObservedReader<'_, '_> {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         self.progress.report(0)?;
-        let read = self.source.read(buffer)?;
+        let read = self.source.read(buffer).map_err(|e| {
+            std::io::Error::other(Failure::io("Read local source", &self.progress.current, e))
+        })?;
+        // Charge actual bytes, not a full buffer for every small file or EOF.
+        // At most one provider buffer is held while waiting for the user limit.
+        self.progress
+            .limiter
+            .wait(read, self.progress.cancel)
+            .map_err(std::io::Error::other)?;
         self.progress.report(read as u64)?;
         Ok(read)
     }
@@ -145,16 +161,81 @@ impl Read for ObservedReader<'_, '_> {
 struct ObservedWriter<'a, 'b> {
     destination: File,
     progress: &'a mut Progress<'b>,
+    path: String,
 }
 impl Write for ObservedWriter<'_, '_> {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
         self.progress.report(0)?;
-        let written = self.destination.write(buffer)?;
-        self.progress.report(written as u64)?;
-        Ok(written)
+        self.progress
+            .limiter
+            .wait(buffer.len(), self.progress.cancel)
+            .map_err(std::io::Error::other)?;
+        match self.destination.write(buffer) {
+            Ok(written) => {
+                self.progress.limiter.refund(buffer.len() - written);
+                self.progress.report(written as u64)?;
+                Ok(written)
+            }
+            Err(error) => {
+                self.progress.limiter.refund(buffer.len());
+                Err(std::io::Error::other(Failure::io(
+                    "Write local temporary destination",
+                    &self.path,
+                    error,
+                )))
+            }
+        }
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        self.destination.flush()
+        self.destination.flush().map_err(|e| {
+            std::io::Error::other(Failure::io(
+                "Flush local temporary destination",
+                &self.path,
+                e,
+            ))
+        })
+    }
+}
+
+fn retry_stream(
+    provider: &mut dyn RemoteProvider,
+    progress: &mut Progress<'_>,
+    source: &str,
+    target: &str,
+    mut transfer: impl FnMut(&mut dyn RemoteProvider, &mut Progress<'_>) -> Result<u64, Failure>,
+) -> Result<u64, String> {
+    let mut retry = Retry::default();
+    loop {
+        check_cancel(progress.cancel)?;
+        progress.limiter.wait(0, progress.cancel)?;
+        progress.bytes = progress.file_start;
+        match transfer(provider, progress) {
+            Ok(count) => {
+                check_cancel(progress.cancel)?;
+                return Ok(count);
+            }
+            Err(error) => {
+                if progress.cancel.load(Ordering::Relaxed) {
+                    return Err("Transfer cancelled".into());
+                }
+                let error = error
+                    .context("Transfer source", source)
+                    .context("Transfer destination", target);
+                let reason = error.to_string();
+                let delay = retry.failed(error)?;
+                progress.limiter.retrying(delay, &reason);
+                progress.send("running", None);
+                crate::transfer_reliability::wait(delay, progress.cancel)?;
+                if let Err(reconnect) = provider.reconnect() {
+                    return retry
+                        .failed(Failure::new(
+                            format!("Reconnect failed: {reconnect}"),
+                            false,
+                        ))
+                        .map(|_| 0);
+                }
+            }
+        }
     }
 }
 
@@ -332,14 +413,15 @@ fn transfer_file(
         } else {
             None
         };
-        let mut reader = ObservedReader {
-            source: File::open(source).map_err(|e| e.to_string())?,
-            progress,
-        };
-        let transferred = provider.upload(&staging, &mut reader).and_then(|count| {
-            check_cancel(reader.progress.cancel)?;
-            Ok(count)
-        });
+        let transferred =
+            retry_stream(provider, progress, source, &target, |provider, progress| {
+                let mut reader = ObservedReader {
+                    source: File::open(source)
+                        .map_err(|e| Failure::io("Open local source", source, e))?,
+                    progress,
+                };
+                provider.upload(&staging, &mut reader)
+            });
         let count = match transferred {
             Ok(count) => count,
             Err(error) => {
@@ -402,28 +484,46 @@ fn transfer_file(
             Path::new(&target),
             &progress.request.operation_id,
         )?;
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&staging)
-            .map_err(|e| e.to_string())?;
-        let result = {
+        let mut created = false;
+        let result = retry_stream(provider, progress, source, &target, |provider, progress| {
+            let file = if created {
+                OpenOptions::new().write(true).truncate(true).open(&staging)
+            } else {
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&staging)
+            }
+            .map_err(|e| Failure::io("Open local temporary destination", &staging, e))?;
+            created = true;
             let mut writer = ObservedWriter {
                 destination: file,
                 progress,
+
+                path: staging.to_string_lossy().into_owned(),
             };
-            provider.download(source, &mut writer).and_then(|count| {
-                writer.destination.sync_all().map_err(|e| e.to_string())?;
-                check_cancel(writer.progress.cancel)?;
-                Ok(count)
-            })
-        };
+            let count = provider.download(source, &mut writer)?;
+            writer
+                .destination
+                .sync_all()
+                .map_err(|e| Failure::io("Finalize local temporary destination", &staging, e))?;
+            Ok(count)
+        });
         let result = result.and_then(|count| {
-            crate::transfer_staging::promote_staged_path(&staging, Path::new(&target), replace)?;
+            crate::transfer_staging::promote_with_recovery(
+                &staging,
+                Path::new(&target),
+                replace,
+                progress.cancel,
+                |delay, reason| {
+                    progress.limiter.retrying(delay, reason);
+                    progress.send("running", None);
+                },
+            )?;
             Ok((target, count, false))
         });
         if let Err(error) = result {
-            return Err(if local_exists(&staging) {
+            return Err(if created && local_exists(&staging) {
                 cleanup_error(
                     error,
                     fs::remove_file(&staging).map_err(|e| e.to_string()),
@@ -600,6 +700,19 @@ pub(crate) fn transfer_entries_with_tuning(
     emit: &dyn Fn(ProgressUpdate),
     tuning: &dyn Fn(TuningUpdate),
 ) -> Result<RemoteTransferOutcome, String> {
+    transfer_entries_with_policy(provider, request, cancel, emit, tuning, &|| {
+        Policy::for_operation(&request.operation_id)
+    })
+}
+
+fn transfer_entries_with_policy(
+    provider: &mut dyn RemoteProvider,
+    request: &RemoteTransferRequest,
+    cancel: &AtomicBool,
+    emit: &dyn Fn(ProgressUpdate),
+    tuning: &dyn Fn(TuningUpdate),
+    read_policy: &dyn Fn() -> Policy,
+) -> Result<RemoteTransferOutcome, String> {
     validate_request(request)?;
     let destination = if request.direction == "download" {
         fs::canonicalize(&request.destination)
@@ -618,9 +731,10 @@ pub(crate) fn transfer_entries_with_tuning(
         current: "Preparing transfer".into(),
         last: Instant::now(),
         tuning,
-        policy: Policy::for_operation(&request.operation_id),
-        limiter: RateLimit::new(Policy::for_operation(&request.operation_id).bandwidth_mib),
+        policy: read_policy(),
+        limiter: RateLimit::new(read_policy().bandwidth_mib),
         policy_checked: Instant::now(),
+        read_policy,
         file_start: 0,
     };
     progress.send("running", None);
@@ -715,6 +829,7 @@ pub fn transfer_single(
         policy: Policy::load(),
         limiter: RateLimit::new(Policy::load().bandwidth_mib),
         policy_checked: Instant::now(),
+        read_policy: &Policy::load,
         file_start: 0,
     };
     if !upload {
@@ -754,6 +869,10 @@ mod tests {
                 fail_upload: false,
                 fail_promote: false,
                 cancel: None,
+                latency: false,
+                transient_failures: 0,
+                attempts: 0,
+                reconnects: 0,
             }
         }
         fn request(&self, direction: &str, sources: Vec<String>) -> RemoteTransferRequest {
@@ -782,6 +901,10 @@ mod tests {
         fail_upload: bool,
         fail_promote: bool,
         cancel: Option<Arc<AtomicBool>>,
+        latency: bool,
+        transient_failures: usize,
+        attempts: usize,
+        reconnects: usize,
     }
     impl DiskProvider {
         fn path(&self, path: &str) -> PathBuf {
@@ -806,6 +929,10 @@ mod tests {
         }
     }
     impl RemoteProvider for DiskProvider {
+        fn reconnect(&mut self) -> Result<(), String> {
+            self.reconnects += 1;
+            Ok(())
+        }
         fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
             let entries = fs::read_dir(self.path(path))
                 .map_err(|e| e.to_string())?
@@ -846,8 +973,25 @@ mod tests {
             }
             Ok(paths.to_vec())
         }
-        fn download(&mut self, path: &str, destination: &mut dyn Write) -> Result<u64, String> {
-            let mut source = File::open(self.path(path)).map_err(|e| e.to_string())?;
+        fn download(
+            &mut self,
+            path: &str,
+            destination: &mut dyn Write,
+        ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
+            self.attempts += 1;
+            if self.transient_failures > 0 {
+                self.transient_failures -= 1;
+                destination.write_all(b"bad partial").unwrap();
+                return Err(Failure::io(
+                    "Read remote",
+                    path,
+                    std::io::Error::from(std::io::ErrorKind::TimedOut),
+                ));
+            }
+            let mut source = crate::transfer_test_io::DelayedIo::new(
+                File::open(self.path(path)).map_err(|e| e.to_string())?,
+                self.latency,
+            );
             if let Some(cancel) = &self.cancel {
                 let mut buffer = vec![0; TRANSFER_BUFFER_SIZE];
                 let read = source.read(&mut buffer).unwrap();
@@ -858,13 +1002,245 @@ mod tests {
             }
             copy_stream(&mut source, destination)
         }
-        fn upload(&mut self, path: &str, source: &mut dyn Read) -> Result<u64, String> {
-            let mut file = File::create(self.path(path)).map_err(|e| e.to_string())?;
+        fn upload(
+            &mut self,
+            path: &str,
+            source: &mut dyn Read,
+        ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
+            self.attempts += 1;
+            let mut file = crate::transfer_test_io::DelayedIo::new(
+                File::create(self.path(path)).map_err(|e| e.to_string())?,
+                self.latency,
+            );
+            if self.transient_failures > 0 {
+                self.transient_failures -= 1;
+                file.write_all(b"bad partial").unwrap();
+                return Err(Failure::io(
+                    "Write remote",
+                    path,
+                    std::io::Error::from(std::io::ErrorKind::TimedOut),
+                ));
+            }
             if self.fail_upload {
                 file.write_all(b"partial").unwrap();
                 return Err("injected network failure".into());
             }
             copy_stream(source, &mut file)
+        }
+    }
+
+    fn delayed_remote_transfer(upload: bool) {
+        use crate::progress::Mode;
+        for mode in [
+            Mode::Automatic,
+            Mode::Conservative,
+            Mode::Maximum,
+            Mode::Manual,
+        ] {
+            let fixture = Fixture::new();
+            let mut provider = fixture.provider();
+            provider.latency = true;
+            let bytes: Vec<u8> = (0..256 * 1024).map(|n| (n % 251) as u8).collect();
+            let mut sources = Vec::new();
+            for index in 0..3 {
+                let name = format!("image-{index}.bin");
+                let source = if upload {
+                    fixture.root.join("local").join(&name)
+                } else {
+                    provider.path(&name)
+                };
+                fs::write(&source, &bytes).unwrap();
+                sources.push(if upload {
+                    source.to_string_lossy().into_owned()
+                } else {
+                    format!("/{name}")
+                });
+            }
+            let request = fixture.request(if upload { "upload" } else { "download" }, sources);
+            let policy = || Policy {
+                mode,
+                manual_concurrency: 16,
+                bandwidth_mib: 0,
+                ..Policy::default()
+            };
+            let snapshots = std::sync::Mutex::new(Vec::new());
+            let started = Instant::now();
+            let result = transfer_entries_with_policy(
+                &mut provider,
+                &request,
+                &AtomicBool::new(false),
+                &|_| {},
+                &|update| snapshots.lock().unwrap().push(update),
+                &policy,
+            )
+            .unwrap();
+            assert!(result.retry_sources.is_empty());
+            assert_eq!(provider.attempts, 3);
+            assert_eq!(provider.reconnects, 0);
+            assert!(snapshots
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|s| !s.explanation.contains("safety limit")
+                    && !s.explanation.contains("Retrying")));
+            for index in 0..3 {
+                let name = format!("image-{index}.bin");
+                let output = if upload {
+                    provider.path(&name)
+                } else {
+                    fixture.root.join("local").join(&name)
+                };
+                assert_eq!(fs::read(output).unwrap(), bytes);
+            }
+            eprintln!("latency remote upload={upload} mode={mode:?}: 3 files, exact contents, no hidden cap, {:.2}s", started.elapsed().as_secs_f64());
+        }
+    }
+
+    #[test]
+    fn native_upload_with_repeated_nas_write_and_flush_latency() {
+        delayed_remote_transfer(true);
+    }
+    #[test]
+    fn native_download_with_repeated_cold_cloud_read_latency() {
+        delayed_remote_transfer(false);
+    }
+
+    #[test]
+    fn native_custom_bandwidth_is_enforced_for_both_directions() {
+        for upload in [true, false] {
+            let fixture = Fixture::new();
+            let mut provider = fixture.provider();
+            let bytes = vec![19; 1024 * 1024];
+            let local = fixture.root.join("local/limited.bin");
+            let source = if upload {
+                fs::write(&local, &bytes).unwrap();
+                local.to_string_lossy().into_owned()
+            } else {
+                fs::write(provider.path("/limited.bin"), &bytes).unwrap();
+                "/limited.bin".into()
+            };
+            let request = fixture.request(if upload { "upload" } else { "download" }, vec![source]);
+            let policy = || Policy {
+                mode: crate::progress::Mode::Manual,
+                bandwidth_mib: 1,
+                ..Policy::default()
+            };
+            let started = Instant::now();
+            let result = transfer_entries_with_policy(
+                &mut provider,
+                &request,
+                &AtomicBool::new(false),
+                &|_| {},
+                &|_| {},
+                &policy,
+            )
+            .unwrap();
+            assert!(result.retry_sources.is_empty());
+            assert!(
+                started.elapsed() >= Duration::from_millis(900),
+                "Custom bandwidth was ignored"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(3),
+                "Unexpected additional throttling"
+            );
+            let output = if upload {
+                provider.path("/limited.bin")
+            } else {
+                local
+            };
+            assert_eq!(fs::read(output).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn remote_upload_and_download_restart_owned_partial_and_report_waiting() {
+        for upload in [false, true] {
+            let fixture = Fixture::new();
+            let mut provider = fixture.provider();
+            let bytes: Vec<u8> = (0..TRANSFER_BUFFER_SIZE + 17)
+                .map(|n| (n % 253) as u8)
+                .collect();
+            let source = if upload {
+                let local = fixture.root.join("local/photo.bin");
+                fs::write(&local, &bytes).unwrap();
+                local.to_string_lossy().into_owned()
+            } else {
+                fs::write(provider.path("/photo.bin"), &bytes).unwrap();
+                "/photo.bin".into()
+            };
+            provider.transient_failures = 1;
+            let request = fixture.request(if upload { "upload" } else { "download" }, vec![source]);
+            let waiting = AtomicBool::new(false);
+            let outcome = transfer_entries_with_tuning(
+                &mut provider,
+                &request,
+                &AtomicBool::new(false),
+                &|_| {},
+                &|update| {
+                    if update.explanation.starts_with("Retrying failed I/O") {
+                        waiting.store(true, Ordering::Relaxed);
+                    }
+                },
+            )
+            .unwrap();
+            assert!(outcome.retry_sources.is_empty(), "{:?}", outcome.items);
+            assert!(waiting.load(Ordering::Relaxed));
+            assert_eq!(provider.attempts, 2);
+            assert_eq!(provider.reconnects, 1);
+            let output = if upload {
+                provider.path("/photo.bin")
+            } else {
+                fixture.root.join("local/photo.bin")
+            };
+            assert_eq!(fs::read(output).unwrap(), bytes);
+            assert!(fs::read_dir(&provider.root).unwrap().all(|e| !e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("partial")));
+        }
+    }
+
+    #[test]
+    fn remote_retry_wait_can_be_cancelled_without_promotion_or_reconnect() {
+        for upload in [false, true] {
+            let fixture = Fixture::new();
+            let mut provider = fixture.provider();
+            let local = fixture.root.join("local/photo.bin");
+            fs::write(&local, b"original local").unwrap();
+            fs::write(provider.path("/photo.bin"), b"original remote").unwrap();
+            provider.transient_failures = 1;
+            let mut request = fixture.request(
+                if upload { "upload" } else { "download" },
+                vec![if upload {
+                    local.to_string_lossy().into_owned()
+                } else {
+                    "/photo.bin".into()
+                }],
+            );
+            request.conflict_action = "replace".into();
+            let cancel = AtomicBool::new(false);
+            let result = transfer_entries_with_tuning(
+                &mut provider,
+                &request,
+                &cancel,
+                &|_| {},
+                &|update| {
+                    if update.explanation.starts_with("Retrying failed I/O") {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                },
+            )
+            .unwrap();
+            assert!(result.cancelled);
+            assert_eq!(provider.attempts, 1);
+            assert_eq!(provider.reconnects, 0);
+            assert_eq!(fs::read(&local).unwrap(), b"original local");
+            assert_eq!(
+                fs::read(provider.path("/photo.bin")).unwrap(),
+                b"original remote"
+            );
         }
     }
 

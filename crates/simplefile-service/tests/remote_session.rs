@@ -96,20 +96,24 @@ impl RemoteProvider for FakeProvider {
         &mut self,
         path: &str,
         destination: &mut dyn std::io::Write,
-    ) -> Result<u64, String> {
+    ) -> Result<u64, simplefile_service::remote::provider::RemoteTransferError> {
         if path != "/release/app.txt" {
-            return Err(format!("unexpected read {path}"));
+            return Err(format!("unexpected read {path}").into());
         }
         destination
             .write_all(b"remote bytes")
             .map_err(|e| e.to_string())?;
         Ok(12)
     }
-    fn upload(&mut self, path: &str, source: &mut dyn std::io::Read) -> Result<u64, String> {
+    fn upload(
+        &mut self,
+        path: &str,
+        source: &mut dyn std::io::Read,
+    ) -> Result<u64, simplefile_service::remote::provider::RemoteTransferError> {
         let mut bytes = Vec::new();
         source.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
         if path != "/incoming/app.txt" || bytes != b"local bytes" {
-            return Err(format!("unexpected write {path}"));
+            return Err(format!("unexpected write {path}").into());
         }
         Ok(bytes.len() as u64)
     }
@@ -249,17 +253,23 @@ fn remote_session_registry_reads_and_writes_files_through_provider() {
     registry
         .provider(&session.session_id)
         .unwrap()
-        .with(|provider| provider.download("/release/app.txt", &mut bytes))
+        .with(|provider| {
+            provider
+                .download("/release/app.txt", &mut bytes)
+                .map_err(String::from)
+        })
         .unwrap();
     assert_eq!(bytes, b"remote bytes");
     let written = registry
         .provider(&session.session_id)
         .unwrap()
         .with(|provider| {
-            provider.upload(
-                "/incoming/app.txt",
-                &mut std::io::Cursor::new(b"local bytes"),
-            )
+            provider
+                .upload(
+                    "/incoming/app.txt",
+                    &mut std::io::Cursor::new(b"local bytes"),
+                )
+                .map_err(String::from)
         })
         .unwrap();
     assert_eq!(written, 11);

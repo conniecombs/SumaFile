@@ -4,6 +4,7 @@ use super::path::{
 };
 use super::provider::RemoteProvider;
 use super::secrets::RemoteSecret;
+use crate::transfer_reliability::Failure;
 use simplefile_core::models::{DirectoryListing, FileEntry};
 use simplefile_core::remote::{RemoteAuthKind, RemoteProfile, RemoteProtocol};
 use std::convert::TryFrom;
@@ -150,12 +151,20 @@ impl RemoteProvider for FtpRemoteProvider {
         Ok(deleted)
     }
 
-    fn download(&mut self, path: &str, destination: &mut dyn Write) -> Result<u64, String> {
+    fn download(
+        &mut self,
+        path: &str,
+        destination: &mut dyn Write,
+    ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
         self.client
             .download(&normalize_remote_path(path), destination)
     }
 
-    fn upload(&mut self, path: &str, source: &mut dyn Read) -> Result<u64, String> {
+    fn upload(
+        &mut self,
+        path: &str,
+        source: &mut dyn Read,
+    ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
         self.client.upload(&normalize_remote_path(path), source)
     }
 
@@ -218,17 +227,21 @@ impl FtpClient {
         }
     }
 
-    fn download(&mut self, path: &str, destination: &mut dyn Write) -> Result<u64, String> {
+    fn download(
+        &mut self,
+        path: &str,
+        destination: &mut dyn Write,
+    ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
         macro_rules! transfer {
             ($client:expr) => {{
-                let mut stream = $client.retr_as_stream(path).map_err(|e| e.to_string())?;
+                let mut stream = $client.retr_as_stream(path).map_err(ftp_failure)?;
                 stream
                     .get_ref()
                     .get_ref()
                     .set_read_timeout(Some(REMOTE_CONNECT_TIMEOUT))
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| Failure::io("Configure remote data stream", path, e))?;
                 let result = super::transfer::copy_stream(&mut stream, destination);
-                let finished = stream.finish().map_err(|e| e.to_string());
+                let finished = stream.finish().map_err(ftp_failure);
                 result.and_then(|count| finished.map(|()| count))
             }};
         }
@@ -238,17 +251,21 @@ impl FtpClient {
         }
     }
 
-    fn upload(&mut self, path: &str, source: &mut dyn Read) -> Result<u64, String> {
+    fn upload(
+        &mut self,
+        path: &str,
+        source: &mut dyn Read,
+    ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
         macro_rules! transfer {
             ($client:expr) => {{
-                let mut stream = $client.put_with_stream(path).map_err(|e| e.to_string())?;
+                let mut stream = $client.put_with_stream(path).map_err(ftp_failure)?;
                 stream
                     .get_ref()
                     .get_ref()
                     .set_write_timeout(Some(REMOTE_CONNECT_TIMEOUT))
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| Failure::io("Configure remote data stream", path, e))?;
                 let result = super::transfer::copy_stream(source, &mut stream);
-                let finished = stream.finish().map_err(|e| e.to_string());
+                let finished = stream.finish().map_err(ftp_failure);
                 result.and_then(|count| finished.map(|()| count))
             }};
         }
@@ -367,9 +384,45 @@ fn ftp_permissions(file: &FtpListFile) -> String {
     permissions
 }
 
+fn ftp_failure(error: suppaftp::FtpError) -> Failure {
+    match error {
+        suppaftp::FtpError::ConnectionError(error) => {
+            Failure::io("FTP connection", "data stream", error)
+        }
+        suppaftp::FtpError::UnexpectedResponse(response) => {
+            let code = response.status as u32;
+            Failure::new(
+                format!("FTP response: {response}"),
+                (400..500).contains(&code) && code != 430,
+            )
+        }
+        error => Failure::new(error.to_string(), false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ftp_and_ftps_retry_temporary_responses_but_not_auth_or_permission_failures() {
+        for (code, retryable) in [
+            (426, true),
+            (451, true),
+            (452, true),
+            (430, false),
+            (530, false),
+            (550, false),
+        ] {
+            let error = ftp_failure(suppaftp::FtpError::UnexpectedResponse(
+                suppaftp::types::Response {
+                    status: suppaftp::Status::from(code),
+                    body: b"test response".to_vec(),
+                },
+            ));
+            assert_eq!(error.retryable, retryable, "{code}");
+        }
+    }
 
     #[test]
     fn streams_binary_data_and_checks_server_completion_over_ftp() {

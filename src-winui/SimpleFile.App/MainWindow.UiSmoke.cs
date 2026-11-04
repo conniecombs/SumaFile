@@ -177,8 +177,9 @@ public sealed partial class MainWindow
             await transfer.WaitAsync(TimeSpan.FromSeconds(30));
             SmokeAssert(operation.Status == TransferOperationStatus.Cancelled, $"Unexpected transfer state: {operation.Status}");
             SmokeAssert(!operation.IsIndeterminate && operation.SummaryText == "Transfer cancelled", "Cancelled UI remained busy");
-            SmokeAssert(!Directory.EnumerateFileSystemEntries(destination, "*", SearchOption.AllDirectories)
-                .Any(path => path.Contains(".sumafile-partial", StringComparison.Ordinal)), "Cancellation left staging files");
+            var remainingStaging = Directory.EnumerateFileSystemEntries(destination, "*", SearchOption.AllDirectories)
+                .Where(path => path.Contains(".sumafile-partial", StringComparison.Ordinal)).ToArray();
+            SmokeAssert(remainingStaging.Length == 0, "Cancellation left staging files: " + string.Join(", ", remainingStaging.Take(4)));
             SmokeAssert(Directory.GetFiles(source).Length == int.Parse(Path.GetFileName(source)), "Cancellation changed the source files");
             results.Add(new { scenario = "transfer-cancellation", status = operation.Status.ToString(), passed = true });
             await SmokeAdaptiveTransfersAsync(root, source, results);
@@ -187,6 +188,7 @@ public sealed partial class MainWindow
         catch (Exception exception) { failure = exception.ToString(); }
         finally
         {
+            CloseTransferProgressWindow();
             heartbeat.Stop();
             gaps.Sort();
             var report = new { passed = failure is null, failure, results,

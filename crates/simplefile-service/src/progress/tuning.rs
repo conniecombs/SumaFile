@@ -175,7 +175,7 @@ pub(crate) fn route_key(source: &str, destination: &str, bytes: u64, files: u64)
     } else {
         "large"
     };
-    let input = format!("copy-v1\0{source}\0{destination}\0{workload}");
+    let input = format!("copy-v2\0{source}\0{destination}\0{workload}");
     // Stable hash rather than storing account/share names or filesystem paths.
     let hash = input.bytes().fold(0xcbf29ce484222325u64, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
@@ -196,7 +196,6 @@ pub(crate) struct Controller {
     learned: bool,
     try_lower: bool,
     lower_tested: bool,
-    stalled: usize,
 }
 
 impl Controller {
@@ -234,7 +233,6 @@ impl Controller {
             learned: false,
             try_lower: false,
             lower_tested: false,
-            stalled: 0,
         }
     }
 
@@ -254,6 +252,12 @@ impl Controller {
     /// keep the chosen number busy. Tail-drain and partial warm-up samples do not
     /// become evidence for a higher/lower concurrency setting.
     pub fn sample(&mut self, bytes: u64, elapsed: Duration, saturated: bool, retries: u64) {
+        // Custom settings are authoritative; errors only delay their failing file.
+        if self.policy.mode == Mode::Manual {
+            self.concurrency = self.policy.manual_concurrency.clamp(1, self.limit);
+            self.explanation = "Custom limits (memory and provider limits still apply)";
+            return;
+        }
         if retries > 0 {
             self.concurrency = (self.concurrency / 2).max(1);
             self.best_concurrency = self.concurrency;
@@ -265,30 +269,17 @@ impl Controller {
             self.explanation = "Reduced concurrency after an I/O retry";
             return;
         }
-        if self.policy.mode == Mode::Manual {
-            self.explanation = "Manual limit";
-            return;
-        }
         if elapsed < Duration::from_secs(5) || !saturated {
             self.previous_rate = None;
             return;
         }
         let rate = bytes as f64 / elapsed.as_secs_f64();
         if rate <= 0.0 {
+            // Hydration, metadata and NAS flush waits do not prove contention.
+            // Do not reduce workers just because no bytes arrived in a window.
             self.previous_rate = None;
-            self.stalled += 1;
-            if self.stalled >= 2 && self.concurrency > 1 {
-                self.concurrency = (self.concurrency / 2).max(1);
-                self.best_concurrency = self.concurrency;
-                self.best_rate = 0.0;
-                self.learned = false;
-                self.probing = false;
-                self.explanation = "Reduced concurrency while storage is stalled";
-                self.stalled = 0;
-            }
             return;
         }
-        self.stalled = 0;
         let Some(previous) = self.previous_rate.replace(rate) else {
             return;
         };
@@ -316,13 +307,6 @@ impl Controller {
             }
             self.probing = false;
             self.learned = true;
-        } else if self.best_rate > 0.0 && rate < self.best_rate * 0.70 && self.concurrency > 1 {
-            self.concurrency = (self.concurrency / 2).max(1);
-            self.best_concurrency = self.concurrency;
-            self.best_rate = 0.0;
-            self.learned = false;
-            self.cooldown = 2;
-            self.explanation = "Rechecking after throughput dropped";
         } else {
             self.best_rate = rate;
             self.best_concurrency = self.concurrency;
@@ -488,11 +472,76 @@ mod tests {
     }
 
     #[test]
-    fn sustained_stalls_reduce_concurrency_without_learning() {
+    fn cloud_hydration_and_nas_flush_gaps_do_not_reduce_concurrency() {
         let mut c = Controller::new(Policy::default(), 4 << 20, None);
-        c.sample(0, Duration::from_secs(5), true, 0);
-        c.sample(0, Duration::from_secs(5), true, 0);
-        assert_eq!(c.concurrency, 2);
+        for _ in 0..24 {
+            c.sample(0, Duration::from_secs(5), true, 0);
+        }
+        assert_eq!(c.concurrency, 4);
         assert_eq!(c.learned_concurrency(), None);
+    }
+
+    #[test]
+    fn custom_limits_survive_latency_errors_and_live_policy_changes() {
+        let mut c = Controller::new(
+            Policy {
+                mode: Mode::Manual,
+                manual_concurrency: 16,
+                ..Policy::default()
+            },
+            4 << 20,
+            Some(1),
+        );
+        for retries in [0, 1, 8, 0, 16, 0] {
+            c.sample(0, Duration::from_secs(30), true, retries);
+            assert_eq!(c.concurrency, 16);
+        }
+        c.update_policy(
+            Policy {
+                mode: Mode::Manual,
+                manual_concurrency: 7,
+                ..Policy::default()
+            },
+            4 << 20,
+        );
+        c.sample(1, Duration::from_secs(5), true, 4);
+        assert_eq!(c.concurrency, 7);
+        assert_eq!(c.learned_concurrency(), None);
+        c.update_policy(Policy::default(), 4 << 20);
+        c.sample(0, Duration::from_secs(1), false, 1);
+        assert!(c.concurrency < 16);
+        c.update_policy(
+            Policy {
+                mode: Mode::Manual,
+                manual_concurrency: 16,
+                ..Policy::default()
+            },
+            4 << 20,
+        );
+        assert_eq!(
+            c.concurrency, 16,
+            "Switching to Custom must discard automatic reductions"
+        );
+    }
+
+    #[test]
+    fn changing_cloud_throughput_without_errors_is_not_a_reason_to_halve_workers() {
+        for mode in [Mode::Automatic, Mode::Conservative, Mode::Maximum] {
+            let mut c = Controller::new(
+                Policy {
+                    mode,
+                    ..Policy::default()
+                },
+                512 << 10,
+                None,
+            );
+            let initial = c.concurrency;
+            // Successive bursts / quiet windows as cloud data is hydrated. No
+            // stable comparative experiment establishes a benefit to fewer workers.
+            for rate in [100_000, 0, 4_000, 0, 1_000, 0, 300, 0, 100, 0] {
+                c.sample(rate, Duration::from_secs(5), true, 0);
+                assert_eq!(c.concurrency, initial);
+            }
+        }
     }
 }

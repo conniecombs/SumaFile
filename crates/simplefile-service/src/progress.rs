@@ -13,6 +13,8 @@ pub(crate) use parallel::{ActiveFile, TuningUpdate};
 pub use registry::OperationRegistry;
 pub(crate) use resources::Permit as TransferPermit;
 pub(crate) use resources::RateLimit;
+#[cfg(test)]
+pub(crate) use tuning::Mode;
 pub(crate) use tuning::Policy;
 
 pub(crate) use plan::prepare_transfer_inputs;
@@ -64,6 +66,38 @@ pub struct TransferBatchError {
 
 pub fn generate_transfer_operation_id() -> String {
     generate_operation_id()
+}
+
+/// Compatibility RPCs share the transfer engine instead of bypassing recovery.
+pub(crate) fn transfer_single_compat(
+    operation: &'static str,
+    source: &str,
+    destination: &str,
+    action: &str,
+) -> Result<String, String> {
+    if simplefile_core::archive::should_handle_transfer(source, destination)? {
+        return if operation == "move" {
+            simplefile_core::file_ops::move_entry_resolved(source, destination, action)
+        } else {
+            simplefile_core::file_ops::copy_entry_resolved(source, destination, action)
+        };
+    }
+    transfer_with_progress_blocking(
+        operation,
+        vec![source.into()],
+        destination.into(),
+        generate_transfer_operation_id(),
+        action.into(),
+        Arc::new(AtomicBool::new(false)),
+        &|_| {},
+    )
+    .map(|results| {
+        results
+            .into_iter()
+            .next()
+            .map_or_else(|| format!("SKIPPED:{source}"), |r| r.destination)
+    })
+    .map_err(|error| error.message)
 }
 
 pub fn transfer_with_progress_blocking(
@@ -910,14 +944,117 @@ mod tests {
             resume_existing: false,
         };
 
-        let copied = copy_file_attempt(&source, &destination, &ctx, 0, 2, 6)
-            .expect("partial destination should resume");
-
-        assert_eq!(copied, 6);
-        assert_eq!(fs::read(&destination).unwrap(), b"abcdef");
+        for partial in [b"".as_slice(), b"abc".as_slice(), b"abcdef".as_slice()] {
+            fs::write(&destination, partial).unwrap();
+            let copied = copy_file_attempt(&source, &destination, &ctx, 0, 2, 6)
+                .expect("empty, partial and complete operation-owned files should resume");
+            assert_eq!(copied, 6);
+            assert_eq!(fs::read(&destination).unwrap(), b"abcdef");
+        }
+        fs::write(&source, b"").unwrap();
+        fs::write(&destination, b"").unwrap();
+        assert_eq!(
+            copy_file_attempt(&source, &destination, &ctx, 0, 2, 0).unwrap(),
+            0
+        );
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn storage_pressure_recovers_or_cancels_files_folders_and_moves() {
+        use std::os::windows::fs::OpenOptionsExt;
+        for directory in [false, true] {
+            for moving in [false, true] {
+                for cancelling in [false, true] {
+                    let root = unique_temp_path("storage_pressure");
+                    let src_root = root.join("src");
+                    let dst_root = root.join("dst");
+                    fs::create_dir_all(&src_root).unwrap();
+                    fs::create_dir_all(&dst_root).unwrap();
+                    let source = src_root.join(if directory { "album" } else { "photo.bin" });
+                    let source_file = if directory {
+                        fs::create_dir(&source).unwrap();
+                        source.join("photo.bin")
+                    } else {
+                        source.clone()
+                    };
+                    let bytes: Vec<u8> = (0..65539).map(|n| (n % 251) as u8).collect();
+                    fs::write(&source_file, &bytes).unwrap();
+                    let operation_id = super::generate_transfer_operation_id();
+                    let target = dst_root.join(source.file_name().unwrap());
+                    let staged_parent = if directory {
+                        let parent = resumable_staging_path_for(&target, &operation_id).unwrap();
+                        fs::create_dir(&parent).unwrap();
+                        parent
+                    } else {
+                        dst_root.clone()
+                    };
+                    let final_file = staged_parent.join("photo.bin");
+                    let staged =
+                        crate::transfer_staging::staging_path_for(&final_file, &operation_id)
+                            .unwrap();
+                    let held = Mutex::new(Some(
+                        fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .share_mode(0)
+                            .open(&staged)
+                            .unwrap(),
+                    ));
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    let waiting = AtomicBool::new(false);
+                    let tuning = |update: super::TuningUpdate| {
+                        if update.explanation.starts_with("Retrying failed I/O") {
+                            waiting.store(true, Ordering::Relaxed);
+                            held.lock().unwrap().take();
+                            assert_eq!(update.concurrency, 4);
+                            if cancelling {
+                                cancel.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    };
+                    let result = super::transfer_with_policy_blocking(
+                        if moving { "move" } else { "copy" },
+                        vec![source.to_string_lossy().into_owned()],
+                        dst_root.to_string_lossy().into_owned(),
+                        operation_id,
+                        "keep-both".into(),
+                        cancel.clone(),
+                        &|_| {},
+                        &tuning,
+                        &|| super::Policy {
+                            mode: super::tuning::Mode::Manual,
+                            manual_concurrency: 4,
+                            ..super::Policy::default()
+                        },
+                    );
+                    assert!(
+                        waiting.load(Ordering::Relaxed),
+                        "No storage wait was reported"
+                    );
+                    if cancelling {
+                        assert!(cancel.load(Ordering::Relaxed));
+                        assert!(result.unwrap().is_empty());
+                        assert_eq!(fs::read(&source_file).unwrap(), bytes);
+                        assert!(!target.exists());
+                    } else {
+                        result.unwrap();
+                        let final_file = if directory {
+                            target.join("photo.bin")
+                        } else {
+                            target.clone()
+                        };
+                        assert_eq!(fs::read(final_file).unwrap(), bytes);
+                        assert_eq!(source.exists(), !moving);
+                    }
+                    assert!(!staged.exists());
+                    fs::remove_dir_all(&root).unwrap();
+                }
+            }
+        }
     }
 
     #[test]

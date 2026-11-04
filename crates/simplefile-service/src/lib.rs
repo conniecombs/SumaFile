@@ -10,7 +10,10 @@ pub mod session;
 pub mod session_cache;
 pub mod shared_memory;
 pub mod shell;
+mod transfer_reliability;
 mod transfer_staging;
+#[cfg(test)]
+mod transfer_test_io;
 pub mod watcher;
 
 pub use dispatch::SessionState;

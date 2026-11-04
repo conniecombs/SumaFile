@@ -4,6 +4,7 @@ use super::path::{
 };
 use super::provider::RemoteProvider;
 use super::secrets::RemoteSecret;
+use crate::transfer_reliability::Failure;
 use russh::client::{self, Handle};
 use russh::keys::{
     agent::client::{AgentClient, AgentStream},
@@ -118,65 +119,69 @@ impl RemoteProvider for SftpRemoteProvider {
         &mut self,
         path: &str,
         destination: &mut dyn std::io::Write,
-    ) -> Result<u64, String> {
+    ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
         block_on_runtime(&self.runtime, async {
             let mut file = self
                 .sftp
                 .open(normalize_remote_path(path))
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(sftp_failure)?;
             let result = async {
                 let mut buffer = vec![0; super::transfer::TRANSFER_BUFFER_SIZE];
                 let mut count = 0;
                 loop {
                     // Call write directly: write_all skips the writer for empty buffers.
-                    destination.write(&[]).map_err(|e| e.to_string())?;
+                    destination.write(&[]).map_err(|e| sftp_io(path, e))?;
                     let read = tokio::time::timeout(REMOTE_CONNECT_TIMEOUT, file.read(&mut buffer))
                         .await
-                        .map_err(|_| "SFTP read timed out".to_string())?
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|_| Failure::new("SFTP read timed out", true))?
+                        .map_err(|e| sftp_io(path, e))?;
                     if read == 0 {
                         break;
                     }
                     destination
                         .write_all(&buffer[..read])
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| sftp_io(path, e))?;
                     count += read as u64;
                 }
                 Ok(count)
             }
             .await;
-            let closed = file.close().await.map_err(|e| e.to_string());
+            let closed = file.close().await.map_err(|e| sftp_io(path, e));
             result.and_then(|count| closed.map(|()| count))
         })
     }
 
-    fn upload(&mut self, path: &str, source: &mut dyn std::io::Read) -> Result<u64, String> {
+    fn upload(
+        &mut self,
+        path: &str,
+        source: &mut dyn std::io::Read,
+    ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
         block_on_runtime(&self.runtime, async {
             let mut file = self
                 .sftp
                 .create(normalize_remote_path(path))
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(sftp_failure)?;
             let result = async {
                 let mut buffer = vec![0; super::transfer::TRANSFER_BUFFER_SIZE];
                 let mut count = 0;
                 loop {
-                    let read = source.read(&mut buffer).map_err(|e| e.to_string())?;
+                    let read = source.read(&mut buffer).map_err(|e| sftp_io(path, e))?;
                     if read == 0 {
                         break;
                     }
                     tokio::time::timeout(REMOTE_CONNECT_TIMEOUT, file.write_all(&buffer[..read]))
                         .await
-                        .map_err(|_| "SFTP write timed out".to_string())?
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|_| Failure::new("SFTP write timed out", true))?
+                        .map_err(|e| sftp_io(path, e))?;
                     count += read as u64;
                 }
                 Ok(count)
             }
             .await;
             // Close on failure as well, before the caller tries to remove staging.
-            let closed = file.close().await.map_err(|e| e.to_string());
+            let closed = file.close().await.map_err(|e| sftp_io(path, e));
             result.and_then(|count| closed.map(|()| count))
         })
     }
@@ -520,10 +525,48 @@ fn mode_to_permissions(mode: u32) -> String {
     output
 }
 
+fn sftp_failure(error: russh_sftp::client::error::Error) -> Failure {
+    use russh_sftp::client::error::Error;
+    use russh_sftp::protocol::StatusCode;
+    let retryable = matches!(&error, Error::Timeout | Error::IO(_) | Error::Limited(_))
+        || matches!(&error, Error::Status(status) if matches!(status.status_code, StatusCode::NoConnection | StatusCode::ConnectionLost));
+    Failure::new(error.to_string(), retryable)
+}
+fn sftp_io(path: &str, error: std::io::Error) -> Failure {
+    if let Some(remote) = error
+        .get_ref()
+        .and_then(|e| e.downcast_ref::<russh_sftp::client::error::Error>())
+    {
+        return sftp_failure(remote.clone()).context("SFTP stream", path);
+    }
+    Failure::io("SFTP stream", path, error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use russh_sftp::protocol::FileAttributes;
+
+    #[test]
+    fn sftp_stream_errors_preserve_permission_vs_connection_classification() {
+        use russh_sftp::protocol::{Status, StatusCode};
+        for (code, retryable) in [
+            (StatusCode::PermissionDenied, false),
+            (StatusCode::NoSuchFile, false),
+            (StatusCode::ConnectionLost, true),
+        ] {
+            let error = russh_sftp::client::error::Error::Status(Status {
+                id: 1,
+                status_code: code,
+                error_message: "server detail".into(),
+                language_tag: "en".into(),
+            });
+            let failure = sftp_io("/photo.jpg", std::io::Error::from(error));
+            assert_eq!(failure.retryable, retryable);
+            assert!(failure.message.contains("/photo.jpg"));
+            assert!(failure.message.contains("server detail"));
+        }
+    }
 
     #[test]
     fn converts_sftp_file_metadata_into_file_entry() {

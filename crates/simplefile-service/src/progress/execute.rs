@@ -2,8 +2,9 @@
 
 use super::plan::{ensure_destination_available, TransferPlan};
 use super::reporting::{CopyContext, ProgressContext, PROGRESS_BYTE_STEP};
+use crate::transfer_reliability::{Failure, Retry};
 use crate::transfer_staging::{
-    conflict_for_existing_destination, existing_file_matches_source, promote_staged_path,
+    conflict_for_existing_destination, existing_file_matches_source, promote_with_recovery,
     remove_path, resumable_staging_path_for, staging_path_for,
 };
 use simplefile_core::path_conflict::{create_dir_exclusive, path_exists_no_follow};
@@ -12,7 +13,6 @@ use std::fs;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 pub(crate) fn is_real_directory(path: &Path) -> bool {
     fs::symlink_metadata(path)
@@ -51,87 +51,137 @@ pub(crate) fn copy_file_attempt(
     completed_bytes: u64,
     buffer_size: usize,
     file_len: u64,
-) -> Result<u64, String> {
-    let mut resume_from = 0u64;
-    if path_exists_no_follow(dst) {
-        let partial_meta = fs::symlink_metadata(dst)
-            .map_err(|error| format!("Failed to stat partial destination: {error}"))?;
-        if partial_meta.file_type().is_file() && partial_meta.len() <= file_len {
-            resume_from = partial_meta.len();
-        } else {
-            remove_path(dst, "partial destination")?;
+) -> Result<u64, Failure> {
+    let buffer_size = buffer_size.min(usize::try_from(file_len.max(1)).unwrap_or(usize::MAX));
+    let existing = match fs::symlink_metadata(dst) {
+        Ok(meta) if meta.file_type().is_file() && meta.len() <= file_len => Some(meta.len()),
+        Ok(_) => {
+            return Err(Failure::new(
+                format!(
+                    "Refusing unexpected temporary destination [{}]",
+                    dst.display()
+                ),
+                false,
+            ))
         }
-    }
-
-    if resume_from == file_len {
-        return Ok(file_len);
-    }
-
-    let mut src_file =
-        fs::File::open(src).map_err(|error| format!("Failed to open source file: {error}"))?;
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(Failure::io("Inspect temporary destination", dst, error)),
+    };
+    let resume_from = existing.unwrap_or(0);
+    let mut src_file = fs::File::open(src).map_err(|e| Failure::io("Open source", src, e))?;
+    let source_modified = src_file
+        .metadata()
+        .map_err(|e| Failure::io("Inspect opened source", src, e))?
+        .modified()
+        .ok();
     if resume_from > 0 {
         src_file
             .seek(SeekFrom::Start(resume_from))
-            .map_err(|error| format!("Failed to resume source file: {error}"))?;
+            .map_err(|e| Failure::io("Resume source", src, e))?;
     }
-    let dst_file = if resume_from > 0 {
-        fs::OpenOptions::new()
-            .append(true)
-            .open(dst)
-            .map_err(|error| format!("Failed to resume destination file: {error}"))?
+    // An existing zero-byte, operation-owned partial is a valid resume point too.
+    let dst_file = if existing.is_some() {
+        fs::OpenOptions::new().append(true).open(dst)
     } else {
         fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(dst)
-            .map_err(|error| format!("Failed to create destination file: {error}"))?
-    };
+    }
+    .map_err(|e| Failure::io("Open temporary destination", dst, e))?;
     let mut reader = BufReader::with_capacity(buffer_size, src_file);
     let mut writer = BufWriter::with_capacity(buffer_size, dst_file);
-    let mut buffer = vec![0u8; buffer_size];
-    let mut copied_this_attempt = resume_from;
-    let mut next_emit_at = ((resume_from / PROGRESS_BYTE_STEP) + 1) * PROGRESS_BYTE_STEP;
+    let copied = copy_file_stream(
+        &mut reader,
+        &mut writer,
+        src,
+        dst,
+        ctx,
+        completed_bytes,
+        resume_from,
+        file_len,
+        buffer_size,
+    )?;
+    let source_after = reader
+        .get_ref()
+        .metadata()
+        .map_err(|e| Failure::io("Recheck source", src, e))?;
+    if source_after.len() != file_len || source_after.modified().ok() != source_modified {
+        return Err(Failure::new(
+            format!("Source changed during transfer [{}]", src.display()),
+            false,
+        ));
+    }
+    ctx.progress.check_cancelled()?;
+    // A successful flush of BufWriter alone does not establish that storage accepted the file.
+    writer
+        .get_ref()
+        .sync_all()
+        .map_err(|e| Failure::io("Finalize temporary destination", dst, e))?;
+    ctx.progress.check_cancelled()?;
+    simplefile_core::file_ops::preserve_basic_metadata(src, dst)
+        .map_err(|e| Failure::new(format!("Preserve metadata [{}]: {e}", dst.display()), false))?;
+    Ok(copied)
+}
 
-    loop {
+/// Shared by filesystem copies, folder workers and moves that copy across volumes.
+/// Successful I/O may take arbitrarily long; duration is not an error signal.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn copy_file_stream(
+    reader: &mut dyn Read,
+    writer: &mut dyn Write,
+    src: &Path,
+    dst: &Path,
+    ctx: &CopyContext<'_>,
+    completed_bytes: u64,
+    resume_from: u64,
+    file_len: u64,
+    buffer_size: usize,
+) -> Result<u64, Failure> {
+    let mut buffer = vec![0u8; buffer_size];
+    let mut copied = resume_from;
+    let mut next_emit_at = ((resume_from / PROGRESS_BYTE_STEP) + 1) * PROGRESS_BYTE_STEP;
+    while copied < file_len {
         ctx.progress.check_cancelled()?;
-        let read = reader
-            .read(&mut buffer)
-            .map_err(|error| format!("Failed to read source file: {error}"))?;
-        if read == 0 {
-            break;
-        }
+        let requested = buffer_size.min((file_len - copied) as usize);
         if let Some(limiter) = ctx.progress.rate_limit {
-            limiter.wait(read, ctx.progress.cancel)?;
+            limiter.wait(requested, ctx.progress.cancel)?;
+        }
+        let read = reader
+            .read(&mut buffer[..requested])
+            .map_err(|e| Failure::io("Read source", src, e))?;
+        if let Some(limiter) = ctx.progress.rate_limit {
+            limiter.refund(requested - read);
+        }
+        if read == 0 {
+            return Err(Failure::new(
+                format!("Source became shorter during transfer [{}]", src.display()),
+                false,
+            ));
         }
         writer
             .write_all(&buffer[..read])
-            .map_err(|error| format!("Failed to write destination file: {error}"))?;
-        copied_this_attempt += read as u64;
-
-        if copied_this_attempt >= next_emit_at {
+            .map_err(|e| Failure::io("Write temporary destination", dst, e))?;
+        copied += read as u64;
+        if copied >= next_emit_at {
             ctx.progress.emit(
-                completed_bytes + copied_this_attempt,
-                src.to_string_lossy().to_string(),
+                completed_bytes + copied,
+                src.to_string_lossy().into(),
                 "running",
                 None,
             );
-            while next_emit_at <= copied_this_attempt {
-                next_emit_at = next_emit_at.saturating_add(PROGRESS_BYTE_STEP);
-            }
+            next_emit_at = copied.saturating_add(PROGRESS_BYTE_STEP);
         }
     }
-
     ctx.progress.finalizing(
-        completed_bytes.saturating_add(copied_this_attempt),
-        src.to_string_lossy().to_string(),
+        completed_bytes.saturating_add(copied),
+        src.to_string_lossy().into(),
     );
     ctx.progress.check_cancelled()?;
     writer
         .flush()
-        .map_err(|error| format!("Failed to flush destination file: {error}"))?;
-    ctx.progress.check_cancelled()?;
-    simplefile_core::file_ops::preserve_basic_metadata(src, dst)?;
-    Ok(copied_this_attempt)
+        .map_err(|e| Failure::io("Flush temporary destination", dst, e))?;
+    Ok(copied)
 }
 
 pub(crate) fn copy_file_with_progress(
@@ -146,9 +196,10 @@ pub(crate) fn copy_file_with_progress(
             .map_err(|error| format!("Failed to create parent directory: {error}"))?;
     }
 
-    let file_len = fs::symlink_metadata(src)
-        .map_err(|error| format!("Failed to stat source file: {error}"))?
-        .len();
+    let source_metadata = fs::symlink_metadata(src)
+        .map_err(|error| format!("Inspect source [{}]: {error}", src.display()))?;
+    let file_len = source_metadata.len();
+    let source_modified = source_metadata.modified().ok();
     let known = ctx.progress.total_bytes.load(Ordering::Relaxed);
     let needed = (*completed_bytes).saturating_add(file_len);
     if needed > known {
@@ -167,62 +218,52 @@ pub(crate) fn copy_file_with_progress(
     }
 
     let staged_path = staging_path_for(dst, ctx.operation_id)?;
-    let copy_result = if file_len == 0 {
-        let result = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&staged_path)
-            .map_err(|error| format!("Failed to create destination file: {error}"))
-            .map(|_| 0);
-        if result.is_ok() {
-            if let Err(error) =
-                simplefile_core::file_ops::preserve_basic_metadata(src, &staged_path)
-            {
-                let _ = fs::remove_file(&staged_path);
-                return Err(error);
-            }
+    let mut retry = Retry::default();
+    let copy_result = loop {
+        if let Err(error) = ctx.progress.check_cancelled() {
+            break Err(error);
         }
-        result
-    } else {
-        let attempts = ctx.attempts();
-        let buffer_size = ctx.buffer_size();
-        let mut copied = Err(String::new());
-
-        for attempt in 0..attempts {
-            if let Err(error) = ctx.progress.check_cancelled() {
-                let _ = fs::remove_file(&staged_path);
-                return Err(error);
-            }
-            if attempt > 0 {
-                std::thread::sleep(Duration::from_millis(500 * (1u64 << (attempt - 1))));
-            }
-
-            match copy_file_attempt(
-                src,
-                &staged_path,
-                ctx,
-                *completed_bytes,
-                buffer_size,
-                file_len,
-            ) {
-                Ok(written) => {
-                    copied = Ok(written);
-                    break;
-                }
-                Err(error) if error == "Operation cancelled" => {
-                    let _ = fs::remove_file(&staged_path);
-                    return Err(error);
-                }
-                Err(error) => {
-                    if let Some(retries) = ctx.progress.retry_count {
-                        retries.fetch_add(1, Ordering::Relaxed);
+        if retry.failures > 0
+            && fs::metadata(src)
+                .is_ok_and(|meta| meta.len() != file_len || meta.modified().ok() != source_modified)
+        {
+            break retry
+                .failed(Failure::new(
+                    format!("Source changed before retry [{}]", src.display()),
+                    false,
+                ))
+                .map(|_| 0);
+        }
+        match copy_file_attempt(
+            src,
+            &staged_path,
+            ctx,
+            *completed_bytes,
+            ctx.buffer_size(),
+            file_len,
+        ) {
+            Ok(written) => break Ok(written),
+            Err(error) if error.message == "Operation cancelled" => break Err(error.message),
+            Err(error) => {
+                let reason = error.to_string();
+                match retry.failed(error) {
+                    Err(error) => break Err(error),
+                    Ok(delay) => {
+                        if let Some(retries) = ctx.progress.retry_count {
+                            retries.fetch_add(1, Ordering::Relaxed);
+                        }
+                        if let Some(limiter) = ctx.progress.rate_limit {
+                            limiter.retrying(delay, &reason);
+                        }
+                        if let Err(error) =
+                            crate::transfer_reliability::wait(delay, ctx.progress.cancel)
+                        {
+                            break Err(error);
+                        }
                     }
-                    copied = Err(error);
                 }
             }
         }
-
-        copied
     };
 
     match copy_result {
@@ -235,11 +276,26 @@ pub(crate) fn copy_file_with_progress(
                 let _ = fs::remove_file(&staged_path);
                 return Err(error);
             }
-            if let Err(error) = promote_staged_path(&staged_path, dst, replace_existing) {
+            if let Err(error) = promote_with_recovery(
+                &staged_path,
+                dst,
+                replace_existing,
+                ctx.progress.cancel,
+                |delay, reason| {
+                    if let Some(limiter) = ctx.progress.rate_limit {
+                        limiter.retrying(delay, reason);
+                    }
+                },
+            ) {
                 let _ = fs::remove_file(&staged_path);
-                return Err(error);
+                return Err(
+                    if error.starts_with("CONFLICT:") || error == "Operation cancelled" {
+                        error
+                    } else {
+                        format!("Finalize destination [{}]: {error}", dst.display())
+                    },
+                );
             }
-            simplefile_core::file_ops::preserve_basic_metadata(src, dst)?;
             *completed_bytes += written;
             if written > file_len {
                 let known = ctx.progress.total_bytes.load(Ordering::Relaxed);
@@ -253,8 +309,19 @@ pub(crate) fn copy_file_with_progress(
             Ok(())
         }
         Err(error) => {
-            let _ = fs::remove_file(&staged_path);
-            Err(error)
+            if fs::symlink_metadata(&staged_path)
+                .is_ok_and(|meta| !meta.file_type().is_file() || meta.len() > file_len)
+            {
+                return Err(error);
+            }
+            match fs::remove_file(&staged_path) {
+                Ok(()) => Err(error),
+                Err(cleanup) if cleanup.kind() == std::io::ErrorKind::NotFound => Err(error),
+                Err(cleanup) => Err(format!(
+                    "{error}; temporary file remains [{}]: {cleanup}",
+                    staged_path.display()
+                )),
+            }
         }
     }
 }
@@ -377,7 +444,16 @@ pub(crate) fn copy_plan_with_progress(
             let _ = remove_path(&staged_dest, "partial destination directory");
             return Err(error);
         }
-        if let Err(error) = promote_staged_path(&staged_dest, &plan.final_dest, false) {
+        if let Err(error) = promote_with_recovery(
+            &staged_dest,
+            &plan.final_dest,
+            false,
+            ctx.cancel,
+            |delay, reason| {
+                session.limiter.retrying(delay, reason);
+                session.display(Vec::new(), true);
+            },
+        ) {
             let _ = remove_path(&staged_dest, "partial destination directory");
             return Err(error);
         }
@@ -473,7 +549,16 @@ pub(crate) fn move_plan_with_progress(
             let _ = remove_path(&staged_dest, "partial destination directory");
             return Err(error);
         }
-        if let Err(error) = promote_staged_path(&staged_dest, &plan.final_dest, false) {
+        if let Err(error) = promote_with_recovery(
+            &staged_dest,
+            &plan.final_dest,
+            false,
+            ctx.cancel,
+            |delay, reason| {
+                session.limiter.retrying(delay, reason);
+                session.display(Vec::new(), true);
+            },
+        ) {
             let _ = remove_path(&staged_dest, "partial destination directory");
             return Err(error);
         }

@@ -78,6 +78,48 @@ public sealed partial class MainWindow
             elapsedMs = clock.Elapsed.TotalMilliseconds, optionsPersisted = true, liveOverride = true,
             activeRowsRendered = true, completedRowsRemoved = true, hashesMatch = true });
 
+        // A real Windows sharing violation at finalization must wait visibly,
+        // retain the original, then recover without user retry or lost bytes.
+        var pressureSource = Path.Combine(root, "storage-source");
+        var pressureDestination = Path.Combine(root, "storage-destination");
+        Directory.CreateDirectory(pressureSource); Directory.CreateDirectory(pressureDestination);
+        var pressureInput = Path.Combine(pressureSource, "photo.bin");
+        var pressureOutput = Path.Combine(pressureDestination, "photo.bin");
+        await File.WriteAllBytesAsync(pressureInput, block[..65539]);
+        await File.WriteAllTextAsync(pressureOutput, "original destination");
+        TransferOperationViewModel pressureOperation;
+        using (var held = new FileStream(pressureOutput, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            pressureOperation = _transfer.Enqueue([pressureInput], pressureDestination, false, async (op, ct) =>
+            {
+                await backend.CopyAsync([pressureInput], pressureDestination, "replace",
+                    new Progress<SimpleFile.Ipc.ProgressUpdate>(op.ApplyProgress), op.SetOperationId, ct,
+                    new Progress<SimpleFile.Ipc.TuningUpdate>(op.ApplyTuning));
+                return TransferOperationStatus.Completed;
+            });
+            await SmokeWaitAsync(() => pressureOperation.TuningText.Contains("Retrying failed I/O", StringComparison.Ordinal), "storage pressure wait");
+            SmokeAssert(SmokeDescendants<TextBlock>(view).Any(t => t.Text.Contains("Retrying failed I/O", StringComparison.Ordinal)),
+                "Storage wait did not render in the transfer window");
+            SmokeAssert(pressureOperation.TuningText.Contains("up to 4 files", StringComparison.Ordinal), "A file retry changed Custom concurrency");
+            SmokeAssert(!pressureOperation.TuningText.Contains("safety limit", StringComparison.Ordinal), "A file retry introduced a hidden bandwidth cap");
+            using var reader = new StreamReader(held, leaveOpen: true);
+            SmokeAssert(await reader.ReadToEndAsync() == "original destination", "Replacement changed the original before storage recovered");
+            var pressureBitmap = new RenderTargetBitmap();
+            await pressureBitmap.RenderAsync(view);
+            var pressurePixels = (await pressureBitmap.GetPixelsAsync()).ToArray();
+            using var screenshot = File.Create(Path.Combine(root, "storage-pressure.png"));
+            var pressureEncoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, screenshot.AsRandomAccessStream());
+            pressureEncoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied,
+                (uint)pressureBitmap.PixelWidth, (uint)pressureBitmap.PixelHeight, 96, 96, pressurePixels);
+            await pressureEncoder.FlushAsync();
+        }
+        await SmokeWaitAsync(() => pressureOperation.IsTerminal, "storage pressure recovery");
+        SmokeAssert(pressureOperation.Status == TransferOperationStatus.Completed, pressureOperation.ErrorMessage);
+        SmokeAssert(File.ReadAllBytes(pressureOutput).SequenceEqual(block[..65539]), "Recovered transfer changed bytes");
+        SmokeAssert(pressureOperation.ActiveFiles.Count == 0, "Recovered file remained active");
+        results.Add(new { scenario = "storage-pressure-recovery", waitingRendered = true, originalProtected = true,
+            automaticRecovery = true, customConcurrencyRespected = true, noHiddenBandwidthCap = true, contentsMatch = true, completedRowsRemoved = true });
+
         await TransferPolicyStore.SaveAsync(backend, new TransferPolicy());
         var bulkDestination = Path.Combine(root, "adaptive-bulk");
         Directory.CreateDirectory(bulkDestination);

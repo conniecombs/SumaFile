@@ -117,7 +117,10 @@ impl<'a> Session<'a> {
             operation_id: self.operation_id.into(),
             mode: self.controller.policy.mode,
             concurrency: self.controller.concurrency,
-            explanation: self.controller.explanation.into(),
+            explanation: self
+                .limiter
+                .explanation()
+                .unwrap_or_else(|| self.controller.explanation.into()),
             active_files: files,
         });
         self.displayed_at = Instant::now();

@@ -19,10 +19,12 @@ internal static class TransferOptionsDialog
             var memory = Number("Copy buffer budget (MiB)", policy.MemoryBudgetMb, 16, 512);
             var bandwidth = Number("Bandwidth limit (MiB/s; 0 = unlimited)", policy.BandwidthMib, 0, 1_048_576);
             var status = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12,
-                Text = "Automatic measures speed and retries. Conservative caps parallel copies at 4. Maximum starts more workers. Custom uses your file limit. Backend and shared resource limits still apply." };
+                Text = "Automatic measures sustained transfer speed. Conservative caps parallel copies at 4. Maximum starts more workers. Custom keeps your file and bandwidth limits, subject to the buffer budget and provider limits." };
             var content = new StackPanel { Spacing = 12, MinWidth = 390, MaxWidth = 500 };
             content.Children.Add(mode); content.Children.Add(parallel); content.Children.Add(memory); content.Children.Add(bandwidth);
             content.Children.Add(status);
+            content.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12,
+                Text = "Zero bandwidth means unlimited in every mode. Normal cloud or network delays do not impose a hidden speed limit. Failed files retry with a short wait; other files can continue. The buffer budget controls SumaFile memory." });
             content.Children.Add(new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12,
                 Text = operation is null ? "Defaults apply to new tasks and running tasks without an override. Changes take effect within 5 seconds; existing files finish before a lower limit is reached."
                     : "Applies to this task only. Changes take effect within 5 seconds; existing files finish before a lower limit is reached." });

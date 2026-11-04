@@ -1,3 +1,4 @@
+use crate::transfer_reliability::{Failure, Retry};
 use simplefile_core::path_conflict::path_exists_no_follow;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -30,6 +31,34 @@ pub(crate) fn remove_path(path: &Path, label: &str) -> Result<(), String> {
     }
 }
 
+/// Workers must already be joined. Windows directory watchers can briefly keep
+/// deletion pending; finish bounded cleanup even when the job was cancelled.
+pub(crate) fn cleanup_owned_path(path: &Path) -> Result<(), String> {
+    let mut last = String::new();
+    for attempt in 0..5 {
+        match fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => last = error.to_string(),
+            Ok(_) => {
+                if let Err(error) = remove_path(path, "operation temporary path") {
+                    last = error;
+                }
+                if matches!(fs::symlink_metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+                {
+                    return Ok(());
+                }
+            }
+        }
+        if attempt < 4 {
+            std::thread::sleep(std::time::Duration::from_millis(25 << attempt));
+        }
+    }
+    Err(format!(
+        "Temporary path remains [{}]: {last}",
+        path.display()
+    ))
+}
+
 pub(crate) fn staging_path_for(final_path: &Path, operation_id: &str) -> Result<PathBuf, String> {
     staging_path_with_salt(final_path, Some(operation_id))
 }
@@ -59,40 +88,69 @@ fn staging_path_with_salt(final_path: &Path, salt: Option<&str>) -> Result<PathB
     Ok(parent.join(format!(".{file_name}.{key:016x}.sumafile-partial")))
 }
 
+#[cfg(test)]
 pub(crate) fn promote_staged_path(
+    staged: &Path,
+    destination: &Path,
+    replace: bool,
+) -> Result<(), String> {
+    promote_attempt(staged, destination, replace).map_err(String::from)
+}
+
+pub(crate) fn promote_with_recovery(
+    staged: &Path,
+    destination: &Path,
+    replace: bool,
+    cancel: &std::sync::atomic::AtomicBool,
+    mut waiting: impl FnMut(std::time::Duration, &str),
+) -> Result<(), String> {
+    let mut retry = Retry::default();
+    loop {
+        crate::transfer_reliability::wait(std::time::Duration::ZERO, cancel)?;
+        match promote_attempt(staged, destination, replace) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                let reason = error.to_string();
+                let delay = retry.failed(error)?;
+                waiting(delay, &reason);
+                crate::transfer_reliability::wait(delay, cancel)?;
+            }
+        }
+    }
+}
+
+fn promote_attempt(
     staged_path: &Path,
     final_path: &Path,
     replace_existing: bool,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     if path_exists_no_follow(final_path) {
         if !replace_existing {
-            return Err(conflict_for_existing_destination(final_path));
+            return Err(conflict_for_existing_destination(final_path).into());
         }
         let backup_path = replacement_backup_path(final_path)?;
         fs::rename(final_path, &backup_path)
-            .map_err(|error| format!("Failed to prepare destination replacement: {error}"))?;
+            .map_err(|e| Failure::io("Prepare destination replacement", final_path, e))?;
         if let Err(error) = fs::rename(staged_path, final_path) {
-            match fs::rename(&backup_path, final_path) {
-                Ok(()) => {
-                    return Err(format!(
-                        "Failed to finish destination file; original destination was restored: {error}"
-                    ));
-                }
-                Err(restore_error) => {
-                    return Err(format!(
-                        "Failed to finish destination file and could not restore original destination from {}: {error}; restore failed: {restore_error}",
-                        backup_path.to_string_lossy()
-                    ));
-                }
-            }
+            return Err(match fs::rename(&backup_path, final_path) {
+                Ok(()) => Failure::io("Finalize destination (original destination was restored)", final_path, error),
+                Err(restore) => Failure::new(format!("Finalize destination [{}]: {error}; original remains [{}], restore failed: {restore}", final_path.display(), backup_path.display()), false),
+            });
         }
-
-        remove_path(&backup_path, "destination backup")?;
+        // Promotion already committed: never replay it just because backup cleanup failed.
+        remove_path(&backup_path, "destination backup").map_err(|e| {
+            Failure::new(
+                format!(
+                    "Transferred, but backup remains [{}]: {e}",
+                    backup_path.display()
+                ),
+                false,
+            )
+        })?;
         return Ok(());
     }
-
     fs::rename(staged_path, final_path)
-        .map_err(|error| format!("Failed to finish destination file: {error}"))
+        .map_err(|e| Failure::io("Finalize destination", final_path, e))
 }
 
 fn replacement_backup_path(final_path: &Path) -> Result<PathBuf, String> {

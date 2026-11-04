@@ -98,7 +98,7 @@ async fn remote_transfer_accepts_health_and_cancel_while_streaming_and_cleans_pa
             &mut self,
             _: &str,
             destination: &mut dyn std::io::Write,
-        ) -> Result<u64, String> {
+        ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
             for _ in 0..1000 {
                 destination
                     .write_all(&[1; 1024])
@@ -107,7 +107,11 @@ async fn remote_transfer_accepts_health_and_cancel_while_streaming_and_cleans_pa
             }
             Ok(1024000)
         }
-        fn upload(&mut self, _: &str, _: &mut dyn std::io::Read) -> Result<u64, String> {
+        fn upload(
+            &mut self,
+            _: &str,
+            _: &mut dyn std::io::Read,
+        ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
             unreachable!()
         }
     }

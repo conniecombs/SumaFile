@@ -39,6 +39,25 @@ public sealed class TransferPolicyTests
     }
 
     [Fact]
+    public void RetryStatusClearsWithoutChangingCustomLimits()
+    {
+        var operation = new TransferOperationViewModel(false, [@"C:\source"], @"D:\destination", (_, _) => Task.FromResult(TransferOperationStatus.Completed));
+        operation.SetOperationId("storage-job");
+        operation.ApplyTuning(new TuningUpdate { OperationId = "storage-job", Mode = "manual", Concurrency = 16,
+            Explanation = "Retrying failed I/O | Read source timed out", ActiveFiles = [new() { Path = "image.jpg", Total = 10 }] });
+        Assert.Contains("Retrying failed I/O", operation.TuningText);
+        Assert.Single(operation.ActiveFiles);
+        operation.ApplyTuning(new TuningUpdate { OperationId = "storage-job", Mode = "manual", Concurrency = 16,
+            Explanation = "Custom limits (memory and provider limits still apply)", ActiveFiles = [new() { Path = "image.jpg", Current = 8, Total = 10 }] });
+        Assert.Contains("up to 16 files", operation.TuningText);
+        Assert.DoesNotContain("safety limit", operation.TuningText);
+        Assert.DoesNotContain("Retrying failed I/O", operation.TuningText);
+        operation.Complete(TransferOperationStatus.Completed);
+        Assert.Empty(operation.TuningText);
+        Assert.Empty(operation.ActiveFiles);
+    }
+
+    [Fact]
     public void ActiveFilesDisappearOnCompletionAndLateOrUnrelatedEventsAreIgnored()
     {
         var operation = new TransferOperationViewModel(false, [@"C:\source"], @"D:\destination", (_, _) => Task.FromResult(TransferOperationStatus.Completed));

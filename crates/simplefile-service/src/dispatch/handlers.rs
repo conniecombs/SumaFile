@@ -490,7 +490,12 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_COPY_ENTRY => match parse_params::<CopyMoveParams>(request) {
-            Ok(p) => match simplefile_core::file_ops::copy_entry(&p.source, &p.destination) {
+            Ok(p) => match crate::progress::transfer_single_compat(
+                "copy",
+                &p.source,
+                &p.destination,
+                "error",
+            ) {
                 Ok(r) => {
                     state
                         .cache
@@ -504,7 +509,12 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_MOVE_ENTRY => match parse_params::<CopyMoveParams>(request) {
-            Ok(p) => match simplefile_core::file_ops::move_entry(&p.source, &p.destination) {
+            Ok(p) => match crate::progress::transfer_single_compat(
+                "move",
+                &p.source,
+                &p.destination,
+                "error",
+            ) {
                 Ok(r) => {
                     state.cache.invalidate_paths([
                         p.source.as_str(),
@@ -520,7 +530,8 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_COPY_ENTRY_RESOLVED => match parse_params::<ResolvedCopyMoveParams>(request) {
-            Ok(p) => match simplefile_core::file_ops::copy_entry_resolved(
+            Ok(p) => match crate::progress::transfer_single_compat(
+                "copy",
                 &p.source,
                 &p.destination,
                 &p.conflict_action,
@@ -538,7 +549,8 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_MOVE_ENTRY_RESOLVED => match parse_params::<ResolvedCopyMoveParams>(request) {
-            Ok(p) => match simplefile_core::file_ops::move_entry_resolved(
+            Ok(p) => match crate::progress::transfer_single_compat(
+                "move",
                 &p.source,
                 &p.destination,
                 &p.conflict_action,

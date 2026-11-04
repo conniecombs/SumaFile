@@ -297,6 +297,41 @@ links and special entries that could escape the destination.
 - Symbolic links are reported as unsupported during folder transfers
 - Plain FTP requires an explicit insecure-connection acknowledgement
 
+### Transfer speed and automatic retries
+
+Filesystem file/folder copies and moves (including mounted cloud drives, mapped
+shares, removable drives, and cross-volume moves) share the same transfer engine.
+Native FTP, FTPS, and SFTP uploads/downloads use the same user bandwidth limiter
+and retry policy, including single-file compatibility commands. Native remote
+sessions support one file stream; the selected file count is an upper limit.
+Same-volume moves can use a direct rename.
+
+- **Custom** keeps the selected concurrency, subject to the chosen buffer budget,
+  shared process resource bounds and provider capabilities. Slow I/O and errors
+  never replace it with a smaller learned value.
+- **Zero bandwidth means unlimited in every mode.** There is no additional safety
+  rate. Successful cloud reads, NAS writes, metadata gaps and durability flushes
+  cannot impose a hidden limit. Native streams charge actual payload bytes,
+  including short reads and small files, rather than reserving full buffers at EOF.
+- Automatic modes compare sustained aggregate throughput while work is queued.
+  They can test more/fewer workers and back off after actual I/O failures. A quiet
+  window alone is not a failure. Settings learned by the former latency-based
+  controller are not reused.
+- A failing file or local finalization step gets at most six attempts, with
+  cancellable waits of 1, 2, 4, 8, and 16 seconds. **Retrying failed I/O** identifies
+  the actual failing phase/path. The affected file waits; healthy workers and new
+  files continue within their configured limits. Permission, conflict, missing-file,
+  invalid-data, authentication, and certificate/host-key errors fail promptly.
+- Empty and partially written operation-owned filesystem temporary files resume
+  correctly. Native remote retries reconnect and restart the incomplete staged
+  file from byte zero. Completed files are retained; failed moves retain sources.
+  The first error is preserved alongside any later failure. Buffered writes and
+  durability checks still complete before a filesystem destination is promoted.
+- SumaFile does not read or control pCloud Drive's cache occupancy. Its buffer
+  budget is RAM, and temporary files are on the destination. A synchronous OS
+  filesystem call may remain blocked until its driver returns. Archive creation/
+  extraction retains its separate format-specific engine.
+
 ## Settings and State
 
 Settings is organized into:

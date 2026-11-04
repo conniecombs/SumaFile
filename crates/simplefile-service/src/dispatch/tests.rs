@@ -937,16 +937,20 @@ impl RemoteProvider for DispatchFakeProvider {
         &mut self,
         path: &str,
         destination: &mut dyn std::io::Write,
-    ) -> Result<u64, String> {
+    ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
         if path != "/release/app.txt" {
-            return Err(format!("unexpected read {path}"));
+            return Err(format!("unexpected read {path}").into());
         }
         destination
             .write_all(b"remote bytes")
             .map_err(|e| e.to_string())?;
         Ok(12)
     }
-    fn upload(&mut self, path: &str, source: &mut dyn std::io::Read) -> Result<u64, String> {
+    fn upload(
+        &mut self,
+        path: &str,
+        source: &mut dyn std::io::Read,
+    ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
         let mut bytes = Vec::new();
         source.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
         if bytes != b"local bytes" {
