@@ -1,5 +1,7 @@
 # Transfer tuning
 
+Applies to **SumaFile 1.0.2**. See [release notes](RELEASE_1.0.2.md) for changes from 1.0.1.
+
 Open **Transfers > Transfer defaults** to choose a policy. A running or queued task's
 **Options** button overrides those defaults for that task; **Use defaults** removes the
 override. Settings persist locally. Bandwidth and scheduler limits refresh within
@@ -43,6 +45,11 @@ finished. Workers waiting for a shared resource permit may appear in this list.
 Aggregate progress, tuning reason, errors, and cancellation remain visible.
 
 ## Learning and reliability
+
+New-policy defaults are ten low-level attempts and three file passes with a
+one-second retry base. Exponential backoff uses factors 1, 2, 4, 8, then 16;
+each wait is capped at 60 seconds. A file pass can contain low-level retries,
+so the limits are separate. Nonretryable failures still fail immediately.
 
 The controller compares pairs of five-second samples, ignores noisy or substantially
 under-filled windows, probes additional workers, and rolls back a slower probe. It

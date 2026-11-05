@@ -8,17 +8,73 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
-### Added
-- Nothing yet.
-
-### Changed
-- Relicensed SumaFile under the MIT License. The root license text, README
-  badge and status table, npm package metadata, and Rust crate metadata now
-  consistently identify MIT.
+No additional changes recorded after the v1.0.2 release preparation.
 
 ---
 
-## [1.0.1] - 2026-09-06
+## [1.0.2] - 2026-11-05
+
+Release notes prepared on this date; publication status is recorded on GitHub.
+The baseline is the published v1.0.1 tag (October 20, 2026), not the earlier
+checklist date. See [complete release notes](RELEASE_1.0.2.md) for all 19
+application commits, dependency changes, upgrade instructions and limitations.
+
+### Added
+- Automatic, Conservative, Maximum throughput and Custom transfer policies;
+  persisted defaults, per-job overrides, active-file rows and tuning explanations.
+- Controls for concurrency, directory checkers, ordering/backlog, buffer budgets,
+  Windows multistream copying, integrity, preallocation, in-place behavior,
+  flush-on-close, bandwidth and retry limits.
+- Bounded route-specific transfer learning, shared worker/buffer resource limits,
+  exact-capacity buffer reuse and disk-backed recursive completion manifests.
+- Locked local staging ownership journals, identity-based interrupted-replacement
+  recovery, SHA-256 verification and verified-handle Windows move deletion.
+- FTP MLST/SFTP stat paths, effective native remote checksum verification and
+  bounded retry passes with explicit provider capability limits.
+- Persistent pane filter/search controls, preview collapse/pinning, conflict
+  comparisons and Keep both previews, and highlighted Rename Before/After states.
+- Daily bounded security repair and timeout scenario checkpoints retained by CI.
+
+### Changed
+- Unified filesystem/compatibility transfer paths and native remote policy handling.
+  Same-volume moves retain direct rename; native remote sessions retain one stream.
+- Improved directory scanning and scheduling, policy refresh, cancellation/history,
+  conflict retries and source/destination protection during copy/move finalization.
+- Details remains usable in narrow panes. Refined toolbar defaults/directional
+  transfer labels, pane/drop styling, path-bar editing, Git status colors and
+  duplicate metadata presentation.
+- Updated locked dependencies: crypto-bigint, ctutils, lofty, log, lzma-rust2,
+  notify, ogg_pager, suppaftp, tokio, typed-path, ureq, ureq-proto and zip;
+  updated target-specific transitive graph. The service directly uses locked sha2.
+- Aligned runtime, installer, manifest, lockfile and documentation identities at
+  1.0.2. Release preparation now includes the Windows manifest and NSIS fallback;
+  publishing requires and uses version-specific release notes.
+
+### Fixed
+- Unrelated/stale partial adoption and unsafe cleanup, replacement rollback gaps,
+  premature directory publication, read-only source deletion and hidden promoted files.
+- Source pathname replacement races, missing identity handling, hashing that
+  depended on read boundaries, and serialization of modification dates before 1970.
+- Incorrect stripe/scratch memory accounting and oversized pooled allocations.
+- Remote downloads ignoring failed/missing final stats, ineffective checksum/retry
+  settings, and retries replaying already completed selections.
+- Cancellation misreported as success, sibling cancellation masking the real I/O
+  failure, structured conflicts bypassing the UI, and work stranded on IPC disconnect.
+- Inconsistent flush-on-close behavior and stale policy snapshots for new workers.
+- Dependency audit/maintenance permission failures and missing formatting diagnostics.
+- UI smoke timeout coupling: retain 10k/100k rendering/navigation checks while
+  transfer regressions use the smallest fixture. Explicit 100k copy stress remains
+  available with an appropriate timeout; this is not a 100k-copy speed claim.
+
+### Validation
+- The integrated application baseline passed Rust and .NET tests, Windows/XAML
+  builds, UI smoke checks, MSI/NSIS install and both release/baseline upgrades.
+- Release preparation receives its own CI. Live physical NAS/cloud throughput,
+  provider durability and signed in-app delivery require their respective environments.
+
+---
+
+## [1.0.1] - 2026-10-20
 
 ### Added
 - Settings now opens as a standalone, resizable WinUI window with `NavigationView`
@@ -32,6 +88,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   Settings -> Behavior can completely disable the Git UI and backend calls.
 
 ### Changed
+- The published tag includes MIT licensing consistently across the license text,
+  README, npm metadata and Rust crates (previously left under Unreleased).
 - Version identity is now **1.0.1**. About, Settings, handshake `appVersion`,
   README badge, artifact names, Cargo package versions, MSBuild `<Version>`,
   assembly identity, installer DisplayVersion, WiX Product Version, and NSIS
@@ -47,7 +105,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
-## [1.0.0] - 2026-09-01
+## [1.0.0] - 2026-09-02
 
 ### Added
 - Recycle Bin is a first-class location (Quick Access). Restore, permanent delete, and Empty Recycle Bin work from the pane.
@@ -176,7 +234,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
-## [1.0.2] - 2026-05-26
+## [SimpleFile 1.0.2] - 2026-05-26
 
 ### Added
 - **Compare Files** workflow for two selected UTF-8 text files, including a Rust
@@ -448,12 +506,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
-[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/conniecombs/SumaFile/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/conniecombs/SumaFile/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/conniecombs/SumaFile/releases/tag/v1.0.0
 [1.1.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.2...v1.0.3
-[1.0.2]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.1...v1.0.2
+[SimpleFile 1.0.2]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.1...v1.0.2
 [SimpleFile 1.0.1]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.0...v1.0.1
 [SimpleFile 1.0.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v0.2.1...v1.0.0
 [0.2.1]: https://github.com/conniecombs/SimpleFile-Windows/compare/v0.2.0...v0.2.1

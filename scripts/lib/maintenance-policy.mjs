@@ -6,6 +6,7 @@ export const generatedFiles = [
   'crates/simplefile-core/src/open_with_policy_generated.rs',
 ];
 export const releaseFiles = ['README.md', 'Cargo.lock', 'src-winui/Directory.Build.props',
+  'src-winui/SimpleFile.App/app.manifest', 'packaging/winui/sumafile-winui.nsi',
   'crates/simplefile-core/src/lib.rs', ...['core', 'ipc', 'service'].map(name => `crates/simplefile-${name}/Cargo.toml`),
   ...['App', 'Core', 'Ipc', 'Tests'].map(name => `src-winui/SimpleFile.${name}/packages.lock.json`)];
 export const recipes = ['rustfmt', 'generated', 'toolchains', 'release', 'security'];

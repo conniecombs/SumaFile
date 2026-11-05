@@ -22,7 +22,18 @@ export function readReleaseVersion(root) {
   }
   const core = readFileSync(resolve(root, 'crates/simplefile-core/src/lib.rs'), 'utf8');
   if (/APP_DISPLAY_VERSION:\s*&str\s*=\s*"([^"]+)"/.exec(core)?.[1] !== version.display) throw new Error('Rust display version differs from WinUI');
+  const manifest = readFileSync(resolve(root, 'src-winui/SimpleFile.App/app.manifest'), 'utf8');
+  if (/<assemblyIdentity version="([^"]+)"/.exec(manifest)?.[1] !== `${version.numeric}.0`) throw new Error('Windows manifest version differs from WinUI');
+  const nsis = readFileSync(resolve(root, 'packaging/winui/sumafile-winui.nsi'), 'utf8');
+  if (/!define NUMERIC_VERSION "([^"]+)"/.exec(nsis)?.[1] !== version.numeric) throw new Error('NSIS fallback version differs from WinUI');
   return version;
+}
+
+export function readReleaseNotes(root, version = readReleaseVersion(root)) {
+  const file = `docs/RELEASE_${version.display}.md`;
+  const source = readFileSync(resolve(root, file), 'utf8');
+  if (!source.startsWith(`# SumaFile ${version.display} Release `)) throw new Error(`Release notes heading does not match ${version.tag}`);
+  return { file, source };
 }
 
 export function planReleaseVersion(root, input) {
@@ -47,6 +58,8 @@ export function planReleaseVersion(root, input) {
     .replace(/<Version>[^<]+<\/Version>/, `<Version>${next.numeric}</Version>`)
     .replace(/<InformationalVersion>[^<]+<\/InformationalVersion>/, `<InformationalVersion>${next.display}</InformationalVersion>`));
   edit('crates/simplefile-core/src/lib.rs', source => source.replace(/(APP_DISPLAY_VERSION:\s*&str\s*=\s*")[^"]+(")/, `$1${next.display}$2`));
+  edit('src-winui/SimpleFile.App/app.manifest', source => source.replace(/(<assemblyIdentity version=")[^"]+(")/, `$1${next.numeric}.0$2`));
+  edit('packaging/winui/sumafile-winui.nsi', source => source.replace(/(!define NUMERIC_VERSION ")[^"]+(")/, `$1${next.numeric}$2`));
   for (const file of nugetLocks) edit(file, source => source.replace(
     /("SimpleFile\.(?:Core|Ipc|App|Tests)": "\[)[\d.]+(, \)")/g, `$1${next.numeric}$2`));
   edit('README.md', source => source

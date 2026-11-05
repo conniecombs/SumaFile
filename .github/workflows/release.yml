@@ -34,6 +34,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       draft: ${{ steps.version.outputs.draft }}
+      notes: ${{ steps.version.outputs.notes }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -276,16 +277,7 @@ jobs:
         with:
           tag_name: ${{ needs.validate.outputs.version }}
           name: SumaFile ${{ needs.validate.outputs.version }}
-          body: |
-            ## SumaFile ${{ needs.validate.outputs.version }}
-
-            Windows installer and portable artifacts are attached below:
-            - WinUI NSIS setup executable (`x64-winui-setup.exe`) for standard per-user installation.
-            - WinUI MSI installer (`x64-winui.msi`) for managed deployment.
-            - Portable zip (`x64-winui-portable.zip`) containing `SumaFile.exe` and `simplefile-service.exe`.
-            - Updater metadata (`latest-winui.json`) and Ed25519 signatures.
-
-            See [docs/CHANGELOG.md](https://github.com/conniecombs/SumaFile/blob/main/docs/CHANGELOG.md) for release notes and upgrade details.
+          body_path: ${{ needs.validate.outputs.notes }}
           draft: true
           prerelease: ${{ needs.validate.outputs.prerelease }}
           files: release-assets/*

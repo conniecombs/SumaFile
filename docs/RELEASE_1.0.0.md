@@ -1,5 +1,7 @@
 # SumaFile 1.0.0 Release Checklist
 
+> Historical release checklist. See [SumaFile 1.0.2](RELEASE_1.0.2.md) for current release notes, artifacts and upgrade guidance.
+
 SumaFile 1.0.0 is the first numbered release of the WinUI 3 + Rust IPC
 desktop app in this repository.
 
