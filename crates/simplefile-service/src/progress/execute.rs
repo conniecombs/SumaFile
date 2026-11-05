@@ -6,11 +6,12 @@ use super::resources::PooledBuffer;
 use super::tuning::CheckMode;
 use crate::transfer_reliability::{Failure, Retry};
 use crate::transfer_staging::{
-     capture_source_version_for_path, capture_source_version_from_open_file, cleanup_owned_path,
+    adopt_or_cleanup_legacy_dir_staging, capture_source_version_for_path,
+    capture_source_version_from_open_file, cleanup_owned_path, cleanup_stale_file_staging,
     conflict_for_existing_destination, delete_verified_source, delete_verified_source_tree,
     existing_file_matches_source_with_mode, hash_file_contents, preallocate_file,
-    promote_with_policy, remove_path, resumable_staging_path_for, staging_path_for,
-    verify_source_unchanged, ContentHasher, SourceVersion,
+    promote_with_policy, remove_path, staging_path_for, verify_source_unchanged, ContentHasher,
+    SourceVersion,
 };
 use simplefile_core::path_conflict::{
     is_already_exists_error, path_exists_no_follow, rename_exclusive,
@@ -53,11 +54,19 @@ fn open_source_sequential(src: &Path) -> std::io::Result<fs::File> {
 fn create_new_staging_sequential(dst: &Path) -> std::io::Result<fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
     const FILE_FLAG_SEQUENTIAL_SCAN: u32 = 0x0800_0000;
-    fs::OpenOptions::new()
-        .write(true)
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x0000_0002;
+    let is_staging = dst
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".sumafile-partial"));
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true)
         .create_new(true)
-        .custom_flags(FILE_FLAG_SEQUENTIAL_SCAN)
-        .open(dst)
+        .custom_flags(FILE_FLAG_SEQUENTIAL_SCAN);
+    if is_staging {
+        opts.attributes(FILE_ATTRIBUTE_HIDDEN);
+    }
+    opts.open(dst)
 }
 
 #[cfg(not(windows))]
@@ -248,6 +257,7 @@ pub(crate) fn copy_file_attempt_versioned(
             .sync_all()
             .map_err(|e| Failure::io("Finalize temporary destination", dst, e))?;
     }
+    drop(dst_file);
     if verify_checksum {
         let mut verify_dst = open_source_sequential(dst)
             .map_err(|e| Failure::io("Open destination for checksum", dst, e))?;
@@ -742,7 +752,9 @@ pub(crate) fn copy_file_with_progress_versioned(
     let staged_path = if use_inplace {
         dst.to_path_buf()
     } else {
-        staging_path_for(dst, ctx.operation_id)?
+        let path = staging_path_for(dst, ctx.operation_id)?;
+        cleanup_stale_file_staging(dst, &path);
+        path
     };
     let must_sync = ctx.policy.flush_on_close
         && (replace_existing
@@ -801,7 +813,7 @@ pub(crate) fn copy_file_with_progress_versioned(
                 dst.to_string_lossy().to_string(),
             );
             if let Err(error) = ctx.progress.check_cancelled() {
-                let _ = fs::remove_file(&staged_path);
+                let _ = cleanup_owned_path(&staged_path);
                 return Err(error);
             }
             if !use_inplace {
@@ -817,7 +829,7 @@ pub(crate) fn copy_file_with_progress_versioned(
                         }
                     },
                 ) {
-                    let _ = fs::remove_file(&staged_path);
+                    let _ = cleanup_owned_path(&staged_path);
                     return Err(
                         if error.starts_with("CONFLICT:") || error == "Operation cancelled" {
                             error
@@ -845,13 +857,9 @@ pub(crate) fn copy_file_with_progress_versioned(
             {
                 return Err(error);
             }
-            match fs::remove_file(&staged_path) {
+            match cleanup_owned_path(&staged_path) {
                 Ok(()) => Err(error),
-                Err(cleanup) if cleanup.kind() == std::io::ErrorKind::NotFound => Err(error),
-                Err(cleanup) => Err(format!(
-                    "{error}; temporary file remains [{}]: {cleanup}",
-                    staged_path.display()
-                )),
+                Err(cleanup) => Err(format!("{error}; {cleanup}")),
             }
         }
     }
@@ -916,70 +924,33 @@ pub(crate) fn copy_plan_with_progress(
     ensure_destination_available(plan)?;
     let active_policy = session.controller.policy.clone();
 
-    let copy_ctx = CopyContext {
-        progress: ctx,
-        operation_id: ctx.operation_id,
-        network: plan.network,
-        resume_existing: false,
-        policy: active_policy.clone(),
-    };
-
     let source_meta = fs::symlink_metadata(&plan.source_path)
         .map_err(|error| format!("Failed to stat source: {error}"))?;
-    let merge_into_existing_dir = source_meta.file_type().is_dir()
-        && plan.replace_existing
-        && is_real_directory(&plan.final_dest);
-    if source_meta.file_type().is_dir() && !merge_into_existing_dir {
-        let staged_dest = resumable_staging_path_for(&plan.final_dest, ctx.operation_id)?;
-        let resumable_ctx = CopyContext {
+    if source_meta.file_type().is_dir() {
+        let adopted_legacy =
+            adopt_or_cleanup_legacy_dir_staging(&plan.final_dest, ctx.operation_id);
+        let tree_ctx = CopyContext {
             progress: ctx,
             operation_id: ctx.operation_id,
             network: plan.network,
-            resume_existing: true,
+            resume_existing: adopted_legacy,
             policy: active_policy.clone(),
         };
         let result = super::parallel::copy_tree(
             &plan.source_path,
-            &staged_dest,
-            &resumable_ctx,
+            &plan.final_dest,
+            &tree_ctx,
             completed_bytes,
-            false,
+            plan.replace_existing,
             session,
         );
-        result?;
-        ctx.finalizing(
-            *completed_bytes,
-            plan.final_dest.to_string_lossy().to_string(),
-        );
-        if let Err(error) = ctx.check_cancelled() {
-            let _ = cleanup_owned_path(&staged_dest);
-            return Err(error);
-        }
-        if let Err(error) = promote_with_policy(
-            &staged_dest,
-            &plan.final_dest,
-            plan.replace_existing,
-            ctx.cancel,
-            &active_policy,
-            |delay, reason| {
-                session.limiter.retrying(delay, reason);
-                session.display(Vec::new(), true);
-            },
-        ) {
-            let _ = cleanup_owned_path(&staged_dest);
+        if let Err(error) = result {
+            if adopted_legacy {
+                let _ = cleanup_owned_path(&plan.final_dest);
+            }
             return Err(error);
         }
         Ok(())
-    } else if source_meta.file_type().is_dir() {
-        super::parallel::copy_tree(
-            &plan.source_path,
-            &plan.final_dest,
-            &copy_ctx,
-            completed_bytes,
-            plan.replace_existing,
-            session,
-        )
-        .map(|_| ())
     } else {
         let task = super::parallel::FileTask {
             source: plan.source_path.clone(),
@@ -1040,70 +1011,35 @@ pub(crate) fn move_plan_with_progress(
     }
 
     let active_policy = session.controller.policy.clone();
-    let copy_ctx = CopyContext {
-        progress: ctx,
-        operation_id: ctx.operation_id,
-        network: plan.network,
-        resume_existing: false,
-        policy: active_policy.clone(),
-    };
 
     let source_meta = fs::symlink_metadata(&plan.source_path)
         .map_err(|error| format!("Failed to stat source: {error}"))?;
-    let merge_into_existing_dir = source_meta.file_type().is_dir()
-        && plan.replace_existing
-        && is_real_directory(&plan.final_dest);
-    if source_meta.file_type().is_dir() && !merge_into_existing_dir {
-        let staged_dest = resumable_staging_path_for(&plan.final_dest, ctx.operation_id)?;
-        let resumable_ctx = CopyContext {
+    if source_meta.file_type().is_dir() {
+        let adopted_legacy =
+            adopt_or_cleanup_legacy_dir_staging(&plan.final_dest, ctx.operation_id);
+        let tree_ctx = CopyContext {
             progress: ctx,
             operation_id: ctx.operation_id,
             network: plan.network,
-            resume_existing: true,
+            resume_existing: adopted_legacy,
             policy: active_policy.clone(),
         };
-        let manifest = super::parallel::copy_tree(
+        let manifest = match super::parallel::copy_tree(
             &plan.source_path,
-            &staged_dest,
-            &resumable_ctx,
-            completed_bytes,
-            false,
-            session,
-        )?;
-        ctx.finalizing(
-            *completed_bytes,
-            plan.final_dest.to_string_lossy().to_string(),
-        );
-        if let Err(error) = ctx.check_cancelled() {
-            let _ = cleanup_owned_path(&staged_dest);
-            return Err(error);
-        }
-        if let Err(error) = promote_with_policy(
-            &staged_dest,
             &plan.final_dest,
+            &tree_ctx,
+            completed_bytes,
             plan.replace_existing,
-            ctx.cancel,
-            &active_policy,
-            |delay, reason| {
-                session.limiter.retrying(delay, reason);
-                session.display(Vec::new(), true);
-            },
+            session,
         ) {
-            let _ = cleanup_owned_path(&staged_dest);
-            return Err(error);
-        }
-        delete_verified_source_tree(&plan.source_path, &manifest)
-            .map_err(|error| format!("Copied but failed to delete source: {error}"))?;
-        Ok(())
-    } else if source_meta.file_type().is_dir() {
-        let manifest = super::parallel::copy_tree(
-            &plan.source_path,
-            &plan.final_dest,
-            &copy_ctx,
-            completed_bytes,
-            plan.replace_existing,
-            session,
-        )?;
+            Ok(manifest) => manifest,
+            Err(error) => {
+                if adopted_legacy {
+                    let _ = cleanup_owned_path(&plan.final_dest);
+                }
+                return Err(error);
+            }
+        };
         delete_verified_source_tree(&plan.source_path, &manifest)
             .map_err(|error| format!("Copied but failed to delete source: {error}"))?;
         Ok(())

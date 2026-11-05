@@ -437,6 +437,46 @@ pub(crate) fn conflict_for_existing_destination(path: &Path) -> String {
     )
 }
 
+#[cfg(windows)]
+#[allow(clippy::permissions_set_readonly_false)]
+fn clear_readonly_for_delete(path: &Path) {
+    fn clear_one(target: &Path) {
+        let Ok(meta) = fs::symlink_metadata(target) else {
+            return;
+        };
+        if meta.file_type().is_symlink() {
+            return;
+        }
+        let mut perms = meta.permissions();
+        if perms.readonly() {
+            perms.set_readonly(false);
+            let _ = fs::set_permissions(target, perms);
+        }
+    }
+
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if meta.is_dir() && !meta.file_type().is_symlink() {
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let child = entry.path();
+                if fs::symlink_metadata(&child)
+                    .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+                {
+                    clear_readonly_for_delete(&child);
+                } else {
+                    clear_one(&child);
+                }
+            }
+        }
+    }
+    clear_one(path);
+}
+
+#[cfg(not(windows))]
+fn clear_readonly_for_delete(_path: &Path) {}
+
 pub(crate) fn remove_path(path: &Path, label: &str) -> Result<(), String> {
     let meta =
         fs::symlink_metadata(path).map_err(|error| format!("Failed to stat {label}: {error}"))?;
@@ -449,10 +489,25 @@ pub(crate) fn remove_path(path: &Path, label: &str) -> Result<(), String> {
                 .map_err(|error| format!("Failed to delete {label} symlink: {error}"))
         }
     } else if meta.is_dir() {
-        fs::remove_dir_all(path)
-            .map_err(|error| format!("Failed to delete {label} directory: {error}"))
+        match fs::remove_dir_all(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                clear_readonly_for_delete(path);
+                fs::remove_dir_all(path)
+                    .map_err(|retry| format!("Failed to delete {label} directory: {retry}"))
+            }
+            Err(error) => Err(format!("Failed to delete {label} directory: {error}")),
+        }
     } else {
-        fs::remove_file(path).map_err(|error| format!("Failed to delete {label} file: {error}"))
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                clear_readonly_for_delete(path);
+                fs::remove_file(path)
+                    .map_err(|retry| format!("Failed to delete {label} file: {retry}"))
+            }
+            Err(error) => Err(format!("Failed to delete {label} file: {error}")),
+        }
     }
 }
 
@@ -488,11 +543,117 @@ pub(crate) fn staging_path_for(final_path: &Path, operation_id: &str) -> Result<
     staging_path_with_salt(final_path, Some(operation_id))
 }
 
+#[allow(dead_code)]
 pub(crate) fn resumable_staging_path_for(
     final_path: &Path,
     operation_id: &str,
 ) -> Result<PathBuf, String> {
     staging_path_with_salt(final_path, Some(operation_id))
+}
+
+fn is_matching_staging_name(entry_name: &str, target_file_name: &str) -> bool {
+    const SUFFIX: &str = ".sumafile-partial";
+    let Some(rest) = entry_name
+        .strip_prefix('.')
+        .and_then(|s| s.strip_suffix(SUFFIX))
+    else {
+        return false;
+    };
+    let Some(after_target) = rest.strip_prefix(target_file_name) else {
+        return false;
+    };
+    let Some(hex_key) = after_target.strip_prefix('.') else {
+        return false;
+    };
+    hex_key.len() == 16 && hex_key.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Adopts a legacy `.{folder}.{hash}.sumafile-partial` staging directory into
+/// `final_dest` if `final_dest` does not yet exist, and cleans up any remaining
+/// duplicate `.sumafile-partial` directories for the same target folder.
+pub(crate) fn adopt_or_cleanup_legacy_dir_staging(
+    final_dest: &Path,
+    operation_id: &str,
+) -> bool {
+    let Some(parent) = final_dest.parent() else {
+        return false;
+    };
+    let Some(file_name) = final_dest.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+
+    let exact_match = resumable_staging_path_for(final_dest, operation_id).ok();
+    let mut candidates: Vec<(PathBuf, Option<SystemTime>)> = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name_str) = name.to_str() else {
+                continue;
+            };
+            if !is_matching_staging_name(name_str, file_name) {
+                continue;
+            }
+            let path = entry.path();
+            if let Ok(meta) = fs::symlink_metadata(&path) {
+                if meta.file_type().is_dir() {
+                    candidates.push((path, meta.modified().ok()));
+                }
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        return false;
+    }
+
+    candidates.sort_by(|a, b| {
+        let a_exact = exact_match.as_ref().is_some_and(|ex| ex == &a.0);
+        let b_exact = exact_match.as_ref().is_some_and(|ex| ex == &b.0);
+        b_exact.cmp(&a_exact).then_with(|| b.1.cmp(&a.1))
+    });
+
+    let mut adopted = false;
+    for (candidate, _) in candidates {
+        if !adopted && !path_exists_no_follow(final_dest) {
+            if rename_exclusive(&candidate, final_dest).is_ok() {
+                adopted = true;
+                continue;
+            }
+        }
+        let _ = cleanup_owned_path(&candidate);
+    }
+    adopted
+}
+
+/// Cleans up any stale `.{file}.{hash}.sumafile-partial` files in `final_dest.parent()`
+/// left behind by previous interrupted operations with different operation IDs.
+pub(crate) fn cleanup_stale_file_staging(final_dest: &Path, current_staged: &Path) {
+    let Some(parent) = final_dest.parent() else {
+        return;
+    };
+    let Some(file_name) = final_dest.file_name().and_then(|n| n.to_str()) else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if !is_matching_staging_name(name_str, file_name) {
+            continue;
+        }
+        let path = entry.path();
+        if path == current_staged {
+            continue;
+        }
+        if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_file()) {
+            let _ = cleanup_owned_path(&path);
+        }
+    }
 }
 
 fn staging_path_with_salt(final_path: &Path, salt: Option<&str>) -> Result<PathBuf, String> {
@@ -512,6 +673,48 @@ fn staging_path_with_salt(final_path: &Path, salt: Option<&str>) -> Result<PathB
 
     Ok(parent.join(format!(".{file_name}.{key:016x}.sumafile-partial")))
 }
+
+#[cfg(windows)]
+fn clear_hidden_after_promote(staged_path: &Path, final_path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
+    };
+
+    let is_staging = staged_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".sumafile-partial"));
+    if !is_staging {
+        return;
+    }
+    let Ok(meta) = fs::symlink_metadata(final_path) else {
+        return;
+    };
+    if meta.file_type().is_symlink() || meta.is_dir() {
+        return;
+    }
+    let attrs = meta.file_attributes();
+    if attrs & FILE_ATTRIBUTE_HIDDEN == 0 {
+        return;
+    }
+    let mut new_attrs = attrs & !FILE_ATTRIBUTE_HIDDEN;
+    if new_attrs == 0 {
+        new_attrs = FILE_ATTRIBUTE_NORMAL;
+    }
+    let wide: Vec<u16> = final_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let _ = SetFileAttributesW(wide.as_ptr(), new_attrs);
+    }
+}
+
+#[cfg(not(windows))]
+fn clear_hidden_after_promote(_staged_path: &Path, _final_path: &Path) {}
 
 #[cfg(test)]
 pub(crate) fn promote_staged_path(
@@ -571,18 +774,23 @@ fn promote_attempt(
         if path_exists_no_follow(final_path) {
             return Err(conflict_for_existing_destination(final_path).into());
         }
-        return rename_exclusive(staged_path, final_path).map_err(|e| {
-            if is_already_exists_error(&e) || path_exists_no_follow(final_path) {
-                conflict_for_existing_destination(final_path).into()
-            } else {
-                Failure::io("Finalize destination", final_path, e)
-            }
-        });
+        return rename_exclusive(staged_path, final_path)
+            .map(|()| clear_hidden_after_promote(staged_path, final_path))
+            .map_err(|e| {
+                if is_already_exists_error(&e) || path_exists_no_follow(final_path) {
+                    conflict_for_existing_destination(final_path).into()
+                } else {
+                    Failure::io("Finalize destination", final_path, e)
+                }
+            });
     }
 
     if !path_exists_no_follow(final_path) {
         match rename_exclusive(staged_path, final_path) {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                clear_hidden_after_promote(staged_path, final_path);
+                return Ok(());
+            }
             Err(e) if is_already_exists_error(&e) || path_exists_no_follow(final_path) => {}
             Err(e) => return Err(Failure::io("Finalize destination", final_path, e)),
         }
@@ -606,6 +814,7 @@ fn promote_attempt(
             ),
         });
     }
+    clear_hidden_after_promote(staged_path, final_path);
     // Promotion already committed: never replay it just because backup cleanup failed.
     remove_path(&backup_path, "destination backup").map_err(|e| {
         Failure::new(

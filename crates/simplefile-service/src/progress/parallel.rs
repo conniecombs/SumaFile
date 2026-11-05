@@ -323,6 +323,11 @@ pub(crate) fn copy_tree(
         for (src, dst) in created_dirs.iter().rev() {
             simplefile_core::file_ops::preserve_basic_metadata(src, dst)?;
         }
+        ctx.progress.finalizing(
+            *completed_bytes,
+            destination.to_string_lossy().to_string(),
+        );
+        ctx.progress.check_cancelled()?;
         let mut files = Vec::with_capacity(copy_res.completed.len());
         for index in copy_res.completed {
             if let (Some(task), Some(version)) =

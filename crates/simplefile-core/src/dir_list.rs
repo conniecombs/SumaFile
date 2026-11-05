@@ -661,6 +661,14 @@ fn emit_prepared_chunks(
     Ok(())
 }
 
+fn is_internal_transfer_artifact(name: &str) -> bool {
+    name.starts_with('.')
+        && (name.ends_with(".sumafile-partial")
+            || name.contains(".sumafile-partial.")
+            || name.ends_with(".sumafile-replace-backup")
+            || name.contains(".sumafile-backup."))
+}
+
 fn enumerate_directory_std(
     path: &Path,
     on_entry: &mut dyn FnMut(FileEntry) -> Result<(), String>,
@@ -668,6 +676,9 @@ fn enumerate_directory_std(
     let read_dir = fs::read_dir(path).map_err(|e| format!("Failed to read directory: {e}"))?;
     for entry in read_dir.flatten() {
         if let Some(file_entry) = crate::utils::get_file_entry_from_dir_entry(&entry) {
+            if is_internal_transfer_artifact(&file_entry.name) {
+                continue;
+            }
             on_entry(file_entry)?;
         }
     }
@@ -765,7 +776,7 @@ fn file_entry_from_find_data(
 
     let name = std::ffi::OsString::from_wide(&data.cFileName[..name_len]);
     let name_str = name.to_string_lossy();
-    if name_str == "." || name_str == ".." {
+    if name_str == "." || name_str == ".." || is_internal_transfer_artifact(&name_str) {
         return None;
     }
 
@@ -981,6 +992,29 @@ mod tests {
             .find(|entry| entry.name == "secret.txt")
             .expect("hidden file should be listed when include_hidden is default");
         assert!(secret.is_hidden);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn listing_excludes_internal_transfer_artifacts() {
+        let dir = unique_temp("transfer-artifacts");
+        fs::write(dir.join("visible.txt"), b"ok").unwrap();
+        fs::write(
+            dir.join(".visible.txt.59c73a65be96f30b.sumafile-partial"),
+            b"part",
+        )
+        .unwrap();
+        fs::write(
+            dir.join(".visible.txt.1234.0.sumafile-replace-backup"),
+            b"bak",
+        )
+        .unwrap();
+        fs::create_dir(dir.join(".Megapack.b9702512292f3342.sumafile-partial")).unwrap();
+
+        let shown = list_directory_collect(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(shown.entries.len(), 1);
+        assert_eq!(shown.entries[0].name, "visible.txt");
 
         let _ = fs::remove_dir_all(&dir);
     }

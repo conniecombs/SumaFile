@@ -1010,27 +1010,42 @@ mod tests {
                     fs::write(&source_file, &bytes).unwrap();
                     let operation_id = super::generate_transfer_operation_id();
                     let target = dst_root.join(source.file_name().unwrap());
-                    let staged_parent = if directory {
-                        let parent = resumable_staging_path_for(&target, &operation_id).unwrap();
-                        fs::create_dir(&parent).unwrap();
-                        parent
+                    let final_file = if directory {
+                        target.join("photo.bin")
                     } else {
-                        dst_root.clone()
+                        target.clone()
                     };
-                    let final_file = staged_parent.join("photo.bin");
                     let staged =
                         crate::transfer_staging::staging_path_for(&final_file, &operation_id)
                             .unwrap();
-                    let held = Mutex::new(Some(
-                        fs::OpenOptions::new()
-                            .write(true)
-                            .create_new(true)
-                            .share_mode(0)
-                            .open(&staged)
-                            .unwrap(),
-                    ));
+                    let held = Mutex::new(if directory {
+                        None
+                    } else {
+                        Some(
+                            fs::OpenOptions::new()
+                                .write(true)
+                                .create_new(true)
+                                .share_mode(0)
+                                .open(&staged)
+                                .unwrap(),
+                        )
+                    });
+                    let locked_staged = AtomicBool::new(!directory);
                     let cancel = Arc::new(AtomicBool::new(false));
                     let waiting = AtomicBool::new(false);
+                    let emit = |_: super::ProgressUpdate| {
+                        if !locked_staged.load(Ordering::Relaxed) && target.exists() {
+                            if let Ok(file) = fs::OpenOptions::new()
+                                .write(true)
+                                .create_new(true)
+                                .share_mode(0)
+                                .open(&staged)
+                            {
+                                *held.lock().unwrap() = Some(file);
+                                locked_staged.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    };
                     let tuning = |update: super::TuningUpdate| {
                         if update.explanation.starts_with("Retrying failed I/O") {
                             waiting.store(true, Ordering::Relaxed);
@@ -1048,7 +1063,7 @@ mod tests {
                         operation_id,
                         "keep-both".into(),
                         cancel.clone(),
-                        &|_| {},
+                        &emit,
                         &tuning,
                         &|| super::Policy {
                             mode: super::tuning::Mode::Manual,
@@ -1473,6 +1488,73 @@ mod tests {
             fs::read(final_dest.join("copied.txt")).unwrap(),
             b"copied-payload"
         );
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    #[test]
+    fn directory_transfer_adopts_legacy_partial_and_cleans_duplicates_even_with_open_handles() {
+        let src_root = unique_temp_path("megapack_src");
+        let dst_root = unique_temp_path("megapack_dst");
+        let source = src_root.join("Megapack");
+        let final_dest = dst_root.join("Megapack");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&dst_root).unwrap();
+        fs::write(source.join("a.bin"), b"alpha").unwrap();
+        fs::write(source.join("b.bin"), b"bravo").unwrap();
+
+        let legacy_one = dst_root.join(".Megapack.59c73a65be96f30b.sumafile-partial");
+        let legacy_two = dst_root.join(".Megapack.b9702512292f3342.sumafile-partial");
+        fs::create_dir_all(&legacy_one).unwrap();
+        fs::create_dir_all(&legacy_two).unwrap();
+        fs::write(legacy_one.join("a.bin"), b"alpha").unwrap();
+        let ro_file = legacy_two.join("readonly.bin");
+        fs::write(&ro_file, b"stale").unwrap();
+        let mut perms = fs::metadata(&ro_file).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&ro_file, perms).unwrap();
+
+        let held_reader = Mutex::new(None);
+        let dest_for_emit = final_dest.clone();
+
+        let result = transfer_with_progress_blocking(
+            "copy",
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            "op_new_retry_id".to_string(),
+            "error".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|_| {
+                if held_reader.lock().unwrap().is_none() && dest_for_emit.join("a.bin").exists() {
+                    if let Ok(file) = fs::File::open(dest_for_emit.join("a.bin")) {
+                        *held_reader.lock().unwrap() = Some(file);
+                    }
+                }
+            },
+        )
+        .expect("directory copy should adopt legacy partial, clean duplicates, and succeed with open child handle");
+
+        assert_eq!(result.len(), 1);
+        assert!(final_dest.is_dir());
+        assert!(!legacy_one.exists());
+        assert!(!legacy_two.exists());
+        assert_eq!(fs::read(final_dest.join("a.bin")).unwrap(), b"alpha");
+        assert_eq!(fs::read(final_dest.join("b.bin")).unwrap(), b"bravo");
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_HIDDEN: u32 = 0x0000_0002;
+            let attrs = fs::metadata(final_dest.join("b.bin"))
+                .unwrap()
+                .file_attributes();
+            assert_eq!(
+                attrs & FILE_ATTRIBUTE_HIDDEN,
+                0,
+                "promoted file must not retain hidden staging attribute"
+            );
+        }
+        drop(held_reader);
 
         let _ = fs::remove_dir_all(&src_root);
         let _ = fs::remove_dir_all(&dst_root);
