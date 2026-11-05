@@ -18,7 +18,9 @@ pub(crate) use resources::RateLimit;
 pub(crate) use tuning::Mode;
 pub(crate) use tuning::{CheckMode, OrderBy, Policy};
 
-pub(crate) use plan::{prepare_transfer_inputs, unique_destination_path};
+#[cfg(test)]
+pub(crate) use plan::prepare_transfer_inputs;
+pub(crate) use plan::unique_destination_path;
 pub(crate) use reporting::ProgressContext;
 
 #[cfg(test)]

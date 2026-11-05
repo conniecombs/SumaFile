@@ -709,9 +709,7 @@ fn set_sparse(file: &fs::File, sparse: bool) -> bool {
     use windows_sys::Win32::System::Ioctl::{FILE_SET_SPARSE_BUFFER, FSCTL_SET_SPARSE};
     use windows_sys::Win32::System::IO::DeviceIoControl;
 
-    let input = FILE_SET_SPARSE_BUFFER {
-        SetSparse: u8::from(sparse),
-    };
+    let input = FILE_SET_SPARSE_BUFFER { SetSparse: sparse };
     let mut returned = 0u32;
     let ok = unsafe {
         DeviceIoControl(

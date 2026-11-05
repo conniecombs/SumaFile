@@ -882,6 +882,10 @@ fn copy_files_streaming_with_sink(
     let need_scan_wake = Arc::new(AtomicBool::new(false));
     let operation_id = ctx.operation_id;
     let operation_type = ctx.operation_type;
+    // Created before the scope: worker threads borrow the receiver for the
+    // whole scope, so it must outlive it.
+    let (work_tx, work_rx) = mpsc::sync_channel::<(usize, FileTask, super::tuning::Policy)>(32);
+    let work_rx = Mutex::new(work_rx);
 
     std::thread::scope(|scope| {
         {
@@ -982,8 +986,6 @@ fn copy_files_streaming_with_sink(
         } else {
             32
         };
-        let (work_tx, work_rx) = mpsc::sync_channel::<(usize, FileTask, super::tuning::Policy)>(32);
-        let work_rx = Mutex::new(work_rx);
         let mut active = BTreeMap::<usize, ActiveFile>::new();
         let mut deferred_retries = VecDeque::<(usize, Failure)>::new();
         let mut file_hl_attempts = BTreeMap::<usize, usize>::new();
