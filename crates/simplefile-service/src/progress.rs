@@ -9,7 +9,7 @@ mod reporting;
 mod resources;
 mod tuning;
 
-pub(crate) use parallel::{ActiveFile, TuningUpdate};
+pub(crate) use parallel::{ActiveFile, ConflictAction, TuningUpdate};
 pub use registry::OperationRegistry;
 pub(crate) use resources::Permit as TransferPermit;
 pub(crate) use resources::PooledBuffer;
@@ -18,7 +18,7 @@ pub(crate) use resources::RateLimit;
 pub(crate) use tuning::Mode;
 pub(crate) use tuning::{CheckMode, OrderBy, Policy};
 
-pub(crate) use plan::prepare_transfer_inputs;
+pub(crate) use plan::{prepare_transfer_inputs, unique_destination_path};
 pub(crate) use reporting::ProgressContext;
 
 #[cfg(test)]
@@ -26,13 +26,15 @@ pub(crate) use execute::{copy_file_attempt, copy_file_with_progress};
 #[cfg(test)]
 pub(crate) use reporting::CopyContext;
 
-use execute::{copy_plan_with_progress, move_plan_with_progress};
-use plan::{choose_next_keep_both_destination, prime_transfer, TransferEstimate};
+use crate::transfer_reliability::{Failure, FailureKind, CANCELLED_MESSAGE, CONFLICT_PREFIX};
+use parallel::{FileTask, RootTask, TaskFailure};
+use plan::{prepare_transfer_inputs_cached, prime_transfer, TransferEstimate, TransferPlan, VolumeKindCache};
 use serde::Serialize;
 use simplefile_core::models::ProgressUpdate;
-use simplefile_core::path_conflict::{is_keep_both_action, path_collision_key};
+use simplefile_core::path_conflict::{is_already_exists_error, rename_exclusive};
 use simplefile_core::utils::generate_operation_id;
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
@@ -43,10 +45,56 @@ pub struct TransferResult {
     pub destination: String,
 }
 
+/// One file or directory that was not transferred. `kind` is `conflict` when
+/// the user has to decide (destination exists / different type) and `error`
+/// otherwise; `destination` is the exact path the item was headed for, so the
+/// UI can retry that item alone.
 #[derive(Debug, Serialize, Clone)]
 pub struct TransferFailure {
     pub source: String,
+    pub destination: String,
+    pub kind: String,
     pub error: String,
+}
+
+impl TransferFailure {
+    fn from_task(failure: &TaskFailure) -> Self {
+        Self::new(
+            &failure.source,
+            &failure.destination,
+            &failure.failure,
+        )
+    }
+
+    fn new(source: &Path, destination: &Path, failure: &Failure) -> Self {
+        Self {
+            source: source.to_string_lossy().into_owned(),
+            destination: destination.to_string_lossy().into_owned(),
+            kind: failure_kind_label(failure.kind).into(),
+            error: boundary_message(failure),
+        }
+    }
+
+    pub fn is_conflict(&self) -> bool {
+        self.kind == "conflict"
+    }
+}
+
+fn failure_kind_label(kind: FailureKind) -> &'static str {
+    match kind {
+        FailureKind::Conflict => "conflict",
+        FailureKind::Cancelled => "cancelled",
+        _ => "error",
+    }
+}
+
+/// Messages that leave the engine keep the legacy `CONFLICT:` prefix for conflicts.
+fn boundary_message(failure: &Failure) -> String {
+    if failure.kind == FailureKind::Conflict && !failure.message.starts_with(CONFLICT_PREFIX) {
+        format!("{CONFLICT_PREFIX} {}", failure.message)
+    } else {
+        failure.message.clone()
+    }
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -63,6 +111,14 @@ pub struct TransferBatchOutcome {
 pub struct TransferBatchError {
     pub message: String,
     pub outcome: Box<TransferBatchOutcome>,
+}
+
+/// One exact file to transfer again after the user resolved its failure.
+#[derive(Debug, Clone)]
+pub struct TransferItem {
+    pub source: String,
+    pub destination: String,
+    pub action: String,
 }
 
 pub fn generate_transfer_operation_id() -> String {
@@ -144,10 +200,12 @@ pub(crate) fn transfer_with_tuning_blocking(
     let policy_id = operation_id.clone();
     transfer_with_policy_blocking(
         operation_type,
-        sources,
+        Request::Selection {
+            sources,
+            conflict_action,
+        },
         destination,
         operation_id,
-        conflict_action,
         cancel,
         emit,
         emit_tuning,
@@ -155,48 +213,161 @@ pub(crate) fn transfer_with_tuning_blocking(
     )
 }
 
+/// Targeted retry: transfer exactly these files to exactly these destinations.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn transfer_items_with_tuning_blocking(
+    operation_type: &'static str,
+    items: Vec<TransferItem>,
+    destination: String,
+    operation_id: String,
+    cancel: Arc<AtomicBool>,
+    emit: &dyn Fn(ProgressUpdate),
+    emit_tuning: &dyn Fn(parallel::TuningUpdate),
+) -> Result<Vec<TransferResult>, TransferBatchError> {
+    let policy_id = operation_id.clone();
+    transfer_with_policy_blocking(
+        operation_type,
+        Request::Items(items),
+        destination,
+        operation_id,
+        cancel,
+        emit,
+        emit_tuning,
+        &|| tuning::Policy::for_operation(&policy_id),
+    )
+}
+
+enum Request {
+    Selection {
+        sources: Vec<String>,
+        conflict_action: String,
+    },
+    Items(Vec<TransferItem>),
+}
+
+impl Request {
+    fn requested_sources(&self) -> Vec<String> {
+        match self {
+            Self::Selection { sources, .. } => sources.clone(),
+            Self::Items(items) => items.iter().map(|item| item.source.clone()).collect(),
+        }
+    }
+}
+
+/// Plans for a targeted retry: each item is an exact source → destination pair.
+fn plans_for_items(
+    items: &[TransferItem],
+    destination: &str,
+    volumes: &mut VolumeKindCache,
+) -> Result<Vec<TransferPlan>, String> {
+    let dest_root = simplefile_core::utils::validate_existing_path_no_resolve(destination)?;
+    if !dest_root.is_dir() {
+        return Err(format!("Destination is not a directory: {destination}"));
+    }
+    crate::transfer_journal::recover_directory(&dest_root)?;
+    let dest_network = volumes.is_network(&dest_root);
+    let mut plans = Vec::with_capacity(items.len());
+    let mut scanned_dirs = HashSet::new();
+    for item in items {
+        let source_path = simplefile_core::utils::validate_path_no_follow(&item.source)?;
+        let final_dest = PathBuf::from(item.destination.trim());
+        if final_dest.file_name().is_none() || !final_dest.is_absolute() {
+            return Err(format!(
+                "Retry destination must be an absolute file path: {}",
+                item.destination
+            ));
+        }
+        let meta = std::fs::symlink_metadata(&source_path)
+            .map_err(|error| format!("Failed to stat {}: {error}", source_path.display()))?;
+        let file_type = meta.file_type();
+        if file_type.is_dir() && !file_type.is_symlink() {
+            return Err(format!(
+                "Retry items must be files; {} is a directory",
+                source_path.display()
+            ));
+        }
+        if let Some(parent) = final_dest.parent() {
+            if scanned_dirs.insert(parent.to_path_buf()) {
+                if !parent.is_dir() {
+                    std::fs::create_dir_all(parent).map_err(|error| {
+                        format!("Failed to create {}: {error}", parent.display())
+                    })?;
+                }
+                crate::transfer_journal::recover_directory(parent)?;
+            }
+        }
+        let is_symlink = file_type.is_symlink();
+        plans.push(TransferPlan {
+            network: dest_network || volumes.is_network(&source_path),
+            source_path,
+            final_dest,
+            conflict: ConflictAction::parse(&item.action),
+            file_count: 1,
+            is_dir: false,
+            is_symlink,
+            byte_size: if file_type.is_file() { meta.len() } else { 0 },
+        });
+    }
+    Ok(plans)
+}
+
+enum RenameOutcome {
+    Done(PathBuf),
+    Conflict(String),
+    Fallback,
+}
+
+/// A whole selected directory moves by one rename when its destination is free.
+fn rename_directory_move(plan: &TransferPlan, reserved: &mut HashSet<String>) -> RenameOutcome {
+    if !plan::same_volume(&plan.source_path, &plan.final_dest)
+        || simplefile_core::path_conflict::path_exists_no_follow(&plan.final_dest)
+    {
+        return RenameOutcome::Fallback;
+    }
+    let mut target = plan.final_dest.clone();
+    for _ in 0..100 {
+        match rename_exclusive(&plan.source_path, &target) {
+            Ok(()) => return RenameOutcome::Done(target),
+            Err(error) if is_already_exists_error(&error) => {
+                if plan.conflict != ConflictAction::KeepBoth {
+                    // Something appeared meanwhile; merge handles it per child.
+                    return RenameOutcome::Fallback;
+                }
+                let Some(parent) = target.parent() else {
+                    return RenameOutcome::Fallback;
+                };
+                let Some(name) = plan.source_path.file_name() else {
+                    return RenameOutcome::Fallback;
+                };
+                match unique_destination_path(parent, name, reserved) {
+                    Ok(next) => {
+                        reserved.insert(simplefile_core::path_conflict::path_collision_key(&next));
+                        target = next;
+                    }
+                    Err(error) => return RenameOutcome::Conflict(error),
+                }
+            }
+            Err(_) => return RenameOutcome::Fallback,
+        }
+    }
+    RenameOutcome::Fallback
+}
+
 #[allow(clippy::too_many_arguments)]
 fn transfer_with_policy_blocking(
     operation_type: &'static str,
-    sources: Vec<String>,
+    request: Request,
     destination: String,
     operation_id: String,
-    conflict_action: String,
     cancel: Arc<AtomicBool>,
     emit: &dyn Fn(ProgressUpdate),
     emit_tuning: &dyn Fn(parallel::TuningUpdate),
     policy: &dyn Fn() -> tuning::Policy,
 ) -> Result<Vec<TransferResult>, TransferBatchError> {
-    let mut session = adaptive::Session::new(
-        &operation_id,
-        operation_type,
-        &sources,
-        &destination,
-        policy,
-        emit_tuning,
-    );
-    let requested_sources = sources.clone();
-    let (mut plans, _dest_path) = prepare_transfer_inputs(sources, destination, &conflict_action)
-        .map_err(|error| {
-        TransferBatchError::failed(
-            operation_id.clone(),
-            error,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
-    })?;
-    let keep_both = is_keep_both_action(&conflict_action);
-    let mut reserved_destinations: HashSet<String> = plans
-        .iter()
-        .map(|plan| path_collision_key(&plan.final_dest))
-        .collect();
-
+    let requested_sources = request.requested_sources();
     let total_bytes = Arc::new(AtomicU64::new(0));
     let total_files = Arc::new(AtomicU64::new(0));
     let completed_files = Arc::new(AtomicU64::new(0));
-    let mut completed_bytes = 0u64;
-    let mut transferred = Vec::with_capacity(plans.len());
     let progress = ProgressContext {
         emit,
         operation_id: &operation_id,
@@ -209,20 +380,70 @@ fn transfer_with_policy_blocking(
         retry_count: None,
         rate_limit: None,
     };
-
+    // The first event precedes every volume probe and destination scan.
     progress.emit_now(0, 0, "Preparing transfer...".to_string(), "running", None);
+
+    let mut volumes = VolumeKindCache::default();
+    let mut failed: Vec<TransferFailure> = Vec::new();
+    let planned = match &request {
+        Request::Selection {
+            sources,
+            conflict_action,
+        } => prepare_transfer_inputs_cached(
+            sources.clone(),
+            destination.clone(),
+            conflict_action,
+            &mut volumes,
+        )
+        .map(|(plans, _, conflicts)| {
+            for (source, final_dest, message) in conflicts {
+                failed.push(TransferFailure::new(
+                    &source,
+                    &final_dest,
+                    &Failure::conflict(message),
+                ));
+            }
+            plans
+        }),
+        Request::Items(items) => plans_for_items(items, &destination, &mut volumes),
+    };
+    let mut plans = match planned {
+        Ok(plans) => plans,
+        Err(error) => {
+            let failure = Failure::from(error);
+            progress.emit_with_total(0, 0, String::new(), "error", Some(boundary_message(&failure)));
+            return Err(TransferBatchError::failed(
+                operation_id,
+                boundary_message(&failure),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                requested_sources,
+            ));
+        }
+    };
+    let mut session = adaptive::Session::new(
+        &operation_id,
+        operation_type,
+        &requested_sources,
+        &destination,
+        policy,
+        emit_tuning,
+    );
+
     let estimated = match prime_transfer(&mut plans, &cancel) {
         Ok(value) => value,
-        Err(error) if error == "Operation cancelled" => {
+        Err(error) if error == CANCELLED_MESSAGE => {
             progress.emit_with_total(
                 0,
                 0,
                 String::new(),
                 "cancelled",
-                Some("Operation cancelled".to_string()),
+                Some(CANCELLED_MESSAGE.to_string()),
             );
             return Err(TransferBatchError::cancelled(
                 operation_id,
+                Vec::new(),
                 Vec::new(),
                 requested_sources,
             ));
@@ -246,316 +467,232 @@ fn transfer_with_policy_blocking(
         None,
     );
 
-    enum TransferOutcome {
-        Completed(Vec<TransferResult>),
-        Cancelled(Vec<TransferResult>),
-        Failed {
-            error: String,
-            source: String,
-            committed: Vec<TransferResult>,
-            pending: Vec<String>,
-        },
-    }
+    let is_move = operation_type == "move";
+    let mut completed_bytes = 0u64;
+    let mut transferred: Vec<TransferResult> = Vec::with_capacity(plans.len());
+    let mut skipped: Vec<TransferResult> = Vec::new();
+    let mut files: Vec<FileTask> = Vec::new();
+    let mut roots: Vec<RootTask> = Vec::new();
+    let mut reserved: HashSet<String> = plans
+        .iter()
+        .map(|plan| simplefile_core::path_conflict::path_collision_key(&plan.final_dest))
+        .collect();
 
-    let outcome = (|| -> TransferOutcome {
-        let mut done = HashSet::new();
-        let mut attempted = HashSet::new();
-        for index in 0..plans.len() {
-            if done.contains(&index) {
-                continue;
-            }
-            let mut plan = plans[index].clone();
-            if cancel.load(Ordering::Relaxed) {
-                return TransferOutcome::Cancelled(transferred);
-            }
-            let source = plan.source_path.to_string_lossy().to_string();
-            let mut completed_plan = false;
-
-            let streamed_move = operation_type == "move"
-                && plan.source_path.components().next() != plan.final_dest.components().next();
-            if (operation_type == "copy" || streamed_move) && !attempted.contains(&index) {
-                let mut tasks = Vec::new();
-                for candidate in plans.iter().skip(index) {
-                    let (is_file, size) = if candidate.is_regular_file {
-                        (true, candidate.byte_size)
-                    } else if candidate.file_count > 0 {
-                        (false, 0)
-                    } else {
-                        let Ok(metadata) = std::fs::symlink_metadata(&candidate.source_path) else {
-                            break;
-                        };
-                        (metadata.file_type().is_file(), metadata.len())
-                    };
-                    if !is_file {
-                        break;
-                    }
-                    if streamed_move
-                        && candidate.source_path.components().next()
-                            == candidate.final_dest.components().next()
-                    {
-                        break;
-                    }
-                    tasks.push(parallel::FileTask {
-                        source: candidate.source_path.clone(),
-                        destination: candidate.final_dest.clone(),
-                        size,
-                        network: candidate.network,
-                        replace_existing: candidate.replace_existing,
-                        resume_existing: false,
-                        symlink: false,
-                    });
-                }
-                if !tasks.is_empty() {
-                    let mut result =
-                        parallel::copy_files(&tasks, &progress, &mut session, completed_bytes);
-                    completed_bytes = completed_bytes.saturating_add(result.bytes);
-                    attempted.extend(index..index + tasks.len());
-                    for completed in result.completed {
-                        let absolute = index + completed;
-                        if streamed_move {
-                            let delete_result = match result.versions.get(&completed) {
-                                Some(version) => crate::transfer_staging::delete_verified_source(
-                                    &plans[absolute].source_path,
-                                    version,
-                                ),
-                                None => Err(format!(
-                                    "Missing source verification snapshot for {}",
-                                    plans[absolute].source_path.display()
-                                )),
-                            };
-                            if let Err(error) = delete_result {
-                                if result.failed.is_none() {
-                                    result.failed = Some((
-                                        completed,
-                                        format!("Copied but failed to delete source: {error}"),
-                                    ));
-                                }
-                                continue;
-                            }
-                        }
-                        done.insert(absolute);
+    for plan in &plans {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        if plan.is_dir {
+            if is_move {
+                match rename_directory_move(plan, &mut reserved) {
+                    RenameOutcome::Done(target) => {
+                        completed_bytes = completed_bytes.saturating_add(1);
+                        progress.complete_files(
+                            plan.file_count,
+                            completed_bytes,
+                            plan.source_path.to_string_lossy().to_string(),
+                        );
                         transferred.push(TransferResult {
-                            source: plans[absolute].source_path.to_string_lossy().into(),
-                            destination: plans[absolute].final_dest.to_string_lossy().into(),
+                            source: plan.source_path.to_string_lossy().into(),
+                            destination: target.to_string_lossy().into(),
                         });
-                    }
-                    if let Some((failed, error)) = result.failed {
-                        if error == "Operation cancelled" {
-                            return TransferOutcome::Cancelled(transferred);
-                        }
-                        if !keep_both || !error.starts_with("CONFLICT:") {
-                            return TransferOutcome::Failed {
-                                error,
-                                source: plans[index + failed].source_path.to_string_lossy().into(),
-                                committed: transferred,
-                                pending: plans
-                                    .iter()
-                                    .enumerate()
-                                    .filter(|(i, _)| !done.contains(i) && *i != index + failed)
-                                    .map(|(_, p)| p.source_path.to_string_lossy().into())
-                                    .collect(),
-                            };
-                        }
-                        // Retain successful files and resolve raced conflicts
-                        // individually through the established keep-both path.
-                    }
-                    if done.contains(&index) {
                         continue;
                     }
-                }
-            }
-
-            let pending_after_current = plans
-                .iter()
-                .enumerate()
-                .skip(index + 1)
-                .filter(|(i, _)| !done.contains(i))
-                .map(|(_, p)| p.source_path.to_string_lossy().into())
-                .collect::<Vec<String>>();
-            for _ in 0..100 {
-                let before_attempt = (
-                    completed_bytes,
-                    completed_files.load(Ordering::Relaxed),
-                    total_bytes.load(Ordering::Relaxed),
-                    total_files.load(Ordering::Relaxed),
-                );
-                match operation_type {
-                    "copy" => match copy_plan_with_progress(
-                        &plan,
-                        &progress,
-                        &mut completed_bytes,
-                        &mut session,
-                    ) {
-                        Ok(()) => {
-                            completed_plan = true;
-                            break;
-                        }
-                        Err(error) if error == "Operation cancelled" => {
-                            return TransferOutcome::Cancelled(transferred);
-                        }
-                        Err(error) if keep_both && error.starts_with("CONFLICT:") => {
-                            completed_bytes = before_attempt.0;
-                            completed_files.store(before_attempt.1, Ordering::Relaxed);
-                            total_bytes.store(before_attempt.2, Ordering::Relaxed);
-                            total_files.store(before_attempt.3, Ordering::Relaxed);
-                            session.restart_after_conflict(completed_bytes);
-                            if let Err(resolve_error) = choose_next_keep_both_destination(
-                                &mut plan,
-                                &mut reserved_destinations,
-                            ) {
-                                return TransferOutcome::Failed {
-                                    error: resolve_error,
-                                    source,
-                                    committed: transferred,
-                                    pending: pending_after_current,
-                                };
-                            }
-                        }
-                        Err(error) => {
-                            return TransferOutcome::Failed {
-                                error,
-                                source,
-                                committed: transferred,
-                                pending: pending_after_current,
-                            };
-                        }
-                    },
-                    "move" => match move_plan_with_progress(
-                        &plan,
-                        &progress,
-                        &mut completed_bytes,
-                        &mut session,
-                    ) {
-                        Ok(()) => {
-                            completed_plan = true;
-                            break;
-                        }
-                        Err(error) if error == "Operation cancelled" => {
-                            return TransferOutcome::Cancelled(transferred);
-                        }
-                        Err(error) if keep_both && error.starts_with("CONFLICT:") => {
-                            completed_bytes = before_attempt.0;
-                            completed_files.store(before_attempt.1, Ordering::Relaxed);
-                            total_bytes.store(before_attempt.2, Ordering::Relaxed);
-                            total_files.store(before_attempt.3, Ordering::Relaxed);
-                            session.restart_after_conflict(completed_bytes);
-                            if let Err(resolve_error) = choose_next_keep_both_destination(
-                                &mut plan,
-                                &mut reserved_destinations,
-                            ) {
-                                return TransferOutcome::Failed {
-                                    error: resolve_error,
-                                    source,
-                                    committed: transferred,
-                                    pending: pending_after_current,
-                                };
-                            }
-                        }
-                        Err(error) => {
-                            return TransferOutcome::Failed {
-                                error,
-                                source,
-                                committed: transferred,
-                                pending: pending_after_current,
-                            };
-                        }
-                    },
-                    _ => {
-                        return TransferOutcome::Failed {
-                            error: format!("Unsupported operation: {operation_type}"),
-                            source,
-                            committed: transferred,
-                            pending: pending_after_current,
-                        };
+                    RenameOutcome::Conflict(message) => {
+                        failed.push(TransferFailure::new(
+                            &plan.source_path,
+                            &plan.final_dest,
+                            &Failure::conflict(message),
+                        ));
+                        continue;
                     }
+                    RenameOutcome::Fallback => {}
                 }
             }
-
-            if !completed_plan {
-                return TransferOutcome::Failed {
-                    error: "Could not choose a unique destination after repeated conflicts"
-                        .to_string(),
-                    source,
-                    committed: transferred,
-                    pending: pending_after_current,
-                };
-            }
-
-            transferred.push(TransferResult {
-                source,
-                destination: plan.final_dest.to_string_lossy().to_string(),
+            roots.push(RootTask {
+                source: plan.source_path.clone(),
+                destination: plan.final_dest.clone(),
+                network: plan.network,
+                conflict: plan.conflict,
+                delete_source: is_move,
             });
-            done.insert(index);
+        } else {
+            files.push(FileTask {
+                source: plan.source_path.clone(),
+                destination: plan.final_dest.clone(),
+                size: plan.byte_size,
+                network: plan.network,
+                conflict: plan.conflict,
+                owned_tree: false,
+                symlink: plan.is_symlink,
+                top_level: true,
+                delete_source: is_move,
+            });
         }
-        TransferOutcome::Completed(transferred)
-    })();
+    }
+
+    let cancelled_early = cancel.load(Ordering::Relaxed);
+    let mut cancelled = cancelled_early;
+    if !cancelled_early && (!files.is_empty() || !roots.is_empty()) {
+        let ctx = reporting::CopyContext {
+            progress: &progress,
+            operation_id: &operation_id,
+            network: plans.iter().any(|plan| plan.network),
+            resume_existing: false,
+            policy: session.controller.policy.clone(),
+        };
+        let result =
+            parallel::copy_selection(&roots, files, &ctx, &mut completed_bytes, &mut session);
+        cancelled = result.copy.cancelled || cancel.load(Ordering::Relaxed);
+
+        for index in &result.copy.completed {
+            let Some(task) = result.copy.completed_tasks.get(index) else {
+                continue;
+            };
+            let destination = result
+                .copy
+                .destinations
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| task.destination.clone());
+            transferred.push(TransferResult {
+                source: task.source.to_string_lossy().into(),
+                destination: destination.to_string_lossy().into(),
+            });
+        }
+        for (_, task) in &result.copy.skipped {
+            if task.top_level {
+                skipped.push(TransferResult {
+                    source: task.source.to_string_lossy().into(),
+                    destination: task.destination.to_string_lossy().into(),
+                });
+            }
+        }
+        for (_, failure) in &result.copy.failed {
+            failed.push(TransferFailure::from_task(failure));
+        }
+        for failure in &result.dir_failures {
+            failed.push(TransferFailure::from_task(failure));
+        }
+        if let Some(error) = &result.copy.scan_error {
+            if !cancelled {
+                failed.push(TransferFailure {
+                    source: String::new(),
+                    destination: destination.clone(),
+                    kind: "error".into(),
+                    error: error.clone(),
+                });
+            }
+        }
+        let failed_paths: Vec<PathBuf> = failed
+            .iter()
+            .filter(|f| !f.source.is_empty())
+            .map(|f| PathBuf::from(&f.source))
+            .collect();
+        for (root, outcome) in roots.iter().zip(result.roots.into_iter()) {
+            match outcome.error {
+                Some(error) if error.is_cancelled() => cancelled = true,
+                Some(error) => {
+                    failed.push(TransferFailure::new(&root.source, &root.destination, &error));
+                }
+                None if cancelled => {}
+                None => {
+                    if is_move {
+                        if let Err(error) = crate::transfer_staging::delete_verified_source_tree(
+                            &root.source,
+                            &outcome.manifest,
+                            &failed_paths,
+                        ) {
+                            failed.push(TransferFailure::new(
+                                &root.source,
+                                &root.destination,
+                                &Failure::from(format!(
+                                    "Copied but failed to delete source: {error}"
+                                )),
+                            ));
+                        }
+                    }
+                    transferred.push(TransferResult {
+                        source: root.source.to_string_lossy().into(),
+                        destination: root.destination.to_string_lossy().into(),
+                    });
+                }
+            }
+        }
+    }
 
     let final_total = total_bytes.load(Ordering::Relaxed);
     session.display(Vec::new(), true);
-    if matches!(&outcome, TransferOutcome::Completed(_)) {
+    if !cancelled && failed.is_empty() {
         session.save();
     }
 
-    match outcome {
-        TransferOutcome::Completed(transferred) => {
-            progress.emit_with_total(final_total, final_total, String::new(), "completed", None);
-            Ok(transferred)
-        }
-        TransferOutcome::Cancelled(transferred) => {
-            progress.emit_with_total(
-                completed_bytes,
-                final_total,
-                String::new(),
-                "cancelled",
-                Some("Operation cancelled".to_string()),
-            );
-            let pending = requested_sources
-                .into_iter()
-                .filter(|source| !transferred.iter().any(|item| &item.source == source))
-                .collect();
-            Err(TransferBatchError::cancelled(
-                operation_id,
-                transferred,
-                pending,
-            ))
-        }
-        TransferOutcome::Failed {
-            error,
-            source,
-            committed,
+    if cancelled {
+        // Files interrupted by the cancellation are pending, not failed.
+        failed.retain(|item| item.kind != "cancelled");
+        progress.emit_with_total(
+            completed_bytes,
+            final_total,
+            String::new(),
+            "cancelled",
+            Some(CANCELLED_MESSAGE.to_string()),
+        );
+        let settled: HashSet<&str> = transferred
+            .iter()
+            .chain(skipped.iter())
+            .map(|item| item.source.as_str())
+            .chain(failed.iter().map(|item| item.source.as_str()))
+            .collect();
+        let pending = requested_sources
+            .iter()
+            .filter(|source| !settled.contains(source.as_str()))
+            .cloned()
+            .collect();
+        return Err(TransferBatchError::cancelled(
+            operation_id,
+            transferred,
+            skipped,
             pending,
-        } => {
-            progress.emit_with_total(
-                completed_bytes,
-                final_total,
-                String::new(),
-                "error",
-                Some(error.clone()),
-            );
-            Err(TransferBatchError::failed(
-                operation_id,
-                error.clone(),
-                committed,
-                vec![TransferFailure { source, error }],
-                pending,
-            ))
-        }
+        ));
     }
+
+    if !failed.is_empty() {
+        let message = failed[0].error.clone();
+        progress.emit_with_total(
+            completed_bytes,
+            final_total,
+            String::new(),
+            "error",
+            Some(message.clone()),
+        );
+        return Err(TransferBatchError::failed(
+            operation_id,
+            message,
+            transferred,
+            skipped,
+            failed,
+            Vec::new(),
+        ));
+    }
+
+    progress.emit_with_total(final_total, final_total, String::new(), "completed", None);
+    Ok(transferred)
 }
 
 impl TransferBatchError {
     fn cancelled(
         operation_id: String,
         committed: Vec<TransferResult>,
+        skipped: Vec<TransferResult>,
         pending: Vec<String>,
     ) -> Self {
         Self {
-            message: "Operation cancelled".into(),
+            message: CANCELLED_MESSAGE.into(),
             outcome: Box::new(TransferBatchOutcome {
                 operation_id,
                 status: "cancelled".into(),
                 committed,
-                skipped: Vec::new(),
+                skipped,
                 failed: Vec::new(),
                 pending,
             }),
@@ -566,6 +703,7 @@ impl TransferBatchError {
         operation_id: String,
         message: String,
         committed: Vec<TransferResult>,
+        skipped: Vec<TransferResult>,
         failed: Vec<TransferFailure>,
         pending: Vec<String>,
     ) -> Self {
@@ -575,7 +713,7 @@ impl TransferBatchError {
                 operation_id,
                 status: "failed".to_string(),
                 committed,
-                skipped: Vec::new(),
+                skipped,
                 failed,
                 pending,
             }),
@@ -682,14 +820,16 @@ mod tests {
 
         let error = super::transfer_with_policy_blocking(
             "copy",
-            vec![
+            super::Request::Selection {
+                sources: vec![
                 first.to_string_lossy().to_string(),
                 second.to_string_lossy().to_string(),
                 third.to_string_lossy().to_string(),
             ],
+                conflict_action: "error".to_string(),
+            },
             dst_dir.to_string_lossy().to_string(),
             "op_partial_failure_test".to_string(),
-            "error".to_string(),
             cancel,
             &|update| {
                 if update.current_item == first_text
@@ -703,14 +843,14 @@ mod tests {
                 mode: super::tuning::Mode::Manual,
                 manual_concurrency: 1,
                 ..super::tuning::Policy::default()
-            },
-        )
-        .expect_err("second item should fail after first commits");
+            })
+        .expect_err("second item should be reported after the others commit");
 
         assert!(error.message.starts_with("CONFLICT:"));
         assert_eq!(error.outcome.operation_id, "op_partial_failure_test");
         assert_eq!(error.outcome.status, "failed");
-        assert_eq!(error.outcome.committed.len(), 1);
+        // One conflict never stops the rest of the selection.
+        assert_eq!(error.outcome.committed.len(), 2);
         assert_eq!(
             error.outcome.committed[0].source,
             first.to_string_lossy().to_string()
@@ -719,16 +859,25 @@ mod tests {
             error.outcome.committed[0].destination,
             dst_dir.join("first.bin").to_string_lossy().to_string()
         );
+        assert_eq!(
+            error.outcome.committed[1].source,
+            third.to_string_lossy().to_string()
+        );
         assert_eq!(error.outcome.failed.len(), 1);
         assert_eq!(
             error.outcome.failed[0].source,
             second.to_string_lossy().to_string()
         );
         assert_eq!(
-            error.outcome.pending,
-            vec![third.to_string_lossy().to_string()]
+            error.outcome.failed[0].destination,
+            conflict.to_string_lossy().to_string()
         );
+        assert_eq!(error.outcome.failed[0].kind, "conflict");
+        assert!(error.outcome.failed[0].error.starts_with("CONFLICT:"));
+        assert!(error.outcome.pending.is_empty());
         assert!(dst_dir.join("first.bin").exists());
+        assert_eq!(fs::read(dst_dir.join("third.txt")).unwrap(), b"third");
+        assert_eq!(fs::read(&conflict).unwrap(), b"conflict");
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);
@@ -1084,10 +1233,12 @@ mod tests {
                     };
                     let result = super::transfer_with_policy_blocking(
                         if moving { "move" } else { "copy" },
-                        vec![source.to_string_lossy().into_owned()],
+            super::Request::Selection {
+                sources: vec![source.to_string_lossy().into_owned()],
+                conflict_action: "replace".into(),
+            },
                         dst_root.to_string_lossy().into_owned(),
                         operation_id,
-                        "replace".into(),
                         cancel.clone(),
                         &emit,
                         &tuning,
@@ -1095,8 +1246,7 @@ mod tests {
                             mode: super::tuning::Mode::Manual,
                             manual_concurrency: 4,
                             ..super::Policy::default()
-                        },
-                    );
+                        });
                     assert!(
                         waiting.load(Ordering::Relaxed),
                         "No storage wait was reported"
@@ -1218,8 +1368,51 @@ mod tests {
     }
 
     #[test]
-    fn directory_copy_and_move_cancel_before_promotion_preserve_source_and_clean_staging() {
-        for operation in ["copy", "move"] {
+    fn same_volume_directory_move_is_one_rename() {
+        let src_root = unique_temp_path("dir_rename_src");
+        let dst_root = unique_temp_path("dir_rename_dst");
+        let source = src_root.join("Movie");
+        let final_destination = dst_root.join("Movie");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&dst_root).unwrap();
+        fs::write(source.join("feature.mkv"), b"feature").unwrap();
+        let operation_id = "op_dir_rename_test";
+        let staging = staging_path_for(&final_destination, operation_id).unwrap();
+        let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
+        let updates_target = updates.clone();
+
+        let result = transfer_with_progress_blocking(
+            "move",
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            operation_id.to_string(),
+            "keep-both".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|update| updates_target.lock().unwrap().push(update),
+        )
+        .expect("same-volume directory move renames");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].destination, final_destination.to_string_lossy());
+        assert!(!source.exists());
+        assert!(!staging.exists());
+        assert_eq!(
+            fs::read(final_destination.join("feature.mkv")).unwrap(),
+            b"feature"
+        );
+        assert!(updates
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|update| update.status == "completed"));
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    #[test]
+    fn directory_copy_cancel_before_promotion_preserves_source_and_cleans_staging() {
+        for operation in ["copy"] {
             let src_root = unique_temp_path("finalizing_cancel_src");
             let dst_root = unique_temp_path("finalizing_cancel_dst");
             let source = src_root.join("Movie");
@@ -1286,10 +1479,12 @@ mod tests {
         let conflict = destination.join("1.bin");
         let error = super::transfer_with_policy_blocking(
             "copy",
-            sources.clone(),
+            super::Request::Selection {
+                sources: sources.clone(),
+                conflict_action: "error".into(),
+            },
             destination.to_string_lossy().into(),
             "concurrent-failure".into(),
-            "error".into(),
             Arc::new(AtomicBool::new(false)),
             &|update| {
                 if update.current_item == "Preparing transfer..." {
@@ -1301,8 +1496,7 @@ mod tests {
                 mode: super::tuning::Mode::Manual,
                 manual_concurrency: 3,
                 ..super::tuning::Policy::default()
-            },
-        )
+            })
         .expect_err("conflict must fail safely");
         let reported: Vec<_> = error
             .outcome
@@ -1400,7 +1594,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_folder_replacing_existing_file_preserves_original_destination() {
+    fn folder_replacing_existing_file_is_a_type_conflict() {
         for operation in ["copy", "move"] {
             let src_root = unique_temp_path("folder_replace_file_src");
             let dst_root = unique_temp_path("folder_replace_file_dst");
@@ -1411,26 +1605,26 @@ mod tests {
             fs::write(source_folder.join("child.txt"), vec![b'a'; 256 * 1024]).unwrap();
             fs::write(&existing_dest_file, b"original-file-must-survive").unwrap();
 
-            let cancel = Arc::new(AtomicBool::new(false));
-            let cancel_for_emit = cancel.clone();
-
             let result = transfer_with_progress_blocking(
                 operation,
                 vec![source_folder.to_string_lossy().to_string()],
                 dst_root.to_string_lossy().to_string(),
-                "op_cancel_folder_replaces_file".to_string(),
+                "op_folder_replaces_file".to_string(),
                 "replace".to_string(),
-                cancel,
-                &|update| {
-                    if update.status == "finalizing" {
-                        cancel_for_emit.store(true, Ordering::SeqCst);
-                    }
-                },
+                Arc::new(AtomicBool::new(false)),
+                &|_| {},
             )
-            .expect_err("cancelled transfer returns a cancelled outcome");
+            .expect_err("a directory never replaces a file silently");
 
-            assert_eq!(result.outcome.status, "cancelled");
+            assert_eq!(result.outcome.status, "failed");
+            assert!(result.message.starts_with("CONFLICT:"), "{}", result.message);
             assert!(result.outcome.committed.is_empty());
+            assert_eq!(result.outcome.failed.len(), 1);
+            assert_eq!(result.outcome.failed[0].kind, "conflict");
+            assert_eq!(
+                result.outcome.failed[0].source,
+                source_folder.to_string_lossy().to_string()
+            );
             assert!(
                 existing_dest_file.is_file(),
                 "original destination file must remain a file"
@@ -1447,7 +1641,7 @@ mod tests {
     }
 
     #[test]
-    fn streamed_move_retains_source_modified_after_copy_before_batch_deletion() {
+    fn streamed_move_deletes_each_source_after_publication_and_leaves_later_writes() {
         let src_dir = unique_temp_path("move_mod_src");
         let dst_dir = unique_temp_path("move_mod_dst");
         fs::create_dir_all(&src_dir).unwrap();
@@ -1459,29 +1653,33 @@ mod tests {
         fs::write(&second, vec![b's'; 512 * 1024]).unwrap();
 
         let first_for_emit = first.clone();
-        let second_dest_text = dst_dir.join("second.txt").to_string_lossy().to_string();
+        let first_deleted_before_second_finalized = Arc::new(AtomicBool::new(false));
+        let observed = first_deleted_before_second_finalized.clone();
         let modified = Arc::new(AtomicBool::new(false));
         let modified_for_emit = modified.clone();
 
-        // Use keep-both or cross-prefix so move streams through copy + verified delete
-        let err = super::transfer_with_policy_blocking(
+        // A verbatim destination prefix forces streaming (copy + verified delete).
+        let results = super::transfer_with_policy_blocking(
             "move",
-            vec![
-                first.to_string_lossy().to_string(),
-                second.to_string_lossy().to_string(),
-            ],
+            super::Request::Selection {
+                sources: vec![
+                    first.to_string_lossy().to_string(),
+                    second.to_string_lossy().to_string(),
+                ],
+                conflict_action: "error".to_string(),
+            },
             format!(r"\\?\{}", dst_dir.to_string_lossy()),
             "op_move_modified_source".to_string(),
-            "error".to_string(),
             Arc::new(AtomicBool::new(false)),
             &|update| {
-                // When second file is finalizing (after first has already finished copying),
-                // another application updates first.txt!
+                // When the second file is finalizing, the first has already been
+                // published and its source deleted; a new file written at the
+                // old name belongs to someone else.
                 if update.status == "finalizing"
                     && update.current_item.ends_with("second.txt")
                     && !modified_for_emit.swap(true, Ordering::SeqCst)
                 {
-                    let _ = &second_dest_text;
+                    observed.store(!first_for_emit.exists(), Ordering::SeqCst);
                     fs::write(&first_for_emit, b"updated--first").unwrap();
                 }
             },
@@ -1492,22 +1690,20 @@ mod tests {
                 ..super::tuning::Policy::default()
             },
         )
-        .expect_err("modified source must not be deleted and must produce partial-move error");
+        .expect("both files move; the later write is not this operation's source");
 
+        assert!(modified.load(Ordering::SeqCst), "finalizing hook did not run");
         assert!(
-            err.message.contains("Copied but failed to delete source"),
-            "unexpected error: {}",
-            err.message
+            first_deleted_before_second_finalized.load(Ordering::SeqCst),
+            "first source should be deleted right after it is published"
         );
-        assert!(
-            first.exists(),
-            "modified first source file must be retained"
-        );
+        assert_eq!(results.len(), 2);
         assert_eq!(fs::read(&first).unwrap(), b"updated--first");
         assert_eq!(
             fs::read(dst_dir.join("first.txt")).unwrap(),
             b"original-first"
         );
+        assert!(!second.exists());
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);
@@ -1526,15 +1722,17 @@ mod tests {
 
         let new_file = source_folder.join("added_after_enum.txt");
         let new_file_for_emit = new_file.clone();
-        let final_dest_text = final_dest.to_string_lossy().to_string();
+        // A verbatim destination prefix forces a staged tree copy + verified
+        // tree deletion instead of a same-volume rename.
+        let verbatim_root = format!(r"\\?\{}", dst_root.to_string_lossy());
+        let final_dest_text = format!(r"{verbatim_root}\Project");
         let injected = Arc::new(AtomicBool::new(false));
         let injected_for_emit = injected.clone();
 
-        // Use keep-both so folder move uses staged copy_tree + verified tree deletion
         let err = transfer_with_progress_blocking(
             "move",
             vec![source_folder.to_string_lossy().to_string()],
-            dst_root.to_string_lossy().to_string(),
+            verbatim_root.clone(),
             "op_folder_move_added_file".to_string(),
             "keep-both".to_string(),
             Arc::new(AtomicBool::new(false)),

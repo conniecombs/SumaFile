@@ -139,12 +139,29 @@ pub(super) struct ResolvedCopyMoveParams {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ProgressCopyMoveParams {
+    #[serde(default)]
     pub sources: Vec<String>,
     pub destination: String,
     #[serde(rename = "operationId")]
     pub operation_id: Option<String>,
-    #[serde(rename = "conflictAction")]
+    #[serde(rename = "conflictAction", default = "default_conflict_action")]
     pub conflict_action: String,
+    /// Targeted retry: exact files to transfer again with their own actions.
+    /// When present, `sources` and `conflictAction` are not used for planning.
+    #[serde(default)]
+    pub items: Option<Vec<ProgressTransferItem>>,
+}
+
+fn default_conflict_action() -> String {
+    "error".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ProgressTransferItem {
+    pub source: String,
+    pub destination: String,
+    #[serde(default = "default_conflict_action")]
+    pub action: String,
 }
 
 #[derive(Debug, Deserialize)]

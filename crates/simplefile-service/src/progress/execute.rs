@@ -1,24 +1,21 @@
 //! Copy and move execution with progress callbacks.
 
-use super::plan::{ensure_destination_available, TransferPlan};
-use super::reporting::{CopyContext, ProgressContext, PROGRESS_BYTE_STEP};
+use super::parallel::ConflictAction;
+use super::reporting::{CopyContext, PROGRESS_BYTE_STEP};
 use super::resources::PooledBuffer;
 use super::tuning::CheckMode;
 use crate::transfer_reliability::{Failure, Retry};
 use crate::transfer_staging::{
     capture_source_version_for_path, capture_source_version_from_open_file, cleanup_owned_path,
-    conflict_for_existing_destination, delete_verified_source, delete_verified_source_tree,
-    existing_file_matches_source_with_mode, hash_file_contents, preallocate_file,
-    promote_leased_with_policy, remove_path, staging_path_for, verify_source_unchanged,
-    ContentHasher, SourceVersion,
+    conflict_for_existing_destination, existing_file_matches_source_with_mode,
+    hash_file_contents, preallocate_file, promote_leased_with_policy, remove_path,
+    staging_path_for, verify_source_unchanged, ContentHasher, SourceVersion,
 };
-use simplefile_core::path_conflict::{
-    is_already_exists_error, path_exists_no_follow, rename_exclusive,
-};
+use simplefile_core::path_conflict::path_exists_no_follow;
 use simplefile_core::utils::recreate_symlink;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -85,13 +82,26 @@ pub(crate) fn copy_file_attempt(
     buffer_size: usize,
     file_len: u64,
 ) -> Result<u64, Failure> {
-    copy_file_attempt_versioned(src, dst, ctx, completed_bytes, buffer_size, file_len, true)
-        .map(|(copied, _)| copied)
+    copy_file_attempt_versioned(
+        src,
+        dst,
+        None,
+        ctx,
+        completed_bytes,
+        buffer_size,
+        file_len,
+        true,
+    )
+    .map(|(copied, _)| copied)
 }
 
+/// `staged_file` is the destination handle the ownership lease created for this
+/// operation (first attempt). Retries pass `None` and resume the existing partial.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn copy_file_attempt_versioned(
     src: &Path,
     dst: &Path,
+    staged_file: Option<fs::File>,
     ctx: &CopyContext,
     completed_bytes: u64,
     buffer_size: usize,
@@ -113,16 +123,19 @@ pub(crate) fn copy_file_attempt_versioned(
         source_initial.creation_time(),
         source_initial.last_write_time(),
     );
-    let first_open = match create_new_staging_sequential(dst) {
-        Ok(file) => Ok(file),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            if let Some(parent) = dst.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| Failure::io("Create parent directory", parent, e))?;
+    let first_open = match staged_file {
+        Some(file) => Ok(file),
+        None => match create_new_staging_sequential(dst) {
+            Ok(file) => Ok(file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(parent) = dst.parent() {
+                    fs::create_dir_all(parent)
+                        .map_err(|e| Failure::io("Create parent directory", parent, e))?;
+                }
+                create_new_staging_sequential(dst)
             }
-            create_new_staging_sequential(dst)
-        }
-        Err(error) => Err(error),
+            Err(error) => Err(error),
+        },
     };
     let (resume_from, mut dst_file) = match first_open {
         Ok(file) => {
@@ -743,6 +756,18 @@ fn copy_file_stream_with_hash(
     Ok(copied)
 }
 
+/// What happened to one file after its copy attempt(s).
+#[derive(Debug)]
+pub(crate) enum FileOutcome {
+    Copied {
+        version: SourceVersion,
+        /// Where the file was published; differs from the plan after keep-both.
+        destination: PathBuf,
+    },
+    /// The destination existed and the action was skip.
+    Skipped,
+}
+
 #[cfg(test)]
 pub(crate) fn copy_file_with_progress(
     src: &Path,
@@ -751,18 +776,69 @@ pub(crate) fn copy_file_with_progress(
     completed_bytes: &mut u64,
     replace_existing: bool,
 ) -> Result<(), String> {
-    copy_file_with_progress_versioned(src, dst, ctx, completed_bytes, replace_existing).map(|_| ())
+    copy_file_with_progress_versioned(
+        src,
+        dst,
+        ctx,
+        completed_bytes,
+        if replace_existing {
+            ConflictAction::Replace
+        } else {
+            ConflictAction::Error
+        },
+    )
+    .map(|_| ())
+    .map_err(|error| error.message)
+}
+
+/// Resolve the planned destination against what exists there right now.
+/// Returns the destination to use and whether an existing file may be replaced,
+/// or `None` when the file should be skipped.
+fn resolve_file_conflict(
+    dst: &Path,
+    conflict: ConflictAction,
+    resume_existing: bool,
+) -> Result<Option<(PathBuf, bool)>, Failure> {
+    match conflict {
+        ConflictAction::Replace => Ok(Some((dst.to_path_buf(), true))),
+        ConflictAction::Error => Ok(Some((dst.to_path_buf(), false))),
+        ConflictAction::Skip => {
+            if !resume_existing && path_exists_no_follow(dst) {
+                Ok(None)
+            } else {
+                Ok(Some((dst.to_path_buf(), false)))
+            }
+        }
+        ConflictAction::KeepBoth => {
+            if !resume_existing && path_exists_no_follow(dst) {
+                let parent = dst
+                    .parent()
+                    .ok_or_else(|| Failure::from("Cannot get destination directory"))?;
+                let name = dst
+                    .file_name()
+                    .ok_or_else(|| Failure::from("Cannot get destination file name"))?;
+                let unique = super::plan::unique_destination_path(
+                    parent,
+                    name,
+                    &std::collections::HashSet::new(),
+                )?;
+                Ok(Some((unique, false)))
+            } else {
+                Ok(Some((dst.to_path_buf(), false)))
+            }
+        }
+    }
 }
 
 pub(crate) fn copy_file_with_progress_versioned(
     src: &Path,
-    dst: &Path,
+    planned_dst: &Path,
     ctx: &CopyContext,
     completed_bytes: &mut u64,
-    replace_existing: bool,
-) -> Result<SourceVersion, String> {
-    let source_metadata = fs::symlink_metadata(src)
-        .map_err(|error| format!("Inspect source [{}]: {error}", src.display()))?;
+    conflict: ConflictAction,
+) -> Result<FileOutcome, Failure> {
+    let source_metadata =
+        fs::symlink_metadata(src).map_err(|error| Failure::io("Inspect source", src, error))?;
     let file_len = source_metadata.len();
     let source_modified = source_metadata.modified().ok();
     let known = ctx.progress.total_bytes.load(Ordering::Relaxed);
@@ -771,17 +847,27 @@ pub(crate) fn copy_file_with_progress_versioned(
         ctx.progress.total_bytes.store(needed, Ordering::Relaxed);
     }
 
-    if ctx.resume_existing && path_exists_no_follow(dst) {
-        if existing_file_matches_source_with_mode(src, dst, ctx.policy.check_mode)? {
+    if ctx.resume_existing && path_exists_no_follow(planned_dst) {
+        if existing_file_matches_source_with_mode(src, planned_dst, ctx.policy.check_mode)? {
             let version = capture_source_version_for_path(src)?;
             *completed_bytes = completed_bytes.saturating_add(file_len);
             ctx.progress
                 .complete_file(*completed_bytes, src.to_string_lossy().to_string());
-            return Ok(version);
+            return Ok(FileOutcome::Copied {
+                version,
+                destination: planned_dst.to_path_buf(),
+            });
         }
 
-        remove_path(dst, "resumable destination")?;
+        remove_path(planned_dst, "resumable destination")?;
     }
+
+    let Some((dst, replace_existing)) =
+        resolve_file_conflict(planned_dst, conflict, ctx.resume_existing)?
+    else {
+        return Ok(FileOutcome::Skipped);
+    };
+    let dst = dst.as_path();
 
     let use_inplace = ctx.policy.inplace && !path_exists_no_follow(dst);
     let staged_path = if use_inplace {
@@ -797,18 +883,25 @@ pub(crate) fn copy_file_with_progress_versioned(
     let must_sync = ctx.policy.flush_on_close;
     let mut retry = Retry::from_policy(&ctx.policy);
     let copy_result = loop {
-        if let Err(error) = ctx.progress.check_cancelled() {
-            break Err(error);
+        if ctx.progress.check_cancelled().is_err() {
+            break Err(Failure::cancelled());
         }
         if retry.failures > 0
             && fs::metadata(src)
                 .is_ok_and(|meta| meta.len() != file_len || meta.modified().ok() != source_modified)
         {
-            break Err(format!("Source changed before retry [{}]", src.display()));
+            break Err(Failure::from(format!(
+                "Source changed before retry [{}]",
+                src.display()
+            )));
         }
+        let staged_file = lease
+            .as_mut()
+            .and_then(|owner| owner.take_staged_file());
         match copy_file_attempt_versioned(
             src,
             &staged_path,
+            staged_file,
             ctx,
             *completed_bytes,
             ctx.buffer_size(),
@@ -816,10 +909,10 @@ pub(crate) fn copy_file_with_progress_versioned(
             must_sync,
         ) {
             Ok((written, version)) => break Ok((written, version)),
-            Err(error) if error.message == "Operation cancelled" => break Err(error.message),
+            Err(error) if error.is_cancelled() => break Err(error),
             Err(error) => {
                 let reason = error.to_string();
-                match retry.failed(error) {
+                match retry.failed_with(error) {
                     Err(error) => break Err(error),
                     Ok(delay) => {
                         if let Some(retries) = ctx.progress.retry_count {
@@ -828,10 +921,8 @@ pub(crate) fn copy_file_with_progress_versioned(
                         if let Some(limiter) = ctx.progress.rate_limit {
                             limiter.retrying(delay, &reason);
                         }
-                        if let Err(error) =
-                            crate::transfer_reliability::wait(delay, ctx.progress.cancel)
-                        {
-                            break Err(error);
+                        if crate::transfer_reliability::wait(delay, ctx.progress.cancel).is_err() {
+                            break Err(Failure::cancelled());
                         }
                     }
                 }
@@ -845,11 +936,11 @@ pub(crate) fn copy_file_with_progress_versioned(
                 completed_bytes.saturating_add(written),
                 dst.to_string_lossy().to_string(),
             );
-            if let Err(error) = ctx.progress.check_cancelled() {
+            if ctx.progress.check_cancelled().is_err() {
                 if let Some(owner) = lease.take() {
                     let _ = owner.abort();
                 }
-                return Err(error);
+                return Err(Failure::cancelled());
             }
             if !use_inplace {
                 if let Err(error) = promote_leased_with_policy(
@@ -868,29 +959,27 @@ pub(crate) fn copy_file_with_progress_versioned(
                     if let Some(owner) = lease.take() {
                         let _ = owner.abort();
                     }
-                    return Err(
-                        if error.starts_with("CONFLICT:") || error == "Operation cancelled" {
-                            error
-                        } else {
-                            format!("Finalize destination [{}]: {error}", dst.display())
-                        },
-                    );
+                    let failure = Failure::from(error);
+                    return Err(if failure.is_conflict() || failure.is_cancelled() {
+                        failure
+                    } else {
+                        Failure::with_kind(
+                            format!("Finalize destination [{}]: {}", dst.display(), failure),
+                            failure.kind,
+                        )
+                    });
                 }
             }
             if let Some(owner) = lease.take() {
                 owner.finish()?;
             }
             *completed_bytes += written;
-            if written > file_len {
-                let known = ctx.progress.total_bytes.load(Ordering::Relaxed);
-                let needed = (*completed_bytes).max(known);
-                if needed > known {
-                    ctx.progress.total_bytes.store(needed, Ordering::Relaxed);
-                }
-            }
             ctx.progress
                 .complete_file(*completed_bytes, src.to_string_lossy().to_string());
-            Ok(version)
+            Ok(FileOutcome::Copied {
+                version,
+                destination: dst.to_path_buf(),
+            })
         }
         Err(error) => {
             if fs::symlink_metadata(&staged_path)
@@ -905,7 +994,10 @@ pub(crate) fn copy_file_with_progress_versioned(
             };
             match cleanup {
                 Ok(()) => Err(error),
-                Err(cleanup) => Err(format!("{error}; {cleanup}")),
+                Err(cleanup) => Err(Failure::with_kind(
+                    format!("{error}; {cleanup}"),
+                    error.kind,
+                )),
             }
         }
     }
@@ -913,18 +1005,26 @@ pub(crate) fn copy_file_with_progress_versioned(
 
 pub(crate) fn copy_symlink_with_progress(
     src_path: &Path,
-    dst_path: &Path,
+    planned_dst: &Path,
     ctx: &CopyContext,
     completed_bytes: u64,
-    replace_existing: bool,
-) -> Result<SourceVersion, String> {
+    conflict: ConflictAction,
+) -> Result<FileOutcome, Failure> {
+    let Some((dst_path, replace_existing)) =
+        resolve_file_conflict(planned_dst, conflict, ctx.resume_existing)?
+    else {
+        return Ok(FileOutcome::Skipped);
+    };
+    let dst_path = dst_path.as_path();
     if !replace_existing && !ctx.resume_existing && path_exists_no_follow(dst_path) {
-        return Err(conflict_for_existing_destination(dst_path));
+        return Err(Failure::conflict(conflict_for_existing_destination(dst_path)));
     }
     let version = capture_source_version_for_path(src_path)?;
     let staged_path = staging_path_for(dst_path, ctx.operation_id)?;
     if path_exists_no_follow(&staged_path) {
-        return Err("Refusing an unowned temporary symlink destination".into());
+        return Err(Failure::from(
+            "Refusing an unowned temporary symlink destination",
+        ));
     }
     recreate_symlink(src_path, &staged_path)?;
     let mut lease = crate::transfer_journal::StagingLease::record_created(
@@ -934,11 +1034,11 @@ pub(crate) fn copy_symlink_with_progress(
     )?;
     if let Err(error) = verify_source_unchanged(src_path, &version) {
         let _ = lease.abort();
-        return Err(error);
+        return Err(Failure::from(error));
     }
-    if let Err(error) = ctx.progress.check_cancelled() {
+    if ctx.progress.check_cancelled().is_err() {
         let _ = lease.abort();
-        return Err(error);
+        return Err(Failure::cancelled());
     }
     if let Err(error) = promote_leased_with_policy(
         &staged_path,
@@ -954,200 +1054,135 @@ pub(crate) fn copy_symlink_with_progress(
         },
     ) {
         let _ = lease.abort();
-        return Err(
-            if error.starts_with("CONFLICT:") || error == "Operation cancelled" {
-                error
-            } else {
-                format!("Finalize destination [{}]: {error}", dst_path.display())
-            },
-        );
+        let failure = Failure::from(error);
+        return Err(if failure.is_conflict() || failure.is_cancelled() {
+            failure
+        } else {
+            Failure::with_kind(
+                format!(
+                    "Finalize destination [{}]: {}",
+                    dst_path.display(),
+                    failure
+                ),
+                failure.kind,
+            )
+        });
     }
     lease.finish()?;
     ctx.progress
         .complete_file(completed_bytes, src_path.to_string_lossy().to_string());
-    Ok(version)
+    Ok(FileOutcome::Copied {
+        version,
+        destination: dst_path.to_path_buf(),
+    })
 }
 
-pub(crate) fn copy_plan_with_progress(
-    plan: &TransferPlan,
-    ctx: &ProgressContext,
-    completed_bytes: &mut u64,
-    session: &mut super::adaptive::Session<'_>,
-) -> Result<(), String> {
-    ensure_destination_available(plan)?;
+/// Same-volume moves rename instead of copying. `None` means "not applicable,
+/// copy instead" (different volume, an unpublished tree, or a rename error that
+/// a copy may still get around).
+pub(crate) fn move_by_rename(
+    source: &Path,
+    planned_dst: &Path,
+    conflict: ConflictAction,
+    ctx: &CopyContext,
+) -> Option<Result<FileOutcome, Failure>> {
+    use simplefile_core::path_conflict::{is_already_exists_error, rename_exclusive};
 
-    let source_meta = fs::symlink_metadata(&plan.source_path)
-        .map_err(|error| format!("Failed to stat source: {error}"))?;
-    if source_meta.file_type().is_dir() {
-        copy_directory_plan(plan, ctx, completed_bytes, session).map(|_| ())
-    } else {
-        let task = super::parallel::FileTask {
-            source: plan.source_path.clone(),
-            destination: plan.final_dest.clone(),
-            size: if source_meta.file_type().is_symlink() {
-                0
-            } else {
-                source_meta.len()
-            },
-            network: plan.network,
-            replace_existing: plan.replace_existing,
-            resume_existing: false,
-            symlink: source_meta.file_type().is_symlink(),
-        };
-        let copied = super::parallel::copy_files(&[task], ctx, session, *completed_bytes);
-        *completed_bytes = completed_bytes.saturating_add(copied.bytes);
-        copied.failed.map_or(Ok(()), |(_, error)| Err(error))
+    if ctx.resume_existing || !super::plan::same_volume(source, planned_dst) {
+        return None;
     }
-}
-
-pub(crate) fn move_plan_with_progress(
-    plan: &TransferPlan,
-    ctx: &ProgressContext,
-    completed_bytes: &mut u64,
-    session: &mut super::adaptive::Session<'_>,
-) -> Result<(), String> {
-    ensure_destination_available(plan)?;
-
-    let rename_size = fs::symlink_metadata(&plan.source_path)
-        .map(|meta| {
-            if meta.file_type().is_file() {
-                meta.len()
-            } else {
-                0
-            }
-        })
-        .unwrap_or(0);
-    if plan.allow_rename && (!plan.replace_existing || !path_exists_no_follow(&plan.final_dest)) {
-        match rename_exclusive(&plan.source_path, &plan.final_dest) {
-            Ok(()) => {
-                *completed_bytes = completed_bytes.saturating_add(rename_size.max(1));
-                ctx.complete_files(
-                    plan.file_count,
-                    *completed_bytes,
-                    plan.source_path.to_string_lossy().to_string(),
-                );
-                return Ok(());
-            }
-            Err(error)
-                if !plan.replace_existing
-                    && (is_already_exists_error(&error)
-                        || path_exists_no_follow(&plan.final_dest)) =>
-            {
-                return Err(conflict_for_existing_destination(&plan.final_dest));
-            }
-            Err(_) => {}
-        }
+    let (dst, replace_existing) = match resolve_file_conflict(planned_dst, conflict, false) {
+        Ok(Some(resolved)) => resolved,
+        Ok(None) => return Some(Ok(FileOutcome::Skipped)),
+        Err(error) => return Some(Err(error)),
+    };
+    if ctx.progress.check_cancelled().is_err() {
+        return Some(Err(Failure::cancelled()));
     }
-
-    let source_meta = fs::symlink_metadata(&plan.source_path)
-        .map_err(|error| format!("Failed to stat source: {error}"))?;
-    if source_meta.file_type().is_dir() {
-        let manifest = copy_directory_plan(plan, ctx, completed_bytes, session)?;
-        delete_verified_source_tree(&plan.source_path, &manifest)
-            .map_err(|error| format!("Copied but failed to delete source: {error}"))?;
-        Ok(())
-    } else {
-        let task = super::parallel::FileTask {
-            source: plan.source_path.clone(),
-            destination: plan.final_dest.clone(),
-            size: if source_meta.file_type().is_symlink() {
-                0
-            } else {
-                source_meta.len()
-            },
-            network: plan.network,
-            replace_existing: plan.replace_existing,
-            resume_existing: false,
-            symlink: source_meta.file_type().is_symlink(),
-        };
-        let copied = super::parallel::copy_files(&[task], ctx, session, *completed_bytes);
-        *completed_bytes = completed_bytes.saturating_add(copied.bytes);
-        if let Some((_, error)) = copied.failed {
-            return Err(error);
+    match rename_exclusive(source, &dst) {
+        Ok(()) => Some(renamed_outcome(&dst)),
+        Err(error) if is_already_exists_error(&error) || path_exists_no_follow(&dst) => {
+            if !replace_existing {
+                return Some(Err(Failure::conflict(conflict_for_existing_destination(&dst))));
+            }
+            let existing_is_dir = fs::symlink_metadata(&dst)
+                .is_ok_and(|meta| meta.file_type().is_dir() && !meta.file_type().is_symlink());
+            if existing_is_dir {
+                return Some(Err(Failure::conflict(format!(
+                    "destination exists with a different type: {}",
+                    dst.display()
+                ))));
+            }
+            // Swap through a unique backup name: the source is renamed, never
+            // copied, so no journal entry may ever treat it as a disposable
+            // staging object. A locked destination gets the same bounded,
+            // visible retries as a staged promotion.
+            let mut retry = Retry::from_policy(&ctx.policy);
+            loop {
+                if ctx.progress.check_cancelled().is_err() {
+                    return Some(Err(Failure::cancelled()));
+                }
+                match swap_source_into_place(source, &dst) {
+                    Ok(()) => return Some(renamed_outcome(&dst)),
+                    Err(error) => {
+                        let reason = error.to_string();
+                        match retry.failed_with(error) {
+                            Err(error) => return Some(Err(error)),
+                            Ok(delay) => {
+                                if let Some(limiter) = ctx.progress.rate_limit {
+                                    limiter.retrying(delay, &reason);
+                                }
+                                if crate::transfer_reliability::wait(delay, ctx.progress.cancel)
+                                    .is_err()
+                                {
+                                    return Some(Err(Failure::cancelled()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        let version = copied.versions.get(&0).ok_or_else(|| {
-            format!(
-                "Missing source verification snapshot for {}",
-                plan.source_path.display()
-            )
-        })?;
-        delete_verified_source(&plan.source_path, version)
-            .map_err(|error| format!("Copied but failed to delete source: {error}"))?;
-        Ok(())
+        Err(_) => None,
     }
 }
 
-fn copy_directory_plan(
-    plan: &TransferPlan,
-    ctx: &ProgressContext,
-    completed_bytes: &mut u64,
-    session: &mut super::adaptive::Session<'_>,
-) -> Result<crate::transfer_staging::TreeCopyManifest, String> {
-    let policy = session.controller.policy.clone();
-    let staged_tree = !is_real_directory(&plan.final_dest);
-    let destination = if staged_tree {
-        staging_path_for(&plan.final_dest, ctx.operation_id)?
-    } else {
-        plan.final_dest.clone()
-    };
-    let mut lease = if staged_tree {
-        simplefile_core::path_conflict::create_dir_exclusive(&destination)?;
-        Some(crate::transfer_journal::StagingLease::record_created(
-            &plan.source_path.to_string_lossy(),
-            &plan.final_dest,
-            &destination,
-        )?)
-    } else {
-        None
-    };
-    let tree_ctx = CopyContext {
-        progress: ctx,
-        operation_id: ctx.operation_id,
-        network: plan.network,
-        resume_existing: staged_tree,
-        policy: policy.clone(),
-    };
-    let result = (|| {
-        let manifest = super::parallel::copy_tree(
-            &plan.source_path,
-            &destination,
-            &tree_ctx,
-            completed_bytes,
-            plan.replace_existing,
-            session,
-        )?;
-        if staged_tree {
-            simplefile_core::file_ops::preserve_basic_metadata(&plan.source_path, &destination)?;
-            ctx.finalizing(*completed_bytes, plan.final_dest.to_string_lossy().into());
-            ctx.check_cancelled()?;
-            promote_leased_with_policy(
-                &destination,
-                &plan.final_dest,
-                plan.replace_existing,
-                ctx.cancel,
-                &policy,
-                lease.as_mut().expect("tree has ownership"),
-                |delay, reason| {
-                    session.limiter.retrying(delay, reason);
-                    session.display(Vec::new(), true);
-                },
-            )?;
-        }
-        Ok(manifest)
-    })();
-    match result {
-        Ok(manifest) => {
-            if let Some(owner) = lease.take() {
-                owner.finish()?;
-            }
-            Ok(manifest)
-        }
-        Err(error) => {
-            let cleanup = lease.take().map(|owner| owner.abort()).transpose();
-            Err(match cleanup {
-                Err(cleanup) => format!("{error}; {cleanup}"),
-                Ok(_) => error,
-            })
-        }
+/// Rename the existing destination aside, rename the source into place, then
+/// remove the backup. Any failure leaves the original destination in place.
+fn swap_source_into_place(source: &Path, dst: &Path) -> Result<(), Failure> {
+    use simplefile_core::path_conflict::rename_exclusive;
+
+    let backup = crate::transfer_staging::unique_backup_path(dst).map_err(Failure::from)?;
+    rename_exclusive(dst, &backup)
+        .map_err(|error| Failure::io("Prepare destination replacement", dst, error))?;
+    if let Err(error) = rename_exclusive(source, dst) {
+        let restore = rename_exclusive(&backup, dst);
+        return Err(match restore {
+            Ok(()) => Failure::io(
+                "Finalize destination (original destination was restored)",
+                dst,
+                error,
+            ),
+            Err(restore) => Failure::from(format!(
+                "Finalize destination [{}]: {error}; original remains [{}], restore failed: {restore}",
+                dst.display(),
+                backup.display()
+            )),
+        });
     }
+    // Promotion already committed: never replay it just because backup cleanup failed.
+    remove_path(&backup, "destination backup").map_err(|error| {
+        Failure::from(format!(
+            "Transferred, but backup remains [{}]: {error}",
+            backup.display()
+        ))
+    })
+}
+
+fn renamed_outcome(dst: &Path) -> Result<FileOutcome, Failure> {
+    let version = capture_source_version_for_path(dst)?;
+    Ok(FileOutcome::Copied {
+        version,
+        destination: dst.to_path_buf(),
+    })
 }

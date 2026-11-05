@@ -748,19 +748,39 @@ pub(super) fn spawn_copy_move_with_progress(
         let sources_for_cache = sources.clone();
         let destination_for_cache = destination.clone();
 
+        let items = params.items;
         let result = scheduler
             .run_transfer(move || {
                 let emit = |update| events_for_task.emit_progress(&update);
-                crate::progress::transfer_with_tuning_blocking(
-                    operation_type,
-                    sources,
-                    destination,
-                    op_id_for_task,
-                    conflict_action,
-                    cancel,
-                    &emit,
-                    &|update| events_for_task.emit("transfer-tuning", &update),
-                )
+                let tuning = |update| events_for_task.emit("transfer-tuning", &update);
+                match items {
+                    Some(items) => crate::progress::transfer_items_with_tuning_blocking(
+                        operation_type,
+                        items
+                            .into_iter()
+                            .map(|item| crate::progress::TransferItem {
+                                source: item.source,
+                                destination: item.destination,
+                                action: item.action,
+                            })
+                            .collect(),
+                        destination,
+                        op_id_for_task,
+                        cancel,
+                        &emit,
+                        &tuning,
+                    ),
+                    None => crate::progress::transfer_with_tuning_blocking(
+                        operation_type,
+                        sources,
+                        destination,
+                        op_id_for_task,
+                        conflict_action,
+                        cancel,
+                        &emit,
+                        &tuning,
+                    ),
+                }
             })
             .await;
 

@@ -504,7 +504,7 @@ fn classify_client_error(host: &str, error: SftpClientError) -> Failure {
         SftpClientError::HostKey(message) => Failure::new(message, false),
         SftpClientError::Ssh(russh::Error::IO(io_err)) => {
             let message = format!("SFTP connection failed: {io_err}");
-            let retryable = Failure::io("SFTP connection", host, io_err).retryable;
+            let retryable = Failure::io("SFTP connection", host, io_err).retryable();
             Failure::new(message, retryable)
         }
         SftpClientError::Ssh(error) => {
@@ -604,7 +604,7 @@ mod tests {
                 language_tag: "en".into(),
             });
             let failure = sftp_io("/photo.jpg", std::io::Error::from(error));
-            assert_eq!(failure.retryable, retryable);
+            assert_eq!(failure.retryable(), retryable);
             assert!(failure.message.contains("/photo.jpg"));
             assert!(failure.message.contains("server detail"));
         }

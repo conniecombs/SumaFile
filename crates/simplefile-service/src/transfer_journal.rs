@@ -25,6 +25,9 @@ pub(crate) struct StagingLease {
     path: PathBuf,
     file: File,
     record: Record,
+    /// The staging file this lease created, still open, for the first copy
+    /// attempt to write through (no second create/open round trip).
+    staged_file: Option<File>,
 }
 
 fn record_path(staged: &Path) -> PathBuf {
@@ -63,10 +66,15 @@ impl StagingLease {
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(windows)]
-        if staged != destination {
+        {
             use std::os::windows::fs::OpenOptionsExt;
-            use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN;
-            options.attributes(FILE_ATTRIBUTE_HIDDEN);
+            use windows_sys::Win32::Storage::FileSystem::{
+                FILE_ATTRIBUTE_HIDDEN, FILE_FLAG_SEQUENTIAL_SCAN,
+            };
+            options.custom_flags(FILE_FLAG_SEQUENTIAL_SCAN);
+            if staged != destination {
+                options.attributes(FILE_ATTRIBUTE_HIDDEN);
+            }
         }
         let stage = match options.open(staged) {
             Ok(file) => file,
@@ -78,14 +86,13 @@ impl StagingLease {
                 ));
             }
         };
-        drop(stage);
-        Self::with_record(source, destination, staged, path, file)
+        Self::with_record(source, destination, staged, path, file, Some(stage))
     }
 
     pub fn record_created(source: &str, destination: &Path, staged: &Path) -> Result<Self, String> {
         let path = record_path(staged);
         let file = open_locked(&path, true)?;
-        Self::with_record(source, destination, staged, path, file)
+        Self::with_record(source, destination, staged, path, file, None)
     }
 
     fn with_record(
@@ -94,8 +101,12 @@ impl StagingLease {
         staged: &Path,
         path: PathBuf,
         file: File,
+        staged_file: Option<File>,
     ) -> Result<Self, String> {
-        let staged_id = file_identity(staged)?;
+        let staged_id = match &staged_file {
+            Some(handle) => identity_from_handle(handle, staged)?,
+            None => file_identity(staged)?,
+        };
         let mut lease = Self {
             path,
             file,
@@ -108,9 +119,16 @@ impl StagingLease {
                 backup: None,
                 committed: false,
             },
+            staged_file,
         };
         lease.persist()?;
         Ok(lease)
+    }
+
+    /// The open staging handle, once. Later calls return `None` so retries
+    /// reopen the partial file and resume it.
+    pub fn take_staged_file(&mut self) -> Option<File> {
+        self.staged_file.take()
     }
 
     fn persist(&mut self) -> Result<(), String> {
@@ -167,6 +185,22 @@ impl StagingLease {
         recover(&self.record)?;
         self.finish()
     }
+}
+
+#[cfg(windows)]
+fn identity_from_handle(handle: &File, staged: &Path) -> Result<FileIdentity, String> {
+    crate::transfer_staging::file_id_from_handle(handle)
+        .map(|(volume, index)| FileIdentity(u64::from(volume), index))
+        .ok_or_else(|| format!("Cannot establish file identity [{}]", staged.display()))
+}
+
+#[cfg(not(windows))]
+fn identity_from_handle(handle: &File, staged: &Path) -> Result<FileIdentity, String> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = handle
+        .metadata()
+        .map_err(|e| format!("Cannot establish file identity [{}]: {e}", staged.display()))?;
+    Ok(FileIdentity(meta.dev(), meta.ino()))
 }
 
 fn matches(path: &Path, id: &FileIdentity) -> bool {

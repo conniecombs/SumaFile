@@ -41,7 +41,7 @@ pub fn connect_typed(
     // Data completion and cleanup commands must also stop on an unresponsive server.
     let socket = TcpStream::connect_timeout(&address, REMOTE_CONNECT_TIMEOUT).map_err(|error| {
         let message = format!("FTP connection failed: {error}");
-        let retryable = Failure::io("FTP connection", &profile.host, error).retryable;
+        let retryable = Failure::io("FTP connection", &profile.host, error).retryable();
         Failure::new(message, retryable)
     })?;
     socket
@@ -54,7 +54,7 @@ pub fn connect_typed(
         RemoteProtocol::Ftp => {
             let mut stream = FtpStream::connect_with_stream(socket).map_err(|error| {
                 let message = format!("FTP connection failed: {error}");
-                let retryable = ftp_failure(error).retryable;
+                let retryable = ftp_failure(error).retryable();
                 Failure::new(message, retryable)
             })?;
             stream = stream.passive_stream_builder(connect_data_socket);
@@ -63,7 +63,7 @@ pub fn connect_typed(
             }
             stream.login(&username, &password).map_err(|error| {
                 let message = format!("FTP login failed: {error}");
-                let retryable = ftp_failure(error).retryable;
+                let retryable = ftp_failure(error).retryable();
                 Failure::new(message, retryable)
             })?;
             FtpClient::Plain(stream)
@@ -71,7 +71,7 @@ pub fn connect_typed(
         RemoteProtocol::Ftps => {
             let mut stream = NativeTlsFtpStream::connect_with_stream(socket).map_err(|error| {
                 let message = format!("FTPS connection failed: {error}");
-                let retryable = ftp_failure(error).retryable;
+                let retryable = ftp_failure(error).retryable();
                 Failure::new(message, retryable)
             })?;
             stream = stream.passive_stream_builder(connect_data_socket);
@@ -88,7 +88,7 @@ pub fn connect_typed(
                 })?;
             stream.login(&username, &password).map_err(|error| {
                 let message = format!("FTPS login failed: {error}");
-                let retryable = ftp_failure(error).retryable;
+                let retryable = ftp_failure(error).retryable();
                 Failure::new(message, retryable)
             })?;
             FtpClient::Tls(stream)
@@ -415,7 +415,7 @@ fn first_socket_addr_typed(profile: &RemoteProfile) -> Result<SocketAddr, Failur
                 "Could not resolve {}:{}: {error}",
                 profile.host, profile.port
             );
-            let retryable = Failure::io("Resolve host", &profile.host, error).retryable;
+            let retryable = Failure::io("Resolve host", &profile.host, error).retryable();
             Failure::new(message, retryable)
         })?
         .next()
@@ -496,7 +496,7 @@ mod tests {
                     body: b"test response".to_vec(),
                 },
             ));
-            assert_eq!(error.retryable, retryable, "{code}");
+            assert_eq!(error.retryable(), retryable, "{code}");
         }
     }
 

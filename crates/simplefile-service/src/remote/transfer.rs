@@ -227,7 +227,7 @@ impl RetryPasses {
     }
     fn failed(&mut self, error: Failure) -> Result<Duration, String> {
         let first = self.first.get_or_insert_with(|| error.to_string()).clone();
-        let retryable = error.retryable;
+        let retryable = error.retryable();
         match self.retry.failed(error) {
             Ok(delay) => Ok(delay),
             Err(last) if retryable && self.pass < self.policy.high_level_retry_limit() => {

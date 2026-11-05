@@ -5,36 +5,111 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+/// How a failure should be treated by retry loops, the coordinator and the UI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureKind {
+    /// Not worth retrying; the file is reported and the rest of the job continues.
+    Permanent,
+    /// Transient I/O; bounded low-level retries, and one high-level retry pass later.
+    Retryable,
+    /// Another process holds the file (sharing/lock violation): a few quick retries,
+    /// never counted as evidence of transport contention.
+    Busy,
+    /// The destination already exists (or has a different type); needs a user decision.
+    Conflict,
+    /// The user cancelled the operation.
+    Cancelled,
+}
+
+impl FailureKind {
+    pub fn is_retryable(self) -> bool {
+        matches!(self, Self::Retryable | Self::Busy)
+    }
+}
+
+/// Attempts allowed for a `Busy` failure before it is reported.
+pub const BUSY_ATTEMPTS: u32 = 3;
+pub const CANCELLED_MESSAGE: &str = "Operation cancelled";
+pub const CONFLICT_PREFIX: &str = "CONFLICT:";
+/// Legacy marker used by resource errors that should be retried at a higher level.
+pub const RETRYABLE_PREFIX: &str = "RETRYABLE:";
+
 #[derive(Clone, Debug)]
 pub struct Failure {
     pub message: String,
-    pub retryable: bool,
+    pub kind: FailureKind,
 }
 
 impl Failure {
     pub fn new(message: impl Into<String>, retryable: bool) -> Self {
-        Self {
-            message: message.into(),
-            retryable,
+        Self::with_kind(
+            message,
+            if retryable {
+                FailureKind::Retryable
+            } else {
+                FailureKind::Permanent
+            },
+        )
+    }
+
+    pub fn with_kind(message: impl Into<String>, kind: FailureKind) -> Self {
+        let message = message.into();
+        if let Some(rest) = message.strip_prefix(RETRYABLE_PREFIX) {
+            return Self {
+                message: rest.trim().to_string(),
+                kind: FailureKind::Retryable,
+            };
         }
+        let kind = if kind == FailureKind::Permanent && message.starts_with(CONFLICT_PREFIX) {
+            FailureKind::Conflict
+        } else if kind == FailureKind::Permanent && message == CANCELLED_MESSAGE {
+            FailureKind::Cancelled
+        } else {
+            kind
+        };
+        Self { message, kind }
+    }
+
+    pub fn cancelled() -> Self {
+        Self::with_kind(CANCELLED_MESSAGE, FailureKind::Cancelled)
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let message = if message.starts_with(CONFLICT_PREFIX) {
+            message
+        } else {
+            format!("{CONFLICT_PREFIX} {message}")
+        };
+        Self::with_kind(message, FailureKind::Conflict)
     }
 
     pub fn io(phase: &str, path: impl AsRef<Path>, error: io::Error) -> Self {
-        let retryable = error
+        let kind = error
             .get_ref()
             .and_then(|e| e.downcast_ref::<Self>())
-            .map_or_else(|| transient_io(&error), |e| e.retryable);
-        Self::new(
+            .map_or_else(|| classify_io(&error), |e| e.kind);
+        Self::with_kind(
             format!("{phase} [{}]: {error}", path.as_ref().display()),
-            retryable,
+            kind,
         )
     }
 
     pub fn context(self, phase: &str, path: &str) -> Self {
-        Self::new(
-            format!("{phase} [{path}]: {}", self.message),
-            self.retryable,
-        )
+        Self::with_kind(format!("{phase} [{path}]: {}", self.message), self.kind)
+    }
+
+    /// Kept for call sites that only distinguish "try again" from "give up".
+    pub fn retryable(&self) -> bool {
+        self.kind.is_retryable()
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.kind == FailureKind::Cancelled
+    }
+
+    pub fn is_conflict(&self) -> bool {
+        self.kind == FailureKind::Conflict
     }
 }
 
@@ -46,17 +121,32 @@ impl fmt::Display for Failure {
 impl std::error::Error for Failure {}
 impl From<String> for Failure {
     fn from(message: String) -> Self {
-        Self::new(message, false)
+        Self::with_kind(message, FailureKind::Permanent)
     }
 }
 impl From<&str> for Failure {
     fn from(message: &str) -> Self {
-        Self::new(message, false)
+        Self::with_kind(message, FailureKind::Permanent)
     }
 }
 impl From<Failure> for String {
     fn from(error: Failure) -> Self {
         error.message
+    }
+}
+
+fn classify_io(error: &io::Error) -> FailureKind {
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(), Some(32 | 33)) {
+        return FailureKind::Busy;
+    }
+    if error.kind() == io::ErrorKind::AlreadyExists {
+        return FailureKind::Conflict;
+    }
+    if transient_io(error) {
+        FailureKind::Retryable
+    } else {
+        FailureKind::Permanent
     }
 }
 
@@ -78,7 +168,7 @@ fn transient_io(error: &io::Error) -> bool {
     #[cfg(windows)]
     if matches!(
         error.raw_os_error(),
-        Some(21 | 32 | 33 | 54 | 64 | 121 | 170 | 995 | 1117 | 1231 | 1450 | 1453)
+        Some(21 | 54 | 64 | 121 | 170 | 995 | 1117 | 1231 | 1450 | 1453)
     ) {
         return true;
     }
@@ -121,19 +211,31 @@ impl Retry {
         Self::with_limits(policy.low_level_retry_limit(), policy.retry_sleep())
     }
 
-    pub fn failed(&mut self, error: Failure) -> Result<Duration, String> {
+    /// Returns the delay before the next attempt, or the failure to report. The
+    /// returned failure keeps the kind of the last attempt, so a conflict or a
+    /// cancellation that follows a transient error is still recognised as one.
+    pub fn failed_with(&mut self, error: Failure) -> Result<Duration, Failure> {
         self.failures += 1;
-        let first = self.first.get_or_insert_with(|| error.clone());
+        let first = self.first.get_or_insert_with(|| error.clone()).clone();
         log::warn!("Transfer attempt {}: {}", self.failures, error);
-        if !error.retryable || self.failures >= self.max_attempts {
-            return Err(if self.failures == 1 {
-                first.to_string()
+        let limit = if error.kind == FailureKind::Busy {
+            BUSY_ATTEMPTS.min(self.max_attempts)
+        } else {
+            self.max_attempts
+        };
+        if !error.kind.is_retryable() || self.failures >= limit {
+            let kind = error.kind;
+            let message = if self.failures == 1
+                || matches!(kind, FailureKind::Conflict | FailureKind::Cancelled)
+            {
+                error.message
             } else {
                 format!(
                     "{}; after {} attempts, last failure: {}",
                     first, self.failures, error
                 )
-            });
+            };
+            return Err(Failure::with_kind(message, kind));
         }
         let shift = (self.failures - 1).min(4);
         let factor = 1u32 << shift;
@@ -141,6 +243,10 @@ impl Retry {
             .base_sleep
             .saturating_mul(factor)
             .min(Duration::from_secs(60)))
+    }
+
+    pub fn failed(&mut self, error: Failure) -> Result<Duration, String> {
+        self.failed_with(error).map_err(|failure| failure.message)
     }
 }
 
@@ -172,14 +278,60 @@ mod tests {
             ))
             .is_ok());
         let error = retry
-            .failed(Failure::io(
+            .failed_with(Failure::io(
                 "Create temporary destination",
                 "partial",
-                io::Error::from(io::ErrorKind::AlreadyExists),
+                io::Error::from(io::ErrorKind::PermissionDenied),
             ))
             .unwrap_err();
-        assert!(error.starts_with("Read source [cloud.jpg]"));
-        assert!(error.contains("last failure: Create temporary destination [partial]"));
+        assert_eq!(error.kind, FailureKind::Permanent);
+        assert!(error.message.starts_with("Read source [cloud.jpg]"));
+        assert!(error
+            .message
+            .contains("last failure: Create temporary destination [partial]"));
+    }
+
+    #[test]
+    fn conflicts_and_cancellation_keep_their_kind_and_message_after_retries() {
+        let mut retry = Retry::default();
+        assert!(retry.failed_with(Failure::new("timeout", true)).is_ok());
+        let conflict = retry
+            .failed_with(Failure::conflict("destination already exists: x"))
+            .unwrap_err();
+        assert_eq!(conflict.kind, FailureKind::Conflict);
+        assert_eq!(conflict.message, "CONFLICT: destination already exists: x");
+        assert!(conflict.message.starts_with(CONFLICT_PREFIX));
+        let mut retry = Retry::default();
+        assert!(retry.failed_with(Failure::new("timeout", true)).is_ok());
+        let cancelled = retry.failed_with(Failure::cancelled()).unwrap_err();
+        assert_eq!(cancelled.kind, FailureKind::Cancelled);
+        assert_eq!(cancelled.message, CANCELLED_MESSAGE);
+    }
+
+    #[test]
+    fn busy_failures_get_three_attempts_and_stay_busy() {
+        let mut retry = Retry::with_limits(10, Duration::from_millis(10));
+        let busy = || Failure::with_kind("sharing violation", FailureKind::Busy);
+        assert!(retry.failed_with(busy()).is_ok());
+        assert!(retry.failed_with(busy()).is_ok());
+        let reported = retry.failed_with(busy()).unwrap_err();
+        assert_eq!(reported.kind, FailureKind::Busy);
+        assert!(reported.message.contains("after 3 attempts"));
+    }
+
+    #[test]
+    fn message_prefixes_select_kinds() {
+        assert_eq!(
+            Failure::from("CONFLICT: destination already exists: y").kind,
+            FailureKind::Conflict
+        );
+        assert_eq!(
+            Failure::from(CANCELLED_MESSAGE.to_string()).kind,
+            FailureKind::Cancelled
+        );
+        assert_eq!(Failure::from("boom").kind, FailureKind::Permanent);
+        assert!(Failure::new("x", true).retryable());
+        assert!(!Failure::new("x", false).retryable());
     }
     #[test]
     fn retry_is_bounded_and_permanent_errors_fail_immediately() {

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct FileIdentity(u64, u64);
+pub(crate) struct FileIdentity(pub(crate) u64, pub(crate) u64);
 
 pub(crate) fn file_identity(path: &Path) -> Result<FileIdentity, String> {
     #[cfg(windows)]
@@ -185,16 +185,47 @@ pub(crate) fn capture_source_version_for_path(path: &Path) -> Result<SourceVersi
         });
     }
 
-    let mut file = fs::File::open(path)
-        .map_err(|e| format!("Failed to open source [{}]: {e}", path.display()))?;
+    let file = open_source_for_verification(path)?;
     let file_meta = file
         .metadata()
         .map_err(|e| format!("Failed to stat opened source [{}]: {e}", path.display()))?;
-    let content_hash = Some(hash_file_contents(&mut file)?);
-    Ok(capture_source_version_from_open_file(
-        &file,
-        &file_meta,
-        content_hash,
+    Ok(capture_source_version_from_open_file(&file, &file_meta, None))
+}
+
+/// Like `capture_source_version_for_path`, with a SHA-256 of a regular file's
+/// content so a later verification can detect same-size, same-time rewrites.
+#[allow(dead_code)]
+pub(crate) fn capture_source_version_for_path_hashed(path: &Path) -> Result<SourceVersion, String> {
+    let mut version = capture_source_version_for_path(path)?;
+    if !version.is_symlink && !version.is_dir {
+        let mut file = fs::File::open(path)
+            .map_err(|e| format!("Failed to open source [{}]: {e}", path.display()))?;
+        version.content_hash = Some(hash_file_contents(&mut file)?);
+    }
+    Ok(version)
+}
+
+/// A sibling name that does not exist yet, for swapping a destination aside.
+pub(crate) fn unique_backup_path(final_path: &Path) -> Result<PathBuf, String> {
+    let parent = final_path
+        .parent()
+        .ok_or_else(|| "Cannot get destination directory".to_string())?;
+    let file_name = final_path
+        .file_name()
+        .ok_or_else(|| "Cannot get destination file name".to_string())?
+        .to_string_lossy();
+    let process_id = std::process::id();
+    for index in 0..10_000u32 {
+        let candidate = parent.join(format!(
+            ".{file_name}.{process_id}.{index}.sumafile-replace-backup"
+        ));
+        if !path_exists_no_follow(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err(format!(
+        "Could not choose replacement backup path for {}",
+        final_path.to_string_lossy()
     ))
 }
 
@@ -476,9 +507,13 @@ pub(crate) fn delete_verified_source(path: &Path, expected: &SourceVersion) -> R
     }
 }
 
+/// `failed_sources` are files or directories reported as failed for this
+/// operation; a source directory that stays because one of them lives in it is
+/// not a second error.
 pub(crate) fn delete_verified_source_tree(
     root: &Path,
     manifest: &TreeCopyManifest,
+    failed_sources: &[PathBuf],
 ) -> Result<(), String> {
     let mut errors = Vec::new();
     manifest.files.visit(|file_path, expected| {
@@ -495,6 +530,12 @@ pub(crate) fn delete_verified_source_tree(
     }
     for (dir_path, version) in manifest.source_dirs.iter().rev() {
         if let Err(error) = delete_verified_source(dir_path, version) {
+            let explained = failed_sources
+                .iter()
+                .any(|failed| failed.starts_with(dir_path));
+            if explained {
+                continue;
+            }
             errors.push(format!(
                 "Source directory retained [{}]: {error}",
                 dir_path.display()
@@ -1098,7 +1139,7 @@ mod tests {
         let new_file = nested_dir.join("uncopied.txt");
         fs::write(&new_file, b"must-not-be-lost").unwrap();
 
-        let err = delete_verified_source_tree(&src_dir, &manifest)
+        let err = delete_verified_source_tree(&src_dir, &manifest, &[])
             .expect_err("tree with new uncopied file must report partial move");
         assert!(err.contains("retained"), "unexpected error: {err}");
         assert!(!copied_file.exists(), "verified copied file is deleted");

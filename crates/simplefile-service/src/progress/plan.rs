@@ -1,14 +1,15 @@
 //! Transfer destination planning and preflight sizing.
 
+use super::parallel::ConflictAction;
 use super::reporting::check_cancelled;
 use crate::transfer_staging::conflict_for_existing_destination;
 use simplefile_core::path_conflict::{
-    is_keep_both_action, path_collision_key, path_exists_no_follow, paths_refer_to_same_entry,
+    path_collision_key, path_exists_no_follow, paths_refer_to_same_entry,
 };
 use simplefile_core::utils::{
     is_network_path, validate_existing_path_no_resolve, validate_path_no_follow,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -18,11 +19,13 @@ use std::sync::Arc;
 pub(crate) struct TransferPlan {
     pub(crate) source_path: PathBuf,
     pub(crate) final_dest: PathBuf,
-    pub(crate) replace_existing: bool,
-    pub(crate) allow_rename: bool,
+    /// How an existing destination is handled for this item and, for a
+    /// directory merged into an existing one, for each of its children.
+    pub(crate) conflict: ConflictAction,
     pub(crate) network: bool,
     pub(crate) file_count: u64,
-    pub(crate) is_regular_file: bool,
+    pub(crate) is_dir: bool,
+    pub(crate) is_symlink: bool,
     pub(crate) byte_size: u64,
 }
 
@@ -30,19 +33,52 @@ pub(crate) struct TransferPlan {
 pub(crate) struct TransferEstimate {
     pub(crate) bytes: u64,
     pub(crate) files: u64,
-    pub(crate) is_regular_file: bool,
 }
 
-pub(crate) fn ensure_not_copying_dir_into_itself(
-    source_path: &Path,
-    final_dest: &Path,
-) -> Result<(), String> {
-    let source_meta = fs::symlink_metadata(source_path)
-        .map_err(|error| format!("Failed to stat source: {error}"))?;
-    if !source_meta.file_type().is_dir() {
-        return Ok(());
-    }
+/// `is_network_path` queries the volume for every call; a selection of
+/// thousands of items on one drive needs the answer once per drive root.
+#[derive(Default)]
+pub(crate) struct VolumeKindCache {
+    network: HashMap<String, bool>,
+}
 
+impl VolumeKindCache {
+    pub(crate) fn is_network(&mut self, path: &Path) -> bool {
+        let key = volume_key(path);
+        if let Some(known) = self.network.get(&key) {
+            return *known;
+        }
+        let value = is_network_path(path);
+        self.network.insert(key, value);
+        value
+    }
+}
+
+/// Drive root (`C:`) or UNC share (`\\server\share`) that identifies a volume.
+pub(crate) fn volume_key(path: &Path) -> String {
+    let raw = path.to_string_lossy().replace('/', "\\");
+    let trimmed = raw.trim_start_matches("\\\\?\\");
+    let trimmed = trimmed.strip_prefix("UNC\\").map_or_else(
+        || trimmed.to_string(),
+        |rest| format!("\\\\{rest}"),
+    );
+    if let Some(rest) = trimmed.strip_prefix("\\\\") {
+        let parts: Vec<&str> = rest.split('\\').filter(|s| !s.is_empty()).take(2).collect();
+        return format!("\\\\{}", parts.join("\\")).to_lowercase();
+    }
+    let bytes = trimmed.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        return trimmed[..2].to_ascii_lowercase();
+    }
+    trimmed.to_lowercase()
+}
+
+/// Whether a move between these paths can be a rename (same volume prefix).
+pub(crate) fn same_volume(source: &Path, destination: &Path) -> bool {
+    source.components().next() == destination.components().next()
+}
+
+fn ensure_dir_not_inside_itself(source_path: &Path, final_dest: &Path) -> Result<(), String> {
     if let Ok(canonical_source) = source_path.canonicalize() {
         let canonical_dest = final_dest
             .parent()
@@ -92,52 +128,99 @@ pub(crate) fn unique_destination_path(
     ))
 }
 
+/// Decide where a top-level item goes. Directories merge into an existing
+/// destination directory and carry the action down to their children; files
+/// resolve against the existing entry here.
 pub(crate) fn resolve_destination(
     source_path: &Path,
+    source_is_dir: bool,
     dest_dir: &Path,
     conflict_action: &str,
     planned_destinations: &HashSet<String>,
-) -> Result<Option<(PathBuf, bool)>, String> {
+) -> Result<Option<(PathBuf, ConflictAction)>, String> {
+    let action = ConflictAction::parse(conflict_action);
     let file_name = source_path
         .file_name()
         .ok_or_else(|| "Cannot get file name".to_string())?;
     let final_dest = dest_dir.join(file_name);
     let final_key = path_collision_key(&final_dest);
-    let exists = path_exists_no_follow(&final_dest);
+    let existing = fs::symlink_metadata(&final_dest).ok();
     let planned_conflict = planned_destinations.contains(&final_key);
 
-    if !exists && !planned_conflict {
-        let replace_existing = conflict_action.eq_ignore_ascii_case("replace");
-        return Ok(Some((final_dest, replace_existing)));
+    if existing.is_none() && !planned_conflict {
+        return Ok(Some((final_dest, action)));
+    }
+    let existing_is_dir = existing
+        .as_ref()
+        .is_some_and(|meta| meta.file_type().is_dir() && !meta.file_type().is_symlink());
+
+    if planned_conflict {
+        return match action {
+            ConflictAction::KeepBoth => Ok(Some((
+                unique_destination_path(dest_dir, file_name, planned_destinations)?,
+                action,
+            ))),
+            ConflictAction::Skip => Ok(None),
+            _ => Err(format!(
+                "CONFLICT: multiple sources would replace the same destination: {}",
+                final_dest.to_string_lossy()
+            )),
+        };
     }
 
-    match conflict_action.to_ascii_lowercase().as_str() {
-        "skip" => Ok(None),
-        "replace" => {
-            if planned_conflict {
-                return Err(format!(
-                    "CONFLICT: multiple sources would replace the same destination: {}",
-                    final_dest.to_string_lossy()
-                ));
-            }
-            if exists && paths_refer_to_same_entry(source_path, &final_dest) {
+    if source_is_dir && existing_is_dir && action != ConflictAction::KeepBoth {
+        // Merge; each child resolves its own conflict with the same action.
+        return Ok(Some((final_dest, action)));
+    }
+    if source_is_dir != existing_is_dir && action == ConflictAction::Replace {
+        return Err(format!(
+            "CONFLICT: destination exists with a different type: {}",
+            final_dest.to_string_lossy()
+        ));
+    }
+
+    match action {
+        ConflictAction::Skip => Ok(None),
+        ConflictAction::Replace => {
+            if paths_refer_to_same_entry(source_path, &final_dest) {
                 return Ok(None);
             }
-            Ok(Some((final_dest, true)))
+            Ok(Some((final_dest, action)))
         }
-        "rename" | "keep-both" | "keep_both" => Ok(Some((
+        ConflictAction::KeepBoth => Ok(Some((
             unique_destination_path(dest_dir, file_name, planned_destinations)?,
-            false,
+            action,
         ))),
-        _ => Err(conflict_for_existing_destination(&final_dest)),
+        ConflictAction::Error => Err(conflict_for_existing_destination(&final_dest)),
     }
 }
+
+/// A top-level item that cannot be planned because of what exists at its
+/// destination: `(source, destination, message)`.
+pub(crate) type PlanConflict = (PathBuf, PathBuf, String);
 
 pub(crate) fn prepare_transfer_inputs(
     sources: Vec<String>,
     destination: String,
     conflict_action: &str,
 ) -> Result<(Vec<TransferPlan>, PathBuf), String> {
+    let mut volumes = VolumeKindCache::default();
+    let (plans, dest_path, conflicts) =
+        prepare_transfer_inputs_cached(sources, destination, conflict_action, &mut volumes)?;
+    if let Some((_, _, message)) = conflicts.into_iter().next() {
+        return Err(message);
+    }
+    Ok((plans, dest_path))
+}
+
+/// Plans every source that can be planned; conflicts are returned per item so
+/// the rest of the selection proceeds and the user resolves them individually.
+pub(crate) fn prepare_transfer_inputs_cached(
+    sources: Vec<String>,
+    destination: String,
+    conflict_action: &str,
+    volumes: &mut VolumeKindCache,
+) -> Result<(Vec<TransferPlan>, PathBuf, Vec<PlanConflict>), String> {
     if sources.is_empty() {
         return Err("No sources specified".to_string());
     }
@@ -148,95 +231,59 @@ pub(crate) fn prepare_transfer_inputs(
     }
 
     crate::transfer_journal::recover_directory(&dest_path)?;
+    let dest_network = volumes.is_network(&dest_path);
     let mut plans = Vec::with_capacity(sources.len());
     let mut planned_destinations = HashSet::new();
-    let keep_both = is_keep_both_action(conflict_action);
+    let mut conflicts = Vec::new();
 
     for source in sources {
         let source_path = validate_path_no_follow(&source)?;
-        let Some((final_dest, replace_existing)) = resolve_destination(
+        let meta = fs::symlink_metadata(&source_path)
+            .map_err(|error| format!("Failed to stat {}: {error}", source_path.display()))?;
+        let file_type = meta.file_type();
+        let is_symlink = file_type.is_symlink();
+        let is_dir = file_type.is_dir() && !is_symlink;
+        let is_regular_file = file_type.is_file() && !is_symlink;
+        let resolved = match resolve_destination(
             &source_path,
+            is_dir,
             &dest_path,
             conflict_action,
             &planned_destinations,
-        )?
-        else {
+        ) {
+            Ok(resolved) => resolved,
+            Err(message) if message.starts_with("CONFLICT:") => {
+                let name = source_path.file_name().unwrap_or_default();
+                conflicts.push((source_path.clone(), dest_path.join(name), message));
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let Some((final_dest, conflict)) = resolved else {
             continue;
         };
 
-        ensure_not_copying_dir_into_itself(&source_path, &final_dest)?;
-        let network = is_network_path(&source_path) || is_network_path(&dest_path);
+        if is_dir {
+            ensure_dir_not_inside_itself(&source_path, &final_dest)?;
+        }
+        let network = dest_network || volumes.is_network(&source_path);
         planned_destinations.insert(path_collision_key(&final_dest));
         plans.push(TransferPlan {
             source_path,
             final_dest,
-            replace_existing,
-            allow_rename: !keep_both,
+            conflict,
             network,
-            file_count: 0,
-            is_regular_file: false,
-            byte_size: 0,
+            file_count: if is_dir { 0 } else { 1 },
+            is_dir,
+            is_symlink,
+            byte_size: if is_regular_file { meta.len() } else { 0 },
         });
     }
 
-    Ok((plans, dest_path))
+    Ok((plans, dest_path, conflicts))
 }
 
-pub(crate) fn ensure_destination_available(plan: &TransferPlan) -> Result<(), String> {
-    if !plan.replace_existing && path_exists_no_follow(&plan.final_dest) {
-        return Err(conflict_for_existing_destination(&plan.final_dest));
-    }
-    Ok(())
-}
-
-pub(crate) fn choose_next_keep_both_destination(
-    plan: &mut TransferPlan,
-    reserved_destinations: &mut HashSet<String>,
-) -> Result<(), String> {
-    reserved_destinations.remove(&path_collision_key(&plan.final_dest));
-    let dest_dir = plan
-        .final_dest
-        .parent()
-        .ok_or_else(|| "Cannot get destination directory".to_string())?;
-    let file_name = plan
-        .source_path
-        .file_name()
-        .ok_or_else(|| "Cannot get file name".to_string())?;
-    let next_dest = unique_destination_path(dest_dir, file_name, reserved_destinations)?;
-    ensure_not_copying_dir_into_itself(&plan.source_path, &next_dest)?;
-    reserved_destinations.insert(path_collision_key(&next_dest));
-    plan.final_dest = next_dest;
-    Ok(())
-}
-
-pub(crate) fn prime_path_transfer(
-    path: &Path,
-    cancel: &Arc<AtomicBool>,
-) -> Result<TransferEstimate, String> {
-    check_cancelled(cancel)?;
-    let meta = fs::symlink_metadata(path)
-        .map_err(|error| format!("Failed to stat {}: {error}", path.display()))?;
-    let file_type = meta.file_type();
-    if file_type.is_symlink() {
-        return Ok(TransferEstimate {
-            bytes: 0,
-            files: 1,
-            is_regular_file: false,
-        });
-    }
-    if file_type.is_file() {
-        return Ok(TransferEstimate {
-            bytes: meta.len(),
-            files: 1,
-            is_regular_file: true,
-        });
-    }
-    if !file_type.is_dir() {
-        return Ok(TransferEstimate::default());
-    }
-    Ok(TransferEstimate::default())
-}
-
+/// Sizes were captured while planning; this only sums them (and honours cancel).
 pub(crate) fn prime_transfer(
     plans: &mut [TransferPlan],
     cancel: &Arc<AtomicBool>,
@@ -244,12 +291,8 @@ pub(crate) fn prime_transfer(
     let mut total = TransferEstimate::default();
     for plan in plans {
         check_cancelled(cancel)?;
-        let estimate = prime_path_transfer(&plan.source_path, cancel)?;
-        plan.file_count = estimate.files;
-        plan.is_regular_file = estimate.is_regular_file;
-        plan.byte_size = estimate.bytes;
-        total.bytes = total.bytes.saturating_add(estimate.bytes);
-        total.files = total.files.saturating_add(estimate.files);
+        total.bytes = total.bytes.saturating_add(plan.byte_size);
+        total.files = total.files.saturating_add(plan.file_count);
     }
     Ok(total)
 }
