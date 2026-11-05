@@ -153,5 +153,6 @@ jobs:
             dist/winui/SumaFile_*_x64-winui.msi
             dist/winui/latest-winui.json
             test-results/ui-smoke/**/report.json
+            test-results/ui-smoke/**/progress.json
           if-no-files-found: warn
           retention-days: 14

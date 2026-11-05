@@ -6,6 +6,7 @@ param(
     [switch]$Baseline,
     [ValidateRange(1000, 3840)]
     [int]$MaxWindowWidth = 3840,
+    [ValidateRange(1, 7200)]
     [int]$TimeoutSeconds = 600
 )
 $ErrorActionPreference = 'Stop'
@@ -50,7 +51,14 @@ $start.EnvironmentVariables['SIMPLEFILE_APP_DATA_DIR'] = Join-Path $testRoot 'st
 $start.EnvironmentVariables['SIMPLEFILE_METADATA_DB'] = Join-Path $testRoot 'state\metadata.db'
 $process = [System.Diagnostics.Process]::Start($start)
 try {
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) { throw "UI smoke timed out. Evidence: $testRoot" }
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        $progressPath = Join-Path $testRoot 'progress.json'
+        if (Test-Path -LiteralPath $progressPath) {
+            Write-Host 'Last UI smoke checkpoint (completed scenarios and active stage):'
+            Get-Content -LiteralPath $progressPath -Raw | Write-Host
+        }
+        throw "UI smoke timed out. Evidence: $testRoot"
+    }
     $reportPath = Join-Path $testRoot 'report.json'
     if (-not (Test-Path -LiteralPath $reportPath)) { throw "App exited ($($process.ExitCode)) without a report. Evidence: $testRoot" }
     $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
