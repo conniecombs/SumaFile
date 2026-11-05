@@ -2174,17 +2174,15 @@ mod tests {
         assert!(version.content_hash.is_none());
         assert_eq!(fs::read(&dst_overlapped).unwrap(), payload);
 
-        let src_file = fs::File::open(&src).unwrap();
         let mut dst_file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&dst_multistream)
             .unwrap();
         let copied = super::super::execute::copy_file_multistream(
-            &src_file,
-            &mut dst_file,
             &src,
             &dst_multistream,
+            &mut dst_file,
             &ctx,
             0,
             payload.len() as u64,
@@ -2201,10 +2199,9 @@ mod tests {
                 .open(&dst_multistream)
                 .unwrap();
             let error = super::super::execute::copy_file_multistream(
-                &src_file,
-                &mut broken_destination,
                 &src,
                 &dst_multistream,
+                &mut broken_destination,
                 &ctx,
                 0,
                 payload.len() as u64 * 2,

@@ -12,6 +12,9 @@ const HISTORY_KEY: &str = "transfer.learning.v1";
 const MAX_HISTORY: usize = 64;
 const MAX_AGE: u64 = 30 * 24 * 60 * 60;
 static HISTORY_LOCK: Mutex<()> = Mutex::new(());
+/// Qualified samples (each at least five saturated seconds) to hold a setting
+/// after a halving or a revert before probing again.
+const COOLDOWN_SAMPLES: usize = 2;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -79,9 +82,12 @@ impl Default for Policy {
             max_backlog: 10_000,
             order_by: OrderBy::Default,
             buffer_size_kib: 4096,
-            memory_budget_mb: 192,
+            // Sixteen files x (three 4 MiB pipeline slots + scratch) fits.
+            memory_budget_mb: 256,
             multi_thread_cutoff_mib: 64,
-            multi_thread_streams: 4,
+            // Opt-in: independent byte ranges help only on local fixed disks
+            // that a single stream cannot saturate.
+            multi_thread_streams: 0,
             check_mode: CheckMode::SizeAndModTime,
             inplace: false,
             preallocate: true,
@@ -158,18 +164,17 @@ impl Policy {
         self.memory_budget_mb.clamp(16, 512) * 1024 * 1024
     }
 
+    /// Buffers charged per file when sizing the concurrency limit: the
+    /// three-slot pipeline. Multistream files charge their actual stripe count
+    /// at reservation time instead of taxing every file for the largest case.
     pub fn max_buffer_count(&self) -> usize {
-        if cfg!(windows) {
-            self.multi_thread_streams_count().max(3)
-        } else {
-            3
-        }
+        3
     }
 
-    pub fn buffer_count(&self, network: bool, file_len: u64, operation: &str) -> usize {
+    pub fn buffer_count(&self, network: bool, file_len: u64, _operation: &str) -> usize {
         let buffer = self.buffer_bytes(network) as u64;
         if cfg!(windows)
-            && operation == "copy"
+            && !network
             && self.check_mode != CheckMode::Checksum
             && self.multi_thread_streams_count() >= 2
             && file_len >= self.multi_thread_cutoff_bytes()
@@ -357,8 +362,8 @@ impl Controller {
         let concurrency = if policy.mode == Mode::Manual {
             policy.manual_concurrency.clamp(1, limit)
         } else if let Some(remembered) = remembered {
-            let cap = if small_file_burst { 16 } else { 8 };
-            remembered.min(cap).clamp(1, limit)
+            // What worked last time on this route, within the configured ceiling.
+            remembered.clamp(1, limit)
         } else if small_file_burst {
             match policy.mode {
                 Mode::Conservative => 2,
@@ -440,7 +445,7 @@ impl Controller {
             self.previous_rate = None;
             self.probing = false;
             self.learned = false;
-            self.cooldown = 6;
+            self.cooldown = COOLDOWN_SAMPLES;
             self.explanation = "Reduced concurrency after an I/O retry";
             return;
         }
@@ -476,7 +481,7 @@ impl Controller {
                 };
             } else {
                 self.concurrency = self.best_concurrency;
-                self.cooldown = 6;
+                self.cooldown = COOLDOWN_SAMPLES;
                 self.explanation = "Keeping the faster stable setting";
                 self.try_lower = !lower && !self.lower_tested;
             }
@@ -720,6 +725,30 @@ mod tests {
                 assert_eq!(c.concurrency, initial);
             }
         }
+    }
+
+    #[test]
+    fn default_budget_reaches_the_configured_concurrency_and_busy_retries_are_ignored() {
+        let policy = Policy::default();
+        assert_eq!(policy.multi_thread_streams, 0, "multistream is opt-in");
+        assert!(
+            policy.limit(policy.buffer_bytes(false)) >= policy.max_concurrency,
+            "defaults must allow max_concurrency, got {}",
+            policy.limit(policy.buffer_bytes(false))
+        );
+        // A remembered value is bounded by the configured ceiling, not by 8.
+        let c = Controller::new(policy.clone(), 4 << 20, Some(12));
+        assert_eq!(c.concurrency, 12);
+        // Halving holds for a short cooldown, then probing resumes.
+        let mut c = Controller::new(policy, 4 << 20, Some(8));
+        c.sample(0, Duration::from_millis(1), false, 1);
+        assert_eq!(c.concurrency, 4);
+        for _ in 0..COOLDOWN_SAMPLES {
+            observe(&mut c, 1000);
+            assert_eq!(c.concurrency, 4);
+        }
+        observe(&mut c, 1000);
+        assert!(c.concurrency > 4, "probing resumes after the cooldown");
     }
 
     #[test]

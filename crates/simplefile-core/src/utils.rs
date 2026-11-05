@@ -214,6 +214,46 @@ pub fn is_network_path(path: &Path) -> bool {
     false
 }
 
+/// True only for a drive letter that Windows reports as a fixed disk and whose
+/// filesystem is not a virtual/cloud mount. UNC paths, removable, remote and
+/// unknown volumes are false, so callers fall back to sequential I/O.
+pub fn is_local_fixed_volume(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use winapi::um::fileapi::GetDriveTypeW;
+        use winapi::um::winbase::DRIVE_FIXED;
+
+        let raw = path.to_string_lossy();
+        let trimmed = raw.trim().trim_start_matches("\\\\?\\");
+        let bytes = trimmed.as_bytes();
+        if bytes.len() < 2 || bytes[1] != b':' {
+            return false;
+        }
+        let letter = bytes[0].to_ascii_uppercase() as char;
+        if !letter.is_ascii_alphabetic() {
+            return false;
+        }
+        let root = format!("{letter}:\\");
+        let wide: Vec<u16> = std::ffi::OsStr::new(&root)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let drive_type = unsafe { GetDriveTypeW(wide.as_ptr()) };
+        if drive_type != DRIVE_FIXED {
+            return false;
+        }
+        return !windows_volume_file_system(&wide)
+            .as_deref()
+            .is_some_and(is_remote_like_file_system);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
+}
+
 #[cfg(windows)]
 fn windows_volume_file_system(wide_root: &[u16]) -> Option<String> {
     use std::ptr::null_mut;

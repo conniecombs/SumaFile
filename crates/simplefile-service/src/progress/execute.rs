@@ -4,7 +4,7 @@ use super::parallel::ConflictAction;
 use super::reporting::{CopyContext, PROGRESS_BYTE_STEP};
 use super::resources::PooledBuffer;
 use super::tuning::CheckMode;
-use crate::transfer_reliability::{Failure, Retry};
+use crate::transfer_reliability::{Failure, FailureKind, Retry};
 use crate::transfer_staging::{
     capture_source_version_for_path, capture_source_version_from_open_file, cleanup_owned_path,
     conflict_for_existing_destination, existing_file_matches_source_with_mode,
@@ -86,6 +86,7 @@ pub(crate) fn copy_file_attempt(
         src,
         dst,
         None,
+        false,
         ctx,
         completed_bytes,
         buffer_size,
@@ -97,11 +98,15 @@ pub(crate) fn copy_file_attempt(
 
 /// `staged_file` is the destination handle the ownership lease created for this
 /// operation (first attempt). Retries pass `None` and resume the existing partial.
+/// `trusted_prefix` says the partial was written by this process's earlier
+/// attempt on the same lease, so its bytes are resumed without being re-read
+/// from the source; a partial of unknown origin is still compared byte for byte.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn copy_file_attempt_versioned(
     src: &Path,
     dst: &Path,
     staged_file: Option<fs::File>,
+    trusted_prefix: bool,
     ctx: &CopyContext,
     completed_bytes: u64,
     buffer_size: usize,
@@ -161,22 +166,23 @@ pub(crate) fn copy_file_attempt_versioned(
                 }
                 Err(error) => return Err(Failure::io("Inspect temporary destination", dst, error)),
             };
-            if existing > 0 {
+            if existing > 0 && !trusted_prefix {
                 // Resume only a verified prefix. A reused operation ID or a
                 // short write cannot silently splice stale bytes into a move.
                 let mut partial = fs::File::open(dst)
                     .map_err(|e| Failure::io("Inspect resume prefix", dst, e))?;
-                let mut left = [0u8; 64 * 1024];
-                let mut right = [0u8; 64 * 1024];
+                let chunk = crate::transfer_staging::VERIFY_CHUNK;
+                let mut left = PooledBuffer::acquire(chunk);
+                let mut right = PooledBuffer::acquire(chunk);
                 let mut remaining = existing;
                 while remaining > 0 {
                     ctx.progress.check_cancelled()?;
-                    let count = remaining.min(left.len() as u64) as usize;
+                    let count = remaining.min(chunk as u64) as usize;
                     src_file
-                        .read_exact(&mut left[..count])
+                        .read_exact(&mut left.as_mut_slice()[..count])
                         .map_err(|e| Failure::io("Read source prefix", src, e))?;
                     partial
-                        .read_exact(&mut right[..count])
+                        .read_exact(&mut right.as_mut_slice()[..count])
                         .map_err(|e| Failure::io("Read resume prefix", dst, e))?;
                     if left[..count] != right[..count] {
                         return Err(Failure::new(
@@ -186,6 +192,8 @@ pub(crate) fn copy_file_attempt_versioned(
                     }
                     remaining -= count as u64;
                 }
+            }
+            if existing > 0 {
                 src_file
                     .seek(SeekFrom::Start(existing))
                     .map_err(|e| Failure::io("Resume source", src, e))?;
@@ -205,24 +213,31 @@ pub(crate) fn copy_file_attempt_versioned(
     };
 
     let verify_checksum = ctx.policy.check_mode == CheckMode::Checksum;
-    let need_hash = ctx.progress.operation_type != "copy" || verify_checksum;
+    // Size, timestamps and file identity guard the default modes; hashing every
+    // byte (and re-reading the source to check it before a move deletes it) is
+    // what the explicit checksum mode asks for.
+    let need_hash = verify_checksum;
     let mut stream_hasher = ContentHasher::new();
     let remaining = file_len.saturating_sub(resume_from);
     let multi_streams = ctx.policy.multi_thread_streams_count();
     let multi_cutoff = ctx.policy.multi_thread_cutoff_bytes();
 
-    let copied = if cfg!(windows)
+    let multistream_eligible = cfg!(windows)
         && resume_from == 0
         && !need_hash
+        && !ctx.network
         && multi_streams >= 2
         && file_len >= multi_cutoff
         && file_len >= (buffer_size as u64).saturating_mul(2)
-    {
+        // Independent byte ranges only pay off on a local fixed disk; a share
+        // or a cloud mount serves one sequential stream far better.
+        && simplefile_core::utils::is_local_fixed_volume(src)
+        && simplefile_core::utils::is_local_fixed_volume(dst);
+    let copied = if multistream_eligible {
         copy_file_multistream(
-            &src_file,
-            &mut dst_file,
             src,
             dst,
+            &mut dst_file,
             ctx,
             completed_bytes,
             file_len,
@@ -461,14 +476,21 @@ fn copy_file_overlapped_with_hash(
 }
 
 /// Multi-stream parallel byte-range copy (`rclone --multi-thread-streams` style)
-/// for single large files on Windows using positional `seek_read` and `seek_write`.
+/// for single large files on local fixed disks.
+///
+/// Every stripe opens its own source and destination handle: Windows serialises
+/// I/O on a handle opened without `FILE_FLAG_OVERLAPPED`, so sharing one handle
+/// between threads only interleaves offsets without concurrency. The staging
+/// file is preallocated by allocation size and marked sparse for the duration of
+/// the copy so out-of-order stripe writes do not make NTFS zero-fill the gap
+/// between the valid data length and each write; the sparse flag is cleared
+/// again once every byte is written.
 #[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn copy_file_multistream(
-    src_file: &fs::File,
-    dst_file: &mut fs::File,
     src: &Path,
     dst: &Path,
+    dst_file: &mut fs::File,
     ctx: &CopyContext<'_>,
     completed_bytes: u64,
     file_len: u64,
@@ -478,9 +500,8 @@ pub(crate) fn copy_file_multistream(
     use std::os::windows::fs::FileExt;
 
     let stream_count = streams.clamp(1, 16);
-    dst_file
-        .set_len(file_len)
-        .map_err(|e| Failure::io("Preallocate multistream destination", dst, e))?;
+    preallocate_file(dst_file, file_len);
+    let sparse = set_sparse(dst_file, true);
 
     let stripe_cancel = AtomicBool::new(false);
     let copied_atomic = AtomicU64::new(0);
@@ -491,7 +512,6 @@ pub(crate) fn copy_file_multistream(
     let chunk_align = (buffer_size as u64).max(64 * 1024);
     let raw_stripe = file_len.div_ceil(stream_count as u64);
     let aligned_stripe = raw_stripe.div_ceil(chunk_align) * chunk_align;
-    let dst_shared: &fs::File = &*dst_file;
 
     let stripe_res = std::thread::scope(|scope| {
         for idx in 0..stream_count {
@@ -509,12 +529,32 @@ pub(crate) fn copy_file_multistream(
                     let _ = tx.send(Ok(0));
                     return;
                 }
+                let src_handle = match open_source_sequential(src) {
+                    Ok(file) => file,
+                    Err(err) => {
+                        local_cancel.store(true, Ordering::Relaxed);
+                        let _ = tx.send(Err(Failure::io("Open source stripe", src, err)));
+                        return;
+                    }
+                };
+                let dst_handle = match fs::OpenOptions::new().write(true).open(dst) {
+                    Ok(file) => file,
+                    Err(err) => {
+                        local_cancel.store(true, Ordering::Relaxed);
+                        let _ = tx.send(Err(Failure::io(
+                            "Open temporary destination stripe",
+                            dst,
+                            err,
+                        )));
+                        return;
+                    }
+                };
                 let mut buf = PooledBuffer::acquire(buffer_size);
                 let mut offset = start;
                 let mut stripe_copied = 0u64;
                 while offset < end {
                     if cancel.load(Ordering::Relaxed) {
-                        let _ = tx.send(Err(Failure::new("Operation cancelled", false)));
+                        let _ = tx.send(Err(Failure::cancelled()));
                         return;
                     }
                     if local_cancel.load(Ordering::Relaxed) {
@@ -534,7 +574,7 @@ pub(crate) fn copy_file_multistream(
                     }
                     let mut read_total = 0usize;
                     while read_total < requested {
-                        match src_file.seek_read(
+                        match src_handle.seek_read(
                             &mut buf.as_mut_slice()[read_total..requested],
                             offset + read_total as u64,
                         ) {
@@ -559,7 +599,7 @@ pub(crate) fn copy_file_multistream(
                     }
                     let mut written_total = 0usize;
                     while written_total < read_total {
-                        match dst_shared.seek_write(
+                        match dst_handle.seek_write(
                             &buf[written_total..read_total],
                             offset + written_total as u64,
                         ) {
@@ -640,6 +680,9 @@ pub(crate) fn copy_file_multistream(
             return Err(err);
         }
     };
+    if sparse {
+        set_sparse(dst_file, false);
+    }
     ctx.progress.finalizing(
         completed_bytes.saturating_add(copied),
         src.to_string_lossy().into(),
@@ -648,20 +691,56 @@ pub(crate) fn copy_file_multistream(
         let _ = dst_file.set_len(0);
         Failure::new(err, false)
     })?;
-    dst_file.flush().map_err(|e| {
+    if copied != file_len {
         let _ = dst_file.set_len(0);
-        Failure::io("Flush temporary destination", dst, e)
-    })?;
+        return Err(Failure::new(
+            format!("Multistream copy wrote {copied} of {file_len} bytes [{}]", dst.display()),
+            false,
+        ));
+    }
     Ok(copied)
+}
+
+/// Mark or unmark the file sparse. Best effort: a filesystem without sparse
+/// support simply pays the zero-fill cost. Returns whether the flag was set.
+#[cfg(windows)]
+fn set_sparse(file: &fs::File, sparse: bool) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Ioctl::{FILE_SET_SPARSE_BUFFER, FSCTL_SET_SPARSE};
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+
+    let input = FILE_SET_SPARSE_BUFFER {
+        SetSparse: u8::from(sparse),
+    };
+    let mut returned = 0u32;
+    let ok = unsafe {
+        DeviceIoControl(
+            file.as_raw_handle() as _,
+            FSCTL_SET_SPARSE,
+            (&input as *const FILE_SET_SPARSE_BUFFER).cast(),
+            std::mem::size_of::<FILE_SET_SPARSE_BUFFER>() as u32,
+            std::ptr::null_mut(),
+            0,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        log::debug!(
+            "FSCTL_SET_SPARSE({sparse}) not applied: {}",
+            std::io::Error::last_os_error()
+        );
+        return false;
+    }
+    true
 }
 
 #[cfg(not(windows))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn copy_file_multistream(
-    _src_file: &fs::File,
-    _dst_file: &mut fs::File,
     _src: &Path,
     _dst: &Path,
+    _dst_file: &mut fs::File,
     _ctx: &CopyContext<'_>,
     _completed_bytes: u64,
     _file_len: u64,
@@ -904,10 +983,14 @@ pub(crate) fn copy_file_with_progress_versioned(
         let staged_file = lease
             .as_mut()
             .and_then(|owner| owner.take_staged_file());
+        // The lease created the staging file exclusively, so any bytes already
+        // in it came from this operation's previous attempt.
+        let trusted_prefix = retry.failures > 0;
         match copy_file_attempt_versioned(
             src,
             &staged_path,
             staged_file,
+            trusted_prefix,
             ctx,
             *completed_bytes,
             ctx.buffer_size(),
@@ -918,11 +1001,16 @@ pub(crate) fn copy_file_with_progress_versioned(
             Err(error) if error.is_cancelled() => break Err(error),
             Err(error) => {
                 let reason = error.to_string();
+                let transport_retry = error.kind == FailureKind::Retryable;
                 match retry.failed_with(error) {
                     Err(error) => break Err(error),
                     Ok(delay) => {
-                        if let Some(retries) = ctx.progress.retry_count {
-                            retries.fetch_add(1, Ordering::Relaxed);
+                        // A file held open elsewhere says nothing about the
+                        // transport; only transient I/O feeds the tuner.
+                        if transport_retry {
+                            if let Some(retries) = ctx.progress.retry_count {
+                                retries.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                         if let Some(limiter) = ctx.progress.rate_limit {
                             limiter.retrying(delay, &reason);
