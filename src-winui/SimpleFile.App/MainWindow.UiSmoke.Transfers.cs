@@ -15,8 +15,10 @@ namespace SimpleFile.App;
 
 public sealed partial class MainWindow
 {
-    private async Task SmokeAdaptiveTransfersAsync(string root, string manyFiles, List<object> results)
+    private async Task SmokeAdaptiveTransfersAsync(string root, string manyFiles, List<object> results,
+        Func<string, Task> checkpoint)
     {
+        await checkpoint("transfer-options");
         var backend = _workspace!.FileOps!;
         ShowTransferProgressWindow();
         var view = (FrameworkElement)_transferProgressWindow!.Content;
@@ -46,6 +48,7 @@ public sealed partial class MainWindow
         Random.Shared.NextBytes(block);
         for (var i = 0; i < 8; i++) await File.WriteAllBytesAsync(Path.Combine(source, $"image-{i}.bin"), block);
         var expectedHash = SHA256.HashData(block);
+        await checkpoint("adaptive-transfer-ui");
         var clock = Stopwatch.StartNew();
         var transfer = TransferWithConflictAsync([source], destination, move: false);
         await SmokeWaitAsync(() => _transfer!.Operations.Any(o => o.Sources.Contains(source) && o.ActiveFiles.Count == 4), "four active file rows");
@@ -81,6 +84,7 @@ public sealed partial class MainWindow
         // A real Windows sharing violation at finalization must wait visibly,
         // retain the original, then recover without user retry or lost bytes.
         var pressureSource = Path.Combine(root, "storage-source");
+        await checkpoint("storage-pressure-recovery");
         var pressureDestination = Path.Combine(root, "storage-destination");
         Directory.CreateDirectory(pressureSource); Directory.CreateDirectory(pressureDestination);
         var pressureInput = Path.Combine(pressureSource, "photo.bin");
@@ -123,6 +127,7 @@ public sealed partial class MainWindow
         await TransferPolicyStore.SaveAsync(backend, new TransferPolicy());
         var bulkDestination = Path.Combine(root, "adaptive-bulk");
         Directory.CreateDirectory(bulkDestination);
+        await checkpoint($"adaptive-bulk-copy-{Path.GetFileName(manyFiles)}");
         clock.Restart();
         var copies = await backend.CopyAsync([manyFiles], bulkDestination, "error");
         var copiedFolder = Path.Combine(bulkDestination, Path.GetFileName(manyFiles));

@@ -188,7 +188,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sumafile-winui-runtime
-          path: test-results/ui-smoke/**/report.json
+          path: |
+            test-results/ui-smoke/**/report.json
+            test-results/ui-smoke/**/progress.json
           if-no-files-found: warn
           retention-days: 14
 

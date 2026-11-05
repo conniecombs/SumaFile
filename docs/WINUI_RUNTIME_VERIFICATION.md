@@ -12,6 +12,13 @@ npm run smoke:winui-ui -- -SkipBuild -Counts 10000
 npm run smoke:winui-ui -- -SkipBuild -Counts 10000 -MaxWindowWidth 1000
 ```
 
+Rendering and stale-navigation checks exercise every requested folder size.
+Cancellation and bulk-copy correctness use the smallest requested fixture
+(10,000 files in the default suite). This keeps the 100,000-entry rendering
+gate independent of durable per-file copy/flush throughput. A deliberate
+100,000-file copy stress run can use `-Counts 100000 -TimeoutSeconds 3600`;
+its elapsed time is diagnostic, not a rendering performance measurement.
+
 The harness exists only in Debug builds. It starts after the normal backend
 handshake and workspace initialization, before deferred startup navigation.
 Settings, metadata database, operation journal, files and report are isolated
@@ -64,6 +71,10 @@ managed memory. A 30 ms dispatcher timer records p95 and maximum heartbeat
 gaps throughout the run, including layout/view changes and cancellation.
 Timing and memory are diagnostic values rather than machine-dependent CI
 thresholds; rendering/selection/cancellation/container assertions are gates.
+The harness also atomically updates `progress.json` before each major scenario,
+including transfer options, concurrency, storage pressure and bulk copying.
+If the host exceeds its process timeout, the script prints the last checkpoint;
+both CI workflows retain it even when a final report could not be written.
 
 First-row latency is measured from navigation until layout produces a
 container for the first row. Final navigation/render time includes a 200 ms

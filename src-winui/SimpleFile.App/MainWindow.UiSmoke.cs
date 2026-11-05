@@ -28,6 +28,17 @@ public sealed partial class MainWindow
         string? failure = null;
         var gaps = new List<double>();
         var clock = Stopwatch.StartNew();
+        var currentStage = "initializing";
+        async Task CheckpointAsync(string stage)
+        {
+            currentStage = stage;
+            var path = Path.Combine(root, "progress.json");
+            await File.WriteAllTextAsync(path + ".tmp", JsonSerializer.Serialize(new
+            {
+                stage, elapsedMs = clock.Elapsed.TotalMilliseconds, results
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(path + ".tmp", path, overwrite: true);
+        }
         var lastTick = clock.Elapsed.TotalMilliseconds;
         var heartbeat = DispatcherQueue.CreateTimer();
         heartbeat.Interval = TimeSpan.FromMilliseconds(30);
@@ -53,6 +64,7 @@ public sealed partial class MainWindow
                 .OrderBy(path => int.Parse(Path.GetFileName(path))).ToArray();
             foreach (var folder in folders)
             {
+                await CheckpointAsync($"large-folder-{Path.GetFileName(folder)}");
                 workspace.SetFileListView(PaneId.Primary, "list");
                 var expected = Directory.GetFiles(folder).Length;
                 double? firstPaint = null;
@@ -93,6 +105,7 @@ public sealed partial class MainWindow
             if (baseline) return true;
 
             // Exercise narrow panes and repeated changes between virtualizing panel types.
+            await CheckpointAsync("layout");
             var sample = folders[0];
             await workspace.NavigatePaneAsync(PaneId.Primary, sample);
             if (!workspace.DualPaneEnabled) await workspace.ToggleDualPaneAsync();
@@ -163,11 +176,16 @@ public sealed partial class MainWindow
                     effectivePrimary = EffectiveFileListViewForPane(PaneId.Primary), passed = true });
             }
             SmokeAssert(sawDetails && sawNarrowDetails, "Layout scenarios must exercise Details in wide and narrow panes");
+            await CheckpointAsync("ui-polish");
             await SmokeUiPolishAsync(root, sample, results);
 
             // Use the same transfer runner, progress model, and cancel route as the UI.
             var destination = Path.Combine(root, "destination");
-            var source = folders[^1];
+            // Rendering covers every requested size. Keep transfer regressions
+            // on the smallest fixture so the 100k listing gate does not also
+            // become a 100k durable-copy stress test inside a ten-minute smoke.
+            var source = folders[0];
+            await CheckpointAsync("transfer-cancellation");
             var transfer = TransferWithConflictAsync([source], destination, move: false);
             await SmokeWaitAsync(() => _transfer!.Operations.Count > 0 && _transfer.Operations[0].OperationId is not null, "transfer start");
             var operation = _transfer!.Operations[0];
@@ -182,7 +200,7 @@ public sealed partial class MainWindow
             SmokeAssert(remainingStaging.Length == 0, "Cancellation left staging files: " + string.Join(", ", remainingStaging.Take(4)));
             SmokeAssert(Directory.GetFiles(source).Length == int.Parse(Path.GetFileName(source)), "Cancellation changed the source files");
             results.Add(new { scenario = "transfer-cancellation", status = operation.Status.ToString(), passed = true });
-            await SmokeAdaptiveTransfersAsync(root, source, results);
+            await SmokeAdaptiveTransfersAsync(root, source, results, CheckpointAsync);
             CloseTransferProgressWindow();
         }
         catch (Exception exception) { failure = exception.ToString(); }
@@ -191,7 +209,7 @@ public sealed partial class MainWindow
             CloseTransferProgressWindow();
             heartbeat.Stop();
             gaps.Sort();
-            var report = new { passed = failure is null, failure, results,
+            var report = new { passed = failure is null, failure, stage = currentStage, results,
                 uiHeartbeat = new { samples = gaps.Count, maxGapMs = gaps.Count == 0 ? 0 : gaps[^1],
                     p95GapMs = gaps.Count == 0 ? 0 : gaps[(int)((gaps.Count - 1) * .95)] } };
             await File.WriteAllTextAsync(Path.Combine(root, "report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
