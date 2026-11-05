@@ -92,9 +92,18 @@ struct Progress<'a> {
     policy_checked: Instant,
     read_policy: &'a dyn Fn() -> Policy,
     file_start: u64,
+    /// Bytes and files discovered so far (top-level files and directory
+    /// listings), so the UI can show a percentage while the walk continues.
+    total_bytes: u64,
+    total_files: u64,
 }
 
 impl Progress<'_> {
+    fn discovered(&mut self, bytes: u64, files: u64) {
+        self.total_bytes = self.total_bytes.saturating_add(bytes);
+        self.total_files = self.total_files.saturating_add(files);
+    }
+
     fn report(&mut self, bytes: u64) -> std::io::Result<()> {
         check_cancel(self.cancel).map_err(std::io::Error::other)?;
         if self.policy_checked.elapsed() >= Duration::from_secs(5) {
@@ -115,9 +124,9 @@ impl Progress<'_> {
             operation_id: self.request.operation_id.clone(),
             operation_type: format!("remote_{}", self.request.direction),
             current: self.bytes,
-            total: 0,
+            total: self.total_bytes.max(self.bytes),
             current_files: self.files,
-            total_files: 0,
+            total_files: self.total_files.max(self.files),
             current_item: self.current.clone(),
             status: status.into(),
             error,
@@ -146,7 +155,9 @@ struct ObservedReader<'a, 'b> {
     source: File,
     progress: &'a mut Progress<'b>,
     bytes_read: u64,
-    hasher: ContentHasher,
+    /// Present only in Checksum mode; hashing every upload otherwise costs CPU
+    /// for a digest nothing checks.
+    hasher: Option<ContentHasher>,
 }
 impl Read for ObservedReader<'_, '_> {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
@@ -155,7 +166,9 @@ impl Read for ObservedReader<'_, '_> {
             std::io::Error::other(Failure::io("Read local source", &self.progress.current, e))
         })?;
         self.bytes_read = self.bytes_read.saturating_add(read as u64);
-        self.hasher.update(&buffer[..read]);
+        if let Some(hasher) = self.hasher.as_mut() {
+            hasher.update(&buffer[..read]);
+        }
         // Charge actual bytes, not a full buffer for every small file or EOF.
         // At most one provider buffer is held while waiting for the user limit.
         self.progress
@@ -171,7 +184,7 @@ struct ObservedWriter<'a, 'b> {
     destination: File,
     progress: &'a mut Progress<'b>,
     path: String,
-    hasher: ContentHasher,
+    hasher: Option<ContentHasher>,
 }
 impl Write for ObservedWriter<'_, '_> {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
@@ -182,7 +195,9 @@ impl Write for ObservedWriter<'_, '_> {
             .map_err(std::io::Error::other)?;
         match self.destination.write(buffer) {
             Ok(written) => {
-                self.hasher.update(&buffer[..written]);
+                if let Some(hasher) = self.hasher.as_mut() {
+                    hasher.update(&buffer[..written]);
+                }
                 self.progress.limiter.refund(buffer.len() - written);
                 self.progress.report(written as u64)?;
                 Ok(written)
@@ -686,6 +701,30 @@ fn unique_remote_sibling(
     Err("Could not allocate a unique remote destination".into())
 }
 
+/// `name (n).ext` next to `path` on the remote side, matching local keep-both.
+fn unique_remote_keep_both(
+    provider: &mut dyn RemoteProvider,
+    path: &str,
+) -> Result<String, String> {
+    let parent = parent_remote_path(path).ok_or("Remote destination has no parent")?;
+    let name = path.rsplit('/').next().unwrap_or("");
+    let (stem, ext) = match name.rfind('.') {
+        Some(index) if index > 0 && index + 1 < name.len() => (&name[..index], Some(&name[index..])),
+        _ => (name, None),
+    };
+    for index in 1..10000 {
+        let candidate_name = match ext {
+            Some(ext) => format!("{stem} ({index}){ext}"),
+            None => format!("{stem} ({index})"),
+        };
+        let candidate = join_remote_path(&parent, &candidate_name);
+        if provider.stat(&candidate)?.is_none() {
+            return Ok(candidate);
+        }
+    }
+    Err("Could not allocate a unique remote destination".into())
+}
+
 fn cleanup_error(original: String, cleanup: Result<(), String>, temporary: &str) -> String {
     match cleanup {
         Ok(()) => original,
@@ -740,13 +779,23 @@ fn transfer_file(
             "error" => return Err(format!("Destination already exists: {target}")),
             "keep-both" => {
                 if upload {
-                    target = unique_remote_sibling(provider, &target, "copy")?;
+                    target = unique_remote_keep_both(provider, &target)?;
                 } else {
-                    let original = target.clone();
-                    target = (1..10000)
-                        .map(|n| format!("{original}.copy-{n}"))
-                        .find(|candidate| !local_exists(Path::new(candidate)))
-                        .ok_or("Could not allocate destination")?;
+                    // Same convention as local copies: "name (1).ext".
+                    let planned = Path::new(&target);
+                    let parent = planned
+                        .parent()
+                        .ok_or("Local destination has no parent")?;
+                    let name = planned
+                        .file_name()
+                        .ok_or("Local destination has no file name")?;
+                    target = crate::progress::unique_destination_path(
+                        parent,
+                        name,
+                        &std::collections::HashSet::new(),
+                    )?
+                    .to_string_lossy()
+                    .into_owned();
                 }
             }
             _ => {}
@@ -796,7 +845,7 @@ fn transfer_file(
                     source: source_file,
                     progress,
                     bytes_read: 0,
-                    hasher: ContentHasher::new(),
+                    hasher: (check_mode == CheckMode::Checksum).then(ContentHasher::new),
                 };
                 let count = provider.upload(&staging, &mut reader)?;
                 if count != expected_len || reader.bytes_read != expected_len {
@@ -807,14 +856,14 @@ fn transfer_file(
                         false,
                     ));
                 }
+                let expected_hash = reader.hasher.take().map(ContentHasher::finish);
                 let expected_version = capture_source_version_from_open_file(
                     &reader.source,
                     &initial_meta,
-                    Some(reader.hasher.clone().finish()),
+                    expected_hash,
                 );
-                let expected_hash = reader.hasher.clone().finish();
                 drop(reader);
-                if check_mode == CheckMode::Checksum {
+                if let Some(expected_hash) = expected_hash {
                     verify_remote_checksum(
                         provider,
                         &staging,
@@ -823,6 +872,8 @@ fn transfer_file(
                         progress,
                     )?;
                 }
+                // Size, timestamps and identity; the content is re-read only
+                // when a checksum was recorded.
                 verify_source_unchanged(Path::new(source), &expected_version).map_err(|err| {
                     Failure::new(
                         format!("Local source changed during upload [{source}]: {err}"),
@@ -890,7 +941,7 @@ fn transfer_file(
                 destination: file,
                 progress,
                 path: staging.to_string_lossy().into_owned(),
-                hasher: ContentHasher::new(),
+                hasher: (check_mode == CheckMode::Checksum).then(ContentHasher::new),
             };
             let count = provider.download(source, &mut writer)?;
             if count != expected_size {
@@ -903,9 +954,9 @@ fn transfer_file(
                     Failure::io("Finalize local temporary destination", &staging, e)
                 })?;
             }
-            let expected_hash = writer.hasher.clone().finish();
+            let expected_hash = writer.hasher.take().map(ContentHasher::finish);
             drop(writer);
-            if check_mode == CheckMode::Checksum {
+            if let Some(expected_hash) = expected_hash {
                 // Compare the bytes persisted locally and a fresh remote read.
                 let mut local_file = File::open(&staging)
                     .map_err(|e| Failure::io("Verify downloaded content", &staging, e))?;
@@ -1011,6 +1062,14 @@ fn transfer_entry(
         return Err("Symbolic links are not followed during folder transfers".into());
     }
     if !is_dir {
+        if depth == 0 {
+            let size = if upload {
+                fs::symlink_metadata(source).map(|m| m.len()).unwrap_or(0)
+            } else {
+                resolved_entry.map(|entry| entry.size).unwrap_or(0)
+            };
+            progress.discovered(size, 1);
+        }
         let (destination, bytes, skipped) =
             transfer_file(provider, source, destination, resolved_entry, progress)?;
         progress.files += u64::from(!skipped);
@@ -1047,7 +1106,7 @@ fn transfer_entry(
     if !upload {
         crate::transfer_journal::recover_directory(Path::new(destination))?;
     }
-    let mut children: Vec<(String, String, u64, Option<FileEntry>)> = if upload {
+    let children: Vec<(String, String, u64, Option<FileEntry>)> = if upload {
         fs::read_dir(source)
             .map_err(|e| e.to_string())?
             .map(|entry| {
@@ -1078,6 +1137,18 @@ fn transfer_entry(
             })
             .collect()
     };
+    let mut children = children;
+    progress.discovered(
+        children
+            .iter()
+            .filter(|(_, _, _, entry)| entry.as_ref().is_none_or(|e| !e.is_dir))
+            .map(|(_, _, size, _)| *size)
+            .sum(),
+        children
+            .iter()
+            .filter(|(_, _, _, entry)| entry.as_ref().is_none_or(|e| !e.is_dir))
+            .count() as u64,
+    );
     match progress.policy.order_by {
         OrderBy::Default => {}
         OrderBy::SizeAsc => children.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0))),
@@ -1192,6 +1263,8 @@ fn transfer_entries_with_policy(
         policy_checked: Instant::now(),
         read_policy,
         file_start: 0,
+        total_bytes: 0,
+        total_files: 0,
     };
     progress.send("running", None);
     let mut outcome = RemoteTransferOutcome::default();
@@ -1290,6 +1363,8 @@ pub fn transfer_single(
         policy_checked: Instant::now(),
         read_policy: &Policy::load,
         file_start: 0,
+        total_bytes: 0,
+        total_files: 0,
     };
     if !upload {
         if let Some(parent) = Path::new(destination).parent() {
@@ -1970,7 +2045,7 @@ mod tests {
             assert_eq!(fs::read(fixture.root.join("local/a.txt")).unwrap(), b"old");
         }
         assert_eq!(
-            fs::read(fixture.root.join("local/a.txt.copy-1")).unwrap(),
+            fs::read(fixture.root.join("local/a (1).txt")).unwrap(),
             b"new"
         );
     }
