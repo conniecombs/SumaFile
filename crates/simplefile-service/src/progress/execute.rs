@@ -6,7 +6,7 @@ use super::resources::PooledBuffer;
 use super::tuning::CheckMode;
 use crate::transfer_reliability::{Failure, Retry};
 use crate::transfer_staging::{
-     capture_source_version_for_path, capture_source_version_from_open_file, cleanup_owned_path,
+    capture_source_version_for_path, capture_source_version_from_open_file, cleanup_owned_path,
     conflict_for_existing_destination, delete_verified_source, delete_verified_source_tree,
     existing_file_matches_source_with_mode, hash_file_contents, preallocate_file,
     promote_with_policy, remove_path, resumable_staging_path_for, staging_path_for,
@@ -94,7 +94,8 @@ pub(crate) fn copy_file_attempt_versioned(
     use std::os::windows::fs::MetadataExt;
 
     let buffer_size = buffer_size.min(usize::try_from(file_len.max(1)).unwrap_or(usize::MAX));
-    let mut src_file = open_source_sequential(src).map_err(|e| Failure::io("Open source", src, e))?;
+    let mut src_file =
+        open_source_sequential(src).map_err(|e| Failure::io("Open source", src, e))?;
     let source_initial = src_file
         .metadata()
         .map_err(|e| Failure::io("Inspect opened source", src, e))?;
@@ -231,16 +232,16 @@ pub(crate) fn copy_file_attempt_versioned(
             false,
         ));
     }
-    let content_hash = if !need_hash {
-        None
-    } else if resume_from == 0 {
-        Some(stream_hasher.finish())
-    } else {
-        Some(
-            hash_file_contents(&mut src_file)
-                .map_err(|e| Failure::new(format!("Hash source [{}]: {e}", src.display()), false))?,
-        )
-    };
+    let content_hash =
+        if !need_hash {
+            None
+        } else if resume_from == 0 {
+            Some(stream_hasher.finish())
+        } else {
+            Some(hash_file_contents(&mut src_file).map_err(|e| {
+                Failure::new(format!("Hash source [{}]: {e}", src.display()), false)
+            })?)
+        };
     let version = capture_source_version_from_open_file(&src_file, &source_after, content_hash);
     ctx.progress.check_cancelled()?;
     if must_sync {

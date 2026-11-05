@@ -638,7 +638,13 @@ fn move_existing_to_backup(final_path: &Path) -> Result<PathBuf, Failure> {
         match rename_exclusive(final_path, &candidate) {
             Ok(()) => return Ok(candidate),
             Err(e) if is_already_exists_error(&e) => continue,
-            Err(e) => return Err(Failure::io("Prepare destination replacement", final_path, e)),
+            Err(e) => {
+                return Err(Failure::io(
+                    "Prepare destination replacement",
+                    final_path,
+                    e,
+                ))
+            }
         }
     }
 
@@ -666,11 +672,7 @@ pub(crate) fn restore_backed_up_destination(final_path: &Path, backup_path: &Pat
 
 #[cfg(test)]
 pub(crate) fn existing_file_matches_source(src: &Path, dst: &Path) -> Result<bool, String> {
-    existing_file_matches_source_with_mode(
-        src,
-        dst,
-        crate::progress::CheckMode::SizeAndModTime,
-    )
+    existing_file_matches_source_with_mode(src, dst, crate::progress::CheckMode::SizeAndModTime)
 }
 
 pub(crate) fn existing_file_matches_source_with_mode(

@@ -293,9 +293,7 @@ pub(crate) fn copy_tree(
 
     *completed_bytes = completed_bytes.saturating_add(copy_res.bytes);
 
-    let mut state = march_state
-        .into_inner()
-        .expect("march state lock poisoned");
+    let mut state = march_state.into_inner().expect("march state lock poisoned");
     state.created_dirs.sort_by_key(|item| item.0);
     state.source_dirs.sort_by_key(|item| item.0);
     state.replaced_backups.sort_by_key(|item| item.0);
@@ -305,11 +303,7 @@ pub(crate) fn copy_tree(
         .into_iter()
         .map(|(_, src, dst)| (src, dst))
         .collect();
-    let source_dirs: Vec<PathBuf> = state
-        .source_dirs
-        .into_iter()
-        .map(|(_, src)| src)
-        .collect();
+    let source_dirs: Vec<PathBuf> = state.source_dirs.into_iter().map(|(_, src)| src).collect();
     let replaced_backups: Vec<(PathBuf, PathBuf)> = state
         .replaced_backups
         .into_iter()
@@ -395,13 +389,7 @@ pub(crate) fn copy_files(
     offset: u64,
 ) -> CopyResult {
     let mut iter = tasks.iter().cloned();
-    copy_files_streaming_using(
-        &mut || Ok(iter.next()),
-        ctx,
-        session,
-        offset,
-        &copy_task,
-    )
+    copy_files_streaming_using(&mut || Ok(iter.next()), ctx, session, offset, &copy_task)
 }
 
 fn copy_task(
@@ -619,8 +607,7 @@ pub(crate) fn copy_files_streaming_using(
                     let total_files = Arc::new(AtomicU64::new(1));
                     let completed_files = Arc::new(AtomicU64::new(0));
                     let emit = |update: ProgressUpdate| {
-                        if completed_files.load(Ordering::Relaxed) > 0
-                            && update.status == "running"
+                        if completed_files.load(Ordering::Relaxed) > 0 && update.status == "running"
                         {
                             return;
                         }
@@ -1252,13 +1239,8 @@ mod tests {
         };
 
         let mut iter = tasks.iter().cloned();
-        let result = copy_files_streaming_using(
-            &mut || Ok(iter.next()),
-            &ctx,
-            &mut session,
-            0,
-            &copy,
-        );
+        let result =
+            copy_files_streaming_using(&mut || Ok(iter.next()), &ctx, &mut session, 0, &copy);
         assert!(result.failed.is_none(), "{:?}", result.failed);
         assert_eq!(result.completed.len(), total_task_count);
         assert_eq!(later_files_completed.load(Ordering::SeqCst), 32);
@@ -1473,7 +1455,11 @@ mod tests {
         fs::create_dir_all(root.join("dst_asc")).unwrap();
         fs::create_dir_all(root.join("dst_desc")).unwrap();
 
-        let sizes = [("c.bin", 4096usize), ("a.bin", 512usize), ("b.bin", 2048usize)];
+        let sizes = [
+            ("c.bin", 4096usize),
+            ("a.bin", 512usize),
+            ("b.bin", 2048usize),
+        ];
         let make_tasks = |dst_sub: &str| -> Vec<FileTask> {
             sizes
                 .iter()
