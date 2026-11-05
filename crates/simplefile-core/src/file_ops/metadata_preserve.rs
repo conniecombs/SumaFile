@@ -88,7 +88,7 @@ pub fn apply_basic_metadata_to_handle(
         SetFileInformationByHandle(
             handle,
             FileBasicInfo,
-            (&info as *const FILE_BASIC_INFO).cast(),
+            (&mut info as *mut FILE_BASIC_INFO).cast(),
             std::mem::size_of::<FILE_BASIC_INFO>() as u32,
         )
     };
