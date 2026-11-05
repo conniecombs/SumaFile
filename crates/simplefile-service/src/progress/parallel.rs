@@ -745,18 +745,6 @@ pub(crate) fn copy_tree(
     }
 }
 
-/// Workers share cancellation but not counters. All active workers are joined
-/// before the caller may remove any staging directory.
-pub(crate) fn copy_files(
-    tasks: &[FileTask],
-    ctx: &ProgressContext<'_>,
-    session: &mut Session<'_>,
-    offset: u64,
-) -> CopyResult {
-    let mut iter = tasks.iter().cloned();
-    copy_files_streaming_using(&mut || Ok(iter.next()), ctx, session, offset, &copy_task)
-}
-
 fn copy_task(
     task: &FileTask,
     context: &CopyContext<'_>,
@@ -846,6 +834,7 @@ fn copy_files_using(
     copy_files_streaming_using(&mut || Ok(iter.next()), ctx, session, offset, &wrapped)
 }
 
+#[cfg(test)]
 pub(crate) fn copy_files_streaming_using(
     next_task: &mut (dyn FnMut() -> Result<Option<FileTask>, String> + Send),
     ctx: &ProgressContext<'_>,

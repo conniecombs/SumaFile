@@ -681,10 +681,6 @@ fn remote_entry(
     provider.stat(path)
 }
 
-fn local_exists(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok()
-}
-
 fn unique_remote_sibling(
     provider: &mut dyn RemoteProvider,
     path: &str,

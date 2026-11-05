@@ -145,19 +145,6 @@ impl<'a> Session<'a> {
             }
         }
     }
-
-    pub fn restart_after_conflict(&mut self, offset: u64) {
-        self.controller = Controller::new(
-            (self.policy)(),
-            self.buffer_size,
-            Some(self.controller.concurrency),
-        );
-        self.sample_bytes = offset;
-        self.sampled_at = Instant::now();
-        self.observed_at = Instant::now();
-        self.busy = Duration::ZERO;
-        self.was_busy = false;
-    }
 }
 
 fn endpoint(path: &str, drives: &[simplefile_core::models::DriveInfo]) -> String {

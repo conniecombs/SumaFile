@@ -199,6 +199,7 @@ pub(crate) fn resolve_destination(
 /// destination: `(source, destination, message)`.
 pub(crate) type PlanConflict = (PathBuf, PathBuf, String);
 
+#[cfg(test)]
 pub(crate) fn prepare_transfer_inputs(
     sources: Vec<String>,
     destination: String,
