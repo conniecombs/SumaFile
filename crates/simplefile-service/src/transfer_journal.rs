@@ -7,7 +7,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-const RECORD_LIMIT: u64 = 64 * 1024;
+const RECORD_LIMIT: u64 = 4 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
 struct Record {
@@ -115,9 +115,12 @@ impl StagingLease {
 
     fn persist(&mut self) -> Result<(), String> {
         let data = serde_json::to_vec(&self.record).map_err(|e| e.to_string())?;
-        self.file
-            .seek(SeekFrom::End(0))
-            .map_err(|e| e.to_string())?;
+        let end = self.file.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
+        if end.saturating_add(data.len() as u64 + 1) > RECORD_LIMIT {
+            return Err(
+                "Transfer ownership record is full; artifacts retained for recovery".into(),
+            );
+        }
         self.file.write_all(&data).map_err(|e| e.to_string())?;
         self.file.write_all(b"\n").map_err(|e| e.to_string())?;
         self.file
@@ -126,8 +129,16 @@ impl StagingLease {
     }
 
     pub fn backup_intent(&mut self, path: &Path, original: &Path) -> Result<(), String> {
-        self.record.backup = Some((path.into(), file_identity(original)?));
-        self.persist()
+        let backup = (path.into(), file_identity(original)?);
+        if self.record.backup.as_ref() == Some(&backup) {
+            return Ok(());
+        }
+        let previous = self.record.backup.replace(backup);
+        if let Err(error) = self.persist() {
+            self.record.backup = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn owns_staged(&self) -> bool {
@@ -135,8 +146,12 @@ impl StagingLease {
     }
 
     pub fn finish(mut self) -> Result<(), String> {
-        self.record.committed = true;
-        self.persist()?;
+        if self.record.staged == self.record.destination {
+            // In-place writes need a completion marker. For a renamed staging
+            // object its identity at the final name already proves promotion.
+            self.record.committed = true;
+            self.persist()?;
+        }
         fs::remove_file(&self.path).map_err(|e| {
             format!(
                 "Remove transfer ownership record [{}]: {e}",
@@ -304,6 +319,28 @@ mod tests {
             fs::remove_dir_all(root).unwrap();
         }
     }
+
+    #[test]
+    fn recovery_distinguishes_committed_and_abandoned_inplace_files() {
+        for committed in [false, true] {
+            let root = root();
+            let destination = root.join("inplace");
+            let mut lease = StagingLease::begin("source", &destination, &destination).unwrap();
+            fs::write(&destination, b"downloaded").unwrap();
+            if committed {
+                lease.record.committed = true;
+                lease.persist().unwrap();
+            }
+            drop(lease);
+            recover_directory(&root).unwrap();
+            assert_eq!(destination.exists(), committed);
+            if committed {
+                assert_eq!(fs::read(&destination).unwrap(), b"downloaded");
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[test]
     fn recovery_refuses_replaced_artifact_identity() {
         let root = root();

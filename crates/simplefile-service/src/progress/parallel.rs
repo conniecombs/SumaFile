@@ -82,7 +82,7 @@ pub(crate) fn copy_tree(
     use simplefile_core::path_conflict::create_dir_exclusive;
 
     struct DirQueue {
-        dirs: VecDeque<(usize, PathBuf, PathBuf)>,
+        dirs: VecDeque<(usize, PathBuf, PathBuf, bool)>,
         active_checkers: usize,
         done: bool,
     }
@@ -110,7 +110,12 @@ pub(crate) fn copy_tree(
     let channel_cap = ctx.policy.backlog_limit().clamp(64, 8192);
 
     let mut initial_dirs = VecDeque::new();
-    initial_dirs.push_back((0usize, source.to_path_buf(), destination.to_path_buf()));
+    initial_dirs.push_back((
+        0usize,
+        source.to_path_buf(),
+        destination.to_path_buf(),
+        resume_existing,
+    ));
     let dir_queue = (
         Mutex::new(DirQueue {
             dirs: initial_dirs,
@@ -131,7 +136,7 @@ pub(crate) fn copy_tree(
             let march_stop = &march_stop;
             let task_tx = task_tx.clone();
             march_scope.spawn(move || loop {
-                let (depth, src_dir, mut dst_dir) = {
+                let (depth, src_dir, mut dst_dir, mut owned_tree) = {
                     let mut q = dir_queue.0.lock().expect("dir queue lock poisoned");
                     loop {
                         if q.done || march_stop.load(Ordering::Acquire) {
@@ -160,11 +165,20 @@ pub(crate) fn copy_tree(
                         return Err("Directory nesting exceeds the safe transfer limit".into());
                     }
                     let existing = is_real_directory(&dst_dir);
-                    if path_exists_no_follow(&dst_dir) && !replace_existing && !resume_existing {
+                    if path_exists_no_follow(&dst_dir) && !replace_existing && !owned_tree {
                         return Err(conflict_for_existing_destination(&dst_dir));
                     }
                     if existing {
                         crate::transfer_journal::recover_directory(&dst_dir)?;
+                    } else if owned_tree {
+                        // The outer staging lease owns this entire unpublished
+                        // subtree. Keep ordinary child names and one root lock.
+                        create_dir_exclusive(&dst_dir)?;
+                        march_state
+                            .lock()
+                            .expect("march state lock poisoned")
+                            .created_dirs
+                            .push((depth, src_dir.clone(), dst_dir.clone()));
                     } else {
                         // Build new/replacement subtrees privately. Their final
                         // names are published only after every worker has joined.
@@ -184,6 +198,7 @@ pub(crate) fn copy_tree(
                         state
                             .staged_dirs
                             .push((depth, dst_dir.clone(), final_dir, lease));
+                        owned_tree = true;
                     }
                     let version =
                         crate::transfer_staging::capture_source_version_for_path(&src_dir)?;
@@ -214,7 +229,7 @@ pub(crate) fn copy_tree(
                         };
                         if file_type.is_dir() {
                             let mut q = dir_queue.0.lock().expect("dir queue lock poisoned");
-                            q.dirs.push_back((depth + 1, child_src, child_dst));
+                            q.dirs.push_back((depth + 1, child_src, child_dst, owned_tree));
                             dir_queue.1.notify_one();
                         } else {
                             let symlink = file_type.is_symlink();
@@ -236,7 +251,7 @@ pub(crate) fn copy_tree(
                                 size,
                                 network,
                                 replace_existing,
-                                resume_existing,
+                                resume_existing: owned_tree,
                                 symlink,
                             };
                             if task_tx.send(Ok(task)).is_err() {

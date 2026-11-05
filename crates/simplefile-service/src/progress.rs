@@ -1182,6 +1182,42 @@ mod tests {
     }
 
     #[test]
+    fn unpublished_nested_directories_use_one_outer_staging_root() {
+        let root = unique_temp_path("nested_owned_tree");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(source.join("one/two/three")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let operation_id = "op_nested_owned_tree";
+        let final_destination = destination.join("source");
+        let staging = staging_path_for(&final_destination, operation_id).unwrap();
+        let staged_text = staging.to_string_lossy().to_string();
+        let saw_nested_tree = AtomicBool::new(false);
+
+        transfer_with_progress_blocking(
+            "copy",
+            vec![source.to_string_lossy().to_string()],
+            destination.to_string_lossy().to_string(),
+            operation_id.to_string(),
+            "error".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|update| {
+                if update.status == "finalizing" && update.current_item == staged_text {
+                    assert!(!final_destination.exists());
+                    assert!(staging.join("one/two/three").is_dir());
+                    saw_nested_tree.store(true, Ordering::Relaxed);
+                }
+            },
+        )
+        .unwrap();
+
+        assert!(saw_nested_tree.load(Ordering::Relaxed));
+        assert!(final_destination.join("one/two/three").is_dir());
+        assert!(!staging.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn directory_copy_and_move_cancel_before_promotion_preserve_source_and_clean_staging() {
         for operation in ["copy", "move"] {
             let src_root = unique_temp_path("finalizing_cancel_src");

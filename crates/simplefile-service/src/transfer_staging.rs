@@ -34,7 +34,8 @@ pub(crate) struct SourceVersion {
     pub(crate) is_symlink: bool,
     pub(crate) is_dir: bool,
     pub(crate) len: u64,
-    pub(crate) modified: Option<SystemTime>,
+    // Signed nanoseconds also round-trip valid filesystem dates before 1970.
+    pub(crate) modified: Option<i128>,
     #[cfg(windows)]
     pub(crate) creation_time: u64,
     #[cfg(windows)]
@@ -128,6 +129,15 @@ pub(crate) fn hash_file_contents(file: &mut fs::File) -> Result<[u8; 32], String
     Ok(hasher.finish())
 }
 
+fn modified_timestamp(meta: &fs::Metadata) -> Option<i128> {
+    meta.modified()
+        .ok()
+        .map(|time| match time.duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(duration) => duration.as_nanos() as i128,
+            Err(error) => -(error.duration().as_nanos() as i128),
+        })
+}
+
 pub(crate) fn capture_source_version_from_open_file(
     file: &fs::File,
     meta: &fs::Metadata,
@@ -140,7 +150,7 @@ pub(crate) fn capture_source_version_from_open_file(
         is_symlink: meta.file_type().is_symlink(),
         is_dir: meta.is_dir(),
         len: meta.len(),
-        modified: meta.modified().ok(),
+        modified: modified_timestamp(meta),
         #[cfg(windows)]
         creation_time: meta.creation_time(),
         #[cfg(windows)]
@@ -162,7 +172,7 @@ pub(crate) fn capture_source_version_for_path(path: &Path) -> Result<SourceVersi
             is_symlink: meta.file_type().is_symlink(),
             is_dir: meta.is_dir(),
             len: meta.len(),
-            modified: meta.modified().ok(),
+            modified: modified_timestamp(&meta),
             #[cfg(windows)]
             creation_time: meta.creation_time(),
             #[cfg(windows)]
@@ -198,7 +208,7 @@ fn metadata_matches_source_version(meta: &fs::Metadata, expected: &SourceVersion
     if !expected.is_symlink && !expected.is_dir && meta.len() != expected.len {
         return false;
     }
-    if !expected.is_dir && meta.modified().ok() != expected.modified {
+    if !expected.is_dir && modified_timestamp(meta) != expected.modified {
         return false;
     }
     #[cfg(windows)]
@@ -939,6 +949,34 @@ mod tests {
             }
             assert_eq!(partitioned.finish(), expected, "chunk size {size}");
         }
+    }
+
+    #[test]
+    fn completion_manifest_preserves_pre_epoch_source_versions() {
+        let root = unique_temp_dir("pre_epoch_manifest");
+        let source = root.join("old.txt");
+        fs::write(&source, b"old content").unwrap();
+        let file = fs::OpenOptions::new().write(true).open(&source).unwrap();
+        let modified = UNIX_EPOCH - std::time::Duration::from_secs(1);
+        file.set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        drop(file);
+        let expected = capture_source_version_for_path(&source).unwrap();
+        assert_eq!(expected.modified, Some(-1_000_000_000));
+        let manifest = crate::transfer_manifest::DiskManifest::new().unwrap();
+        manifest.push(&source, &expected).unwrap();
+        let mut visited = 0;
+        manifest
+            .visit(|path, version| {
+                assert_eq!(path, source.as_path());
+                assert_eq!(version, &expected);
+                visited += 1;
+                super::verify_source_unchanged(path, version)
+            })
+            .unwrap();
+        assert_eq!(visited, 1);
+        drop(manifest);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(windows)]

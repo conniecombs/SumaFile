@@ -16,7 +16,7 @@ Reviewed against `88ae5cbfadc4615910ab2fb41d7895b2a31b1336`.
 | Hash results depended on read boundaries | Incremental SHA-256 for source versions and checksum verification | Known vector and uneven read partitions |
 | Reservations assumed three buffers despite up to sixteen stripes | Charge actual stripe/ring layout plus verification scratch, enforce per-job reservations, cap active plus cached buffers globally | Budget cancellation/shrink, exact-capacity reuse, tuning limits |
 | Small copies could inherit a huge pooled allocation | Reuse only exact-capacity allocations; shared cache capped at 64 MiB and 32 buffers | Pool capacity and byte bounds |
-| Completed tree tasks and versions stayed in memory | Release completed scheduler entries; spool recursive source-version records to a locked temporary manifest | Recursive copy/move and completion-manifest traversal |
+| Completed tree tasks and versions stayed in memory | Release completed scheduler entries; spool recursive source-version records to a locked temporary manifest | Recursive copy/move, completion-manifest traversal and timestamps before 1970 |
 | Repeated remote parent listings scaled poorly | Provider `stat`: SFTP lstat and FTP MLST, with conservative LIST fallback for unsupported FTP servers | Stat-count regression and FTP metadata parsing |
 | Download revalidation ignored errors or missing sources | Require a successful final stat; reject disappeared, changed, or non-file sources before publication | Failed stat and disappearance preserve original destination |
 | Remote checksum and retry-pass settings did nothing | Verify persisted/downloaded bytes and remote content using SHA-256; bounded retries apply only to the failing file | Same-length remote corruption and retry-pass limits |
@@ -43,8 +43,10 @@ intact; their names alone do not prove ownership.
 
 An interrupted transfer is safely restarted, not blindly resumed from byte counts.
 Within an active operation, a low-level retry verifies a partial file's prefix
-before appending. New directories are published after their complete copy. Merges
-into existing directories remain per-file transactions: previously committed files
+before appending. New directories are published after their complete copy. One
+outer directory lease protects unpublished child directories, avoiding a locked
+journal and another staging-name suffix at every nesting level. Merges into
+existing directories remain per-file transactions: previously committed files
 can remain after another file fails. Moves remove only verified copied sources;
 new or changed sources remain and the operation reports the failure.
 
@@ -74,10 +76,11 @@ are capped at 8,192. Configured limits are bounded; discovery order can start af
 SHA-256 and explicit checksum mode cost CPU and verification I/O. Native remote
 checksum mode reads remote content again and charges that traffic to bandwidth
 pacing without inflating copied-byte progress. FTP servers without MLST still need
-LIST fallback; SFTP avoids full parent listings for per-file stat and temporary-name selection.
-FTP MLST avoids listings for present entries; ambiguous 550 replies still require
-a successful parent listing so permission failures are not mistaken for absence. Recovery adds one local directory
-scan rather than one scan for every file.
+LIST fallback; SFTP avoids full parent listings for per-file stat and temporary-name
+selection. FTP MLST avoids listings for present entries; ambiguous 550 replies
+still require a successful parent listing so permission failures are not mistaken
+for absence. Recovery adds one local directory scan rather than one scan for every
+file.
 
 ## Validation
 

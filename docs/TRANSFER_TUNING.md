@@ -2,7 +2,8 @@
 
 Open **Transfers > Transfer defaults** to choose a policy. A running or queued task's
 **Options** button overrides those defaults for that task; **Use defaults** removes the
-override. Settings persist locally. Bandwidth and scheduler limits refresh within five seconds during streamed copies.
+override. Settings persist locally. Bandwidth and scheduler limits refresh within
+five seconds during streamed copies.
 Each newly dispatched file snapshots current integrity, storage and buffer settings;
 active files finish with their current settings. Directory checkers, queue order,
 backlog and local retry-pass limits are fixed when that scheduler starts.
@@ -19,8 +20,8 @@ bandwidth limit in MiB/s (zero means unlimited). The buffer budget is per job; t
 service additionally caps all its file workers together at 32 and their buffers at
 512 MiB including the shared cache (at most 64 MiB). Reservations account for
 actual stripe/pipeline layouts and verification scratch; smaller buffers cannot
-reuse a larger cached allocation. Two independent jobs may run concurrently. Conflicting destination trees
-remain queued. Bandwidth caps are per job, not a machine-wide network shaper.
+reuse a larger cached allocation. Two independent jobs may run concurrently.
+Conflicting destination trees remain queued. Bandwidth caps are per job, not a machine-wide network shaper.
 
 ## Supported tasks
 
@@ -45,9 +46,9 @@ Aggregate progress, tuning reason, errors, and cancellation remain visible.
 
 The controller compares pairs of five-second samples, ignores noisy or substantially
 under-filled windows, probes additional workers, and rolls back a slower probe. It
-also tests fewer workers after an unsuccessful increase and backs off after retries
-when a retry is observed. Successful slow I/O does not impose a hidden speed cap. Limits protect resources; they do not guarantee a mathematical
-optimum. Short jobs may finish before enough evidence is available to tune.
+also tests fewer workers after an unsuccessful increase and backs off when a retry
+is observed. Successful slow I/O does not impose a hidden speed cap. Limits protect
+resources; they do not guarantee a mathematical optimum. Short jobs may finish before enough evidence is available to tune.
 
 Proven concurrency settings are stored by ordered endpoint identity, copy/move
 direction and average-file-size bucket. Mapped shares and local volume identity
@@ -65,8 +66,8 @@ metadata preservation, cancellation cleanup and network retry remain in the copy
 path. Workers are joined before a directory is cleaned up or promoted.
 
 For a cloud drive, observed speed is filesystem/cache throughput. The cloud client
-controls caching and remote completion. Windows local copies can use positional byte-range streams above the configured
-cutoff. Moves and checksum copies use the hashing pipeline. Native remote sessions
+controls caching and remote completion. Windows local copies can use positional
+byte-range streams above the configured cutoff. Moves and checksum copies use the hashing pipeline. Native remote sessions
 use provider-sized buffers; unsupported local concurrency/buffer controls are
 disabled in the remote options dialog. Remote checksum mode performs an additional
 remote read, and retry passes never replay files already completed. Native pCloud
