@@ -1,6 +1,6 @@
 use super::path::{join_remote_path, normalize_remote_path, parent_remote_path};
 use super::provider::RemoteProvider;
-use crate::progress::{ActiveFile, Policy, RateLimit, TuningUpdate};
+use crate::progress::{ActiveFile, OrderBy, Policy, PooledBuffer, RateLimit, TuningUpdate};
 use crate::transfer_reliability::{Failure, Retry};
 use crate::transfer_staging::{
     capture_source_version_from_open_file, verify_source_unchanged, ContentHasher,
@@ -44,7 +44,7 @@ pub struct RemoteTransferOutcome {
 }
 
 pub fn copy_stream(source: &mut dyn Read, destination: &mut dyn Write) -> Result<u64, Failure> {
-    let mut buffer = vec![0; TRANSFER_BUFFER_SIZE];
+    let mut buffer = PooledBuffer::acquire(TRANSFER_BUFFER_SIZE);
     let mut count = 0;
     loop {
         // Gives a download destination a chance to apply backpressure before the next network read.
@@ -211,7 +211,7 @@ fn retry_stream(
     target: &str,
     mut transfer: impl FnMut(&mut dyn RemoteProvider, &mut Progress<'_>) -> Result<u64, Failure>,
 ) -> Result<u64, String> {
-    let mut retry = Retry::default();
+    let mut retry = Retry::from_policy(&progress.policy);
     loop {
         check_cancel(progress.cancel)?;
         progress.limiter.wait(0, progress.cancel)?;
@@ -358,7 +358,7 @@ fn finalize_remote_upload(
     target: &str,
     backup: Option<&str>,
 ) -> Result<(), String> {
-    let mut retry = Retry::default();
+    let mut retry = Retry::from_policy(&progress.policy);
     let mut backed_up = backup.is_none();
     let mut promoted = false;
     let target_name = target.rsplit('/').next().unwrap_or("");
@@ -782,10 +782,15 @@ fn transfer_file(
         let expected_size = expected_entry.size;
         let expected_modified = expected_entry.modified.clone();
 
-        let staging = crate::transfer_staging::staging_path_for(
-            Path::new(&target),
-            &progress.request.operation_id,
-        )?;
+        let use_inplace = progress.policy.inplace && !exists;
+        let staging = if use_inplace {
+            Path::new(&target).to_path_buf()
+        } else {
+            crate::transfer_staging::staging_path_for(
+                Path::new(&target),
+                &progress.request.operation_id,
+            )?
+        };
         let mut created = false;
         let result = retry_stream(provider, progress, source, &target, |provider, progress| {
             let file = if created {
@@ -797,7 +802,11 @@ fn transfer_file(
                     .open(&staging)
             }
             .map_err(|e| Failure::io("Open local temporary destination", &staging, e))?;
+            if progress.policy.preallocate {
+                crate::transfer_staging::preallocate_file(&file, expected_size);
+            }
             created = true;
+            let flush_on_close = progress.policy.flush_on_close;
             let mut writer = ObservedWriter {
                 destination: file,
                 progress,
@@ -813,10 +822,12 @@ fn transfer_file(
                     false,
                 ));
             }
-            writer
-                .destination
-                .sync_all()
-                .map_err(|e| Failure::io("Finalize local temporary destination", &staging, e))?;
+            if flush_on_close {
+                writer
+                    .destination
+                    .sync_all()
+                    .map_err(|e| Failure::io("Finalize local temporary destination", &staging, e))?;
+            }
             Ok(count)
         });
         let result = result.and_then(|count| {
@@ -829,16 +840,20 @@ fn transfer_file(
                     return Err(format!("Remote source changed during download: {source}"));
                 }
             }
-            crate::transfer_staging::promote_with_recovery(
-                &staging,
-                Path::new(&target),
-                replace,
-                progress.cancel,
-                |delay, reason| {
-                    progress.limiter.retrying(delay, reason);
-                    progress.send("running", None);
-                },
-            )?;
+            if !use_inplace {
+                let policy_snapshot = progress.policy.clone();
+                crate::transfer_staging::promote_with_policy(
+                    &staging,
+                    Path::new(&target),
+                    replace,
+                    progress.cancel,
+                    &policy_snapshot,
+                    |delay, reason| {
+                        progress.limiter.retrying(delay, reason);
+                        progress.send("running", None);
+                    },
+                )?;
+            }
             Ok((target, count, false))
         });
         if let Err(error) = result {
@@ -927,14 +942,16 @@ fn transfer_entry(
             Err(e) => return Err(e.to_string()),
         }
     }
-    let children: Vec<(String, String, Option<FileEntry>)> = if upload {
+    let mut children: Vec<(String, String, u64, Option<FileEntry>)> = if upload {
         fs::read_dir(source)
             .map_err(|e| e.to_string())?
             .map(|entry| {
                 let entry = entry.map_err(|e| e.to_string())?;
+                let size = entry.metadata().ok().map(|m| m.len()).unwrap_or(0);
                 Ok((
                     entry.file_name().to_string_lossy().into_owned(),
                     entry.path().to_string_lossy().into_owned(),
+                    size,
                     None,
                 ))
             })
@@ -946,16 +963,24 @@ fn transfer_entry(
             .into_iter()
             .filter(|entry| entry.name != "." && entry.name != "..")
             .map(|entry| {
+                let size = entry.size;
                 (
                     entry.name.clone(),
                     join_remote_path(source, &entry.name),
+                    size,
                     Some(entry),
                 )
             })
             .collect()
     };
+    match progress.policy.order_by {
+        OrderBy::Default => {}
+        OrderBy::SizeAsc => children.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0))),
+        OrderBy::SizeDesc => children.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0))),
+        OrderBy::Name => children.sort_by(|a, b| a.0.cmp(&b.0)),
+    }
     let mut failed = false;
-    for (name, child, entry) in children {
+    for (name, child, _size, entry) in children {
         check_cancel(progress.cancel)?;
         let result = validate_name(&name).and_then(|()| {
             let target = if upload {
@@ -1863,5 +1888,44 @@ mod tests {
             );
             assert_eq!(fs::read_dir(&provider.root).unwrap().count(), 1);
         }
+    }
+
+    #[test]
+    fn remote_transfer_honors_order_by_inplace_and_custom_retry_policy() {
+        let fixture = Fixture::new();
+        let mut provider = fixture.provider();
+        let remote_dir = provider.path("/ordered");
+        fs::create_dir_all(&remote_dir).unwrap();
+        fs::write(remote_dir.join("z_large.bin"), vec![1u8; 4096]).unwrap();
+        fs::write(remote_dir.join("a_small.bin"), vec![2u8; 256]).unwrap();
+        fs::write(remote_dir.join("m_medium.bin"), vec![3u8; 1024]).unwrap();
+
+        let request = fixture.request("download", vec!["/ordered".into()]);
+        let policy = || Policy {
+            order_by: OrderBy::SizeAsc,
+            inplace: true,
+            preallocate: false,
+            flush_on_close: false,
+            low_level_retries: 4,
+            retry_sleep_ms: 25,
+            ..Policy::default()
+        };
+        let outcome = transfer_entries_with_policy(
+            &mut provider,
+            &request,
+            &AtomicBool::new(false),
+            &|_| {},
+            &|_| {},
+            &policy,
+        )
+        .unwrap();
+        assert!(outcome.retry_sources.is_empty());
+        let file_sizes: Vec<u64> = outcome
+            .items
+            .iter()
+            .filter(|i| !i.is_dir)
+            .map(|i| i.bytes)
+            .collect();
+        assert_eq!(file_sizes, vec![256, 1024, 4096]);
     }
 }

@@ -22,6 +22,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::{Builder, Runtime};
 
 const REMOTE_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const SFTP_STREAM_BUFFER_SIZE: usize = 512 * 1024;
 
 pub fn connect(
     profile: &RemoteProfile,
@@ -134,7 +135,7 @@ impl RemoteProvider for SftpRemoteProvider {
                 .await
                 .map_err(sftp_failure)?;
             let result = async {
-                let mut buffer = vec![0; super::transfer::TRANSFER_BUFFER_SIZE];
+                let mut buffer = vec![0; SFTP_STREAM_BUFFER_SIZE];
                 let mut count = 0;
                 loop {
                     // Call write directly: write_all skips the writer for empty buffers.
@@ -171,7 +172,7 @@ impl RemoteProvider for SftpRemoteProvider {
                 .await
                 .map_err(sftp_failure)?;
             let result = async {
-                let mut buffer = vec![0; super::transfer::TRANSFER_BUFFER_SIZE];
+                let mut buffer = vec![0; SFTP_STREAM_BUFFER_SIZE];
                 let mut count = 0;
                 loop {
                     let read = source.read(&mut buffer).map_err(|e| sftp_io(path, e))?;

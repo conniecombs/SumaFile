@@ -4,6 +4,61 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 static ALLOCATION: Mutex<(usize, usize)> = Mutex::new((0, 0));
+static BUFFER_POOL: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+const MAX_POOLED_BUFFERS: usize = 32;
+
+/// Recycled transfer buffer that returns its backing allocation to a bounded
+/// process-wide pool on drop (`rclone` `lib/pool` style), avoiding repeated
+/// multi-megabyte heap allocations and page faults across files.
+pub(crate) struct PooledBuffer(Vec<u8>);
+
+impl PooledBuffer {
+    pub fn acquire(size: usize) -> Self {
+        let mut buf = BUFFER_POOL
+            .lock()
+            .ok()
+            .and_then(|mut pool| {
+                pool.iter()
+                    .position(|b| b.capacity() >= size)
+                    .map(|idx| pool.swap_remove(idx))
+                    .or_else(|| pool.pop())
+            })
+            .unwrap_or_default();
+        if buf.len() != size {
+            buf.resize(size, 0);
+        }
+        Self(buf)
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl std::ops::Deref for PooledBuffer {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for PooledBuffer {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl Drop for PooledBuffer {
+    fn drop(&mut self) {
+        if (64 * 1024..=64 * 1024 * 1024).contains(&self.0.capacity()) {
+            if let Ok(mut pool) = BUFFER_POOL.lock() {
+                if pool.len() < MAX_POOLED_BUFFERS {
+                    pool.push(std::mem::take(&mut self.0));
+                }
+            }
+        }
+    }
+}
 
 pub(crate) struct Permit(usize);
 
@@ -155,5 +210,17 @@ mod tests {
         cancel.store(false, Ordering::Relaxed);
         limit.update(0);
         limit.wait(usize::MAX, &cancel).unwrap();
+    }
+
+    #[test]
+    fn pooled_buffer_reuses_backing_allocation_across_acquires() {
+        let ptr_first = {
+            let mut buf = PooledBuffer::acquire(256 * 1024);
+            buf.as_mut_slice()[0] = 42;
+            buf.as_ptr() as usize
+        };
+        let buf_second = PooledBuffer::acquire(256 * 1024);
+        assert_eq!(buf_second.len(), 256 * 1024);
+        assert_eq!(buf_second.as_ptr() as usize, ptr_first);
     }
 }

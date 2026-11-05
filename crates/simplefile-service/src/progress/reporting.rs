@@ -5,8 +5,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
-pub(crate) const NETWORK_BUFFER_SIZE: usize = 512 * 1024;
-pub(crate) const LOCAL_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 pub(crate) const PROGRESS_BYTE_STEP: u64 = 4 * 1024 * 1024;
 pub(crate) const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(80);
 
@@ -130,14 +128,11 @@ pub(crate) struct CopyContext<'a> {
     pub(crate) operation_id: &'a str,
     pub(crate) network: bool,
     pub(crate) resume_existing: bool,
+    pub(crate) policy: super::tuning::Policy,
 }
 
 impl CopyContext<'_> {
     pub(crate) fn buffer_size(&self) -> usize {
-        if self.network {
-            NETWORK_BUFFER_SIZE
-        } else {
-            LOCAL_BUFFER_SIZE
-        }
+        self.policy.buffer_bytes(self.network)
     }
 }

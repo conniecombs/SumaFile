@@ -11,12 +11,46 @@ public sealed class TransferPolicyTests
     {
         Assert.Equal(new TransferPolicy(), TransferPolicy.Parse("broken"));
         Assert.Equal(new TransferPolicy(), TransferPolicy.Parse("{}"));
-        var policy = TransferPolicy.Parse("""{"mode":"unknown","maxConcurrency":100,"manualConcurrency":0,"memoryBudgetMb":1,"bandwidthMib":-1}""");
+        var policy = TransferPolicy.Parse("""
+        {
+            "mode":"unknown",
+            "maxConcurrency":100,
+            "manualConcurrency":0,
+            "checkers":999,
+            "maxBacklog":10,
+            "orderBy":"invalid_order",
+            "bufferSizeKib":8,
+            "memoryBudgetMb":1,
+            "multiThreadCutoffMib":0,
+            "multiThreadStreams":99,
+            "checkMode":"bad_mode",
+            "inplace":true,
+            "preallocate":false,
+            "flushOnClose":false,
+            "bandwidthMib":-1,
+            "lowLevelRetries":0,
+            "highLevelRetries":999,
+            "retrySleepMs":1
+        }
+        """);
         Assert.Equal("automatic", policy.Mode);
         Assert.Equal(32, policy.MaxConcurrency);
         Assert.Equal(1, policy.ManualConcurrency);
+        Assert.Equal(64, policy.Checkers);
+        Assert.Equal(128, policy.MaxBacklog);
+        Assert.Equal("default", policy.OrderBy);
+        Assert.Equal(64, policy.BufferSizeKib);
         Assert.Equal(16, policy.MemoryBudgetMb);
+        Assert.Equal(1, policy.MultiThreadCutoffMib);
+        Assert.Equal(16, policy.MultiThreadStreams);
+        Assert.Equal("size_and_mod_time", policy.CheckMode);
+        Assert.True(policy.Inplace);
+        Assert.False(policy.Preallocate);
+        Assert.False(policy.FlushOnClose);
         Assert.Equal(0, policy.BandwidthMib);
+        Assert.Equal(1, policy.LowLevelRetries);
+        Assert.Equal(20, policy.HighLevelRetries);
+        Assert.Equal(10, policy.RetrySleepMs);
     }
 
     [Fact]
@@ -24,7 +58,25 @@ public sealed class TransferPolicyTests
     {
         var ipc = new ConfigurableIpc();
         var backend = new FileOperationService(ipc);
-        var policy = new TransferPolicy { Mode = "manual", ManualConcurrency = 7, BandwidthMib = 12 };
+        var policy = new TransferPolicy
+        {
+            Mode = "manual",
+            ManualConcurrency = 7,
+            Checkers = 16,
+            MaxBacklog = 4096,
+            OrderBy = "size_asc",
+            BufferSizeKib = 8192,
+            MultiThreadCutoffMib = 32,
+            MultiThreadStreams = 6,
+            CheckMode = "checksum",
+            Inplace = true,
+            Preallocate = false,
+            FlushOnClose = false,
+            BandwidthMib = 12,
+            LowLevelRetries = 15,
+            HighLevelRetries = 5,
+            RetrySleepMs = 250,
+        };
         await TransferPolicyStore.SaveAsync(backend, policy);
         await TransferPolicyStore.SetOverrideAsync(backend, "job-a", policy with { ManualConcurrency = 2 });
         await TransferPolicyStore.SetOverrideAsync(backend, "job-b", policy with { ManualConcurrency = 3 });

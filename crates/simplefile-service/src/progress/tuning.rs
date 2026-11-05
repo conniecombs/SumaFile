@@ -16,21 +16,57 @@ static HISTORY_LOCK: Mutex<()> = Mutex::new(());
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Mode {
-    #[default]
-    Automatic,
     Conservative,
     Maximum,
     Manual,
+    #[default]
+    #[serde(other)]
+    Automatic,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OrderBy {
+    SizeAsc,
+    SizeDesc,
+    Name,
+    #[default]
+    #[serde(other)]
+    Default,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CheckMode {
+    SizeOnly,
+    Checksum,
+    IgnoreTimes,
+    #[default]
+    #[serde(other)]
+    SizeAndModTime,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub(crate) struct Policy {
     pub mode: Mode,
     pub max_concurrency: usize,
     pub manual_concurrency: usize,
+    pub checkers: usize,
+    pub max_backlog: usize,
+    pub order_by: OrderBy,
+    pub buffer_size_kib: usize,
     pub memory_budget_mb: usize,
+    pub multi_thread_cutoff_mib: usize,
+    pub multi_thread_streams: usize,
+    pub check_mode: CheckMode,
+    pub inplace: bool,
+    pub preallocate: bool,
+    pub flush_on_close: bool,
     pub bandwidth_mib: usize,
+    pub low_level_retries: u32,
+    pub high_level_retries: u32,
+    pub retry_sleep_ms: u64,
 }
 
 impl Default for Policy {
@@ -39,19 +75,49 @@ impl Default for Policy {
             mode: Mode::Automatic,
             max_concurrency: 16,
             manual_concurrency: 4,
+            checkers: 8,
+            max_backlog: 10_000,
+            order_by: OrderBy::Default,
+            buffer_size_kib: 4096,
             memory_budget_mb: 192,
+            multi_thread_cutoff_mib: 64,
+            multi_thread_streams: 4,
+            check_mode: CheckMode::SizeAndModTime,
+            inplace: false,
+            preallocate: true,
+            flush_on_close: true,
             bandwidth_mib: 0,
+            low_level_retries: 10,
+            high_level_retries: 3,
+            retry_sleep_ms: 1000,
         }
     }
 }
 
 impl Policy {
+    pub fn normalized(mut self) -> Self {
+        self.max_concurrency = self.max_concurrency.clamp(1, 32);
+        self.manual_concurrency = self.manual_concurrency.clamp(1, 32);
+        self.checkers = self.checkers.clamp(1, 64);
+        self.max_backlog = self.max_backlog.clamp(128, 100_000);
+        self.buffer_size_kib = self.buffer_size_kib.clamp(64, 65_536);
+        self.memory_budget_mb = self.memory_budget_mb.clamp(16, 512);
+        self.multi_thread_cutoff_mib = self.multi_thread_cutoff_mib.clamp(1, 16_384);
+        self.multi_thread_streams = self.multi_thread_streams.clamp(0, 16);
+        self.bandwidth_mib = self.bandwidth_mib.clamp(0, 1_048_576);
+        self.low_level_retries = self.low_level_retries.clamp(1, 50);
+        self.high_level_retries = self.high_level_retries.clamp(1, 20);
+        self.retry_sleep_ms = self.retry_sleep_ms.clamp(10, 60_000);
+        self
+    }
+
     pub fn load() -> Self {
         get_db_setting(POLICY_KEY.into())
             .ok()
             .flatten()
-            .and_then(|s| serde_json::from_str(&s).ok())
+            .and_then(|s| serde_json::from_str::<Self>(&s).ok())
             .unwrap_or_default()
+            .normalized()
     }
 
     pub fn for_operation(operation_id: &str) -> Self {
@@ -71,9 +137,46 @@ impl Policy {
             .into_iter()
             .find_map(|(id, value)| {
                 (id == operation_id && value.updated <= now && now - value.updated < 86400)
-                    .then_some(value.policy)
+                    .then(|| value.policy.normalized())
             })
             .unwrap_or_else(Self::load)
+    }
+
+    pub fn buffer_bytes(&self, network: bool) -> usize {
+        let kib = self.buffer_size_kib.clamp(64, 65_536);
+        if network && kib == 4096 {
+            512 * 1024
+        } else {
+            kib * 1024
+        }
+    }
+
+    pub fn checkers_limit(&self) -> usize {
+        self.checkers.clamp(1, 64)
+    }
+
+    pub fn backlog_limit(&self) -> usize {
+        self.max_backlog.clamp(128, 100_000)
+    }
+
+    pub fn multi_thread_cutoff_bytes(&self) -> u64 {
+        (self.multi_thread_cutoff_mib.clamp(1, 16_384) as u64) * 1024 * 1024
+    }
+
+    pub fn multi_thread_streams_count(&self) -> usize {
+        self.multi_thread_streams.clamp(0, 16)
+    }
+
+    pub fn low_level_retry_limit(&self) -> u32 {
+        self.low_level_retries.clamp(1, 50)
+    }
+
+    pub fn high_level_retry_limit(&self) -> u32 {
+        self.high_level_retries.clamp(1, 20)
+    }
+
+    pub fn retry_sleep(&self) -> Duration {
+        Duration::from_millis(self.retry_sleep_ms.clamp(10, 60_000))
     }
 
     pub fn limit(&self, buffer_bytes: usize) -> usize {

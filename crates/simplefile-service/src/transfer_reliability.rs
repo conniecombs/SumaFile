@@ -85,19 +85,47 @@ fn transient_io(error: &io::Error) -> bool {
     false
 }
 
-/// Six attempts, at most 31 seconds of deliberate waiting. Each provider also
-/// bounds its network calls; a synchronous OS filesystem call cannot be interrupted.
-#[derive(Default)]
+/// Configurable exponential-backoff pacer (`rclone` `lib/pacer` style).
+/// Defaults to six attempts with a 1-second base interval (at most 31 seconds of
+/// deliberate waiting), or honors user `TransferPolicy` (`--low-level-retries`
+/// and `--retries-sleep`).
 pub(crate) struct Retry {
     first: Option<Failure>,
     pub failures: u32,
+    max_attempts: u32,
+    base_sleep: Duration,
 }
+
+impl Default for Retry {
+    fn default() -> Self {
+        Self {
+            first: None,
+            failures: 0,
+            max_attempts: 6,
+            base_sleep: Duration::from_secs(1),
+        }
+    }
+}
+
 impl Retry {
+    pub fn with_limits(max_attempts: u32, base_sleep: Duration) -> Self {
+        Self {
+            first: None,
+            failures: 0,
+            max_attempts: max_attempts.clamp(1, 50),
+            base_sleep: base_sleep.clamp(Duration::from_millis(10), Duration::from_secs(60)),
+        }
+    }
+
+    pub fn from_policy(policy: &crate::progress::Policy) -> Self {
+        Self::with_limits(policy.low_level_retry_limit(), policy.retry_sleep())
+    }
+
     pub fn failed(&mut self, error: Failure) -> Result<Duration, String> {
         self.failures += 1;
         let first = self.first.get_or_insert_with(|| error.clone());
         log::warn!("Transfer attempt {}: {}", self.failures, error);
-        if !error.retryable || self.failures >= 6 {
+        if !error.retryable || self.failures >= self.max_attempts {
             return Err(if self.failures == 1 {
                 first.to_string()
             } else {
@@ -107,7 +135,9 @@ impl Retry {
                 )
             });
         }
-        Ok(Duration::from_secs(1 << (self.failures - 1)))
+        let shift = (self.failures - 1).min(4);
+        let factor = 1u32 << shift;
+        Ok(self.base_sleep.saturating_mul(factor).min(Duration::from_secs(60)))
     }
 }
 
@@ -168,5 +198,20 @@ mod tests {
         assert_eq!(delay, Duration::from_secs(31));
         assert!(retry.failed(Failure::new("timeout", true)).is_err());
         assert!(wait(Duration::from_secs(16), &AtomicBool::new(true)).is_err());
+    }
+
+    #[test]
+    fn retry_with_limits_honors_custom_attempts_and_backoff() {
+        let mut retry = Retry::with_limits(3, Duration::from_millis(50));
+        assert_eq!(
+            retry.failed(Failure::new("transient", true)).unwrap(),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            retry.failed(Failure::new("transient", true)).unwrap(),
+            Duration::from_millis(100)
+        );
+        let err = retry.failed(Failure::new("transient", true)).unwrap_err();
+        assert!(err.contains("after 3 attempts"));
     }
 }

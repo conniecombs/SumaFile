@@ -27,7 +27,7 @@ public sealed partial class MainWindow
             dialog = VisualTreeHelper.GetOpenPopupsForXamlRoot(view.XamlRoot).Select(p => p.Child).OfType<ContentDialog>().FirstOrDefault();
             return dialog is not null;
         }, "transfer options dialog");
-        var mode = SmokeDescendants<ComboBox>(dialog!).Single();
+        var mode = SmokeDescendants<ComboBox>(dialog!).Single(c => Equals(c.Header, "Mode"));
         var numbers = SmokeDescendants<NumberBox>(dialog!).ToArray();
         mode.SelectedIndex = 3;
         numbers.Single(n => Equals(n.Header, "Maximum simultaneous files")).Value = 4;

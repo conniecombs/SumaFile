@@ -12,10 +12,11 @@ mod tuning;
 pub(crate) use parallel::{ActiveFile, TuningUpdate};
 pub use registry::OperationRegistry;
 pub(crate) use resources::Permit as TransferPermit;
+pub(crate) use resources::PooledBuffer;
 pub(crate) use resources::RateLimit;
 #[cfg(test)]
 pub(crate) use tuning::Mode;
-pub(crate) use tuning::Policy;
+pub(crate) use tuning::{CheckMode, OrderBy, Policy};
 
 pub(crate) use plan::prepare_transfer_inputs;
 pub(crate) use reporting::ProgressContext;
@@ -77,9 +78,17 @@ pub(crate) fn transfer_single_compat(
 ) -> Result<String, String> {
     if simplefile_core::archive::should_handle_transfer(source, destination)? {
         return if operation == "move" {
-            simplefile_core::file_ops::move_entry_resolved(source, destination, action)
+            simplefile_core::archive::move_entry_resolved(
+                source.to_string(),
+                destination.to_string(),
+                action.to_string(),
+            )
         } else {
-            simplefile_core::file_ops::copy_entry_resolved(source, destination, action)
+            simplefile_core::archive::copy_entry_resolved(
+                source.to_string(),
+                destination.to_string(),
+                action.to_string(),
+            )
         };
     }
     transfer_with_progress_blocking(
@@ -905,6 +914,7 @@ mod tests {
             operation_id,
             network: false,
             resume_existing: false,
+            policy: super::Policy::default(),
         };
         let mut completed_bytes = 0;
 
@@ -956,6 +966,7 @@ mod tests {
             operation_id,
             network: true,
             resume_existing: false,
+            policy: super::Policy::default(),
         };
 
         for partial in [b"".as_slice(), b"abc".as_slice(), b"abcdef".as_slice()] {

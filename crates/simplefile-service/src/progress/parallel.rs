@@ -3,8 +3,9 @@
 
 use super::adaptive::Session;
 use super::execute::{copy_file_with_progress_versioned, copy_symlink_with_progress};
-use super::reporting::{CopyContext, ProgressContext, LOCAL_BUFFER_SIZE, NETWORK_BUFFER_SIZE};
+use super::reporting::{CopyContext, ProgressContext};
 use super::resources::Permit;
+use super::tuning::OrderBy;
 use crate::transfer_staging::{
     backup_existing_destination, cleanup_owned_path, conflict_for_existing_destination,
     restore_backed_up_destination, SourceVersion, TreeCopyManifest,
@@ -12,15 +13,45 @@ use crate::transfer_staging::{
 use serde::Serialize;
 use simplefile_core::models::ProgressUpdate;
 use simplefile_core::path_conflict::path_exists_no_follow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 const INITIAL_PRIME_COUNT: usize = 64;
-const READAHEAD_QUEUE_CAPACITY: usize = 2048;
+
+fn is_high_level_retryable(error: &str) -> bool {
+    (error.contains("; after ") && error.contains(" attempts, last failure:"))
+        || error.starts_with("RETRYABLE:")
+}
+
+fn sort_ready_queue(ready_queue: &mut VecDeque<usize>, tasks: &[FileTask], order_by: OrderBy) {
+    if matches!(order_by, OrderBy::Default) || ready_queue.len() <= 1 {
+        return;
+    }
+    let slice = ready_queue.make_contiguous();
+    match order_by {
+        OrderBy::Default => {}
+        OrderBy::SizeAsc => {
+            slice.sort_by(|&a, &b| tasks[a].size.cmp(&tasks[b].size).then_with(|| a.cmp(&b)));
+        }
+        OrderBy::SizeDesc => {
+            slice.sort_by(|&a, &b| tasks[b].size.cmp(&tasks[a].size).then_with(|| a.cmp(&b)));
+        }
+        OrderBy::Name => {
+            slice.sort_by(|&a, &b| {
+                tasks[a]
+                    .source
+                    .file_name()
+                    .cmp(&tasks[b].source.file_name())
+                    .then_with(|| tasks[a].source.cmp(&tasks[b].source))
+                    .then_with(|| a.cmp(&b))
+            });
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct FileTask {
@@ -33,11 +64,11 @@ pub(crate) struct FileTask {
     pub symlink: bool,
 }
 
-/// Enumerate incrementally with a dedicated background scanner and a bounded
-/// read-ahead queue. Directory traversal reuses `DirEntry::file_type()` and
-/// `DirEntry::metadata()` (cached from `FindFirstFileW`/`FindNextFileW` on Windows)
-/// to avoid redundant per-file stat syscalls. All workers are joined before
-/// cleanup or directory metadata preservation.
+/// Enumerate incrementally with rclone `fs/march`-style multi-checker directory traversal
+/// and a bounded read-ahead queue (`--checkers` and `--max-backlog`). Directory traversal
+/// reuses `DirEntry::file_type()` and `DirEntry::metadata()` (cached from
+/// `FindFirstFileW`/`FindNextFileW` on Windows) to avoid redundant per-file stat syscalls.
+/// All checkers and file workers are joined before cleanup or directory metadata preservation.
 pub(crate) fn copy_tree(
     source: &std::path::Path,
     destination: &std::path::Path,
@@ -48,131 +79,242 @@ pub(crate) fn copy_tree(
 ) -> Result<TreeCopyManifest, String> {
     use super::execute::is_real_directory;
     use simplefile_core::path_conflict::create_dir_exclusive;
-    enum Step {
-        Entry {
-            src: PathBuf,
-            dst: PathBuf,
-            file_type: Option<fs::FileType>,
-            len: Option<u64>,
-        },
-        Directory(Box<fs::ReadDir>, PathBuf),
+
+    struct DirQueue {
+        dirs: VecDeque<(usize, PathBuf, PathBuf)>,
+        active_checkers: usize,
+        done: bool,
     }
-    let mut stack = vec![Step::Entry {
-        src: source.into(),
-        dst: destination.into(),
-        file_type: None,
-        len: None,
-    }];
-    let mut created_dirs = Vec::new();
-    let mut source_dirs = Vec::new();
-    let mut replaced_backups = Vec::new();
+
+    #[derive(Default)]
+    struct MarchState {
+        created_dirs: Vec<(usize, PathBuf, PathBuf)>,
+        source_dirs: Vec<(usize, PathBuf)>,
+        replaced_backups: Vec<(usize, PathBuf, PathBuf)>,
+    }
 
     let cancel = ctx.progress.cancel;
     let total_bytes = ctx.progress.total_bytes;
     let total_files = ctx.progress.total_files;
     let network = ctx.network;
     let resume_existing = ctx.resume_existing;
+    let checker_count = ctx.policy.checkers_limit().clamp(1, 32);
+    let channel_cap = ctx.policy.backlog_limit().clamp(64, 8192);
 
-    let mut next_task = || -> Result<Option<FileTask>, String> {
-        while let Some(step) = stack.pop() {
-            if cancel.load(Ordering::Relaxed) {
-                return Err("Operation cancelled".to_string());
-            }
-            match step {
-                Step::Directory(mut entries, target) => {
-                    if let Some(entry) = entries.next() {
-                        let entry = entry.map_err(|e| format!("Failed to read entry: {e}"))?;
-                        let file_type = entry.file_type().ok();
-                        let len = match file_type {
-                            Some(ft) if ft.is_dir() || ft.is_symlink() => Some(0),
-                            _ => entry.metadata().ok().map(|m| m.len()),
-                        };
-                        let child = target.join(entry.file_name());
-                        stack.push(Step::Directory(entries, target));
-                        stack.push(Step::Entry {
-                            src: entry.path(),
-                            dst: child,
-                            file_type,
-                            len,
-                        });
+    let mut initial_dirs = VecDeque::new();
+    initial_dirs.push_back((0usize, source.to_path_buf(), destination.to_path_buf()));
+    let dir_queue = (
+        Mutex::new(DirQueue {
+            dirs: initial_dirs,
+            active_checkers: 0,
+            done: false,
+        }),
+        Condvar::new(),
+    );
+    let march_state = Mutex::new(MarchState::default());
+    let march_stop = AtomicBool::new(false);
+    let (task_tx, task_rx) = mpsc::sync_channel::<Result<FileTask, String>>(channel_cap);
+    let task_rx = Mutex::new(Some(task_rx));
+
+    let copy_res = std::thread::scope(|march_scope| {
+        for _ in 0..checker_count {
+            let dir_queue = &dir_queue;
+            let march_state = &march_state;
+            let march_stop = &march_stop;
+            let task_tx = task_tx.clone();
+            march_scope.spawn(move || loop {
+                let (depth, src_dir, dst_dir) = {
+                    let mut q = dir_queue.0.lock().expect("dir queue lock poisoned");
+                    loop {
+                        if q.done || march_stop.load(Ordering::Acquire) {
+                            q.done = true;
+                            dir_queue.1.notify_all();
+                            return;
+                        }
+                        if let Some(item) = q.dirs.pop_front() {
+                            q.active_checkers += 1;
+                            break item;
+                        }
+                        if q.active_checkers == 0 {
+                            q.done = true;
+                            dir_queue.1.notify_all();
+                            return;
+                        }
+                        q = dir_queue.1.wait(q).expect("dir queue condvar poisoned");
                     }
-                }
-                Step::Entry {
-                    src,
-                    dst,
-                    file_type,
-                    len,
-                } => {
-                    let (file_type, size) = match (file_type, len) {
-                        (Some(ft), Some(size)) => (ft, size),
-                        _ => {
-                            let metadata = fs::symlink_metadata(&src)
-                                .map_err(|e| format!("Failed to stat source: {e}"))?;
-                            let ft = metadata.file_type();
-                            let size = if ft.is_dir() || ft.is_symlink() {
+                };
+
+                let step_res = (|| -> Result<(), String> {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err("Operation cancelled".to_string());
+                    }
+                    if depth >= 1024 {
+                        return Err("Directory nesting exceeds the safe transfer limit".into());
+                    }
+                    let existing = if path_exists_no_follow(&dst_dir) {
+                        if is_real_directory(&dst_dir) {
+                            if !replace_existing && !resume_existing {
+                                return Err(conflict_for_existing_destination(&dst_dir));
+                            }
+                            true
+                        } else if replace_existing || resume_existing {
+                            let backup = backup_existing_destination(&dst_dir)?;
+                            march_state
+                                .lock()
+                                .expect("march state lock poisoned")
+                                .replaced_backups
+                                .push((depth, dst_dir.clone(), backup));
+                            false
+                        } else {
+                            return Err(conflict_for_existing_destination(&dst_dir));
+                        }
+                    } else {
+                        false
+                    };
+                    if !existing {
+                        create_dir_exclusive(&dst_dir)?;
+                        march_state
+                            .lock()
+                            .expect("march state lock poisoned")
+                            .created_dirs
+                            .push((depth, src_dir.clone(), dst_dir.clone()));
+                    }
+                    march_state
+                        .lock()
+                        .expect("march state lock poisoned")
+                        .source_dirs
+                        .push((depth, src_dir.clone()));
+
+                    let entries = fs::read_dir(&src_dir)
+                        .map_err(|e| format!("Failed to read directory: {e}"))?;
+
+                    for entry_res in entries {
+                        if march_stop.load(Ordering::Acquire) {
+                            return Ok(());
+                        }
+                        if cancel.load(Ordering::Relaxed) {
+                            return Err("Operation cancelled".to_string());
+                        }
+                        let entry = entry_res.map_err(|e| format!("Failed to read entry: {e}"))?;
+                        let child_src = entry.path();
+                        let child_dst = dst_dir.join(entry.file_name());
+                        let file_type = match entry.file_type() {
+                            Ok(ft) => ft,
+                            Err(_) => fs::symlink_metadata(&child_src)
+                                .map_err(|e| format!("Failed to stat source: {e}"))?
+                                .file_type(),
+                        };
+                        if file_type.is_dir() {
+                            let mut q = dir_queue.0.lock().expect("dir queue lock poisoned");
+                            q.dirs.push_back((depth + 1, child_src, child_dst));
+                            dir_queue.1.notify_one();
+                        } else {
+                            let symlink = file_type.is_symlink();
+                            let size = if symlink {
                                 0
                             } else {
-                                metadata.len()
-                            };
-                            (ft, size)
-                        }
-                    };
-                    if file_type.is_dir() {
-                        let existing = if path_exists_no_follow(&dst) {
-                            if is_real_directory(&dst) {
-                                if !replace_existing && !resume_existing {
-                                    return Err(conflict_for_existing_destination(&dst));
+                                match entry.metadata() {
+                                    Ok(m) => m.len(),
+                                    Err(_) => fs::symlink_metadata(&child_src)
+                                        .map_err(|e| format!("Failed to stat source: {e}"))?
+                                        .len(),
                                 }
-                                true
-                            } else if replace_existing || resume_existing {
-                                let backup = backup_existing_destination(&dst)?;
-                                replaced_backups.push((dst.clone(), backup));
-                                false
-                            } else {
-                                return Err(conflict_for_existing_destination(&dst));
+                            };
+                            total_bytes.fetch_add(size, Ordering::Relaxed);
+                            total_files.fetch_add(1, Ordering::Relaxed);
+                            let task = FileTask {
+                                source: child_src,
+                                destination: child_dst,
+                                size,
+                                network,
+                                replace_existing,
+                                resume_existing,
+                                symlink,
+                            };
+                            if task_tx.send(Ok(task)).is_err() {
+                                return Ok(());
                             }
-                        } else {
-                            false
-                        };
-                        if !existing {
-                            create_dir_exclusive(&dst)?;
-                            created_dirs.push((src.clone(), dst.clone()));
                         }
-                        source_dirs.push(src.clone());
-                        if stack.len() >= 1024 {
-                            return Err("Directory nesting exceeds the safe transfer limit".into());
-                        }
-                        let entries = fs::read_dir(&src)
-                            .map_err(|e| format!("Failed to read directory: {e}"))?;
-                        stack.push(Step::Directory(Box::new(entries), dst));
-                    } else {
-                        let symlink = file_type.is_symlink();
-                        total_bytes.fetch_add(size, Ordering::Relaxed);
-                        total_files.fetch_add(1, Ordering::Relaxed);
-                        return Ok(Some(FileTask {
-                            source: src,
-                            destination: dst,
-                            size,
-                            network,
-                            replace_existing,
-                            resume_existing,
-                            symlink,
-                        }));
                     }
-                }
-            }
-        }
-        Ok(None)
-    };
+                    Ok(())
+                })();
 
-    let copy_res = copy_files_streaming_using(
-        &mut next_task,
-        ctx.progress,
-        session,
-        *completed_bytes,
-        &copy_task,
-    );
+                if let Err(err) = step_res {
+                    if !march_stop.swap(true, Ordering::AcqRel) {
+                        let _ = task_tx.send(Err(err));
+                    }
+                    let mut q = dir_queue.0.lock().expect("dir queue lock poisoned");
+                    q.active_checkers = q.active_checkers.saturating_sub(1);
+                    q.done = true;
+                    dir_queue.1.notify_all();
+                    return;
+                }
+
+                let mut q = dir_queue.0.lock().expect("dir queue lock poisoned");
+                q.active_checkers = q.active_checkers.saturating_sub(1);
+                if q.active_checkers == 0 && q.dirs.is_empty() {
+                    q.done = true;
+                    dir_queue.1.notify_all();
+                    return;
+                }
+            });
+        }
+        drop(task_tx);
+
+        let mut next_task = || -> Result<Option<FileTask>, String> {
+            let guard = task_rx.lock().expect("task rx lock poisoned");
+            let Some(rx) = guard.as_ref() else {
+                return Ok(None);
+            };
+            match rx.recv() {
+                Ok(Ok(task)) => Ok(Some(task)),
+                Ok(Err(error)) => Err(error),
+                Err(_) => Ok(None),
+            }
+        };
+
+        let res = copy_files_streaming_using(
+            &mut next_task,
+            ctx.progress,
+            session,
+            *completed_bytes,
+            &copy_task,
+        );
+
+        march_stop.store(true, Ordering::Release);
+        let _ = task_rx.lock().expect("task rx lock poisoned").take();
+        {
+            let mut q = dir_queue.0.lock().expect("dir queue lock poisoned");
+            q.done = true;
+            dir_queue.1.notify_all();
+        }
+        res
+    });
+
     *completed_bytes = completed_bytes.saturating_add(copy_res.bytes);
+
+    let mut state = march_state
+        .into_inner()
+        .expect("march state lock poisoned");
+    state.created_dirs.sort_by_key(|item| item.0);
+    state.source_dirs.sort_by_key(|item| item.0);
+    state.replaced_backups.sort_by_key(|item| item.0);
+
+    let created_dirs: Vec<(PathBuf, PathBuf)> = state
+        .created_dirs
+        .into_iter()
+        .map(|(_, src, dst)| (src, dst))
+        .collect();
+    let source_dirs: Vec<PathBuf> = state
+        .source_dirs
+        .into_iter()
+        .map(|(_, src)| src)
+        .collect();
+    let replaced_backups: Vec<(PathBuf, PathBuf)> = state
+        .replaced_backups
+        .into_iter()
+        .map(|(_, dst, backup)| (dst, backup))
+        .collect();
 
     let result = (|| -> Result<TreeCopyManifest, String> {
         if let Some((_, error)) = copy_res.failed {
@@ -327,13 +469,25 @@ pub(crate) fn copy_files_streaming_using(
     offset: u64,
     copy: &CopyVersionedFunction<'_>,
 ) -> CopyResult {
-    let mut tasks = Vec::with_capacity(INITIAL_PRIME_COUNT);
+    let backlog_limit = session.controller.policy.backlog_limit();
+    let order_by = session.controller.policy.order_by;
+    let prime_limit = if matches!(order_by, OrderBy::Default) {
+        INITIAL_PRIME_COUNT.min(backlog_limit)
+    } else {
+        backlog_limit
+    };
+    let mut tasks = Vec::with_capacity(prime_limit.min(1024));
+    let mut ready_queue = VecDeque::with_capacity(prime_limit.min(1024));
     let mut producer_done = false;
     let mut initial_error: Option<(usize, String)> = None;
 
-    while tasks.len() < INITIAL_PRIME_COUNT {
+    while tasks.len() < prime_limit {
         match next_task() {
-            Ok(Some(task)) => tasks.push(task),
+            Ok(Some(task)) => {
+                let idx = tasks.len();
+                tasks.push(task);
+                ready_queue.push_back(idx);
+            }
             Ok(None) => {
                 producer_done = true;
                 break;
@@ -356,11 +510,10 @@ pub(crate) fn copy_files_streaming_using(
         };
     }
 
-    let buffer_size = if tasks.iter().all(|t| t.network) {
-        NETWORK_BUFFER_SIZE
-    } else {
-        LOCAL_BUFFER_SIZE
-    };
+    sort_ready_queue(&mut ready_queue, &tasks, order_by);
+
+    let all_network = tasks.iter().all(|t| t.network);
+    let buffer_size = session.controller.policy.buffer_bytes(all_network);
     session.workload(
         tasks.iter().map(|t| t.size).sum(),
         tasks.len(),
@@ -372,13 +525,15 @@ pub(crate) fn copy_files_streaming_using(
     } else {
         32
     };
+    let channel_cap = backlog_limit.clamp(64, 4096);
+    let max_hl_attempts = session.controller.policy.high_level_retry_limit().max(1) as usize;
+    let worker_policy = session.controller.policy.clone();
     let worker_cancel = Arc::new(AtomicBool::new(initial_error.is_some()));
     let retry_count = AtomicU64::new(0);
     let (work_tx, work_rx) = mpsc::sync_channel::<(usize, FileTask)>(32);
     let work_rx = Mutex::new(work_rx);
-    let (event_tx, event_rx) = mpsc::sync_channel::<Message>(READAHEAD_QUEUE_CAPACITY);
-    let (scan_tx, scan_rx) =
-        mpsc::sync_channel::<Result<FileTask, String>>(READAHEAD_QUEUE_CAPACITY);
+    let (event_tx, event_rx) = mpsc::sync_channel::<Message>(channel_cap);
+    let (scan_tx, scan_rx) = mpsc::sync_channel::<Result<FileTask, String>>(channel_cap);
     let need_scan_wake = Arc::new(AtomicBool::new(false));
     let mut result = CopyResult {
         bytes: 0,
@@ -388,20 +543,24 @@ pub(crate) fn copy_files_streaming_using(
         failed: initial_error,
     };
     let mut active = BTreeMap::<usize, ActiveFile>::new();
-    let mut next = 0;
+    let mut deferred_retries = VecDeque::<(usize, String)>::new();
+    let mut file_hl_attempts = BTreeMap::<usize, usize>::new();
+    let mut last_dispatched_idx = 0usize;
     let mut first_snapshot = true;
     let mut last_display = Instant::now();
     let mut last_retries = 0;
     let operation_id = ctx.operation_id;
     let operation_type = ctx.operation_type;
-    if let Some(first) = tasks.first() {
-        ctx.emit_now(
-            offset,
-            ctx.total_bytes.load(Ordering::Relaxed),
-            first.source.to_string_lossy().into(),
-            "running",
-            None,
-        );
+    if let Some(&first_idx) = ready_queue.front() {
+        if let Some(first) = tasks.get(first_idx) {
+            ctx.emit_now(
+                offset,
+                ctx.total_bytes.load(Ordering::Relaxed),
+                first.source.to_string_lossy().into(),
+                "running",
+                None,
+            );
+        }
     }
 
     std::thread::scope(|scope| {
@@ -442,6 +601,7 @@ pub(crate) fn copy_files_streaming_using(
             let cancel = &worker_cancel;
             let retries = &retry_count;
             let limiter = session.limiter.clone();
+            let policy = worker_policy.clone();
             scope.spawn(move || {
                 let last_worker_emit = std::cell::Cell::new(
                     Instant::now()
@@ -491,12 +651,18 @@ pub(crate) fn copy_files_streaming_using(
                         operation_id,
                         network: task.network,
                         resume_existing: task.resume_existing,
+                        policy: policy.clone(),
                     };
                     let mut copied = 0;
                     let permit_buffer = context
                         .buffer_size()
                         .min(usize::try_from(task.size.max(4096)).unwrap_or(usize::MAX));
-                    let status = Permit::acquire(permit_buffer.saturating_mul(3), cancel)
+                    let chunks = if task.size > context.buffer_size() as u64 {
+                        3
+                    } else {
+                        1
+                    };
+                    let status = Permit::acquire(permit_buffer.saturating_mul(chunks), cancel)
                         .and_then(|_permit| copy(&task, &context, &mut copied));
                     if tx.send(Message::Finished(index, copied, status)).is_err() {
                         break;
@@ -510,8 +676,9 @@ pub(crate) fn copy_files_streaming_using(
                             active: &mut BTreeMap<usize, ActiveFile>,
                             result: &mut CopyResult,
                             producer_done: &mut bool,
-                            next: usize,
-                            tasks_len: usize,
+                            deferred_retries: &mut VecDeque<(usize, String)>,
+                            file_hl_attempts: &mut BTreeMap<usize, usize>,
+                            ready_empty: bool,
                             last_display: &Instant| {
             match message {
                 Message::ScanAvailable => {}
@@ -521,7 +688,7 @@ pub(crate) fn copy_files_streaming_using(
                     }
                     if update.status == "finalizing"
                         && (last_display.elapsed() >= Duration::from_millis(200)
-                            || (active.len() == 1 && *producer_done && next == tasks_len))
+                            || (active.len() == 1 && *producer_done && ready_empty))
                     {
                         let current = offset
                             .saturating_add(result.bytes)
@@ -539,29 +706,57 @@ pub(crate) fn copy_files_streaming_using(
                             ctx.completed_files.fetch_add(1, Ordering::Relaxed);
                         }
                         Err(error) => {
-                            if result.failed.is_none() {
-                                result.failed = Some((index, error));
+                            let attempts = file_hl_attempts.entry(index).or_insert(0);
+                            *attempts += 1;
+                            if *attempts < max_hl_attempts
+                                && !worker_cancel.load(Ordering::Relaxed)
+                                && is_high_level_retryable(&error)
+                            {
+                                let clean = error
+                                    .strip_prefix("RETRYABLE:")
+                                    .unwrap_or(&error)
+                                    .trim()
+                                    .to_string();
+                                deferred_retries.push_back((index, clean));
+                            } else {
+                                let clean = error
+                                    .strip_prefix("RETRYABLE:")
+                                    .unwrap_or(&error)
+                                    .trim()
+                                    .to_string();
+                                if result.failed.is_none() {
+                                    result.failed = Some((index, clean));
+                                }
+                                worker_cancel.store(true, Ordering::Relaxed);
+                                *producer_done = true;
                             }
-                            worker_cancel.store(true, Ordering::Relaxed);
-                            *producer_done = true;
                         }
                     }
                 }
             }
         };
 
-        while !producer_done || next < tasks.len() || !active.is_empty() {
+        while !producer_done
+            || !ready_queue.is_empty()
+            || !active.is_empty()
+            || (!worker_cancel.load(Ordering::Relaxed) && !deferred_retries.is_empty())
+        {
             if ctx.check_cancelled().is_err() {
                 worker_cancel.store(true, Ordering::Relaxed);
                 producer_done = true;
             }
+            let mut added_from_scan = false;
             while !producer_done
                 && !worker_cancel.load(Ordering::Relaxed)
-                && (tasks.len().saturating_sub(next)).saturating_add(active.len())
-                    < READAHEAD_QUEUE_CAPACITY
+                && ready_queue.len().saturating_add(active.len()) < backlog_limit
             {
                 match scan_rx.try_recv() {
-                    Ok(Ok(task)) => tasks.push(task),
+                    Ok(Ok(task)) => {
+                        let idx = tasks.len();
+                        tasks.push(task);
+                        ready_queue.push_back(idx);
+                        added_from_scan = true;
+                    }
                     Ok(Err(error)) => {
                         if result.failed.is_none() {
                             result.failed = Some((tasks.len(), error));
@@ -577,27 +772,46 @@ pub(crate) fn copy_files_streaming_using(
                     }
                 }
             }
+            if added_from_scan {
+                sort_ready_queue(&mut ready_queue, &tasks, order_by);
+            }
+
+            if producer_done
+                && ready_queue.is_empty()
+                && active.is_empty()
+                && !worker_cancel.load(Ordering::Relaxed)
+                && !deferred_retries.is_empty()
+            {
+                for (retry_index, _prev_err) in deferred_retries.drain(..) {
+                    ready_queue.push_back(retry_index);
+                }
+                sort_ready_queue(&mut ready_queue, &tasks, order_by);
+            }
+
             while !worker_cancel.load(Ordering::Relaxed)
-                && next < tasks.len()
                 && active.len() < session.controller.concurrency
             {
-                let task = tasks[next].clone();
+                let Some(next_idx) = ready_queue.pop_front() else {
+                    break;
+                };
+                last_dispatched_idx = next_idx;
+                let task = tasks[next_idx].clone();
                 active.insert(
-                    next,
+                    next_idx,
                     ActiveFile {
                         path: task.source.to_string_lossy().into(),
                         current: 0,
                         total: task.size,
                     },
                 );
-                if work_tx.send((next, task)).is_err() {
+                if work_tx.send((next_idx, task)).is_err() {
                     break;
                 }
-                next += 1;
             }
+
             if !producer_done
                 && !worker_cancel.load(Ordering::Relaxed)
-                && next == tasks.len()
+                && ready_queue.is_empty()
                 && active.len() < session.controller.concurrency
             {
                 need_scan_wake.store(true, Ordering::Release);
@@ -605,7 +819,10 @@ pub(crate) fn copy_files_streaming_using(
                     need_scan_wake.store(false, Ordering::Release);
                     match scanned {
                         Ok(task) => {
+                            let idx = tasks.len();
                             tasks.push(task);
+                            ready_queue.push_back(idx);
+                            sort_ready_queue(&mut ready_queue, &tasks, order_by);
                             continue;
                         }
                         Err(error) => {
@@ -619,7 +836,7 @@ pub(crate) fn copy_files_streaming_using(
                 }
             }
             if active.is_empty()
-                && ((producer_done && next == tasks.len())
+                && ((producer_done && ready_queue.is_empty() && deferred_retries.is_empty())
                     || worker_cancel.load(Ordering::Relaxed))
             {
                 break;
@@ -637,8 +854,9 @@ pub(crate) fn copy_files_streaming_using(
                         &mut active,
                         &mut result,
                         &mut producer_done,
-                        next,
-                        tasks.len(),
+                        &mut deferred_retries,
+                        &mut file_hl_attempts,
+                        ready_queue.is_empty(),
                         &last_display,
                     );
                     while let Ok(msg) = event_rx.try_recv() {
@@ -647,8 +865,9 @@ pub(crate) fn copy_files_streaming_using(
                             &mut active,
                             &mut result,
                             &mut producer_done,
-                            next,
-                            tasks.len(),
+                            &mut deferred_retries,
+                            &mut file_hl_attempts,
+                            ready_queue.is_empty(),
                             &last_display,
                         );
                     }
@@ -657,7 +876,7 @@ pub(crate) fn copy_files_streaming_using(
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     if !producer_done || !active.is_empty() {
                         result.failed = Some((
-                            next.saturating_sub(1),
+                            last_dispatched_idx,
                             "Copy workers stopped unexpectedly".into(),
                         ));
                     }
@@ -688,9 +907,14 @@ pub(crate) fn copy_files_streaming_using(
         drop(scan_rx);
         drop(work_tx);
     });
+    if result.failed.is_none() {
+        if let Some((failed_idx, failed_err)) = deferred_retries.pop_front() {
+            result.failed = Some((failed_idx, failed_err));
+        }
+    }
     result.tasks = tasks;
     if ctx.check_cancelled().is_err() && result.failed.is_none() {
-        result.failed = Some((next.saturating_sub(1), "Operation cancelled".into()));
+        result.failed = Some((last_dispatched_idx, "Operation cancelled".into()));
     }
     session.observe(offset.saturating_add(result.bytes), false, 0);
     session.display(Vec::new(), true);
@@ -699,7 +923,7 @@ pub(crate) fn copy_files_streaming_using(
 
 #[cfg(test)]
 mod tests {
-    use super::super::tuning::{Mode, Policy};
+    use super::super::tuning::{CheckMode, Mode, OrderBy, Policy};
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1082,20 +1306,23 @@ mod tests {
             retry_count: None,
             rate_limit: None,
         };
+        let active_policy = Policy {
+            mode: Mode::Automatic,
+            max_concurrency: 16,
+            checkers: 8,
+            memory_budget_mb: 24,
+            ..Policy::default()
+        };
         let copy_ctx = CopyContext {
             progress: &progress,
             operation_id: "small-tree-test",
             network: false,
             resume_existing: false,
+            policy: active_policy.clone(),
         };
         let snapshots = Mutex::new(Vec::new());
         let emit_tuning = |update| snapshots.lock().unwrap().push(update);
-        let policy = || Policy {
-            mode: Mode::Automatic,
-            max_concurrency: 16,
-            memory_budget_mb: 24,
-            ..Policy::default()
-        };
+        let policy = || active_policy.clone();
         let mut session = Session::new(
             "small-tree-test",
             "copy",
@@ -1131,6 +1358,268 @@ mod tests {
                 .join(format!("small_{i:04}.txt"));
             assert_eq!(fs::read(copied).unwrap(), format!("payload-{i}").as_bytes());
         }
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn high_level_retry_pass_recovers_transient_straggler_after_healthy_batch_completes() {
+        let root = std::env::temp_dir().join(format!(
+            "sumafile_high_level_retry_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("dst")).unwrap();
+        let tasks: Vec<_> = (0..10)
+            .map(|index| {
+                let source = root.join("src").join(format!("{index}.bin"));
+                fs::write(&source, vec![index as u8; 1024]).unwrap();
+                FileTask {
+                    source,
+                    destination: root.join("dst").join(format!("{index}.bin")),
+                    size: 1024,
+                    network: false,
+                    replace_existing: false,
+                    resume_existing: false,
+                    symlink: false,
+                }
+            })
+            .collect();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let total = Arc::new(AtomicU64::new(10 * 1024));
+        let files = Arc::new(AtomicU64::new(10));
+        let completed = Arc::new(AtomicU64::new(0));
+        let ctx = ProgressContext {
+            emit: &|_| {},
+            operation_id: "hl-retry-test",
+            operation_type: "copy",
+            cancel: &cancel,
+            total_bytes: &total,
+            total_files: &files,
+            completed_files: &completed,
+            last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
+        };
+        let policy = || Policy::default();
+        let mut session = Session::new(
+            "hl-retry-test",
+            "copy",
+            &[],
+            &root.to_string_lossy(),
+            &policy,
+            &|_| {},
+        );
+        let flaky_source = tasks[2].source.clone();
+        let flaky_attempts = Arc::new(AtomicU64::new(0));
+        let healthy_finished_before_retry = Arc::new(AtomicU64::new(0));
+        let healthy_counter = Arc::new(AtomicU64::new(0));
+
+        let copy = {
+            let flaky_attempts = flaky_attempts.clone();
+            let healthy_finished_before_retry = healthy_finished_before_retry.clone();
+            let healthy_counter = healthy_counter.clone();
+            move |task: &FileTask, context: &CopyContext<'_>, bytes: &mut u64| {
+                if task.source == flaky_source {
+                    let attempt = flaky_attempts.fetch_add(1, Ordering::SeqCst);
+                    if attempt == 0 {
+                        return Err(
+                            "Read source [2.bin]: timed out; after 6 attempts, last failure: timed out"
+                                .into(),
+                        );
+                    }
+                    healthy_finished_before_retry
+                        .store(healthy_counter.load(Ordering::SeqCst), Ordering::SeqCst);
+                }
+                copy_task(task, context, bytes)?;
+                if task.source != flaky_source {
+                    healthy_counter.fetch_add(1, Ordering::SeqCst);
+                }
+                Ok(())
+            }
+        };
+
+        let result = copy_files_using(&tasks, &ctx, &mut session, 0, &copy);
+        assert!(result.failed.is_none(), "{:?}", result.failed);
+        assert_eq!(result.completed.len(), 10);
+        assert_eq!(flaky_attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            healthy_finished_before_retry.load(Ordering::SeqCst),
+            9,
+            "All 9 healthy files should complete before the deferred high-level retry pass runs"
+        );
+        for task in &tasks {
+            assert_eq!(
+                fs::read(&task.source).unwrap(),
+                fs::read(&task.destination).unwrap()
+            );
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn order_by_size_and_name_controls_dispatch_order_and_checksum_inplace_policy_works() {
+        let root = std::env::temp_dir().join(format!(
+            "sumafile_order_by_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("dst_asc")).unwrap();
+        fs::create_dir_all(root.join("dst_desc")).unwrap();
+
+        let sizes = [("c.bin", 4096usize), ("a.bin", 512usize), ("b.bin", 2048usize)];
+        let make_tasks = |dst_sub: &str| -> Vec<FileTask> {
+            sizes
+                .iter()
+                .map(|(name, sz)| {
+                    let source = root.join("src").join(name);
+                    fs::write(&source, vec![0x5Au8; *sz]).unwrap();
+                    FileTask {
+                        source,
+                        destination: root.join(dst_sub).join(name),
+                        size: *sz as u64,
+                        network: false,
+                        replace_existing: false,
+                        resume_existing: false,
+                        symlink: false,
+                    }
+                })
+                .collect()
+        };
+
+        for (order_by, dst_sub, expected_sizes) in [
+            (OrderBy::SizeAsc, "dst_asc", vec![512u64, 2048, 4096]),
+            (OrderBy::SizeDesc, "dst_desc", vec![4096u64, 2048, 512]),
+        ] {
+            let tasks = make_tasks(dst_sub);
+            let cancel = Arc::new(AtomicBool::new(false));
+            let total = Arc::new(AtomicU64::new(tasks.iter().map(|t| t.size).sum()));
+            let files = Arc::new(AtomicU64::new(tasks.len() as u64));
+            let completed = Arc::new(AtomicU64::new(0));
+            let ctx = ProgressContext {
+                emit: &|_| {},
+                operation_id: "order-by-test",
+                operation_type: "copy",
+                cancel: &cancel,
+                total_bytes: &total,
+                total_files: &files,
+                completed_files: &completed,
+                last_running_emit: Mutex::new(Instant::now()),
+                retry_count: None,
+                rate_limit: None,
+            };
+            let policy = || Policy {
+                mode: Mode::Manual,
+                manual_concurrency: 1,
+                order_by,
+                inplace: true,
+                check_mode: CheckMode::Checksum,
+                ..Policy::default()
+            };
+            let mut session = Session::new(
+                "order-by-test",
+                "copy",
+                &[],
+                &root.to_string_lossy(),
+                &policy,
+                &|_| {},
+            );
+            let dispatched_sizes = Arc::new(Mutex::new(Vec::new()));
+            let dispatched_clone = dispatched_sizes.clone();
+            let copy = move |task: &FileTask, context: &CopyContext<'_>, bytes: &mut u64| {
+                dispatched_clone.lock().unwrap().push(task.size);
+                copy_task(task, context, bytes).map(|_| ())
+            };
+            let result = copy_files_using(&tasks, &ctx, &mut session, 0, &copy);
+            assert!(result.failed.is_none(), "{:?}", result.failed);
+            assert_eq!(*dispatched_sizes.lock().unwrap(), expected_sizes);
+        }
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn overlapped_and_multistream_copy_commit_exact_bytes() {
+        let root = std::env::temp_dir().join(format!(
+            "sumafile_overlapped_multistream_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let src = root.join("large_source.bin");
+        let dst_overlapped = root.join("large_overlapped.bin");
+        let dst_multistream = root.join("large_multistream.bin");
+
+        let payload: Vec<u8> = (0..(2 * 1024 * 1024 + 371))
+            .map(|i| ((i * 31 + 17) % 251) as u8)
+            .collect();
+        fs::write(&src, &payload).unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let total = Arc::new(AtomicU64::new(payload.len() as u64));
+        let files = Arc::new(AtomicU64::new(1));
+        let completed = Arc::new(AtomicU64::new(0));
+        let progress = ProgressContext {
+            emit: &|_| {},
+            operation_id: "overlapped-multistream-test",
+            operation_type: "move",
+            cancel: &cancel,
+            total_bytes: &total,
+            total_files: &files,
+            completed_files: &completed,
+            last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
+        };
+        let ctx = CopyContext {
+            progress: &progress,
+            operation_id: "overlapped-multistream-test",
+            network: true, // 512 KiB buffer -> triggers 3-slot overlapped ring buffer on 2 MiB file
+            resume_existing: false,
+            policy: Policy::default(),
+        };
+        let mut completed_bytes = 0u64;
+        let version = super::super::execute::copy_file_with_progress_versioned(
+            &src,
+            &dst_overlapped,
+            &ctx,
+            &mut completed_bytes,
+            false,
+        )
+        .expect("overlapped ring-buffer copy should succeed");
+        assert!(version.content_hash.is_some());
+        assert_eq!(fs::read(&dst_overlapped).unwrap(), payload);
+
+        let src_file = fs::File::open(&src).unwrap();
+        let mut dst_file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dst_multistream)
+            .unwrap();
+        let copied = super::super::execute::copy_file_multistream(
+            &src_file,
+            &mut dst_file,
+            &src,
+            &dst_multistream,
+            &ctx,
+            0,
+            payload.len() as u64,
+            256 * 1024,
+            4,
+        )
+        .expect("4-stream parallel byte-range copy should succeed");
+        assert_eq!(copied, payload.len() as u64);
+        drop(dst_file);
+        assert_eq!(fs::read(&dst_multistream).unwrap(), payload);
 
         fs::remove_dir_all(&root).unwrap();
     }

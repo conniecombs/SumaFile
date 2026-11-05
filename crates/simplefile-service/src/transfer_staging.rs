@@ -51,7 +51,14 @@ impl ContentHasher {
     }
 
     pub(crate) fn update(&mut self, bytes: &[u8]) {
-        for &b in bytes {
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            let word = u64::from_le_bytes([
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ]);
+            self.state = (self.state ^ word).wrapping_mul(FNV_PRIME);
+        }
+        for &b in chunks.remainder() {
             self.state ^= b as u64;
             self.state = self.state.wrapping_mul(FNV_PRIME);
         }
@@ -61,6 +68,31 @@ impl ContentHasher {
         self.state
     }
 }
+
+#[cfg(windows)]
+pub(crate) fn preallocate_file(file: &fs::File, size: u64) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileAllocationInfo, SetFileInformationByHandle, FILE_ALLOCATION_INFO,
+    };
+    if size < 64 * 1024 || size > i64::MAX as u64 {
+        return;
+    }
+    let info = FILE_ALLOCATION_INFO {
+        AllocationSize: size as i64,
+    };
+    unsafe {
+        let _ = SetFileInformationByHandle(
+            file.as_raw_handle() as _,
+            FileAllocationInfo,
+            (&info as *const FILE_ALLOCATION_INFO).cast(),
+            std::mem::size_of::<FILE_ALLOCATION_INFO>() as u32,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn preallocate_file(_file: &fs::File, _size: u64) {}
 
 #[cfg(windows)]
 pub(crate) fn file_id_from_handle(file: &fs::File) -> Option<(u32, u64)> {
@@ -490,14 +522,32 @@ pub(crate) fn promote_staged_path(
     promote_attempt(staged, destination, replace).map_err(String::from)
 }
 
-pub(crate) fn promote_with_recovery(
+pub(crate) fn promote_with_policy(
     staged: &Path,
     destination: &Path,
     replace: bool,
     cancel: &std::sync::atomic::AtomicBool,
+    policy: &crate::progress::Policy,
+    waiting: impl FnMut(std::time::Duration, &str),
+) -> Result<(), String> {
+    promote_with_retry(
+        staged,
+        destination,
+        replace,
+        cancel,
+        Retry::from_policy(policy),
+        waiting,
+    )
+}
+
+fn promote_with_retry(
+    staged: &Path,
+    destination: &Path,
+    replace: bool,
+    cancel: &std::sync::atomic::AtomicBool,
+    mut retry: Retry,
     mut waiting: impl FnMut(std::time::Duration, &str),
 ) -> Result<(), String> {
-    let mut retry = Retry::default();
     loop {
         crate::transfer_reliability::wait(std::time::Duration::ZERO, cancel)?;
         match promote_attempt(staged, destination, replace) {
@@ -614,7 +664,23 @@ pub(crate) fn restore_backed_up_destination(final_path: &Path, backup_path: &Pat
     }
 }
 
+#[cfg(test)]
 pub(crate) fn existing_file_matches_source(src: &Path, dst: &Path) -> Result<bool, String> {
+    existing_file_matches_source_with_mode(
+        src,
+        dst,
+        crate::progress::CheckMode::SizeAndModTime,
+    )
+}
+
+pub(crate) fn existing_file_matches_source_with_mode(
+    src: &Path,
+    dst: &Path,
+    check_mode: crate::progress::CheckMode,
+) -> Result<bool, String> {
+    if check_mode == crate::progress::CheckMode::IgnoreTimes {
+        return Ok(false);
+    }
     let source = fs::symlink_metadata(src)
         .map_err(|error| format!("Failed to stat source file: {error}"))?;
     let destination = fs::symlink_metadata(dst)
@@ -624,6 +690,9 @@ pub(crate) fn existing_file_matches_source(src: &Path, dst: &Path) -> Result<boo
         || source.len() != destination.len()
     {
         return Ok(false);
+    }
+    if check_mode == crate::progress::CheckMode::SizeOnly {
+        return Ok(true);
     }
 
     files_have_same_contents(src, dst)
