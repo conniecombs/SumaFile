@@ -456,6 +456,44 @@ public class FileOperationServiceTests
     }
 
     [Fact]
+    public async Task BackendCancellationWithoutLocalTokenNeverReportsCompletion()
+    {
+        var outcome = new TransferBatchOutcome
+        {
+            OperationId = "backend_cancel", Status = "cancelled",
+            Committed = [new TransferResult { Source = @"C:\a", Destination = @"C:\dest\a" }],
+            Skipped = [], Failed = [], Pending = [@"C:\b"],
+        };
+        var stub = new ConfigurableIpc
+        {
+            CopyWithProgressHandler = (_, _, _, _, _) => throw new IpcException(
+                Protocol.ErrApplication, "Operation cancelled", JsonSerializer.SerializeToElement(outcome)),
+        };
+        var service = new FileOperationService(stub);
+        var error = await Assert.ThrowsAsync<TransferCanceledException>(() =>
+            service.CopyAsync([@"C:\a", @"C:\b"], @"C:\dest", "error"));
+        Assert.Equal(@"C:\a", error.Committed.Single().Source);
+        Assert.Equal(@"C:\b", error.Pending.Single());
+        Assert.False(error.CancellationToken.IsCancellationRequested);
+    }
+
+    [Fact]
+    public void StructuredConflictRetryExcludesCommittedAndSkippedSources()
+    {
+        var outcome = new TransferBatchOutcome
+        {
+            OperationId = "conflict", Status = "failed",
+            Committed = [new TransferResult { Source = @"C:\a", Destination = @"C:\dest\a" }],
+            Skipped = [new TransferResult { Source = @"C:\skip", Destination = @"C:\dest\skip" }],
+            Failed = [], Pending = [@"C:\b"],
+        };
+        var error = new TransferOperationException("CONFLICT: destination exists", outcome,
+            new IpcException(Protocol.ErrApplication, "CONFLICT: destination exists"));
+        Assert.True(FileOperationService.IsConflict(error));
+        Assert.Equal(new[] { @"C:\b" }, error.RemainingSources([@"c:\A", @"C:\b", @"C:\skip"]));
+    }
+
+    [Fact]
     public async Task CopyAsync_IpcPartialFailure_ThrowsTransferOperationException()
     {
         var outcome = new

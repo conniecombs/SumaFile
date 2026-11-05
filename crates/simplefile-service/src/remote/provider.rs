@@ -5,7 +5,24 @@ use simplefile_core::remote::{RemoteProfile, RemoteProtocol};
 use std::io::{Read, Write};
 
 pub trait RemoteProvider: Send {
+    fn transfer_buffer_bytes(&self) -> usize {
+        super::transfer::TRANSFER_BUFFER_SIZE
+    }
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String>;
+
+    /// Inspect one entry without following links. Providers with a stat command
+    /// override this fallback to avoid repeatedly listing large parent folders.
+    fn stat(&mut self, path: &str) -> Result<Option<FileEntry>, String> {
+        let path = super::path::normalize_remote_path(path);
+        let parent = super::path::parent_remote_path(&path)
+            .ok_or("A server root cannot be transferred as a file")?;
+        let name = super::path::remote_file_name(&path);
+        Ok(self
+            .list_directory(&parent)?
+            .entries
+            .into_iter()
+            .find(|entry| entry.name == name))
+    }
 
     fn create_directory(&mut self, path: &str, name: &str) -> Result<FileEntry, String>;
 
@@ -93,6 +110,12 @@ fn connect_raw_typed(
     }
 }
 impl RemoteProvider for ReconnectingProvider {
+    fn transfer_buffer_bytes(&self) -> usize {
+        self.inner.transfer_buffer_bytes()
+    }
+    fn stat(&mut self, path: &str) -> Result<Option<FileEntry>, String> {
+        self.inner.stat(path)
+    }
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
         self.inner.list_directory(path)
     }

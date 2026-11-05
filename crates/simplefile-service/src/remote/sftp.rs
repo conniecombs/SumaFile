@@ -57,6 +57,24 @@ struct SftpRemoteProvider {
 }
 
 impl RemoteProvider for SftpRemoteProvider {
+    fn transfer_buffer_bytes(&self) -> usize {
+        SFTP_STREAM_BUFFER_SIZE
+    }
+    fn stat(&mut self, path: &str) -> Result<Option<FileEntry>, String> {
+        use russh_sftp::client::error::Error;
+        use russh_sftp::protocol::StatusCode;
+        let path = normalize_remote_path(path);
+        match block_on_runtime(&self.runtime, self.sftp.symlink_metadata(path.clone())) {
+            Ok(metadata) => Ok(Some(file_entry_from_sftp_metadata(
+                &parent_remote_path(&path).unwrap_or_else(|| "/".into()),
+                &path,
+                metadata,
+            ))),
+            Err(Error::Status(status)) if status.status_code == StatusCode::NoSuchFile => Ok(None),
+            Err(error) => Err(format!("SFTP stat failed for {path}: {error}")),
+        }
+    }
+
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
         let path = normalize_remote_path(path);
         let entries = block_on_runtime(&self.runtime, self.sftp.read_dir(path.clone()))

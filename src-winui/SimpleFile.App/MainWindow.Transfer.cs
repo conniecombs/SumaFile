@@ -419,7 +419,15 @@ public sealed partial class MainWindow
                             cancellationToken);
                     }
 
-                    throw;
+                    if (!FileOperationService.IsConflict(exception)) throw;
+                    var remaining = exception.RemainingSources(sources);
+                    if (remaining.Length == 0) break;
+                    var retryAction = await ChooseConflictActionFromBackendConflictAsync(
+                        exception.Message, destination, move, remaining, conflictSession, cancellationToken);
+                    if (retryAction is null) return TransferOperationStatus.Cancelled;
+                    sources = remaining;
+                    action = retryAction;
+                    canRegisterUndo = !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
                 }
                 catch (IpcException exception) when (FileOperationService.IsConflict(exception) && !cancellationToken.IsCancellationRequested)
                 {

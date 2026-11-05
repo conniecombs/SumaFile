@@ -1,92 +1,163 @@
-//! Process-wide worker and buffer limits; per-job cancellable bandwidth pacing.
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+//! Process-wide active + cached buffer limits and per-job cancellable budgets.
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-static ALLOCATION: Mutex<(usize, usize)> = Mutex::new((0, 0));
-static BUFFER_POOL: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
+const GLOBAL_BYTES: usize = 512 * 1024 * 1024;
+const POOL_BYTES: usize = 64 * 1024 * 1024;
 const MAX_POOLED_BUFFERS: usize = 32;
+struct Allocation {
+    workers: usize,
+    active: usize,
+    pooled: usize,
+    pool: Vec<Vec<u8>>,
+}
+static ALLOCATION: Mutex<Allocation> = Mutex::new(Allocation {
+    workers: 0,
+    active: 0,
+    pooled: 0,
+    pool: Vec::new(),
+});
+static AVAILABLE: Condvar = Condvar::new();
 
-/// Recycled transfer buffer that returns its backing allocation to a bounded
-/// process-wide pool on drop (`rclone` `lib/pool` style), avoiding repeated
-/// multi-megabyte heap allocations and page faults across files.
+pub(crate) struct MemoryBudget {
+    limit: AtomicUsize,
+    used: AtomicUsize,
+}
+impl MemoryBudget {
+    pub fn new(bytes: usize) -> Arc<Self> {
+        Arc::new(Self {
+            limit: AtomicUsize::new(bytes),
+            used: AtomicUsize::new(0),
+        })
+    }
+    pub fn update(&self, bytes: usize) {
+        self.limit.store(bytes, Ordering::Relaxed);
+        AVAILABLE.notify_all();
+    }
+}
+
+/// Only exact-capacity buffers are reused. A small file cannot inherit a huge
+/// allocation that was charged as a small reservation.
 pub(crate) struct PooledBuffer(Vec<u8>);
-
 impl PooledBuffer {
     pub fn acquire(size: usize) -> Self {
-        let mut buf = BUFFER_POOL
-            .lock()
-            .ok()
-            .and_then(|mut pool| {
-                pool.iter()
-                    .position(|b| b.capacity() >= size)
-                    .map(|idx| pool.swap_remove(idx))
-                    .or_else(|| pool.pop())
-            })
-            .unwrap_or_default();
-        if buf.len() != size {
-            buf.resize(size, 0);
-        }
-        Self(buf)
+        let cached = ALLOCATION.lock().ok().and_then(|mut state| {
+            let index = state.pool.iter().position(|buf| buf.capacity() == size)?;
+            let buffer = state.pool.swap_remove(index);
+            state.pooled -= buffer.capacity();
+            Some(buffer)
+        });
+        Self(cached.unwrap_or_else(|| vec![0; size]))
     }
-
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.0
     }
 }
-
 impl std::ops::Deref for PooledBuffer {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         &self.0
     }
 }
-
 impl std::ops::DerefMut for PooledBuffer {
     fn deref_mut(&mut self) -> &mut [u8] {
         &mut self.0
     }
 }
-
 impl Drop for PooledBuffer {
     fn drop(&mut self) {
-        if (64 * 1024..=64 * 1024 * 1024).contains(&self.0.capacity()) {
-            if let Ok(mut pool) = BUFFER_POOL.lock() {
-                if pool.len() < MAX_POOLED_BUFFERS {
-                    pool.push(std::mem::take(&mut self.0));
-                }
+        let bytes = self.0.capacity();
+        if !(64 * 1024..=POOL_BYTES).contains(&bytes) {
+            return;
+        }
+        if let Ok(mut state) = ALLOCATION.lock() {
+            // Active reservations still cover buffers being returned. Counting
+            // both here is conservative and prevents a cache from exceeding the cap.
+            if state.pool.len() < MAX_POOLED_BUFFERS
+                && state.pooled + bytes <= POOL_BYTES
+                && state.active + state.pooled + bytes <= GLOBAL_BYTES
+            {
+                state.pooled += bytes;
+                state.pool.push(std::mem::take(&mut self.0));
             }
         }
     }
 }
 
-pub(crate) struct Permit(usize);
-
+pub(crate) struct Permit {
+    bytes: usize,
+    budget: Option<Arc<MemoryBudget>>,
+}
 impl Permit {
     pub fn acquire(bytes: usize, cancel: &AtomicBool) -> Result<Self, String> {
+        Self::acquire_inner(bytes, None, cancel)
+    }
+    pub fn acquire_for_job(
+        bytes: usize,
+        budget: Arc<MemoryBudget>,
+        cancel: &AtomicBool,
+    ) -> Result<Self, String> {
+        Self::acquire_inner(bytes, Some(budget), cancel)
+    }
+    fn acquire_inner(
+        bytes: usize,
+        budget: Option<Arc<MemoryBudget>>,
+        cancel: &AtomicBool,
+    ) -> Result<Self, String> {
+        if bytes > GLOBAL_BYTES {
+            return Err("Transfer buffer reservation exceeds the service budget".into());
+        }
+        let mut state = ALLOCATION.lock().map_err(|e| e.to_string())?;
         loop {
             if cancel.load(Ordering::Relaxed) {
                 return Err("Operation cancelled".into());
             }
+            if budget
+                .as_ref()
+                .is_some_and(|b| bytes > b.limit.load(Ordering::Relaxed))
             {
-                let mut allocation = ALLOCATION.lock().map_err(|e| e.to_string())?;
-                if allocation.0 < 32 && allocation.1.saturating_add(bytes) <= 512 * 1024 * 1024 {
-                    allocation.0 += 1;
-                    allocation.1 += bytes;
-                    return Ok(Self(bytes));
-                }
+                return Err(
+                    "RETRYABLE:Transfer buffer budget changed; retry with current settings".into(),
+                );
             }
-            std::thread::sleep(Duration::from_millis(25));
+            let fits_job = budget.as_ref().is_none_or(|b| {
+                b.used.load(Ordering::Relaxed).saturating_add(bytes)
+                    <= b.limit.load(Ordering::Relaxed)
+            });
+            if fits_job && state.workers < 32 && state.active.saturating_add(bytes) <= GLOBAL_BYTES
+            {
+                while state.active + state.pooled + bytes > GLOBAL_BYTES {
+                    if let Some(buffer) = state.pool.pop() {
+                        state.pooled -= buffer.capacity();
+                    } else {
+                        break;
+                    }
+                }
+                state.workers += 1;
+                state.active += bytes;
+                if let Some(b) = &budget {
+                    b.used.fetch_add(bytes, Ordering::Relaxed);
+                }
+                return Ok(Self { bytes, budget });
+            }
+            state = AVAILABLE
+                .wait_timeout(state, Duration::from_millis(25))
+                .map_err(|e| e.to_string())?
+                .0;
         }
     }
 }
-
 impl Drop for Permit {
     fn drop(&mut self) {
-        if let Ok(mut allocation) = ALLOCATION.lock() {
-            allocation.0 -= 1;
-            allocation.1 -= self.0;
+        if let Ok(mut state) = ALLOCATION.lock() {
+            state.workers -= 1;
+            state.active -= self.bytes;
+            if let Some(b) = &self.budget {
+                b.used.fetch_sub(self.bytes, Ordering::Relaxed);
+            }
         }
+        AVAILABLE.notify_all();
     }
 }
 
@@ -213,14 +284,47 @@ mod tests {
     }
 
     #[test]
-    fn pooled_buffer_reuses_backing_allocation_across_acquires() {
-        let ptr_first = {
-            let mut buf = PooledBuffer::acquire(256 * 1024);
-            buf.as_mut_slice()[0] = 42;
-            buf.as_ptr() as usize
-        };
-        let buf_second = PooledBuffer::acquire(256 * 1024);
-        assert_eq!(buf_second.len(), 256 * 1024);
-        assert_eq!(buf_second.as_ptr() as usize, ptr_first);
+    fn pool_reuses_only_exact_capacity_and_stays_byte_bounded() {
+        drop(PooledBuffer::acquire(8 * 1024 * 1024));
+        let small = PooledBuffer::acquire(64 * 1024);
+        assert_eq!(small.0.capacity(), 64 * 1024);
+        let buffers: Vec<_> = (0..40)
+            .map(|_| PooledBuffer::acquire(2 * 1024 * 1024))
+            .collect();
+        drop(buffers);
+        let state = ALLOCATION.lock().unwrap();
+        assert!(state.pooled <= POOL_BYTES);
+        assert!(state.pool.len() <= MAX_POOLED_BUFFERS);
+        assert_eq!(
+            state.pooled,
+            state.pool.iter().map(Vec::capacity).sum::<usize>()
+        );
+    }
+
+    #[test]
+    fn job_budget_waits_cancellably_and_rejects_stale_large_reservations() {
+        let budget = MemoryBudget::new(1024);
+        let cancel = AtomicBool::new(false);
+        let permit = Permit::acquire_for_job(1024, budget.clone(), &cancel).unwrap();
+        assert_eq!(budget.used.load(Ordering::Relaxed), 1024);
+        std::thread::scope(|scope| {
+            let cancel = &cancel;
+            scope.spawn(move || {
+                std::thread::sleep(Duration::from_millis(40));
+                cancel.store(true, Ordering::Relaxed);
+            });
+            let error = Permit::acquire_for_job(1, budget.clone(), cancel)
+                .err()
+                .unwrap();
+            assert_eq!(error, "Operation cancelled");
+        });
+        drop(permit);
+        assert_eq!(budget.used.load(Ordering::Relaxed), 0);
+        budget.update(512);
+        cancel.store(false, Ordering::Relaxed);
+        assert!(Permit::acquire_for_job(1024, budget, &cancel)
+            .err()
+            .unwrap()
+            .starts_with("RETRYABLE:"));
     }
 }

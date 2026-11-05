@@ -101,11 +101,15 @@ pub fn connect_typed(
         }
     };
 
-    Ok(Box::new(FtpRemoteProvider { client }))
+    Ok(Box::new(FtpRemoteProvider {
+        client,
+        mlst_supported: true,
+    }))
 }
 
 struct FtpRemoteProvider {
     client: FtpClient,
+    mlst_supported: bool,
 }
 
 fn connect_data_socket(address: SocketAddr) -> suppaftp::FtpResult<TcpStream> {
@@ -121,6 +125,39 @@ fn connect_data_socket(address: SocketAddr) -> suppaftp::FtpResult<TcpStream> {
 }
 
 impl RemoteProvider for FtpRemoteProvider {
+    fn stat(&mut self, path: &str) -> Result<Option<FileEntry>, String> {
+        let path = normalize_remote_path(path);
+        if self.mlst_supported {
+            match self.client.mlst(Some(&path)) {
+                Ok(line) => {
+                    let mut entry = parse_ftp_list_line(
+                        &parent_remote_path(&path).unwrap_or_else(|| "/".into()),
+                        line.trim(),
+                    )?;
+                    entry.path = path.clone();
+                    entry.name = super::path::remote_file_name(&path);
+                    return Ok(Some(entry));
+                }
+                Err(suppaftp::FtpError::UnexpectedResponse(response)) => {
+                    match response.status as u32 {
+                        500 | 501 | 502 | 504 => self.mlst_supported = false,
+                        // 550 can mean missing OR permission denied. A successful
+                        // parent listing is required before declaring it absent.
+                        550 => {}
+                        _ => return Err(format!("FTP stat failed for {path}: {response:?}")),
+                    }
+                }
+                Err(error) => return Err(format!("FTP stat failed for {path}: {error}")),
+            }
+        }
+        let parent = parent_remote_path(&path).ok_or("Remote path has no parent")?;
+        Ok(self
+            .list_directory(&parent)?
+            .entries
+            .into_iter()
+            .find(|entry| entry.path == path))
+    }
+
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
         let path = normalize_remote_path(path);
         let lines = self
@@ -206,11 +243,7 @@ impl RemoteProvider for FtpRemoteProvider {
 
 impl FtpRemoteProvider {
     fn find_entry(&mut self, path: &str) -> Result<FileEntry, String> {
-        let parent = parent_remote_path(path).unwrap_or_else(|| "/".to_string());
-        self.list_directory(&parent)?
-            .entries
-            .into_iter()
-            .find(|entry| normalize_remote_path(&entry.path) == normalize_remote_path(path))
+        self.stat(path)?
             .ok_or_else(|| format!("FTP entry not found after operation: {path}"))
     }
 }
@@ -221,6 +254,13 @@ enum FtpClient {
 }
 
 impl FtpClient {
+    fn mlst(&mut self, path: Option<&str>) -> suppaftp::FtpResult<String> {
+        match self {
+            Self::Plain(stream) => stream.mlst(path),
+            Self::Tls(stream) => stream.mlst(path),
+        }
+    }
+
     fn list(&mut self, path: Option<&str>) -> suppaftp::FtpResult<Vec<String>> {
         match self {
             Self::Plain(stream) => stream.list(path),

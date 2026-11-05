@@ -12,6 +12,14 @@ public sealed class TransferOperationException : Exception
     }
 
     public TransferBatchOutcome Outcome { get; }
+
+    public string[] RemainingSources(IEnumerable<string> requested)
+    {
+        var completed = Outcome.Committed.Concat(Outcome.Skipped)
+            .Select(result => result.Source).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return requested.Where(source => !completed.Contains(source))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
 }
 
 public sealed class TransferCanceledException : OperationCanceledException
@@ -260,6 +268,11 @@ public sealed class FileOperationService : ISettingsBackend
         }
         catch (IpcException exception) when (TryGetTransferOutcome(exception, out var outcome))
         {
+            if (string.Equals(outcome.Status, "cancelled", StringComparison.Ordinal))
+            {
+                _journal?.Cancelled(operationType, operationId);
+                throw new TransferCanceledException(operationId, outcome.Committed, outcome.Pending, ct);
+            }
             _journal?.Failed(operationType, operationId, exception);
             throw new TransferOperationException(exception.Message, outcome, exception);
         }
@@ -867,7 +880,7 @@ public sealed class FileOperationService : ISettingsBackend
     public Task OpenPowershellAdminAsync(string path, CancellationToken ct = default) => _ipc.OpenPowershellAdminAsync(path, ct);
 
     // Check if an IpcException represents a conflict.
-    public static bool IsConflict(IpcException ex)
+    public static bool IsConflict(Exception ex)
         => ex.Message.StartsWith(Protocol.PrefixConflict, StringComparison.Ordinal);
 
     // Check if an IpcException represents a trash unavailable error.

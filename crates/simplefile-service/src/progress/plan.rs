@@ -147,6 +147,7 @@ pub(crate) fn prepare_transfer_inputs(
         return Err(format!("Destination is not a directory: {destination}"));
     }
 
+    crate::transfer_journal::recover_directory(&dest_path)?;
     let mut plans = Vec::with_capacity(sources.len());
     let mut planned_destinations = HashSet::new();
     let keep_both = is_keep_both_action(conflict_action);

@@ -27,6 +27,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Rust
+        id: rust
         uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
@@ -37,12 +38,30 @@ jobs:
           workspaces: .
 
       - name: Check formatting
+        id: format
         run: cargo fmt --all -- --check
 
+      - name: Generate formatting repair patch
+        if: failure() && steps.format.outcome == 'failure'
+        shell: pwsh
+        run: |
+          cargo fmt --all
+          git diff --binary --output=rustfmt.patch
+
+      - name: Upload formatting repair patch
+        if: failure() && steps.format.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: rustfmt-repair
+          path: rustfmt.patch
+          retention-days: 7
+
       - name: Run Clippy
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Run tests
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo test --locked --all-features
 
   repo-checks:

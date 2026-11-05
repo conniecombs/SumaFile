@@ -1,6 +1,8 @@
 use super::path::{join_remote_path, normalize_remote_path, parent_remote_path};
 use super::provider::RemoteProvider;
-use crate::progress::{ActiveFile, OrderBy, Policy, PooledBuffer, RateLimit, TuningUpdate};
+use crate::progress::{
+    ActiveFile, CheckMode, OrderBy, Policy, PooledBuffer, RateLimit, TuningUpdate,
+};
 use crate::transfer_reliability::{Failure, Retry};
 use crate::transfer_staging::{
     capture_source_version_from_open_file, verify_source_unchanged, ContentHasher,
@@ -169,6 +171,7 @@ struct ObservedWriter<'a, 'b> {
     destination: File,
     progress: &'a mut Progress<'b>,
     path: String,
+    hasher: ContentHasher,
 }
 impl Write for ObservedWriter<'_, '_> {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
@@ -179,6 +182,7 @@ impl Write for ObservedWriter<'_, '_> {
             .map_err(std::io::Error::other)?;
         match self.destination.write(buffer) {
             Ok(written) => {
+                self.hasher.update(&buffer[..written]);
                 self.progress.limiter.refund(buffer.len() - written);
                 self.progress.report(written as u64)?;
                 Ok(written)
@@ -204,6 +208,85 @@ impl Write for ObservedWriter<'_, '_> {
     }
 }
 
+/// A serial remote session retries only its failing file. Completed files are
+/// never replayed when another pass is needed.
+struct RetryPasses {
+    retry: Retry,
+    policy: Policy,
+    pass: u32,
+    first: Option<String>,
+}
+impl RetryPasses {
+    fn new(policy: &Policy) -> Self {
+        Self {
+            retry: Retry::from_policy(policy),
+            policy: policy.clone(),
+            pass: 1,
+            first: None,
+        }
+    }
+    fn failed(&mut self, error: Failure) -> Result<Duration, String> {
+        let first = self.first.get_or_insert_with(|| error.to_string()).clone();
+        let retryable = error.retryable;
+        match self.retry.failed(error) {
+            Ok(delay) => Ok(delay),
+            Err(last) if retryable && self.pass < self.policy.high_level_retry_limit() => {
+                self.pass += 1;
+                self.retry = Retry::from_policy(&self.policy);
+                log::warn!("Remote transfer retry pass {}: {last}", self.pass);
+                Ok(self.policy.retry_sleep())
+            }
+            Err(last) => Err(format!("{first}; after {} pass(es): {last}", self.pass)),
+        }
+    }
+}
+
+struct ChecksumWriter<'a, 'b> {
+    progress: &'a mut Progress<'b>,
+    hasher: ContentHasher,
+    bytes: u64,
+}
+impl Write for ChecksumWriter<'_, '_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.progress.report(0)?;
+        self.progress
+            .limiter
+            .wait(bytes.len(), self.progress.cancel)
+            .map_err(std::io::Error::other)?;
+        self.hasher.update(bytes);
+        self.bytes += bytes.len() as u64;
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.progress.report(0)
+    }
+}
+
+fn verify_remote_checksum(
+    provider: &mut dyn RemoteProvider,
+    path: &str,
+    expected_len: u64,
+    expected_hash: [u8; 32],
+    progress: &mut Progress<'_>,
+) -> Result<(), Failure> {
+    let mut writer = ChecksumWriter {
+        progress,
+        hasher: ContentHasher::new(),
+        bytes: 0,
+    };
+    let count = provider.download(path, &mut writer)?;
+    if count != expected_len
+        || writer.bytes != expected_len
+        || writer.hasher.finish() != expected_hash
+    {
+        return Err(Failure::new(
+            format!("Remote checksum verification failed [{path}]"),
+            false,
+        ));
+    }
+    Ok(())
+}
+
 fn retry_stream(
     provider: &mut dyn RemoteProvider,
     progress: &mut Progress<'_>,
@@ -211,7 +294,7 @@ fn retry_stream(
     target: &str,
     mut transfer: impl FnMut(&mut dyn RemoteProvider, &mut Progress<'_>) -> Result<u64, Failure>,
 ) -> Result<u64, String> {
-    let mut retry = Retry::from_policy(&progress.policy);
+    let mut retry = RetryPasses::new(&progress.policy);
     loop {
         check_cancel(progress.cancel)?;
         progress.limiter.wait(0, progress.cancel)?;
@@ -310,18 +393,15 @@ fn abort_remote_upload_finalization(
             if let Some(backup_path) = backup {
                 if state.backup_exists && !state.target_exists {
                     if let Err(restore_err) = provider.rename_entry(backup_path, target_name) {
-                        combined = format!(
-                            "{combined}; original remains at {backup_path}: {restore_err}"
-                        );
+                        combined =
+                            format!("{combined}; original remains at {backup_path}: {restore_err}");
                     }
                 }
             }
             if state.staging_exists {
                 cleanup_error(
                     combined,
-                    provider
-                        .delete_entries(&[staging.to_string()])
-                        .map(|_| ()),
+                    provider.delete_entries(&[staging.to_string()]).map(|_| ()),
                     staging,
                 )
             } else {
@@ -333,17 +413,14 @@ fn abort_remote_upload_finalization(
             if need_restore_fallback {
                 if let Some(backup_path) = backup {
                     if let Err(restore_err) = provider.rename_entry(backup_path, target_name) {
-                        combined = format!(
-                            "{combined}; original remains at {backup_path}: {restore_err}"
-                        );
+                        combined =
+                            format!("{combined}; original remains at {backup_path}: {restore_err}");
                     }
                 }
             }
             cleanup_error(
                 combined,
-                provider
-                    .delete_entries(&[staging.to_string()])
-                    .map(|_| ()),
+                provider.delete_entries(&[staging.to_string()]).map(|_| ()),
                 staging,
             )
         }
@@ -429,8 +506,7 @@ fn finalize_remote_upload(
                 loop {
                     progress.limiter.retrying(delay, &reason);
                     progress.send("running", None);
-                    if let Err(wait_err) =
-                        crate::transfer_reliability::wait(delay, progress.cancel)
+                    if let Err(wait_err) = crate::transfer_reliability::wait(delay, progress.cancel)
                     {
                         return Err(abort_remote_upload_finalization(
                             provider,
@@ -456,8 +532,8 @@ fn finalize_remote_upload(
                                     backed_up && backup.is_some(),
                                 ));
                             }
-                            let reconnect_err = reconnect_err
-                                .context("Reconnect for upload finalization", target);
+                            let reconnect_err =
+                                reconnect_err.context("Reconnect for upload finalization", target);
                             reason = reconnect_err.to_string();
                             delay = match retry.failed(reconnect_err) {
                                 Ok(next_delay) => next_delay,
@@ -587,15 +663,7 @@ fn remote_entry(
     provider: &mut dyn RemoteProvider,
     path: &str,
 ) -> Result<Option<FileEntry>, String> {
-    let path = normalize_remote_path(path);
-    let parent =
-        parent_remote_path(&path).ok_or("A server root cannot be transferred as a file")?;
-    let name = path.rsplit('/').next().unwrap_or("");
-    Ok(provider
-        .list_directory(&parent)?
-        .entries
-        .into_iter()
-        .find(|entry| entry.name == name))
+    provider.stat(path)
 }
 
 fn local_exists(path: &Path) -> bool {
@@ -609,17 +677,10 @@ fn unique_remote_sibling(
 ) -> Result<String, String> {
     let parent = parent_remote_path(path).ok_or("Remote destination has no parent")?;
     let name = path.rsplit('/').next().unwrap_or("");
-    // One snapshot, rather than one network listing per candidate.
-    let names: std::collections::HashSet<_> = provider
-        .list_directory(&parent)?
-        .entries
-        .into_iter()
-        .map(|e| e.name)
-        .collect();
     for index in 1..10000 {
-        let candidate = format!("{name}.{suffix}-{index}");
-        if !names.contains(&candidate) {
-            return Ok(join_remote_path(&parent, &candidate));
+        let candidate = join_remote_path(&parent, &format!("{name}.{suffix}-{index}"));
+        if provider.stat(&candidate)?.is_none() {
+            return Ok(candidate);
         }
     }
     Err("Could not allocate a unique remote destination".into())
@@ -641,8 +702,12 @@ fn transfer_file(
 ) -> Result<(String, u64, bool), String> {
     check_cancel(progress.cancel)?;
     progress.current = source.to_string();
-    let _permit =
-        crate::progress::TransferPermit::acquire(TRANSFER_BUFFER_SIZE * 3, progress.cancel)?;
+    let _permit = crate::progress::TransferPermit::acquire(
+        provider.transfer_buffer_bytes() * 3,
+        progress.cancel,
+    )?;
+    progress.policy = (progress.read_policy)();
+    let check_mode = progress.policy.check_mode;
     progress.file_start = progress.bytes;
     progress.send("running", None);
     let upload = progress.request.direction == "upload";
@@ -715,8 +780,12 @@ fn transfer_file(
         } else {
             None
         };
-        let transferred =
-            retry_stream(provider, progress, source, &target, |provider, progress| {
+        let transferred = retry_stream(
+            provider,
+            progress,
+            source,
+            &target,
+            |provider, progress| {
                 let source_file =
                     File::open(source).map_err(|e| Failure::io("Open local source", source, e))?;
                 let initial_meta = source_file
@@ -741,9 +810,19 @@ fn transfer_file(
                 let expected_version = capture_source_version_from_open_file(
                     &reader.source,
                     &initial_meta,
-                    Some(reader.hasher.finish()),
+                    Some(reader.hasher.clone().finish()),
                 );
+                let expected_hash = reader.hasher.clone().finish();
                 drop(reader);
+                if check_mode == CheckMode::Checksum {
+                    verify_remote_checksum(
+                        provider,
+                        &staging,
+                        expected_len,
+                        expected_hash,
+                        progress,
+                    )?;
+                }
                 verify_source_unchanged(Path::new(source), &expected_version).map_err(|err| {
                     Failure::new(
                         format!("Local source changed during upload [{source}]: {err}"),
@@ -751,7 +830,8 @@ fn transfer_file(
                     )
                 })?;
                 Ok(count)
-            });
+            },
+        );
         let count = match transferred {
             Ok(count) => count,
             Err(error) => {
@@ -791,83 +871,105 @@ fn transfer_file(
                 &progress.request.operation_id,
             )?
         };
-        let mut created = false;
+        let mut lease =
+            crate::transfer_journal::StagingLease::begin(source, Path::new(&target), &staging)?;
         let result = retry_stream(provider, progress, source, &target, |provider, progress| {
-            let file = if created {
-                OpenOptions::new().write(true).truncate(true).open(&staging)
-            } else {
-                OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&staging)
+            if !lease.owns_staged() {
+                return Err(Failure::new("Transfer staging identity changed", false));
             }
-            .map_err(|e| Failure::io("Open local temporary destination", &staging, e))?;
+            let file = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&staging)
+                .map_err(|e| Failure::io("Open local temporary destination", &staging, e))?;
             if progress.policy.preallocate {
                 crate::transfer_staging::preallocate_file(&file, expected_size);
             }
-            created = true;
             let flush_on_close = progress.policy.flush_on_close;
             let mut writer = ObservedWriter {
                 destination: file,
                 progress,
-
                 path: staging.to_string_lossy().into_owned(),
+                hasher: ContentHasher::new(),
             };
             let count = provider.download(source, &mut writer)?;
             if count != expected_size {
-                return Err(Failure::new(
-                    format!(
-                        "Remote source size mismatch for {source}: expected {expected_size} bytes, received {count}"
-                    ),
-                    false,
-                ));
+                return Err(Failure::new(format!(
+                    "Remote source size mismatch for {source}: expected {expected_size} bytes, received {count}"
+                ), false));
             }
             if flush_on_close {
-                writer
-                    .destination
-                    .sync_all()
-                    .map_err(|e| Failure::io("Finalize local temporary destination", &staging, e))?;
+                writer.destination.sync_all().map_err(|e| {
+                    Failure::io("Finalize local temporary destination", &staging, e)
+                })?;
+            }
+            let expected_hash = writer.hasher.clone().finish();
+            drop(writer);
+            if check_mode == CheckMode::Checksum {
+                // Compare the bytes persisted locally and a fresh remote read.
+                let mut local_file = File::open(&staging)
+                    .map_err(|e| Failure::io("Verify downloaded content", &staging, e))?;
+                let local = crate::transfer_staging::hash_file_contents(&mut local_file)
+                    .map_err(Failure::from)?;
+                if local != expected_hash {
+                    return Err(Failure::new(
+                        "Downloaded content failed checksum verification",
+                        false,
+                    ));
+                }
+                verify_remote_checksum(provider, source, expected_size, expected_hash, progress)?;
+            }
+            // Failure to stat is a failure to verify, never evidence of success.
+            let after = remote_entry(provider, source)
+                .map_err(Failure::from)?
+                .ok_or_else(|| {
+                    Failure::new(
+                        format!("Remote source disappeared during download: {source}"),
+                        false,
+                    )
+                })?;
+            if after.is_dir
+                || after.is_symlink
+                || after.size != expected_size
+                || (check_mode == CheckMode::SizeAndModTime && after.modified != expected_modified)
+            {
+                return Err(Failure::new(
+                    format!("Remote source changed during download: {source}"),
+                    false,
+                ));
             }
             Ok(count)
         });
         let result = result.and_then(|count| {
-            if let Ok(Some(after_entry)) = remote_entry(provider, source) {
-                if after_entry.size != expected_size
-                    || (!expected_modified.is_empty()
-                        && !after_entry.modified.is_empty()
-                        && after_entry.modified != expected_modified)
-                {
-                    return Err(format!("Remote source changed during download: {source}"));
-                }
-            }
+            check_cancel(progress.cancel)?;
             if !use_inplace {
                 let policy_snapshot = progress.policy.clone();
-                crate::transfer_staging::promote_with_policy(
+                crate::transfer_staging::promote_leased_with_policy(
                     &staging,
                     Path::new(&target),
                     replace,
                     progress.cancel,
                     &policy_snapshot,
+                    &mut lease,
                     |delay, reason| {
                         progress.limiter.retrying(delay, reason);
                         progress.send("running", None);
                     },
                 )?;
             }
-            Ok((target, count, false))
+            Ok(count)
         });
-        if let Err(error) = result {
-            return Err(if created && local_exists(&staging) {
-                cleanup_error(
-                    error,
-                    fs::remove_file(&staging).map_err(|e| e.to_string()),
-                    &staging.to_string_lossy(),
-                )
-            } else {
-                error
-            });
+        match result {
+            Ok(count) => {
+                lease.finish()?;
+                Ok((target, count, false))
+            }
+            Err(error) => Err(cleanup_error(
+                error,
+                lease.abort(),
+                &staging.to_string_lossy(),
+            )),
         }
-        result
     }
 }
 
@@ -941,6 +1043,9 @@ fn transfer_entry(
             }
             Err(e) => return Err(e.to_string()),
         }
+    }
+    if !upload {
+        crate::transfer_journal::recover_directory(Path::new(destination))?;
     }
     let mut children: Vec<(String, String, u64, Option<FileEntry>)> = if upload {
         fs::read_dir(source)
@@ -1070,6 +1175,9 @@ fn transfer_entries_with_policy(
     } else {
         normalize_remote_path(&request.destination)
     };
+    if request.direction == "download" {
+        crate::transfer_journal::recover_directory(Path::new(&destination))?;
+    }
     let mut progress = Progress {
         request,
         cancel,
@@ -1165,6 +1273,9 @@ pub fn transfer_single(
         operation_id: crate::progress::generate_transfer_operation_id(),
     };
     let cancel = AtomicBool::new(false);
+    if request.direction == "download" {
+        crate::transfer_journal::recover_directory(Path::new(&destination))?;
+    }
     let mut progress = Progress {
         request: &request,
         cancel: &cancel,
@@ -1227,6 +1338,11 @@ mod tests {
                 transient_failures: 0,
                 attempts: 0,
                 reconnects: 0,
+                fail_stat_after_read: false,
+                remove_after_read: false,
+                corrupt_upload: false,
+                listings: 0,
+                stats: 0,
             }
         }
         fn request(&self, direction: &str, sources: Vec<String>) -> RemoteTransferRequest {
@@ -1265,6 +1381,11 @@ mod tests {
         transient_failures: usize,
         attempts: usize,
         reconnects: usize,
+        fail_stat_after_read: bool,
+        remove_after_read: bool,
+        corrupt_upload: bool,
+        listings: usize,
+        stats: usize,
     }
     impl DiskProvider {
         fn path(&self, path: &str) -> PathBuf {
@@ -1289,6 +1410,14 @@ mod tests {
         }
     }
     impl RemoteProvider for DiskProvider {
+        fn stat(&mut self, path: &str) -> Result<Option<FileEntry>, String> {
+            self.stats += 1;
+            if self.fail_stat_after_read && self.attempts > 0 {
+                return Err("injected revalidation failure".into());
+            }
+            Ok(self.path(path).exists().then(|| self.entry(path)))
+        }
+
         fn reconnect(&mut self) -> Result<(), crate::remote::provider::RemoteTransferError> {
             self.reconnects += 1;
             if self.permanent_reconnect_failure {
@@ -1305,6 +1434,7 @@ mod tests {
             Ok(())
         }
         fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
+            self.listings += 1;
             let entries = fs::read_dir(self.path(path))
                 .map_err(|e| e.to_string())?
                 .map(|entry| {
@@ -1388,7 +1518,12 @@ mod tests {
                     .map_err(|e| e.to_string())?;
                 cancel.store(true, Ordering::Relaxed);
             }
-            copy_stream(&mut source, destination)
+            let result = copy_stream(&mut source, destination);
+            drop(source);
+            if self.remove_after_read {
+                fs::remove_file(self.path(path)).unwrap();
+            }
+            result
         }
         fn upload(
             &mut self,
@@ -1414,11 +1549,103 @@ mod tests {
                 return Err("injected network failure".into());
             }
             let copied = copy_stream(source, &mut file)?;
+            drop(file);
+            if self.corrupt_upload {
+                fs::write(self.path(path), vec![0u8; copied as usize]).unwrap();
+            }
             if let Some((local_path, replacement)) = &self.mutate_local_during_upload {
                 fs::write(local_path, replacement).unwrap();
             }
             Ok(copied)
         }
+    }
+
+    #[test]
+    fn download_revalidation_failure_or_disappearance_preserves_original() {
+        for missing in [false, true] {
+            let fixture = Fixture::new();
+            let mut provider = fixture.provider();
+            fs::write(provider.path("/source"), b"new").unwrap();
+            let local = Path::new(&fixture.local()).join("source");
+            fs::write(&local, b"original").unwrap();
+            provider.remove_after_read = missing;
+            provider.fail_stat_after_read = !missing;
+            let request = fixture.request("download", vec!["/source".into()]);
+            let outcome =
+                transfer_entries(&mut provider, &request, &AtomicBool::new(false), &|_| {})
+                    .unwrap();
+            assert_eq!(outcome.retry_sources, vec!["/source"]);
+            assert_eq!(fs::read(&local).unwrap(), b"original");
+            assert_eq!(fs::read_dir(fixture.local()).unwrap().count(), 1);
+        }
+    }
+
+    #[test]
+    fn checksum_upload_detects_same_length_remote_corruption() {
+        let fixture = Fixture::new();
+        let mut provider = fixture.provider();
+        let local = Path::new(&fixture.local()).join("source");
+        fs::write(&local, b"correct content").unwrap();
+        fs::write(provider.path("/source"), b"original").unwrap();
+        provider.corrupt_upload = true;
+        let request = fixture.request("upload", vec![local.to_string_lossy().into_owned()]);
+        let outcome = transfer_entries_with_policy(
+            &mut provider,
+            &request,
+            &AtomicBool::new(false),
+            &|_| {},
+            &|_| {},
+            &|| Policy {
+                check_mode: CheckMode::Checksum,
+                ..Policy::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(outcome.retry_sources.len(), 1);
+        assert!(outcome
+            .items
+            .iter()
+            .any(|item| item.error.as_ref().is_some_and(|e| e.contains("checksum"))));
+        assert_eq!(fs::read(provider.path("/source")).unwrap(), b"original");
+    }
+
+    #[test]
+    fn remote_retry_passes_are_bounded_and_stat_avoids_parent_listings() {
+        let fixture = Fixture::new();
+        let mut provider = fixture.provider();
+        fs::write(provider.path("/source"), b"data").unwrap();
+        provider.transient_failures = 3;
+        let request = fixture.request("download", vec!["/source".into()]);
+        let outcome = transfer_entries_with_policy(
+            &mut provider,
+            &request,
+            &AtomicBool::new(false),
+            &|_| {},
+            &|_| {},
+            &|| Policy {
+                low_level_retries: 2,
+                high_level_retries: 2,
+                retry_sleep_ms: 10,
+                ..Policy::default()
+            },
+        )
+        .unwrap();
+        assert!(outcome.retry_sources.is_empty());
+        assert_eq!(provider.attempts, 4);
+        assert_eq!(provider.listings, 0);
+        assert!(provider.stats >= 2);
+        let mut retry = RetryPasses::new(&Policy {
+            low_level_retries: 2,
+            high_level_retries: 2,
+            ..Policy::default()
+        });
+        for _ in 0..3 {
+            assert!(retry.failed(Failure::new("first failure", true)).is_ok());
+        }
+        assert!(retry
+            .failed(Failure::new("last failure", true))
+            .unwrap_err()
+            .contains("first failure"));
     }
 
     fn delayed_remote_transfer(upload: bool) {
@@ -1674,9 +1901,18 @@ mod tests {
         for fail_upload in [true, false] {
             provider.fail_upload = fail_upload;
             provider.fail_promote = !fail_upload;
-            let outcome =
-                transfer_entries(&mut provider, &request, &AtomicBool::new(false), &|_| {})
-                    .unwrap();
+            let outcome = transfer_entries_with_policy(
+                &mut provider,
+                &request,
+                &AtomicBool::new(false),
+                &|_| {},
+                &|_| {},
+                &|| Policy {
+                    retry_sleep_ms: 10,
+                    ..Policy::default()
+                },
+            )
+            .unwrap();
             assert_eq!(outcome.retry_sources, request.sources);
             assert_eq!(fs::read(provider.path("/app.txt")).unwrap(), b"original");
             assert_eq!(fs::read_dir(&provider.root).unwrap().count(), 1);
@@ -1819,11 +2055,9 @@ mod tests {
         fs::write(provider.path("/mutable.txt"), b"original-remote").unwrap();
 
         // Same-length modification during upload to ensure content/metadata check catches it
-        provider.mutate_local_during_upload =
-            Some((local_source.clone(), b"version-two".to_vec()));
+        provider.mutate_local_during_upload = Some((local_source.clone(), b"version-two".to_vec()));
 
-        let request =
-            fixture.request("upload", vec![local_source.to_string_lossy().into_owned()]);
+        let request = fixture.request("upload", vec![local_source.to_string_lossy().into_owned()]);
         let outcome =
             transfer_entries(&mut provider, &request, &AtomicBool::new(false), &|_| {}).unwrap();
 
@@ -1847,8 +2081,7 @@ mod tests {
         provider.transient_failures = 1;
         provider.transient_reconnect_failures = 1;
 
-        let request =
-            fixture.request("upload", vec![local_source.to_string_lossy().into_owned()]);
+        let request = fixture.request("upload", vec![local_source.to_string_lossy().into_owned()]);
         let outcome =
             transfer_entries(&mut provider, &request, &AtomicBool::new(false), &|_| {}).unwrap();
 

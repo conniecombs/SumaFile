@@ -15,6 +15,7 @@ pub(super) const WRITE_BATCH_BYTES: usize = 1024 * 1024;
 #[derive(Clone)]
 pub(super) struct OutboundSink {
     pub(super) sender: mpsc::Sender<OutboundFrame>,
+    writer_task: tokio::task::AbortHandle,
 }
 
 pub(super) struct OutboundFrame {
@@ -23,6 +24,10 @@ pub(super) struct OutboundFrame {
 }
 
 impl OutboundSink {
+    pub(super) fn close(&self) {
+        self.writer_task.abort();
+    }
+
     pub(super) async fn enqueue_payload(&self, payload: Vec<u8>) -> Result<(), String> {
         self.sender
             .send(OutboundFrame { payload, ack: None })
@@ -74,10 +79,13 @@ where
     W: AsyncWrite + Unpin + Send + 'static,
 {
     let (sender, receiver) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         let _ = writer_loop(writer, receiver).await;
     });
-    OutboundSink { sender }
+    OutboundSink {
+        sender,
+        writer_task: task.abort_handle(),
+    }
 }
 
 pub(super) async fn writer_loop<W>(

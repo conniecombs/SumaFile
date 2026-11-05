@@ -60,6 +60,15 @@ async fn call(client: &mut tokio::io::DuplexStream, method: &str, id: u64, param
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_transfer_accepts_health_and_cancel_while_streaming_and_cleans_partial_file() {
+    remote_transfer_cancellation(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_transfer_disconnect_cancels_worker_and_cleans_partial_file() {
+    remote_transfer_cancellation(true).await;
+}
+
+async fn remote_transfer_cancellation(disconnect: bool) {
     use crate::remote::provider::{RemoteProvider, RemoteProviderFactory};
     use simplefile_core::models::{DirectoryListing, FileEntry};
     struct SlowProvider;
@@ -144,6 +153,27 @@ async fn remote_transfer_accepts_health_and_cancel_while_streaming_and_cleans_pa
     let notification: Value =
         serde_json::from_slice(&read_frame(&mut client).await.unwrap()).unwrap();
     assert_eq!(notification["method"], "operation-progress");
+    if disconnect {
+        // Wait for the owned partial, so cleanup cannot pass before I/O starts.
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while std::fs::read_dir(&destination).unwrap().count() == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        drop(client);
+        serving.await.unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while std::fs::read_dir(&destination).unwrap().count() != 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        std::fs::remove_dir(&destination).unwrap();
+        return;
+    }
     send_request(&mut client, HEALTH_METHOD, 2, json!({})).await;
     send_request(
         &mut client,
