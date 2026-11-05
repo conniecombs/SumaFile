@@ -101,7 +101,10 @@ pub fn connect_typed(
         }
     };
 
-    Ok(Box::new(FtpRemoteProvider { client, mlst_supported: true }))
+    Ok(Box::new(FtpRemoteProvider {
+        client,
+        mlst_supported: true,
+    }))
 }
 
 struct FtpRemoteProvider {
@@ -128,7 +131,8 @@ impl RemoteProvider for FtpRemoteProvider {
             match self.client.mlst(Some(&path)) {
                 Ok(line) => {
                     let mut entry = parse_ftp_list_line(
-                        &parent_remote_path(&path).unwrap_or_else(|| "/".into()), line.trim(),
+                        &parent_remote_path(&path).unwrap_or_else(|| "/".into()),
+                        line.trim(),
                     )?;
                     entry.path = path.clone();
                     entry.name = super::path::remote_file_name(&path);
@@ -147,7 +151,11 @@ impl RemoteProvider for FtpRemoteProvider {
             }
         }
         let parent = parent_remote_path(&path).ok_or("Remote path has no parent")?;
-        Ok(self.list_directory(&parent)?.entries.into_iter().find(|entry| entry.path == path))
+        Ok(self
+            .list_directory(&parent)?
+            .entries
+            .into_iter()
+            .find(|entry| entry.path == path))
     }
 
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {

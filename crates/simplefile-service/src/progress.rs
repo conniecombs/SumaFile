@@ -221,7 +221,11 @@ fn transfer_with_policy_blocking(
                 "cancelled",
                 Some("Operation cancelled".to_string()),
             );
-            return Err(TransferBatchError::cancelled(operation_id, Vec::new(), requested_sources));
+            return Err(TransferBatchError::cancelled(
+                operation_id,
+                Vec::new(),
+                requested_sources,
+            ));
         }
         Err(error) => {
             eprintln!("simplefile-service: transfer size estimate failed: {error}");
@@ -505,10 +509,15 @@ fn transfer_with_policy_blocking(
                 "cancelled",
                 Some("Operation cancelled".to_string()),
             );
-            let pending = requested_sources.into_iter()
+            let pending = requested_sources
+                .into_iter()
                 .filter(|source| !transferred.iter().any(|item| &item.source == source))
                 .collect();
-            Err(TransferBatchError::cancelled(operation_id, transferred, pending))
+            Err(TransferBatchError::cancelled(
+                operation_id,
+                transferred,
+                pending,
+            ))
         }
         TransferOutcome::Failed {
             error,
@@ -535,12 +544,20 @@ fn transfer_with_policy_blocking(
 }
 
 impl TransferBatchError {
-    fn cancelled(operation_id: String, committed: Vec<TransferResult>, pending: Vec<String>) -> Self {
+    fn cancelled(
+        operation_id: String,
+        committed: Vec<TransferResult>,
+        pending: Vec<String>,
+    ) -> Self {
         Self {
             message: "Operation cancelled".into(),
             outcome: Box::new(TransferBatchOutcome {
-                operation_id, status: "cancelled".into(), committed,
-                skipped: Vec::new(), failed: Vec::new(), pending,
+                operation_id,
+                status: "cancelled".into(),
+                committed,
+                skipped: Vec::new(),
+                failed: Vec::new(),
+                pending,
             }),
         }
     }
@@ -1033,11 +1050,18 @@ mod tests {
                     let staged =
                         crate::transfer_staging::staging_path_for(&final_file, &operation_id)
                             .unwrap();
-                    if directory { fs::create_dir_all(&target).unwrap(); }
+                    if directory {
+                        fs::create_dir_all(&target).unwrap();
+                    }
                     fs::write(&final_file, b"original").unwrap();
                     // Lock the final destination, not an unowned temporary file.
-                    let held = Mutex::new(Some(fs::OpenOptions::new().read(true)
-                        .share_mode(1).open(&final_file).unwrap()));
+                    let held = Mutex::new(Some(
+                        fs::OpenOptions::new()
+                            .read(true)
+                            .share_mode(1)
+                            .open(&final_file)
+                            .unwrap(),
+                    ));
                     let cancel = Arc::new(AtomicBool::new(false));
                     let waiting = AtomicBool::new(false);
                     let emit = |_: super::ProgressUpdate| {};
@@ -1106,9 +1130,15 @@ mod tests {
         fs::write(&missing_source, b"two").unwrap();
 
         let operation_id = "op_resume_dir_test";
-        let staging = crate::transfer_staging::staging_path_for(&final_destination, operation_id).unwrap();
+        let staging =
+            crate::transfer_staging::staging_path_for(&final_destination, operation_id).unwrap();
         fs::create_dir_all(&staging).unwrap();
-        let lease = crate::transfer_journal::StagingLease::record_created(&source.to_string_lossy(), &final_destination, &staging).unwrap();
+        let lease = crate::transfer_journal::StagingLease::record_created(
+            &source.to_string_lossy(),
+            &final_destination,
+            &staging,
+        )
+        .unwrap();
         let staged_existing = staging.join("one.txt");
         fs::copy(&existing_source, &staged_existing).unwrap();
         simplefile_core::file_ops::preserve_basic_metadata(&existing_source, &staged_existing)
@@ -1312,9 +1342,7 @@ mod tests {
             "error".to_string(),
             Arc::new(AtomicBool::new(false)),
             &|update| {
-                if update.status == "finalizing"
-                    && !created_for_emit.swap(true, Ordering::SeqCst)
-                {
+                if update.status == "finalizing" && !created_for_emit.swap(true, Ordering::SeqCst) {
                     fs::write(&destination_for_emit, b"concurrent-destination").unwrap();
                 }
             },
@@ -1433,7 +1461,10 @@ mod tests {
             "modified first source file must be retained"
         );
         assert_eq!(fs::read(&first).unwrap(), b"updated--first");
-        assert_eq!(fs::read(dst_dir.join("first.txt")).unwrap(), b"original-first");
+        assert_eq!(
+            fs::read(dst_dir.join("first.txt")).unwrap(),
+            b"original-first"
+        );
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);
@@ -1473,7 +1504,9 @@ mod tests {
                 }
             },
         )
-        .expect_err("folder move must report partial move when new file is added after enumeration");
+        .expect_err(
+            "folder move must report partial move when new file is added after enumeration",
+        );
 
         assert!(
             err.message.contains("Copied but failed to delete source"),

@@ -40,278 +40,279 @@ where
     let events = EventSink::new(writer.clone(), binary_hot_frames.clone());
 
     let result = async {
-    loop {
-        let payload = match read_frame(&mut reader).await {
-            Ok(payload) => payload,
-            Err(FrameError::UnexpectedEof) => return Ok(()),
-            Err(FrameError::Oversize { length }) => {
-                return Err(format!("inbound frame too large: {length}"));
-            }
-            Err(error) => return Err(error.to_string()),
-        };
-
-        let request: JsonRpcRequest = serde_json::from_slice(&payload)
-            .map_err(|error| format!("invalid JSON-RPC request: {error}"))?;
-
-        let dispatch_start = Instant::now();
-        let action = dispatch(&mut state, &request);
-        let dispatch_ms = dispatch_start.elapsed().as_secs_f64() * 1000.0;
-
-        match action {
-            Dispatch::Reply(response) => write_json(&writer, &response).await?,
-            Dispatch::RemoteTransfer {
-                id,
-                provider,
-                request,
-            } => {
-                let cancel = operations.register(&request.operation_id).await;
-                jobs::spawn_remote_transfer(
-                    writer.clone(),
-                    operations.clone(),
-                    scheduler.clone(),
-                    events.clone(),
-                    cache.clone(),
-                    jobs::RemoteTransferJob {
-                        id,
-                        provider,
-                        request,
-                        cancel,
-                    },
-                );
-            }
-            Dispatch::ListDirectory { id, path, options } => {
-                spawn_list_directory(
-                    writer.clone(),
-                    scheduler.clone(),
-                    binary_hot_frames.clone(),
-                    cache.clone(),
-                    id,
-                    path,
-                    options,
-                );
-            }
-            Dispatch::CopyWithProgress { id, params } => {
-                let op_id = params
-                    .operation_id
-                    .clone()
-                    .unwrap_or_else(crate::progress::generate_transfer_operation_id);
-                let cancel = operations.register(&op_id).await;
-                spawn_copy_move_with_progress(
-                    writer.clone(),
-                    operations.clone(),
-                    scheduler.clone(),
-                    events.clone(),
-                    cache.clone(),
-                    CopyMoveJob {
-                        id,
-                        params,
-                        op_id,
-                        cancel,
-                        is_copy: true,
-                    },
-                );
-            }
-            Dispatch::MoveWithProgress { id, params } => {
-                let op_id = params
-                    .operation_id
-                    .clone()
-                    .unwrap_or_else(crate::progress::generate_transfer_operation_id);
-                let cancel = operations.register(&op_id).await;
-                spawn_copy_move_with_progress(
-                    writer.clone(),
-                    operations.clone(),
-                    scheduler.clone(),
-                    events.clone(),
-                    cache.clone(),
-                    CopyMoveJob {
-                        id,
-                        params,
-                        op_id,
-                        cancel,
-                        is_copy: false,
-                    },
-                );
-            }
-            Dispatch::CancelOperation { id, operation_id } => {
-                let cancelled = operations.cancel(&operation_id).await;
-                write_json(&writer, &JsonRpcResponse::result(id, json!(cancelled))).await?;
-            }
-            Dispatch::SearchFiles { id, options } => {
-                spawn_search_files(
-                    writer.clone(),
-                    searches.clone(),
-                    scheduler.clone(),
-                    events.clone(),
-                    id,
-                    options,
-                );
-            }
-            Dispatch::CancelSearch { id, search_id } => {
-                searches.cancel(&search_id).await;
-                write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
-            }
-            Dispatch::WatchDirectory { id, path } => {
-                let events = events.clone();
-                let cache_for_watch = cache.clone();
-                let result =
-                    crate::watcher::watch_directory(path, &mut watcher_state, move |change| {
-                        cache_for_watch.invalidate_path(&change.path);
-                        events.emit_file_change(&change);
-                    });
-                let response = match result {
-                    Ok(()) => JsonRpcResponse::result(id, Value::Null),
-                    Err(message) => JsonRpcResponse::application_error(id, message),
-                };
-                write_json(&writer, &response).await?;
-            }
-            Dispatch::UnwatchDirectory { id } => {
-                crate::watcher::unwatch_directory(&mut watcher_state);
-                write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
-            }
-            Dispatch::DuplicateCheck {
-                id,
-                directory,
-                min_size,
-                partial_hash_bytes,
-                max_depth,
-                exclude_patterns,
-                network_mode,
-                operation_id,
-            } => {
-                spawn_duplicate_check(
-                    writer.clone(),
-                    duplicate_scans.clone(),
-                    scheduler.clone(),
-                    events.clone(),
-                    DuplicateCheckJob {
-                        id,
-                        directory,
-                        min_size,
-                        partial_hash_bytes,
-                        max_depth,
-                        exclude_patterns,
-                        network_mode,
-                        operation_id,
-                    },
-                );
-            }
-            Dispatch::CancelDuplicateCheck { id, operation_id } => {
-                if let Some(operation_id) = operation_id {
-                    duplicate_scans.cancel(&operation_id).await;
-                } else {
-                    duplicate_scans.cancel_all().await;
+        loop {
+            let payload = match read_frame(&mut reader).await {
+                Ok(payload) => payload,
+                Err(FrameError::UnexpectedEof) => return Ok(()),
+                Err(FrameError::Oversize { length }) => {
+                    return Err(format!("inbound frame too large: {length}"));
                 }
-                write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
-            }
-            Dispatch::DiskCleanup {
-                id,
-                directory,
-                size_threshold,
-                operation_id,
-            } => {
-                spawn_disk_cleanup(
-                    writer.clone(),
-                    cleanup_scans.clone(),
-                    scheduler.clone(),
-                    events.clone(),
-                    DiskCleanupJob {
-                        id,
-                        directory,
-                        size_threshold,
-                        operation_id,
-                    },
-                );
-            }
-            Dispatch::CancelDiskCleanup { id, operation_id } => {
-                if let Some(operation_id) = operation_id {
-                    cleanup_scans.cancel(&operation_id).await;
-                } else {
-                    cleanup_scans.cancel_all().await;
-                }
-                write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
-            }
-            Dispatch::InstallUpdate { id } => {
-                spawn_install_update(writer.clone(), scheduler.clone(), events.clone(), id);
-            }
-            Dispatch::GenerateThumbnail { id, path, size } => {
-                spawn_generate_thumbnail(
-                    writer.clone(),
-                    scheduler.clone(),
-                    binary_hot_frames.clone(),
-                    cache.clone(),
-                    id,
-                    path,
-                    size,
-                );
-            }
-            Dispatch::GenerateThumbnails { id, paths, size } => {
-                spawn_generate_thumbnails(
-                    writer.clone(),
-                    scheduler.clone(),
-                    binary_hot_frames.clone(),
-                    cache.clone(),
-                    id,
-                    paths,
-                    size,
-                );
-            }
-            Dispatch::CalculateFolderSize { id, path, cancel } => {
-                spawn_folder_size(
-                    writer.clone(),
-                    scheduler.clone(),
-                    cache.clone(),
-                    id,
-                    path,
-                    cancel,
-                );
-            }
-            Dispatch::CountFolderItems { id, path, cancel } => {
-                spawn_folder_item_count(
-                    writer.clone(),
-                    scheduler.clone(),
-                    cache.clone(),
-                    id,
-                    path,
-                    cancel,
-                );
-            }
-            Dispatch::GetFolderMetrics { id, path, cancel } => {
-                spawn_folder_metrics(
-                    writer.clone(),
-                    scheduler.clone(),
-                    cache.clone(),
-                    id,
-                    path,
-                    cancel,
-                );
-            }
-            Dispatch::Shutdown(response) => {
-                crate::watcher::unwatch_directory(&mut watcher_state);
-                write_json(&writer, &response).await?;
-                state.shutdown = true;
-                return Ok(());
-            }
-        }
+                Err(error) => return Err(error.to_string()),
+            };
 
-        let total_ms = dispatch_start.elapsed().as_secs_f64() * 1000.0;
-        if total_ms > 1.0 {
-            log::debug!(
-                "ipc.timing method={} dispatch_ms={:.2} total_ms={:.2}",
-                request.method,
-                dispatch_ms,
-                total_ms
-            );
+            let request: JsonRpcRequest = serde_json::from_slice(&payload)
+                .map_err(|error| format!("invalid JSON-RPC request: {error}"))?;
+
+            let dispatch_start = Instant::now();
+            let action = dispatch(&mut state, &request);
+            let dispatch_ms = dispatch_start.elapsed().as_secs_f64() * 1000.0;
+
+            match action {
+                Dispatch::Reply(response) => write_json(&writer, &response).await?,
+                Dispatch::RemoteTransfer {
+                    id,
+                    provider,
+                    request,
+                } => {
+                    let cancel = operations.register(&request.operation_id).await;
+                    jobs::spawn_remote_transfer(
+                        writer.clone(),
+                        operations.clone(),
+                        scheduler.clone(),
+                        events.clone(),
+                        cache.clone(),
+                        jobs::RemoteTransferJob {
+                            id,
+                            provider,
+                            request,
+                            cancel,
+                        },
+                    );
+                }
+                Dispatch::ListDirectory { id, path, options } => {
+                    spawn_list_directory(
+                        writer.clone(),
+                        scheduler.clone(),
+                        binary_hot_frames.clone(),
+                        cache.clone(),
+                        id,
+                        path,
+                        options,
+                    );
+                }
+                Dispatch::CopyWithProgress { id, params } => {
+                    let op_id = params
+                        .operation_id
+                        .clone()
+                        .unwrap_or_else(crate::progress::generate_transfer_operation_id);
+                    let cancel = operations.register(&op_id).await;
+                    spawn_copy_move_with_progress(
+                        writer.clone(),
+                        operations.clone(),
+                        scheduler.clone(),
+                        events.clone(),
+                        cache.clone(),
+                        CopyMoveJob {
+                            id,
+                            params,
+                            op_id,
+                            cancel,
+                            is_copy: true,
+                        },
+                    );
+                }
+                Dispatch::MoveWithProgress { id, params } => {
+                    let op_id = params
+                        .operation_id
+                        .clone()
+                        .unwrap_or_else(crate::progress::generate_transfer_operation_id);
+                    let cancel = operations.register(&op_id).await;
+                    spawn_copy_move_with_progress(
+                        writer.clone(),
+                        operations.clone(),
+                        scheduler.clone(),
+                        events.clone(),
+                        cache.clone(),
+                        CopyMoveJob {
+                            id,
+                            params,
+                            op_id,
+                            cancel,
+                            is_copy: false,
+                        },
+                    );
+                }
+                Dispatch::CancelOperation { id, operation_id } => {
+                    let cancelled = operations.cancel(&operation_id).await;
+                    write_json(&writer, &JsonRpcResponse::result(id, json!(cancelled))).await?;
+                }
+                Dispatch::SearchFiles { id, options } => {
+                    spawn_search_files(
+                        writer.clone(),
+                        searches.clone(),
+                        scheduler.clone(),
+                        events.clone(),
+                        id,
+                        options,
+                    );
+                }
+                Dispatch::CancelSearch { id, search_id } => {
+                    searches.cancel(&search_id).await;
+                    write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
+                }
+                Dispatch::WatchDirectory { id, path } => {
+                    let events = events.clone();
+                    let cache_for_watch = cache.clone();
+                    let result =
+                        crate::watcher::watch_directory(path, &mut watcher_state, move |change| {
+                            cache_for_watch.invalidate_path(&change.path);
+                            events.emit_file_change(&change);
+                        });
+                    let response = match result {
+                        Ok(()) => JsonRpcResponse::result(id, Value::Null),
+                        Err(message) => JsonRpcResponse::application_error(id, message),
+                    };
+                    write_json(&writer, &response).await?;
+                }
+                Dispatch::UnwatchDirectory { id } => {
+                    crate::watcher::unwatch_directory(&mut watcher_state);
+                    write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
+                }
+                Dispatch::DuplicateCheck {
+                    id,
+                    directory,
+                    min_size,
+                    partial_hash_bytes,
+                    max_depth,
+                    exclude_patterns,
+                    network_mode,
+                    operation_id,
+                } => {
+                    spawn_duplicate_check(
+                        writer.clone(),
+                        duplicate_scans.clone(),
+                        scheduler.clone(),
+                        events.clone(),
+                        DuplicateCheckJob {
+                            id,
+                            directory,
+                            min_size,
+                            partial_hash_bytes,
+                            max_depth,
+                            exclude_patterns,
+                            network_mode,
+                            operation_id,
+                        },
+                    );
+                }
+                Dispatch::CancelDuplicateCheck { id, operation_id } => {
+                    if let Some(operation_id) = operation_id {
+                        duplicate_scans.cancel(&operation_id).await;
+                    } else {
+                        duplicate_scans.cancel_all().await;
+                    }
+                    write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
+                }
+                Dispatch::DiskCleanup {
+                    id,
+                    directory,
+                    size_threshold,
+                    operation_id,
+                } => {
+                    spawn_disk_cleanup(
+                        writer.clone(),
+                        cleanup_scans.clone(),
+                        scheduler.clone(),
+                        events.clone(),
+                        DiskCleanupJob {
+                            id,
+                            directory,
+                            size_threshold,
+                            operation_id,
+                        },
+                    );
+                }
+                Dispatch::CancelDiskCleanup { id, operation_id } => {
+                    if let Some(operation_id) = operation_id {
+                        cleanup_scans.cancel(&operation_id).await;
+                    } else {
+                        cleanup_scans.cancel_all().await;
+                    }
+                    write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
+                }
+                Dispatch::InstallUpdate { id } => {
+                    spawn_install_update(writer.clone(), scheduler.clone(), events.clone(), id);
+                }
+                Dispatch::GenerateThumbnail { id, path, size } => {
+                    spawn_generate_thumbnail(
+                        writer.clone(),
+                        scheduler.clone(),
+                        binary_hot_frames.clone(),
+                        cache.clone(),
+                        id,
+                        path,
+                        size,
+                    );
+                }
+                Dispatch::GenerateThumbnails { id, paths, size } => {
+                    spawn_generate_thumbnails(
+                        writer.clone(),
+                        scheduler.clone(),
+                        binary_hot_frames.clone(),
+                        cache.clone(),
+                        id,
+                        paths,
+                        size,
+                    );
+                }
+                Dispatch::CalculateFolderSize { id, path, cancel } => {
+                    spawn_folder_size(
+                        writer.clone(),
+                        scheduler.clone(),
+                        cache.clone(),
+                        id,
+                        path,
+                        cancel,
+                    );
+                }
+                Dispatch::CountFolderItems { id, path, cancel } => {
+                    spawn_folder_item_count(
+                        writer.clone(),
+                        scheduler.clone(),
+                        cache.clone(),
+                        id,
+                        path,
+                        cancel,
+                    );
+                }
+                Dispatch::GetFolderMetrics { id, path, cancel } => {
+                    spawn_folder_metrics(
+                        writer.clone(),
+                        scheduler.clone(),
+                        cache.clone(),
+                        id,
+                        path,
+                        cancel,
+                    );
+                }
+                Dispatch::Shutdown(response) => {
+                    crate::watcher::unwatch_directory(&mut watcher_state);
+                    write_json(&writer, &response).await?;
+                    state.shutdown = true;
+                    return Ok(());
+                }
+            }
+
+            let total_ms = dispatch_start.elapsed().as_secs_f64() * 1000.0;
+            if total_ms > 1.0 {
+                log::debug!(
+                    "ipc.timing method={} dispatch_ms={:.2} total_ms={:.2}",
+                    request.method,
+                    dispatch_ms,
+                    total_ms
+                );
+            }
         }
     }
-    }.await;
+    .await;
     // Detached blocking jobs must not outlive the client that owns them.
+    writer.close();
     operations.cancel_all().await;
     searches.cancel_all().await;
     duplicate_scans.cancel_all().await;
     cleanup_scans.cancel_all().await;
     crate::watcher::unwatch_directory(&mut watcher_state);
     result
-
 }
 
 #[cfg(test)]

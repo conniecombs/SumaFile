@@ -28,10 +28,14 @@ pub(crate) struct StagingLease {
 }
 
 fn record_path(staged: &Path) -> PathBuf {
-    let base = if staged.file_name().is_some_and(|n| n.to_string_lossy().ends_with(".sumafile-partial")) {
+    let base = if staged
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().ends_with(".sumafile-partial"))
+    {
         staged.to_path_buf()
     } else {
-        crate::transfer_staging::staging_path_for(staged, "ownership").expect("transfer has a destination filename")
+        crate::transfer_staging::staging_path_for(staged, "ownership")
+            .expect("transfer has a destination filename")
     };
     let mut name = base.as_os_str().to_os_string();
     name.push(".state");
@@ -39,9 +43,14 @@ fn record_path(staged: &Path) -> PathBuf {
 }
 
 fn open_locked(path: &Path, create: bool) -> Result<File, String> {
-    let file = OpenOptions::new().read(true).write(true).create_new(create)
-        .open(path).map_err(|e| format!("Open transfer ownership record [{}]: {e}", path.display()))?;
-    file.try_lock().map_err(|e| format!("Transfer artifact is in use [{}]: {e}", path.display()))?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(create)
+        .open(path)
+        .map_err(|e| format!("Open transfer ownership record [{}]: {e}", path.display()))?;
+    file.try_lock()
+        .map_err(|e| format!("Transfer artifact is in use [{}]: {e}", path.display()))?;
     Ok(file)
 }
 
@@ -55,7 +64,10 @@ impl StagingLease {
             Ok(file) => file,
             Err(error) => {
                 let _ = fs::remove_file(&path);
-                return Err(format!("Create owned transfer staging [{}]: {error}", staged.display()));
+                return Err(format!(
+                    "Create owned transfer staging [{}]: {error}",
+                    staged.display()
+                ));
             }
         };
         drop(stage);
@@ -68,22 +80,41 @@ impl StagingLease {
         Self::with_record(source, destination, staged, path, file)
     }
 
-    fn with_record(source: &str, destination: &Path, staged: &Path, path: PathBuf, file: File) -> Result<Self, String> {
+    fn with_record(
+        source: &str,
+        destination: &Path,
+        staged: &Path,
+        path: PathBuf,
+        file: File,
+    ) -> Result<Self, String> {
         let staged_id = file_identity(staged)?;
-        let mut lease = Self { path, file, record: Record {
-            version: 1, source: source.into(), destination: destination.into(), staged: staged.into(),
-            staged_id, backup: None, committed: false,
-        }};
+        let mut lease = Self {
+            path,
+            file,
+            record: Record {
+                version: 1,
+                source: source.into(),
+                destination: destination.into(),
+                staged: staged.into(),
+                staged_id,
+                backup: None,
+                committed: false,
+            },
+        };
         lease.persist()?;
         Ok(lease)
     }
 
     fn persist(&mut self) -> Result<(), String> {
         let data = serde_json::to_vec(&self.record).map_err(|e| e.to_string())?;
-        self.file.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
+        self.file
+            .seek(SeekFrom::End(0))
+            .map_err(|e| e.to_string())?;
         self.file.write_all(&data).map_err(|e| e.to_string())?;
         self.file.write_all(b"\n").map_err(|e| e.to_string())?;
-        self.file.sync_all().map_err(|e| format!("Persist transfer ownership [{}]: {e}", self.path.display()))
+        self.file
+            .sync_all()
+            .map_err(|e| format!("Persist transfer ownership [{}]: {e}", self.path.display()))
     }
 
     pub fn backup_intent(&mut self, path: &Path, original: &Path) -> Result<(), String> {
@@ -98,7 +129,12 @@ impl StagingLease {
     pub fn finish(mut self) -> Result<(), String> {
         self.record.committed = true;
         self.persist()?;
-        fs::remove_file(&self.path).map_err(|e| format!("Remove transfer ownership record [{}]: {e}", self.path.display()))
+        fs::remove_file(&self.path).map_err(|e| {
+            format!(
+                "Remove transfer ownership record [{}]: {e}",
+                self.path.display()
+            )
+        })
     }
 
     pub fn abort(self) -> Result<(), String> {
@@ -115,19 +151,33 @@ fn recover(record: &Record) -> Result<(), String> {
     if let Some((backup, id)) = &record.backup {
         if matches(backup, id) {
             if !path_exists_no_follow(&record.destination) {
-                rename_exclusive(backup, &record.destination).map_err(|e| format!("Restore interrupted replacement [{}]: {e}", backup.display()))?;
+                rename_exclusive(backup, &record.destination).map_err(|e| {
+                    format!(
+                        "Restore interrupted replacement [{}]: {e}",
+                        backup.display()
+                    )
+                })?;
             } else if matches(&record.destination, &record.staged_id) {
                 cleanup_owned_path(backup)?;
             } else {
-                return Err(format!("Interrupted replacement needs recovery; original retained at {}", backup.display()));
+                return Err(format!(
+                    "Interrupted replacement needs recovery; original retained at {}",
+                    backup.display()
+                ));
             }
         } else if path_exists_no_follow(backup) {
-            return Err(format!("Recovery backup identity changed; retained {}", backup.display()));
+            return Err(format!(
+                "Recovery backup identity changed; retained {}",
+                backup.display()
+            ));
         }
     }
     if !record.committed && path_exists_no_follow(&record.staged) {
         if !matches(&record.staged, &record.staged_id) {
-            return Err(format!("Recovery staging identity changed; retained {}", record.staged.display()));
+            return Err(format!(
+                "Recovery staging identity changed; retained {}",
+                record.staged.display()
+            ));
         }
         cleanup_owned_path(&record.staged)?;
     }
@@ -145,25 +195,49 @@ pub(crate) fn recover_directory(directory: &Path) -> Result<(), String> {
     for entry in entries {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name();
-        if !name.to_string_lossy().ends_with(".sumafile-partial.state") { continue; }
+        if !name.to_string_lossy().ends_with(".sumafile-partial.state") {
+            continue;
+        }
         let path = entry.path();
-        let Ok(mut file) = open_locked(&path, false) else { continue; };
-        if file.metadata().map_err(|e| e.to_string())?.len() > RECORD_LIMIT { continue; }
+        let Ok(mut file) = open_locked(&path, false) else {
+            continue;
+        };
+        if file.metadata().map_err(|e| e.to_string())?.len() > RECORD_LIMIT {
+            continue;
+        }
         let mut bytes = Vec::new();
-        (&mut file).take(RECORD_LIMIT).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+        (&mut file)
+            .take(RECORD_LIMIT)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
         // Append-only records preserve the last synced state if a subsequent
         // update is torn. Ignore an incomplete trailing line.
-        let Some(end) = bytes.iter().rposition(|byte| *byte == b'\n') else { continue; };
-        let last = bytes[..end].rsplit(|byte| *byte == b'\n').next().unwrap_or_default();
-        let Ok(record) = serde_json::from_slice::<Record>(last) else { continue; };
-        if record.version != 1 || record_path(&record.staged) != path
-            || record.staged.parent() != Some(directory) || record.destination.parent() != Some(directory)
-            || record.backup.as_ref().is_some_and(|(p, _)| p.parent() != Some(directory)
-                || !p.file_name().is_some_and(|n| n.to_string_lossy().ends_with(".sumafile-replace-backup"))) {
+        let Some(end) = bytes.iter().rposition(|byte| *byte == b'\n') else {
+            continue;
+        };
+        let last = bytes[..end]
+            .rsplit(|byte| *byte == b'\n')
+            .next()
+            .unwrap_or_default();
+        let Ok(record) = serde_json::from_slice::<Record>(last) else {
+            continue;
+        };
+        if record.version != 1
+            || record_path(&record.staged) != path
+            || record.staged.parent() != Some(directory)
+            || record.destination.parent() != Some(directory)
+            || record.backup.as_ref().is_some_and(|(p, _)| {
+                p.parent() != Some(directory)
+                    || !p
+                        .file_name()
+                        .is_some_and(|n| n.to_string_lossy().ends_with(".sumafile-replace-backup"))
+            })
+        {
             continue;
         }
         recover(&record)?;
-        fs::remove_file(&path).map_err(|e| format!("Remove recovered transfer record [{}]: {e}", path.display()))?;
+        fs::remove_file(&path)
+            .map_err(|e| format!("Remove recovered transfer record [{}]: {e}", path.display()))?;
     }
     Ok(())
 }
@@ -205,12 +279,17 @@ mod tests {
             fs::write(&stage, b"new").unwrap();
             lease.backup_intent(&backup, &destination).unwrap();
             fs::rename(&destination, &backup).unwrap();
-            if promoted { fs::rename(&stage, &destination).unwrap(); }
+            if promoted {
+                fs::rename(&stage, &destination).unwrap();
+            }
             // A torn later update must not erase the synced backup intent.
             lease.file.write_all(b"{\"version\":").unwrap();
             drop(lease);
             recover_directory(&root).unwrap();
-            assert_eq!(fs::read(&destination).unwrap(), if promoted { b"new" } else { b"old" });
+            assert_eq!(
+                fs::read(&destination).unwrap(),
+                if promoted { b"new" } else { b"old" }
+            );
             assert!(!backup.exists());
             assert!(!stage.exists());
             assert!(!record_path(&stage).exists());
@@ -226,7 +305,9 @@ mod tests {
         fs::rename(&stage, root.join("original-stage")).unwrap();
         fs::write(&stage, b"another transfer").unwrap();
         drop(lease);
-        assert!(recover_directory(&root).unwrap_err().contains("identity changed"));
+        assert!(recover_directory(&root)
+            .unwrap_err()
+            .contains("identity changed"));
         assert_eq!(fs::read(&stage).unwrap(), b"another transfer");
         assert!(record_path(&stage).exists());
         fs::remove_dir_all(root).unwrap();

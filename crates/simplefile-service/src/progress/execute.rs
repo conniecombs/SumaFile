@@ -6,12 +6,11 @@ use super::resources::PooledBuffer;
 use super::tuning::CheckMode;
 use crate::transfer_reliability::{Failure, Retry};
 use crate::transfer_staging::{
-    capture_source_version_for_path,
-    capture_source_version_from_open_file, cleanup_owned_path,
+    capture_source_version_for_path, capture_source_version_from_open_file, cleanup_owned_path,
     conflict_for_existing_destination, delete_verified_source, delete_verified_source_tree,
     existing_file_matches_source_with_mode, hash_file_contents, preallocate_file,
-    promote_leased_with_policy, remove_path, staging_path_for, verify_source_unchanged, ContentHasher,
-    SourceVersion,
+    promote_leased_with_policy, remove_path, staging_path_for, verify_source_unchanged,
+    ContentHasher, SourceVersion,
 };
 use simplefile_core::path_conflict::{
     is_already_exists_error, path_exists_no_follow, rename_exclusive,
@@ -103,7 +102,8 @@ pub(crate) fn copy_file_attempt_versioned(
     use std::os::windows::fs::MetadataExt;
 
     let buffer_size = buffer_size.min(usize::try_from(file_len.max(1)).unwrap_or(usize::MAX));
-    let mut src_file = open_source_sequential(src).map_err(|e| Failure::io("Open source", src, e))?;
+    let mut src_file =
+        open_source_sequential(src).map_err(|e| Failure::io("Open source", src, e))?;
     let source_initial = src_file
         .metadata()
         .map_err(|e| Failure::io("Inspect opened source", src, e))?;
@@ -151,17 +151,25 @@ pub(crate) fn copy_file_attempt_versioned(
             if existing > 0 {
                 // Resume only a verified prefix. A reused operation ID or a
                 // short write cannot silently splice stale bytes into a move.
-                let mut partial = fs::File::open(dst).map_err(|e| Failure::io("Inspect resume prefix", dst, e))?;
+                let mut partial = fs::File::open(dst)
+                    .map_err(|e| Failure::io("Inspect resume prefix", dst, e))?;
                 let mut left = [0u8; 64 * 1024];
                 let mut right = [0u8; 64 * 1024];
                 let mut remaining = existing;
                 while remaining > 0 {
                     ctx.progress.check_cancelled()?;
                     let count = remaining.min(left.len() as u64) as usize;
-                    src_file.read_exact(&mut left[..count]).map_err(|e| Failure::io("Read source prefix", src, e))?;
-                    partial.read_exact(&mut right[..count]).map_err(|e| Failure::io("Read resume prefix", dst, e))?;
+                    src_file
+                        .read_exact(&mut left[..count])
+                        .map_err(|e| Failure::io("Read source prefix", src, e))?;
+                    partial
+                        .read_exact(&mut right[..count])
+                        .map_err(|e| Failure::io("Read resume prefix", dst, e))?;
                     if left[..count] != right[..count] {
-                        return Err(Failure::new("Temporary destination does not match the source prefix", false));
+                        return Err(Failure::new(
+                            "Temporary destination does not match the source prefix",
+                            false,
+                        ));
                     }
                     remaining -= count as u64;
                 }
@@ -170,10 +178,15 @@ pub(crate) fn copy_file_attempt_versioned(
                     .map_err(|e| Failure::io("Resume source", src, e))?;
             }
             // An existing zero-byte, operation-owned partial is a valid resume point too.
-            let mut file = fs::OpenOptions::new().write(true).open(dst)
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .open(dst)
                 .map_err(|e| Failure::io("Open temporary destination", dst, e))?;
-            file.seek(SeekFrom::Start(existing)).map_err(|e| Failure::io("Seek temporary destination", dst, e))?;
-            if existing == 0 && ctx.policy.preallocate { preallocate_file(&file, file_len); }
+            file.seek(SeekFrom::Start(existing))
+                .map_err(|e| Failure::io("Seek temporary destination", dst, e))?;
+            if existing == 0 && ctx.policy.preallocate {
+                preallocate_file(&file, file_len);
+            }
             (existing, file)
         }
     };
@@ -256,16 +269,16 @@ pub(crate) fn copy_file_attempt_versioned(
             false,
         ));
     }
-    let content_hash = if !need_hash {
-        None
-    } else if resume_from == 0 {
-        Some(stream_hasher.finish())
-    } else {
-        Some(
-            hash_file_contents(&mut src_file)
-                .map_err(|e| Failure::new(format!("Hash source [{}]: {e}", src.display()), false))?,
-        )
-    };
+    let content_hash =
+        if !need_hash {
+            None
+        } else if resume_from == 0 {
+            Some(stream_hasher.finish())
+        } else {
+            Some(hash_file_contents(&mut src_file).map_err(|e| {
+                Failure::new(format!("Hash source [{}]: {e}", src.display()), false)
+            })?)
+        };
     let version = capture_source_version_from_open_file(&src_file, &source_after, content_hash);
     ctx.progress.check_cancelled()?;
     if must_sync {
@@ -776,7 +789,11 @@ pub(crate) fn copy_file_with_progress_versioned(
     } else {
         staging_path_for(dst, ctx.operation_id)?
     };
-    let mut lease = Some(crate::transfer_journal::StagingLease::begin(&src.to_string_lossy(), dst, &staged_path)?);
+    let mut lease = Some(crate::transfer_journal::StagingLease::begin(
+        &src.to_string_lossy(),
+        dst,
+        &staged_path,
+    )?);
     let must_sync = ctx.policy.flush_on_close;
     let mut retry = Retry::from_policy(&ctx.policy);
     let copy_result = loop {
@@ -829,7 +846,9 @@ pub(crate) fn copy_file_with_progress_versioned(
                 dst.to_string_lossy().to_string(),
             );
             if let Err(error) = ctx.progress.check_cancelled() {
-                if let Some(owner) = lease.take() { let _ = owner.abort(); }
+                if let Some(owner) = lease.take() {
+                    let _ = owner.abort();
+                }
                 return Err(error);
             }
             if !use_inplace {
@@ -846,7 +865,9 @@ pub(crate) fn copy_file_with_progress_versioned(
                         }
                     },
                 ) {
-                    if let Some(owner) = lease.take() { let _ = owner.abort(); }
+                    if let Some(owner) = lease.take() {
+                        let _ = owner.abort();
+                    }
                     return Err(
                         if error.starts_with("CONFLICT:") || error == "Operation cancelled" {
                             error
@@ -856,7 +877,9 @@ pub(crate) fn copy_file_with_progress_versioned(
                     );
                 }
             }
-            if let Some(owner) = lease.take() { owner.finish()?; }
+            if let Some(owner) = lease.take() {
+                owner.finish()?;
+            }
             *completed_bytes += written;
             if written > file_len {
                 let known = ctx.progress.total_bytes.load(Ordering::Relaxed);
@@ -875,7 +898,11 @@ pub(crate) fn copy_file_with_progress_versioned(
             {
                 return Err(error);
             }
-            let cleanup = if let Some(owner) = lease.take() { owner.abort() } else { cleanup_owned_path(&staged_path) };
+            let cleanup = if let Some(owner) = lease.take() {
+                owner.abort()
+            } else {
+                cleanup_owned_path(&staged_path)
+            };
             match cleanup {
                 Ok(()) => Err(error),
                 Err(cleanup) => Err(format!("{error}; {cleanup}")),
@@ -900,7 +927,11 @@ pub(crate) fn copy_symlink_with_progress(
         return Err("Refusing an unowned temporary symlink destination".into());
     }
     recreate_symlink(src_path, &staged_path)?;
-    let mut lease = crate::transfer_journal::StagingLease::record_created(&src_path.to_string_lossy(), dst_path, &staged_path)?;
+    let mut lease = crate::transfer_journal::StagingLease::record_created(
+        &src_path.to_string_lossy(),
+        dst_path,
+        &staged_path,
+    )?;
     if let Err(error) = verify_source_unchanged(src_path, &version) {
         let _ = lease.abort();
         return Err(error);
@@ -1008,7 +1039,6 @@ pub(crate) fn move_plan_with_progress(
         }
     }
 
-
     let source_meta = fs::symlink_metadata(&plan.source_path)
         .map_err(|error| format!("Failed to stat source: {error}"))?;
     if source_meta.file_type().is_dir() {
@@ -1048,39 +1078,76 @@ pub(crate) fn move_plan_with_progress(
 }
 
 fn copy_directory_plan(
-    plan: &TransferPlan, ctx: &ProgressContext, completed_bytes: &mut u64,
+    plan: &TransferPlan,
+    ctx: &ProgressContext,
+    completed_bytes: &mut u64,
     session: &mut super::adaptive::Session<'_>,
 ) -> Result<crate::transfer_staging::TreeCopyManifest, String> {
     let policy = session.controller.policy.clone();
     let staged_tree = !is_real_directory(&plan.final_dest);
-    let destination = if staged_tree { staging_path_for(&plan.final_dest, ctx.operation_id)? } else { plan.final_dest.clone() };
+    let destination = if staged_tree {
+        staging_path_for(&plan.final_dest, ctx.operation_id)?
+    } else {
+        plan.final_dest.clone()
+    };
     let mut lease = if staged_tree {
         simplefile_core::path_conflict::create_dir_exclusive(&destination)?;
         Some(crate::transfer_journal::StagingLease::record_created(
-            &plan.source_path.to_string_lossy(), &plan.final_dest, &destination)?)
-    } else { None };
+            &plan.source_path.to_string_lossy(),
+            &plan.final_dest,
+            &destination,
+        )?)
+    } else {
+        None
+    };
     let tree_ctx = CopyContext {
-        progress: ctx, operation_id: ctx.operation_id, network: plan.network,
-        resume_existing: staged_tree, policy: policy.clone(),
+        progress: ctx,
+        operation_id: ctx.operation_id,
+        network: plan.network,
+        resume_existing: staged_tree,
+        policy: policy.clone(),
     };
     let result = (|| {
-        let manifest = super::parallel::copy_tree(&plan.source_path, &destination, &tree_ctx,
-            completed_bytes, plan.replace_existing, session)?;
+        let manifest = super::parallel::copy_tree(
+            &plan.source_path,
+            &destination,
+            &tree_ctx,
+            completed_bytes,
+            plan.replace_existing,
+            session,
+        )?;
         if staged_tree {
             simplefile_core::file_ops::preserve_basic_metadata(&plan.source_path, &destination)?;
             ctx.finalizing(*completed_bytes, plan.final_dest.to_string_lossy().into());
             ctx.check_cancelled()?;
-            promote_leased_with_policy(&destination, &plan.final_dest, plan.replace_existing,
-                ctx.cancel, &policy, lease.as_mut().expect("tree has ownership"),
-                |delay, reason| { session.limiter.retrying(delay, reason); session.display(Vec::new(), true); })?;
+            promote_leased_with_policy(
+                &destination,
+                &plan.final_dest,
+                plan.replace_existing,
+                ctx.cancel,
+                &policy,
+                lease.as_mut().expect("tree has ownership"),
+                |delay, reason| {
+                    session.limiter.retrying(delay, reason);
+                    session.display(Vec::new(), true);
+                },
+            )?;
         }
         Ok(manifest)
     })();
     match result {
-        Ok(manifest) => { if let Some(owner) = lease.take() { owner.finish()?; } Ok(manifest) }
+        Ok(manifest) => {
+            if let Some(owner) = lease.take() {
+                owner.finish()?;
+            }
+            Ok(manifest)
+        }
         Err(error) => {
             let cleanup = lease.take().map(|owner| owner.abort()).transpose();
-            Err(match cleanup { Err(cleanup) => format!("{error}; {cleanup}"), Ok(_) => error })
+            Err(match cleanup {
+                Err(cleanup) => format!("{error}; {cleanup}"),
+                Ok(_) => error,
+            })
         }
     }
 }

@@ -144,8 +144,14 @@ impl Policy {
 
     pub fn buffer_bytes(&self, network: bool) -> usize {
         let kib = self.buffer_size_kib.clamp(64, 65_536);
-        let requested = if network && kib == 4096 { 512 * 1024 } else { kib * 1024 };
-        requested.min((self.memory_bytes() - 128 * 1024) / self.max_buffer_count()).max(4096)
+        let requested = if network && kib == 4096 {
+            512 * 1024
+        } else {
+            kib * 1024
+        };
+        requested
+            .min((self.memory_bytes() - 128 * 1024) / self.max_buffer_count())
+            .max(4096)
     }
 
     pub fn memory_bytes(&self) -> usize {
@@ -153,16 +159,28 @@ impl Policy {
     }
 
     pub fn max_buffer_count(&self) -> usize {
-        if cfg!(windows) { self.multi_thread_streams_count().max(3) } else { 3 }
+        if cfg!(windows) {
+            self.multi_thread_streams_count().max(3)
+        } else {
+            3
+        }
     }
 
     pub fn buffer_count(&self, network: bool, file_len: u64, operation: &str) -> usize {
         let buffer = self.buffer_bytes(network) as u64;
-        if cfg!(windows) && operation == "copy" && self.check_mode != CheckMode::Checksum
+        if cfg!(windows)
+            && operation == "copy"
+            && self.check_mode != CheckMode::Checksum
             && self.multi_thread_streams_count() >= 2
-            && file_len >= self.multi_thread_cutoff_bytes() && file_len >= buffer * 2 {
+            && file_len >= self.multi_thread_cutoff_bytes()
+            && file_len >= buffer * 2
+        {
             self.multi_thread_streams_count()
-        } else if file_len > buffer { 3 } else { 1 }
+        } else if file_len > buffer {
+            3
+        } else {
+            1
+        }
     }
 
     pub fn checkers_limit(&self) -> usize {

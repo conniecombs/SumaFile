@@ -6,9 +6,7 @@ use super::execute::{copy_file_with_progress_versioned, copy_symlink_with_progre
 use super::reporting::{CopyContext, ProgressContext};
 use super::resources::Permit;
 use super::tuning::OrderBy;
-use crate::transfer_staging::{
-    conflict_for_existing_destination, SourceVersion, TreeCopyManifest,
-};
+use crate::transfer_staging::{conflict_for_existing_destination, SourceVersion, TreeCopyManifest};
 use serde::Serialize;
 use simplefile_core::models::ProgressUpdate;
 use simplefile_core::path_conflict::path_exists_no_follow;
@@ -26,7 +24,11 @@ fn is_high_level_retryable(error: &str) -> bool {
         || error.starts_with("RETRYABLE:")
 }
 
-fn sort_ready_queue(ready_queue: &mut VecDeque<usize>, tasks: &BTreeMap<usize, FileTask>, order_by: OrderBy) {
+fn sort_ready_queue(
+    ready_queue: &mut VecDeque<usize>,
+    tasks: &BTreeMap<usize, FileTask>,
+    order_by: OrderBy,
+) {
     if matches!(order_by, OrderBy::Default) || ready_queue.len() <= 1 {
         return;
     }
@@ -89,7 +91,12 @@ pub(crate) fn copy_tree(
     struct MarchState {
         created_dirs: Vec<(usize, PathBuf, PathBuf)>,
         source_dirs: Vec<(usize, PathBuf, SourceVersion)>,
-        staged_dirs: Vec<(usize, PathBuf, PathBuf, crate::transfer_journal::StagingLease)>,
+        staged_dirs: Vec<(
+            usize,
+            PathBuf,
+            PathBuf,
+            crate::transfer_journal::StagingLease,
+        )>,
     }
 
     let manifest = crate::transfer_manifest::DiskManifest::new()?;
@@ -162,18 +169,29 @@ pub(crate) fn copy_tree(
                         // Build new/replacement subtrees privately. Their final
                         // names are published only after every worker has joined.
                         let final_dir = dst_dir.clone();
-                        dst_dir = crate::transfer_staging::staging_path_for(&final_dir, operation_id)?;
+                        dst_dir =
+                            crate::transfer_staging::staging_path_for(&final_dir, operation_id)?;
                         create_dir_exclusive(&dst_dir)?;
                         let lease = crate::transfer_journal::StagingLease::record_created(
-                            &src_dir.to_string_lossy(), &final_dir, &dst_dir,
+                            &src_dir.to_string_lossy(),
+                            &final_dir,
+                            &dst_dir,
                         )?;
                         let mut state = march_state.lock().expect("march state lock poisoned");
-                        state.created_dirs.push((depth, src_dir.clone(), dst_dir.clone()));
-                        state.staged_dirs.push((depth, dst_dir.clone(), final_dir, lease));
+                        state
+                            .created_dirs
+                            .push((depth, src_dir.clone(), dst_dir.clone()));
+                        state
+                            .staged_dirs
+                            .push((depth, dst_dir.clone(), final_dir, lease));
                     }
-                    let version = crate::transfer_staging::capture_source_version_for_path(&src_dir)?;
-                    march_state.lock().expect("march state lock poisoned")
-                        .source_dirs.push((depth, src_dir.clone(), version));
+                    let version =
+                        crate::transfer_staging::capture_source_version_for_path(&src_dir)?;
+                    march_state
+                        .lock()
+                        .expect("march state lock poisoned")
+                        .source_dirs
+                        .push((depth, src_dir.clone(), version));
 
                     let entries = fs::read_dir(&src_dir)
                         .map_err(|e| format!("Failed to read directory: {e}"))?;
@@ -263,9 +281,15 @@ pub(crate) fn copy_tree(
             }
         };
 
-        let mut completed = |task: &FileTask, version: &SourceVersion| manifest.push(&task.source, version);
+        let mut completed =
+            |task: &FileTask, version: &SourceVersion| manifest.push(&task.source, version);
         let res = copy_files_streaming_with_sink(
-            &mut next_task, ctx.progress, session, *completed_bytes, &copy_task, Some(&mut completed),
+            &mut next_task,
+            ctx.progress,
+            session,
+            *completed_bytes,
+            &copy_task,
+            Some(&mut completed),
         );
 
         march_stop.store(true, Ordering::Release);
@@ -280,9 +304,7 @@ pub(crate) fn copy_tree(
 
     *completed_bytes = completed_bytes.saturating_add(copy_res.bytes);
 
-    let mut state = march_state
-        .into_inner()
-        .expect("march state lock poisoned");
+    let mut state = march_state.into_inner().expect("march state lock poisoned");
     state.created_dirs.sort_by_key(|item| item.0);
     state.source_dirs.sort_by_key(|item| item.0);
     state.staged_dirs.sort_by_key(|item| item.0);
@@ -306,28 +328,43 @@ pub(crate) fn copy_tree(
         for (src, dst) in created_dirs.iter().rev() {
             simplefile_core::file_ops::preserve_basic_metadata(src, dst)?;
         }
-        ctx.progress.finalizing(
-            *completed_bytes,
-            destination.to_string_lossy().to_string(),
-        );
+        ctx.progress
+            .finalizing(*completed_bytes, destination.to_string_lossy().to_string());
         ctx.progress.check_cancelled()?;
         while let Some((_, staged, final_dir, mut lease)) = staged_dirs.pop() {
             if let Err(error) = crate::transfer_staging::promote_leased_with_policy(
-                &staged, &final_dir, replace_existing, ctx.progress.cancel, &ctx.policy, &mut lease,
-                |delay, reason| { if let Some(limiter) = ctx.progress.rate_limit { limiter.retrying(delay, reason); } },
+                &staged,
+                &final_dir,
+                replace_existing,
+                ctx.progress.cancel,
+                &ctx.policy,
+                &mut lease,
+                |delay, reason| {
+                    if let Some(limiter) = ctx.progress.rate_limit {
+                        limiter.retrying(delay, reason);
+                    }
+                },
             ) {
                 let cleanup = lease.abort();
-                return Err(match cleanup { Ok(()) => error, Err(extra) => format!("{error}; {extra}") });
+                return Err(match cleanup {
+                    Ok(()) => error,
+                    Err(extra) => format!("{error}; {extra}"),
+                });
             }
             lease.finish()?;
         }
-        Ok(TreeCopyManifest { files: crate::transfer_manifest::CopiedFiles::Disk(manifest), source_dirs })
+        Ok(TreeCopyManifest {
+            files: crate::transfer_manifest::CopiedFiles::Disk(manifest),
+            source_dirs,
+        })
     })();
 
     if let Err(original) = result {
         let mut failure = original;
         while let Some((_, _, _, lease)) = staged_dirs.pop() {
-            if let Err(error) = lease.abort() { failure = format!("{failure}; {error}"); }
+            if let Err(error) = lease.abort() {
+                failure = format!("{failure}; {error}");
+            }
         }
         return Err(failure);
     }
@@ -362,6 +399,8 @@ pub(crate) struct CopyResult {
     pub completed: Vec<usize>,
     pub versions: BTreeMap<usize, SourceVersion>,
     pub failed: Option<(usize, String)>,
+    #[cfg(test)]
+    pub retained_tasks_peak: usize,
 }
 
 /// Workers share cancellation but not counters. On error no more work is
@@ -374,13 +413,7 @@ pub(crate) fn copy_files(
     offset: u64,
 ) -> CopyResult {
     let mut iter = tasks.iter().cloned();
-    copy_files_streaming_using(
-        &mut || Ok(iter.next()),
-        ctx,
-        session,
-        offset,
-        &copy_task,
-    )
+    copy_files_streaming_using(&mut || Ok(iter.next()), ctx, session, offset, &copy_task)
 }
 
 fn copy_task(
@@ -455,8 +488,11 @@ type CompletionSink<'a> = dyn FnMut(&FileTask, &SourceVersion) -> Result<(), Str
 
 fn copy_files_streaming_with_sink(
     next_task: &mut (dyn FnMut() -> Result<Option<FileTask>, String> + Send),
-    ctx: &ProgressContext<'_>, session: &mut Session<'_>, offset: u64,
-    copy: &CopyVersionedFunction<'_>, mut completed_sink: Option<&mut CompletionSink<'_>>,
+    ctx: &ProgressContext<'_>,
+    session: &mut Session<'_>,
+    offset: u64,
+    copy: &CopyVersionedFunction<'_>,
+    mut completed_sink: Option<&mut CompletionSink<'_>>,
 ) -> CopyResult {
     let backlog_limit = session.controller.policy.backlog_limit();
     let order_by = session.controller.policy.order_by;
@@ -497,6 +533,8 @@ fn copy_files_streaming_with_sink(
             completed: Vec::new(),
             versions: BTreeMap::new(),
             failed: initial_error,
+            #[cfg(test)]
+            retained_tasks_peak: 0,
         };
     }
 
@@ -529,6 +567,8 @@ fn copy_files_streaming_with_sink(
         completed: Vec::new(),
         versions: BTreeMap::new(),
         failed: initial_error,
+        #[cfg(test)]
+        retained_tasks_peak: tasks.len(),
     };
     let mut active = BTreeMap::<usize, ActiveFile>::new();
     let mut deferred_retries = VecDeque::<(usize, String)>::new();
@@ -607,8 +647,7 @@ fn copy_files_streaming_with_sink(
                     let total_files = Arc::new(AtomicU64::new(1));
                     let completed_files = Arc::new(AtomicU64::new(0));
                     let emit = |update: ProgressUpdate| {
-                        if completed_files.load(Ordering::Relaxed) > 0
-                            && update.status == "running"
+                        if completed_files.load(Ordering::Relaxed) > 0 && update.status == "running"
                         {
                             return;
                         }
@@ -645,9 +684,18 @@ fn copy_files_streaming_with_sink(
                     let permit_buffer = context
                         .buffer_size()
                         .min(usize::try_from(task.size.max(4096)).unwrap_or(usize::MAX));
-                    let chunks = context.policy.buffer_count(task.network, task.size, operation_type);
-                    let status = Permit::acquire_for_job(permit_buffer.saturating_mul(chunks).saturating_add(128 * 1024), memory.clone(), cancel)
-                        .and_then(|_permit| copy(&task, &context, &mut copied));
+                    let chunks =
+                        context
+                            .policy
+                            .buffer_count(task.network, task.size, operation_type);
+                    let status = Permit::acquire_for_job(
+                        permit_buffer
+                            .saturating_mul(chunks)
+                            .saturating_add(128 * 1024),
+                        memory.clone(),
+                        cancel,
+                    )
+                    .and_then(|_permit| copy(&task, &context, &mut copied));
                     if tx.send(Message::Finished(index, copied, status)).is_err() {
                         break;
                     }
@@ -656,82 +704,85 @@ fn copy_files_streaming_with_sink(
         }
         drop(event_tx);
 
-        let mut handle_event = |message: Message,
-                            active: &mut BTreeMap<usize, ActiveFile>,
-                            result: &mut CopyResult,
-                            producer_done: &mut bool,
-                            deferred_retries: &mut VecDeque<(usize, String)>,
-                            file_hl_attempts: &mut BTreeMap<usize, usize>,
-                            ready_empty: bool,
-                            last_display: &Instant,
-                            tasks: &mut BTreeMap<usize, FileTask>| {
-            match message {
-                Message::ScanAvailable => {}
-                Message::Progress(index, update) => {
-                    if let Some(file) = active.get_mut(&index) {
-                        file.current = file.current.max(update.current);
+        let mut handle_event =
+            |message: Message,
+             active: &mut BTreeMap<usize, ActiveFile>,
+             result: &mut CopyResult,
+             producer_done: &mut bool,
+             deferred_retries: &mut VecDeque<(usize, String)>,
+             file_hl_attempts: &mut BTreeMap<usize, usize>,
+             ready_empty: bool,
+             last_display: &Instant,
+             tasks: &mut BTreeMap<usize, FileTask>| {
+                match message {
+                    Message::ScanAvailable => {}
+                    Message::Progress(index, update) => {
+                        if let Some(file) = active.get_mut(&index) {
+                            file.current = file.current.max(update.current);
+                        }
+                        if update.status == "finalizing"
+                            && (last_display.elapsed() >= Duration::from_millis(200)
+                                || (active.len() == 1 && *producer_done && ready_empty))
+                        {
+                            let current = offset
+                                .saturating_add(result.bytes)
+                                .saturating_add(active.values().map(|f| f.current).sum::<u64>());
+                            ctx.finalizing(current, update.current_item);
+                        }
                     }
-                    if update.status == "finalizing"
-                        && (last_display.elapsed() >= Duration::from_millis(200)
-                            || (active.len() == 1 && *producer_done && ready_empty))
-                    {
-                        let current = offset
-                            .saturating_add(result.bytes)
-                            .saturating_add(active.values().map(|f| f.current).sum::<u64>());
-                        ctx.finalizing(current, update.current_item);
-                    }
-                }
-                Message::Finished(index, bytes, status) => {
-                    active.remove(&index);
-                    match status {
-                        Ok(version) => {
-                            result.bytes = result.bytes.saturating_add(bytes);
-                            if let Some(sink) = completed_sink.as_deref_mut() {
-                                if let Some(task) = tasks.get(&index) {
-                                    if let Err(error) = sink(task, &version) {
-                                        if result.failed.is_none() { result.failed = Some((index, error)); }
-                                        worker_cancel.store(true, Ordering::Relaxed);
-                                        *producer_done = true;
+                    Message::Finished(index, bytes, status) => {
+                        active.remove(&index);
+                        match status {
+                            Ok(version) => {
+                                result.bytes = result.bytes.saturating_add(bytes);
+                                if let Some(sink) = completed_sink.as_deref_mut() {
+                                    if let Some(task) = tasks.get(&index) {
+                                        if let Err(error) = sink(task, &version) {
+                                            if result.failed.is_none() {
+                                                result.failed = Some((index, error));
+                                            }
+                                            worker_cancel.store(true, Ordering::Relaxed);
+                                            *producer_done = true;
+                                        }
                                     }
+                                } else {
+                                    result.completed.push(index);
+                                    result.versions.insert(index, version);
                                 }
-                            } else {
-                                result.completed.push(index);
-                                result.versions.insert(index, version);
+                                tasks.remove(&index);
+                                file_hl_attempts.remove(&index);
+                                ctx.completed_files.fetch_add(1, Ordering::Relaxed);
                             }
-                            tasks.remove(&index);
-                            file_hl_attempts.remove(&index);
-                            ctx.completed_files.fetch_add(1, Ordering::Relaxed);
-                        }
-                        Err(error) => {
-                            let attempts = file_hl_attempts.entry(index).or_insert(0);
-                            *attempts += 1;
-                            if *attempts < max_hl_attempts
-                                && !worker_cancel.load(Ordering::Relaxed)
-                                && is_high_level_retryable(&error)
-                            {
-                                let clean = error
-                                    .strip_prefix("RETRYABLE:")
-                                    .unwrap_or(&error)
-                                    .trim()
-                                    .to_string();
-                                deferred_retries.push_back((index, clean));
-                            } else {
-                                let clean = error
-                                    .strip_prefix("RETRYABLE:")
-                                    .unwrap_or(&error)
-                                    .trim()
-                                    .to_string();
-                                if result.failed.is_none() {
-                                    result.failed = Some((index, clean));
+                            Err(error) => {
+                                let attempts = file_hl_attempts.entry(index).or_insert(0);
+                                *attempts += 1;
+                                if *attempts < max_hl_attempts
+                                    && !worker_cancel.load(Ordering::Relaxed)
+                                    && is_high_level_retryable(&error)
+                                {
+                                    let clean = error
+                                        .strip_prefix("RETRYABLE:")
+                                        .unwrap_or(&error)
+                                        .trim()
+                                        .to_string();
+                                    deferred_retries.push_back((index, clean));
+                                } else {
+                                    let clean = error
+                                        .strip_prefix("RETRYABLE:")
+                                        .unwrap_or(&error)
+                                        .trim()
+                                        .to_string();
+                                    if result.failed.is_none() {
+                                        result.failed = Some((index, clean));
+                                    }
+                                    worker_cancel.store(true, Ordering::Relaxed);
+                                    *producer_done = true;
                                 }
-                                worker_cancel.store(true, Ordering::Relaxed);
-                                *producer_done = true;
                             }
                         }
                     }
                 }
-            }
-        };
+            };
 
         while !producer_done
             || !ready_queue.is_empty()
@@ -745,7 +796,11 @@ fn copy_files_streaming_with_sink(
             let mut added_from_scan = false;
             while !producer_done
                 && !worker_cancel.load(Ordering::Relaxed)
-                && ready_queue.len().saturating_add(active.len()).saturating_add(deferred_retries.len()) < backlog_limit
+                && ready_queue
+                    .len()
+                    .saturating_add(active.len())
+                    .saturating_add(deferred_retries.len())
+                    < backlog_limit
             {
                 match scan_rx.try_recv() {
                     Ok(Ok(task)) => {
@@ -770,6 +825,8 @@ fn copy_files_streaming_with_sink(
                     }
                 }
             }
+            #[cfg(test)]
+            { result.retained_tasks_peak = result.retained_tasks_peak.max(tasks.len()); }
             if added_from_scan {
                 sort_ready_queue(&mut ready_queue, &tasks, order_by);
             }
@@ -802,7 +859,10 @@ fn copy_files_streaming_with_sink(
                         total: task.size,
                     },
                 );
-                if work_tx.send((next_idx, task, session.controller.policy.clone())).is_err() {
+                if work_tx
+                    .send((next_idx, task, session.controller.policy.clone()))
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -926,6 +986,64 @@ mod tests {
     use super::super::tuning::{CheckMode, Mode, OrderBy, Policy};
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn streaming_completion_is_bounded_and_new_files_receive_current_policy() {
+        let root = std::env::temp_dir().join(crate::progress::generate_transfer_operation_id());
+        fs::create_dir(&root).unwrap();
+        let template = root.join("source");
+        fs::write(&template, b"source").unwrap();
+        let version = crate::transfer_staging::capture_source_version_for_path(&template).unwrap();
+        let changed = AtomicBool::new(false);
+        let policy = || Policy {
+            mode: Mode::Manual,
+            manual_concurrency: 1,
+            max_backlog: 128,
+            check_mode: if changed.load(Ordering::Relaxed) { CheckMode::Checksum } else { CheckMode::SizeOnly },
+            flush_on_close: changed.load(Ordering::Relaxed),
+            ..Policy::default()
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let total = Arc::new(AtomicU64::new(1000));
+        let files = Arc::new(AtomicU64::new(1000));
+        let completed = Arc::new(AtomicU64::new(0));
+        let ctx = ProgressContext {
+            emit: &|_| {}, operation_id: "bounded-policy-test", operation_type: "copy",
+            cancel: &cancel, total_bytes: &total, total_files: &files, completed_files: &completed,
+            last_running_emit: Mutex::new(Instant::now()), retry_count: None, rate_limit: None,
+        };
+        let mut session = Session::new("bounded-policy-test", "copy", &[], &root.to_string_lossy(), &policy, &|_| {});
+        let mut index = 0;
+        let mut next = || {
+            if index == 1000 { return Ok(None); }
+            index += 1;
+            Ok(Some(FileTask {
+                source: root.join(index.to_string()), destination: root.join(format!("dest-{index}")),
+                size: 1, network: false, replace_existing: false, resume_existing: false, symlink: false,
+            }))
+        };
+        let mut count = 0;
+        let mut sink = |_: &FileTask, _: &SourceVersion| { count += 1; Ok(()) };
+        let copy = |_: &FileTask, context: &CopyContext<'_>, _: &mut u64| {
+            if changed.swap(true, Ordering::Relaxed) {
+                assert_eq!(context.policy.check_mode, CheckMode::Checksum);
+                assert!(context.policy.flush_on_close);
+            } else {
+                assert_eq!(context.policy.check_mode, CheckMode::SizeOnly);
+                // A retry notification exercises the same live-refresh path as
+                // a five-second observation without a wall-clock test delay.
+                context.progress.retry_count.unwrap().fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(version.clone())
+        };
+        let result = copy_files_streaming_with_sink(&mut next, &ctx, &mut session, 0, &copy, Some(&mut sink));
+        assert!(result.failed.is_none(), "{:?}", result.failed);
+        assert_eq!(count, 1000);
+        assert!(result.completed.is_empty());
+        assert!(result.versions.is_empty());
+        assert!(result.retained_tasks_peak <= 160, "{} retained tasks", result.retained_tasks_peak);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn exercise(cancel_during_copy: bool) {
         let root = std::env::temp_dir().join(format!(
@@ -1252,13 +1370,8 @@ mod tests {
         };
 
         let mut iter = tasks.iter().cloned();
-        let result = copy_files_streaming_using(
-            &mut || Ok(iter.next()),
-            &ctx,
-            &mut session,
-            0,
-            &copy,
-        );
+        let result =
+            copy_files_streaming_using(&mut || Ok(iter.next()), &ctx, &mut session, 0, &copy);
         assert!(result.failed.is_none(), "{:?}", result.failed);
         assert_eq!(result.completed.len(), total_task_count);
         assert_eq!(later_files_completed.load(Ordering::SeqCst), 32);
@@ -1342,7 +1455,12 @@ mod tests {
         )
         .expect("small-file tree copy should succeed");
 
-        assert_eq!(manifest.files.len(), total_files_expected);
+        let mut completed_records = 0;
+        manifest.files.visit(|_, _| {
+            completed_records += 1;
+            Ok(())
+        }).unwrap();
+        assert_eq!(completed_records, total_files_expected);
         assert_eq!(
             completed_files.load(Ordering::Relaxed),
             total_files_expected as u64
@@ -1473,7 +1591,11 @@ mod tests {
         fs::create_dir_all(root.join("dst_asc")).unwrap();
         fs::create_dir_all(root.join("dst_desc")).unwrap();
 
-        let sizes = [("c.bin", 4096usize), ("a.bin", 512usize), ("b.bin", 2048usize)];
+        let sizes = [
+            ("c.bin", 4096usize),
+            ("a.bin", 512usize),
+            ("b.bin", 2048usize),
+        ];
         let make_tasks = |dst_sub: &str| -> Vec<FileTask> {
             sizes
                 .iter()
@@ -1620,6 +1742,16 @@ mod tests {
         assert_eq!(copied, payload.len() as u64);
         drop(dst_file);
         assert_eq!(fs::read(&dst_multistream).unwrap(), payload);
+        for _ in 0..16 {
+            let mut broken_destination = fs::OpenOptions::new().write(true).open(&dst_multistream).unwrap();
+            let error = super::super::execute::copy_file_multistream(
+                &src_file, &mut broken_destination, &src, &dst_multistream, &ctx, 0,
+                payload.len() as u64 * 2, 64 * 1024, 16,
+            ).unwrap_err();
+            assert!(error.message.contains("Source became shorter"), "{}", error.message);
+            assert!(!cancel.load(Ordering::Relaxed));
+        }
+
 
         fs::remove_dir_all(&root).unwrap();
     }
