@@ -159,14 +159,18 @@ async fn remote_transfer_cancellation(disconnect: bool) {
             while std::fs::read_dir(&destination).unwrap().count() == 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         drop(client);
         serving.await.unwrap().unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(3), async {
             while std::fs::read_dir(&destination).unwrap().count() != 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         std::fs::remove_dir(&destination).unwrap();
         return;
     }

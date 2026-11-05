@@ -82,7 +82,10 @@ where
     let task = tokio::spawn(async move {
         let _ = writer_loop(writer, receiver).await;
     });
-    OutboundSink { sender, writer_task: task.abort_handle() }
+    OutboundSink {
+        sender,
+        writer_task: task.abort_handle(),
+    }
 }
 
 pub(super) async fn writer_loop<W>(

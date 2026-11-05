@@ -1901,9 +1901,18 @@ mod tests {
         for fail_upload in [true, false] {
             provider.fail_upload = fail_upload;
             provider.fail_promote = !fail_upload;
-            let outcome =
-                transfer_entries(&mut provider, &request, &AtomicBool::new(false), &|_| {})
-                    .unwrap();
+            let outcome = transfer_entries_with_policy(
+                &mut provider,
+                &request,
+                &AtomicBool::new(false),
+                &|_| {},
+                &|_| {},
+                &|| Policy {
+                    retry_sleep_ms: 10,
+                    ..Policy::default()
+                },
+            )
+            .unwrap();
             assert_eq!(outcome.retry_sources, request.sources);
             assert_eq!(fs::read(provider.path("/app.txt")).unwrap(), b"original");
             assert_eq!(fs::read_dir(&provider.root).unwrap().count(), 1);

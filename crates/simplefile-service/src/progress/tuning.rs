@@ -662,6 +662,7 @@ mod tests {
             Policy {
                 mode: Mode::Manual,
                 manual_concurrency: 16,
+                memory_budget_mb: 512,
                 ..Policy::default()
             },
             4 << 20,
@@ -689,6 +690,7 @@ mod tests {
             Policy {
                 mode: Mode::Manual,
                 manual_concurrency: 16,
+                memory_budget_mb: 512,
                 ..Policy::default()
             },
             4 << 20,
@@ -728,9 +730,9 @@ mod tests {
             memory_budget_mb: 24,
             ..Policy::default()
         };
-        // With 4 MiB buffers and 24 MiB budget, large files cap concurrency at 2.
+        // Four 4 MiB stripes plus verification scratch leave room for one file in 24 MiB.
         let large = Controller::new_for_workload(policy.clone(), 4 << 20, None, 64 << 20, 4);
-        assert_eq!(large.concurrency, 2);
+        assert_eq!(large.concurrency, 1);
 
         // For 64 small files (4 KiB each), effective buffer is right-sized to 64 KiB
         // and automatic mode starts at 12 workers instead of 2 or 4.

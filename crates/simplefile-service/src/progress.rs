@@ -920,15 +920,21 @@ mod tests {
 
         let operation_id = "op_stage_cancel_test";
         let staged = staging_path_for(&destination, operation_id).unwrap();
-        fs::write(&staged, b"partial").unwrap();
+        let saw_owned_staging = AtomicBool::new(false);
 
         let total_bytes = Arc::new(AtomicU64::new(0));
         let total_files = Arc::new(AtomicU64::new(0));
         let completed_files = Arc::new(AtomicU64::new(0));
-        let cancel = Arc::new(AtomicBool::new(true));
+        let cancel = Arc::new(AtomicBool::new(false));
         let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
         let updates_target = updates.clone();
-        let emit = |update| updates_target.lock().unwrap().push(update);
+        let emit = |update: ProgressUpdate| {
+            if update.status == "finalizing" {
+                saw_owned_staging.store(staged.exists(), Ordering::Relaxed);
+                cancel.store(true, Ordering::Relaxed);
+            }
+            updates_target.lock().unwrap().push(update);
+        };
         let progress = ProgressContext {
             emit: &emit,
             operation_id,
@@ -955,6 +961,7 @@ mod tests {
                 .expect_err("cancelled copy should fail");
 
         assert_eq!(error, "Operation cancelled");
+        assert!(saw_owned_staging.load(Ordering::Relaxed));
         assert!(!staged.exists());
         assert!(!destination.exists());
 

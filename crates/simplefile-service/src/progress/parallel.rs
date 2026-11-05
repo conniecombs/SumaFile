@@ -826,7 +826,9 @@ fn copy_files_streaming_with_sink(
                 }
             }
             #[cfg(test)]
-            { result.retained_tasks_peak = result.retained_tasks_peak.max(tasks.len()); }
+            {
+                result.retained_tasks_peak = result.retained_tasks_peak.max(tasks.len());
+            }
             if added_from_scan {
                 sort_ready_queue(&mut ready_queue, &tasks, order_by);
             }
@@ -999,7 +1001,11 @@ mod tests {
             mode: Mode::Manual,
             manual_concurrency: 1,
             max_backlog: 128,
-            check_mode: if changed.load(Ordering::Relaxed) { CheckMode::Checksum } else { CheckMode::SizeOnly },
+            check_mode: if changed.load(Ordering::Relaxed) {
+                CheckMode::Checksum
+            } else {
+                CheckMode::SizeOnly
+            },
             flush_on_close: changed.load(Ordering::Relaxed),
             ..Policy::default()
         };
@@ -1008,22 +1014,46 @@ mod tests {
         let files = Arc::new(AtomicU64::new(1000));
         let completed = Arc::new(AtomicU64::new(0));
         let ctx = ProgressContext {
-            emit: &|_| {}, operation_id: "bounded-policy-test", operation_type: "copy",
-            cancel: &cancel, total_bytes: &total, total_files: &files, completed_files: &completed,
-            last_running_emit: Mutex::new(Instant::now()), retry_count: None, rate_limit: None,
+            emit: &|_| {},
+            operation_id: "bounded-policy-test",
+            operation_type: "copy",
+            cancel: &cancel,
+            total_bytes: &total,
+            total_files: &files,
+            completed_files: &completed,
+            last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
         };
-        let mut session = Session::new("bounded-policy-test", "copy", &[], &root.to_string_lossy(), &policy, &|_| {});
+        let mut session = Session::new(
+            "bounded-policy-test",
+            "copy",
+            &[],
+            &root.to_string_lossy(),
+            &policy,
+            &|_| {},
+        );
         let mut index = 0;
         let mut next = || {
-            if index == 1000 { return Ok(None); }
+            if index == 1000 {
+                return Ok(None);
+            }
             index += 1;
             Ok(Some(FileTask {
-                source: root.join(index.to_string()), destination: root.join(format!("dest-{index}")),
-                size: 1, network: false, replace_existing: false, resume_existing: false, symlink: false,
+                source: root.join(index.to_string()),
+                destination: root.join(format!("dest-{index}")),
+                size: 1,
+                network: false,
+                replace_existing: false,
+                resume_existing: false,
+                symlink: false,
             }))
         };
         let mut count = 0;
-        let mut sink = |_: &FileTask, _: &SourceVersion| { count += 1; Ok(()) };
+        let mut sink = |_: &FileTask, _: &SourceVersion| {
+            count += 1;
+            Ok(())
+        };
         let copy = |_: &FileTask, context: &CopyContext<'_>, _: &mut u64| {
             if changed.swap(true, Ordering::Relaxed) {
                 assert_eq!(context.policy.check_mode, CheckMode::Checksum);
@@ -1032,16 +1062,31 @@ mod tests {
                 assert_eq!(context.policy.check_mode, CheckMode::SizeOnly);
                 // A retry notification exercises the same live-refresh path as
                 // a five-second observation without a wall-clock test delay.
-                context.progress.retry_count.unwrap().fetch_add(1, Ordering::Relaxed);
+                context
+                    .progress
+                    .retry_count
+                    .unwrap()
+                    .fetch_add(1, Ordering::Relaxed);
             }
             Ok(version.clone())
         };
-        let result = copy_files_streaming_with_sink(&mut next, &ctx, &mut session, 0, &copy, Some(&mut sink));
+        let result = copy_files_streaming_with_sink(
+            &mut next,
+            &ctx,
+            &mut session,
+            0,
+            &copy,
+            Some(&mut sink),
+        );
         assert!(result.failed.is_none(), "{:?}", result.failed);
         assert_eq!(count, 1000);
         assert!(result.completed.is_empty());
         assert!(result.versions.is_empty());
-        assert!(result.retained_tasks_peak <= 160, "{} retained tasks", result.retained_tasks_peak);
+        assert!(
+            result.retained_tasks_peak <= 160,
+            "{} retained tasks",
+            result.retained_tasks_peak
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1343,7 +1388,9 @@ mod tests {
         let later_files_for_worker = later_files_completed.clone();
         let slow_file_path = tasks[0].source.clone();
 
-        let copy = move |task: &FileTask, context: &CopyContext<'_>, bytes: &mut u64| {
+        let snapshot =
+            crate::transfer_staging::capture_source_version_for_path(&tasks[1].source).unwrap();
+        let copy = move |task: &FileTask, _context: &CopyContext<'_>, bytes: &mut u64| {
             if task.source == slow_file_path {
                 // Wait until at least 20 files beyond the first 128-file window (indices 128..160)
                 // have been scheduled and completed while this slow file in batch 0 is still active!
@@ -1358,7 +1405,9 @@ mod tests {
                     std::thread::sleep(Duration::from_millis(2));
                 }
             }
-            let version = copy_task(task, context, bytes)?;
+            // This regression tests scheduling independence from a straggler.
+            // Disk flush throughput is covered by the actual-copy tests.
+            *bytes += task.size;
             if let Some(stem) = task.source.file_stem().and_then(|s| s.to_str()) {
                 if let Ok(idx) = stem.parse::<usize>() {
                     if idx >= 128 {
@@ -1366,7 +1415,7 @@ mod tests {
                     }
                 }
             }
-            Ok(version)
+            Ok(snapshot.clone())
         };
 
         let mut iter = tasks.iter().cloned();
@@ -1456,10 +1505,13 @@ mod tests {
         .expect("small-file tree copy should succeed");
 
         let mut completed_records = 0;
-        manifest.files.visit(|_, _| {
-            completed_records += 1;
-            Ok(())
-        }).unwrap();
+        manifest
+            .files
+            .visit(|_, _| {
+                completed_records += 1;
+                Ok(())
+            })
+            .unwrap();
         assert_eq!(completed_records, total_files_expected);
         assert_eq!(
             completed_files.load(Ordering::Relaxed),
@@ -1743,15 +1795,29 @@ mod tests {
         drop(dst_file);
         assert_eq!(fs::read(&dst_multistream).unwrap(), payload);
         for _ in 0..16 {
-            let mut broken_destination = fs::OpenOptions::new().write(true).open(&dst_multistream).unwrap();
+            let mut broken_destination = fs::OpenOptions::new()
+                .write(true)
+                .open(&dst_multistream)
+                .unwrap();
             let error = super::super::execute::copy_file_multistream(
-                &src_file, &mut broken_destination, &src, &dst_multistream, &ctx, 0,
-                payload.len() as u64 * 2, 64 * 1024, 16,
-            ).unwrap_err();
-            assert!(error.message.contains("Source became shorter"), "{}", error.message);
+                &src_file,
+                &mut broken_destination,
+                &src,
+                &dst_multistream,
+                &ctx,
+                0,
+                payload.len() as u64 * 2,
+                64 * 1024,
+                16,
+            )
+            .unwrap_err();
+            assert!(
+                error.message.contains("Source became shorter"),
+                "{}",
+                error.message
+            );
             assert!(!cancel.load(Ordering::Relaxed));
         }
-
 
         fs::remove_dir_all(&root).unwrap();
     }

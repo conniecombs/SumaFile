@@ -60,7 +60,15 @@ impl StagingLease {
         // Recovery runs once per directory before scheduling. An existing
         // unrecorded partial cannot establish ownership and is left intact.
         let file = open_locked(&path, true)?;
-        let stage = match OpenOptions::new().write(true).create_new(true).open(staged) {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(windows)]
+        if staged != destination {
+            use std::os::windows::fs::OpenOptionsExt;
+            use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN;
+            options.attributes(FILE_ATTRIBUTE_HIDDEN);
+        }
+        let stage = match options.open(staged) {
             Ok(file) => file,
             Err(error) => {
                 let _ = fs::remove_file(&path);

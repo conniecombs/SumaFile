@@ -74,8 +74,9 @@ are capped at 8,192. Configured limits are bounded; discovery order can start af
 SHA-256 and explicit checksum mode cost CPU and verification I/O. Native remote
 checksum mode reads remote content again and charges that traffic to bandwidth
 pacing without inflating copied-byte progress. FTP servers without MLST still need
-LIST fallback; SFTP and MLST-capable FTP avoid full parent listings for normal
-per-file stat and temporary-name selection. Recovery adds one local directory
+LIST fallback; SFTP avoids full parent listings for per-file stat and temporary-name selection.
+FTP MLST avoids listings for present entries; ambiguous 550 replies still require
+a successful parent listing so permission failures are not mistaken for absence. Recovery adds one local directory
 scan rather than one scan for every file.
 
 ## Validation
