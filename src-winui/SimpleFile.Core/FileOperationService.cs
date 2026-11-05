@@ -14,6 +14,38 @@ public sealed class TransferOperationException : Exception
     public TransferBatchOutcome Outcome { get; }
 }
 
+public sealed class TransferCanceledException : OperationCanceledException
+{
+    public TransferCanceledException(
+        string operationId,
+        TransferResult[] committed,
+        string[] pending,
+        CancellationToken cancellationToken)
+        : base("Transfer was cancelled.", cancellationToken)
+    {
+        OperationId = operationId;
+        Committed = committed ?? [];
+        Pending = pending ?? [];
+        Outcome = new TransferBatchOutcome
+        {
+            OperationId = operationId,
+            Status = "cancelled",
+            Committed = Committed,
+            Skipped = [],
+            Failed = [],
+            Pending = Pending,
+        };
+    }
+
+    public string OperationId { get; }
+
+    public TransferResult[] Committed { get; }
+
+    public string[] Pending { get; }
+
+    public TransferBatchOutcome Outcome { get; }
+}
+
 public sealed class FileOperationService : ISettingsBackend
 {
     private ISimpleFileIpc _ipc;
@@ -201,14 +233,17 @@ public sealed class FileOperationService : ISettingsBackend
             var results = await transfer.ConfigureAwait(false);
             if (ct.IsCancellationRequested)
             {
-                _journal?.Cancelled(operationType, operationId);
-                throw new OperationCanceledException(ct);
+                throw new TransferCanceledException(
+                    operationId,
+                    results,
+                    RemainingSources(sources, results),
+                    ct);
             }
 
             _journal?.Completed(operationType, operationId);
             return results;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException exception)
         {
             if (ct.IsCancellationRequested)
             {
@@ -216,7 +251,12 @@ public sealed class FileOperationService : ISettingsBackend
             }
 
             _journal?.Cancelled(operationType, operationId);
-            throw;
+            if (exception is TransferCanceledException)
+            {
+                throw;
+            }
+
+            throw new TransferCanceledException(operationId, [], [.. sources], ct);
         }
         catch (IpcException exception) when (TryGetTransferOutcome(exception, out var outcome))
         {
@@ -235,6 +275,26 @@ public sealed class FileOperationService : ISettingsBackend
             try { await TransferPolicyStore.SetOverrideAsync(this, operationId, null).ConfigureAwait(false); }
             catch (Exception exception) { System.Diagnostics.Debug.WriteLine($"Transfer override cleanup: {exception.Message}"); }
         }
+    }
+
+    private static string[] RemainingSources(string[] sources, TransferResult[] committed)
+    {
+        if (sources.Length == 0)
+        {
+            return [];
+        }
+
+        if (committed.Length == 0)
+        {
+            return [.. sources];
+        }
+
+        var committedSources = new HashSet<string>(
+            committed.Select(result => result.Source),
+            StringComparer.OrdinalIgnoreCase);
+        return sources
+            .Where(source => !committedSources.Contains(source))
+            .ToArray();
     }
 
     private static bool TryGetTransferOutcome(
@@ -844,4 +904,3 @@ public sealed class FileOperationService : ISettingsBackend
         return $"op_{timestamp}_{counter}";
     }
 }
-

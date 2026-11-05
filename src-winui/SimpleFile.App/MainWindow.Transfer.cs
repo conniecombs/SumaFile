@@ -369,6 +369,32 @@ public sealed partial class MainWindow
 
                     break;
                 }
+                catch (TransferCanceledException exception)
+                {
+                    var committed = exception.Outcome.Committed;
+                    if (canRegisterUndo
+                        && committed.Length > 0
+                        && ReferenceEquals(_workspace, workspace))
+                    {
+                        if (move)
+                        {
+                            workspace.Undo.PushMove(committed, fileOps);
+                        }
+                        else
+                        {
+                            workspace.Undo.PushCopy(committed, fileOps);
+                        }
+                    }
+
+                    if (committed.Length > 0 && ReferenceEquals(_workspace, workspace))
+                    {
+                        await workspace.RefreshAffectedPanesAsync(
+                            TransferAffectedPaths(sources, destination, move),
+                            CancellationToken.None);
+                    }
+
+                    return TransferOperationStatus.Cancelled;
+                }
                 catch (TransferOperationException exception) when (!cancellationToken.IsCancellationRequested)
                 {
                     var committed = exception.Outcome.Committed;
@@ -410,6 +436,7 @@ public sealed partial class MainWindow
                     }
 
                     action = retryAction;
+                    canRegisterUndo = !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
                 }
             }
 

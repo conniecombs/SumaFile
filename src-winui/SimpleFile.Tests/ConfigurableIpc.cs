@@ -24,6 +24,8 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<string[], CancellationToken, Task<string[]>>? MoveToTrashHandler { get; set; }
     public Func<string[], CancellationToken, Task<string[]>>? RestoreRecycleBinHandler { get; set; }
     public Func<CancellationToken, Task>? EmptyRecycleBinHandler { get; set; }
+    public Func<string, string, string, CancellationToken, Task<string>>? CopyEntryResolvedHandler { get; set; }
+    public Func<string, string, string, CancellationToken, Task<string>>? MoveEntryResolvedHandler { get; set; }
     public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? CopyWithProgressHandler { get; set; }
     public Func<string[], string, string?, string, CancellationToken, Task<TransferResult[]>>? MoveWithProgressHandler { get; set; }
     public Func<string[], CancellationToken, Task<Dictionary<string, string?>>>? GetDbSettingsHandler { get; set; }
@@ -175,6 +177,20 @@ internal sealed class ConfigurableIpc : NullIpc
 
     public override Task<string[]> BatchRenameAsync(RenameRequest[] entries, CancellationToken ct = default)
         => BatchRenameHandler?.Invoke(entries, ct) ?? throw NotConfigured();
+
+    public override Task<string> CopyEntryResolvedAsync(
+        string source,
+        string destination,
+        string conflictAction,
+        CancellationToken ct = default)
+        => CopyEntryResolvedHandler?.Invoke(source, destination, conflictAction, ct) ?? throw NotConfigured();
+
+    public override Task<string> MoveEntryResolvedAsync(
+        string source,
+        string destination,
+        string conflictAction,
+        CancellationToken ct = default)
+        => MoveEntryResolvedHandler?.Invoke(source, destination, conflictAction, ct) ?? throw NotConfigured();
 
     public override Task<TransferResult[]> CopyWithProgressAsync(
         string[] sources,

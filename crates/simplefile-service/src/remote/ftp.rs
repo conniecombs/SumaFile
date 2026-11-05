@@ -20,55 +20,84 @@ pub fn connect(
     profile: &RemoteProfile,
     secret: Option<&RemoteSecret>,
 ) -> Result<Box<dyn RemoteProvider>, String> {
+    connect_typed(profile, secret).map_err(String::from)
+}
+
+pub fn connect_typed(
+    profile: &RemoteProfile,
+    secret: Option<&RemoteSecret>,
+) -> Result<Box<dyn RemoteProvider>, Failure> {
     if profile.protocol == RemoteProtocol::Ftp && !profile.insecure_plain_ftp {
-        return Err("Plain FTP requires insecure_plain_ftp acknowledgement".to_string());
+        return Err(Failure::new(
+            "Plain FTP requires insecure_plain_ftp acknowledgement",
+            false,
+        ));
     }
 
-    let (username, password) = ftp_credentials(profile, secret)?;
-    let address = first_socket_addr(profile)?;
+    let (username, password) =
+        ftp_credentials(profile, secret).map_err(|msg| Failure::new(msg, false))?;
+    let address = first_socket_addr_typed(profile)?;
     // Configure the control socket before reading the greeting or negotiating TLS.
     // Data completion and cleanup commands must also stop on an unresponsive server.
-    let socket = TcpStream::connect_timeout(&address, REMOTE_CONNECT_TIMEOUT)
-        .map_err(|error| format!("FTP connection failed: {error}"))?;
+    let socket = TcpStream::connect_timeout(&address, REMOTE_CONNECT_TIMEOUT).map_err(|error| {
+        let message = format!("FTP connection failed: {error}");
+        let retryable = Failure::io("FTP connection", &profile.host, error).retryable;
+        Failure::new(message, retryable)
+    })?;
     socket
         .set_read_timeout(Some(REMOTE_CONNECT_TIMEOUT))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Failure::new(e.to_string(), false))?;
     socket
         .set_write_timeout(Some(REMOTE_CONNECT_TIMEOUT))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Failure::new(e.to_string(), false))?;
     let client = match profile.protocol {
         RemoteProtocol::Ftp => {
-            let mut stream = FtpStream::connect_with_stream(socket)
-                .map_err(|error| format!("FTP connection failed: {error}"))?;
+            let mut stream = FtpStream::connect_with_stream(socket).map_err(|error| {
+                let message = format!("FTP connection failed: {error}");
+                let retryable = ftp_failure(error).retryable;
+                Failure::new(message, retryable)
+            })?;
             stream = stream.passive_stream_builder(connect_data_socket);
             if !profile.passive_mode {
                 stream = stream.active_mode(REMOTE_CONNECT_TIMEOUT);
             }
-            stream
-                .login(&username, &password)
-                .map_err(|error| format!("FTP login failed: {error}"))?;
+            stream.login(&username, &password).map_err(|error| {
+                let message = format!("FTP login failed: {error}");
+                let retryable = ftp_failure(error).retryable;
+                Failure::new(message, retryable)
+            })?;
             FtpClient::Plain(stream)
         }
         RemoteProtocol::Ftps => {
-            let mut stream = NativeTlsFtpStream::connect_with_stream(socket)
-                .map_err(|error| format!("FTPS connection failed: {error}"))?;
+            let mut stream = NativeTlsFtpStream::connect_with_stream(socket).map_err(|error| {
+                let message = format!("FTPS connection failed: {error}");
+                let retryable = ftp_failure(error).retryable;
+                Failure::new(message, retryable)
+            })?;
             stream = stream.passive_stream_builder(connect_data_socket);
             if !profile.passive_mode {
                 stream = stream.active_mode(REMOTE_CONNECT_TIMEOUT);
             }
             let connector = suppaftp::native_tls::TlsConnector::new()
                 .map(NativeTlsConnector::from)
-                .map_err(|error| format!("FTPS TLS setup failed: {error}"))?;
+                .map_err(|error| Failure::new(format!("FTPS TLS setup failed: {error}"), false))?;
             let mut stream = stream
                 .into_secure(connector, &profile.host)
-                .map_err(|error| format!("FTPS TLS negotiation failed: {error}"))?;
-            stream
-                .login(&username, &password)
-                .map_err(|error| format!("FTPS login failed: {error}"))?;
+                .map_err(|error| {
+                    Failure::new(format!("FTPS TLS negotiation failed: {error}"), false)
+                })?;
+            stream.login(&username, &password).map_err(|error| {
+                let message = format!("FTPS login failed: {error}");
+                let retryable = ftp_failure(error).retryable;
+                Failure::new(message, retryable)
+            })?;
             FtpClient::Tls(stream)
         }
         RemoteProtocol::Sftp => {
-            return Err("FTP adapter cannot connect SFTP profiles".to_string());
+            return Err(Failure::new(
+                "FTP adapter cannot connect SFTP profiles",
+                false,
+            ));
         }
     };
 
@@ -338,17 +367,24 @@ fn ftp_credentials(
     }
 }
 
-fn first_socket_addr(profile: &RemoteProfile) -> Result<SocketAddr, String> {
+fn first_socket_addr_typed(profile: &RemoteProfile) -> Result<SocketAddr, Failure> {
     (profile.host.as_str(), profile.port)
         .to_socket_addrs()
         .map_err(|error| {
-            format!(
+            let message = format!(
                 "Could not resolve {}:{}: {error}",
                 profile.host, profile.port
-            )
+            );
+            let retryable = Failure::io("Resolve host", &profile.host, error).retryable;
+            Failure::new(message, retryable)
         })?
         .next()
-        .ok_or_else(|| format!("Could not resolve {}:{}", profile.host, profile.port))
+        .ok_or_else(|| {
+            Failure::new(
+                format!("Could not resolve {}:{}", profile.host, profile.port),
+                false,
+            )
+        })
 }
 
 fn basic_remote_entry(path: &str, is_dir: bool, size: u64) -> FileEntry {

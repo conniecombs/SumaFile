@@ -27,10 +27,17 @@ pub fn connect(
     profile: &RemoteProfile,
     secret: Option<&RemoteSecret>,
 ) -> Result<Box<dyn RemoteProvider>, String> {
+    connect_typed(profile, secret).map_err(String::from)
+}
+
+pub fn connect_typed(
+    profile: &RemoteProfile,
+    secret: Option<&RemoteSecret>,
+) -> Result<Box<dyn RemoteProvider>, Failure> {
     let runtime = Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|error| format!("SFTP runtime setup failed: {error}"))?;
+        .map_err(|error| Failure::new(format!("SFTP runtime setup failed: {error}"), false))?;
     let profile = profile.clone();
     let secret = secret.cloned();
     let (session, sftp) = block_on_runtime(&runtime, connect_async(profile, secret))?;
@@ -202,7 +209,7 @@ impl RemoteProvider for SftpRemoteProvider {
 async fn connect_async(
     profile: RemoteProfile,
     secret: Option<RemoteSecret>,
-) -> Result<(Handle<VerifiedHostKeyHandler>, SftpSession), String> {
+) -> Result<(Handle<VerifiedHostKeyHandler>, SftpSession), Failure> {
     let config = client::Config {
         inactivity_timeout: Some(REMOTE_CONNECT_TIMEOUT),
         keepalive_interval: Some(Duration::from_secs(10)),
@@ -216,20 +223,22 @@ async fn connect_async(
     let address = (profile.host.clone(), profile.port);
     let mut session = client::connect(Arc::new(config), address, handler)
         .await
-        .map_err(format_client_error)?;
-    authenticate(&profile, secret.as_ref(), &mut session).await?;
+        .map_err(|err| classify_client_error(&profile.host, err))?;
+    authenticate(&profile, secret.as_ref(), &mut session)
+        .await
+        .map_err(|msg| Failure::new(msg, false))?;
 
     let channel = session
         .channel_open_session()
         .await
-        .map_err(|error| format!("SFTP channel open failed: {error}"))?;
+        .map_err(|error| Failure::new(format!("SFTP channel open failed: {error}"), true))?;
     channel
         .request_subsystem(true, "sftp")
         .await
-        .map_err(|error| format!("SFTP subsystem request failed: {error}"))?;
+        .map_err(|error| Failure::new(format!("SFTP subsystem request failed: {error}"), true))?;
     let sftp = SftpSession::new(channel.into_stream())
         .await
-        .map_err(|error| format!("SFTP subsystem setup failed: {error}"))?;
+        .map_err(|error| Failure::new(format!("SFTP subsystem setup failed: {error}"), true))?;
     sftp.set_timeout(15);
 
     Ok((session, sftp))
@@ -471,10 +480,24 @@ impl From<russh::Error> for SftpClientError {
     }
 }
 
-fn format_client_error(error: SftpClientError) -> String {
+fn classify_client_error(host: &str, error: SftpClientError) -> Failure {
     match error {
-        SftpClientError::Ssh(error) => format!("SFTP connection failed: {error}"),
-        SftpClientError::HostKey(message) => message,
+        SftpClientError::HostKey(message) => Failure::new(message, false),
+        SftpClientError::Ssh(russh::Error::IO(io_err)) => {
+            let message = format!("SFTP connection failed: {io_err}");
+            let retryable = Failure::io("SFTP connection", host, io_err).retryable;
+            Failure::new(message, retryable)
+        }
+        SftpClientError::Ssh(error) => {
+            let retryable = matches!(
+                error,
+                russh::Error::Elapsed(_)
+                    | russh::Error::InactivityTimeout
+                    | russh::Error::Disconnect
+                    | russh::Error::HUP
+            );
+            Failure::new(format!("SFTP connection failed: {error}"), retryable)
+        }
     }
 }
 

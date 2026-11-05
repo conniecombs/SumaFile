@@ -261,11 +261,18 @@ fn transfer_with_policy_blocking(
                 && plan.source_path.components().next() != plan.final_dest.components().next();
             if (operation_type == "copy" || streamed_move) && !attempted.contains(&index) {
                 let mut tasks = Vec::new();
-                for candidate in plans.iter().skip(index).take(128) {
-                    let Ok(metadata) = std::fs::symlink_metadata(&candidate.source_path) else {
-                        break;
+                for candidate in plans.iter().skip(index) {
+                    let (is_file, size) = if candidate.is_regular_file {
+                        (true, candidate.byte_size)
+                    } else if candidate.file_count > 0 {
+                        (false, 0)
+                    } else {
+                        let Ok(metadata) = std::fs::symlink_metadata(&candidate.source_path) else {
+                            break;
+                        };
+                        (metadata.file_type().is_file(), metadata.len())
                     };
-                    if !metadata.file_type().is_file() {
+                    if !is_file {
                         break;
                     }
                     if streamed_move
@@ -277,7 +284,7 @@ fn transfer_with_policy_blocking(
                     tasks.push(parallel::FileTask {
                         source: candidate.source_path.clone(),
                         destination: candidate.final_dest.clone(),
-                        size: metadata.len(),
+                        size,
                         network: candidate.network,
                         replace_existing: candidate.replace_existing,
                         resume_existing: false,
@@ -292,10 +299,17 @@ fn transfer_with_policy_blocking(
                     for completed in result.completed {
                         let absolute = index + completed;
                         if streamed_move {
-                            if let Err(error) = crate::transfer_staging::remove_path(
-                                &plans[absolute].source_path,
-                                "source",
-                            ) {
+                            let delete_result = match result.versions.get(&completed) {
+                                Some(version) => crate::transfer_staging::delete_verified_source(
+                                    &plans[absolute].source_path,
+                                    version,
+                                ),
+                                None => Err(format!(
+                                    "Missing source verification snapshot for {}",
+                                    plans[absolute].source_path.display()
+                                )),
+                            };
+                            if let Err(error) = delete_result {
                                 if result.failed.is_none() {
                                     result.failed = Some((
                                         completed,
@@ -1250,5 +1264,206 @@ mod tests {
         let updates = updates.lock().unwrap();
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].status, "completed");
+    }
+
+    #[test]
+    fn destination_created_immediately_before_promotion_is_preserved_unless_replace_authorized() {
+        let src_dir = unique_temp_path("atomic_promo_src");
+        let dst_dir = unique_temp_path("atomic_promo_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("report.txt");
+        let destination = dst_dir.join("report.txt");
+        fs::write(&source, b"incoming-content").unwrap();
+
+        let destination_for_emit = destination.clone();
+        let created = Arc::new(AtomicBool::new(false));
+        let created_for_emit = created.clone();
+
+        let err = transfer_with_progress_blocking(
+            "copy",
+            vec![source.to_string_lossy().to_string()],
+            dst_dir.to_string_lossy().to_string(),
+            "op_atomic_no_overwrite".to_string(),
+            "error".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|update| {
+                if update.status == "finalizing"
+                    && !created_for_emit.swap(true, Ordering::SeqCst)
+                {
+                    fs::write(&destination_for_emit, b"concurrent-destination").unwrap();
+                }
+            },
+        )
+        .expect_err("concurrent destination creation must report conflict");
+
+        assert!(err.message.starts_with("CONFLICT:"));
+        assert_eq!(fs::read(&destination).unwrap(), b"concurrent-destination");
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[test]
+    fn cancel_folder_replacing_existing_file_preserves_original_destination() {
+        for operation in ["copy", "move"] {
+            let src_root = unique_temp_path("folder_replace_file_src");
+            let dst_root = unique_temp_path("folder_replace_file_dst");
+            let source_folder = src_root.join("Item");
+            let existing_dest_file = dst_root.join("Item");
+            fs::create_dir_all(&source_folder).unwrap();
+            fs::create_dir_all(&dst_root).unwrap();
+            fs::write(source_folder.join("child.txt"), vec![b'a'; 256 * 1024]).unwrap();
+            fs::write(&existing_dest_file, b"original-file-must-survive").unwrap();
+
+            let cancel = Arc::new(AtomicBool::new(false));
+            let cancel_for_emit = cancel.clone();
+
+            let result = transfer_with_progress_blocking(
+                operation,
+                vec![source_folder.to_string_lossy().to_string()],
+                dst_root.to_string_lossy().to_string(),
+                "op_cancel_folder_replaces_file".to_string(),
+                "replace".to_string(),
+                cancel,
+                &|update| {
+                    if update.status == "finalizing" {
+                        cancel_for_emit.store(true, Ordering::SeqCst);
+                    }
+                },
+            )
+            .expect("cancelled transfer returns committed list");
+
+            assert!(result.is_empty());
+            assert!(
+                existing_dest_file.is_file(),
+                "original destination file must remain a file"
+            );
+            assert_eq!(
+                fs::read(&existing_dest_file).unwrap(),
+                b"original-file-must-survive"
+            );
+            assert!(source_folder.join("child.txt").exists());
+
+            let _ = fs::remove_dir_all(&src_root);
+            let _ = fs::remove_dir_all(&dst_root);
+        }
+    }
+
+    #[test]
+    fn streamed_move_retains_source_modified_after_copy_before_batch_deletion() {
+        let src_dir = unique_temp_path("move_mod_src");
+        let dst_dir = unique_temp_path("move_mod_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+
+        let first = src_dir.join("first.txt");
+        let second = src_dir.join("second.txt");
+        fs::write(&first, b"original-first").unwrap();
+        fs::write(&second, vec![b's'; 512 * 1024]).unwrap();
+
+        let first_for_emit = first.clone();
+        let second_dest_text = dst_dir.join("second.txt").to_string_lossy().to_string();
+        let modified = Arc::new(AtomicBool::new(false));
+        let modified_for_emit = modified.clone();
+
+        // Use keep-both or cross-prefix so move streams through copy + verified delete
+        let err = super::transfer_with_policy_blocking(
+            "move",
+            vec![
+                first.to_string_lossy().to_string(),
+                second.to_string_lossy().to_string(),
+            ],
+            format!(r"\\?\{}", dst_dir.to_string_lossy()),
+            "op_move_modified_source".to_string(),
+            "error".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|update| {
+                // When second file is finalizing (after first has already finished copying),
+                // another application updates first.txt!
+                if update.status == "finalizing"
+                    && update.current_item.ends_with("second.txt")
+                    && !modified_for_emit.swap(true, Ordering::SeqCst)
+                {
+                    let _ = &second_dest_text;
+                    fs::write(&first_for_emit, b"updated--first").unwrap();
+                }
+            },
+            &|_| {},
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 1,
+                ..super::tuning::Policy::default()
+            },
+        )
+        .expect_err("modified source must not be deleted and must produce partial-move error");
+
+        assert!(
+            err.message.contains("Copied but failed to delete source"),
+            "unexpected error: {}",
+            err.message
+        );
+        assert!(
+            first.exists(),
+            "modified first source file must be retained"
+        );
+        assert_eq!(fs::read(&first).unwrap(), b"updated--first");
+        assert_eq!(fs::read(dst_dir.join("first.txt")).unwrap(), b"original-first");
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[test]
+    fn folder_move_retains_uncopied_file_added_after_enumeration() {
+        let src_root = unique_temp_path("folder_move_added_src");
+        let dst_root = unique_temp_path("folder_move_added_dst");
+        let source_folder = src_root.join("Project");
+        let final_dest = dst_root.join("Project");
+        fs::create_dir_all(&source_folder).unwrap();
+        fs::create_dir_all(&dst_root).unwrap();
+        let existing_file = source_folder.join("copied.txt");
+        fs::write(&existing_file, b"copied-payload").unwrap();
+
+        let new_file = source_folder.join("added_after_enum.txt");
+        let new_file_for_emit = new_file.clone();
+        let final_dest_text = final_dest.to_string_lossy().to_string();
+        let injected = Arc::new(AtomicBool::new(false));
+        let injected_for_emit = injected.clone();
+
+        // Use keep-both so folder move uses staged copy_tree + verified tree deletion
+        let err = transfer_with_progress_blocking(
+            "move",
+            vec![source_folder.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            "op_folder_move_added_file".to_string(),
+            "keep-both".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|update| {
+                if update.status == "finalizing"
+                    && update.current_item == final_dest_text
+                    && !injected_for_emit.swap(true, Ordering::SeqCst)
+                {
+                    fs::write(&new_file_for_emit, b"uncopied-new-data").unwrap();
+                }
+            },
+        )
+        .expect_err("folder move must report partial move when new file is added after enumeration");
+
+        assert!(
+            err.message.contains("Copied but failed to delete source"),
+            "unexpected error: {}",
+            err.message
+        );
+        assert!(!existing_file.exists(), "copied file should be deleted");
+        assert!(new_file.exists(), "uncopied added file must be retained");
+        assert_eq!(fs::read(&new_file).unwrap(), b"uncopied-new-data");
+        assert_eq!(
+            fs::read(final_dest.join("copied.txt")).unwrap(),
+            b"copied-payload"
+        );
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
     }
 }

@@ -73,7 +73,13 @@ impl<'a> Session<'a> {
         let route = tuning::route_key(&self.endpoints, &self.destination, bytes, files as u64);
         if self.route != route || self.buffer_size != buffer_size {
             self.save();
-            self.controller = Controller::new((self.policy)(), buffer_size, tuning::recall(&route));
+            self.controller = Controller::new_for_workload(
+                (self.policy)(),
+                buffer_size,
+                tuning::recall(&route),
+                bytes,
+                files,
+            );
             self.limiter.update(self.controller.policy.bandwidth_mib);
             self.route = route;
             self.buffer_size = buffer_size;

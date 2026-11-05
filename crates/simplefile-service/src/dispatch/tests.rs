@@ -838,6 +838,14 @@ fn dispatch_fake_file(path: &str, size: u64) -> FileEntry {
 
 impl RemoteProvider for DispatchFakeProvider {
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
+        if path == "/release" {
+            return Ok(DirectoryListing {
+                path: path.into(),
+                parent: Some("/".into()),
+                is_network: true,
+                entries: vec![dispatch_fake_file("/release/app.txt", 12)],
+            });
+        }
         if path == "/incoming" {
             return Ok(DirectoryListing {
                 path: path.into(),

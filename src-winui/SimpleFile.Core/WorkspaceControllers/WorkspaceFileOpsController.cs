@@ -233,28 +233,65 @@ internal sealed class WorkspaceFileOpsController
             return;
         }
 
-        if (move)
+        var canRegisterUndo = !string.Equals(conflictAction, "replace", StringComparison.OrdinalIgnoreCase);
+        try
         {
-            var results = await workspace.FileOps.MoveAsync(sources, destination, conflictAction, ct: cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            workspace.Undo.PushMove(results, workspace.FileOps);
-        }
-        else
-        {
-            var results = await workspace.FileOps.CopyAsync(sources, destination, conflictAction, ct: cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            workspace.Undo.PushCopy(results, workspace.FileOps);
-        }
+            if (move)
+            {
+                var results = await workspace.FileOps.MoveAsync(sources, destination, conflictAction, ct: cancellationToken).ConfigureAwait(false);
+                if (canRegisterUndo)
+                {
+                    workspace.Undo.PushMove(results, workspace.FileOps);
+                }
+            }
+            else
+            {
+                var results = await workspace.FileOps.CopyAsync(sources, destination, conflictAction, ct: cancellationToken).ConfigureAwait(false);
+                if (canRegisterUndo)
+                {
+                    workspace.Undo.PushCopy(results, workspace.FileOps);
+                }
+            }
 
-        cancellationToken.ThrowIfCancellationRequested();
-        await workspace.RefreshAffectedPanesAsync(
-            OperationLogController.TransferAffectedPaths(sources, destination, move),
-            cancellationToken).ConfigureAwait(false);
-        if (workspace.DualPaneEnabled)
-        {
+            await workspace.RefreshAffectedPanesAsync(
+                OperationLogController.TransferAffectedPaths(sources, destination, move),
+                CancellationToken.None).ConfigureAwait(false);
+            if (workspace.DualPaneEnabled)
+            {
+                await workspace.NavigatePaneAsync(workspace.OtherPane().Id, destination, HistoryMode.None, activate: false, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
-            await workspace.NavigatePaneAsync(workspace.OtherPane().Id, destination, HistoryMode.None, activate: false, cancellationToken)
-                .ConfigureAwait(false);
+        }
+        catch (TransferCanceledException exception)
+        {
+            var committed = exception.Outcome.Committed;
+            if (canRegisterUndo && committed.Length > 0)
+            {
+                if (move)
+                {
+                    workspace.Undo.PushMove(committed, workspace.FileOps);
+                }
+                else
+                {
+                    workspace.Undo.PushCopy(committed, workspace.FileOps);
+                }
+            }
+
+            if (committed.Length > 0)
+            {
+                await workspace.RefreshAffectedPanesAsync(
+                    OperationLogController.TransferAffectedPaths(sources, destination, move),
+                    CancellationToken.None).ConfigureAwait(false);
+                if (workspace.DualPaneEnabled)
+                {
+                    await workspace.NavigatePaneAsync(workspace.OtherPane().Id, destination, HistoryMode.None, activate: false, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            throw;
         }
     }
 

@@ -6,6 +6,7 @@
 use crate::models::{FileEntry, TreeNode};
 use crate::path_conflict::{
     create_dir_exclusive, is_keep_both_action, path_collision_key, path_exists_no_follow,
+    rename_exclusive,
 };
 use crate::utils::{
     get_file_entry, recreate_symlink, validate_existing_path_no_resolve, validate_name,
@@ -40,6 +41,13 @@ struct RenamePlan {
     source_path: PathBuf,
     temp_path: Option<PathBuf>,
     final_path: PathBuf,
+}
+
+#[derive(Debug)]
+struct ResolvedDestination {
+    final_dest: PathBuf,
+    backup_path: Option<PathBuf>,
+    same_entry: bool,
 }
 
 // ============================================================================
@@ -293,20 +301,26 @@ pub fn rename_entry(path: &str, new_name: &str) -> Result<String, String> {
 
     let same_target_on_case_insensitive_fs =
         path_collision_key(&path_buf) == path_collision_key(&new_path);
-    if new_path.exists() && !same_target_on_case_insensitive_fs {
+    if path_exists_no_follow(&new_path) && !same_target_on_case_insensitive_fs {
         return Err(format!(
             "A file or directory with that name already exists: {new_name}"
         ));
     }
 
-    if same_target_on_case_insensitive_fs && new_path.exists() {
+    if same_target_on_case_insensitive_fs && path_exists_no_follow(&new_path) {
         let temp_path = move_to_unique_rename_temp(&path_buf, parent, 0)?;
         if let Err(e) = rename_no_replace(&temp_path, &new_path) {
-            let _ = fs::rename(&temp_path, &path_buf);
+            let _ = rename_no_replace(&temp_path, &path_buf);
             return Err(format!("Failed to rename: {e}"));
         }
     } else {
-        fs::rename(&path_buf, &new_path).map_err(|e| format!("Failed to rename: {e}"))?;
+        rename_no_replace(&path_buf, &new_path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("A file or directory with that name already exists: {new_name}")
+            } else {
+                format!("Failed to rename: {e}")
+            }
+        })?;
     }
     Ok(new_path.to_string_lossy().to_string())
 }
@@ -349,7 +363,7 @@ pub fn batch_rename(entries: Vec<RenameRequest>) -> Result<Vec<String>, String> 
 
     for plan in &plans {
         let final_key = path_collision_key(&plan.final_path);
-        if plan.final_path.exists() && !source_keys.contains(&final_key) {
+        if path_exists_no_follow(&plan.final_path) && !source_keys.contains(&final_key) {
             let name = plan.final_path.file_name().map_or_else(
                 || plan.final_path.to_string_lossy().to_string(),
                 |n| n.to_string_lossy().to_string(),
@@ -375,7 +389,7 @@ pub fn batch_rename(entries: Vec<RenameRequest>) -> Result<Vec<String>, String> 
             Err(e) => {
                 let mut recovery_failures = Vec::new();
                 for (temp, source) in moved_to_temp.iter().rev() {
-                    if let Err(rollback_err) = fs::rename(temp, source) {
+                    if let Err(rollback_err) = rename_no_replace(temp, source) {
                         recovery_failures.push(rollback_detail(temp, source, &rollback_err));
                     }
                 }
@@ -401,14 +415,16 @@ pub fn batch_rename(entries: Vec<RenameRequest>) -> Result<Vec<String>, String> 
         if let Err(e) = rename_no_replace(temp_path, &plan.final_path) {
             let mut recovery_failures = Vec::new();
             for (final_path, source_path) in finalized.iter().rev() {
-                if let Err(rollback_err) = fs::rename(final_path, source_path) {
+                if let Err(rollback_err) = rename_no_replace(final_path, source_path) {
                     recovery_failures.push(rollback_detail(final_path, source_path, &rollback_err));
                 }
             }
             for remaining in &plans {
                 if let Some(temp_path) = remaining.temp_path.as_ref() {
-                    if temp_path.exists() {
-                        if let Err(rollback_err) = fs::rename(temp_path, &remaining.source_path) {
+                    if path_exists_no_follow(temp_path) {
+                        if let Err(rollback_err) =
+                            rename_no_replace(temp_path, &remaining.source_path)
+                        {
                             recovery_failures.push(rollback_detail(
                                 temp_path,
                                 &remaining.source_path,
@@ -479,36 +495,45 @@ pub fn move_entry(source: &str, destination: &str) -> Result<String, String> {
         ));
     }
 
-    if fs::rename(&source_path, &final_dest).is_err() {
-        let source_meta = fs::symlink_metadata(&source_path)
-            .map_err(|e| format!("Failed to stat source: {e}"))?;
-        let source_type = source_meta.file_type();
-        if source_type.is_dir() {
-            if let Err(copy_err) = copy_dir_iterative(&source_path, &final_dest) {
-                let _ = fs::remove_dir_all(&final_dest);
-                return Err(copy_err);
-            }
-            fs::remove_dir_all(&source_path)
-                .map_err(|e| format!("Copied but failed to delete source: {e}"))?;
-        } else if source_type.is_symlink() {
-            recreate_symlink(&source_path, &final_dest)?;
-            if source_meta.is_dir() {
-                fs::remove_dir(&source_path)
-                    .map_err(|e| format!("Copied but failed to delete source symlink: {e}"))?;
-            } else {
-                fs::remove_file(&source_path)
-                    .map_err(|e| format!("Copied but failed to delete source symlink: {e}"))?;
-            }
-        } else {
-            match copy_file_exclusive_preserve_times(&source_path, &final_dest) {
-                Ok(_) => {}
-                Err(e) => {
-                    let _ = fs::remove_file(&final_dest);
-                    return Err(e);
+    match rename_no_replace(&source_path, &final_dest) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(format!(
+                "CONFLICT: destination already exists: {}",
+                final_dest.to_string_lossy()
+            ));
+        }
+        Err(_) => {
+            let source_meta = fs::symlink_metadata(&source_path)
+                .map_err(|e| format!("Failed to stat source: {e}"))?;
+            let source_type = source_meta.file_type();
+            if source_type.is_dir() {
+                if let Err(copy_err) = copy_dir_iterative(&source_path, &final_dest) {
+                    let _ = fs::remove_dir_all(&final_dest);
+                    return Err(copy_err);
                 }
+                fs::remove_dir_all(&source_path)
+                    .map_err(|e| format!("Copied but failed to delete source: {e}"))?;
+            } else if source_type.is_symlink() {
+                recreate_symlink(&source_path, &final_dest)?;
+                if source_meta.is_dir() {
+                    fs::remove_dir(&source_path)
+                        .map_err(|e| format!("Copied but failed to delete source symlink: {e}"))?;
+                } else {
+                    fs::remove_file(&source_path)
+                        .map_err(|e| format!("Copied but failed to delete source symlink: {e}"))?;
+                }
+            } else {
+                match copy_file_exclusive_preserve_times(&source_path, &final_dest) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        let _ = fs::remove_file(&final_dest);
+                        return Err(e);
+                    }
+                }
+                fs::remove_file(&source_path)
+                    .map_err(|e| format!("Copied but failed to delete source: {e}"))?;
             }
-            fs::remove_file(&source_path)
-                .map_err(|e| format!("Copied but failed to delete source: {e}"))?;
         }
     }
     Ok(final_dest.to_string_lossy().to_string())
@@ -539,11 +564,31 @@ pub fn copy_entry_resolved(
     let retry_keep_both = is_keep_both_action(conflict_action);
     for _ in 0..100 {
         match resolve_destination(&source_path, &dest_dir, conflict_action)? {
-            Some(final_dest) => match copy_path_to_destination(&source_path, &final_dest) {
-                Ok(()) => return Ok(final_dest.to_string_lossy().to_string()),
-                Err(e) if retry_keep_both && e.starts_with("CONFLICT:") => continue,
-                Err(e) => return Err(e),
-            },
+            Some(resolved) => {
+                if resolved.same_entry {
+                    return Ok(resolved.final_dest.to_string_lossy().to_string());
+                }
+                match copy_path_to_destination(&source_path, &resolved.final_dest) {
+                    Ok(()) => {
+                        if let Some(backup) = &resolved.backup_path {
+                            let _ = remove_existing_path(backup);
+                        }
+                        return Ok(resolved.final_dest.to_string_lossy().to_string());
+                    }
+                    Err(e) => {
+                        if let Some(backup) = &resolved.backup_path {
+                            if path_exists_no_follow(&resolved.final_dest) {
+                                let _ = remove_existing_path(&resolved.final_dest);
+                            }
+                            let _ = rename_no_replace(backup, &resolved.final_dest);
+                        }
+                        if retry_keep_both && e.starts_with("CONFLICT:") {
+                            continue;
+                        }
+                        return Err(e);
+                    }
+                }
+            }
             None => return Ok(format!("SKIPPED:{source}")),
         }
     }
@@ -571,12 +616,30 @@ pub fn move_entry_resolved(
     let retry_keep_both = is_keep_both_action(conflict_action);
     for _ in 0..100 {
         match resolve_destination(&source_path, &dest_dir, conflict_action)? {
-            Some(final_dest) => {
+            Some(resolved) => {
+                if resolved.same_entry {
+                    return Ok(resolved.final_dest.to_string_lossy().to_string());
+                }
                 let allow_rename = !retry_keep_both;
-                match move_path_to_destination(&source_path, &final_dest, allow_rename) {
-                    Ok(()) => return Ok(final_dest.to_string_lossy().to_string()),
-                    Err(e) if retry_keep_both && e.starts_with("CONFLICT:") => continue,
-                    Err(e) => return Err(e),
+                match move_path_to_destination(&source_path, &resolved.final_dest, allow_rename) {
+                    Ok(()) => {
+                        if let Some(backup) = &resolved.backup_path {
+                            let _ = remove_existing_path(backup);
+                        }
+                        return Ok(resolved.final_dest.to_string_lossy().to_string());
+                    }
+                    Err(e) => {
+                        if let Some(backup) = &resolved.backup_path {
+                            if path_exists_no_follow(&resolved.final_dest) {
+                                let _ = remove_existing_path(&resolved.final_dest);
+                            }
+                            let _ = rename_no_replace(backup, &resolved.final_dest);
+                        }
+                        if retry_keep_both && e.starts_with("CONFLICT:") {
+                            continue;
+                        }
+                        return Err(e);
+                    }
                 }
             }
             None => return Ok(format!("SKIPPED:{source}")),
@@ -656,13 +719,7 @@ fn unique_rename_temp_path(parent: &Path, idx: usize) -> Result<PathBuf, String>
 }
 
 fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
-    if destination.exists() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "destination already exists",
-        ));
-    }
-    fs::rename(source, destination)
+    rename_exclusive(source, destination)
 }
 
 fn move_to_unique_rename_temp(source: &Path, parent: &Path, idx: usize) -> Result<PathBuf, String> {
@@ -742,13 +799,17 @@ fn resolve_destination(
     source_path: &Path,
     dest_dir: &Path,
     conflict_action: &str,
-) -> Result<Option<PathBuf>, String> {
+) -> Result<Option<ResolvedDestination>, String> {
     let file_name = source_path
         .file_name()
         .ok_or_else(|| "Cannot get file name".to_string())?;
     let final_dest = dest_dir.join(file_name);
     if !path_exists_no_follow(&final_dest) {
-        return Ok(Some(final_dest));
+        return Ok(Some(ResolvedDestination {
+            final_dest,
+            backup_path: None,
+            same_entry: false,
+        }));
     }
 
     match conflict_action.to_ascii_lowercase().as_str() {
@@ -758,15 +819,25 @@ fn resolve_destination(
                 (source_path.canonicalize(), final_dest.canonicalize())
             {
                 if src_can == dst_can {
-                    return Ok(Some(final_dest));
+                    return Ok(Some(ResolvedDestination {
+                        final_dest,
+                        backup_path: None,
+                        same_entry: true,
+                    }));
                 }
             }
-            remove_existing_path(&final_dest)?;
-            Ok(Some(final_dest))
+            let backup_path = move_to_unique_rename_temp(&final_dest, dest_dir, 0)?;
+            Ok(Some(ResolvedDestination {
+                final_dest,
+                backup_path: Some(backup_path),
+                same_entry: false,
+            }))
         }
-        "rename" | "keep-both" | "keep_both" => {
-            Ok(Some(unique_destination_path(dest_dir, file_name)))
-        }
+        "rename" | "keep-both" | "keep_both" => Ok(Some(ResolvedDestination {
+            final_dest: unique_destination_path(dest_dir, file_name),
+            backup_path: None,
+            same_entry: false,
+        })),
         _ => Err(format!(
             "CONFLICT: destination already exists: {}",
             final_dest.to_string_lossy()
@@ -795,8 +866,17 @@ fn move_path_to_destination(
     final_dest: &Path,
     allow_rename: bool,
 ) -> Result<(), String> {
-    if allow_rename && fs::rename(source_path, final_dest).is_ok() {
-        return Ok(());
+    if allow_rename {
+        match rename_no_replace(source_path, final_dest) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(format!(
+                    "CONFLICT: destination already exists: {}",
+                    final_dest.to_string_lossy()
+                ));
+            }
+            Err(_) => {}
+        }
     }
     copy_path_to_destination(source_path, final_dest)?;
     remove_existing_path(source_path)

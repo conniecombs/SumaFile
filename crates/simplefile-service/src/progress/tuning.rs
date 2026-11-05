@@ -188,6 +188,8 @@ pub(crate) struct Controller {
     pub concurrency: usize,
     pub explanation: &'static str,
     limit: usize,
+    buffer_bytes: usize,
+    effective_buffer: usize,
     best_concurrency: usize,
     best_rate: f64,
     previous_rate: Option<f64>,
@@ -200,23 +202,51 @@ pub(crate) struct Controller {
 
 impl Controller {
     pub fn new(policy: Policy, buffer_bytes: usize, remembered: Option<usize>) -> Self {
-        let limit = policy.limit(buffer_bytes);
+        Self::new_for_workload(policy, buffer_bytes, remembered, 0, 0)
+    }
+
+    pub fn new_for_workload(
+        policy: Policy,
+        buffer_bytes: usize,
+        remembered: Option<usize>,
+        bytes: u64,
+        files: usize,
+    ) -> Self {
+        let avg_size = bytes / (files as u64).max(1);
+        let small_file_burst = files >= 16 && avg_size <= 256 * 1024;
+        let effective_buffer = if small_file_burst {
+            buffer_bytes.min(usize::try_from(avg_size.max(64 * 1024)).unwrap_or(buffer_bytes))
+        } else {
+            buffer_bytes
+        };
+        let limit = policy.limit(effective_buffer);
         let concurrency = if policy.mode == Mode::Manual {
             policy.manual_concurrency.clamp(1, limit)
+        } else if let Some(remembered) = remembered {
+            let cap = if small_file_burst { 16 } else { 8 };
+            remembered.min(cap).clamp(1, limit)
+        } else if small_file_burst {
+            match policy.mode {
+                Mode::Conservative => 2,
+                Mode::Maximum => 16,
+                _ => 12,
+            }
+            .clamp(1, limit)
         } else {
-            remembered
-                .unwrap_or(match policy.mode {
-                    Mode::Conservative => 2,
-                    Mode::Maximum => 8,
-                    _ => 4,
-                })
-                .min(8)
-                .clamp(1, limit)
+            match policy.mode {
+                Mode::Conservative => 2,
+                Mode::Maximum => 8,
+                _ => 4,
+            }
+            .min(8)
+            .clamp(1, limit)
         };
         let explanation = if policy.mode == Mode::Manual {
             "Manual limit"
         } else if remembered.is_some() {
             "Rechecking remembered setting"
+        } else if small_file_burst {
+            "Scaling concurrency for small-file batch"
         } else {
             "Measuring transfer speed"
         };
@@ -225,6 +255,8 @@ impl Controller {
             concurrency,
             explanation,
             limit,
+            buffer_bytes,
+            effective_buffer,
             best_concurrency: concurrency,
             best_rate: 0.0,
             previous_rate: None,
@@ -237,12 +269,21 @@ impl Controller {
     }
 
     pub fn update_policy(&mut self, policy: Policy, buffer_bytes: usize) {
-        let limit = policy.limit(buffer_bytes);
+        let effective_buffer = if buffer_bytes == self.buffer_bytes {
+            self.effective_buffer
+        } else {
+            buffer_bytes
+        };
+        let limit = policy.limit(effective_buffer);
         if policy.mode != self.policy.mode
             || limit != self.limit
             || policy.manual_concurrency != self.policy.manual_concurrency
         {
-            *self = Self::new(policy, buffer_bytes, Some(self.concurrency.min(limit)));
+            let mut updated =
+                Self::new(policy, effective_buffer, Some(self.concurrency.min(limit)));
+            updated.buffer_bytes = buffer_bytes;
+            updated.effective_buffer = effective_buffer;
+            *self = updated;
         } else {
             self.policy = policy;
         }
@@ -543,5 +584,37 @@ mod tests {
                 assert_eq!(c.concurrency, initial);
             }
         }
+    }
+
+    #[test]
+    fn small_file_bursts_scale_initial_concurrency_and_right_size_memory_limit() {
+        let policy = Policy {
+            mode: Mode::Automatic,
+            max_concurrency: 16,
+            memory_budget_mb: 24,
+            ..Policy::default()
+        };
+        // With 4 MiB buffers and 24 MiB budget, large files cap concurrency at 2.
+        let large = Controller::new_for_workload(policy.clone(), 4 << 20, None, 64 << 20, 4);
+        assert_eq!(large.concurrency, 2);
+
+        // For 64 small files (4 KiB each), effective buffer is right-sized to 64 KiB
+        // and automatic mode starts at 12 workers instead of 2 or 4.
+        let small = Controller::new_for_workload(policy, 4 << 20, None, 64 * 4096, 64);
+        assert_eq!(small.concurrency, 12);
+
+        let max_small = Controller::new_for_workload(
+            Policy {
+                mode: Mode::Maximum,
+                max_concurrency: 16,
+                memory_budget_mb: 24,
+                ..Policy::default()
+            },
+            4 << 20,
+            None,
+            64 * 4096,
+            64,
+        );
+        assert_eq!(max_small.concurrency, 16);
     }
 }

@@ -1,9 +1,402 @@
 use crate::transfer_reliability::{Failure, Retry};
-use simplefile_core::path_conflict::path_exists_no_follow;
+use simplefile_core::path_conflict::{
+    is_already_exists_error, path_exists_no_follow, rename_exclusive,
+};
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0100_0000_01b3;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceVersion {
+    pub(crate) is_symlink: bool,
+    pub(crate) is_dir: bool,
+    pub(crate) len: u64,
+    pub(crate) modified: Option<SystemTime>,
+    #[cfg(windows)]
+    pub(crate) creation_time: u64,
+    #[cfg(windows)]
+    pub(crate) last_write_time: u64,
+    #[cfg(windows)]
+    pub(crate) file_id: Option<(u32, u64)>,
+    pub(crate) content_hash: Option<u64>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct TreeCopyManifest {
+    pub(crate) files: Vec<(PathBuf, SourceVersion)>,
+    pub(crate) source_dirs: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ContentHasher {
+    state: u64,
+}
+
+impl Default for ContentHasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ContentHasher {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: FNV_OFFSET_BASIS,
+        }
+    }
+
+    pub(crate) fn update(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.state ^= b as u64;
+            self.state = self.state.wrapping_mul(FNV_PRIME);
+        }
+    }
+
+    pub(crate) fn finish(self) -> u64 {
+        self.state
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn file_id_from_handle(file: &fs::File) -> Option<(u32, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) };
+    if ok != 0 {
+        let index = ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
+        Some((info.dwVolumeSerialNumber, index))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn hash_file_contents(file: &mut fs::File) -> Result<u64, String> {
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| format!("Failed to seek source file for hashing: {e}"))?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
+    let mut buffer = [0u8; 64 * 1024];
+    let mut hasher = ContentHasher::new();
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|e| format!("Failed to read source file for hashing: {e}"))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finish())
+}
+
+pub(crate) fn capture_source_version_from_open_file(
+    file: &fs::File,
+    meta: &fs::Metadata,
+    content_hash: Option<u64>,
+) -> SourceVersion {
+    #[cfg(windows)]
+    use std::os::windows::fs::MetadataExt;
+
+    SourceVersion {
+        is_symlink: meta.file_type().is_symlink(),
+        is_dir: meta.is_dir(),
+        len: meta.len(),
+        modified: meta.modified().ok(),
+        #[cfg(windows)]
+        creation_time: meta.creation_time(),
+        #[cfg(windows)]
+        last_write_time: meta.last_write_time(),
+        #[cfg(windows)]
+        file_id: file_id_from_handle(file),
+        content_hash,
+    }
+}
+
+pub(crate) fn capture_source_version_for_path(path: &Path) -> Result<SourceVersion, String> {
+    let meta = fs::symlink_metadata(path)
+        .map_err(|e| format!("Failed to stat source [{}]: {e}", path.display()))?;
+    #[cfg(windows)]
+    use std::os::windows::fs::MetadataExt;
+
+    if meta.file_type().is_symlink() || meta.is_dir() {
+        return Ok(SourceVersion {
+            is_symlink: meta.file_type().is_symlink(),
+            is_dir: meta.is_dir(),
+            len: meta.len(),
+            modified: meta.modified().ok(),
+            #[cfg(windows)]
+            creation_time: meta.creation_time(),
+            #[cfg(windows)]
+            last_write_time: meta.last_write_time(),
+            #[cfg(windows)]
+            file_id: None,
+            content_hash: None,
+        });
+    }
+
+    let mut file = fs::File::open(path)
+        .map_err(|e| format!("Failed to open source [{}]: {e}", path.display()))?;
+    let file_meta = file
+        .metadata()
+        .map_err(|e| format!("Failed to stat opened source [{}]: {e}", path.display()))?;
+    let content_hash = Some(hash_file_contents(&mut file)?);
+    Ok(capture_source_version_from_open_file(
+        &file,
+        &file_meta,
+        content_hash,
+    ))
+}
+
+fn metadata_matches_source_version(meta: &fs::Metadata, expected: &SourceVersion) -> bool {
+    #[cfg(windows)]
+    use std::os::windows::fs::MetadataExt;
+
+    if meta.file_type().is_symlink() != expected.is_symlink || meta.is_dir() != expected.is_dir {
+        return false;
+    }
+    if !expected.is_symlink && !expected.is_dir && meta.len() != expected.len {
+        return false;
+    }
+    if meta.modified().ok() != expected.modified {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        if meta.creation_time() != expected.creation_time
+            || meta.last_write_time() != expected.last_write_time
+        {
+            return false;
+        }
+    }
+    true
+}
+
+pub(crate) fn verify_source_unchanged(path: &Path, expected: &SourceVersion) -> Result<(), String> {
+    let lstat = fs::symlink_metadata(path)
+        .map_err(|e| format!("Failed to stat source [{}]: {e}", path.display()))?;
+    if !metadata_matches_source_version(&lstat, expected) {
+        return Err(format!(
+            "Source changed before move completion and was retained: {}",
+            path.display()
+        ));
+    }
+    if expected.is_symlink || expected.is_dir {
+        return Ok(());
+    }
+
+    let mut file = open_source_for_verification(path)?;
+    let file_meta = file
+        .metadata()
+        .map_err(|e| format!("Failed to stat source handle [{}]: {e}", path.display()))?;
+    if !metadata_matches_source_version(&file_meta, expected) {
+        return Err(format!(
+            "Source changed before move completion and was retained: {}",
+            path.display()
+        ));
+    }
+    #[cfg(windows)]
+    if let (Some(expected_id), Some(actual_id)) = (expected.file_id, file_id_from_handle(&file)) {
+        if expected_id != actual_id {
+            return Err(format!(
+                "Source identity changed before move completion and was retained: {}",
+                path.display()
+            ));
+        }
+    }
+    if let Some(expected_hash) = expected.content_hash {
+        let actual_hash = hash_file_contents(&mut file)?;
+        if actual_hash != expected_hash {
+            return Err(format!(
+                "Source content changed before move completion and was retained: {}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn open_source_for_verification(path: &Path) -> Result<fs::File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_DELETE, FILE_SHARE_READ};
+
+    fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+        .open(path)
+        .map_err(|e| {
+            format!(
+                "Failed to lock source for move verification [{}]: {e}",
+                path.display()
+            )
+        })
+}
+
+#[cfg(not(windows))]
+fn open_source_for_verification(path: &Path) -> Result<fs::File, String> {
+    fs::File::open(path).map_err(|e| {
+        format!(
+            "Failed to open source for move verification [{}]: {e}",
+            path.display()
+        )
+    })
+}
+
+pub(crate) fn delete_verified_source(path: &Path, expected: &SourceVersion) -> Result<(), String> {
+    let lstat = fs::symlink_metadata(path)
+        .map_err(|e| format!("Failed to stat source [{}]: {e}", path.display()))?;
+    if !metadata_matches_source_version(&lstat, expected) {
+        return Err(format!(
+            "Source changed before move completion and was retained: {}",
+            path.display()
+        ));
+    }
+
+    if expected.is_symlink {
+        if lstat.is_dir() {
+            return fs::remove_dir(path)
+                .map_err(|e| format!("Failed to delete source symlink [{}]: {e}", path.display()));
+        }
+        return fs::remove_file(path)
+            .map_err(|e| format!("Failed to delete source symlink [{}]: {e}", path.display()));
+    }
+
+    if expected.is_dir {
+        return fs::remove_dir(path).map_err(|e| {
+            format!(
+                "Source directory retained because new or uncopied items remain in {}: {e}",
+                path.display()
+            )
+        });
+    }
+
+    let mut file = open_source_for_verification(path)?;
+    let file_meta = file
+        .metadata()
+        .map_err(|e| format!("Failed to stat source handle [{}]: {e}", path.display()))?;
+    if !metadata_matches_source_version(&file_meta, expected) {
+        return Err(format!(
+            "Source changed before move completion and was retained: {}",
+            path.display()
+        ));
+    }
+    #[cfg(windows)]
+    if let (Some(expected_id), Some(actual_id)) = (expected.file_id, file_id_from_handle(&file)) {
+        if expected_id != actual_id {
+            return Err(format!(
+                "Source identity changed before move completion and was retained: {}",
+                path.display()
+            ));
+        }
+    }
+    if let Some(expected_hash) = expected.content_hash {
+        let actual_hash = hash_file_contents(&mut file)?;
+        if actual_hash != expected_hash {
+            return Err(format!(
+                "Source content changed before move completion and was retained: {}",
+                path.display()
+            ));
+        }
+    }
+
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(first_err) => {
+            drop(file);
+            if first_err.kind() == std::io::ErrorKind::PermissionDenied {
+                let recheck = fs::symlink_metadata(path)
+                    .map_err(|e| format!("Failed to stat source [{}]: {e}", path.display()))?;
+                if !metadata_matches_source_version(&recheck, expected) {
+                    return Err(format!(
+                        "Source changed before move completion and was retained: {}",
+                        path.display()
+                    ));
+                }
+                #[cfg(windows)]
+                #[allow(clippy::permissions_set_readonly_false)]
+                {
+                    let mut perms = recheck.permissions();
+                    if perms.readonly() {
+                        perms.set_readonly(false);
+                        let _ = fs::set_permissions(path, perms);
+                    }
+                }
+                return fs::remove_file(path).map_err(|e| {
+                    format!("Failed to delete source file [{}]: {e}", path.display())
+                });
+            }
+            Err(format!(
+                "Failed to delete source file [{}]: {first_err}",
+                path.display()
+            ))
+        }
+    }
+}
+
+pub(crate) fn delete_verified_source_tree(
+    root: &Path,
+    manifest: &TreeCopyManifest,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for (file_path, expected) in &manifest.files {
+        if let Err(err) = delete_verified_source(file_path, expected) {
+            errors.push(err);
+        }
+    }
+
+    let mut dirs_to_remove: Vec<&Path> = manifest
+        .source_dirs
+        .iter()
+        .rev()
+        .map(PathBuf::as_path)
+        .collect();
+    if !dirs_to_remove.iter().any(|&d| d == root) {
+        dirs_to_remove.push(root);
+    }
+
+    for dir_path in dirs_to_remove {
+        match fs::remove_dir(dir_path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                #[cfg(windows)]
+                #[allow(clippy::permissions_set_readonly_false)]
+                if err.kind() == std::io::ErrorKind::PermissionDenied {
+                    if let Ok(meta) = fs::symlink_metadata(dir_path) {
+                        let mut perms = meta.permissions();
+                        if perms.readonly() {
+                            perms.set_readonly(false);
+                            let _ = fs::set_permissions(dir_path, perms);
+                            if fs::remove_dir(dir_path).is_ok() {
+                                continue;
+                            }
+                        }
+                    }
+                }
+                if errors.is_empty() {
+                    errors.push(format!(
+                        "Source directory retained because new or uncopied items remain in {} ({err})",
+                        dir_path.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
 
 pub(crate) fn conflict_for_existing_destination(path: &Path) -> String {
     format!(
@@ -124,57 +517,101 @@ fn promote_attempt(
     final_path: &Path,
     replace_existing: bool,
 ) -> Result<(), Failure> {
-    if path_exists_no_follow(final_path) {
-        if !replace_existing {
+    if !replace_existing {
+        if path_exists_no_follow(final_path) {
             return Err(conflict_for_existing_destination(final_path).into());
         }
-        let backup_path = replacement_backup_path(final_path)?;
-        fs::rename(final_path, &backup_path)
-            .map_err(|e| Failure::io("Prepare destination replacement", final_path, e))?;
-        if let Err(error) = fs::rename(staged_path, final_path) {
-            return Err(match fs::rename(&backup_path, final_path) {
-                Ok(()) => Failure::io("Finalize destination (original destination was restored)", final_path, error),
-                Err(restore) => Failure::new(format!("Finalize destination [{}]: {error}; original remains [{}], restore failed: {restore}", final_path.display(), backup_path.display()), false),
-            });
+        return rename_exclusive(staged_path, final_path).map_err(|e| {
+            if is_already_exists_error(&e) || path_exists_no_follow(final_path) {
+                conflict_for_existing_destination(final_path).into()
+            } else {
+                Failure::io("Finalize destination", final_path, e)
+            }
+        });
+    }
+
+    if !path_exists_no_follow(final_path) {
+        match rename_exclusive(staged_path, final_path) {
+            Ok(()) => return Ok(()),
+            Err(e) if is_already_exists_error(&e) || path_exists_no_follow(final_path) => {}
+            Err(e) => return Err(Failure::io("Finalize destination", final_path, e)),
         }
-        // Promotion already committed: never replay it just because backup cleanup failed.
-        remove_path(&backup_path, "destination backup").map_err(|e| {
-            Failure::new(
+    }
+
+    let backup_path = move_existing_to_backup(final_path)?;
+    if let Err(error) = rename_exclusive(staged_path, final_path) {
+        return Err(match rename_exclusive(&backup_path, final_path) {
+            Ok(()) => Failure::io(
+                "Finalize destination (original destination was restored)",
+                final_path,
+                error,
+            ),
+            Err(restore) => Failure::new(
                 format!(
-                    "Transferred, but backup remains [{}]: {e}",
+                    "Finalize destination [{}]: {error}; original remains [{}], restore failed: {restore}",
+                    final_path.display(),
                     backup_path.display()
                 ),
                 false,
-            )
-        })?;
-        return Ok(());
+            ),
+        });
     }
-    fs::rename(staged_path, final_path)
-        .map_err(|e| Failure::io("Finalize destination", final_path, e))
+    // Promotion already committed: never replay it just because backup cleanup failed.
+    remove_path(&backup_path, "destination backup").map_err(|e| {
+        Failure::new(
+            format!(
+                "Transferred, but backup remains [{}]: {e}",
+                backup_path.display()
+            ),
+            false,
+        )
+    })?;
+    Ok(())
 }
 
-fn replacement_backup_path(final_path: &Path) -> Result<PathBuf, String> {
+fn move_existing_to_backup(final_path: &Path) -> Result<PathBuf, Failure> {
     let parent = final_path
         .parent()
-        .ok_or_else(|| "Cannot get destination directory".to_string())?;
+        .ok_or_else(|| Failure::new("Cannot get destination directory", false))?;
     let file_name = final_path
         .file_name()
-        .ok_or_else(|| "Cannot get destination file name".to_string())?
+        .ok_or_else(|| Failure::new("Cannot get destination file name", false))?
         .to_string_lossy();
     let process_id = std::process::id();
     for index in 0..10_000u32 {
         let candidate = parent.join(format!(
             ".{file_name}.{process_id}.{index}.sumafile-replace-backup"
         ));
-        if !path_exists_no_follow(&candidate) {
-            return Ok(candidate);
+        if path_exists_no_follow(&candidate) {
+            continue;
+        }
+        match rename_exclusive(final_path, &candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(e) if is_already_exists_error(&e) => continue,
+            Err(e) => return Err(Failure::io("Prepare destination replacement", final_path, e)),
         }
     }
 
-    Err(format!(
-        "Could not choose replacement backup path for {}",
-        final_path.to_string_lossy()
+    Err(Failure::new(
+        format!(
+            "Could not choose replacement backup path for {}",
+            final_path.to_string_lossy()
+        ),
+        false,
     ))
+}
+
+pub(crate) fn backup_existing_destination(final_path: &Path) -> Result<PathBuf, String> {
+    move_existing_to_backup(final_path).map_err(String::from)
+}
+
+pub(crate) fn restore_backed_up_destination(final_path: &Path, backup_path: &Path) {
+    if path_exists_no_follow(final_path) {
+        let _ = cleanup_owned_path(final_path);
+    }
+    if path_exists_no_follow(backup_path) {
+        let _ = rename_exclusive(backup_path, final_path);
+    }
 }
 
 pub(crate) fn existing_file_matches_source(src: &Path, dst: &Path) -> Result<bool, String> {
@@ -224,7 +661,11 @@ fn files_have_same_contents(left: &Path, right: &Path) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{existing_file_matches_source, promote_staged_path, resumable_staging_path_for};
+    use super::{
+        capture_source_version_for_path, delete_verified_source, delete_verified_source_tree,
+        existing_file_matches_source, promote_staged_path, resumable_staging_path_for,
+        TreeCopyManifest,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -257,6 +698,80 @@ mod tests {
             1,
             "backup should not be left behind after successful restore"
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn promote_no_replace_preserves_destination_created_before_promotion() {
+        let root = unique_temp_dir("no_replace_atomic");
+        let destination = root.join("item.txt");
+        let staged = root.join(".item.txt.partial");
+        fs::write(&staged, b"staged-replacement").unwrap();
+        // Destination created immediately before promotion
+        fs::write(&destination, b"concurrently-created-destination").unwrap();
+
+        let error = promote_staged_path(&staged, &destination, false)
+            .expect_err("existing destination must not be overwritten when replace is false");
+
+        assert!(
+            error.starts_with("CONFLICT: destination already exists:"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            fs::read(&destination).unwrap(),
+            b"concurrently-created-destination"
+        );
+        assert_eq!(fs::read(&staged).unwrap(), b"staged-replacement");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delete_verified_source_retains_modified_file() {
+        let root = unique_temp_dir("verified_source_modified");
+        let source = root.join("source.txt");
+        fs::write(&source, b"v1").unwrap();
+        let snapshot = capture_source_version_for_path(&source).unwrap();
+
+        // Modify file with same length so even size-preserving edits are caught
+        fs::write(&source, b"v2").unwrap();
+
+        let err = delete_verified_source(&source, &snapshot)
+            .expect_err("modified source must not be deleted");
+        assert!(err.contains("retained"), "unexpected error: {err}");
+        assert_eq!(fs::read(&source).unwrap(), b"v2");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delete_verified_source_tree_retains_newly_added_file() {
+        let root = unique_temp_dir("verified_tree_added_file");
+        let src_dir = root.join("folder");
+        let nested_dir = src_dir.join("sub");
+        fs::create_dir_all(&nested_dir).unwrap();
+        let copied_file = nested_dir.join("copied.txt");
+        fs::write(&copied_file, b"copied").unwrap();
+
+        let manifest = TreeCopyManifest {
+            files: vec![(
+                copied_file.clone(),
+                capture_source_version_for_path(&copied_file).unwrap(),
+            )],
+            source_dirs: vec![src_dir.clone(), nested_dir.clone()],
+        };
+
+        // Another application adds a new file after folder enumeration
+        let new_file = nested_dir.join("uncopied.txt");
+        fs::write(&new_file, b"must-not-be-lost").unwrap();
+
+        let err = delete_verified_source_tree(&src_dir, &manifest)
+            .expect_err("tree with new uncopied file must report partial move");
+        assert!(err.contains("retained"), "unexpected error: {err}");
+        assert!(!copied_file.exists(), "verified copied file is deleted");
+        assert!(new_file.exists(), "new uncopied file must be retained");
+        assert_eq!(fs::read(&new_file).unwrap(), b"must-not-be-lost");
 
         let _ = fs::remove_dir_all(root);
     }

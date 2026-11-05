@@ -25,7 +25,7 @@ pub trait RemoteProvider: Send {
         source: &mut dyn Read,
     ) -> Result<u64, crate::remote::provider::RemoteTransferError>;
 
-    fn reconnect(&mut self) -> Result<(), String> {
+    fn reconnect(&mut self) -> Result<(), crate::remote::provider::RemoteTransferError> {
         Ok(())
     }
 
@@ -50,7 +50,7 @@ impl RemoteProviderFactory for DefaultRemoteProviderFactory {
         profile: &RemoteProfile,
         secret: Option<&RemoteSecret>,
     ) -> Result<Box<dyn RemoteProvider>, String> {
-        let inner = connect_raw(profile, secret)?;
+        let inner = connect_raw_typed(profile, secret).map_err(String::from)?;
         Ok(Box::new(ReconnectingProvider {
             inner,
             profile: profile.clone(),
@@ -81,13 +81,15 @@ struct ReconnectingProvider {
     profile: RemoteProfile,
     secret: Option<RemoteSecret>,
 }
-fn connect_raw(
+fn connect_raw_typed(
     profile: &RemoteProfile,
     secret: Option<&RemoteSecret>,
-) -> Result<Box<dyn RemoteProvider>, String> {
+) -> Result<Box<dyn RemoteProvider>, RemoteTransferError> {
     match profile.protocol {
-        RemoteProtocol::Sftp => crate::remote::sftp::connect(profile, secret),
-        RemoteProtocol::Ftp | RemoteProtocol::Ftps => crate::remote::ftp::connect(profile, secret),
+        RemoteProtocol::Sftp => crate::remote::sftp::connect_typed(profile, secret),
+        RemoteProtocol::Ftp | RemoteProtocol::Ftps => {
+            crate::remote::ftp::connect_typed(profile, secret)
+        }
     }
 }
 impl RemoteProvider for ReconnectingProvider {
@@ -113,8 +115,8 @@ impl RemoteProvider for ReconnectingProvider {
     fn upload(&mut self, path: &str, source: &mut dyn Read) -> Result<u64, RemoteTransferError> {
         self.inner.upload(path, source)
     }
-    fn reconnect(&mut self) -> Result<(), String> {
-        self.inner = connect_raw(&self.profile, self.secret.as_ref())?;
+    fn reconnect(&mut self) -> Result<(), RemoteTransferError> {
+        self.inner = connect_raw_typed(&self.profile, self.secret.as_ref())?;
         Ok(())
     }
     fn disconnect(&mut self) -> Result<(), String> {

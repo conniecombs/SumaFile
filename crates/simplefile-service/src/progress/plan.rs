@@ -22,12 +22,15 @@ pub(crate) struct TransferPlan {
     pub(crate) allow_rename: bool,
     pub(crate) network: bool,
     pub(crate) file_count: u64,
+    pub(crate) is_regular_file: bool,
+    pub(crate) byte_size: u64,
 }
 
 #[derive(Default)]
 pub(crate) struct TransferEstimate {
     pub(crate) bytes: u64,
     pub(crate) files: u64,
+    pub(crate) is_regular_file: bool,
 }
 
 pub(crate) fn ensure_not_copying_dir_into_itself(
@@ -104,7 +107,8 @@ pub(crate) fn resolve_destination(
     let planned_conflict = planned_destinations.contains(&final_key);
 
     if !exists && !planned_conflict {
-        return Ok(Some((final_dest, false)));
+        let replace_existing = conflict_action.eq_ignore_ascii_case("replace");
+        return Ok(Some((final_dest, replace_existing)));
     }
 
     match conflict_action.to_ascii_lowercase().as_str() {
@@ -119,7 +123,7 @@ pub(crate) fn resolve_destination(
             if exists && paths_refer_to_same_entry(source_path, &final_dest) {
                 return Ok(None);
             }
-            Ok(Some((final_dest, exists)))
+            Ok(Some((final_dest, true)))
         }
         "rename" | "keep-both" | "keep_both" => Ok(Some((
             unique_destination_path(dest_dir, file_name, planned_destinations)?,
@@ -169,6 +173,8 @@ pub(crate) fn prepare_transfer_inputs(
             allow_rename: !keep_both,
             network,
             file_count: 0,
+            is_regular_file: false,
+            byte_size: 0,
         });
     }
 
@@ -211,12 +217,17 @@ pub(crate) fn prime_path_transfer(
         .map_err(|error| format!("Failed to stat {}: {error}", path.display()))?;
     let file_type = meta.file_type();
     if file_type.is_symlink() {
-        return Ok(TransferEstimate { bytes: 0, files: 1 });
+        return Ok(TransferEstimate {
+            bytes: 0,
+            files: 1,
+            is_regular_file: false,
+        });
     }
     if file_type.is_file() {
         return Ok(TransferEstimate {
             bytes: meta.len(),
             files: 1,
+            is_regular_file: true,
         });
     }
     if !file_type.is_dir() {
@@ -234,6 +245,8 @@ pub(crate) fn prime_transfer(
         check_cancelled(cancel)?;
         let estimate = prime_path_transfer(&plan.source_path, cancel)?;
         plan.file_count = estimate.files;
+        plan.is_regular_file = estimate.is_regular_file;
+        plan.byte_size = estimate.bytes;
         total.bytes = total.bytes.saturating_add(estimate.bytes);
         total.files = total.files.saturating_add(estimate.files);
     }
