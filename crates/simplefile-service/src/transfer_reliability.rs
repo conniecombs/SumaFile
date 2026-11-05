@@ -137,7 +137,10 @@ impl Retry {
         }
         let shift = (self.failures - 1).min(4);
         let factor = 1u32 << shift;
-        Ok(self.base_sleep.saturating_mul(factor).min(Duration::from_secs(60)))
+        Ok(self
+            .base_sleep
+            .saturating_mul(factor)
+            .min(Duration::from_secs(60)))
     }
 }
 

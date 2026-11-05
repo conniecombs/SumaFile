@@ -1314,9 +1314,7 @@ mod tests {
             "error".to_string(),
             Arc::new(AtomicBool::new(false)),
             &|update| {
-                if update.status == "finalizing"
-                    && !created_for_emit.swap(true, Ordering::SeqCst)
-                {
+                if update.status == "finalizing" && !created_for_emit.swap(true, Ordering::SeqCst) {
                     fs::write(&destination_for_emit, b"concurrent-destination").unwrap();
                 }
             },
@@ -1434,7 +1432,10 @@ mod tests {
             "modified first source file must be retained"
         );
         assert_eq!(fs::read(&first).unwrap(), b"updated--first");
-        assert_eq!(fs::read(dst_dir.join("first.txt")).unwrap(), b"original-first");
+        assert_eq!(
+            fs::read(dst_dir.join("first.txt")).unwrap(),
+            b"original-first"
+        );
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);
@@ -1474,7 +1475,9 @@ mod tests {
                 }
             },
         )
-        .expect_err("folder move must report partial move when new file is added after enumeration");
+        .expect_err(
+            "folder move must report partial move when new file is added after enumeration",
+        );
 
         assert!(
             err.message.contains("Copied but failed to delete source"),

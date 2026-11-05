@@ -571,10 +571,7 @@ fn is_matching_staging_name(entry_name: &str, target_file_name: &str) -> bool {
 /// Adopts a legacy `.{folder}.{hash}.sumafile-partial` staging directory into
 /// `final_dest` if `final_dest` does not yet exist, and cleans up any remaining
 /// duplicate `.sumafile-partial` directories for the same target folder.
-pub(crate) fn adopt_or_cleanup_legacy_dir_staging(
-    final_dest: &Path,
-    operation_id: &str,
-) -> bool {
+pub(crate) fn adopt_or_cleanup_legacy_dir_staging(final_dest: &Path, operation_id: &str) -> bool {
     let Some(parent) = final_dest.parent() else {
         return false;
     };
@@ -847,7 +844,13 @@ fn move_existing_to_backup(final_path: &Path) -> Result<PathBuf, Failure> {
         match rename_exclusive(final_path, &candidate) {
             Ok(()) => return Ok(candidate),
             Err(e) if is_already_exists_error(&e) => continue,
-            Err(e) => return Err(Failure::io("Prepare destination replacement", final_path, e)),
+            Err(e) => {
+                return Err(Failure::io(
+                    "Prepare destination replacement",
+                    final_path,
+                    e,
+                ))
+            }
         }
     }
 
@@ -875,11 +878,7 @@ pub(crate) fn restore_backed_up_destination(final_path: &Path, backup_path: &Pat
 
 #[cfg(test)]
 pub(crate) fn existing_file_matches_source(src: &Path, dst: &Path) -> Result<bool, String> {
-    existing_file_matches_source_with_mode(
-        src,
-        dst,
-        crate::progress::CheckMode::SizeAndModTime,
-    )
+    existing_file_matches_source_with_mode(src, dst, crate::progress::CheckMode::SizeAndModTime)
 }
 
 pub(crate) fn existing_file_matches_source_with_mode(

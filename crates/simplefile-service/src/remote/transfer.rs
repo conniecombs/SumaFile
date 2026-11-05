@@ -310,18 +310,15 @@ fn abort_remote_upload_finalization(
             if let Some(backup_path) = backup {
                 if state.backup_exists && !state.target_exists {
                     if let Err(restore_err) = provider.rename_entry(backup_path, target_name) {
-                        combined = format!(
-                            "{combined}; original remains at {backup_path}: {restore_err}"
-                        );
+                        combined =
+                            format!("{combined}; original remains at {backup_path}: {restore_err}");
                     }
                 }
             }
             if state.staging_exists {
                 cleanup_error(
                     combined,
-                    provider
-                        .delete_entries(&[staging.to_string()])
-                        .map(|_| ()),
+                    provider.delete_entries(&[staging.to_string()]).map(|_| ()),
                     staging,
                 )
             } else {
@@ -333,17 +330,14 @@ fn abort_remote_upload_finalization(
             if need_restore_fallback {
                 if let Some(backup_path) = backup {
                     if let Err(restore_err) = provider.rename_entry(backup_path, target_name) {
-                        combined = format!(
-                            "{combined}; original remains at {backup_path}: {restore_err}"
-                        );
+                        combined =
+                            format!("{combined}; original remains at {backup_path}: {restore_err}");
                     }
                 }
             }
             cleanup_error(
                 combined,
-                provider
-                    .delete_entries(&[staging.to_string()])
-                    .map(|_| ()),
+                provider.delete_entries(&[staging.to_string()]).map(|_| ()),
                 staging,
             )
         }
@@ -429,8 +423,7 @@ fn finalize_remote_upload(
                 loop {
                     progress.limiter.retrying(delay, &reason);
                     progress.send("running", None);
-                    if let Err(wait_err) =
-                        crate::transfer_reliability::wait(delay, progress.cancel)
+                    if let Err(wait_err) = crate::transfer_reliability::wait(delay, progress.cancel)
                     {
                         return Err(abort_remote_upload_finalization(
                             provider,
@@ -456,8 +449,8 @@ fn finalize_remote_upload(
                                     backed_up && backup.is_some(),
                                 ));
                             }
-                            let reconnect_err = reconnect_err
-                                .context("Reconnect for upload finalization", target);
+                            let reconnect_err =
+                                reconnect_err.context("Reconnect for upload finalization", target);
                             reason = reconnect_err.to_string();
                             delay = match retry.failed(reconnect_err) {
                                 Ok(next_delay) => next_delay,
@@ -715,8 +708,12 @@ fn transfer_file(
         } else {
             None
         };
-        let transferred =
-            retry_stream(provider, progress, source, &target, |provider, progress| {
+        let transferred = retry_stream(
+            provider,
+            progress,
+            source,
+            &target,
+            |provider, progress| {
                 let source_file =
                     File::open(source).map_err(|e| Failure::io("Open local source", source, e))?;
                 let initial_meta = source_file
@@ -751,7 +748,8 @@ fn transfer_file(
                     )
                 })?;
                 Ok(count)
-            });
+            },
+        );
         let count = match transferred {
             Ok(count) => count,
             Err(error) => {
@@ -823,10 +821,9 @@ fn transfer_file(
                 ));
             }
             if flush_on_close {
-                writer
-                    .destination
-                    .sync_all()
-                    .map_err(|e| Failure::io("Finalize local temporary destination", &staging, e))?;
+                writer.destination.sync_all().map_err(|e| {
+                    Failure::io("Finalize local temporary destination", &staging, e)
+                })?;
             }
             Ok(count)
         });
@@ -1819,11 +1816,9 @@ mod tests {
         fs::write(provider.path("/mutable.txt"), b"original-remote").unwrap();
 
         // Same-length modification during upload to ensure content/metadata check catches it
-        provider.mutate_local_during_upload =
-            Some((local_source.clone(), b"version-two".to_vec()));
+        provider.mutate_local_during_upload = Some((local_source.clone(), b"version-two".to_vec()));
 
-        let request =
-            fixture.request("upload", vec![local_source.to_string_lossy().into_owned()]);
+        let request = fixture.request("upload", vec![local_source.to_string_lossy().into_owned()]);
         let outcome =
             transfer_entries(&mut provider, &request, &AtomicBool::new(false), &|_| {}).unwrap();
 
@@ -1847,8 +1842,7 @@ mod tests {
         provider.transient_failures = 1;
         provider.transient_reconnect_failures = 1;
 
-        let request =
-            fixture.request("upload", vec![local_source.to_string_lossy().into_owned()]);
+        let request = fixture.request("upload", vec![local_source.to_string_lossy().into_owned()]);
         let outcome =
             transfer_entries(&mut provider, &request, &AtomicBool::new(false), &|_| {}).unwrap();
 
