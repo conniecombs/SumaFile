@@ -33,8 +33,9 @@ pub fn apply_basic_metadata_to_handle(
 ) -> Result<(), String> {
     use std::os::windows::fs::MetadataExt;
     use std::os::windows::io::AsRawHandle;
-    use winapi::um::fileapi::{GetFileInformationByHandleEx, SetFileInformationByHandle};
-    use winapi::um::minwinbase::{FileBasicInfo, FILE_BASIC_INFO};
+    use winapi::um::fileapi::{SetFileInformationByHandle, FILE_BASIC_INFO};
+    use winapi::um::minwinbase::FileBasicInfo;
+    use winapi::um::winbase::GetFileInformationByHandleEx;
     use winapi::um::winnt::{
         FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, LARGE_INTEGER,
     };
