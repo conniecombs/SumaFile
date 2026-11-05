@@ -137,7 +137,8 @@ pub(crate) fn copy_file_attempt_versioned(
         .metadata()
         .map_err(|e| Failure::io("Recheck source", src, e))?;
     #[cfg(windows)]
-    let times_changed = (source_after.creation_time(), source_after.last_write_time()) != source_times;
+    let times_changed =
+        (source_after.creation_time(), source_after.last_write_time()) != source_times;
     #[cfg(not(windows))]
     let times_changed = false;
     if source_after.len() != file_len
@@ -149,15 +150,16 @@ pub(crate) fn copy_file_attempt_versioned(
             false,
         ));
     }
-    let content_hash = if resume_from == 0 {
-        Some(stream_hasher.finish())
-    } else {
-        Some(
-            hash_file_contents(reader.get_mut())
-                .map_err(|e| Failure::new(format!("Hash source [{}]: {e}", src.display()), false))?,
-        )
-    };
-    let version = capture_source_version_from_open_file(reader.get_ref(), &source_after, content_hash);
+    let content_hash =
+        if resume_from == 0 {
+            Some(stream_hasher.finish())
+        } else {
+            Some(hash_file_contents(reader.get_mut()).map_err(|e| {
+                Failure::new(format!("Hash source [{}]: {e}", src.display()), false)
+            })?)
+        };
+    let version =
+        capture_source_version_from_open_file(reader.get_ref(), &source_after, content_hash);
     ctx.progress.check_cancelled()?;
     // A successful flush of BufWriter alone does not establish that storage accepted the file.
     writer
@@ -568,8 +570,9 @@ pub(crate) fn copy_plan_with_progress(
 
     let source_meta = fs::symlink_metadata(&plan.source_path)
         .map_err(|error| format!("Failed to stat source: {error}"))?;
-    let merge_into_existing_dir =
-        source_meta.file_type().is_dir() && plan.replace_existing && is_real_directory(&plan.final_dest);
+    let merge_into_existing_dir = source_meta.file_type().is_dir()
+        && plan.replace_existing
+        && is_real_directory(&plan.final_dest);
     if source_meta.file_type().is_dir() && !merge_into_existing_dir {
         let staged_dest = resumable_staging_path_for(&plan.final_dest, ctx.operation_id)?;
         let resumable_ctx = CopyContext {
@@ -687,8 +690,9 @@ pub(crate) fn move_plan_with_progress(
 
     let source_meta = fs::symlink_metadata(&plan.source_path)
         .map_err(|error| format!("Failed to stat source: {error}"))?;
-    let merge_into_existing_dir =
-        source_meta.file_type().is_dir() && plan.replace_existing && is_real_directory(&plan.final_dest);
+    let merge_into_existing_dir = source_meta.file_type().is_dir()
+        && plan.replace_existing
+        && is_real_directory(&plan.final_dest);
     if source_meta.file_type().is_dir() && !merge_into_existing_dir {
         let staged_dest = resumable_staging_path_for(&plan.final_dest, ctx.operation_id)?;
         let resumable_ctx = CopyContext {
