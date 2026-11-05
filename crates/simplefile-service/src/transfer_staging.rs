@@ -6,7 +6,7 @@ use simplefile_core::path_conflict::{
 };
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -111,15 +111,18 @@ pub(crate) fn file_id_from_handle(file: &fs::File) -> Option<(u32, u64)> {
     }
 }
 
+/// Read size for verification passes: large enough to keep a network share or
+/// cloud mount streaming, small enough to come from the shared buffer pool.
+pub(crate) const VERIFY_CHUNK: usize = 1024 * 1024;
+
 pub(crate) fn hash_file_contents(file: &mut fs::File) -> Result<[u8; 32], String> {
     file.seek(SeekFrom::Start(0))
         .map_err(|e| format!("Failed to seek source file for hashing: {e}"))?;
-    let mut reader = BufReader::with_capacity(64 * 1024, file);
-    let mut buffer = [0u8; 64 * 1024];
+    let mut buffer = crate::progress::PooledBuffer::acquire(VERIFY_CHUNK);
     let mut hasher = ContentHasher::new();
     loop {
-        let read = reader
-            .read(&mut buffer)
+        let read = file
+            .read(buffer.as_mut_slice())
             .map_err(|e| format!("Failed to read source file for hashing: {e}"))?;
         if read == 0 {
             break;
@@ -663,7 +666,7 @@ pub(crate) fn staging_path_for(final_path: &Path, operation_id: &str) -> Result<
     staging_path_with_salt(final_path, Some(operation_id))
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn resumable_staging_path_for(
     final_path: &Path,
     operation_id: &str,
@@ -689,47 +692,6 @@ fn staging_path_with_salt(final_path: &Path, salt: Option<&str>) -> Result<PathB
     Ok(parent.join(format!(".{file_name}.{key:016x}.sumafile-partial")))
 }
 
-#[cfg(windows)]
-fn clear_hidden_after_promote(staged_path: &Path, final_path: &Path) {
-    use std::os::windows::ffi::OsStrExt;
-    use std::os::windows::fs::MetadataExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
-    };
-
-    let is_staging = staged_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".sumafile-partial"));
-    if !is_staging {
-        return;
-    }
-    let Ok(meta) = fs::symlink_metadata(final_path) else {
-        return;
-    };
-    if meta.file_type().is_symlink() || meta.is_dir() {
-        return;
-    }
-    let attrs = meta.file_attributes();
-    if attrs & FILE_ATTRIBUTE_HIDDEN == 0 {
-        return;
-    }
-    let mut new_attrs = attrs & !FILE_ATTRIBUTE_HIDDEN;
-    if new_attrs == 0 {
-        new_attrs = FILE_ATTRIBUTE_NORMAL;
-    }
-    let wide: Vec<u16> = final_path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    unsafe {
-        let _ = SetFileAttributesW(wide.as_ptr(), new_attrs);
-    }
-}
-
-#[cfg(not(windows))]
-fn clear_hidden_after_promote(_staged_path: &Path, _final_path: &Path) {}
 
 #[cfg(test)]
 pub(crate) fn promote_staged_path(
@@ -783,29 +745,21 @@ fn promote_attempt_leased(
     lease: Option<&mut crate::transfer_journal::StagingLease>,
 ) -> Result<(), Failure> {
     if !replace_existing {
-        if path_exists_no_follow(final_path) {
-            return Err(conflict_for_existing_destination(final_path).into());
-        }
-        return rename_exclusive(staged_path, final_path)
-            .map(|()| clear_hidden_after_promote(staged_path, final_path))
-            .map_err(|e| {
-                if is_already_exists_error(&e) || path_exists_no_follow(final_path) {
-                    conflict_for_existing_destination(final_path).into()
-                } else {
-                    Failure::io("Finalize destination", final_path, e)
-                }
-            });
+        // The exclusive rename reports an existing destination itself; no
+        // separate existence probe is needed.
+        return rename_exclusive(staged_path, final_path).map_err(|e| {
+            if is_already_exists_error(&e) || path_exists_no_follow(final_path) {
+                conflict_for_existing_destination(final_path).into()
+            } else {
+                Failure::io("Finalize destination", final_path, e)
+            }
+        });
     }
 
-    if !path_exists_no_follow(final_path) {
-        match rename_exclusive(staged_path, final_path) {
-            Ok(()) => {
-                clear_hidden_after_promote(staged_path, final_path);
-                return Ok(());
-            }
-            Err(e) if is_already_exists_error(&e) || path_exists_no_follow(final_path) => {}
-            Err(e) => return Err(Failure::io("Finalize destination", final_path, e)),
-        }
+    match rename_exclusive(staged_path, final_path) {
+        Ok(()) => return Ok(()),
+        Err(e) if is_already_exists_error(&e) || path_exists_no_follow(final_path) => {}
+        Err(e) => return Err(Failure::io("Finalize destination", final_path, e)),
     }
 
     let backup_path = move_existing_to_backup_leased(final_path, lease)?;
@@ -826,7 +780,6 @@ fn promote_attempt_leased(
             ),
         });
     }
-    clear_hidden_after_promote(staged_path, final_path);
     // Promotion already committed: never replay it just because backup cleanup failed.
     remove_path(&backup_path, "destination backup").map_err(|e| {
         Failure::new(
@@ -886,17 +839,19 @@ fn move_existing_to_backup_leased(
 
 #[cfg(test)]
 pub(crate) fn existing_file_matches_source(src: &Path, dst: &Path) -> Result<bool, String> {
-    existing_file_matches_source_with_mode(src, dst, crate::progress::CheckMode::SizeAndModTime)
+    existing_file_matches_source_with_mode(src, dst, crate::progress::CheckMode::Checksum)
 }
 
+/// Whether an existing destination already holds the source, by the selected
+/// integrity mode: `SizeOnly` compares sizes; `SizeAndModTime` sizes and
+/// modification times; `IgnoreTimes` and `Checksum` compare the bytes.
 pub(crate) fn existing_file_matches_source_with_mode(
     src: &Path,
     dst: &Path,
     check_mode: crate::progress::CheckMode,
 ) -> Result<bool, String> {
-    if check_mode == crate::progress::CheckMode::IgnoreTimes {
-        return Ok(false);
-    }
+    use crate::progress::CheckMode;
+
     let source = fs::symlink_metadata(src)
         .map_err(|error| format!("Failed to stat source file: {error}"))?;
     let destination = fs::symlink_metadata(dst)
@@ -907,30 +862,28 @@ pub(crate) fn existing_file_matches_source_with_mode(
     {
         return Ok(false);
     }
-    if check_mode == crate::progress::CheckMode::SizeOnly {
-        return Ok(true);
+    match check_mode {
+        CheckMode::SizeOnly => Ok(true),
+        CheckMode::SizeAndModTime => {
+            Ok(modified_timestamp(&source).is_some()
+                && modified_timestamp(&source) == modified_timestamp(&destination))
+        }
+        CheckMode::IgnoreTimes | CheckMode::Checksum => files_have_same_contents(src, dst),
     }
-
-    files_have_same_contents(src, dst)
 }
 
 fn files_have_same_contents(left: &Path, right: &Path) -> Result<bool, String> {
-    let mut left = BufReader::new(
-        fs::File::open(left).map_err(|error| format!("Failed to open source file: {error}"))?,
-    );
-    let mut right = BufReader::new(
-        fs::File::open(right)
-            .map_err(|error| format!("Failed to open resumable destination file: {error}"))?,
-    );
-    let mut left_buffer = [0u8; 64 * 1024];
-    let mut right_buffer = [0u8; 64 * 1024];
+    let mut left =
+        fs::File::open(left).map_err(|error| format!("Failed to open source file: {error}"))?;
+    let mut right = fs::File::open(right)
+        .map_err(|error| format!("Failed to open resumable destination file: {error}"))?;
+    let mut left_buffer = crate::progress::PooledBuffer::acquire(VERIFY_CHUNK);
+    let mut right_buffer = crate::progress::PooledBuffer::acquire(VERIFY_CHUNK);
 
     loop {
-        let left_read = left
-            .read(&mut left_buffer)
+        let left_read = read_fully(&mut left, left_buffer.as_mut_slice())
             .map_err(|error| format!("Failed to read source file: {error}"))?;
-        let right_read = right
-            .read(&mut right_buffer)
+        let right_read = read_fully(&mut right, right_buffer.as_mut_slice())
             .map_err(|error| format!("Failed to read resumable destination file: {error}"))?;
         if left_read != right_read {
             return Ok(false);
@@ -942,6 +895,21 @@ fn files_have_same_contents(left: &Path, right: &Path) -> Result<bool, String> {
             return Ok(false);
         }
     }
+}
+
+/// Fill `buffer` as far as the file allows; short reads from network
+/// filesystems must not be mistaken for a length difference.
+pub(crate) fn read_fully(file: &mut fs::File, buffer: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match file.read(&mut buffer[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(filled)
 }
 
 #[cfg(test)]
@@ -1177,6 +1145,31 @@ mod tests {
         fs::write(&partial, b"NEW").unwrap();
         assert!(existing_file_matches_source(&source, &partial).unwrap());
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn existing_file_check_modes_do_what_their_names_say() {
+        use crate::progress::CheckMode;
+        let root = unique_temp_dir("check_modes");
+        let source = root.join("source.txt");
+        let other = root.join("other.txt");
+        fs::write(&source, b"NEW").unwrap();
+        fs::write(&other, b"OLD").unwrap();
+        let stamp = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        for path in [&source, &other] {
+            let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+            file.set_times(fs::FileTimes::new().set_modified(stamp)).unwrap();
+        }
+        // Same size and time, different bytes.
+        assert!(super::existing_file_matches_source_with_mode(&source, &other, CheckMode::SizeOnly).unwrap());
+        assert!(super::existing_file_matches_source_with_mode(&source, &other, CheckMode::SizeAndModTime).unwrap());
+        assert!(!super::existing_file_matches_source_with_mode(&source, &other, CheckMode::IgnoreTimes).unwrap());
+        assert!(!super::existing_file_matches_source_with_mode(&source, &other, CheckMode::Checksum).unwrap());
+        // Same bytes, different time.
+        fs::write(&other, b"NEW").unwrap();
+        assert!(!super::existing_file_matches_source_with_mode(&source, &other, CheckMode::SizeAndModTime).unwrap());
+        assert!(super::existing_file_matches_source_with_mode(&source, &other, CheckMode::IgnoreTimes).unwrap());
         let _ = fs::remove_dir_all(root);
     }
 }

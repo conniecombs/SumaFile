@@ -299,6 +299,14 @@ pub(crate) fn copy_file_attempt_versioned(
             .sync_all()
             .map_err(|e| Failure::io("Finalize temporary destination", dst, e))?;
     }
+    // Timestamps, the read-only bit and the staging hidden flag in one call on
+    // the handle we already hold, instead of reopening the file afterwards.
+    let is_staging = dst
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".sumafile-partial"));
+    simplefile_core::file_ops::apply_basic_metadata_to_handle(&dst_file, &source_after, is_staging)
+        .map_err(|e| Failure::new(format!("Preserve metadata [{}]: {e}", dst.display()), false))?;
     drop(dst_file);
     if verify_checksum {
         let mut verify_dst = open_source_sequential(dst)
@@ -320,8 +328,6 @@ pub(crate) fn copy_file_attempt_versioned(
         }
     }
     ctx.progress.check_cancelled()?;
-    simplefile_core::file_ops::preserve_basic_metadata(src, dst)
-        .map_err(|e| Failure::new(format!("Preserve metadata [{}]: {e}", dst.display()), false))?;
     Ok((copied, version))
 }
 

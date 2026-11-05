@@ -17,7 +17,7 @@ pub(crate) struct BlockingScheduler {
 }
 
 struct BlockingPermits {
-    _general: OwnedSemaphorePermit,
+    _general: Option<OwnedSemaphorePermit>,
     _background: Option<OwnedSemaphorePermit>,
     _transfer: Option<OwnedSemaphorePermit>,
 }
@@ -139,7 +139,7 @@ impl BlockingScheduler {
             .await
             .map_err(|_| "blocking scheduler is closed".to_string())?;
         Ok(BlockingPermits {
-            _general: general,
+            _general: Some(general),
             _background: None,
             _transfer: None,
         })
@@ -159,12 +159,16 @@ impl BlockingScheduler {
             .await
             .map_err(|_| "blocking scheduler is closed".to_string())?;
         Ok(BlockingPermits {
-            _general: general,
+            _general: Some(general),
             _background: Some(background),
             _transfer: None,
         })
     }
 
+    /// Transfers run for minutes or hours and own their own lane. They do not
+    /// take a general permit: the general pool is sized to the core count for
+    /// short blocking calls, and two long transfers must not stall directory
+    /// listings on a small machine.
     async fn acquire_transfer(&self) -> Result<BlockingPermits, String> {
         let transfer = self
             .transfer
@@ -172,14 +176,8 @@ impl BlockingScheduler {
             .acquire_owned()
             .await
             .map_err(|_| "transfer scheduler is closed".to_string())?;
-        let general = self
-            .general
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| "blocking scheduler is closed".to_string())?;
         Ok(BlockingPermits {
-            _general: general,
+            _general: None,
             _background: None,
             _transfer: Some(transfer),
         })
@@ -266,6 +264,40 @@ mod tests {
         first.await.unwrap().unwrap();
         second.await.unwrap().unwrap();
         assert_eq!(second_started.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn transfers_do_not_consume_general_permits() {
+        let scheduler = BlockingScheduler::new(1, 2);
+        let (entered_tx, entered_rx) = oneshot::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let transfer = {
+            let scheduler = scheduler.clone();
+            tokio::spawn(async move {
+                scheduler
+                    .run_transfer(move || {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                    })
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(2), entered_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        // A foreground listing still gets the single general permit while the
+        // transfer is running.
+        let listed = tokio::time::timeout(
+            Duration::from_secs(2),
+            scheduler.run_foreground(|| 42),
+        )
+        .await
+        .expect("foreground work must not wait for a long transfer")
+        .unwrap();
+        assert_eq!(listed, 42);
+        release_tx.send(()).unwrap();
+        transfer.await.unwrap().unwrap();
     }
 
     #[tokio::test]

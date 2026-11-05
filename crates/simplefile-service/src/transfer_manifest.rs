@@ -2,7 +2,7 @@
 use crate::transfer_staging::SourceVersion;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -12,7 +12,9 @@ struct Entry(PathBuf, SourceVersion);
 #[derive(Debug)]
 pub(crate) struct DiskManifest {
     path: PathBuf,
-    file: Mutex<File>,
+    /// Buffered: one record is many small JSON fragments, and a write syscall
+    /// per fragment per completed file adds up over a large tree.
+    file: Mutex<BufWriter<File>>,
 }
 
 impl DiskManifest {
@@ -30,12 +32,11 @@ impl DiskManifest {
         file.try_lock().map_err(|e| e.to_string())?;
         Ok(Arc::new(Self {
             path,
-            file: Mutex::new(file),
+            file: Mutex::new(BufWriter::with_capacity(64 * 1024, file)),
         }))
     }
     pub fn push(&self, path: &Path, version: &SourceVersion) -> Result<(), String> {
         let mut file = self.file.lock().map_err(|e| e.to_string())?;
-        file.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
         serde_json::to_writer(&mut *file, &Entry(path.into(), version.clone()))
             .map_err(|e| e.to_string())?;
         file.write_all(b"\n").map_err(|e| e.to_string())
@@ -44,7 +45,9 @@ impl DiskManifest {
         &self,
         mut action: impl FnMut(&Path, &SourceVersion) -> Result<(), String>,
     ) -> Result<(), String> {
-        let mut file = self.file.lock().map_err(|e| e.to_string())?;
+        let mut writer = self.file.lock().map_err(|e| e.to_string())?;
+        writer.flush().map_err(|e| e.to_string())?;
+        let file = writer.get_mut();
         // Persist all copy completions before source deletion starts.
         file.sync_all()
             .map_err(|e| format!("Persist move completion manifest: {e}"))?;
