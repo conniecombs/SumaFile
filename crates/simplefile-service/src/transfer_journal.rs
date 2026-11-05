@@ -115,7 +115,10 @@ impl StagingLease {
 
     fn persist(&mut self) -> Result<(), String> {
         let data = serde_json::to_vec(&self.record).map_err(|e| e.to_string())?;
-        let end = self.file.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
+        let end = self
+            .file
+            .seek(SeekFrom::End(0))
+            .map_err(|e| e.to_string())?;
         if end.saturating_add(data.len() as u64 + 1) > RECORD_LIMIT {
             return Err(
                 "Transfer ownership record is full; artifacts retained for recovery".into(),

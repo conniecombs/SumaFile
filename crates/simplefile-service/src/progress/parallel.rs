@@ -229,7 +229,8 @@ pub(crate) fn copy_tree(
                         };
                         if file_type.is_dir() {
                             let mut q = dir_queue.0.lock().expect("dir queue lock poisoned");
-                            q.dirs.push_back((depth + 1, child_src, child_dst, owned_tree));
+                            q.dirs
+                                .push_back((depth + 1, child_src, child_dst, owned_tree));
                             dir_queue.1.notify_one();
                         } else {
                             let symlink = file_type.is_symlink();
