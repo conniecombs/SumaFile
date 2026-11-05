@@ -532,6 +532,76 @@ public class FileOperationServiceTests
     }
 
     [Fact]
+    public async Task CopyAsync_FailuresCarryDestinationAndKind_AndConflictsAreRecognisedByKind()
+    {
+        var outcome = new
+        {
+            operation_id = "op_kinds",
+            status = "failed",
+            committed = new[] { new { source = @"C:\src\ok.txt", destination = @"C:\dest\ok.txt" } },
+            skipped = Array.Empty<object>(),
+            failed = new[]
+            {
+                new
+                {
+                    source = @"C:\src\Album\same.jpg",
+                    destination = @"C:\dest\Album\same.jpg",
+                    kind = "conflict",
+                    error = @"CONFLICT: destination already exists: C:\dest\Album\same.jpg",
+                },
+            },
+            pending = Array.Empty<string>(),
+        };
+        var stub = new ConfigurableIpc
+        {
+            CopyWithProgressHandler = (sources, destination, operationId, conflictAction, ct) =>
+                throw new IpcException(Protocol.ErrApplication, "copy failed", JsonSerializer.SerializeToElement(outcome)),
+        };
+        var service = new FileOperationService(stub);
+
+        var error = await Assert.ThrowsAsync<TransferOperationException>(() =>
+            service.CopyAsync([@"C:\src\ok.txt", @"C:\src\Album"], @"C:\dest", "error"));
+
+        var failure = error.Outcome.Failed.Single();
+        Assert.Equal(@"C:\dest\Album\same.jpg", failure.Destination);
+        Assert.Equal("conflict", failure.Kind);
+        Assert.True(failure.IsConflict);
+        Assert.True(FileOperationService.IsConflict(error), "a conflict kind counts even when the message is generic");
+    }
+
+    [Fact]
+    public async Task CopyItemsAsync_SendsExactItemsAsTargetedRetry()
+    {
+        TransferItemRequest[]? sent = null;
+        string? sentDestination = null;
+        var stub = new ConfigurableIpc
+        {
+            CopyItemsWithProgressHandler = (items, destination, operationId, ct) =>
+            {
+                sent = items;
+                sentDestination = destination;
+                return Task.FromResult(items
+                    .Select(item => new TransferResult { Source = item.Source, Destination = item.Destination })
+                    .ToArray());
+            },
+        };
+        var service = new FileOperationService(stub);
+        var items = new[]
+        {
+            new TransferItemRequest { Source = @"C:\src\Album\same.jpg", Destination = @"C:\dest\Album\same.jpg", Action = "replace" },
+            new TransferItemRequest { Source = @"C:\src\Album\other.jpg", Destination = @"C:\dest\Album\other.jpg", Action = "keep-both" },
+        };
+
+        var results = await service.CopyItemsAsync(items, @"C:\dest");
+
+        Assert.Same(items, sent);
+        Assert.Equal(@"C:\dest", sentDestination);
+        Assert.Equal(2, results.Length);
+        Assert.Equal(@"C:\dest\Album\same.jpg", results[0].Destination);
+        Assert.Single(stub.ItemRetries);
+    }
+
+    [Fact]
     public async Task MoveAsync_TokenCancel_CallsBackendCancelAndWaitsForWorkerCleanup()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

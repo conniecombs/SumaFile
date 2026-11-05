@@ -359,8 +359,34 @@ public sealed class TransferFailure
 {
     [JsonPropertyName("source")]
     public string Source { get; set; } = "";
+
+    /// <summary>The exact path the item was headed for; a targeted retry sends it back verbatim.</summary>
+    [JsonPropertyName("destination")]
+    public string Destination { get; set; } = "";
+
+    /// <summary>"conflict" (the user decides), "cancelled", or "error".</summary>
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "error";
+
     [JsonPropertyName("error")]
     public string Error { get; set; } = "";
+
+    [JsonIgnore]
+    public bool IsConflict => string.Equals(Kind, "conflict", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>One file to transfer again to an exact destination with its own conflict action.</summary>
+public sealed class TransferItemRequest
+{
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = "";
+
+    [JsonPropertyName("destination")]
+    public string Destination { get; set; } = "";
+
+    /// <summary>"error", "skip", "replace" or "keep-both".</summary>
+    [JsonPropertyName("action")]
+    public string Action { get; set; } = "error";
 }
 
 public sealed class TransferBatchOutcome

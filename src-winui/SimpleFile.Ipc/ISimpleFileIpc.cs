@@ -98,6 +98,8 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default);
     Task<TransferResult[]> CopyWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default);
     Task<TransferResult[]> MoveWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default);
+    Task<TransferResult[]> CopyItemsWithProgressAsync(TransferItemRequest[] items, string destination, string? operationId, CancellationToken ct = default);
+    Task<TransferResult[]> MoveItemsWithProgressAsync(TransferItemRequest[] items, string destination, string? operationId, CancellationToken ct = default);
     Task<bool> CancelOperationAsync(string operationId, CancellationToken ct = default);
     Task<SearchResult[]> SearchFilesAsync(SearchOptions options, Action<SearchResult[]>? onBatch = null, Action<int>? onComplete = null, CancellationToken ct = default);
     Task CancelSearchAsync(string searchId, CancellationToken ct = default);

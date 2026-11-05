@@ -92,7 +92,8 @@
         "sources": "string[]",
         "destination": "string",
         "operationId": "string?",
-        "conflictAction": "ConflictAction"
+        "conflictAction": "ConflictAction",
+      "items": "TransferItemRequest[]?"
       },
       "result": "TransferResult[]",
       "progressEvent": "operation-progress"
@@ -102,7 +103,8 @@
         "sources": "string[]",
         "destination": "string",
         "operationId": "string?",
-        "conflictAction": "ConflictAction"
+        "conflictAction": "ConflictAction",
+      "items": "TransferItemRequest[]?"
       },
       "result": "TransferResult[]",
       "progressEvent": "operation-progress"

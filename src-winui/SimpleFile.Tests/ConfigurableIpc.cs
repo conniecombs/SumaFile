@@ -211,6 +211,30 @@ internal sealed class ConfigurableIpc : NullIpc
         return MoveWithProgressHandler?.Invoke(sources, destination, operationId, conflictAction, ct) ?? throw NotConfigured();
     }
 
+    public Func<TransferItemRequest[], string, string?, CancellationToken, Task<TransferResult[]>>? CopyItemsWithProgressHandler { get; set; }
+    public Func<TransferItemRequest[], string, string?, CancellationToken, Task<TransferResult[]>>? MoveItemsWithProgressHandler { get; set; }
+    public List<TransferItemRequest[]> ItemRetries { get; } = new();
+
+    public override Task<TransferResult[]> CopyItemsWithProgressAsync(
+        TransferItemRequest[] items,
+        string destination,
+        string? operationId,
+        CancellationToken ct = default)
+    {
+        ItemRetries.Add(items);
+        return CopyItemsWithProgressHandler?.Invoke(items, destination, operationId, ct) ?? throw NotConfigured();
+    }
+
+    public override Task<TransferResult[]> MoveItemsWithProgressAsync(
+        TransferItemRequest[] items,
+        string destination,
+        string? operationId,
+        CancellationToken ct = default)
+    {
+        ItemRetries.Add(items);
+        return MoveItemsWithProgressHandler?.Invoke(items, destination, operationId, ct) ?? throw NotConfigured();
+    }
+
     public override async Task<bool> CancelOperationAsync(string operationId, CancellationToken ct = default)
     {
         LastCancelledOperationId = operationId;

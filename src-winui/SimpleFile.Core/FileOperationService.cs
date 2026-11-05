@@ -187,6 +187,48 @@ public sealed class FileOperationService : ISettingsBackend
             ct, tuning, policy);
     }
 
+    // Targeted retry: transfer exactly these files to their exact destinations,
+    // each with its own conflict action, after the user resolved a reported failure.
+    public Task<TransferResult[]> CopyItemsAsync(
+        TransferItemRequest[] items,
+        string destination,
+        IProgress<ProgressUpdate>? progress = null,
+        Action<string>? operationStarted = null,
+        CancellationToken ct = default,
+        IProgress<TuningUpdate>? tuning = null,
+        TransferPolicy? policy = null)
+    {
+        return RunTransferAsync(
+            "copy",
+            items.Select(item => item.Source).ToArray(),
+            destination,
+            (ipc, operationId, token) => ipc.CopyItemsWithProgressAsync(
+                items, destination, operationId, token),
+            progress,
+            operationStarted,
+            ct, tuning, policy);
+    }
+
+    public Task<TransferResult[]> MoveItemsAsync(
+        TransferItemRequest[] items,
+        string destination,
+        IProgress<ProgressUpdate>? progress = null,
+        Action<string>? operationStarted = null,
+        CancellationToken ct = default,
+        IProgress<TuningUpdate>? tuning = null,
+        TransferPolicy? policy = null)
+    {
+        return RunTransferAsync(
+            "move",
+            items.Select(item => item.Source).ToArray(),
+            destination,
+            (ipc, operationId, token) => ipc.MoveItemsWithProgressAsync(
+                items, destination, operationId, token),
+            progress,
+            operationStarted,
+            ct, tuning, policy);
+    }
+
     private async Task<TransferResult[]> RunTransferAsync(
         string operationType,
         string[] sources,
@@ -881,7 +923,10 @@ public sealed class FileOperationService : ISettingsBackend
 
     // Check if an IpcException represents a conflict.
     public static bool IsConflict(Exception ex)
-        => ex.Message.StartsWith(Protocol.PrefixConflict, StringComparison.Ordinal);
+        => ex.Message.StartsWith(Protocol.PrefixConflict, StringComparison.Ordinal)
+            || (ex is TransferOperationException transfer
+                && transfer.Outcome.Failed.Length > 0
+                && transfer.Outcome.Failed.All(failure => failure.IsConflict));
 
     // Check if an IpcException represents a trash unavailable error.
     public static bool IsTrashUnavailable(IpcException ex)

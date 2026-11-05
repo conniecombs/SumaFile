@@ -321,39 +321,61 @@ public sealed partial class MainWindow
             var progress = new Progress<ProgressUpdate>(update => OnTransferProgress(operation, update));
             var tuning = new Progress<TuningUpdate>(operation.ApplyTuning);
             var canRegisterUndo = !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
+            // After the first pass, failures are resolved one file at a time and
+            // sent back as exact (source, destination, action) items.
+            TransferItemRequest[]? retryItems = null;
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    if (move)
+                    TransferResult[] results;
+                    if (retryItems is not null)
                     {
-                        var results = await fileOps.MoveAsync(
+                        results = move
+                            ? await fileOps.MoveItemsAsync(
+                                retryItems,
+                                destination,
+                                progress,
+                                operationId => StartTransferProgress(operation, operationId),
+                                cancellationToken, tuning, operation.PolicyOverride)
+                            : await fileOps.CopyItemsAsync(
+                                retryItems,
+                                destination,
+                                progress,
+                                operationId => StartTransferProgress(operation, operationId),
+                                cancellationToken, tuning, operation.PolicyOverride);
+                    }
+                    else if (move)
+                    {
+                        results = await fileOps.MoveAsync(
                             sources,
                             destination,
                             action,
                             progress,
                             operationId => StartTransferProgress(operation, operationId),
                             cancellationToken, tuning, operation.PolicyOverride);
-                        if (canRegisterUndo
-                            && ReferenceEquals(_workspace, workspace)
-                            && !cancellationToken.IsCancellationRequested)
-                        {
-                            workspace.Undo.PushMove(results, fileOps);
-                        }
                     }
                     else
                     {
-                        var results = await fileOps.CopyAsync(
+                        results = await fileOps.CopyAsync(
                             sources,
                             destination,
                             action,
                             progress,
                             operationId => StartTransferProgress(operation, operationId),
                             cancellationToken, tuning, operation.PolicyOverride);
-                        if (canRegisterUndo
-                            && ReferenceEquals(_workspace, workspace)
-                            && !cancellationToken.IsCancellationRequested)
+                    }
+
+                    if (canRegisterUndo
+                        && ReferenceEquals(_workspace, workspace)
+                        && !cancellationToken.IsCancellationRequested)
+                    {
+                        if (move)
+                        {
+                            workspace.Undo.PushMove(results, fileOps);
+                        }
+                        else
                         {
                             workspace.Undo.PushCopy(results, fileOps);
                         }
@@ -419,15 +441,42 @@ public sealed partial class MainWindow
                             cancellationToken);
                     }
 
-                    if (!FileOperationService.IsConflict(exception)) throw;
-                    var remaining = exception.RemainingSources(sources);
-                    if (remaining.Length == 0) break;
-                    var retryAction = await ChooseConflictActionFromBackendConflictAsync(
-                        exception.Message, destination, move, remaining, conflictSession, cancellationToken);
-                    if (retryAction is null) return TransferOperationStatus.Cancelled;
-                    sources = remaining;
-                    action = retryAction;
-                    canRegisterUndo = !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
+                    var failures = exception.Outcome.Failed;
+                    if (failures.Length == 0)
+                    {
+                        // Planning-level failure without per-item detail (older
+                        // service): keep the top-level retry path.
+                        if (!FileOperationService.IsConflict(exception)) throw;
+                        var remaining = exception.RemainingSources(sources);
+                        if (remaining.Length == 0) break;
+                        var retryAction = await ChooseConflictActionFromBackendConflictAsync(
+                            exception.Message, destination, move, remaining, conflictSession, cancellationToken);
+                        if (retryAction is null) return TransferOperationStatus.Cancelled;
+                        sources = remaining;
+                        action = retryAction;
+                        canRegisterUndo = !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
+                        continue;
+                    }
+
+                    var items = await ResolveTransferFailuresAsync(
+                        failures, destination, move, sources, conflictSession, cancellationToken);
+                    if (items is null)
+                    {
+                        return TransferOperationStatus.Cancelled;
+                    }
+                    if (items.Length == 0)
+                    {
+                        // Every failure was skipped by the user; what was committed stands.
+                        if (ReferenceEquals(_workspace, workspace))
+                        {
+                            CompleteTransferProgress(move, sources.Length, destination);
+                        }
+                        break;
+                    }
+
+                    retryItems = items;
+                    canRegisterUndo = canRegisterUndo
+                        && items.All(item => !string.Equals(item.Action, "replace", StringComparison.OrdinalIgnoreCase));
                 }
                 catch (IpcException exception) when (FileOperationService.IsConflict(exception) && !cancellationToken.IsCancellationRequested)
                 {
@@ -595,6 +644,138 @@ public sealed partial class MainWindow
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Turn the engine's per-file failures into exact retry items. Conflicts are
+    /// decided one file at a time (or once with "apply to all"); errors are
+    /// offered as a group with Retry or Skip. Returns null when the user cancels,
+    /// an empty array when nothing is left to retry.
+    /// </summary>
+    private async Task<TransferItemRequest[]?> ResolveTransferFailuresAsync(
+        TransferFailure[] failures,
+        string destination,
+        bool move,
+        string[] sources,
+        TransferConflictSession session,
+        CancellationToken cancellationToken)
+    {
+        var items = new List<TransferItemRequest>();
+        var errors = new List<TransferFailure>();
+        foreach (var failure in failures)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!failure.IsConflict)
+            {
+                if (!string.Equals(failure.Kind, "cancelled", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(failure.Source))
+                {
+                    errors.Add(failure);
+                }
+                continue;
+            }
+
+            string? chosen;
+            if (session.TryGetSticky(out var sticky))
+            {
+                chosen = sticky;
+            }
+            else
+            {
+                var name = PathRules.Basename(string.IsNullOrWhiteSpace(failure.Destination)
+                    ? failure.Source
+                    : failure.Destination);
+                chosen = await PromptConflictActionAsync(
+                    destination,
+                    [name],
+                    move,
+                    sources,
+                    session,
+                    cancellationToken,
+                    string.IsNullOrWhiteSpace(failure.Destination) ? null : failure.Destination);
+            }
+
+            if (chosen is null)
+            {
+                return null;
+            }
+            if (string.Equals(chosen, "skip", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            items.Add(new TransferItemRequest
+            {
+                Source = failure.Source,
+                Destination = failure.Destination,
+                Action = chosen,
+            });
+        }
+
+        if (errors.Count > 0)
+        {
+            var retry = await PromptRetryFailedTransfersAsync(errors, move, cancellationToken);
+            if (retry is null)
+            {
+                return null;
+            }
+            if (retry.Value)
+            {
+                items.AddRange(errors.Select(failure => new TransferItemRequest
+                {
+                    Source = failure.Source,
+                    Destination = failure.Destination,
+                    Action = "error",
+                }));
+            }
+        }
+
+        return items.ToArray();
+    }
+
+    /// <summary>True = retry the failed files, false = skip them, null = cancel the operation.</summary>
+    private async Task<bool?> PromptRetryFailedTransfersAsync(
+        IReadOnlyList<TransferFailure> errors,
+        bool move,
+        CancellationToken cancellationToken)
+    {
+        await _transferPromptGate.WaitAsync(cancellationToken);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var lines = errors
+                .Take(6)
+                .Select(failure => $"{PathRules.Basename(failure.Source)} — {failure.Error}");
+            var detail = string.Join(Environment.NewLine, lines);
+            if (errors.Count > 6)
+            {
+                detail += Environment.NewLine + $"… and {errors.Count - 6} more";
+            }
+            var dialog = new ContentDialog
+            {
+                Title = errors.Count == 1
+                    ? $"1 item could not be {(move ? "moved" : "copied")}"
+                    : $"{errors.Count} items could not be {(move ? "moved" : "copied")}",
+                Content = new TextBlock { Text = detail, TextWrapping = TextWrapping.Wrap },
+                PrimaryButtonText = "Retry",
+                SecondaryButtonText = "Skip",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = Content.XamlRoot,
+            };
+            using var cancelDialog = cancellationToken.Register(() => DispatcherQueue.TryEnqueue(dialog.Hide));
+            var result = await dialog.ShowAsync();
+            cancellationToken.ThrowIfCancellationRequested();
+            return result switch
+            {
+                ContentDialogResult.Primary => true,
+                ContentDialogResult.Secondary => false,
+                _ => null,
+            };
+        }
+        finally
+        {
+            _transferPromptGate.Release();
+        }
     }
 
     private async Task<string?> ChooseConflictActionFromBackendConflictAsync(

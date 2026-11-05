@@ -214,12 +214,19 @@
     },
     "TransferFailure": {
       "source": "crates/simplefile-service/src/progress.rs",
-      "fields": ["source", "error"]
+      "fields": ["source", "destination", "kind", "error"],
+      "notes": "kind is conflict (the destination exists or has a different type; the user decides), cancelled, or error. destination is the exact path the item was headed for, so a client can retry that item alone with TransferItemRequest."
+    },
+    "TransferItemRequest": {
+      "source": "crates/simplefile-service/src/dispatch/params.rs",
+      "fields": ["source", "destination", "action"],
+      "optional": ["action"],
+      "notes": "Targeted retry for copy_with_progress and move_with_progress: transfer exactly this file to exactly this destination path with this ConflictAction (default error). Nested under the top-level items param; single-word field names, so no casing question arises."
     },
     "TransferBatchOutcome": {
       "source": "crates/simplefile-service/src/progress.rs",
       "fields": ["operation_id", "status", "committed", "skipped", "failed", "pending"],
-      "notes": "Returned as JSON-RPC error.data for copy_with_progress and move_with_progress failures so clients can register safe undo for committed items and retry pending sources."
+      "notes": "Returned as JSON-RPC error.data for copy_with_progress and move_with_progress failures. committed lists every item that reached its final name (including directories whose children partially failed); failed lists each file that was not transferred, with its destination and kind, so a client resolves failures one at a time by sending them back as items; pending lists top-level sources that never started (cancellation or a planning error)."
     },
     "Checksums": {
       "source": "crates/simplefile-core/src/checksum.rs",

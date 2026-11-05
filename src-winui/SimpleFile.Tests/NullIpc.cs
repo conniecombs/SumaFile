@@ -214,6 +214,18 @@ internal abstract class NullIpc : ISimpleFileIpc
         string conflictAction,
         CancellationToken ct = default) => throw NotConfigured();
 
+    public virtual Task<TransferResult[]> CopyItemsWithProgressAsync(
+        TransferItemRequest[] items,
+        string destination,
+        string? operationId,
+        CancellationToken ct = default) => throw NotConfigured();
+
+    public virtual Task<TransferResult[]> MoveItemsWithProgressAsync(
+        TransferItemRequest[] items,
+        string destination,
+        string? operationId,
+        CancellationToken ct = default) => throw NotConfigured();
+
     public virtual Task<bool> CancelOperationAsync(string operationId, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<SearchResult[]> SearchFilesAsync(

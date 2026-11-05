@@ -97,3 +97,15 @@ Tests use temporary local files, Windows handles, failure-injecting remote
 providers and a loopback FTP fixture. They do not establish throughput on a
 physical NAS, removable device or live cloud account. No production files or
 remote credentials are needed for the regression suite.
+
+## v1.0.3 repairs
+
+A second review on `2086121` (`docs/superpowers/specs/2026-11-05-transport-engine-audit.md`)
+led to the repairs designed in `docs/superpowers/specs/2026-11-05-transport-engine-repairs-design.md`.
+In short: one coordinator per selection that continues past per-file failures and reports each
+with its destination and kind; a targeted retry (`items`) so the conflict dialog acts on the file
+it shows; structured failure kinds; roughly half the per-file metadata round trips (no DACL copy,
+metadata set on the open handle, no post-rename attribute fix-up); multistream opt-in with its own
+handle per stripe and a sparse staging file; hashing only in Checksum mode; same-volume moves that
+rename, keep-both included; a tuner that ignores sharing violations and reaches the configured
+concurrency with the default budget.
