@@ -2439,6 +2439,7 @@ dependencies = [
  "russh-sftp",
  "serde",
  "serde_json",
+ "sha2",
  "simplefile-core",
  "simplefile-ipc",
  "suppaftp",

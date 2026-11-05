@@ -2,16 +2,34 @@ use crate::transfer_reliability::{Failure, Retry};
 use simplefile_core::path_conflict::{
     is_already_exists_error, path_exists_no_follow, rename_exclusive,
 };
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x0100_0000_01b3;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FileIdentity(u64, u64);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) fn file_identity(path: &Path) -> Result<FileIdentity, String> {
+    #[cfg(windows)]
+    {
+        let file = open_source_for_verification(path)?;
+        let (volume, index) = file_id_from_handle(&file)
+            .ok_or_else(|| format!("Cannot establish file identity [{}]", path.display()))?;
+        Ok(FileIdentity(volume as u64, index))
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+        Ok(FileIdentity(meta.dev(), meta.ino()))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SourceVersion {
     pub(crate) is_symlink: bool,
     pub(crate) is_dir: bool,
@@ -23,49 +41,30 @@ pub(crate) struct SourceVersion {
     pub(crate) last_write_time: u64,
     #[cfg(windows)]
     pub(crate) file_id: Option<(u32, u64)>,
-    pub(crate) content_hash: Option<u64>,
+    pub(crate) content_hash: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct TreeCopyManifest {
-    pub(crate) files: Vec<(PathBuf, SourceVersion)>,
-    pub(crate) source_dirs: Vec<PathBuf>,
+    pub(crate) files: crate::transfer_manifest::CopiedFiles,
+    pub(crate) source_dirs: Vec<(PathBuf, SourceVersion)>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ContentHasher {
-    state: u64,
-}
-
-impl Default for ContentHasher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// SHA-256 is independent of read boundaries, including short and resumed reads.
+#[derive(Clone, Default)]
+pub(crate) struct ContentHasher(Sha256);
 
 impl ContentHasher {
     pub(crate) fn new() -> Self {
-        Self {
-            state: FNV_OFFSET_BASIS,
-        }
+        Self::default()
     }
 
     pub(crate) fn update(&mut self, bytes: &[u8]) {
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            let word = u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ]);
-            self.state = (self.state ^ word).wrapping_mul(FNV_PRIME);
-        }
-        for &b in chunks.remainder() {
-            self.state ^= b as u64;
-            self.state = self.state.wrapping_mul(FNV_PRIME);
-        }
+        self.0.update(bytes);
     }
 
-    pub(crate) fn finish(self) -> u64 {
-        self.state
+    pub(crate) fn finish(self) -> [u8; 32] {
+        self.0.finalize().into()
     }
 }
 
@@ -111,7 +110,7 @@ pub(crate) fn file_id_from_handle(file: &fs::File) -> Option<(u32, u64)> {
     }
 }
 
-pub(crate) fn hash_file_contents(file: &mut fs::File) -> Result<u64, String> {
+pub(crate) fn hash_file_contents(file: &mut fs::File) -> Result<[u8; 32], String> {
     file.seek(SeekFrom::Start(0))
         .map_err(|e| format!("Failed to seek source file for hashing: {e}"))?;
     let mut reader = BufReader::with_capacity(64 * 1024, file);
@@ -132,7 +131,7 @@ pub(crate) fn hash_file_contents(file: &mut fs::File) -> Result<u64, String> {
 pub(crate) fn capture_source_version_from_open_file(
     file: &fs::File,
     meta: &fs::Metadata,
-    content_hash: Option<u64>,
+    content_hash: Option<[u8; 32]>,
 ) -> SourceVersion {
     #[cfg(windows)]
     use std::os::windows::fs::MetadataExt;
@@ -169,7 +168,7 @@ pub(crate) fn capture_source_version_for_path(path: &Path) -> Result<SourceVersi
             #[cfg(windows)]
             last_write_time: meta.last_write_time(),
             #[cfg(windows)]
-            file_id: None,
+            file_id: open_source_for_verification(path).ok().and_then(|file| file_id_from_handle(&file)),
             content_hash: None,
         });
     }
@@ -197,13 +196,13 @@ fn metadata_matches_source_version(meta: &fs::Metadata, expected: &SourceVersion
     if !expected.is_symlink && !expected.is_dir && meta.len() != expected.len {
         return false;
     }
-    if meta.modified().ok() != expected.modified {
+    if !expected.is_dir && meta.modified().ok() != expected.modified {
         return false;
     }
     #[cfg(windows)]
     {
         if meta.creation_time() != expected.creation_time
-            || meta.last_write_time() != expected.last_write_time
+            || (!expected.is_dir && meta.last_write_time() != expected.last_write_time)
         {
             return false;
         }
@@ -220,6 +219,7 @@ pub(crate) fn verify_source_unchanged(path: &Path, expected: &SourceVersion) -> 
             path.display()
         ));
     }
+    #[cfg(not(windows))]
     if expected.is_symlink || expected.is_dir {
         return Ok(());
     }
@@ -235,8 +235,8 @@ pub(crate) fn verify_source_unchanged(path: &Path, expected: &SourceVersion) -> 
         ));
     }
     #[cfg(windows)]
-    if let (Some(expected_id), Some(actual_id)) = (expected.file_id, file_id_from_handle(&file)) {
-        if expected_id != actual_id {
+    {
+        if expected.file_id.is_none() || expected.file_id != file_id_from_handle(&file) {
             return Err(format!(
                 "Source identity changed before move completion and was retained: {}",
                 path.display()
@@ -256,30 +256,82 @@ pub(crate) fn verify_source_unchanged(path: &Path, expected: &SourceVersion) -> 
 }
 
 #[cfg(windows)]
-fn open_source_for_verification(path: &Path) -> Result<fs::File, String> {
+fn open_source_handle(path: &Path, deleting: bool) -> Result<fs::File, String> {
     use std::os::windows::fs::OpenOptionsExt;
-    use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_DELETE, FILE_SHARE_READ};
-
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_SHARE_DELETE, FILE_SHARE_READ,
+    };
+    const GENERIC_READ: u32 = 0x8000_0000;
+    const DELETE_ACCESS: u32 = 0x0001_0000;
+    const FILE_WRITE_ATTRIBUTES_ACCESS: u32 = 0x100;
     fs::OpenOptions::new()
-        .read(true)
+        .access_mode(GENERIC_READ | if deleting { DELETE_ACCESS | FILE_WRITE_ATTRIBUTES_ACCESS } else { 0 })
         .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
-        .map_err(|e| {
-            format!(
-                "Failed to lock source for move verification [{}]: {e}",
-                path.display()
-            )
-        })
+        .map_err(|e| format!("Failed to lock source for verification [{}]: {e}", path.display()))
+}
+
+#[cfg(windows)]
+fn open_source_for_verification(path: &Path) -> Result<fs::File, String> {
+    open_source_handle(path, false)
 }
 
 #[cfg(not(windows))]
 fn open_source_for_verification(path: &Path) -> Result<fs::File, String> {
-    fs::File::open(path).map_err(|e| {
-        format!(
-            "Failed to open source for move verification [{}]: {e}",
-            path.display()
-        )
-    })
+    fs::File::open(path).map_err(|e| format!("Failed to open source [{}]: {e}", path.display()))
+}
+
+#[cfg(windows)]
+fn delete_open_source(file: &fs::File, path: &Path) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        SetFileInformationByHandle, GetFileInformationByHandleEx, FileBasicInfo,
+        FileDispositionInfo, FileDispositionInfoEx, FILE_BASIC_INFO,
+        FILE_DISPOSITION_INFO, FILE_DISPOSITION_INFO_EX,
+        FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+        FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_NORMAL,
+    };
+    let handle = file.as_raw_handle() as _;
+    let info = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+    };
+    // Delete the verified object, never whichever object now occupies `path`.
+    if unsafe { SetFileInformationByHandle(handle, FileDispositionInfoEx,
+        (&info as *const FILE_DISPOSITION_INFO_EX).cast(), std::mem::size_of_val(&info) as u32) } != 0 {
+        return Ok(());
+    }
+    let extended_error = std::io::Error::last_os_error();
+    if !matches!(extended_error.raw_os_error(), Some(1 | 50 | 87)) {
+        return Err(format!("Failed to delete verified source [{}]: {extended_error}", path.display()));
+    }
+    // Older filesystems/SMB servers need the original disposition class.
+    // Read-only changes also use this same handle and are restored on failure.
+    let mut original: FILE_BASIC_INFO = unsafe { std::mem::zeroed() };
+    let got_basic = unsafe { GetFileInformationByHandleEx(handle, FileBasicInfo,
+        (&mut original as *mut FILE_BASIC_INFO).cast(), std::mem::size_of_val(&original) as u32) } != 0;
+    let readonly = got_basic && original.FileAttributes & FILE_ATTRIBUTE_READONLY != 0;
+    if readonly {
+        let mut writable = original;
+        writable.FileAttributes &= !FILE_ATTRIBUTE_READONLY;
+        if writable.FileAttributes == 0 { writable.FileAttributes = FILE_ATTRIBUTE_NORMAL; }
+        if unsafe { SetFileInformationByHandle(handle, FileBasicInfo,
+            (&writable as *const FILE_BASIC_INFO).cast(), std::mem::size_of_val(&writable) as u32) } == 0 {
+            return Err(format!("Failed to clear verified source read-only attribute [{}]: {}", path.display(), std::io::Error::last_os_error()));
+        }
+    }
+    let info = FILE_DISPOSITION_INFO { DeleteFile: 1 };
+    if unsafe { SetFileInformationByHandle(handle, FileDispositionInfo,
+        (&info as *const FILE_DISPOSITION_INFO).cast(), std::mem::size_of_val(&info) as u32) } != 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if readonly {
+        unsafe { SetFileInformationByHandle(handle, FileBasicInfo,
+            (&original as *const FILE_BASIC_INFO).cast(), std::mem::size_of_val(&original) as u32); }
+    }
+    Err(format!("Failed to delete verified source [{}]: {error}", path.display()))
 }
 
 pub(crate) fn delete_verified_source(path: &Path, expected: &SourceVersion) -> Result<(), String> {
@@ -292,6 +344,7 @@ pub(crate) fn delete_verified_source(path: &Path, expected: &SourceVersion) -> R
         ));
     }
 
+    #[cfg(not(windows))]
     if expected.is_symlink {
         if lstat.is_dir() {
             return fs::remove_dir(path)
@@ -301,6 +354,7 @@ pub(crate) fn delete_verified_source(path: &Path, expected: &SourceVersion) -> R
             .map_err(|e| format!("Failed to delete source symlink [{}]: {e}", path.display()));
     }
 
+    #[cfg(not(windows))]
     if expected.is_dir {
         return fs::remove_dir(path).map_err(|e| {
             format!(
@@ -310,6 +364,9 @@ pub(crate) fn delete_verified_source(path: &Path, expected: &SourceVersion) -> R
         });
     }
 
+    #[cfg(windows)]
+    let mut file = open_source_handle(path, true)?;
+    #[cfg(not(windows))]
     let mut file = open_source_for_verification(path)?;
     let file_meta = file
         .metadata()
@@ -321,8 +378,8 @@ pub(crate) fn delete_verified_source(path: &Path, expected: &SourceVersion) -> R
         ));
     }
     #[cfg(windows)]
-    if let (Some(expected_id), Some(actual_id)) = (expected.file_id, file_id_from_handle(&file)) {
-        if expected_id != actual_id {
+    {
+        if expected.file_id.is_none() || expected.file_id != file_id_from_handle(&file) {
             return Err(format!(
                 "Source identity changed before move completion and was retained: {}",
                 path.display()
@@ -339,38 +396,10 @@ pub(crate) fn delete_verified_source(path: &Path, expected: &SourceVersion) -> R
         }
     }
 
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(first_err) => {
-            drop(file);
-            if first_err.kind() == std::io::ErrorKind::PermissionDenied {
-                let recheck = fs::symlink_metadata(path)
-                    .map_err(|e| format!("Failed to stat source [{}]: {e}", path.display()))?;
-                if !metadata_matches_source_version(&recheck, expected) {
-                    return Err(format!(
-                        "Source changed before move completion and was retained: {}",
-                        path.display()
-                    ));
-                }
-                #[cfg(windows)]
-                #[allow(clippy::permissions_set_readonly_false)]
-                {
-                    let mut perms = recheck.permissions();
-                    if perms.readonly() {
-                        perms.set_readonly(false);
-                        let _ = fs::set_permissions(path, perms);
-                    }
-                }
-                return fs::remove_file(path).map_err(|e| {
-                    format!("Failed to delete source file [{}]: {e}", path.display())
-                });
-            }
-            Err(format!(
-                "Failed to delete source file [{}]: {first_err}",
-                path.display()
-            ))
-        }
-    }
+    #[cfg(windows)]
+    { delete_open_source(&file, path) }
+    #[cfg(not(windows))]
+    { fs::remove_file(path).map_err(|e| format!("Failed to delete source [{}]: {e}", path.display())) }
 }
 
 pub(crate) fn delete_verified_source_tree(
@@ -378,48 +407,17 @@ pub(crate) fn delete_verified_source_tree(
     manifest: &TreeCopyManifest,
 ) -> Result<(), String> {
     let mut errors = Vec::new();
-    for (file_path, expected) in &manifest.files {
-        if let Err(err) = delete_verified_source(file_path, expected) {
-            errors.push(err);
-        }
-    }
+    manifest.files.visit(|file_path, expected| {
+        if let Err(err) = delete_verified_source(file_path, expected) { errors.push(err); }
+        Ok(())
+    })?;
 
-    let mut dirs_to_remove: Vec<&Path> = manifest
-        .source_dirs
-        .iter()
-        .rev()
-        .map(PathBuf::as_path)
-        .collect();
-    if !dirs_to_remove.iter().any(|&d| d == root) {
-        dirs_to_remove.push(root);
+    if !manifest.source_dirs.iter().any(|(path, _)| path == root) {
+        return Err("Move completion manifest is missing the source root; directory retained".into());
     }
-
-    for dir_path in dirs_to_remove {
-        match fs::remove_dir(dir_path) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                #[cfg(windows)]
-                #[allow(clippy::permissions_set_readonly_false)]
-                if err.kind() == std::io::ErrorKind::PermissionDenied {
-                    if let Ok(meta) = fs::symlink_metadata(dir_path) {
-                        let mut perms = meta.permissions();
-                        if perms.readonly() {
-                            perms.set_readonly(false);
-                            let _ = fs::set_permissions(dir_path, perms);
-                            if fs::remove_dir(dir_path).is_ok() {
-                                continue;
-                            }
-                        }
-                    }
-                }
-                if errors.is_empty() {
-                    errors.push(format!(
-                        "Source directory retained because new or uncopied items remain in {} ({err})",
-                        dir_path.display()
-                    ));
-                }
-            }
+    for (dir_path, version) in manifest.source_dirs.iter().rev() {
+        if let Err(error) = delete_verified_source(dir_path, version) {
+            errors.push(format!("Source directory retained [{}]: {error}", dir_path.display()));
         }
     }
 
@@ -551,111 +549,6 @@ pub(crate) fn resumable_staging_path_for(
     staging_path_with_salt(final_path, Some(operation_id))
 }
 
-fn is_matching_staging_name(entry_name: &str, target_file_name: &str) -> bool {
-    const SUFFIX: &str = ".sumafile-partial";
-    let Some(rest) = entry_name
-        .strip_prefix('.')
-        .and_then(|s| s.strip_suffix(SUFFIX))
-    else {
-        return false;
-    };
-    let Some(after_target) = rest.strip_prefix(target_file_name) else {
-        return false;
-    };
-    let Some(hex_key) = after_target.strip_prefix('.') else {
-        return false;
-    };
-    hex_key.len() == 16 && hex_key.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// Adopts a legacy `.{folder}.{hash}.sumafile-partial` staging directory into
-/// `final_dest` if `final_dest` does not yet exist, and cleans up any remaining
-/// duplicate `.sumafile-partial` directories for the same target folder.
-pub(crate) fn adopt_or_cleanup_legacy_dir_staging(
-    final_dest: &Path,
-    operation_id: &str,
-) -> bool {
-    let Some(parent) = final_dest.parent() else {
-        return false;
-    };
-    let Some(file_name) = final_dest.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
-
-    let exact_match = resumable_staging_path_for(final_dest, operation_id).ok();
-    let mut candidates: Vec<(PathBuf, Option<SystemTime>)> = Vec::new();
-
-    if let Ok(entries) = fs::read_dir(parent) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name_str) = name.to_str() else {
-                continue;
-            };
-            if !is_matching_staging_name(name_str, file_name) {
-                continue;
-            }
-            let path = entry.path();
-            if let Ok(meta) = fs::symlink_metadata(&path) {
-                if meta.file_type().is_dir() {
-                    candidates.push((path, meta.modified().ok()));
-                }
-            }
-        }
-    }
-
-    if candidates.is_empty() {
-        return false;
-    }
-
-    candidates.sort_by(|a, b| {
-        let a_exact = exact_match.as_ref().is_some_and(|ex| ex == &a.0);
-        let b_exact = exact_match.as_ref().is_some_and(|ex| ex == &b.0);
-        b_exact.cmp(&a_exact).then_with(|| b.1.cmp(&a.1))
-    });
-
-    let mut adopted = false;
-    for (candidate, _) in candidates {
-        if !adopted && !path_exists_no_follow(final_dest) {
-            if rename_exclusive(&candidate, final_dest).is_ok() {
-                adopted = true;
-                continue;
-            }
-        }
-        let _ = cleanup_owned_path(&candidate);
-    }
-    adopted
-}
-
-/// Cleans up any stale `.{file}.{hash}.sumafile-partial` files in `final_dest.parent()`
-/// left behind by previous interrupted operations with different operation IDs.
-pub(crate) fn cleanup_stale_file_staging(final_dest: &Path, current_staged: &Path) {
-    let Some(parent) = final_dest.parent() else {
-        return;
-    };
-    let Some(file_name) = final_dest.file_name().and_then(|n| n.to_str()) else {
-        return;
-    };
-    let Ok(entries) = fs::read_dir(parent) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name_str) = name.to_str() else {
-            continue;
-        };
-        if !is_matching_staging_name(name_str, file_name) {
-            continue;
-        }
-        let path = entry.path();
-        if path == current_staged {
-            continue;
-        }
-        if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_file()) {
-            let _ = cleanup_owned_path(&path);
-        }
-    }
-}
-
 fn staging_path_with_salt(final_path: &Path, salt: Option<&str>) -> Result<PathBuf, String> {
     let parent = final_path
         .parent()
@@ -725,35 +618,22 @@ pub(crate) fn promote_staged_path(
     promote_attempt(staged, destination, replace).map_err(String::from)
 }
 
-pub(crate) fn promote_with_policy(
-    staged: &Path,
-    destination: &Path,
-    replace: bool,
-    cancel: &std::sync::atomic::AtomicBool,
-    policy: &crate::progress::Policy,
-    waiting: impl FnMut(std::time::Duration, &str),
-) -> Result<(), String> {
-    promote_with_retry(
-        staged,
-        destination,
-        replace,
-        cancel,
-        Retry::from_policy(policy),
-        waiting,
-    )
+#[cfg(test)]
+fn promote_attempt(staged_path: &Path, final_path: &Path, replace_existing: bool) -> Result<(), Failure> {
+    promote_attempt_leased(staged_path, final_path, replace_existing, None)
 }
 
-fn promote_with_retry(
-    staged: &Path,
-    destination: &Path,
-    replace: bool,
-    cancel: &std::sync::atomic::AtomicBool,
-    mut retry: Retry,
+pub(crate) fn promote_leased_with_policy(
+    staged: &Path, destination: &Path, replace: bool,
+    cancel: &std::sync::atomic::AtomicBool, policy: &crate::progress::Policy,
+    lease: &mut crate::transfer_journal::StagingLease,
     mut waiting: impl FnMut(std::time::Duration, &str),
 ) -> Result<(), String> {
+    let mut retry = Retry::from_policy(policy);
     loop {
         crate::transfer_reliability::wait(std::time::Duration::ZERO, cancel)?;
-        match promote_attempt(staged, destination, replace) {
+        if !lease.owns_staged() { return Err("Transfer staging identity changed; artifact retained".into()); }
+        match promote_attempt_leased(staged, destination, replace, Some(lease)) {
             Ok(()) => return Ok(()),
             Err(error) => {
                 let reason = error.to_string();
@@ -765,10 +645,11 @@ fn promote_with_retry(
     }
 }
 
-fn promote_attempt(
+fn promote_attempt_leased(
     staged_path: &Path,
     final_path: &Path,
     replace_existing: bool,
+    lease: Option<&mut crate::transfer_journal::StagingLease>,
 ) -> Result<(), Failure> {
     if !replace_existing {
         if path_exists_no_follow(final_path) {
@@ -796,7 +677,7 @@ fn promote_attempt(
         }
     }
 
-    let backup_path = move_existing_to_backup(final_path)?;
+    let backup_path = move_existing_to_backup_leased(final_path, lease)?;
     if let Err(error) = rename_exclusive(staged_path, final_path) {
         return Err(match rename_exclusive(&backup_path, final_path) {
             Ok(()) => Failure::io(
@@ -828,7 +709,7 @@ fn promote_attempt(
     Ok(())
 }
 
-fn move_existing_to_backup(final_path: &Path) -> Result<PathBuf, Failure> {
+fn move_existing_to_backup_leased(final_path: &Path, mut lease: Option<&mut crate::transfer_journal::StagingLease>) -> Result<PathBuf, Failure> {
     let parent = final_path
         .parent()
         .ok_or_else(|| Failure::new("Cannot get destination directory", false))?;
@@ -844,6 +725,7 @@ fn move_existing_to_backup(final_path: &Path) -> Result<PathBuf, Failure> {
         if path_exists_no_follow(&candidate) {
             continue;
         }
+        if let Some(owner) = lease.as_deref_mut() { owner.backup_intent(&candidate, final_path)?; }
         match rename_exclusive(final_path, &candidate) {
             Ok(()) => return Ok(candidate),
             Err(e) if is_already_exists_error(&e) => continue,
@@ -858,19 +740,6 @@ fn move_existing_to_backup(final_path: &Path) -> Result<PathBuf, Failure> {
         ),
         false,
     ))
-}
-
-pub(crate) fn backup_existing_destination(final_path: &Path) -> Result<PathBuf, String> {
-    move_existing_to_backup(final_path).map_err(String::from)
-}
-
-pub(crate) fn restore_backed_up_destination(final_path: &Path, backup_path: &Path) {
-    if path_exists_no_follow(final_path) {
-        let _ = cleanup_owned_path(final_path);
-    }
-    if path_exists_no_follow(backup_path) {
-        let _ = rename_exclusive(backup_path, final_path);
-    }
 }
 
 #[cfg(test)]
@@ -960,6 +829,49 @@ mod tests {
     }
 
     #[test]
+    fn sha256_is_independent_of_short_read_boundaries() {
+        let mut abc = super::ContentHasher::new();
+        abc.update(b"a"); abc.update(b"bc");
+        assert_eq!(abc.finish(), [
+            0xba,0x78,0x16,0xbf,0x8f,0x01,0xcf,0xea,0x41,0x41,0x40,0xde,0x5d,0xae,0x22,0x23,
+            0xb0,0x03,0x61,0xa3,0x96,0x17,0x7a,0x9c,0xb4,0x10,0xff,0x61,0xf2,0x00,0x15,0xad,
+        ]);
+        let bytes: Vec<u8> = (0..65539).map(|i| (i % 251) as u8).collect();
+        let mut complete = super::ContentHasher::new();
+        complete.update(&bytes);
+        let expected = complete.finish();
+        for size in [1, 3, 4, 7, 8, 9, 63, 64, 65536] {
+            let mut partitioned = super::ContentHasher::new();
+            for chunk in bytes.chunks(size) { partitioned.update(chunk); }
+            assert_eq!(partitioned.finish(), expected, "chunk size {size}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn deletion_uses_verified_handle_after_path_replacement_and_handles_readonly() {
+        for readonly in [false, true] {
+            let root = unique_temp_dir("source_handle_delete");
+            let source = root.join("source");
+            let moved = root.join("renamed-source");
+            fs::write(&source, b"copied").unwrap();
+            if readonly {
+                let mut permissions = fs::metadata(&source).unwrap().permissions();
+                permissions.set_readonly(true);
+                fs::set_permissions(&source, permissions).unwrap();
+            }
+            let handle = super::open_source_handle(&source, true).unwrap();
+            fs::rename(&source, &moved).unwrap();
+            fs::write(&source, b"replacement-must-survive").unwrap();
+            super::delete_open_source(&handle, &source).unwrap();
+            drop(handle);
+            assert!(!moved.exists());
+            assert_eq!(fs::read(&source).unwrap(), b"replacement-must-survive");
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn promote_replace_restores_original_when_staged_rename_fails() {
         let root = unique_temp_dir("restore_original");
         let destination = root.join("item.txt");
@@ -1036,8 +948,11 @@ mod tests {
             files: vec![(
                 copied_file.clone(),
                 capture_source_version_for_path(&copied_file).unwrap(),
-            )],
-            source_dirs: vec![src_dir.clone(), nested_dir.clone()],
+            )].into(),
+            source_dirs: vec![
+                (src_dir.clone(), capture_source_version_for_path(&src_dir).unwrap()),
+                (nested_dir.clone(), capture_source_version_for_path(&nested_dir).unwrap()),
+            ],
         };
 
         // Another application adds a new file after folder enumeration

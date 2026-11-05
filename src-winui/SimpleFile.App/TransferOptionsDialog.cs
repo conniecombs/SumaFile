@@ -7,7 +7,7 @@ namespace SimpleFile.App;
 
 internal static class TransferOptionsDialog
 {
-    public static async Task ShowAsync(XamlRoot root, ISettingsBackend backend, TransferOperationViewModel? operation = null)
+    public static async Task ShowAsync(XamlRoot root, ISettingsBackend backend, TransferOperationViewModel? operation = null, bool remote = false)
     {
         try
         {
@@ -79,11 +79,21 @@ internal static class TransferOptionsDialog
             var highLevelRetries = Number("Batch retry passes (--retries)", policy.HighLevelRetries, 1, 20);
             var retrySleepMs = Number("Base retry backoff (ms, --retries-sleep)", policy.RetrySleepMs, 10, 60_000);
 
+            if (remote)
+            {
+                foreach (var control in new Control[] { mode, parallel, checkers, maxBacklog, bufferSize, memory, multiThreadCutoff, multiThreadStreams })
+                    control.IsEnabled = false;
+                inplace.Content = "Write downloads directly to new destination files";
+                preallocate.Content = "Pre-allocate local download space";
+                flushOnClose.Content = "Flush local download buffers before commit";
+                highLevelRetries.Header = "Retry passes per failed file";
+            }
+
             var status = new TextBlock
             {
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = 12,
-                Text = "Automatic measures sustained transfer speed. Conservative caps parallel copies at 4. Maximum starts more workers. Custom keeps your file and bandwidth limits, subject to the buffer budget and provider limits.",
+                Text = remote ? "Remote sessions transfer one file at a time with provider-sized buffers. Download storage settings do not control server disk flushing. Checksum mode reads remote content again for verification." : "Automatic measures sustained transfer speed. Conservative caps parallel copies at 4. Maximum starts more workers. Custom keeps your file and bandwidth limits, subject to the buffer budget and provider limits.",
             };
 
             var content = new StackPanel { Spacing = 12, MinWidth = 420, MaxWidth = 520, Padding = new Thickness(0, 0, 12, 0) };
@@ -117,15 +127,15 @@ internal static class TransferOptionsDialog
             {
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = 12,
-                Text = "Zero bandwidth means unlimited in every mode. Normal cloud or network delays do not impose a hidden speed limit. Failed files retry with exponential backoff and full-batch retry passes. The buffer budget controls pooled SumaFile memory.",
+                Text = "Zero bandwidth means unlimited in every mode. Normal cloud or network delays do not impose a hidden speed limit. Only failed files retry, with exponential backoff. The buffer budget covers active copy buffers; all tasks share a separately capped buffer cache.",
             });
             content.Children.Add(new TextBlock
             {
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = 12,
                 Text = operation is null
-                    ? "Defaults apply to new tasks and running tasks without an override. Changes take effect within 5 seconds; existing files finish before a lower limit is reached."
-                    : "Applies to this task only. Changes take effect within 5 seconds; existing files finish before a lower limit is reached.",
+                    ? "Defaults apply to tasks without an override. Bandwidth and concurrency refresh within 5 seconds. Integrity, storage and buffer changes apply to newly dispatched files. Directory checkers, queue order and retry-pass limits apply on the next task."
+                    : "Applies to this task only. Bandwidth and concurrency refresh within 5 seconds; active files finish with their current settings. Directory checkers, queue order and retry-pass limits are fixed when the task starts.",
             });
 
             if (operation is null)

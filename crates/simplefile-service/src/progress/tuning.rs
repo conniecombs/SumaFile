@@ -144,11 +144,25 @@ impl Policy {
 
     pub fn buffer_bytes(&self, network: bool) -> usize {
         let kib = self.buffer_size_kib.clamp(64, 65_536);
-        if network && kib == 4096 {
-            512 * 1024
-        } else {
-            kib * 1024
-        }
+        let requested = if network && kib == 4096 { 512 * 1024 } else { kib * 1024 };
+        requested.min((self.memory_bytes() - 128 * 1024) / self.max_buffer_count()).max(4096)
+    }
+
+    pub fn memory_bytes(&self) -> usize {
+        self.memory_budget_mb.clamp(16, 512) * 1024 * 1024
+    }
+
+    pub fn max_buffer_count(&self) -> usize {
+        if cfg!(windows) { self.multi_thread_streams_count().max(3) } else { 3 }
+    }
+
+    pub fn buffer_count(&self, network: bool, file_len: u64, operation: &str) -> usize {
+        let buffer = self.buffer_bytes(network) as u64;
+        if cfg!(windows) && operation == "copy" && self.check_mode != CheckMode::Checksum
+            && self.multi_thread_streams_count() >= 2
+            && file_len >= self.multi_thread_cutoff_bytes() && file_len >= buffer * 2 {
+            self.multi_thread_streams_count()
+        } else if file_len > buffer { 3 } else { 1 }
     }
 
     pub fn checkers_limit(&self) -> usize {
@@ -180,9 +194,8 @@ impl Policy {
     }
 
     pub fn limit(&self, buffer_bytes: usize) -> usize {
-        // The current copier owns a read buffer, write buffer, and copy buffer.
-        let memory_limit = self.memory_budget_mb.clamp(16, 512) * 1024 * 1024
-            / buffer_bytes.max(1).saturating_mul(3);
+        let memory_limit = self.memory_bytes()
+            / (buffer_bytes.max(1).saturating_mul(self.max_buffer_count()) + 128 * 1024);
         let mode_limit = if self.mode == Mode::Conservative {
             4
         } else {
@@ -534,9 +547,9 @@ mod tests {
             ..Policy::default()
         };
         let mut c = Controller::new(policy, 4 << 20, None);
-        assert_eq!(c.concurrency, 2);
+        assert_eq!(c.concurrency, 1);
         observe(&mut c, 1000);
-        assert_eq!(c.concurrency, 2);
+        assert_eq!(c.concurrency, 1);
         assert_eq!(c.learned_concurrency(), None);
         c.update_policy(
             Policy {

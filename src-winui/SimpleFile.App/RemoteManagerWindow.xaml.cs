@@ -37,7 +37,7 @@ public sealed partial class RemoteManagerWindow : Window
     public bool IsClosed { get; private set; }
 
     private async void OnTransferDefaultsClicked(object sender, RoutedEventArgs e) =>
-        await TransferOptionsDialog.ShowAsync(Root.XamlRoot, _viewModel.TransferSettingsBackend);
+        await TransferOptionsDialog.ShowAsync(Root.XamlRoot, _viewModel.TransferSettingsBackend, remote: true);
 
     public void RequestProfileSelection(string? profileId)
     {

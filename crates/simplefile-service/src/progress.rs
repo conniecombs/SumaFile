@@ -175,6 +175,7 @@ fn transfer_with_policy_blocking(
         policy,
         emit_tuning,
     );
+    let requested_sources = sources.clone();
     let (mut plans, _dest_path) = prepare_transfer_inputs(sources, destination, &conflict_action)
         .map_err(|error| {
         TransferBatchError::failed(
@@ -220,7 +221,7 @@ fn transfer_with_policy_blocking(
                 "cancelled",
                 Some("Operation cancelled".to_string()),
             );
-            return Ok(Vec::new());
+            return Err(TransferBatchError::cancelled(operation_id, Vec::new(), requested_sources));
         }
         Err(error) => {
             eprintln!("simplefile-service: transfer size estimate failed: {error}");
@@ -504,7 +505,10 @@ fn transfer_with_policy_blocking(
                 "cancelled",
                 Some("Operation cancelled".to_string()),
             );
-            Ok(transferred)
+            let pending = requested_sources.into_iter()
+                .filter(|source| !transferred.iter().any(|item| &item.source == source))
+                .collect();
+            Err(TransferBatchError::cancelled(operation_id, transferred, pending))
         }
         TransferOutcome::Failed {
             error,
@@ -531,6 +535,16 @@ fn transfer_with_policy_blocking(
 }
 
 impl TransferBatchError {
+    fn cancelled(operation_id: String, committed: Vec<TransferResult>, pending: Vec<String>) -> Self {
+        Self {
+            message: "Operation cancelled".into(),
+            outcome: Box::new(TransferBatchOutcome {
+                operation_id, status: "cancelled".into(), committed,
+                skipped: Vec::new(), failed: Vec::new(), pending,
+            }),
+        }
+    }
+
     fn failed(
         operation_id: String,
         message: String,
@@ -558,7 +572,7 @@ mod tests {
         copy_file_attempt, copy_file_with_progress, prepare_transfer_inputs,
         transfer_with_progress_blocking, CopyContext, ProgressContext,
     };
-    use crate::transfer_staging::{resumable_staging_path_for, staging_path_for};
+    use crate::transfer_staging::staging_path_for;
     use simplefile_core::models::ProgressUpdate;
     use std::fs;
     use std::path::PathBuf;
@@ -763,9 +777,10 @@ mod tests {
             cancel,
             &|update| updates_target.lock().unwrap().push(update),
         )
-        .expect("cancel should return partial results");
+        .expect_err("cancel must return an explicit terminal outcome");
 
-        assert!(result.is_empty());
+        assert_eq!(result.outcome.status, "cancelled");
+        assert!(result.outcome.committed.is_empty());
         assert!(updates
             .lock()
             .unwrap()
@@ -1018,34 +1033,14 @@ mod tests {
                     let staged =
                         crate::transfer_staging::staging_path_for(&final_file, &operation_id)
                             .unwrap();
-                    let held = Mutex::new(if directory {
-                        None
-                    } else {
-                        Some(
-                            fs::OpenOptions::new()
-                                .write(true)
-                                .create_new(true)
-                                .share_mode(0)
-                                .open(&staged)
-                                .unwrap(),
-                        )
-                    });
-                    let locked_staged = AtomicBool::new(!directory);
+                    if directory { fs::create_dir_all(&target).unwrap(); }
+                    fs::write(&final_file, b"original").unwrap();
+                    // Lock the final destination, not an unowned temporary file.
+                    let held = Mutex::new(Some(fs::OpenOptions::new().read(true)
+                        .share_mode(1).open(&final_file).unwrap()));
                     let cancel = Arc::new(AtomicBool::new(false));
                     let waiting = AtomicBool::new(false);
-                    let emit = |_: super::ProgressUpdate| {
-                        if !locked_staged.load(Ordering::Relaxed) && target.exists() {
-                            if let Ok(file) = fs::OpenOptions::new()
-                                .write(true)
-                                .create_new(true)
-                                .share_mode(0)
-                                .open(&staged)
-                            {
-                                *held.lock().unwrap() = Some(file);
-                                locked_staged.store(true, Ordering::Relaxed);
-                            }
-                        }
-                    };
+                    let emit = |_: super::ProgressUpdate| {};
                     let tuning = |update: super::TuningUpdate| {
                         if update.explanation.starts_with("Retrying failed I/O") {
                             waiting.store(true, Ordering::Relaxed);
@@ -1061,7 +1056,7 @@ mod tests {
                         vec![source.to_string_lossy().into_owned()],
                         dst_root.to_string_lossy().into_owned(),
                         operation_id,
-                        "keep-both".into(),
+                        "replace".into(),
                         cancel.clone(),
                         &emit,
                         &tuning,
@@ -1077,9 +1072,9 @@ mod tests {
                     );
                     if cancelling {
                         assert!(cancel.load(Ordering::Relaxed));
-                        assert!(result.unwrap().is_empty());
+                        assert_eq!(result.unwrap_err().outcome.status, "cancelled");
                         assert_eq!(fs::read(&source_file).unwrap(), bytes);
-                        assert!(!target.exists());
+                        assert_eq!(fs::read(&final_file).unwrap(), b"original");
                     } else {
                         result.unwrap();
                         let final_file = if directory {
@@ -1098,7 +1093,7 @@ mod tests {
     }
 
     #[test]
-    fn directory_copy_resumes_completed_files_from_staging_directory() {
+    fn directory_copy_recovers_recorded_interruption_without_trusting_completed_names() {
         let src_root = unique_temp_path("resume_dir_src");
         let dst_root = unique_temp_path("resume_dir_dst");
         let source = src_root.join("Album");
@@ -1111,13 +1106,15 @@ mod tests {
         fs::write(&missing_source, b"two").unwrap();
 
         let operation_id = "op_resume_dir_test";
-        let staging = resumable_staging_path_for(&final_destination, operation_id).unwrap();
+        let staging = crate::transfer_staging::staging_path_for(&final_destination, operation_id).unwrap();
         fs::create_dir_all(&staging).unwrap();
+        let lease = crate::transfer_journal::StagingLease::record_created(&source.to_string_lossy(), &final_destination, &staging).unwrap();
         let staged_existing = staging.join("one.txt");
         fs::copy(&existing_source, &staged_existing).unwrap();
         simplefile_core::file_ops::preserve_basic_metadata(&existing_source, &staged_existing)
             .unwrap();
         let staged_existing_modified = fs::metadata(&staged_existing).unwrap().modified().unwrap();
+        drop(lease); // Simulate an interrupted process.
         let cancel = Arc::new(AtomicBool::new(false));
 
         let result = transfer_with_progress_blocking(
@@ -1129,7 +1126,7 @@ mod tests {
             cancel,
             &|_| {},
         )
-        .expect("directory copy should resume staged files and complete");
+        .expect("recorded abandoned staging should be cleaned and copied afresh");
 
         assert_eq!(result.len(), 1);
         assert_eq!(fs::read(final_destination.join("one.txt")).unwrap(), b"one");
@@ -1159,7 +1156,7 @@ mod tests {
             fs::write(source.join("feature.mkv"), b"feature").unwrap();
 
             let operation_id = "op_finalizing_cancel_test";
-            let staging = resumable_staging_path_for(&final_destination, operation_id).unwrap();
+            let staging = staging_path_for(&final_destination, operation_id).unwrap();
             let final_destination_text = final_destination.to_string_lossy().to_string();
             let cancel = Arc::new(AtomicBool::new(false));
             let cancel_for_emit = cancel.clone();
@@ -1182,9 +1179,10 @@ mod tests {
                     updates_target.lock().unwrap().push(update);
                 },
             )
-            .expect("cancelled directory copy should return partial results");
+            .expect_err("cancelled directory copy must return its terminal outcome");
 
-            assert!(result.is_empty());
+            assert_eq!(result.outcome.status, "cancelled");
+            assert!(result.outcome.committed.is_empty());
             assert!(!final_destination.exists());
             assert!(!staging.exists());
             assert_eq!(fs::read(source.join("feature.mkv")).unwrap(), b"feature");
@@ -1358,9 +1356,10 @@ mod tests {
                     }
                 },
             )
-            .expect("cancelled transfer returns committed list");
+            .expect_err("cancelled transfer returns a cancelled outcome");
 
-            assert!(result.is_empty());
+            assert_eq!(result.outcome.status, "cancelled");
+            assert!(result.outcome.committed.is_empty());
             assert!(
                 existing_dest_file.is_file(),
                 "original destination file must remain a file"
@@ -1494,7 +1493,7 @@ mod tests {
     }
 
     #[test]
-    fn directory_transfer_adopts_legacy_partial_and_cleans_duplicates_even_with_open_handles() {
+    fn directory_transfer_preserves_unowned_legacy_partials() {
         let src_root = unique_temp_path("megapack_src");
         let dst_root = unique_temp_path("megapack_dst");
         let source = src_root.join("Megapack");
@@ -1533,12 +1532,13 @@ mod tests {
                 }
             },
         )
-        .expect("directory copy should adopt legacy partial, clean duplicates, and succeed with open child handle");
+        .expect("unowned legacy artifacts should not affect a new operation");
 
         assert_eq!(result.len(), 1);
         assert!(final_dest.is_dir());
-        assert!(!legacy_one.exists());
-        assert!(!legacy_two.exists());
+        assert_eq!(fs::read(legacy_one.join("a.bin")).unwrap(), b"alpha");
+        assert_eq!(fs::read(&ro_file).unwrap(), b"stale");
+        assert!(!final_dest.join("readonly.bin").exists());
         assert_eq!(fs::read(final_dest.join("a.bin")).unwrap(), b"alpha");
         assert_eq!(fs::read(final_dest.join("b.bin")).unwrap(), b"bravo");
         #[cfg(windows)]

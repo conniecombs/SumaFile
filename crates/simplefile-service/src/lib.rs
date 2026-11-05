@@ -10,6 +10,8 @@ pub mod session;
 pub mod session_cache;
 pub mod shared_memory;
 pub mod shell;
+mod transfer_journal;
+mod transfer_manifest;
 mod transfer_reliability;
 mod transfer_staging;
 #[cfg(test)]

@@ -39,6 +39,7 @@ where
     let cache = state.cache.clone();
     let events = EventSink::new(writer.clone(), binary_hot_frames.clone());
 
+    let result = async {
     loop {
         let payload = match read_frame(&mut reader).await {
             Ok(payload) => payload,
@@ -302,6 +303,15 @@ where
             );
         }
     }
+    }.await;
+    // Detached blocking jobs must not outlive the client that owns them.
+    operations.cancel_all().await;
+    searches.cancel_all().await;
+    duplicate_scans.cancel_all().await;
+    cleanup_scans.cancel_all().await;
+    crate::watcher::unwatch_directory(&mut watcher_state);
+    result
+
 }
 
 #[cfg(test)]

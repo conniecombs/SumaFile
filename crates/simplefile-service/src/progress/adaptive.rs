@@ -1,5 +1,5 @@
 use super::parallel::{ActiveFile, TuningUpdate};
-use super::resources::RateLimit;
+use super::resources::{MemoryBudget, RateLimit};
 use super::tuning::{self, Controller, Policy};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 /// Lives for the whole transfer, including short batches of small files.
 pub(crate) struct Session<'a> {
     pub controller: Controller,
+    pub memory: std::sync::Arc<MemoryBudget>,
     pub limiter: std::sync::Arc<RateLimit>,
     emit: &'a dyn Fn(TuningUpdate),
     policy: &'a dyn Fn() -> Policy,
@@ -51,6 +52,7 @@ impl<'a> Session<'a> {
         endpoints.dedup();
         let initial = policy();
         Self {
+            memory: MemoryBudget::new(initial.memory_bytes()),
             limiter: std::sync::Arc::new(RateLimit::new(initial.bandwidth_mib)),
             controller: Controller::new(initial, 4 << 20, None),
             emit,
@@ -81,6 +83,7 @@ impl<'a> Session<'a> {
                 files,
             );
             self.limiter.update(self.controller.policy.bandwidth_mib);
+            self.memory.update(self.controller.policy.memory_bytes());
             self.route = route;
             self.buffer_size = buffer_size;
             self.sample_bytes = offset;
@@ -103,6 +106,7 @@ impl<'a> Session<'a> {
             self.controller
                 .update_policy((self.policy)(), self.buffer_size);
             self.limiter.update(self.controller.policy.bandwidth_mib);
+            self.memory.update(self.controller.policy.memory_bytes());
             self.controller.sample(
                 current.saturating_sub(self.sample_bytes),
                 elapsed,
