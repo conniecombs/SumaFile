@@ -44,3 +44,11 @@ test('YAML semantics accept quoting and reject duplicate keys', () => {
     parseWorkflow("on:\n  push:\n    branches:\n      - main\n      - 'C#'\n"));
   assert.throws(() => parseWorkflow('jobs: {}\njobs: {}'), /unique/i);
 });
+
+test('release uploads cannot replace reviewed notes with a generic message', () => {
+  const { workflows, dependabot } = source();
+  const upload = workflows['release.yml'].jobs.build.steps.find(step => step.uses?.startsWith('softprops/action-gh-release@'));
+  delete upload.with.body_path;
+  upload.with.body = 'Download the attached files.';
+  assert.ok(validateWorkflows(workflows, dependabot).some(error => error.includes('version-specific release notes')));
+});

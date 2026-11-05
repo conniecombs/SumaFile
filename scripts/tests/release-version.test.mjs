@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { nugetLocks, parseVersion, planReleaseVersion, readReleaseVersion } from '../lib/release-version.mjs';
+import { nugetLocks, parseVersion, planReleaseVersion, readReleaseVersion, readReleaseNotes } from '../lib/release-version.mjs';
 
 const sourceRoot = resolve(import.meta.dirname, '../..');
 const files = [...nugetLocks, 'Cargo.lock', 'README.md', 'src-winui/Directory.Build.props', 'crates/simplefile-core/src/lib.rs',
+  'src-winui/SimpleFile.App/app.manifest', 'packaging/winui/sumafile-winui.nsi',
   ...['simplefile-core', 'simplefile-ipc', 'simplefile-service'].map(crate => `crates/${crate}/Cargo.toml`)];
 test('release preview is read-only and applying it keeps every identity in sync', () => {
   const root = mkdtempSync(join(tmpdir(), 'sumafile-version-'));
@@ -19,7 +20,7 @@ test('release preview is read-only and applying it keeps every identity in sync'
     const original = readReleaseVersion(root);
     const { changes } = planReleaseVersion(root, 'v1.2.3-beta.1');
     assert.deepEqual(readReleaseVersion(root), original);
-    assert.equal(changes.size, 9);
+    assert.equal(changes.size, 11);
     for (const [file, contents] of changes) writeFileSync(resolve(root, file), contents);
     assert.deepEqual(readReleaseVersion(root), { numeric: '1.2.3', display: '1.2.3-beta.1', tag: 'v1.2.3-beta.1', prerelease: true });
     const lock = readFileSync(resolve(root, 'Cargo.lock'), 'utf8');
@@ -32,6 +33,14 @@ test('release preview is read-only and applying it keeps every identity in sync'
     assert.match(readme, /version-1\.2\.3%2Dbeta\.1-2563eb/);
     assert.match(readme, /SumaFile_1\.2\.3-beta\.1_x64-winui/);
     assert.equal(planReleaseVersion(root, '1.2.3-beta.1').changes.size, 0);
+    const manifestPath = resolve(root, 'src-winui/SimpleFile.App/app.manifest');
+    const manifest = readFileSync(manifestPath, 'utf8');
+    writeFileSync(manifestPath, manifest.replace('1.2.3.0', '1.0.0.0'));
+    assert.throws(() => readReleaseVersion(root), /Windows manifest version/);
+    writeFileSync(manifestPath, manifest);
+    const nsisPath = resolve(root, 'packaging/winui/sumafile-winui.nsi');
+    writeFileSync(nsisPath, readFileSync(nsisPath, 'utf8').replace('NUMERIC_VERSION "1.2.3"', 'NUMERIC_VERSION "1.0.0"'));
+    assert.throws(() => readReleaseVersion(root), /NSIS fallback version/);
   } finally {
     if (!resolve(root).startsWith(resolve(tmpdir()) + '\\') && !resolve(root).startsWith(resolve(tmpdir()) + '/')) throw new Error('Unsafe fixture cleanup');
     rmSync(root, { recursive: true });
@@ -65,6 +74,21 @@ test('version-tag pushes publish after release gates pass', () => {
     RELEASE_DRAFT: '',
   });
   assert.equal(resolved.draft, 'false');
+  assert.equal(resolved.notes, `docs/RELEASE_${version.display}.md`);
+});
+
+test('publication requires version-specific release notes with a matching heading', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sumafile-notes-'));
+  try {
+    const version = parseVersion('1.2.3');
+    assert.throws(() => readReleaseNotes(root, version), /ENOENT/);
+    mkdirSync(join(root, 'docs'));
+    const file = join(root, 'docs/RELEASE_1.2.3.md');
+    writeFileSync(file, '# SumaFile 1.2.2 Release Notes\n');
+    assert.throws(() => readReleaseNotes(root, version), /heading/);
+    writeFileSync(file, '# SumaFile 1.2.3 Release Notes\n\nReviewed changes.\n');
+    assert.match(readReleaseNotes(root, version).source, /Reviewed changes/);
+  } finally { rmSync(root, { recursive: true }); }
 });
 
 test('manual releases remain drafts by default and can explicitly publish', () => {

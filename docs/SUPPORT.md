@@ -1,10 +1,11 @@
 # Support
 
-Use this file when collecting information for SumaFile Windows support issues.
+Use this file when collecting information for SumaFile 1.0.2 Windows support issues.
+See [release notes](RELEASE_1.0.2.md) for upgrade behavior and known limitations.
 
 ## Before Reporting
 
-1. Confirm you are on the `Windows-Focused` branch or a Windows release built from it.
+1. Record the installed version or development commit from `main`; the current release target is v1.0.2.
 2. Run `npm run check` when reporting a development issue.
 3. For installer issues, also run `npm run smoke:winui-msi`, `npm run smoke:winui-installer`, and `npm run smoke:winui-upgrade`.
 4. For startup issues, capture whether the app window appears, whether settings load, and whether the updater check starts.
@@ -26,3 +27,14 @@ Use this file when collecting information for SumaFile Windows support issues.
 - Settings startup behavior: check `src-winui/SimpleFile.Core` settings/workspace persistence.
 - Archive behavior: check `crates/simplefile-core/src/archive/`.
 - Release and updater behavior: check `.github/RELEASE.md`, `docs/UPDATER_RELEASE.md`, and `scripts/check-updater-config.mjs`.
+
+## Transfer and UI timeout reports
+
+Include the transfer mode, concurrency/buffer limits, integrity and retry settings,
+source/destination storage types, and whether the operation was a copy or move.
+Record committed/pending outcomes and any recovery message. Preserve ownership
+records and replacement backups for diagnosis; filenames alone do not establish
+which data may be discarded. Redact paths and account details before sharing.
+For UI smoke failures, include both `report.json` (if written) and `progress.json`
+from `test-results/ui-smoke/<run>/`, plus the workflow run URL. The checkpoint
+identifies the last active scenario when the process timeout prevents a final report.

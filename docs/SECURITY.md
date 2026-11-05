@@ -2,7 +2,8 @@
 
 ## Supported Branch
 
-Security reports for this branch should be evaluated against the current Windows-focused release scope: local files, mapped network drives, archives, previews, metadata, Git status, cleanup tools, updater metadata, and Windows installers.
+Security reports for `main` and SumaFile 1.0.2 should be evaluated against the Windows release scope: local files, mapped network drives, archives, previews, metadata, Git status, cleanup tools, FTP/FTPS/SFTP sessions, updater metadata, and Windows installers.
+See [v1.0.2 release notes](RELEASE_1.0.2.md) for the release boundary.
 
 ## Sensitive Files
 
@@ -33,3 +34,16 @@ When reporting a vulnerability, include:
 - Windows elevated PowerShell launch behavior.
 - Mapped network drive naming and filesystem probing.
 - File preview limits for large or untrusted files.
+
+## Transfer recovery and remote sessions
+
+Review ownership locks and filesystem identities before any staging/backup cleanup
+or source deletion. Recovery journals contain source/destination paths and must
+be redacted in reports. Unknown artifacts must not be treated as owned by name
+alone. Native remote process-crash recovery is not provided by local journals.
+Checksum mode verifies content but is not a substitute for TLS/SSH peer validation.
+Plain FTP requires explicit insecure-connection acknowledgement.
+
+The release audit and bounded security updater share the checked-in advisory
+policy in `scripts/lib/audit-policy.mjs`; existing documented exceptions remain.
+Eligible patch proposals require CI and installer validation.

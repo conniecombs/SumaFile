@@ -1,5 +1,7 @@
 # SumaFile WinUI 3 host
 
+Current product version: **1.0.2**. See the [complete release notes](../docs/RELEASE_1.0.2.md) for changes since v1.0.1 and upgrade validation.
+
 Native Windows file-manager UI. It starts `simplefile-service` (job object
 `KILL_ON_JOB_CLOSE` plus silent breakaway so opened documents outlive the
 app) and speaks named-pipe JSON-RPC.

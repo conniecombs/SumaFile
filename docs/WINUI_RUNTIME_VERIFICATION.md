@@ -1,5 +1,7 @@
 # WinUI runtime verification
 
+Current release target: **SumaFile 1.0.2**. See [release notes](RELEASE_1.0.2.md) for the complete change set.
+
 Run `npm run smoke:winui-ui` from a Windows desktop session. The script builds
 the Debug WinUI application and Rust service, generates folders containing
 10,000 and 100,000 mixed text/image files, and launches the real application.

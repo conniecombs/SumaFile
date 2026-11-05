@@ -9,10 +9,10 @@ No push, PR, remote settings change, or release is part of local verification.
 The UI smoke test requested a 1920-pixel window, but the hosted desktop could
 constrain its actual size. Both panes stayed below the Details layout threshold,
 so the test incorrectly concluded that Details had never been exercised. The
-test now measures actual pane widths, verifies the narrow dual-pane fallback,
+v1.0.2 test measures actual pane widths, verifies Details in narrow dual panes,
 and separately exercises Details in a full-width single pane. Use
 `npm run smoke:winui-ui -- -Counts 10000 -MaxWindowWidth 1000` to reproduce the
-constrained desktop case locally. The product's layout threshold is unchanged.
+constrained desktop case locally. Details stays selected at narrow widths.
 
 Several repository guards also depended on spelling: an action version, the
 name of a hash implementation, or generic provider words in documentation.
@@ -23,6 +23,13 @@ checks target retired executable integration identifiers and dependencies.
 Compiler/API changes, failing behavior tests, security advisories, and conflicting
 release versions are real failures. The maintenance policy does not suppress
 them or weaken their checks to make a build green.
+
+The v1.0.2 installer UI smoke retains both 10,000- and 100,000-entry rendering
+checks, while transfer regressions use the smallest requested fixture. This
+avoids coupling the ten-minute smoke budget to a 100,000-file durable-copy
+stress run. Atomic `progress.json` checkpoints identify the active scenario
+and survive timeouts alongside completed results. See
+[WinUI runtime verification](WINUI_RUNTIME_VERIFICATION.md) for stress commands.
 
 ## Update coverage and reproducibility
 
@@ -52,7 +59,9 @@ npm run release:prepare -- 1.0.2
 Add `--write` to `maintenance:toolchains` or `release:prepare` only to apply that
 proposal locally. Release preparation updates the three Cargo manifests,
 workspace Cargo.lock and NuGet project-reference entries, WinUI version properties, Rust display version,
-and README identity. Release notes still require editorial review. A manually
+Windows assembly manifest, NSIS numeric fallback, and README identity. Release
+notes still require editorial review; the release workflow requires a matching
+version-specific notes file and publishes it as the release body. A manually
 dispatched release derives its version from these files; an optional supplied
 version is an assertion and fails if it disagrees. Version preparation never
 tags, signs, or publishes a release.

@@ -33,12 +33,12 @@ after the user-facing product name changed to SumaFile.
 
 ## Release flow
 
-1. Update the version in `src-winui/Directory.Build.props`,
-   `crates/simplefile-core/Cargo.toml`, `crates/simplefile-ipc/Cargo.toml`,
-   `crates/simplefile-service/Cargo.toml`, `Cargo.lock`, the
-   `APP_DISPLAY_VERSION` constant, and the README badge.
+1. Run `npm run release:prepare -- 1.0.2 --write` to align Cargo, WinUI, Windows
+   manifest, NSIS fallback, lockfiles and README version fields. Review the
+   [v1.0.2 notes](RELEASE_1.0.2.md) and changelog; `--resolve` requires matching
+   notes before the workflow can publish their contents as the release body.
 2. Commit the version bump and release notes.
-3. Create a tag matching `Directory.Build.props` `<Version>` (currently `v1.0.1`), or run the `Release` GitHub Actions workflow
+3. Create a tag matching `Directory.Build.props` `<Version>` (currently `v1.0.2`), or run the `Release` GitHub Actions workflow
    manually with that version.
 4. The release workflow runs quality gates, builds the WinUI host and Rust IPC
    service, signs the NSIS setup executable, uploads NSIS/MSI/portable

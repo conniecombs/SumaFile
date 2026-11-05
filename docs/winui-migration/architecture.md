@@ -8,7 +8,7 @@
 | **Status** | Historical design (Svelte/Tauri UI retired 2026-08-15) |
 | **Source tree** | `R:\Repos\SimpleFile-Windows` |
 | **Contract source** | [`docs/winui-migration/inventory.md`](inventory.md) |
-| **Current product** | SumaFile 1.0.1 (`com.simplefile.desktop`) |
+| **Current product** | SumaFile 1.0.2 (`com.simplefile.desktop`) |
 
 This is a historical design document from before the Svelte/Tauri UI was retired. The original 74-command / 5-event inventory remains migration context; the current parity gate is authoritative for the live service command count.
 

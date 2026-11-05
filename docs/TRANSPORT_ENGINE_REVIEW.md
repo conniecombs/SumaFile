@@ -1,5 +1,7 @@
 # Transport engine review and repairs
 
+These repairs are included in [SumaFile 1.0.2](RELEASE_1.0.2.md).
+
 Scope: local, removable, UNC and mounted-cloud copy/move; FTP/FTPS/SFTP streaming;
 Rust scheduling and staging; C# terminal outcomes, conflict retries and settings.
 Reviewed against `88ae5cbfadc4615910ab2fb41d7895b2a31b1336`.

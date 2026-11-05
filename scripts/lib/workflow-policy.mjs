@@ -95,6 +95,10 @@ export function validateWorkflows(workflows, dependabot) {
   needs('release.yml', 'build', ['validate', 'checks']);
   needs('release.yml', 'publish', ['validate', 'build']);
   check(release?.jobs?.publish?.if === "needs.validate.outputs.draft == 'false'", 'Release: publication must honor draft selection');
+  const releaseUpload = action(release?.jobs?.build, 'softprops/action-gh-release')?.with;
+  check(release?.jobs?.validate?.outputs?.notes === '${{ steps.version.outputs.notes }}'
+    && releaseUpload?.body_path === '${{ needs.validate.outputs.notes }}'
+    && releaseUpload?.body === undefined, 'Release: publish the validated version-specific release notes');
   command('release.yml', 'checks', /^npm run check\s*$/, 'repository checks');
   command('release.yml', 'checks', /^npm ci\b/, 'locked JavaScript install');
   command('release.yml', 'checks', /^cargo fmt\b.*--check/, 'format check');

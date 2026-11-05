@@ -1,13 +1,15 @@
 # Feature Opportunities
 
 This branch should prioritize Windows-native file-manager improvements.
+See [v1.0.2 release notes](RELEASE_1.0.2.md) for the current completed scope.
 
 ## Candidate Work
 
 - Richer mapped network drive display and error states. (Done: offline/stale
   badges, probe timeout, refresh, reconnect dialog.)
 - Better progress messaging for long local transfers. (Done: bytes/total,
-  rate, ETA, cancelling feedback, size preflight.)
+  rate, ETA, cancelling feedback, size preflight; v1.0.2 adds active files, tuning
+  explanations, structured outcomes and configurable retry/verification controls.)
 - More archive formats and safer extraction previews. (Done: metadata summaries now cover ZIP/TAR families and keep archive fields grouped in preview/properties surfaces; remaining opportunity is interactive archive preview actions.)
 - More metadata panels for media and document files. (Done: preview now groups image/audio/video/PDF/Office plus data/archive/font/ebook/email/calendar/contact/certificate fields into focused sections with fixture coverage; remaining opportunity is richer per-format visual smoke coverage.)
 - Rendered previews for Markdown/data documents. (Done: preview exposes a persisted opt-in rendered view for Markdown, HTML, JSON/JSONL, CSV/TSV, XML/XAML, YAML, TOML, AsciiDoc, and reStructuredText using a sanitized WebView document.)
