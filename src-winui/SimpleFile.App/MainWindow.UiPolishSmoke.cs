@@ -51,16 +51,41 @@ public sealed partial class MainWindow
         PrimaryDetailsFileList.ClearSelection();
         workspace.SelectPath(null, PaneId.Primary);
         _previewEmptySettled = true;
+        QueuePreviewFromSelection();
+        // An empty selection no longer collapses the preview: it stays open with its empty state.
+        SmokeAssert(PreviewPanel.Visibility == Visibility.Visible && PreviewRail.Visibility == Visibility.Collapsed,
+            "Empty unpinned preview collapsed at a roomy width");
+        await SmokeWaitAsync(() => PreviewSubtitle.Text == "Select a file", "preview empty state");
+        // Only a cramped dual-pane layout collapses the unpinned preview to its rail.
+        var roomySize = AppWindow.Size;
+        var roomyPreviewWidth = workspace.Settings.PreviewWidth;
+        try
+        {
+            var scale = RootGrid.XamlRoot.RasterizationScale;
+            AppWindow.Resize(new Windows.Graphics.SizeInt32((int)Math.Round(1000 * scale), roomySize.Height));
+            workspace.Settings.PreviewWidth = UiSettings.PreviewMaxWidth;
+            await Task.Delay(300);
+            ApplyPreviewVisibility();
+            SmokeAssert(PreviewLayoutPolicy.ShouldCollapse(workspace.Settings, false, true, ExplorerContentGrid.ActualWidth, false),
+                "Smoke window did not become cramped");
+            SmokeAssert(PreviewRail.Visibility == Visibility.Visible && PreviewPanel.Visibility == Visibility.Collapsed,
+                "Cramped unpinned preview did not collapse to its rail");
+            SmokeInvoke(PreviewRail);
+            SmokeAssert(PreviewPanel.Visibility == Visibility.Visible, "Preview rail did not reopen the panel");
+            var pin = SmokeDescendants<ToggleButton>(PreviewPanel).Single(button => button.Name == "PreviewPinButton");
+            ((IToggleProvider)new ToggleButtonAutomationPeer(pin).GetPattern(PatternInterface.Toggle)).Toggle();
+            await SmokeWaitAsync(() => workspace.Settings.PreviewPinned, "pin preview button");
+            _previewManuallyExpanded = false;
+            ApplyPreviewVisibility();
+            SmokeAssert(PreviewPanel.Visibility == Visibility.Visible, "Pinned preview collapsed when cramped");
+        }
+        finally
+        {
+            workspace.Settings.PreviewWidth = roomyPreviewWidth;
+            AppWindow.Resize(roomySize);
+        }
+        await Task.Delay(300);
         ApplyPreviewVisibility();
-        SmokeAssert(PreviewRail.Visibility == Visibility.Visible, "Empty unpinned preview did not collapse");
-        SmokeInvoke(PreviewRail);
-        SmokeAssert(PreviewPanel.Visibility == Visibility.Visible, "Preview rail did not reopen the panel");
-        var pin = SmokeDescendants<ToggleButton>(PreviewPanel).Single(button => button.Name == "PreviewPinButton");
-        ((IToggleProvider)new ToggleButtonAutomationPeer(pin).GetPattern(PatternInterface.Toggle)).Toggle();
-        await SmokeWaitAsync(() => workspace.Settings.PreviewPinned, "pin preview button");
-        _previewManuallyExpanded = false;
-        ApplyPreviewVisibility();
-        SmokeAssert(PreviewPanel.Visibility == Visibility.Visible, "Pinned preview collapsed");
         workspace.SetFilterQuery(PaneId.Primary, "file-0000");
         workspace.SetFileListView(PaneId.Primary, "details");
         workspace.SetFileListView(PaneId.Secondary, "details");
@@ -93,11 +118,16 @@ public sealed partial class MainWindow
             await Task.Delay(300);
             SmokeAssert(comparisons[0].KeepBothName == "report (1).txt", "Unexpected Keep both preview");
             await SmokeCaptureAsync(conflict, Path.Combine(root, "conflict-polish.png"));
-            SmokeInvoke(SmokeDescendants<Button>(conflict).Single(button => button.Content?.ToString() == "Keep both"));
+            var choices = SmokeDescendants<RadioButtons>(conflict).Single(group => group.Name == "ChoiceButtons");
+            var keepBothIndex = choices.Items.IndexOf(choices.Items.OfType<TextBlock>()
+                .Single(item => item.Text.StartsWith("Keep both", StringComparison.Ordinal)));
+            SmokeAssert(keepBothIndex >= 0 && choices.SelectedIndex != keepBothIndex, "Keep both was the default conflict choice");
+            choices.SelectedIndex = keepBothIndex;
+            SmokeInvoke(SmokeDescendants<Button>(conflict).Single(button => button.Name == "PrimaryButton"));
         }
         finally { conflict.Hide(); }
         await dialogTask;
-        SmokeAssert(conflict.Result == ConflictResolution.KeepBoth, "Keep both button did not select its action");
+        SmokeAssert(conflict.Result == ConflictResolution.KeepBoth, "Keep both choice did not select its action");
         await workspace.FileOps!.CopyAsync([incoming], existingFolder, "keep-both");
         SmokeAssert(await File.ReadAllTextAsync(Path.Combine(existingFolder, comparisons[0].KeepBothName)) == "incoming content"
             && await File.ReadAllTextAsync(Path.Combine(existingFolder, "report.txt")) == "existing",

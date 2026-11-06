@@ -15,6 +15,17 @@ namespace SimpleFile.App;
 
 public sealed partial class MainWindow
 {
+    private static async Task SmokeExpandTransferDetailsAsync(FrameworkElement view)
+    {
+        await SmokeWaitAsync(() => SmokeDescendants<Expander>(view).Any(e => Equals(e.Header, "Details")), "transfer details expander");
+        foreach (var expander in SmokeDescendants<Expander>(view).Where(e => Equals(e.Header, "Details")))
+        {
+            expander.IsExpanded = true;
+        }
+        view.UpdateLayout();
+        await Task.Delay(200);
+    }
+
     private async Task SmokeAdaptiveTransfersAsync(string root, string manyFiles, List<object> results,
         Func<string, Task> checkpoint)
     {
@@ -32,8 +43,8 @@ public sealed partial class MainWindow
         var mode = SmokeDescendants<ComboBox>(dialog!).Single(c => Equals(c.Header, "Mode"));
         var numbers = SmokeDescendants<NumberBox>(dialog!).ToArray();
         mode.SelectedIndex = 3;
-        numbers.Single(n => Equals(n.Header, "Maximum simultaneous files")).Value = 4;
-        numbers.Single(n => Equals(n.Header, "Bandwidth limit (MiB/s; 0 = unlimited)")).Value = 4;
+        numbers.Single(n => Equals(n.Header, "Files at once")).Value = 4;
+        numbers.Single(n => Equals(n.Header, "Bandwidth limit (MB/s, 0 = unlimited)")).Value = 4;
         var apply = SmokeDescendants<Button>(dialog!).Single(b => b.Name == "PrimaryButton");
         ((IInvokeProvider)new ButtonAutomationPeer(apply).GetPattern(PatternInterface.Invoke)).Invoke();
         await optionsTask;
@@ -54,6 +65,8 @@ public sealed partial class MainWindow
         await SmokeWaitAsync(() => _transfer!.Operations.Any(o => o.Sources.Contains(source) && o.ActiveFiles.Count == 4), "four active file rows");
         var operation = _transfer!.Operations.First(o => o.Sources.Contains(source));
         await Task.Delay(200);
+        // Active files and tuning text live in each task's collapsed "Details" expander.
+        await SmokeExpandTransferDetailsAsync(view);
         SmokeAssert(SmokeDescendants<TextBlock>(view).Any(t => t.Text == "image-0.bin" || t.Text.StartsWith("image-", StringComparison.Ordinal)),
             "The active file model did not render in the transfer window");
         var bitmap = new RenderTargetBitmap();
@@ -102,6 +115,7 @@ public sealed partial class MainWindow
                 return TransferOperationStatus.Completed;
             });
             await SmokeWaitAsync(() => pressureOperation.TuningText.Contains("Retrying failed I/O", StringComparison.Ordinal), "storage pressure wait");
+            await SmokeExpandTransferDetailsAsync(view);
             SmokeAssert(SmokeDescendants<TextBlock>(view).Any(t => t.Text.Contains("Retrying failed I/O", StringComparison.Ordinal)),
                 "Storage wait did not render in the transfer window");
             SmokeAssert(pressureOperation.TuningText.Contains("up to 4 files", StringComparison.Ordinal), "A file retry changed Custom concurrency");
