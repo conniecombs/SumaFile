@@ -50,6 +50,7 @@
                         Style="{StaticResource SfGhostButtonStyle}"
                         Click="OnRefreshClicked"
                         IsEnabled="{Binding CanRefresh}"
+                        AutomationProperties.Name="Refresh Git status"
                         ToolTipService.ToolTip="Refresh Git status">
                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE72C;" />
                     </Button>
@@ -57,6 +58,7 @@
                         Style="{StaticResource SfGhostButtonStyle}"
                         Click="OnFetchClicked"
                         IsEnabled="{Binding CanFetch}"
+                        AutomationProperties.Name="Fetch"
                         ToolTipService.ToolTip="Fetch">
                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE8B5;" />
                     </Button>

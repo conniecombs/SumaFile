@@ -390,15 +390,8 @@ public sealed partial class MainWindow
             return;
         }
 
-        SyncQuickFilterBox(QuickFilterBox, _workspace.FilterQueryFor(_workspace.Normalize(_workspace.ActivePane)));
-    }
-
-    private static void SyncQuickFilterBox(TextBox box, string filter)
-    {
-        if (!string.Equals(box.Text, filter, StringComparison.Ordinal))
-        {
-            box.Text = filter;
-        }
+        // The omnibar shows the active pane's filter while in Filter mode.
+        SyncOmnibarFromWorkspace();
     }
 
     private static T? ChromeResource<T>(string key) where T : class
@@ -409,6 +402,20 @@ public sealed partial class MainWindow
     }
 
     private static Style? ChromeStyle(string key) => ChromeResource<Style>(key);
+
+    /// <summary>
+    /// Plain buttons that act as toggles: reflect the state in the accessible name, the tooltip
+    /// and a selected background so sighted and screen-reader users both see what is open.
+    /// </summary>
+    private void SetToggleChromeState(Button button, bool isOn, string onName, string offName)
+    {
+        var name = isOn ? onName : offName;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, name);
+        ToolTipService.SetToolTip(button, name);
+        button.Background = isOn
+            ? Brush("SfBgSelectedBrush")
+            : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+    }
 
     private Brush Brush(string key)
     {
@@ -737,7 +744,9 @@ public sealed partial class MainWindow
             error,
             _workspace?.FilterQueryFor(pane.Id),
             _workspace?.ShowHiddenFiles ?? false,
-            pane.Path);
+            pane.Path,
+            newFolderShortcut: ShortcutLabelFor("new-folder") ?? "",
+            toggleHiddenShortcut: ShortcutLabelFor("toggle-hidden") ?? "");
         host.Visibility = state.Visible ? Visibility.Visible : Visibility.Collapsed;
         if (!state.Visible)
         {

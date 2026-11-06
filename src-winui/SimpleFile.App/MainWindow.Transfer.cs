@@ -178,8 +178,14 @@ public sealed partial class MainWindow
         var hovered = HoveredFileRow(e, pane);
         var target = DropDestination.Resolve(_workspace.Pane(pane).Path, hovered?.Path, hovered?.IsDir == true);
         var sources = await ReadDroppedPathsAsync(e);
-        if (sources.Count == 0 || !DropDestination.IsValidDrop(sources, target.Destination))
+        if (sources.Count == 0)
         {
+            return;
+        }
+
+        if (!DropDestination.IsValidDrop(sources, target.Destination))
+        {
+            SetStatusText("Cannot drop into that location");
             return;
         }
 
@@ -1020,7 +1026,12 @@ public sealed partial class MainWindow
                 destination = picked;
             }
 
-            await fileOps.ExtractArchiveAsync(info.Path, destination, archiveCts.Token);
+            await DialogHost.RunWithProgressAsync(
+                Content.XamlRoot,
+                "Extract archive",
+                $"Extracting {row.Name} to {destination}…",
+                (_, token) => fileOps.ExtractArchiveAsync(info.Path, destination, token),
+                archiveCts.Token);
             if (ReferenceEquals(_workspace, workspace) && !archiveCts.IsCancellationRequested)
             {
                 await workspace.RefreshAffectedPanesAsync([destination], archiveCts.Token);

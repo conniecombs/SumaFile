@@ -17,8 +17,6 @@ public class ToolbarOverflowPlannerTests
     {
         var widths = new Dictionary<string, double>(StringComparer.Ordinal)
         {
-            [ToolbarOverflowPlanner.Filter] = ToolbarOverflowPlanner.FilterOverflowWidthFor(1200),
-            [ToolbarOverflowPlanner.Search] = ToolbarOverflowPlanner.SearchOverflowWidthFor(1200),
             [ToolbarOverflowPlanner.Settings] = 32,
             [ToolbarOverflowPlanner.Profiles] = 32,
             [ToolbarOverflowPlanner.ViewOptions] = 32,
@@ -35,8 +33,6 @@ public class ToolbarOverflowPlannerTests
 
         Assert.Equal(
             [
-                ToolbarOverflowPlanner.Filter,
-                ToolbarOverflowPlanner.Search,
                 ToolbarOverflowPlanner.Settings,
                 ToolbarOverflowPlanner.Profiles,
                 ToolbarOverflowPlanner.ViewOptions,
@@ -55,8 +51,7 @@ public class ToolbarOverflowPlannerTests
         Assert.Empty(wide);
 
         var medium = ToolbarOverflowPlanner.OverflowIds(700, reserved, widths, ToolbarOverflowPlanner.PrimaryHideOrder);
-        Assert.Contains(ToolbarOverflowPlanner.Filter, medium);
-        Assert.Contains(ToolbarOverflowPlanner.Search, medium);
+        Assert.Contains(ToolbarOverflowPlanner.Settings, medium);
         Assert.DoesNotContain(ToolbarOverflowPlanner.New, medium);
 
         var narrow = ToolbarOverflowPlanner.OverflowIds(340, reserved, widths, ToolbarOverflowPlanner.PrimaryHideOrder);
@@ -65,17 +60,5 @@ public class ToolbarOverflowPlannerTests
 
         var again = ToolbarOverflowPlanner.OverflowIds(340, reserved, widths, ToolbarOverflowPlanner.PrimaryHideOrder);
         Assert.True(narrow.SetEquals(again));
-    }
-    [Theory]
-    [InlineData(700, 260, 128)]
-    [InlineData(1600, 384, 160)]
-    [InlineData(2400, 480, 200)]
-    public void ToolbarOverflowPlanner_ScalesSearchAndFilterWithinCaps(
-        double availableWidth,
-        double expectedSearchWidth,
-        double expectedFilterWidth)
-    {
-        Assert.Equal(expectedSearchWidth, ToolbarOverflowPlanner.SearchWidthFor(availableWidth), 3);
-        Assert.Equal(expectedFilterWidth, ToolbarOverflowPlanner.FilterWidthFor(availableWidth), 3);
     }
 }

@@ -795,8 +795,6 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        ApplyResponsiveToolbarSizing(toolbarWidth);
-
         var reserved = MeasuredWidth(PrimaryNavHost)
             + MeasuredWidth(PrimaryMoreButton)
             + OmnibarHost.MinWidth
@@ -814,12 +812,6 @@ public sealed partial class MainWindow : Window
             ToolbarOverflowPlanner.PrimaryHideOrderFor(layout));
 
         ApplyOverflowSet(_primaryToolbarOverflow, overflowed, ApplyPrimaryOverflowVisibility);
-    }
-
-    private void ApplyResponsiveToolbarSizing(double toolbarWidth)
-    {
-        SetWidthIfChanged(PrimarySearchHost, ToolbarOverflowPlanner.SearchWidthFor(toolbarWidth));
-        SetWidthIfChanged(QuickFilterBox, ToolbarOverflowPlanner.FilterWidthFor(toolbarWidth));
     }
 
     private void ApplyOverflowSet(
@@ -851,10 +843,6 @@ public sealed partial class MainWindow : Window
 
     private void ApplyPrimaryOverflowVisibility(IReadOnlySet<string> overflowed)
     {
-        SetOverflowVisible(QuickFilterBox, !overflowed.Contains(ToolbarOverflowPlanner.Filter));
-        var searchVisible = !overflowed.Contains(ToolbarOverflowPlanner.Search);
-        SetOverflowVisible(PrimarySearchHost, searchVisible);
-        PrimarySearchColumn.Width = searchVisible ? GridLength.Auto : new GridLength(0);
         ApplyPrimaryToolbarCommandVisibility(overflowed);
         SetOverflowVisible(ClosePrimaryPaneButton, false);
         var actionsVisible = HasVisiblePrimaryToolbarAction();

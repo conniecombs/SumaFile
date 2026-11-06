@@ -61,7 +61,7 @@ public sealed partial class ConflictDialog : ContentDialog
         ConflictMessage.Text = text.ConflictSummary;
         ChoiceHint.Text = text.ChoiceHint;
         ApplyToAll.Content = context.Conflicts.Count > 0
-            ? $"Apply to {context.Conflicts.Count:N0} {(context.Conflicts.Count == 1 ? "conflict" : "conflicts")} and any further conflicts in this transfer"
+            ? $"This choice applies to all {context.Conflicts.Count:N0} listed {(context.Conflicts.Count == 1 ? "conflict" : "conflicts")}; also apply it to conflicts found inside folders"
             : "Apply to all remaining conflicts";
     }
 

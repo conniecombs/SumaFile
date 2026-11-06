@@ -167,16 +167,6 @@ public static class ContextMenuBuilder
             overflowed.Contains(id);
 
         var items = new List<ContextMenuEntry>();
-        if (Has(ToolbarOverflowPlanner.Search))
-        {
-            items.Add(Item("overflow-search", "Find in folder", shortcut: "Ctrl+F"));
-        }
-
-        if (Has(ToolbarOverflowPlanner.Filter))
-        {
-            items.Add(Item("overflow-filter", "Filter list"));
-        }
-
         var actionOrder = request.ToolbarActionOrder.Count == 0
             ? CommandSurfaceLayout.DefaultPrimaryActionIds
             : request.ToolbarActionOrder;

@@ -57,7 +57,7 @@ public sealed partial class MainWindow
                 };
                 button.Click += OnSortColumn;
                 ToolTipService.SetToolTip(button, $"Sort by {column.Label}");
-                AutomationProperties.SetName(button, $"Sort by {column.Label}");
+                AutomationProperties.SetName(button, SortAutomationName(column, pane));
                 cell.Children.Add(button);
 
                 var thumb = new PaneResizeGrip
@@ -68,6 +68,7 @@ public sealed partial class MainWindow
                     Margin = new Thickness(0, 0, -4, 0),
                     Tag = new ColumnResizeTarget(column.Id, pane),
                 };
+                AutomationProperties.SetName(thumb, $"Resize {column.Label} column");
                 thumb.Children.Add(new Rectangle
                 {
                     Width = 1,
@@ -112,6 +113,19 @@ public sealed partial class MainWindow
         }
 
         header.Width = Math.Max(1, columns.VisibleWidth + header.Padding.Left + header.Padding.Right);
+    }
+
+    private string SortAutomationName(FileListColumn column, PaneId pane)
+    {
+        var label = column.Id == "date" ? "Date modified" : column.Label;
+        if (_workspace is null || !string.Equals(_workspace.SortByFor(pane), column.Sort, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Sort by {label}";
+        }
+
+        return _workspace.SortAscendingFor(pane)
+            ? $"Sort by {label}, currently sorted ascending"
+            : $"Sort by {label}, currently sorted descending";
     }
 
     private string HeaderLabel(FileListColumn column, PaneId pane)

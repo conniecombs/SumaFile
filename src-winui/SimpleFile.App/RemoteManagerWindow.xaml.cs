@@ -60,7 +60,11 @@ public sealed partial class RemoteManagerWindow : Window
         await RunRemoteActionAsync(() => _viewModel.LoadProfilesAsync());
 
     private async void OnConnectClicked(object sender, RoutedEventArgs e) =>
-        await RunRemoteActionAsync(() => _viewModel.ConnectSelectedProfileAsync());
+        await RunRemoteActionAsync(() => DialogHost.RunWithProgressAsync(
+            Root.XamlRoot,
+            "Connecting",
+            $"Connecting to {_viewModel.SelectedProfile?.Name ?? "the selected profile"}…",
+            (_, token) => _viewModel.ConnectSelectedProfileAsync(null, token)));
 
     private async void OnDisconnectClicked(object sender, RoutedEventArgs e) =>
         await RunRemoteActionAsync(() => _viewModel.DisconnectAsync());

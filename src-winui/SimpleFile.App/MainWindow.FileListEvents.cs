@@ -477,7 +477,7 @@ public sealed partial class MainWindow
             visible.Count,
             selectedEntries,
             searchCount,
-            _search is null ? null : ActiveToolbarSearchTextBox().Text);
+            _search is null ? null : ActiveSearchQuery);
         ApplyStatusBarState();
     }
 

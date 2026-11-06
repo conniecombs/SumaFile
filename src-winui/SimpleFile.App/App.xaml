@@ -280,9 +280,9 @@
                     <SolidColorBrush x:Key="SfPaneInactiveBgBrush" Color="#000000" />
                     <SolidColorBrush x:Key="SfBgHoverBrush" Color="#1A1A1A" />
                     <SolidColorBrush x:Key="SfBgPressedBrush" Color="#2A2A2A" />
-                    <SolidColorBrush x:Key="SfBgSelectedBrush" Color="#1A1A1A" />
+                    <SolidColorBrush x:Key="SfBgSelectedBrush" Color="#2B2B8F" />
                     <SolidColorBrush x:Key="SfTextPrimaryBrush" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="SfTextMutedBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="SfTextMutedBrush" Color="#C8C8C8" />
                     <SolidColorBrush x:Key="SfAccentBrush" Color="#FFFF00" />
                     <SolidColorBrush x:Key="SfAccentSoftBrush" Color="#33FFFF00" />
                     <SolidColorBrush x:Key="SfActivePaneBorderBrush" Color="#FFFF00" />

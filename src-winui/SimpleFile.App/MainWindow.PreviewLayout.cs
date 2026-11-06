@@ -54,7 +54,8 @@ public sealed partial class MainWindow
     private void OnExplorerContentSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (_workspace is null || Math.Abs(e.NewSize.Width - e.PreviousSize.Width) < 1) return;
-        _previewManuallyExpanded = false;
+        // A resize re-evaluates the collapse policy but never discards the user's explicit
+        // choice to open the pane; only Pin/unpin and the toggle change that.
         ApplyPreviewVisibility();
     }
 

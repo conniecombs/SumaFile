@@ -51,7 +51,9 @@ public static class OmnibarIntentParser
             return new OmnibarIntent(OmnibarIntentKind.Search, value[1..].Trim());
         }
 
-        if (value.StartsWith("~", StringComparison.Ordinal))
+        // "~name" filters; "~\folder" and "~/folder" are home-relative paths.
+        if (value.StartsWith("~", StringComparison.Ordinal)
+            && !(value.Length > 1 && value[1] is '\\' or '/'))
         {
             return new OmnibarIntent(OmnibarIntentKind.Filter, value[1..].Trim());
         }

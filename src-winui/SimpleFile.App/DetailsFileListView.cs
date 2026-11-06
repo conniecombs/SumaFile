@@ -572,6 +572,12 @@ public sealed class DetailsFileListView : UserControl
             return;
         }
 
+        if (args.Item is FileRow namedRow)
+        {
+            // Narrator focuses the container, so the row name must live there.
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(args.ItemContainer, namedRow.AutomationName);
+        }
+
         item.Width = _viewportWidth;
         item.MinWidth = 0;
         item.HorizontalAlignment = HorizontalAlignment.Left;

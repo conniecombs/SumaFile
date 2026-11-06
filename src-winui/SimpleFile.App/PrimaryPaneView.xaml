@@ -112,6 +112,7 @@
                                         Grid.Column="1"
                                         Style="{StaticResource SfToolbarButtonStyle}"
                                         Click="OnEditPrimaryPath"
+                                        AutomationProperties.Name="Edit path"
                                         ToolTipService.ToolTip="Edit path">
                                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="13" Glyph="&#xE70F;" />
                                     </Button>

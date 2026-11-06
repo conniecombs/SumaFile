@@ -446,7 +446,7 @@ public class WinUiSourceShapeTests
         Assert.Contains("Current view options", toolbar);
         Assert.Contains("Save view defaults", toolbar);
         Assert.Contains("SaveFolderViewSettingsFromFlyoutAsync", commands);
-        Assert.Contains("ActiveToolbarSearchTextBox", commands);
+        Assert.Contains("ActiveSearchQuery", commands);
         Assert.DoesNotContain("SearchTextBoxFor", commands);
         Assert.Contains("EffectiveFolderViewRuleFor", workspace);
         Assert.Contains("FolderViewSettingsDocument.SettingsKey", settingsStore);

@@ -41,7 +41,7 @@
                 </Grid>
 
                 <Grid Grid.Row="1">
-                    <ProgressBar
+                    <ProgressBar AutomationProperties.Name="Transfer progress"
                         x:Name="ProgressBar"
                         Height="4"
                         Margin="0,18,0,0"
@@ -58,7 +58,7 @@
                 </Grid>
 
                 <Grid Grid.Row="2">
-                    <ProgressBar
+                    <ProgressBar AutomationProperties.Name="Current file progress"
                         x:Name="FileProgressBar"
                         Height="3"
                         Margin="0,18,0,0"

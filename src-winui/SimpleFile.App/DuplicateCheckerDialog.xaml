@@ -144,7 +144,7 @@
                     Text="Scanning for duplicate files"
                     FontSize="18"
                     FontWeight="SemiBold" />
-                <ProgressBar
+                <ProgressBar AutomationProperties.Name="Scan progress"
                     x:Name="ScanProgress"
                     Grid.Row="1"
                     Margin="0,16,0,0"
@@ -247,7 +247,7 @@
                                                     <ColumnDefinition Width="Auto" />
                                                 </Grid.ColumnDefinitions>
 
-                                                <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected, Mode=TwoWay}" IsEnabled="{Binding CanSelect}" Click="FileCheckbox_Click" Tag="{Binding}" VerticalAlignment="Center" />
+                                                <CheckBox Grid.Column="0" AutomationProperties.Name="Select for deletion" IsChecked="{Binding IsSelected, Mode=TwoWay}" IsEnabled="{Binding CanSelect}" Click="FileCheckbox_Click" Tag="{Binding}" VerticalAlignment="Center" />
 
                                                 <StackPanel Grid.Column="1" Margin="8,0">
                                                     <TextBlock Text="{Binding FileName}" FontWeight="Bold" TextTrimming="CharacterEllipsis" />

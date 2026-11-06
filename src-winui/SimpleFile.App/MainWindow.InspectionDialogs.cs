@@ -61,8 +61,12 @@ public sealed partial class MainWindow
             var utilityCts = BeginUtilityOperation("ShowQuickLookAsync");
             try
             {
-                var metrics = await fileOps.GetFolderMetricsAsync(row.Path, utilityCts.Token)
-                    .ConfigureAwait(true);
+                var metrics = await DialogHost.RunWithProgressAsync(
+                    Content.XamlRoot,
+                    "Quick Look",
+                    $"Measuring {row.Name}…",
+                    (_, token) => fileOps.GetFolderMetricsAsync(row.Path, token),
+                    utilityCts.Token);
 
                 if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
                 {
@@ -516,31 +520,34 @@ public sealed partial class MainWindow
         var utilityCts = BeginUtilityOperation("ShowFolderMetricsAsync");
         try
         {
-            var lines = new List<string>();
-            ulong totalSize = 0;
-            ulong totalCount = 0;
-
-            foreach (var path in paths)
-            {
-                SetStatusText($"Calculating metrics for {path}...");
-                var metrics = await fileOps.GetFolderMetricsAsync(path, utilityCts.Token);
-                if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
+            var lines = await DialogHost.RunWithProgressAsync(
+                Content.XamlRoot,
+                "Folder metrics",
+                $"Measuring {paths.Length} folders…",
+                async (progress, token) =>
                 {
-                    return;
-                }
+                    var measured = new List<string>();
+                    ulong totalSize = 0;
+                    ulong totalCount = 0;
+                    for (var index = 0; index < paths.Length; index++)
+                    {
+                        var path = paths[index];
+                        progress.Report($"Measuring {index + 1} of {paths.Length}: {path}");
+                        var metrics = await fileOps.GetFolderMetricsAsync(path, token);
+                        measured.Add($"{path}{Environment.NewLine}{EntryPresentation.FormatFileSize(metrics.Size)} · {metrics.ItemCount} item(s)");
+                        totalSize += metrics.Size;
+                        totalCount += metrics.ItemCount;
+                    }
 
-                lines.Add($"{path}{Environment.NewLine}{EntryPresentation.FormatFileSize(metrics.Size)} · {metrics.ItemCount} item(s)");
-                totalSize += metrics.Size;
-                totalCount += metrics.ItemCount;
-            }
-
-            if (paths.Length > 1)
+                    measured.Add(paths.Length > 1
+                        ? $"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s) across {paths.Length} folders"
+                        : $"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s)");
+                    return measured;
+                },
+                utilityCts.Token);
+            if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
             {
-                lines.Add($"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s) across {paths.Length} folders");
-            }
-            else
-            {
-                lines.Add($"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s)");
+                return;
             }
 
             SetStatusText("");
@@ -615,7 +622,6 @@ public sealed partial class MainWindow
             destinationText.Text = row.Display.DestinationSummary;
         }
 
-        list.SelectionChanged += (_, _) => UpdateDetails();
         UpdateDetails();
         var content = new StackPanel
         {
@@ -636,8 +642,18 @@ public sealed partial class MainWindow
             PrimaryButtonText = OperationHistoryFormatter.RetrySelectedLabel,
             SecondaryButtonText = workspace.Undo.CanUndo ? "Undo last" : "",
             CloseButtonText = "Close",
-            DefaultButton = ContentDialogButton.Primary,
+            DefaultButton = ContentDialogButton.Close,
             XamlRoot = Content.XamlRoot,
+        };
+        // Retry only makes sense for transfers that did not complete.
+        static bool CanRetry(object? item) =>
+            item is OperationHistoryRow candidate
+            && candidate.Record.Status is "failed" or "cancelled";
+        dialog.IsPrimaryButtonEnabled = CanRetry(list.SelectedItem);
+        list.SelectionChanged += (_, _) =>
+        {
+            UpdateDetails();
+            dialog.IsPrimaryButtonEnabled = CanRetry(list.SelectedItem);
         };
         var result = await DialogHost.ShowAsync(dialog);
         if (!ReferenceEquals(_workspace, workspace))

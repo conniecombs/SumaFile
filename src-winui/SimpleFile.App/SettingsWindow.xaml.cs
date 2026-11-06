@@ -113,6 +113,7 @@ public sealed partial class SettingsWindow : Window
         SecondaryWindowChrome.Apply(this, "Settings", 1120, 760);
 
         Closed += OnClosed;
+        AppWindow.Closing += OnAppWindowClosing;
         SelectInitialCategory();
         UpdateDefaultIconSizeValueText(DefaultIconSize);
         _shortcutRows = KeyboardShortcutMap.Defaults
@@ -681,6 +682,37 @@ public sealed partial class SettingsWindow : Window
     }
 
     public bool IsClosed { get; private set; }
+
+    private bool _discardConfirmed;
+
+    private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_result == ContentDialogResult.Primary || _discardConfirmed || !HasUnsavedChanges)
+        {
+            return;
+        }
+
+        args.Cancel = true;
+        var dialog = new ContentDialog
+        {
+            Title = "Discard changes?",
+            Content = "You have unsaved settings changes.",
+            PrimaryButtonText = "Discard",
+            CloseButtonText = "Keep editing",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await DialogHost.ShowAsync(dialog) == ContentDialogResult.Primary)
+        {
+            _discardConfirmed = true;
+            Close();
+        }
+    }
+
+    private void OnRestoreDefaultsClicked(object sender, RoutedEventArgs e)
+    {
+        ApplySettingsSnapshot(UiSettings.CreateDefault());
+    }
 
     private void OnClosed(object sender, WindowEventArgs args)
     {

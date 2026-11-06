@@ -16,7 +16,9 @@ public sealed class EmptyPaneState
         string? errorMessage,
         string? filterQuery,
         bool showHidden,
-        string? path)
+        string? path,
+        string newFolderShortcut = "Ctrl+Shift+N",
+        string toggleHiddenShortcut = "Ctrl+H")
     {
         if (visibleCount > 0)
         {
@@ -50,12 +52,18 @@ public sealed class EmptyPaneState
 
         if (rawCount > 0 && !showHidden)
         {
-            return VisibleState("Hidden items are hidden", "Press Ctrl+H to show hidden files");
+            return VisibleState(
+                "Hidden items are hidden",
+                string.IsNullOrWhiteSpace(toggleHiddenShortcut)
+                    ? "Use View to show hidden files"
+                    : $"Press {toggleHiddenShortcut} to show hidden files");
         }
 
         return VisibleState(
             "This folder is empty",
-            "Drop files here, or press Ctrl+Shift+N to create a folder");
+            string.IsNullOrWhiteSpace(newFolderShortcut)
+                ? "Drop files here, or use New to create a folder"
+                : $"Drop files here, or press {newFolderShortcut} to create a folder");
     }
 
     private static EmptyPaneState VisibleState(string title, string hint)

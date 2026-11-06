@@ -97,11 +97,22 @@ public sealed partial class MainWindow
 
     private string SyncedOmnibarTextFor(OmnibarMode mode) => mode switch
     {
-        OmnibarMode.Search => SearchBox.Text,
-        OmnibarMode.Filter => QuickFilterBox.Text,
+        OmnibarMode.Search => _search?.Query ?? "",
+        OmnibarMode.Filter => _workspace?.FilterQueryFor(ActiveUiPane) ?? "",
         OmnibarMode.Command => "",
         _ => _workspace?.Active.Path ?? "",
     };
+
+    /// <summary>Filter mode applies as the user types, like the old filter box did.</summary>
+    private void OnOmnibarTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_syncingOmnibar || _applyingWorkspace || _omnibarMode != OmnibarMode.Filter || !_omnibarFocused)
+        {
+            return;
+        }
+
+        _workspace?.SetFilterQuery(ActiveUiPane, OmnibarInput.Text);
+    }
 
     private void FocusOmnibar(OmnibarMode mode)
     {
@@ -128,12 +139,15 @@ public sealed partial class MainWindow
                 break;
             case OmnibarIntentKind.Search:
                 SetOmnibarMode(OmnibarMode.Search, focus: false);
-                SearchBox.Text = intent.Value;
+                if (_search is not null)
+                {
+                    _search.Query = intent.Value;
+                }
+
                 await StartSearchAsync(ActiveUiPane);
                 break;
             case OmnibarIntentKind.Filter:
                 SetOmnibarMode(OmnibarMode.Filter, focus: false);
-                QuickFilterBox.Text = intent.Value;
                 _workspace.SetFilterQuery(ActiveUiPane, intent.Value);
                 SetStatusText(string.IsNullOrWhiteSpace(intent.Value)
                     ? "Filter cleared"
@@ -201,5 +215,11 @@ public sealed partial class MainWindow
         OmnibarSearchModeButton.IsChecked = _omnibarMode == OmnibarMode.Search;
         OmnibarFilterModeButton.IsChecked = _omnibarMode == OmnibarMode.Filter;
         OmnibarCommandModeButton.IsChecked = _omnibarMode == OmnibarMode.Command;
+
+        // Search mode exposes the content-search toggle and the cancel button beside Run.
+        var searching = _omnibarMode == OmnibarMode.Search;
+        ContentSearchButton.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;
+        SearchCancelButton.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;
+        OmnibarInput.Padding = new Thickness(116, 4, searching ? 92 : 34, 4);
     }
 }

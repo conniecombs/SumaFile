@@ -147,7 +147,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var query = ActiveToolbarSearchTextBox().Text.Trim();
+        var query = (_search?.ExecutedQuery is { Length: > 0 } executed ? executed : ActiveSearchQuery).Trim();
         if (string.IsNullOrWhiteSpace(query))
         {
             ShowMessage("Smart folder", "Run a search before saving it as a smart folder.", InfoBarSeverity.Informational);

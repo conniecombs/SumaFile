@@ -271,9 +271,10 @@ public static class ToolbarActionCatalog
         var existing = new HashSet<string>(actions.Select(action => action.Id), StringComparer.Ordinal);
         foreach (var command in AppCommandCatalog.All)
         {
+            // "search" and "filter" focus the omnibar; they are not toolbar buttons.
             if (existing.Contains(command.Id)
-                || string.Equals(command.Id, ToolbarOverflowPlanner.Search, StringComparison.Ordinal)
-                || string.Equals(command.Id, ToolbarOverflowPlanner.Filter, StringComparison.Ordinal))
+                || string.Equals(command.Id, "search", StringComparison.Ordinal)
+                || string.Equals(command.Id, "filter", StringComparison.Ordinal))
             {
                 continue;
             }

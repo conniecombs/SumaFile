@@ -71,163 +71,25 @@ public sealed partial class MainWindow
     private readonly SemaphoreSlim _viewIconSizeSaveGate = new(1, 1);
     private List<AppCommand> _paletteCommands = [];
 
-    private void FocusSearchUi()
-    {
-        if (OmnibarHost.Visibility == Visibility.Visible)
-        {
-            FocusOmnibar(OmnibarMode.Search);
-            return;
-        }
+    private void FocusSearchUi() => FocusOmnibar(OmnibarMode.Search);
 
-        var pane = ActiveUiPane;
-        var host = ActiveToolbarSearchHost();
-        var box = ActiveToolbarSearchTextBox();
-        if (host.Visibility == Visibility.Visible)
-        {
-            _workspace?.ActivatePane(pane);
-            box.Focus(FocusState.Programmatic);
-            box.SelectAll();
-            return;
-        }
-
-        ShowOverflowInputFlyout(
-            ActiveToolbarMoreButton(),
-            "Find in folder",
-            box.Text,
-            async text =>
-            {
-                box.Text = text;
-                await StartSearchAsync(pane);
-            },
-            commitOnClose: false);
-    }
-
-    private void FocusFilterUi()
-    {
-        if (OmnibarHost.Visibility == Visibility.Visible)
-        {
-            FocusOmnibar(OmnibarMode.Filter);
-            return;
-        }
-
-        var pane = ActiveUiPane;
-        var box = ActiveToolbarQuickFilterBox();
-        if (box.Visibility == Visibility.Visible)
-        {
-            _workspace?.ActivatePane(pane);
-            box.Focus(FocusState.Programmatic);
-            box.SelectAll();
-            return;
-        }
-
-        ShowOverflowInputFlyout(
-            ActiveToolbarMoreButton(),
-            "Filter list",
-            box.Text,
-            text =>
-            {
-                if (!string.Equals(box.Text, text, StringComparison.Ordinal))
-                {
-                    box.Text = text;
-                }
-
-                _workspace?.SetFilterQuery(pane, text);
-                return Task.CompletedTask;
-            },
-            commitOnClose: true);
-    }
-
-    private void ShowOverflowInputFlyout(
-        FrameworkElement anchor,
-        string placeholder,
-        string? current,
-        Func<string, Task> commit,
-        bool commitOnClose)
-    {
-        var input = new TextBox
-        {
-            MinWidth = 240,
-            PlaceholderText = placeholder,
-            Text = current ?? "",
-            Style = SearchBox.Style,
-        };
-        var flyout = new Flyout { Content = input };
-        var committed = false;
-
-        async Task CommitAsync()
-        {
-            if (committed)
-            {
-                return;
-            }
-
-            committed = true;
-            await commit(input.Text);
-        }
-
-        input.KeyDown += async (_, args) =>
-        {
-            if (args.Key == VirtualKey.Enter)
-            {
-                args.Handled = true;
-                flyout.Hide();
-                await CommitAsync();
-            }
-            else if (args.Key == VirtualKey.Escape)
-            {
-                args.Handled = true;
-                flyout.Hide();
-            }
-        };
-        input.Loaded += (_, _) =>
-        {
-            input.Focus(FocusState.Programmatic);
-            input.SelectAll();
-        };
-        if (commitOnClose)
-        {
-            flyout.Closed += async (_, _) => await CommitAsync();
-        }
-
-        flyout.ShowAt(anchor);
-    }
+    private void FocusFilterUi() => FocusOmnibar(OmnibarMode.Filter);
 
     private PaneId ActiveUiPane => _workspace?.Normalize(_workspace.ActivePane) ?? PaneId.Primary;
 
-    private TextBox ActiveToolbarSearchTextBox() =>
-        SearchBox;
-
-    private Button ActiveToolbarSearchCancelButton() =>
-        SearchCancelButton;
-
-    private FrameworkElement ActiveToolbarSearchHost() =>
-        PrimarySearchHost;
-
-    private TextBox ActiveToolbarQuickFilterBox() =>
-        QuickFilterBox;
+    private string ActiveSearchQuery => _search?.Query ?? "";
 
     private Button ActiveToolbarMoreButton() =>
         PrimaryMoreButton;
 
     private void SetSearchCancelEnabled(bool enabled)
     {
-        ActiveToolbarSearchCancelButton().IsEnabled = enabled;
+        SearchCancelButton.IsEnabled = enabled;
     }
 
     private void UpdateSearchCancelButtons()
     {
         SetSearchCancelEnabled(_search?.CanCancel == true);
-    }
-
-    private void OnQuickFilterChanged(object sender, TextChangedEventArgs e)
-    {
-        if (_applyingWorkspace)
-        {
-            return;
-        }
-
-        var pane = ActiveUiPane;
-        _workspace?.SetFilterQuery(pane, QuickFilterBox.Text);
     }
 
     private async void OnTogglePreview(object sender, RoutedEventArgs e)
@@ -294,7 +156,7 @@ public sealed partial class MainWindow
             PreviewDividerColumn.Width = new GridLength(0);
         }
 
-        ToolTipService.SetToolTip(PreviewToggleButton, visible && !collapsed ? "Hide preview pane" : "Show preview pane");
+        SetToggleChromeState(PreviewToggleButton, visible && !collapsed, "Hide preview pane", "Show preview pane");
     }
 
     private void ApplyTheme(string? theme)
@@ -365,7 +227,7 @@ public sealed partial class MainWindow
 
     private void RefreshCommandPalette(string query)
     {
-        _paletteCommands = [.. AppCommandCatalog.Filter(query)
+        _paletteCommands = [.. AppCommandCatalog.WithEffectiveShortcuts(AppCommandCatalog.Filter(query), _workspace?.Settings.ShortcutOverrides)
             .Where(command => !string.Equals(command.Group, "Git", StringComparison.Ordinal) || IsGitIntegrationEnabled)];
         CommandPaletteList.ItemsSource = _paletteCommands;
         if (_paletteCommands.Count > 0)
@@ -1035,7 +897,7 @@ public sealed partial class MainWindow
 
         if (entry.Children.Count > 0)
         {
-            var sub = new MenuFlyoutSubItem { Text = entry.Label, Tag = entry, Name = entry.Id };
+            var sub = new MenuFlyoutSubItem { Text = entry.Label, Tag = entry, Name = entry.Id, IsEnabled = !entry.Disabled };
             if (!string.IsNullOrWhiteSpace(entry.IconGlyph))
             {
                 sub.Icon = CreateMenuIcon(entry.IconGlyph);
@@ -1054,7 +916,8 @@ public sealed partial class MainWindow
             Text = entry.Label,
             Tag = entry,
             Name = entry.Id,
-            KeyboardAcceleratorTextOverride = entry.Shortcut ?? "",
+            KeyboardAcceleratorTextOverride = ShortcutLabelFor(entry.Id) ?? entry.Shortcut ?? "",
+            IsEnabled = !entry.Disabled,
         };
         if (!string.IsNullOrWhiteSpace(entry.IconGlyph))
         {
@@ -1194,11 +1057,11 @@ public sealed partial class MainWindow
                 return;
             }
 
-            var filterBox = ActiveToolbarQuickFilterBox();
-            if (!string.IsNullOrEmpty(filterBox.Text))
+            if (!string.IsNullOrEmpty(_workspace.FilterQueryFor(ActiveUiPane)))
             {
                 e.Handled = true;
-                filterBox.Text = "";
+                _workspace.SetFilterQuery(ActiveUiPane, "");
+                SyncOmnibarFromWorkspace(force: true);
                 return;
             }
 

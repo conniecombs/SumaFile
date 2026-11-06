@@ -680,7 +680,11 @@ internal sealed partial class FileOperationDialogService
         var entry = selected[0];
         try
         {
-            var info = await workspace.FileOps.ListArchiveAsync(entry.Path);
+            var info = await DialogHost.RunWithProgressAsync(
+                _xamlRoot(),
+                "View archive",
+                $"Reading {entry.Name}…",
+                (_, token) => workspace.FileOps.ListArchiveAsync(entry.Path, token));
             var dialog = new ArchiveViewerDialog { XamlRoot = _xamlRoot() };
             dialog.ArchiveData = info;
             await DialogHost.ShowAsync(dialog);
@@ -714,7 +718,11 @@ internal sealed partial class FileOperationDialogService
 
         try
         {
-            var info = await workspace.FileOps.ListArchiveAsync(selected[0].Path);
+            var info = await DialogHost.RunWithProgressAsync(
+                _xamlRoot(),
+                "Extract archive",
+                $"Reading {selected[0].Name}…",
+                (_, token) => workspace.FileOps.ListArchiveAsync(selected[0].Path, token));
             await ShowExtractDialogAsync(info);
         }
         catch (OperationCanceledException)
@@ -766,10 +774,15 @@ internal sealed partial class FileOperationDialogService
             try
             {
                 var archivePath = Path.Combine(dialog.TargetDirectory, dialog.ArchiveName);
-                await fileOps.CreateArchiveAsync(
+                await DialogHost.RunWithProgressAsync(
+                    _xamlRoot(),
+                    "Create archive",
+                    $"Creating {dialog.ArchiveName}…",
+                    (_, token) => fileOps.CreateArchiveAsync(
                     dialog.SelectedPaths,
                     archivePath,
                     dialog.ArchiveFormat,
+                    token),
                     archiveCts.Token);
                 if (ReferenceEquals(_workspace(), workspace) && !archiveCts.IsCancellationRequested)
                 {
@@ -860,9 +873,27 @@ internal sealed partial class FileOperationDialogService
                     return;
                 }
 
+                if (workspace.Settings.ConfirmDelete)
+                {
+                    var confirm = new ContentDialog
+                    {
+                        Title = "Move to Recycle Bin",
+                        Content = $"Move {FormatItemCount(trash.Length)} to the Recycle Bin?",
+                        PrimaryButtonText = "Move to Recycle Bin",
+                        CloseButtonText = "Cancel",
+                        DefaultButton = ContentDialogButton.Close,
+                        XamlRoot = _xamlRoot(),
+                    };
+                    if (await DialogHost.ShowAsync(confirm) != ContentDialogResult.Primary)
+                    {
+                        return;
+                    }
+                }
+
                 try
                 {
-                    await fileOps.TrashAsync(trash, token);
+                    // Through the workspace so the pane refreshes and the trash is undoable.
+                    await workspace.TrashSelectedAsync(trash, token);
                 }
                 catch (IpcException ipcException) when (FileOperationService.IsTrashUnavailable(ipcException))
                 {
@@ -1002,7 +1033,12 @@ internal sealed partial class FileOperationDialogService
             var archiveCts = _beginArchiveOperation();
             try
             {
-                await fileOps.ExtractArchiveAsync(info.Path, dialog.Destination, archiveCts.Token);
+                await DialogHost.RunWithProgressAsync(
+                    _xamlRoot(),
+                    "Extract archive",
+                    $"Extracting {Path.GetFileName(info.Path)} to {dialog.Destination}…",
+                    (_, token) => fileOps.ExtractArchiveAsync(info.Path, dialog.Destination, token),
+                    archiveCts.Token);
                 if (ReferenceEquals(_workspace(), workspace) && !archiveCts.IsCancellationRequested)
                 {
                     await workspace.RefreshAffectedPanesAsync([dialog.Destination], archiveCts.Token);

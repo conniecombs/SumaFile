@@ -183,7 +183,7 @@
                                                     TextTrimming="CharacterEllipsis"
                                                     TextWrapping="NoWrap"
                                                     Visibility="{x:Bind DescriptionVisibility}" />
-                                                <ProgressBar
+                                                <ProgressBar AutomationProperties.Name="Drive usage"
                                                     Style="{StaticResource SfUsageBarStyle}"
                                                     Maximum="100"
                                                     Minimum="0"
@@ -313,6 +313,7 @@
                                                 HorizontalAlignment="Center"
                                                 Background="Transparent"
                                                 BorderThickness="0"
+                                                AutomationProperties.Name="Expand or collapse folder"
                                                 Click="OnFolderTreeToggle"
                                                 Tag="{Binding Path}">
                                                 <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="8" Glyph="&#xE76C;" />
@@ -386,6 +387,7 @@
                                                 MinHeight="22"
                                                 Click="OnRemoveBookmark"
                                                 Tag="{Binding Path}"
+                                                AutomationProperties.Name="Remove bookmark"
                                                 ToolTipService.ToolTip="Remove bookmark">
                                                 <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="10" Glyph="&#xE711;" />
                                             </Button>
