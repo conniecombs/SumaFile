@@ -3,7 +3,7 @@
 [![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
 [![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
 [![Installer Smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
-![Version](https://img.shields.io/badge/version-1.0.2-2563eb)
+![Version](https://img.shields.io/badge/version-1.0.3-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%7C%20Windows%2011-0078D4?logo=windows)
 ![UI](https://img.shields.io/badge/UI-WinUI%203-5b8def)
 ![Backend](https://img.shields.io/badge/backend-Rust%20IPC-b7410e?logo=rust)
@@ -22,7 +22,6 @@ stay responsive in one local-first app.
 
 ## Contents
 
-- [Screenshots](#screenshots)
 - [Status](#status)
 - [Highlights](#highlights)
 - [Install](#install)
@@ -40,58 +39,11 @@ stay responsive in one local-first app.
 - [Support](#support)
 - [License](#license)
 
-## Screenshots
-
-The screenshots below were captured locally from generated sample files and
-folders on an `R:` drive. The app does not require an `R:` drive; normal local
-drives, removable media, mapped network shares, and archive files are the
-supported storage surfaces.
-
-### Dual-pane browsing
-
-![SumaFile dual-pane workspace browsing generated folders and files on an R drive](docs/assets/screenshots/sumafile-dual-pane-workspace.png)
-
-Dual panes, pane-local tabs, breadcrumbs, bookmarks, drive status, details
-columns, and the preview rail are visible in the default workspace flow.
-
-### Preview pane
-
-![SumaFile preview pane showing a selected generated PNG with image metadata](docs/assets/screenshots/sumafile-preview-pane.png)
-
-The preview pane can stay open while browsing. It shows image, text, PDF, media,
-font, metadata, and checksum workflows without leaving the file manager.
-
-### Right-click actions
-
-![SumaFile context menu showing file management, inspection, folder, copy, move, and archive actions](docs/assets/screenshots/sumafile-context-menu.png)
-
-The context menu is a primary command surface for opening in tabs or the other
-pane, Quick Look, terminals, color labels, folder metrics, duplicate checks,
-rename tools, copy/move-to-pane actions, packing, unpacking, archive creation,
-and delete choices.
-
-### Advanced Rename
-
-![SumaFile Advanced Rename dialog showing template-based before and after preview rows](docs/assets/screenshots/sumafile-advanced-rename.png)
-
-Advanced Rename builds a live plan before anything is written. It supports
-templates, numbering, filtering, regex remove/replace, whitespace cleanup,
-separator conversion, extension transforms, recursive folder targeting, and
-invalid-name or duplicate-target warnings.
-
-### Git status columns
-
-![SumaFile developer column preset showing modified, added, and untracked Git status labels](docs/assets/screenshots/sumafile-git-status.png)
-
-This focused crop shows the developer column preset with `untracked`,
-`modified`, and `added` labels beside normal file metadata, so local
-repositories can be reviewed without jumping between Explorer and a terminal.
-
 ## Status
 
 | Area | Current state |
 | --- | --- |
-| Product version | `1.0.2` |
+| Product version | `1.0.3` |
 | Platform | Windows 10 2004+ / Windows 11, x64 |
 | UI | Unpackaged WinUI 3 desktop app |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
@@ -103,17 +55,16 @@ The active application is the WinUI host under `src-winui/` plus the Rust crates
 under `crates/`. Historical migration notes remain in `docs/winui-migration/`,
 but the Svelte/Tauri surface is not the shipping UI for this branch.
 
-## What changed in 1.0.2
+## What changed in 1.0.3
 
-Configurable parallel transfers now expose active files, bandwidth, buffering,
-retry and integrity controls. Local recovery uses locked ownership records and
-verified source identities; remote transfers gain effective checksum and retry
-controls. Narrow-pane Details, filter/search controls, preview pinning, and
-conflict/rename comparisons improve everyday workflows.
+Use the omnibar to enter a path, search a folder, or filter the active pane.
+Copy and move jobs now continue past individual failures. When you retry, SumaFile
+retries the affected files at their original destinations. Slow Git, network and
+filesystem requests run separately from the service's request loop so you can
+continue browsing.
 
-See the [complete release notes](docs/RELEASE_1.0.2.md) for all changes since the
-published v1.0.1 tag, upgrade guidance, dependency changes and limitations.
-The repository targets v1.0.2; GitHub Releases lists the artifacts actually published.
+See the [v1.0.3 release notes](docs/RELEASE_1.0.3.md) for the changes since
+v1.0.2, transfer defaults, upgrade instructions and known limitations.
 
 ## Highlights
 
@@ -136,9 +87,9 @@ Download the latest Windows release from
 
 | Artifact | Recommended use |
 | --- | --- |
-| `SumaFile_1.0.2_x64-winui-setup.exe` | Normal per-user installation |
-| `SumaFile_1.0.2_x64-winui.msi` | MSI deployment or installer validation |
-| `SumaFile_1.0.2_x64-winui-portable.zip` | Portable, extracted-folder usage |
+| `SumaFile_1.0.3_x64-winui-setup.exe` | Normal per-user installation |
+| `SumaFile_1.0.3_x64-winui.msi` | MSI deployment or installer validation |
+| `SumaFile_1.0.3_x64-winui-portable.zip` | Portable, extracted-folder usage |
 | `latest-winui.json` | Signed updater metadata for published releases |
 
 Requirements:
@@ -240,7 +191,7 @@ Inspection tools include:
 
 - Quick filter for the visible directory
 - Recursive filename search
-- Optional content search from the search box
+- Optional content search in the omnibar’s Search mode
 - Filters for size, date, depth, and hidden-file inclusion
 - Batched, cancellable search results for large trees
 - Smart folders saved from reusable search criteria
@@ -620,13 +571,13 @@ Version fields that must stay synchronized:
 - README badges and install artifact names
 - `docs/CHANGELOG.md`
 
-Git release tags use `vMAJOR.MINOR.PATCH`, for example `v1.0.2`.
+Git release tags use `vMAJOR.MINOR.PATCH`, for example `v1.0.3`.
 
 Before creating a release tag:
 
 1. Confirm the version fields above match.
 2. Run `npm run check:release`.
-3. Run the WinUI smoke commands required by `docs/RELEASE_1.0.2.md`.
+3. Run the WinUI smoke commands required by `docs/RELEASE_1.0.3.md`.
 4. Confirm the Installer Smoke workflow succeeds on the release commit.
 5. Dispatch or create the GitHub release for the matching tag.
 
@@ -645,6 +596,7 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 | [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
 | [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
 | [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | Signed updater releases |
+| [docs/RELEASE_1.0.3.md](docs/RELEASE_1.0.3.md) | Changes since v1.0.2, upgrade instructions and release checklist |
 | [docs/RELEASE_1.0.2.md](docs/RELEASE_1.0.2.md) | Complete 1.0.1 → 1.0.2 release notes, upgrade guidance and checklist |
 | [docs/RELEASE_1.0.1.md](docs/RELEASE_1.0.1.md) | Historical 1.0.1 release checklist |
 | [docs/RELEASE_1.0.0.md](docs/RELEASE_1.0.0.md) | Historical 1.0.0 release checklist and dogfood plan |
@@ -665,7 +617,7 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 
 ## Known Limitations
 
-- SumaFile 1.0.2 is Windows-only.
+- SumaFile 1.0.3 is Windows-only.
 - Installing SumaFile for the first time is manual; in-app update installation requires a
   newer published release with signed `latest-winui.json` metadata.
 - RAR archives can be listed and extracted, but RAR creation and in-place RAR
