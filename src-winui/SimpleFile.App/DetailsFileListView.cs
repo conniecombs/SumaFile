@@ -178,6 +178,28 @@ public sealed class DetailsFileListView : UserControl
 
     public int ItemCount => _rows.Count;
 
+    /// <summary>
+    /// The realized row view for <paramref name="row"/>, scrolling it into view first. Used by
+    /// inline rename; null when the row is not in this list or could not be realized.
+    /// </summary>
+    public FileRowView? RowViewFor(FileRow row)
+    {
+        if (!_rows.Contains(row))
+        {
+            return null;
+        }
+
+        if (_list.ContainerFromItem(row) is not ListViewItem)
+        {
+            _list.ScrollIntoView(row);
+            _list.UpdateLayout();
+        }
+
+        return _list.ContainerFromItem(row) is ListViewItem item
+            ? FindDescendant<FileRowView>(item)
+            : null;
+    }
+
     public void ApplyDetailsLayout(
         ColumnLayout columns,
         int iconSize,

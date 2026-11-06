@@ -609,19 +609,36 @@ public class PreviewWebViewLockdownTests
 
 public class Sprint2ShellTests
 {
-    // S1: clicking the omnibar's own Run/mode buttons moved focus, which reset the typed text.
+    // S1: clicking the omnibar's own Run button moved focus, which reset the typed text.
+    [Fact]
+    public void OmnibarRunButton_DoesNotTakeFocusFromTheInput()
+    {
+        var xaml = File.ReadAllText(Path.Combine(AppRoot(), "PrimaryToolbarView.xaml"));
+        var element = ElementFor(xaml, "OmnibarExecuteButton");
+
+        Assert.Contains("AllowFocusOnInteraction=\"False\"", element);
+    }
+
+    // 1.0.4: the mode toggles are keyboard focusable; a click hands focus back to the text box
+    // and the typed text survives the toggle taking focus.
     [Theory]
-    [InlineData("OmnibarExecuteButton")]
     [InlineData("OmnibarPathModeButton")]
     [InlineData("OmnibarSearchModeButton")]
     [InlineData("OmnibarFilterModeButton")]
     [InlineData("OmnibarCommandModeButton")]
-    public void OmnibarButtons_DoNotTakeFocusFromTheInput(string name)
+    public void OmnibarModeButtons_AreFocusableAndReturnFocusToTheInput(string name)
     {
         var xaml = File.ReadAllText(Path.Combine(AppRoot(), "PrimaryToolbarView.xaml"));
         var element = ElementFor(xaml, name);
+        Assert.DoesNotContain("AllowFocusOnInteraction", element);
 
-        Assert.Contains("AllowFocusOnInteraction=\"False\"", element);
+        var code = File.ReadAllText(Path.Combine(AppRoot(), "PrimaryToolbarView.xaml.cs"));
+        var request = code[code.IndexOf("private void RequestOmnibarMode(", StringComparison.Ordinal)..];
+        Assert.Contains("OmnibarBox.Focus(FocusState.Programmatic)", request);
+
+        var omnibar = File.ReadAllText(Path.Combine(AppRoot(), "MainWindow.Omnibar.cs"));
+        Assert.Contains("IsOmnibarModeButtonFocused()", omnibar);
+        Assert.Contains("_omnibarKeepTypedText", omnibar);
     }
 
     [Fact]

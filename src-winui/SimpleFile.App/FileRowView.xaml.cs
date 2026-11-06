@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using SimpleFile.Core;
@@ -24,6 +25,8 @@ public sealed partial class FileRowView : UserControl
     private int? _explicitIconSize;
     private double _explicitHorizontalOffset;
     private string _explicitPresentationKey = "";
+    private FileRow? _renameRow;
+    private Func<FileRow, string, Task>? _renameCommit;
 
     public static readonly DependencyProperty RowProperty = DependencyProperty.Register(
         nameof(Row),
@@ -38,6 +41,147 @@ public sealed partial class FileRowView : UserControl
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         ActualThemeChanged += OnActualThemeChanged;
+        // Keep pointer gestures inside the rename box from opening or re-selecting the row.
+        RenameBox.DoubleTapped += (_, e) => e.Handled = true;
+        RenameBox.RightTapped += (_, e) => e.Handled = true;
+    }
+
+    /// <summary>True while the inline rename box is showing for this row.</summary>
+    public bool IsRenaming => _renameRow is not null;
+
+    /// <summary>
+    /// Shows the rename box over the name cell with the current name, selecting the name
+    /// without its extension. Enter commits through <paramref name="commit"/>; Escape or
+    /// losing focus cancels. Returns false when the row cannot be edited in place.
+    /// </summary>
+    public bool BeginRename(Func<FileRow, string, Task> commit)
+    {
+        if (Row is not { } row || _nameText is null || _renameRow is not null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var origin = _nameText.TransformToVisual(RowRoot).TransformPoint(new Windows.Foundation.Point(0, 0));
+            var left = Math.Max(0, origin.X - 6);
+            var available = RowRoot.ActualWidth > 0 ? RowRoot.ActualWidth - left : double.PositiveInfinity;
+            RenameBox.Margin = new Thickness(left, 0, 0, 0);
+            RenameBox.Width = Math.Max(80, Math.Min(Math.Max(160, _nameText.ActualWidth + 24), available));
+        }
+        catch (ArgumentException)
+        {
+            RenameBox.Margin = new Thickness(0);
+            RenameBox.Width = double.NaN;
+        }
+
+        _renameRow = row;
+        _renameCommit = commit;
+        RenameBox.Text = row.Name;
+        RenameBox.Visibility = Visibility.Visible;
+        _nameText.Opacity = 0;
+        // The box was collapsed until now; lay it out so it can take focus.
+        RowRoot.UpdateLayout();
+        if (!RenameBox.Focus(FocusState.Programmatic))
+        {
+            EndRename(restoreFocus: false);
+            return false;
+        }
+
+        SelectRenameStem(row);
+        // Focus can apply its own selection after this call returns; select again once it settles.
+        DispatcherQueue?.TryEnqueue(() =>
+        {
+            if (ReferenceEquals(_renameRow, row))
+            {
+                SelectRenameStem(row);
+            }
+        });
+        return true;
+    }
+
+    /// <summary>Hides the rename box without renaming.</summary>
+    public void CancelRename() => EndRename(restoreFocus: true);
+
+    private void SelectRenameStem(FileRow row)
+    {
+        var length = Math.Clamp(NewItemTemplate.RenameSelectionLength(row.Name, row.IsDir), 0, RenameBox.Text.Length);
+        RenameBox.Select(0, length);
+    }
+
+    private async void OnRenameBoxKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Escape)
+        {
+            e.Handled = true;
+            EndRename(restoreFocus: true);
+            return;
+        }
+
+        if (e.Key != Windows.System.VirtualKey.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (_renameRow is not { } row || _renameCommit is not { } commit)
+        {
+            EndRename(restoreFocus: true);
+            return;
+        }
+
+        var newName = RenameBox.Text.Trim();
+        EndRename(restoreFocus: true);
+        if (newName.Length == 0 || string.Equals(newName, row.Name, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            await commit(row, newName);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void OnRenameBoxLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (_renameRow is not null)
+        {
+            EndRename(restoreFocus: false);
+        }
+    }
+
+    private void EndRename(bool restoreFocus)
+    {
+        var wasRenaming = _renameRow is not null;
+        _renameRow = null;
+        _renameCommit = null;
+        if (restoreFocus && wasRenaming && FindListItem() is { } item)
+        {
+            item.Focus(FocusState.Programmatic);
+        }
+
+        RenameBox.Visibility = Visibility.Collapsed;
+        if (_nameText is not null)
+        {
+            _nameText.Opacity = 1;
+        }
+    }
+
+    private ListViewItem? FindListItem()
+    {
+        for (var current = VisualTreeHelper.GetParent(this); current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is ListViewItem item)
+            {
+                return item;
+            }
+        }
+
+        return null;
     }
 
     private void OnActualThemeChanged(FrameworkElement sender, object args)
@@ -92,6 +236,12 @@ public sealed partial class FileRowView : UserControl
     {
         if (sender is FileRowView view)
         {
+            // A recycled container shows a different item: never rename the wrong file.
+            if (view._renameRow is not null && !ReferenceEquals(view._renameRow, args.NewValue))
+            {
+                view.EndRename(restoreFocus: false);
+            }
+
             view.ApplyRow();
         }
     }
