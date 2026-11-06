@@ -95,7 +95,12 @@ public static class OmnibarIntentParser
 
     private static bool IsRootedOrExplicit(string value)
     {
-        return value[0] is '\\' or '/' or '.' or '~'
+        return value is "." or ".."
+            || value.StartsWith(@".\", StringComparison.Ordinal)
+            || value.StartsWith("./", StringComparison.Ordinal)
+            || value.StartsWith(@"..\", StringComparison.Ordinal)
+            || value.StartsWith("../", StringComparison.Ordinal)
+            || value[0] is '\\' or '/' or '~'
             || (value.Length >= 2 && char.IsAsciiLetter(value[0]) && value[1] == ':');
     }
 

@@ -450,7 +450,10 @@ public class DualPaneAndTabsTests
     {
         var workspace = await Started();
         Assert.Equal(16, workspace.Primary.IconSize);
-        Assert.Equal(32, workspace.NudgeFileListIconSize(PaneId.Primary, 2));
+        Assert.Equal(32, workspace.NudgeFileListIconSize(PaneId.Primary, 1));
+        Assert.Equal(48, workspace.NudgeFileListIconSize(PaneId.Primary, 1));
+        Assert.Equal(32, workspace.NudgeFileListIconSize(PaneId.Primary, -1));
+        Assert.Equal(96, workspace.NudgeFileListIconSize(PaneId.Primary, 2));
         Assert.Equal(256, workspace.NudgeFileListIconSize(PaneId.Primary, 100));
         Assert.Equal(16, workspace.NudgeFileListIconSize(PaneId.Primary, -100));
     }

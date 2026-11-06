@@ -229,7 +229,7 @@ public static class ToolbarActionCatalog
         new(ToolbarOverflowPlanner.DualPane, "Second pane", "View", ContextMenuIconCatalog.OpenPane, ToolbarOverflowPlanner.DualPane, "F6", usesBuiltInControl: true),
         new(ToolbarOverflowPlanner.Profiles, "Profiles", "Profiles", ContextMenuIconCatalog.Switch, usesBuiltInControl: true),
         new(ToolbarOverflowPlanner.ViewOptions, "View", "View", ContextMenuIconCatalog.ViewAll, usesBuiltInControl: true),
-        new(ToolbarOverflowPlanner.Settings, "Settings", "App", ContextMenuIconCatalog.Settings, ToolbarOverflowPlanner.Settings, "Ctrl+Shift+S", usesBuiltInControl: true),
+        new(ToolbarOverflowPlanner.Settings, "Settings", "App", ContextMenuIconCatalog.Settings, ToolbarOverflowPlanner.Settings, "Ctrl+,", usesBuiltInControl: true),
     ];
 
     public static IReadOnlyList<ToolbarAction> All { get; } = BuildAll();

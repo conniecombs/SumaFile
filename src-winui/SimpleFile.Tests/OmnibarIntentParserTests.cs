@@ -90,6 +90,15 @@ public class OmnibarIntentParserTests
         Assert.Equal(text, intent.Value);
     }
 
+    [Fact]
+    public void Parse_DotPrefixedNamesStillCheckForAFolder()
+    {
+        var intent = OmnibarIntentParser.Parse(".git", OmnibarMode.Navigate, @"C:\Users", _ => false);
+
+        Assert.Equal(OmnibarIntentKind.Filter, intent.Kind);
+        Assert.Equal(".git", intent.Value);
+    }
+
     [Theory]
     [InlineData("C:", @"C:\")]
     [InlineData("c:", @"C:\")]

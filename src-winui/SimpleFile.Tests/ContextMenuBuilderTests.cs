@@ -167,7 +167,7 @@ public class ContextMenuBuilderTests
         Assert.Equal("FTP/SFTP manager...", tools.Children[0].Label);
         Assert.Equal("Operation history...", tools.Children[1].Label);
         Assert.Equal("Large files and duplicates here...", tools.Children[2].Label);
-        Assert.Equal("F4", tools.Children[3].Shortcut);
+        Assert.Equal("Ctrl+`", tools.Children[3].Shortcut);
         Assert.Contains(more, entry => entry.Id == "overflow-profiles" && entry.Label == "Manage workspace profiles...");
     }
 
@@ -470,7 +470,7 @@ public class ContextMenuBuilderTests
         Assert.DoesNotContain(background, entry => entry.Id == "ctx-terminal");
 
         var tools = Assert.Single(background, entry => entry.Id == "ctx-tools-menu");
-        Assert.Contains(tools.Children, child => child.Id == "ctx-terminal" && child.Label == "Open terminal here" && child.Shortcut == "F4");
+        Assert.Contains(tools.Children, child => child.Id == "ctx-terminal" && child.Label == "Open terminal here" && child.Shortcut == "Ctrl+`");
         Assert.Contains(tools.Children, child => child.Id == "ctx-powershell-admin");
     }
 
@@ -521,7 +521,7 @@ public class ContextMenuBuilderTests
         Assert.DoesNotContain(empty, entry => entry.Id == "ctx-rename");
         Assert.DoesNotContain(emptyFlat, entry => entry.Id == "ctx-delete-menu");
         Assert.Contains(emptyFlat, entry => entry.Id == "ctx-cleanup");
-        Assert.Contains(emptyFlat, entry => entry.Id == "ctx-terminal" && entry.Shortcut == "F4");
+        Assert.Contains(emptyFlat, entry => entry.Id == "ctx-terminal" && entry.Shortcut == "Ctrl+`");
         Assert.DoesNotContain(empty, entry => entry.Id == "ctx-close-dual-pane");
         Assert.DoesNotContain(empty, entry => entry.Kind == ContextMenuKind.Divider && empty.Last() == entry);
 
@@ -594,7 +594,7 @@ public class ContextMenuBuilderTests
         Assert.Equal("overflow-new", newMenu.Id);
         Assert.Equal("New", newMenu.Label);
         Assert.Contains(newMenu.Children, child => child.Id == "new:folder" && child.Shortcut == "Ctrl+Shift+N");
-        Assert.Contains(newMenu.Children, child => child.Id == "new:text" && child.Label == "Text document" && child.Shortcut == "Ctrl+N");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:text" && child.Label == "Text document" && child.Shortcut is null);
         Assert.Contains(newMenu.Children, child => child.Id == "new:empty" && child.Label == "Blank file...");
         Assert.Contains(newMenu.Children, child => child.Id == "new:shortcut" && child.Label == "Shortcut...");
         Assert.Equal("overflow-dual-pane", overflowed[1].Id);
@@ -633,7 +633,7 @@ public class ContextMenuBuilderTests
 
         Assert.Equal("overflow-terminal", overflowed[0].Id);
         Assert.Equal("Open terminal", overflowed[0].Label);
-        Assert.Equal("F4", overflowed[0].Shortcut);
+        Assert.Equal("Ctrl+`", overflowed[0].Shortcut);
         Assert.Equal("overflow-copy", overflowed[1].Id);
         Assert.Equal("Copy", overflowed[1].Label);
         Assert.Equal("Ctrl+C", overflowed[1].Shortcut);

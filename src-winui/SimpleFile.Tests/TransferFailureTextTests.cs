@@ -16,6 +16,8 @@ public class TransferFailureTextTests
     [InlineData(null, "Connection reset by peer", "Lost the connection to the server.")]
     [InlineData(null, "operation timed out", "Lost the connection to the server.")]
     [InlineData(null, "No such host is known", "Lost the connection to the server.")]
+    [InlineData(null, "getaddrinfo: host not found", "Lost the connection to the server.")]
+    [InlineData(null, "The ghost file vanished", "Couldn't finish report.txt.")]
     [InlineData("cancelled", null, "The transfer was cancelled.")]
     [InlineData(null, "Operation was canceled", "The transfer was cancelled.")]
     [InlineData("weird", "boom", "Couldn't finish report.txt.")]

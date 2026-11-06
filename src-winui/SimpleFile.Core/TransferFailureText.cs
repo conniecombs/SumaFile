@@ -18,6 +18,10 @@ public static class TransferFailureText
         {
             summary = "The destination drive is full.";
         }
+        else if (ContainsAny(haystack, "connection", "timed out", "timeout", "no such host", "host not found", "host unreachable"))
+        {
+            summary = "Lost the connection to the server.";
+        }
         else if (ContainsAny(haystack, "not found", "not_found", "notfound", "no such file", "does not exist"))
         {
             summary = $"{name} no longer exists.";
@@ -25,10 +29,6 @@ public static class TransferFailureText
         else if (ContainsAny(haystack, "cancel"))
         {
             summary = "The transfer was cancelled.";
-        }
-        else if (ContainsAny(haystack, "connection", "reset", "timed out", "timeout", "host"))
-        {
-            summary = "Lost the connection to the server.";
         }
         else
         {

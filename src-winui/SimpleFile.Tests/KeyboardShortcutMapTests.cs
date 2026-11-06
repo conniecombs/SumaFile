@@ -75,6 +75,21 @@ public class KeyboardShortcutMapTests
     }
 
     [Fact]
+    public void ImportExport_RoundTripsPunctuationChords()
+    {
+        var json = KeyboardShortcutExportDocument.ToJson(new Dictionary<string, List<string>>
+        {
+            ["search.focus"] = ["Ctrl+`", "Ctrl+,"],
+            ["tabs.reopen"] = ["Ctrl+/"],
+        });
+
+        var imported = KeyboardShortcutExportDocument.FromJson(json);
+
+        Assert.Equal(["Ctrl+`", "Ctrl+,"], imported["search.focus"]);
+        Assert.Equal(["Ctrl+/"], imported["tabs.reopen"]);
+    }
+
+    [Fact]
     public void ValidateOverrides_FindsConflictsAndReservedWindowsShortcuts()
     {
         var issues = KeyboardShortcutMap.ValidateOverrides(new Dictionary<string, List<string>>

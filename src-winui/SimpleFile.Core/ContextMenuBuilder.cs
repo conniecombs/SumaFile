@@ -162,7 +162,7 @@ public static class ContextMenuBuilder
                 Item("overflow-ftp-sftp-manager", "FTP/SFTP manager...", showIcon: false),
                 Item("overflow-operation-history", "Operation history...", showIcon: false),
                 Item("ctx-cleanup", "Large files and duplicates here...", showIcon: false),
-                Item("ctx-terminal", "Open terminal here", false, "F4", showIcon: false),
+                Item("ctx-terminal", "Open terminal here", false, "Ctrl+`", showIcon: false),
             ],
         });
         entries.Add(Item("overflow-profiles", "Manage workspace profiles..."));
@@ -252,7 +252,7 @@ public static class ContextMenuBuilder
                     });
                     break;
                 case ToolbarOverflowPlanner.Settings:
-                    items.Add(Item("overflow-settings", "Settings", shortcut: "Ctrl+Shift+S"));
+                    items.Add(Item("overflow-settings", "Settings", shortcut: "Ctrl+,"));
                     break;
                 default:
                     if (ToolbarActionCatalog.Find(id) is { CommandId: not null } action)
@@ -480,7 +480,7 @@ public static class ContextMenuBuilder
                 Item("ctx-cleanup", "Large files and duplicates here...", showIcon: false),
                 Item("ctx-duplicates", "Find duplicates here...", showIcon: false),
                 Divider(),
-                Item("ctx-terminal", "Open terminal here", false, "F4", showIcon: false),
+                Item("ctx-terminal", "Open terminal here", false, "Ctrl+`", showIcon: false),
                 Item("ctx-powershell-admin", "Open PowerShell as administrator", showIcon: false),
             ],
         };
@@ -539,7 +539,7 @@ public static class ContextMenuBuilder
             [
                 Item("new:folder", "Folder", shortcut: "Ctrl+Shift+N", iconGlyph: ContextMenuIconCatalog.NewFolder),
                 Divider(),
-                Item("new:text", "Text document", shortcut: "Ctrl+N", iconGlyph: ContextMenuIconCatalog.Document),
+                Item("new:text", "Text document", iconGlyph: ContextMenuIconCatalog.Document),
                 Item("new:empty", "Blank file...", iconGlyph: ContextMenuIconCatalog.Document),
                 Item("new:shortcut", "Shortcut...", iconGlyph: ContextMenuIconCatalog.Link),
             ],
