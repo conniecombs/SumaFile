@@ -83,4 +83,23 @@ public class StatusBarFormatterTests
         Assert.Equal("Done", snapshot.BadgeText);
         Assert.True(snapshot.HasAttention);
     }
+
+    [Theory]
+    [InlineData(1, 0, "1 transfer running")]
+    [InlineData(3, 0, "3 transfers running")]
+    [InlineData(2, 1, "2 transfers running, 1 waiting")]
+    public void StatusCenter_UsesRealPluralsForTransfers(int active, int queued, string expected)
+    {
+        var snapshot = StatusCenterFormatter.Format(active, queued, false, false, null, 0);
+        Assert.Equal(expected, snapshot.DetailText);
+    }
+
+    [Theory]
+    [InlineData(1, "1 recent operation")]
+    [InlineData(2, "2 recent operations")]
+    public void StatusCenter_UsesRealPluralsForOperations(int count, string expected)
+    {
+        var snapshot = StatusCenterFormatter.Format(0, 0, false, false, null, count);
+        Assert.Equal(expected, snapshot.DetailText);
+    }
 }

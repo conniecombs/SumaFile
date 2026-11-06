@@ -47,13 +47,13 @@ public sealed class EmptyPaneState
 
         if (string.IsNullOrEmpty(path))
         {
-            return VisibleState("Select a folder", "Choose a location from the side menu or path bar");
+            return VisibleState("Select a folder", "Choose a location from the sidebar or path bar");
         }
 
         if (rawCount > 0 && !showHidden)
         {
             return VisibleState(
-                "Hidden items are hidden",
+                "Only hidden items here",
                 string.IsNullOrWhiteSpace(toggleHiddenShortcut)
                     ? "Use View to show hidden files"
                     : $"Press {toggleHiddenShortcut} to show hidden files");

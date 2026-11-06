@@ -17,6 +17,8 @@ public sealed class UndoStack
     private readonly Stack<UndoEntry> _undo = new();
     private readonly Stack<UndoEntry> _redo = new();
 
+    private static string Items(int count) => count == 1 ? "1 item" : $"{count} items";
+
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
     public string? NextUndoDescription => _undo.Count > 0 ? _undo.Peek().Description : null;
@@ -35,7 +37,7 @@ public sealed class UndoStack
         var items = transferred.ToArray();
         Push(new UndoEntry
         {
-            Description = $"Copy {items.Length} item(s)",
+            Description = $"Copy {Items(items.Length)}",
             Undo = ct => ops.TrashAsync(items.Select(item => item.Destination).ToArray(), ct),
             Redo = async ct =>
             {
@@ -132,7 +134,7 @@ public sealed class UndoStack
         var restored = new bool[items.Length];
         Push(new UndoEntry
         {
-            Description = $"Move {items.Length} item(s)",
+            Description = $"Move {Items(items.Length)}",
             Undo = async ct =>
             {
                 for (var index = items.Length - 1; index >= 0; index--)
@@ -192,7 +194,7 @@ public sealed class UndoStack
         var currentPaths = renamed.ToArray();
         Push(new UndoEntry
         {
-            Description = $"Rename {originals.Length} item(s)",
+            Description = $"Rename {Items(originals.Length)}",
             Undo = async ct =>
             {
                 currentPaths = await RenameAllAsync(
@@ -226,7 +228,7 @@ public sealed class UndoStack
 
         Push(new UndoEntry
         {
-            Description = $"Move to Recycle Bin {currentPaths.Length} item(s)",
+            Description = $"Move to Recycle Bin {Items(currentPaths.Length)}",
             Undo = async ct =>
             {
                 currentPaths = await ops.RestoreRecycleBinAsync(recyclePaths, ct).ConfigureAwait(false);

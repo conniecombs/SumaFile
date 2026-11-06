@@ -141,8 +141,8 @@ public static class KeyboardShortcutMap
     public static readonly IReadOnlyList<KeyboardShortcut> Defaults =
     [
         new("path.focus", ["Ctrl+L", "Alt+D"], "Focus path bar", "Navigation"),
-        new("nav.parent", ["Alt+Up", "Backspace"], "Go up", "Navigation"),
-        new("nav.back", ["Alt+Left"], "Back", "Navigation"),
+        new("nav.parent", ["Alt+Up"], "Go up", "Navigation"),
+        new("nav.back", ["Alt+Left", "Backspace"], "Back", "Navigation"),
         new("nav.forward", ["Alt+Right"], "Forward", "Navigation"),
         new("nav.home", ["Alt+Home"], "Go home", "Navigation"),
         new("directory.refresh", ["F5"], "Refresh", "Navigation"),
@@ -159,27 +159,27 @@ public static class KeyboardShortcutMap
         new("directory.properties", [], "Current folder properties", "Inspection"),
         new("file.openTab", ["Ctrl+Enter"], "Open folder in new tab", "Tabs"),
         new("selection.all", ["Ctrl+A"], "Select all", "Selection"),
-        new("file.newFile", ["Ctrl+N"], "New text document", "File"),
+        new("file.newFile", [], "New text document", "File"),
         new("file.newFolder", ["Ctrl+Shift+N"], "New folder", "File"),
         new("file.newShortcut", [], "New shortcut", "File"),
-        new("tabs.new", ["Ctrl+T"], "New tab", "Tabs"),
+        new("tabs.new", ["Ctrl+T", "Ctrl+N"], "New tab", "Tabs"),
         new("tabs.close", ["Ctrl+W"], "Close tab", "Tabs"),
         new("tabs.reopen", [], "Reopen closed tab", "Tabs"),
         new("tabs.next", ["Ctrl+Tab"], "Next tab", "Tabs"),
         new("tabs.previous", ["Ctrl+Shift+Tab"], "Previous tab", "Tabs"),
         new("tabs.jump", ["Ctrl+1-9"], "Switch to tab (9 is last)", "Tabs", isEditable: false),
         new("quickLook.toggle", ["Space"], "Quick Look", "Inspection"),
-        new("preview.toggle", [], "Toggle preview pane", "View"),
+        new("preview.toggle", ["Alt+P"], "Toggle preview pane", "View"),
         new("search.focus", ["Ctrl+F", "F3"], "Focus find in folder", "Search"),
         new("view.toggleHidden", ["Ctrl+H"], "Show or hide hidden files", "View"),
         new("view.iconSize", ["Ctrl+Mouse wheel"], "Change icon size", "View", isEditable: false),
         new("places.bookmark", ["Ctrl+B"], "Bookmark current folder", "Organization"),
-        new("help.keyboard", ["F1", "Ctrl+Divide"], "Keyboard shortcuts", "App"),
+        new("help.keyboard", ["F1", "Ctrl+/"], "Keyboard shortcuts", "App"),
         new("commandPalette.open", ["Ctrl+Shift+P"], "Command palette", "App"),
         new("history.undo", ["Ctrl+Z"], "Undo", "History"),
         new("history.redo", ["Ctrl+Y", "Ctrl+Shift+Z"], "Redo", "History"),
-        new("terminal.open", ["F4"], "Open terminal", "Tools"),
-        new("settings.open", ["Ctrl+Shift+S"], "Settings", "App"),
+        new("terminal.open", ["Ctrl+`"], "Open terminal", "Tools"),
+        new("settings.open", ["Ctrl+,"], "Settings", "App"),
         new("pane.toggleDual", ["F6"], "Open or close second pane", "Panes"),
         new("pane.switch", ["Tab"], "Switch pane", "Panes"),
         new("pane.focusPrimary", ["Alt+1", "Ctrl+Shift+Left"], "Focus left pane", "Panes"),
@@ -211,8 +211,16 @@ public static class KeyboardShortcutMap
         "pane.focusPrimary",
         "pane.focusSecondary",
         "nav.parent",
+        "nav.back",
         "commandPalette.open",
     };
+
+    /// <summary>
+    /// Commands bound to a bare key (Tab, Space, Backspace) that only make sense while the file list
+    /// has focus; the window must leave those keys alone in toolbars, dialogs and flyouts.
+    /// </summary>
+    public static bool IsFileListScopedKey(string commandId) =>
+        commandId is "pane.switch" or "quickLook.toggle" or "nav.back";
 
     public static bool IsSuppressedWhileEditingText(string commandId) =>
         SuppressedWhileEditingText.Contains(commandId);
@@ -699,9 +707,10 @@ public static class KeyboardShortcutMap
             "down" or "downarrow" => "Down",
             "plus" or "add" => "Plus",
             "minus" or "subtract" => "Minus",
-            "comma" => "Comma",
+            "comma" or "oemcomma" or "," => "OemComma",
             "period" or "dot" => "Period",
-            "slash" => "Slash",
+            "slash" or "oem2" or "/" => "Oem2",
+            "backtick" or "oem3" or "`" => "Oem3",
             "backslash" => "Backslash",
             "divide" => "Divide",
             "multiply" => "Multiply",
@@ -738,7 +747,13 @@ public static class KeyboardShortcutMap
             parts.Add("Win");
         }
 
-        parts.Add(key);
+        parts.Add(key switch
+        {
+            "Oem3" => "`",
+            "OemComma" => ",",
+            "Oem2" => "/",
+            _ => key,
+        });
         return string.Join("+", parts);
     }
 }

@@ -16,7 +16,7 @@ public enum OmnibarIntentKind
     Command,
 }
 
-public sealed record OmnibarIntent(OmnibarIntentKind Kind, string Value)
+public sealed record OmnibarIntent(OmnibarIntentKind Kind, string Value, string? StatusMessage = null)
 {
     public static OmnibarIntent Empty(OmnibarMode mode, string currentPath)
     {
@@ -32,7 +32,8 @@ public sealed record OmnibarIntent(OmnibarIntentKind Kind, string Value)
 
 public static class OmnibarIntentParser
 {
-    public static OmnibarIntent Parse(string? text, OmnibarMode mode, string? currentPath = null)
+    public static OmnibarIntent Parse(string? text, OmnibarMode mode, string? currentPath = null,
+        Func<string, bool>? directoryExists = null)
     {
         var value = (text ?? "").Trim();
         var path = currentPath ?? "";
@@ -63,8 +64,39 @@ public static class OmnibarIntentParser
             OmnibarMode.Search => new OmnibarIntent(OmnibarIntentKind.Search, value),
             OmnibarMode.Filter => new OmnibarIntent(OmnibarIntentKind.Filter, value),
             OmnibarMode.Command => new OmnibarIntent(OmnibarIntentKind.Command, value),
-            _ => new OmnibarIntent(OmnibarIntentKind.Navigate, value),
+            _ => ParseNavigate(value, path, directoryExists),
         };
+    }
+
+    private static OmnibarIntent ParseNavigate(string value, string currentPath, Func<string, bool>? directoryExists)
+    {
+        // A bare drive ("C:") would resolve against that drive's working directory; mean its root.
+        if (value.Length == 2 && char.IsAsciiLetter(value[0]) && value[1] == ':')
+        {
+            return new OmnibarIntent(OmnibarIntentKind.Navigate, char.ToUpperInvariant(value[0]) + @":\");
+        }
+
+        if (directoryExists is null || IsRootedOrExplicit(value) || currentPath.Length == 0)
+        {
+            return new OmnibarIntent(OmnibarIntentKind.Navigate, value);
+        }
+
+        var candidate = Path.Combine(currentPath, value);
+        if (directoryExists(candidate))
+        {
+            return new OmnibarIntent(OmnibarIntentKind.Navigate, candidate);
+        }
+
+        return new OmnibarIntent(
+            OmnibarIntentKind.Filter,
+            value,
+            $"No folder named '{value}' here. Filtering instead.");
+    }
+
+    private static bool IsRootedOrExplicit(string value)
+    {
+        return value[0] is '\\' or '/' or '.' or '~'
+            || (value.Length >= 2 && char.IsAsciiLetter(value[0]) && value[1] == ':');
     }
 
     public static IReadOnlyList<AppCommand> FilterCommands(string? query, bool includeGit)

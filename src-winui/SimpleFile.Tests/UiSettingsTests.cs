@@ -15,7 +15,7 @@ public class UiSettingsTests
     [Fact]
     public void UiSettings_NormalizesAppearanceAndStartLocation()
     {
-        Assert.Equal("system", UiSettings.NormalizeTheme("Light"));
+        Assert.Equal("light", UiSettings.NormalizeTheme("Light"));
         Assert.Equal("system", UiSettings.NormalizeTheme("system"));
         Assert.Equal("system", UiSettings.NormalizeTheme("nope"));
         Assert.Equal("dark", UiSettings.NormalizeTheme("Dark"));
@@ -27,7 +27,7 @@ public class UiSettingsTests
         Assert.Equal("details", UiSettings.NormalizeDefaultView("nope"));
         Assert.Equal(16, UiSettings.NormalizeIconSize((int?)null));
         Assert.Equal(32, UiSettings.NormalizeIconSize("33"));
-        Assert.Equal(120, UiSettings.NormalizeIconSize(120));
+        Assert.Equal(96, UiSettings.NormalizeIconSize(120));
         Assert.Equal(16, UiSettings.NormalizeIconSize(3));
         Assert.Equal(256, UiSettings.NormalizeIconSize(900));
         Assert.Equal(UiSettings.SidebarDefaultWidth, UiSettings.NormalizeSidebarWidth(double.NaN));
@@ -70,5 +70,24 @@ public class UiSettingsTests
 
         workspace.ApplyUiSettings(new UiSettings { StartLocation = "last", LastPath = @"D:\Last" });
         Assert.Equal(@"D:\Last", workspace.ResolveStartPath());
+    }
+
+    [Fact]
+    public void IconSizeOptions_AreTheFiveStandardSizes()
+    {
+        Assert.Equal(
+            [(16, "Small icons"), (32, "Medium icons"), (48, "Large icons"), (96, "Extra large icons"), (256, "Huge icons")],
+            UiSettings.IconSizeOptions);
+    }
+
+    [Theory]
+    [InlineData(128, 96)]
+    [InlineData(192, 256)]
+    [InlineData(256, 256)]
+    [InlineData(20, 16)]
+    [InlineData(60, 48)]
+    public void NormalizeIconSize_MapsLegacyAndUnknownSizesToOptions(int size, int expected)
+    {
+        Assert.Equal(expected, UiSettings.NormalizeIconSize(size));
     }
 }

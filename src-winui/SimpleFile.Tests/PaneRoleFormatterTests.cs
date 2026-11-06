@@ -11,10 +11,10 @@ public class PaneRoleFormatterTests
         var left = PaneRoleFormatter.Format(PaneId.Primary, PaneId.Primary, dualPaneEnabled: true, @"C:\Work");
         var right = PaneRoleFormatter.Format(PaneId.Secondary, PaneId.Primary, dualPaneEnabled: true, @"D:\Sorted");
 
-        Assert.Equal("Left - Active", left.Caption);
+        Assert.Equal("Left · Active", left.Caption);
         Assert.Contains("left pane is active", left.Tooltip, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(@"C:\Work", left.Tooltip, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal("Right - Destination", right.Caption);
+        Assert.Equal("Right", right.Caption);
         Assert.Contains("destination for Copy/Move to other pane", right.Tooltip, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(@"D:\Sorted", right.Tooltip, StringComparison.OrdinalIgnoreCase);
     }
