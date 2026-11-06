@@ -41,7 +41,7 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var utilityCts = _beginUtilityOperation();
+        var utilityCts = _beginUtilityOperation($"Scan:{typeof(TDialog).Name}");
         using var scanCts = CancellationTokenSource.CreateLinkedTokenSource(utilityCts.Token);
         var scanToken = scanCts.Token;
         var progress = new Progress<ProgressUpdate>(update =>

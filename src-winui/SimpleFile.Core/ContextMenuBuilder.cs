@@ -120,8 +120,8 @@ public static class ContextMenuBuilder
         }
 
         entries.Add(ToolbarMenu(request));
-        entries.Add(Item("ftp-sftp-manager", "FTP/SFTP Manager..."));
-        entries.Add(Item("operation-history", "Operation history..."));
+        entries.Add(Item("overflow-ftp-sftp-manager", "FTP/SFTP Manager..."));
+        entries.Add(Item("overflow-operation-history", "Operation history..."));
         entries.Add(Item("overflow-profiles", "Manage workspace profiles..."));
         entries.Add(Divider());
 

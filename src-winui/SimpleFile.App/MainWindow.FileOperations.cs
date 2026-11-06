@@ -78,7 +78,10 @@ public sealed partial class MainWindow
         {
             _workspace?.Clipboard.SetCopy(paths);
             _workspace?.RememberClipboard();
-            var exported = await TrySetWindowsFileClipboardAsync(paths, ClipboardOperation.Copy);
+            var exported = await TrySetWindowsFileClipboardAsync(
+                paths,
+                ClipboardOperation.Copy,
+                _workspace?.Clipboard.Stamp ?? "");
             SetStatusText(exported
                 ? $"Copied {paths.Length} item(s)"
                 : $"Copied {paths.Length} item(s) in SumaFile");
@@ -92,7 +95,10 @@ public sealed partial class MainWindow
         {
             _workspace?.Clipboard.SetCut(paths);
             _workspace?.RememberClipboard();
-            var exported = await TrySetWindowsFileClipboardAsync(paths, ClipboardOperation.Cut);
+            var exported = await TrySetWindowsFileClipboardAsync(
+                paths,
+                ClipboardOperation.Cut,
+                _workspace?.Clipboard.Stamp ?? "");
             SetStatusText(exported
                 ? $"Cut {paths.Length} item(s)"
                 : $"Cut {paths.Length} item(s) in SumaFile");
@@ -104,6 +110,7 @@ public sealed partial class MainWindow
         if (_workspace is null) return;
 
         var clipboard = _workspace.Clipboard;
+        clipboard.ReconcileWith(await TryReadWindowsClipboardStampAsync());
         var payload = clipboard.HasItems
             ? new ClipboardTransferPayload(clipboard.Operation, clipboard.SourcePaths, IsInternal: true)
             : await TryReadWindowsFileClipboardAsync();

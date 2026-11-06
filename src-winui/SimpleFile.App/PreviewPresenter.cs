@@ -11,7 +11,7 @@ internal sealed partial class PreviewPresenter
     private readonly Func<FileRow?> _activeSelectedRow;
     private readonly Func<IReadOnlyList<FileRow>> _activeSelectedRows;
     private readonly Func<XamlRoot> _xamlRoot;
-    private readonly Func<CancellationTokenSource> _beginUtilityOperation;
+    private readonly Func<string, CancellationTokenSource> _beginUtilityOperation;
     private readonly Action<CancellationTokenSource> _finishUtilityOperation;
     private readonly Func<Task> _openWithSelectedAsync;
     private readonly Action<string, string, InfoBarSeverity> _showMessage;
@@ -58,7 +58,7 @@ internal sealed partial class PreviewPresenter
         Func<FileRow?> activeSelectedRow,
         Func<IReadOnlyList<FileRow>> activeSelectedRows,
         Func<XamlRoot> xamlRoot,
-        Func<CancellationTokenSource> beginUtilityOperation,
+        Func<string, CancellationTokenSource> beginUtilityOperation,
         Action<CancellationTokenSource> finishUtilityOperation,
         Func<Task> openWithSelectedAsync,
         Action<string, string, InfoBarSeverity> showMessage,
@@ -222,7 +222,7 @@ internal sealed partial class PreviewPresenter
         }
 
         var pane = workspace.ActivePane;
-        var utilityCts = _beginUtilityOperation();
+        var utilityCts = _beginUtilityOperation("OpenSelectedAsync");
         try
         {
             await workspace.OpenPathAsync(row.Path, row.IsDir, pane, utilityCts.Token);
@@ -248,7 +248,7 @@ internal sealed partial class PreviewPresenter
             return;
         }
 
-        var utilityCts = _beginUtilityOperation();
+        var utilityCts = _beginUtilityOperation("RevealSelectedAsync");
         try
         {
             await workspace.RevealInFolderAsync(row.Path, utilityCts.Token);
@@ -281,7 +281,7 @@ internal sealed partial class PreviewPresenter
         _checksumText.Text = "Computing...";
         var token = _previewToken;
         var path = row.Path;
-        var utilityCts = _beginUtilityOperation();
+        var utilityCts = _beginUtilityOperation("ComputeChecksumAsync");
         try
         {
             var checksums = await fileOps.ComputeChecksumAsync(path, utilityCts.Token);
@@ -336,7 +336,7 @@ internal sealed partial class PreviewPresenter
 
         var pathA = selected[0].Path;
         var pathB = selected[1].Path;
-        var utilityCts = _beginUtilityOperation();
+        var utilityCts = _beginUtilityOperation("CompareSelectedFilesAsync");
         try
         {
             var comparison = await fileOps.CompareFilesAsync(pathA, pathB, utilityCts.Token);

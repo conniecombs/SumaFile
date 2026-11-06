@@ -26,7 +26,7 @@ internal sealed partial class PreviewPresenter
             return;
         }
 
-        if (PreviewPathSupport.IsPdfPreviewType(preview.FileType) && TryRenderPdfPreview(path, token, cancellationToken))
+        if (PreviewPathSupport.IsPdfPreviewType(preview.FileType) && await TryRenderPdfPreviewAsync(path, token, cancellationToken))
         {
             return;
         }

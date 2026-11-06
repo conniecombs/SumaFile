@@ -222,7 +222,7 @@ public sealed partial class MainWindow
             }
         };
 
-        await dialog.ShowAsync();
+        await DialogHost.ShowAsync(dialog);
     }
 
     private OpenWithApplication? SelectedOpenWithApplication(ListView appList, string applicationText)
@@ -316,7 +316,7 @@ public sealed partial class MainWindow
             return false;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("LaunchOpenWithApplicationAsync");
         try
         {
             await SaveViewIconSizeNowAsync();

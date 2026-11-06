@@ -13,7 +13,8 @@ internal sealed partial class FileOperationDialogService
     private readonly Func<FileRow?> _selectedItem;
     private readonly Func<FileRow[]> _selectedEntries;
     private readonly Func<string[]?> _selectedPaths;
-    private readonly Func<CancellationTokenSource> _beginUtilityOperation;
+    private readonly Func<string, CancellationTokenSource> _beginUtilityOperation;
+    private SettingsWindow? _settingsWindow;
     private readonly Action<CancellationTokenSource> _finishUtilityOperation;
     private readonly Func<CancellationTokenSource> _beginArchiveOperation;
     private readonly Action<CancellationTokenSource> _finishArchiveOperation;
@@ -37,7 +38,7 @@ internal sealed partial class FileOperationDialogService
         Func<FileRow?> selectedItem,
         Func<FileRow[]> selectedEntries,
         Func<string[]?> selectedPaths,
-        Func<CancellationTokenSource> beginUtilityOperation,
+        Func<string, CancellationTokenSource> beginUtilityOperation,
         Action<CancellationTokenSource> finishUtilityOperation,
         Func<CancellationTokenSource> beginArchiveOperation,
         Action<CancellationTokenSource> finishArchiveOperation,
@@ -95,7 +96,7 @@ internal sealed partial class FileOperationDialogService
         }
 
         string? createdPath = null;
-        var utilityCts = _beginUtilityOperation();
+        var utilityCts = _beginUtilityOperation("CreateNewItemFromTemplateAsync");
         try
         {
             workspace.ActivatePane(pane);
@@ -238,7 +239,7 @@ internal sealed partial class FileOperationDialogService
             XamlRoot = _xamlRoot(),
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (result != ContentDialogResult.Primary)
         {
             return;
@@ -257,7 +258,7 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var utilityCts = _beginUtilityOperation();
+        var utilityCts = _beginUtilityOperation("PromptAndCreateShortcutAsync");
         try
         {
             workspace.ActivatePane(pane);
@@ -309,7 +310,7 @@ internal sealed partial class FileOperationDialogService
             XamlRoot = _xamlRoot(),
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (result != ContentDialogResult.Primary || dialog.Content is not TextBox tb)
         {
             return;
@@ -326,7 +327,7 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var utilityCts = _beginUtilityOperation();
+        var utilityCts = _beginUtilityOperation("PromptForNameAndInvokeAsync");
         try
         {
             workspace.ActivatePane(pane);
@@ -369,7 +370,7 @@ internal sealed partial class FileOperationDialogService
             XamlRoot = _xamlRoot(),
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (result != ContentDialogResult.Primary)
         {
             return;
@@ -386,7 +387,7 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var utilityCts = _beginUtilityOperation();
+        var utilityCts = _beginUtilityOperation("PromptRenameCreatedItemAsync");
         try
         {
             await workspace.RenameSelectedAsync(path, newName, utilityCts.Token);
@@ -425,7 +426,7 @@ internal sealed partial class FileOperationDialogService
             XamlRoot = _xamlRoot(),
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(tb.Text) && tb.Text.Trim() != row.Name)
         {
             if (!ReferenceEquals(_workspace(), workspace))
@@ -433,7 +434,7 @@ internal sealed partial class FileOperationDialogService
                 return;
             }
 
-            var utilityCts = _beginUtilityOperation();
+            var utilityCts = _beginUtilityOperation("PromptAndRenameAsync");
             try
             {
                 await workspace.RenameSelectedAsync(row.Path, tb.Text.Trim(), utilityCts.Token);
@@ -484,7 +485,7 @@ internal sealed partial class FileOperationDialogService
                 DefaultButton = ContentDialogButton.Close,
                 XamlRoot = _xamlRoot(),
             };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
             {
                 return;
             }
@@ -495,7 +496,7 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var utilityCts = _beginUtilityOperation();
+        var utilityCts = _beginUtilityOperation("TrashSelectedAsync");
         try
         {
             await workspace.TrashSelectedAsync(paths, utilityCts.Token);
@@ -548,7 +549,7 @@ internal sealed partial class FileOperationDialogService
             XamlRoot = _xamlRoot(),
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (result == ContentDialogResult.Primary)
         {
             if (!ReferenceEquals(_workspace(), workspace))
@@ -556,7 +557,7 @@ internal sealed partial class FileOperationDialogService
                 return;
             }
 
-            var utilityCts = _beginUtilityOperation();
+            var utilityCts = _beginUtilityOperation("DeleteSelectedAsync");
             try
             {
                 foreach (var path in paths)
@@ -578,6 +579,16 @@ internal sealed partial class FileOperationDialogService
         }
     }
 
+    public void CloseSettingsWindow()
+    {
+        if (_settingsWindow is { IsClosed: false } open)
+        {
+            open.Close();
+        }
+
+        _settingsWindow = null;
+    }
+
     public async Task ShowSettingsAsync(string? initialCategory = null)
     {
         var workspace = _workspace();
@@ -587,18 +598,25 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var dialog = new SettingsWindow(initialCategory)
+        if (_settingsWindow is { IsClosed: false } open)
+        {
+            open.Activate();
+            return;
+        }
+
+        var settingsWindow = new SettingsWindow(initialCategory)
         {
             OwnerHwnd = _ownerHwnd(),
         };
+        _settingsWindow = settingsWindow;
 
-        var utilityCts = _beginUtilityOperation();
-        dialog.ClearRecentHistoryAction = () => _clearRecentHistoryAsync(utilityCts.Token);
+        var utilityCts = _beginUtilityOperation("ShowSettingsAsync");
+        settingsWindow.ClearRecentHistoryAction = () => _clearRecentHistoryAsync(utilityCts.Token);
         try
         {
             try
             {
-                await dialog.LoadSettingsAsync(fileOps, workspace.Settings, utilityCts.Token);
+                await settingsWindow.LoadSettingsAsync(fileOps, workspace.Settings, utilityCts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -612,7 +630,7 @@ internal sealed partial class FileOperationDialogService
 
             if (!ReferenceEquals(_workspace(), workspace)
                 || utilityCts.IsCancellationRequested
-                || await dialog.ShowAsync() != ContentDialogResult.Primary)
+                || await settingsWindow.ShowAsync() != ContentDialogResult.Primary)
             {
                 return;
             }
@@ -624,7 +642,7 @@ internal sealed partial class FileOperationDialogService
 
             try
             {
-                dialog.ApplyTo(workspace.Settings);
+                settingsWindow.ApplyTo(workspace.Settings);
                 workspace.ApplyUiSettings(workspace.Settings, applyViewDefaultsToPanes: false);
                 _applyTheme(workspace.Settings.Theme);
                 _applyKeyboardShortcuts();
@@ -665,7 +683,7 @@ internal sealed partial class FileOperationDialogService
             var info = await workspace.FileOps.ListArchiveAsync(entry.Path);
             var dialog = new ArchiveViewerDialog { XamlRoot = _xamlRoot() };
             dialog.ArchiveData = info;
-            await dialog.ShowAsync();
+            await DialogHost.ShowAsync(dialog);
             if (dialog.ExtractRequested)
             {
                 await ShowExtractDialogAsync(info);
@@ -736,7 +754,7 @@ internal sealed partial class FileOperationDialogService
         dialog.SelectedPaths = selected.Select(entry => entry.Path).ToArray();
         dialog.SelectedNames = selected.Select(entry => entry.Name).ToArray();
         dialog.TargetDirectory = workspace.Active.Path;
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (result == ContentDialogResult.Primary)
         {
             if (!ReferenceEquals(_workspace(), workspace))
@@ -917,7 +935,7 @@ internal sealed partial class FileOperationDialogService
 
         var dialog = new TagPickerDialog { XamlRoot = _xamlRoot() };
         dialog.SetTags(workspace.AllTags.ToArray());
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (result == ContentDialogResult.Primary)
         {
             if (!ReferenceEquals(_workspace(), workspace))
@@ -926,7 +944,7 @@ internal sealed partial class FileOperationDialogService
             }
 
             var paths = selected.Select(entry => entry.Path).ToArray();
-            var utilityCts = _beginUtilityOperation();
+            var utilityCts = _beginUtilityOperation("SetColorLabelAsync");
             try
             {
                 if (dialog.SelectedTagId.HasValue)
@@ -973,7 +991,7 @@ internal sealed partial class FileOperationDialogService
         };
         dialog.ArchiveData = info;
         dialog.SetBaseDirectory(workspace.Active.Path);
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (result == ContentDialogResult.Primary)
         {
             if (!ReferenceEquals(_workspace(), workspace))
@@ -1021,7 +1039,7 @@ internal sealed partial class FileOperationDialogService
             XamlRoot = _xamlRoot(),
         };
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
         {
             _showMessage("Recycle Bin unavailable", "Nothing was permanently deleted.", InfoBarSeverity.Warning);
             return;

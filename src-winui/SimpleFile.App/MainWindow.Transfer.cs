@@ -763,7 +763,7 @@ public sealed partial class MainWindow
                 XamlRoot = Content.XamlRoot,
             };
             using var cancelDialog = cancellationToken.Register(() => DispatcherQueue.TryEnqueue(dialog.Hide));
-            var result = await dialog.ShowAsync();
+            var result = await DialogHost.ShowAsync(dialog);
             cancellationToken.ThrowIfCancellationRequested();
             return result switch
             {
@@ -852,7 +852,7 @@ public sealed partial class MainWindow
             cancellationToken.ThrowIfCancellationRequested();
             dialog.SetComparisons(comparisons);
             using var cancelDialog = cancellationToken.Register(() => DispatcherQueue.TryEnqueue(dialog.Hide));
-            var result = await dialog.ShowAsync();
+            var result = await DialogHost.ShowAsync(dialog);
             cancellationToken.ThrowIfCancellationRequested();
             string? action = dialog.Result == ConflictResolution.KeepBoth
                 ? "keep-both"
@@ -933,7 +933,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(input.Text))
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(input.Text))
         {
             return;
         }
@@ -942,7 +942,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("PromptPackIntoFolderAsync");
         try
         {
             await workspace.PackIntoFolderAsync(paths, input.Text.Trim(), utilityCts.Token);
@@ -968,7 +968,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("UnpackSelectedFolderAsync");
         try
         {
             await workspace.UnpackFolderAsync(row.Path, utilityCts.Token);
@@ -1076,17 +1076,17 @@ public sealed partial class MainWindow
             Extension = row.Extension,
         }).ToArray();
 
-        var dialog = new AdvancedRenameDialog(
+        var renameWindow = new AdvancedRenameDialog(
             selectedEntries,
             workspace.Active.Path,
             (path, cancellationToken) => backend.ListDirectoryAsync(path, onChunk: null, cancellationToken));
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await renameWindow.ShowAsync() != ContentDialogResult.Primary)
         {
             return;
         }
 
-        var requests = dialog.RenameRequests;
+        var requests = renameWindow.RenameRequests;
         if (requests.Length == 0)
         {
             ShowMessage("Advanced rename", "No names would change.", InfoBarSeverity.Informational);
@@ -1094,12 +1094,12 @@ public sealed partial class MainWindow
         }
 
         if (!ReferenceEquals(_workspace, workspace)
-            || !await ConfirmAdvancedRenameAsync(dialog.ChangedRows, requests.Length))
+            || !await ConfirmAdvancedRenameAsync(renameWindow.ChangedRows, requests.Length))
         {
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("PromptAdvancedRenameAsync");
         try
         {
             var renamed = await fileOps.BatchRenameAsync(requests, utilityCts.Token);
@@ -1172,7 +1172,7 @@ public sealed partial class MainWindow
             XamlRoot = Content.XamlRoot,
         };
 
-        return await confirm.ShowAsync() == ContentDialogResult.Primary;
+        return await DialogHost.ShowAsync(confirm) == ContentDialogResult.Primary;
     }
 
     private async Task UndoLastAsync()
@@ -1184,7 +1184,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("UndoLastAsync");
         try
         {
             await workspace.Undo.UndoAsync(utilityCts.Token);
@@ -1216,7 +1216,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("RedoLastAsync");
         try
         {
             await workspace.Undo.RedoAsync(utilityCts.Token);

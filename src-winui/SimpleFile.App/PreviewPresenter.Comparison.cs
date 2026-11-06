@@ -50,7 +50,7 @@ internal sealed partial class PreviewPresenter
             XamlRoot = _xamlRoot(),
         };
 
-        await dialog.ShowAsync();
+        await DialogHost.ShowAsync(dialog);
     }
 
     private static string TextComparisonSummary(FileComparison comparison)

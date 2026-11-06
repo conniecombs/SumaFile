@@ -50,7 +50,7 @@ public sealed partial class MainWindow : Window
     private TransferProgressWindow? _transferProgressWindow;
     private RemoteManagerWindow? _remoteManagerWindow;
     private CancellationTokenSource? _archiveCts;
-    private CancellationTokenSource? _utilityCts;
+    private readonly UtilityOperationRegistry _utilityOperations = new();
     private bool _applyingWorkspace;
     private int _folderRefreshToken;
     private CancellationTokenSource? _folderRefreshCts;
@@ -330,6 +330,7 @@ public sealed partial class MainWindow : Window
             _transfer.PropertyChanged += OnTransferPropertyChanged;
         }
 
+        AttachWindowsClipboard();
     }
 
     private void DetachViewModels()
@@ -347,6 +348,7 @@ public sealed partial class MainWindow : Window
             _transfer.PropertyChanged -= OnTransferPropertyChanged;
         }
 
+        DetachWindowsClipboard();
     }
 
     private void OnBackendDisconnected(object? sender, Exception? error)
@@ -1071,7 +1073,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var result = await dialog.ShowAsync();
+            var result = await DialogHost.ShowAsync(dialog);
             if (!ReferenceEquals(_workspace, workspace) || reconnectCts.IsCancellationRequested)
             {
                 return;
@@ -1146,29 +1148,15 @@ public sealed partial class MainWindow : Window
         _archiveCts = null;
     }
 
-    private CancellationTokenSource BeginUtilityOperation()
-    {
-        _utilityCts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _utilityCts = cts;
-        return cts;
-    }
+    /// <summary>
+    /// Starts a cancellable utility operation. Only a repeat of the same <paramref name="kind"/>
+    /// cancels the previous one; unrelated operations run side by side.
+    /// </summary>
+    private CancellationTokenSource BeginUtilityOperation(string kind) => _utilityOperations.Begin(kind);
 
-    private void FinishUtilityOperation(CancellationTokenSource cts)
-    {
-        if (ReferenceEquals(_utilityCts, cts))
-        {
-            _utilityCts = null;
-        }
+    private void FinishUtilityOperation(CancellationTokenSource cts) => _utilityOperations.Finish(cts);
 
-        cts.Dispose();
-    }
-
-    private void CancelUtilityOperation()
-    {
-        _utilityCts?.Cancel();
-        _utilityCts = null;
-    }
+    private void CancelUtilityOperation() => _utilityOperations.CancelAll();
 
     private void CancelNetworkReconnectPrompt()
     {
@@ -1341,6 +1329,7 @@ public sealed partial class MainWindow : Window
         CloseGitWorkbenchWindow(forDock: false);
         _previewPresenter.CancelPending();
         CancelNetworkReconnectPrompt();
+        _fileOperationDialogs.CloseSettingsWindow();
         CancelUtilityOperation();
         CancelArchiveOperation();
         _transfer?.Reset();

@@ -8,7 +8,7 @@ namespace SimpleFile.App;
 
 internal sealed partial class PreviewPresenter
 {
-    private bool TryRenderPdfPreview(string path, int token, CancellationToken cancellationToken)
+    private async Task<bool> TryRenderPdfPreviewAsync(string path, int token, CancellationToken cancellationToken)
     {
         if (!PreviewPathSupport.CanUsePathBackedPreview(path, "pdf") || !IsCurrent(path, token, cancellationToken))
         {
@@ -20,7 +20,15 @@ internal sealed partial class PreviewPresenter
             ClearIcon();
             _mediaPlayer.Source = null;
             _mediaPlayer.Visibility = Visibility.Collapsed;
-            _pdfView.Source = new Uri(path);
+            var source = new Uri(path);
+            // The built-in PDF viewer needs script; navigation stays pinned to this file.
+            await EnsurePreviewWebViewAsync(allowScript: true, allowedNavigation: source);
+            if (!IsCurrent(path, token, cancellationToken))
+            {
+                return true;
+            }
+
+            _pdfView.Source = source;
             _pdfView.Visibility = Visibility.Visible;
             _emptyText.Visibility = Visibility.Collapsed;
             return true;

@@ -298,12 +298,16 @@ public sealed partial class MainWindow
         catch (OperationCanceledException)
         {
         }
-        catch (Exception exception) when (silent)
+        catch (Exception exception)
         {
             _gitStatus = null;
             _gitStatusPath = workspace.Active.Path;
             _gitWorkbenchModel.SetUnavailable(exception.Message);
             RefreshGitActionButtons();
+            if (!silent)
+            {
+                throw;
+            }
         }
         finally
         {
@@ -571,7 +575,7 @@ public sealed partial class MainWindow
         };
         input.Loaded += (_, _) => input.Focus(FocusState.Programmatic);
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -601,7 +605,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("RunGitRepositoryCommandAsync");
         try
         {
             SetStatusText($"Running git {verb}...");
@@ -647,7 +651,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("RunGitPathsCommandAsync");
         try
         {
             SetStatusText($"Running git {verb}...");
@@ -733,6 +737,6 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Close,
         };
 
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        return await DialogHost.ShowAsync(dialog) == ContentDialogResult.Primary;
     }
 }

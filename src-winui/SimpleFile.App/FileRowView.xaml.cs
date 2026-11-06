@@ -145,7 +145,7 @@ public sealed partial class FileRowView : UserControl
 
         ApplyColumns();
         ApplyIcon();
-        Opacity = Row.IsHidden ? 0.55 : 1;
+        Opacity = EntryPresentation.RowOpacity(Row.IsCut, Row.IsHidden);
 
         if (_nameText is not null)
         {
@@ -189,7 +189,6 @@ public sealed partial class FileRowView : UserControl
         }
 
         ApplyTagPip(Row.TagColor);
-        Opacity = Row.IsCut ? 0.45 : 1.0;
         AutomationProperties.SetName(this, Row.AutomationName);
     }
 

@@ -8,6 +8,12 @@ namespace SimpleFile.Core;
 /// </summary>
 public static class EntryPresentation
 {
+    /// <summary>
+    /// Row opacity for the file list: cut rows are dimmed most, hidden rows a little, others are opaque.
+    /// </summary>
+    public static double RowOpacity(bool isCut, bool isHidden) =>
+        isCut ? 0.45 : isHidden ? 0.55 : 1.0;
+
     public static string FormatFileSize(ulong bytes, bool isDirectory = false)
     {
         if (isDirectory)

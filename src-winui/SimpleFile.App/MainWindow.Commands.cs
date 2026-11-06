@@ -485,7 +485,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = Content.XamlRoot,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -1114,7 +1114,7 @@ public sealed partial class MainWindow
         }
 
         var commandId = CommandAliasCatalog.Normalize(id);
-        if (!string.Equals(commandId, id, StringComparison.Ordinal))
+        if (AppCommandHandlers.ContainsKey(commandId))
         {
             await RunAppCommandAsync(commandId);
             return;
@@ -1210,7 +1210,7 @@ public sealed partial class MainWindow
 
     private bool IsTextInputFocused()
     {
-        return FocusManager.GetFocusedElement(Content.XamlRoot) is TextBox;
+        return FocusManager.GetFocusedElement(Content.XamlRoot) is TextBox or PasswordBox or RichEditBox;
     }
 
 }

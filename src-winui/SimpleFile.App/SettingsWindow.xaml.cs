@@ -689,8 +689,11 @@ public sealed partial class SettingsWindow : Window
         Close();
     }
 
+    public bool IsClosed { get; private set; }
+
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        IsClosed = true;
         _resultSource.TrySetResult(_result);
     }
 }

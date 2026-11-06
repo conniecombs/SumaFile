@@ -140,7 +140,7 @@ public sealed partial class RemoteManagerWindow : Window
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -324,7 +324,7 @@ public sealed partial class RemoteManagerWindow : Window
             Content = message,
             CloseButtonText = "OK",
         };
-        await dialog.ShowAsync();
+        await DialogHost.ShowAsync(dialog);
     }
 
     private async Task<string?> ShowRemoteNameDialogAsync(
@@ -348,7 +348,7 @@ public sealed partial class RemoteManagerWindow : Window
             DefaultButton = ContentDialogButton.Primary,
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         return result == ContentDialogResult.Primary ? input.Text : null;
     }
 
@@ -628,7 +628,7 @@ public sealed partial class RemoteManagerWindow : Window
             }
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (result != ContentDialogResult.Primary)
         {
             return null;
@@ -666,7 +666,7 @@ public sealed partial class RemoteManagerWindow : Window
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        return await DialogHost.ShowAsync(dialog) == ContentDialogResult.Primary;
     }
 
     private static StackPanel CreateProfileDialogSection(string title, params UIElement[] children)

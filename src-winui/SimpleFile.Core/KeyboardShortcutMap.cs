@@ -185,6 +185,34 @@ public static class KeyboardShortcutMap
         new("escape", ["Escape"], "Dismiss overlay / clear", "App", isEditable: false),
     ];
 
+    /// <summary>
+    /// Commands whose default chords (Enter, F2, Delete, Backspace, Space, Tab, Ctrl+C/X/V/A,
+    /// Ctrl+Z/Y, Ctrl+Shift+Left/Right) belong to the text editor while a text input has focus.
+    /// The window must not run them, nor mark the key handled, in that state.
+    /// </summary>
+    private static readonly HashSet<string> SuppressedWhileEditingText = new(StringComparer.Ordinal)
+    {
+        "file.open",
+        "file.rename",
+        "file.delete.trash",
+        "file.delete.permanent",
+        "file.copy",
+        "file.cut",
+        "file.paste",
+        "selection.all",
+        "history.undo",
+        "history.redo",
+        "quickLook.toggle",
+        "pane.switch",
+        "pane.focusPrimary",
+        "pane.focusSecondary",
+        "nav.parent",
+        "commandPalette.open",
+    };
+
+    public static bool IsSuppressedWhileEditingText(string commandId) =>
+        SuppressedWhileEditingText.Contains(commandId);
+
     public static KeyboardShortcut? Find(string id)
     {
         return Defaults.FirstOrDefault(item => string.Equals(item.Id, id, StringComparison.Ordinal));

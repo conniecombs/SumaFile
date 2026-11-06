@@ -37,7 +37,7 @@ public sealed partial class MainWindow
             CloseButtonText = "Close",
             XamlRoot = Content.XamlRoot,
         };
-        await dialog.ShowAsync();
+        await DialogHost.ShowAsync(dialog);
     }
 
     private async Task ShowQuickLookAsync()
@@ -58,7 +58,7 @@ public sealed partial class MainWindow
 
         if (fileOps is not null && row.IsDir)
         {
-            var utilityCts = BeginUtilityOperation();
+            var utilityCts = BeginUtilityOperation("ShowQuickLookAsync");
             try
             {
                 var metrics = await fileOps.GetFolderMetricsAsync(row.Path, utilityCts.Token)
@@ -96,7 +96,7 @@ public sealed partial class MainWindow
         }
         else if (fileOps is not null && !row.IsDir)
         {
-            var utilityCts = BeginUtilityOperation();
+            var utilityCts = BeginUtilityOperation("ShowQuickLookAsync");
             try
             {
                 var preview = await fileOps.ReadFilePreviewAsync(row.Path, 80_000, utilityCts.Token);
@@ -221,7 +221,7 @@ public sealed partial class MainWindow
         {
             dialog.Closed += (_, _) => cleanup();
         }
-        await dialog.ShowAsync();
+        await DialogHost.ShowAsync(dialog);
     }
 
     private static void AddQuickLookMetadataRows(StackPanel panel, IEnumerable<InspectionDetailRow> rows)
@@ -337,7 +337,7 @@ public sealed partial class MainWindow
         var checksumText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"), FontSize = 12 };
         var checksumButton = new Button { Content = "Compute checksums", HorizontalAlignment = HorizontalAlignment.Left };
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("Properties");
         try
         {
             var info = await fileOps.GetEntryInfoAsync(row.Path, utilityCts.Token);
@@ -398,7 +398,7 @@ public sealed partial class MainWindow
         {
             checksumButton.IsEnabled = false;
             checksumText.Text = "Computing…";
-            var hashCts = BeginUtilityOperation();
+            var hashCts = BeginUtilityOperation("PropertiesChecksum");
             try
             {
                 var checksums = await fileOps.ComputeChecksumAsync(row.Path, hashCts.Token);
@@ -434,7 +434,7 @@ public sealed partial class MainWindow
             CloseButtonText = "Close",
             XamlRoot = Content.XamlRoot,
         };
-        await dialog.ShowAsync();
+        await DialogHost.ShowAsync(dialog);
     }
 
     private async Task ShowClipboardHistoryAsync()
@@ -472,7 +472,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || list.SelectedItem is not ClipboardHistoryRow row)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary || list.SelectedItem is not ClipboardHistoryRow row)
         {
             return;
         }
@@ -513,7 +513,7 @@ public sealed partial class MainWindow
 
         var paths = folders.Select(f => f.Path).ToArray();
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("ShowFolderMetricsAsync");
         try
         {
             var lines = new List<string>();
@@ -560,7 +560,7 @@ public sealed partial class MainWindow
                 CloseButtonText = "Close",
                 XamlRoot = Content.XamlRoot,
             };
-            await dialog.ShowAsync();
+            await DialogHost.ShowAsync(dialog);
         }
         catch (OperationCanceledException)
         {
@@ -639,7 +639,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot,
         };
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (!ReferenceEquals(_workspace, workspace))
         {
             return;
@@ -668,7 +668,7 @@ public sealed partial class MainWindow
         }
 
         var path = workspace.Active.Path;
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("RunGitAsync");
         try
         {
             if (pull)
@@ -712,7 +712,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("OpenPowershellAdminAsync");
         try
         {
             await fileOps.OpenPowershellAdminAsync(workspace.Active.Path, utilityCts.Token);

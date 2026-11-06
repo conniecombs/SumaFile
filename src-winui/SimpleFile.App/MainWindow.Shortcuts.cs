@@ -61,10 +61,41 @@ public sealed partial class MainWindow
         };
         accelerator.Invoked += async (_, args) =>
         {
+            if (!CanRunShortcutNow(commandId))
+            {
+                // Leave the key to the focused control (text editing, focus traversal).
+                return;
+            }
+
             args.Handled = true;
             await RunKeyboardShortcutAsync(commandId);
         };
         return accelerator;
+    }
+
+    /// <summary>
+    /// Decided synchronously before the accelerator claims the key: editing and destructive
+    /// commands yield to a focused text input, and pane switching yields when there is one pane.
+    /// </summary>
+    private bool CanRunShortcutNow(string commandId)
+    {
+        if (DialogHost.IsDialogOpen)
+        {
+            return false;
+        }
+
+        if (KeyboardShortcutMap.IsSuppressedWhileEditingText(commandId)
+            && (IsEditingPath || IsTextInputFocused()))
+        {
+            return false;
+        }
+
+        if (commandId == "pane.switch" && _workspace?.DualPaneEnabled != true)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private void AddFixedTabJumpAccelerators()
