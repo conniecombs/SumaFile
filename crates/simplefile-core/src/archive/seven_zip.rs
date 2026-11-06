@@ -29,16 +29,8 @@ pub(super) fn resolve_seven_zip_binary() -> Option<String> {
         }
     }
 
-    for command in ["7z", "7za"] {
-        if std::process::Command::new(command)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .is_ok()
-        {
-            return Some(command.to_string());
-        }
+    if let Some(command) = seven_zip_on_path() {
+        return Some(command);
     }
 
     for path in [
@@ -51,6 +43,25 @@ pub(super) fn resolve_seven_zip_binary() -> Option<String> {
     }
 
     None
+}
+
+/// Probing PATH means launching `7z`; do it once per process instead of on
+/// every archive operation and capability query.
+fn seven_zip_on_path() -> Option<String> {
+    static PROBE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PROBE
+        .get_or_init(|| {
+            ["7z", "7za"].into_iter().find_map(|command| {
+                std::process::Command::new(command)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .output()
+                    .ok()
+                    .map(|_| command.to_string())
+            })
+        })
+        .clone()
 }
 
 pub(super) fn require_seven_zip_binary() -> Result<String, String> {

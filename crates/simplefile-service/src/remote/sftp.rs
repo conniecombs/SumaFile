@@ -547,8 +547,15 @@ where
     }
 }
 
+/// `SHA256:` prefix and padding are cosmetic; the base64 digest itself is
+/// case-sensitive and must be compared exactly.
 fn normalize_fingerprint(value: &str) -> String {
-    value.trim().replace('=', "").to_ascii_lowercase()
+    let value = value.trim();
+    let (prefix, digest) = match value.split_once(':') {
+        Some((prefix, digest)) => (prefix.to_ascii_lowercase(), digest),
+        None => ("sha256".to_string(), value),
+    };
+    format!("{prefix}:{}", digest.trim().replace('=', ""))
 }
 
 fn mode_to_permissions(mode: u32) -> String {
@@ -705,6 +712,27 @@ mod runtime_tests {
         assert!(
             ticked.load(Ordering::SeqCst),
             "background task did not run without block_on"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::normalize_fingerprint;
+
+    #[test]
+    fn digest_case_is_significant_but_prefix_and_padding_are_not() {
+        assert_eq!(
+            normalize_fingerprint(" sha256:AbC= "),
+            normalize_fingerprint("SHA256:AbC")
+        );
+        assert_ne!(
+            normalize_fingerprint("SHA256:AbC"),
+            normalize_fingerprint("SHA256:abc")
+        );
+        assert_eq!(
+            normalize_fingerprint("AbC"),
+            normalize_fingerprint("sha256:AbC")
         );
     }
 }

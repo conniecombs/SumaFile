@@ -55,8 +55,18 @@ impl OutboundSink {
     }
 }
 
+#[cfg(test)]
 pub(super) async fn read_frame<R: AsyncRead + Unpin>(
     reader: &mut R,
+) -> Result<Vec<u8>, FrameError> {
+    read_frame_with_limit(reader, MAX_FRAME_BYTES).await
+}
+
+/// Read one frame, refusing lengths above `limit` before allocating for them.
+/// The session uses a small limit until the client has authenticated.
+pub(super) async fn read_frame_with_limit<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    limit: u32,
 ) -> Result<Vec<u8>, FrameError> {
     let mut header = [0u8; 4];
     if let Err(error) = reader.read_exact(&mut header).await {
@@ -66,6 +76,9 @@ pub(super) async fn read_frame<R: AsyncRead + Unpin>(
         return Err(FrameError::Io(error.to_string()));
     }
     let length = decode_length(header)?;
+    if length > limit {
+        return Err(FrameError::Oversize { length });
+    }
     let mut payload = vec![0u8; length as usize];
     reader
         .read_exact(&mut payload)

@@ -19,7 +19,14 @@ pub(crate) fn normalize_remote_path(path: &str) -> String {
 }
 
 pub(crate) fn join_remote_path(parent: &str, child: &str) -> String {
-    let child = child.trim().trim_matches('/');
+    // A child name cannot climb out of its parent: `..` and `.` components
+    // and empty segments are dropped, so rename/create stay in the folder.
+    let child = child
+        .trim()
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .collect::<Vec<_>>()
+        .join("/");
     if child.is_empty() {
         return normalize_remote_path(parent);
     }
@@ -116,6 +123,16 @@ mod tests {
             join_remote_path("/dir", r"report\final.txt"),
             r"/dir/report\final.txt"
         );
+    }
+
+    #[test]
+    fn child_names_cannot_escape_their_parent() {
+        assert_eq!(
+            join_remote_path("/var/www", "../etc/passwd"),
+            "/var/www/etc/passwd"
+        );
+        assert_eq!(join_remote_path("/var/www", ".."), "/var/www");
+        assert_eq!(join_remote_path("/var/www", "./a//b"), "/var/www/a/b");
     }
 
     #[test]

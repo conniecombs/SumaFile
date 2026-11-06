@@ -119,7 +119,7 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task DeleteTagAsync(long id, CancellationToken ct = default);
     Task<Tag[]> GetTagsForPathAsync(string path, CancellationToken ct = default);
     Task SetTagsForPathAsync(string path, long[] tagIds, CancellationToken ct = default);
-    Task<Dictionary<string, Tag>> GetAllFileTagsAsync(CancellationToken ct = default);
+    Task<Dictionary<string, Tag[]>> GetAllFileTagsAsync(CancellationToken ct = default);
     Task<string[]> GetFilesWithTagAsync(long tagId, CancellationToken ct = default);
     Task<SmartFolder[]> LoadSmartFoldersAsync(CancellationToken ct = default);
     Task<SmartFolder[]> SaveSmartFolderAsync(SmartFolder folder, CancellationToken ct = default);

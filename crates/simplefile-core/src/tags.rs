@@ -138,7 +138,9 @@ pub fn get_files_with_tag(tag_id: i64) -> Result<Vec<String>, String> {
     Ok(paths)
 }
 
-pub fn get_all_file_tags() -> Result<HashMap<String, Tag>, String> {
+/// Every tag of every tagged file. A file can carry several tags; the map
+/// used to keep only the last one per path.
+pub fn get_all_file_tags() -> Result<HashMap<String, Vec<Tag>>, String> {
     let connection = open_metadata_db()?;
     let mut statement = connection
         .prepare(
@@ -162,10 +164,10 @@ pub fn get_all_file_tags() -> Result<HashMap<String, Tag>, String> {
         })
         .map_err(|error| error.to_string())?;
 
-    let mut map = HashMap::new();
+    let mut map: HashMap<String, Vec<Tag>> = HashMap::new();
     for row in rows {
         let (path, tag) = row.map_err(|error| error.to_string())?;
-        map.insert(path, tag);
+        map.entry(path).or_default().push(tag);
     }
     Ok(map)
 }
@@ -261,20 +263,22 @@ mod tests {
             update_tag(created.id, "Reviewed".to_string(), "#654321".to_string()).expect("update");
         assert_eq!(updated.name, "Reviewed");
 
-        set_tags_for_path("C:\\file.txt".to_string(), vec![created.id]).expect("set tags");
+        let second = create_tag("Urgent".to_string(), "#ff0000".to_string()).expect("second");
+        set_tags_for_path("C:\\file.txt".to_string(), vec![created.id, second.id])
+            .expect("set tags");
         let tags = get_tags_for_path("C:\\file.txt".to_string()).expect("path tags");
-        assert_eq!(tags, vec![updated.clone()]);
+        assert_eq!(tags, vec![updated.clone(), second.clone()]);
         assert_eq!(
             get_files_with_tag(created.id).expect("files"),
             vec!["C:\\file.txt".to_string()]
         );
+        // Both tags survive the all-files map; it used to keep only one.
+        let all = get_all_file_tags().expect("file tags");
         assert_eq!(
-            get_all_file_tags()
-                .expect("file tags")
-                .get("C:\\file.txt")
-                .cloned(),
-            Some(updated)
+            all.get("C:\\file.txt").cloned(),
+            Some(vec![updated, second.clone()])
         );
+        delete_tag(second.id).expect("delete second");
 
         delete_tag(created.id).expect("delete");
         assert!(get_tags_for_path("C:\\file.txt".to_string())

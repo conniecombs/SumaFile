@@ -70,9 +70,39 @@ pub(super) fn extract_zip(path: &str, dest: &Path) -> Result<(), String> {
             ensure_extract_path_within_destination(&dest_canonical, &final_outpath)?;
             let mut outfile = create_file(&final_outpath)?;
             copy_entry_data(&mut file, &mut outfile, &final_outpath)?;
+            drop(outfile);
+            restore_zip_mtime(&final_outpath, file.last_modified());
         }
     }
     Ok(())
+}
+
+/// Apply the entry's recorded modification time to the extracted file so an
+/// extract-and-rebuild round trip keeps the original timestamps.
+fn restore_zip_mtime(path: &Path, stamp: Option<zip::DateTime>) {
+    use chrono::TimeZone;
+    let Some(stamp) = stamp else {
+        return;
+    };
+    let Some(naive) = chrono::NaiveDate::from_ymd_opt(
+        i32::from(stamp.year()),
+        u32::from(stamp.month()),
+        u32::from(stamp.day()),
+    )
+    .and_then(|date| {
+        date.and_hms_opt(
+            u32::from(stamp.hour()),
+            u32::from(stamp.minute()),
+            u32::from(stamp.second()),
+        )
+    }) else {
+        return;
+    };
+    let Some(local) = chrono::Local.from_local_datetime(&naive).single() else {
+        return;
+    };
+    let mtime = filetime::FileTime::from_unix_time(local.timestamp(), 0);
+    let _ = filetime::set_file_mtime(path, mtime);
 }
 
 pub(super) fn extract_tar(

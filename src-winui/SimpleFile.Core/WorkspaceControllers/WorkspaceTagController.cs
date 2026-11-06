@@ -15,7 +15,7 @@ internal sealed class WorkspaceTagController
     ];
 
     public List<Tag> AllTags { get; private set; } = [];
-    public Dictionary<string, Tag> FileTags { get; private set; } = new();
+    public Dictionary<string, Tag[]> FileTags { get; private set; } = new();
     public long? ActiveTagFilter { get; private set; }
 
     public async Task LoadTagsAsync(
@@ -114,7 +114,10 @@ internal sealed class WorkspaceTagController
 
     public IReadOnlyList<string> FilesWithTag(long tagId)
     {
-        return FileTags.Where(pair => pair.Value.Id == tagId).Select(pair => pair.Key).ToList();
+        return FileTags
+            .Where(pair => pair.Value.Any(tag => tag.Id == tagId))
+            .Select(pair => pair.Key)
+            .ToList();
     }
 
     public IReadOnlyList<FileEntry> FilterEntries(IReadOnlyList<FileEntry> entries)
@@ -125,7 +128,7 @@ internal sealed class WorkspaceTagController
         }
 
         var tagged = FileTags
-            .Where(pair => pair.Value.Id == tagId)
+            .Where(pair => pair.Value.Any(tag => tag.Id == tagId))
             .Select(pair => pair.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return entries.Where(entry => tagged.Contains(entry.Path)).ToList();

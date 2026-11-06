@@ -77,7 +77,7 @@ public sealed partial class ExplorerWorkspace
 
     public List<SmartFolder> SmartFolders => _places.SmartFolders;
     public List<Tag> AllTags => _tags.AllTags;
-    public Dictionary<string, Tag> FileTags => _tags.FileTags;
+    public Dictionary<string, Tag[]> FileTags => _tags.FileTags;
     public List<BookmarkItem> Bookmarks => _places.Bookmarks;
     public List<string> RecentPaths => _places.RecentPaths;
     public List<FolderTreeItem> FolderTreeRows => _folderTree.Rows;

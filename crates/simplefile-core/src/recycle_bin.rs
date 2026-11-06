@@ -263,8 +263,14 @@ fn unique_destination(path: &Path) -> PathBuf {
 }
 
 fn rename_or_copy(source: &Path, destination: &Path) -> Result<(), String> {
-    match fs::rename(source, destination) {
+    // Never replace a file that appeared between choosing the destination and
+    // moving: the unique name was picked a moment ago, not atomically.
+    match crate::path_conflict::rename_exclusive(source, destination) {
         Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
+            "Restore destination already exists: {}",
+            destination.display()
+        )),
         Err(_) => {
             if source.is_dir() {
                 copy_dir_all(source, destination)?;
@@ -383,7 +389,9 @@ fn collect_sid_entries(recycle_root: &Path, entries: &mut Vec<FileEntry>) {
                 path: data_path.to_string_lossy().to_string(),
                 is_dir,
                 is_symlink: false,
-                is_hidden: name_looks_hidden(&parsed.original_path),
+                is_hidden: Path::new(&parsed.original_path)
+                    .file_name()
+                    .is_some_and(|name| name_looks_hidden(&name.to_string_lossy())),
                 is_system: false,
                 size: if is_dir { 0 } else { parsed.size },
                 modified: format_system_time(parsed.deleted),

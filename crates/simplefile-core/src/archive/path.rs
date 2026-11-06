@@ -82,6 +82,12 @@ pub fn split_archive_path(path: &str) -> Result<Option<ArchivePath>, String> {
     }))
 }
 
+/// True for an archive file or any path inside one, decided from the path
+/// components alone (no archive is opened).
+pub fn is_archive_path(path: &str) -> bool {
+    split_archive_path(path).ok().flatten().is_some()
+}
+
 pub fn is_archive_virtual_path(path: &str) -> bool {
     split_archive_path(path)
         .ok()

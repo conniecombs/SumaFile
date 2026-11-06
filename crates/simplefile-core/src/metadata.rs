@@ -865,6 +865,15 @@ fn extract_archive_metadata(path: &Path, extension: &str) -> Result<FileMetadata
             let decoder = flate2::read::GzDecoder::new(file);
             extract_tar_archive_metadata(decoder, "Compressed tar archive")
         }
+        "gz" if path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with(".tar.gz") =>
+        {
+            let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
+            let decoder = flate2::read::GzDecoder::new(file);
+            extract_tar_archive_metadata(decoder, "Compressed tar archive")
+        }
         _ => Ok(format_only_metadata(
             "archive",
             archive_format_label(extension),

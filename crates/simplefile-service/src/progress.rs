@@ -498,7 +498,8 @@ fn transfer_with_policy_blocking(
             if is_move {
                 match rename_directory_move(plan, &mut reserved) {
                     RenameOutcome::Done(target) => {
-                        completed_bytes = completed_bytes.saturating_add(1);
+                        // Directories contribute no bytes to the estimate, so
+                        // a renamed one adds none to the progress either.
                         progress.complete_files(
                             plan.file_count,
                             completed_bytes,

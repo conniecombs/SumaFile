@@ -1075,7 +1075,7 @@ pub(crate) fn copy_file_with_progress_versioned(
                     if let Some(owner) = lease.take() {
                         let _ = owner.abort();
                     }
-                    let failure = Failure::from(error);
+                    let failure = error;
                     return Err(if failure.is_conflict() || failure.is_cancelled() {
                         failure
                     } else {
@@ -1172,7 +1172,7 @@ pub(crate) fn copy_symlink_with_progress(
         },
     ) {
         let _ = lease.abort();
-        let failure = Failure::from(error);
+        let failure = error;
         return Err(if failure.is_conflict() || failure.is_cancelled() {
             failure
         } else {

@@ -86,14 +86,19 @@ struct FilterCandidate<'a> {
 }
 
 fn passes_filters(candidate: &FilterCandidate<'_>, options: &SearchOptions) -> bool {
-    if candidate.is_file {
-        if let Some(ref types) = options.file_types {
-            if !types.is_empty() {
-                let ext_lower = candidate.extension.to_lowercase();
-                if !types.iter().any(|item| item.to_lowercase() == ext_lower) {
-                    return false;
-                }
-            }
+    if let Some(types) = options
+        .file_types
+        .as_ref()
+        .filter(|types| !types.is_empty())
+    {
+        // A type filter asks for files of those kinds; a directory whose name
+        // happens to match the query is not one of them.
+        if !candidate.is_file {
+            return false;
+        }
+        let ext_lower = candidate.extension.to_lowercase();
+        if !types.iter().any(|item| item.to_lowercase() == ext_lower) {
+            return false;
         }
     }
 
@@ -109,21 +114,18 @@ fn passes_filters(candidate: &FilterCandidate<'_>, options: &SearchOptions) -> b
         }
     }
 
+    // A date bound can only be satisfied by an entry whose time is known.
     if let Some(ref after) = candidate.after_dt {
-        if let Some(mod_time) = candidate.modified_time {
-            let modified: DateTime<Local> = mod_time.into();
-            if modified < *after {
-                return false;
-            }
+        match candidate.modified_time {
+            Some(mod_time) if DateTime::<Local>::from(mod_time) >= *after => {}
+            _ => return false,
         }
     }
 
     if let Some(ref before) = candidate.before_dt {
-        if let Some(mod_time) = candidate.modified_time {
-            let modified: DateTime<Local> = mod_time.into();
-            if modified > *before {
-                return false;
-            }
+        match candidate.modified_time {
+            Some(mod_time) if DateTime::<Local>::from(mod_time) <= *before => {}
+            _ => return false,
         }
     }
 
@@ -135,14 +137,21 @@ fn content_matches_file(path: &Path, options: &SearchOptions, size: u64) -> bool
         return false;
     }
 
+    // Wildcards describe file names, not file contents: `*report*` means the
+    // text "report". An interior wildcard has no content meaning at all.
+    let needle = options.query.trim_matches(['*', '?']);
+    if needle.is_empty() || needle.contains(['*', '?']) {
+        return false;
+    }
+
     let Ok(content) = fs::read_to_string(path) else {
         return false;
     };
 
     if options.case_sensitive {
-        content.contains(&options.query)
+        content.contains(needle)
     } else {
-        simplefile_core::native_accel::contains_case_insensitive(&content, &options.query)
+        simplefile_core::native_accel::contains_case_insensitive(&content, needle)
     }
 }
 
@@ -397,5 +406,48 @@ mod tests {
             false,
             &Some(pattern)
         ));
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::{passes_filters, FilterCandidate};
+    use simplefile_core::models::SearchOptions;
+
+    fn options(json: &str) -> SearchOptions {
+        serde_json::from_str(json).unwrap()
+    }
+
+    fn candidate<'a>(is_dir: bool, extension: &'a str) -> FilterCandidate<'a> {
+        FilterCandidate {
+            is_dir,
+            is_file: !is_dir,
+            size: 10,
+            extension,
+            after_dt: &None,
+            before_dt: &None,
+            modified_time: None,
+        }
+    }
+
+    #[test]
+    fn a_type_filter_excludes_directories() {
+        let options = options(
+            r#"{"query":"report","search_path":"C:/","case_sensitive":false,"include_hidden":false,"file_types":["txt"]}"#,
+        );
+        assert!(passes_filters(&candidate(false, "txt"), &options));
+        assert!(!passes_filters(&candidate(false, "png"), &options));
+        assert!(!passes_filters(&candidate(true, ""), &options));
+    }
+
+    #[test]
+    fn date_bounds_exclude_entries_without_a_known_time() {
+        let options = options(
+            r#"{"query":"x","search_path":"C:/","case_sensitive":false,"include_hidden":false}"#,
+        );
+        let after = Some(chrono::Local::now());
+        let mut unknown = candidate(false, "txt");
+        unknown.after_dt = &after;
+        assert!(!passes_filters(&unknown, &options));
     }
 }

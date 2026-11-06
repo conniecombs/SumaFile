@@ -22,55 +22,136 @@ pub fn get_git_status(path: String) -> Result<GitStatus, String> {
     })
 }
 
+/// The host asks for file statuses and then the panel status on every folder
+/// change; both answer from one status run taken within this window.
+const STATUS_CACHE_TTL: Duration = Duration::from_millis(1500);
+
+static STATUS_CACHE: std::sync::Mutex<Option<(PathBuf, Instant, GitRepositoryStatus)>> =
+    std::sync::Mutex::new(None);
+
+fn cached_status(root: &Path) -> Option<GitRepositoryStatus> {
+    let cache = STATUS_CACHE.lock().ok()?;
+    let (cached_root, taken, status) = cache.as_ref()?;
+    (cached_root == root && taken.elapsed() < STATUS_CACHE_TTL).then(|| status.clone())
+}
+
+fn remember_status(root: &Path, status: &GitRepositoryStatus) {
+    if let Ok(mut cache) = STATUS_CACHE.lock() {
+        *cache = Some((root.to_path_buf(), Instant::now(), status.clone()));
+    }
+}
+
+/// Any command that changes the index, the work tree or the refs makes the
+/// cached status stale.
+fn forget_status() {
+    if let Ok(mut cache) = STATUS_CACHE.lock() {
+        *cache = None;
+    }
+}
+
 pub fn get_git_repository_status(path: String) -> Result<GitRepositoryStatus, String> {
     let path = validate_existing_path_no_resolve(&path)?;
     let Some(repo) = try_repo_context(&path)? else {
         return Ok(not_a_repo_status());
     };
+    if let Some(status) = cached_status(&repo.root) {
+        return Ok(status);
+    }
 
-    let branch = git_output(&repo.root, &["branch", "--show-current"])
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    // One status run carries branch, upstream and ahead/behind in its header;
+    // only the abbreviated HEAD needs a second process.
     let head = git_output(&repo.root, &["rev-parse", "--short", "HEAD"])
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let upstream = git_output(
+    let (header, changes) = git_output(
         &repo.root,
         &[
-            "rev-parse",
-            "--abbrev-ref",
-            "--symbolic-full-name",
-            "@{upstream}",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--branch",
+            "--untracked-files=normal",
         ],
     )
-    .ok()
-    .map(|value| value.trim().to_string())
-    .filter(|value| !value.is_empty());
-
-    let (ahead, behind) = ahead_behind(&repo.root);
-    let changes = git_output(
-        &repo.root,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=normal"],
-    )
-    .map(|output| parse_porcelain_status(&repo.root, &output))
+    .map(|output| parse_porcelain_status_with_branch(&repo.root, &output))
     .unwrap_or_default();
 
-    Ok(GitRepositoryStatus {
+    let status = GitRepositoryStatus {
         is_repo: true,
         root: Some(repo.root.to_string_lossy().to_string()),
-        branch,
-        upstream,
+        branch: header.branch,
+        upstream: header.upstream,
         head,
-        ahead,
-        behind,
+        ahead: header.ahead,
+        behind: header.behind,
         staged: changes.iter().filter(|change| change.staged).count() as u32,
         unstaged: changes.iter().filter(|change| change.unstaged).count() as u32,
         untracked: changes.iter().filter(|change| change.untracked).count() as u32,
         conflicted: changes.iter().filter(|change| change.conflicted).count() as u32,
         changes,
-    })
+    };
+    remember_status(&repo.root, &status);
+    Ok(status)
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct BranchHeader {
+    branch: Option<String>,
+    upstream: Option<String>,
+    ahead: u32,
+    behind: u32,
+}
+
+/// Parse the `## <branch>...<upstream> [ahead N, behind M]` header that
+/// `git status --branch` emits as its first record.
+fn parse_branch_header(record: &str) -> BranchHeader {
+    let Some(rest) = record.strip_prefix("## ") else {
+        return BranchHeader::default();
+    };
+    if rest.starts_with("HEAD (no branch)") || rest.starts_with("No commits yet") {
+        return BranchHeader::default();
+    }
+    let (names, counts) = match rest.split_once(" [") {
+        Some((names, counts)) => (names, Some(counts.trim_end_matches(']'))),
+        None => (rest, None),
+    };
+    let (branch, upstream) = match names.split_once("...") {
+        Some((branch, upstream)) => (branch, Some(upstream)),
+        None => (names, None),
+    };
+    let mut header = BranchHeader {
+        branch: Some(branch.trim().to_string()).filter(|value| !value.is_empty()),
+        upstream: upstream
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        ..BranchHeader::default()
+    };
+    for part in counts.unwrap_or_default().split(',') {
+        let part = part.trim();
+        if let Some(value) = part.strip_prefix("ahead ") {
+            header.ahead = value.trim().parse().unwrap_or(0);
+        } else if let Some(value) = part.strip_prefix("behind ") {
+            header.behind = value.trim().parse().unwrap_or(0);
+        }
+    }
+    header
+}
+
+fn parse_porcelain_status_with_branch(
+    root: &Path,
+    output: &str,
+) -> (BranchHeader, Vec<GitFileStatus>) {
+    match output.split_once(char::from(0)) {
+        Some((first, rest)) if first.starts_with("## ") => (
+            parse_branch_header(first),
+            parse_porcelain_status(root, rest),
+        ),
+        _ => (
+            BranchHeader::default(),
+            parse_porcelain_status(root, output),
+        ),
+    }
 }
 
 pub fn get_git_file_statuses(path: String) -> Result<Vec<FileEntry>, String> {
@@ -308,13 +389,12 @@ fn repo_context_from_string(path: &str) -> Result<RepoContext, String> {
 }
 
 fn try_repo_context(path: &Path) -> Result<Option<RepoContext>, String> {
-    if git_output(path, &["rev-parse", "--is-inside-work-tree"]).is_err() {
+    // `--show-toplevel` fails outside a work tree, so one process answers
+    // both "is this a repository" and "where is its root".
+    let Ok(root) = git_output(path, &["rev-parse", "--show-toplevel"]) else {
         return Ok(None);
-    }
-
-    let root = git_output(path, &["rev-parse", "--show-toplevel"])?
-        .trim()
-        .to_string();
+    };
+    let root = root.trim().to_string();
     if root.is_empty() {
         return Ok(None);
     }
@@ -322,21 +402,6 @@ fn try_repo_context(path: &Path) -> Result<Option<RepoContext>, String> {
     Ok(Some(RepoContext {
         root: PathBuf::from(root),
     }))
-}
-
-fn ahead_behind(root: &Path) -> (u32, u32) {
-    git_output(
-        root,
-        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
-    )
-    .ok()
-    .and_then(|counts| {
-        let mut parts = counts.split_whitespace();
-        let ahead = parts.next()?.parse().ok()?;
-        let behind = parts.next()?.parse().ok()?;
-        Some((ahead, behind))
-    })
-    .unwrap_or((0, 0))
 }
 
 fn parse_porcelain_status(root: &Path, output: &str) -> Vec<GitFileStatus> {
@@ -394,7 +459,12 @@ fn git_file_status(
     let staged = !untracked && !conflicted && index_status != ' ';
     let unstaged = !untracked && !conflicted && worktree_status != ' ';
     let status = status_label(index_status, worktree_status).to_string();
-    let absolute_path = root.join(Path::new(&path)).to_string_lossy().to_string();
+    // git reports repo-relative paths with `/`; join with native separators so
+    // the UI and the cache see one spelling.
+    let absolute_path = root
+        .join(path.replace('/', std::path::MAIN_SEPARATOR_STR))
+        .to_string_lossy()
+        .to_string();
 
     GitFileStatus {
         path,
@@ -458,6 +528,8 @@ const GIT_REMOTE_TIMEOUT: Duration = Duration::from_secs(600);
 /// explicit actions (commit, push).
 fn git_query_command(path: &Path, args: &[OsString]) -> Command {
     let mut command = hidden_command("git");
+    // Diff and status pathspecs name exact files; `a[1].txt` is not a glob.
+    command.arg("--literal-pathspecs");
     harden_against_repo_config(&mut command, true);
     command.arg("-C").arg(path).args(args);
     command
@@ -481,6 +553,7 @@ fn run_git_path_command(
     pathspecs: &[String],
     summary: &str,
 ) -> Result<GitCommandResult, String> {
+    forget_status();
     let mut args = Vec::with_capacity(prefix_args.len() + pathspecs.len());
     args.extend(prefix_args.iter().cloned());
     args.extend(pathspecs.iter().map(OsString::from));
@@ -494,6 +567,7 @@ fn run_git_repo_command(
     args: &[OsString],
     summary: &str,
 ) -> Result<GitCommandResult, String> {
+    forget_status();
     let command = git_root_command(root, args, false);
     command_output_with_name(command, command_name, summary)
 }
@@ -736,6 +810,7 @@ fn run_git_remote_command(
     subcommand_args: &[&str],
 ) -> Result<GitCommandResult, String> {
     let path = validate_existing_path_no_resolve(path)?;
+    forget_status();
     let mut command = hidden_command("git");
     command.args(git_remote_args(&path, subcommand, subcommand_args));
     command_output_with_timeout(
@@ -750,8 +825,48 @@ fn run_git_remote_command(
 mod tests {
     use super::{
         command_output_with_timeout, git_query_command, git_remote_args, git_root_command,
-        parse_porcelain_status, repo_relative_path, status_label,
+        parse_branch_header, parse_porcelain_status, parse_porcelain_status_with_branch,
+        repo_relative_path, status_label, BranchHeader,
     };
+
+    #[test]
+    fn branch_header_carries_branch_upstream_and_counts() {
+        assert_eq!(
+            parse_branch_header("## main...origin/main [ahead 2, behind 1]"),
+            BranchHeader {
+                branch: Some("main".into()),
+                upstream: Some("origin/main".into()),
+                ahead: 2,
+                behind: 1,
+            }
+        );
+        assert_eq!(
+            parse_branch_header("## feature/x"),
+            BranchHeader {
+                branch: Some("feature/x".into()),
+                ..BranchHeader::default()
+            }
+        );
+        assert_eq!(
+            parse_branch_header("## HEAD (no branch)"),
+            BranchHeader::default()
+        );
+        assert_eq!(
+            parse_branch_header("## No commits yet on main"),
+            BranchHeader::default()
+        );
+    }
+
+    #[test]
+    fn status_with_branch_separates_header_from_records() {
+        let nul = char::from(0);
+        let output =
+            format!("## main...origin/main [ahead 1]{nul} M src/lib.rs{nul}?? notes.txt{nul}");
+        let (header, changes) = parse_porcelain_status_with_branch(Path::new("repo"), &output);
+        assert_eq!(header.branch.as_deref(), Some("main"));
+        assert_eq!(header.ahead, 1);
+        assert_eq!(changes.len(), 2);
+    }
     use std::ffi::OsString;
     use std::path::Path;
 

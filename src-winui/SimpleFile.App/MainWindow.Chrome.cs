@@ -689,8 +689,12 @@ public sealed partial class MainWindow
     {
         var cut = _workspace?.Clipboard is { Operation: ClipboardOperation.Cut, HasItems: true } clipboard
             && clipboard.SourcePaths.Any(path => PathRules.PathsEqual(path, entry.Path));
+        // The row badge shows the first tag; every tag is kept in FileTags.
         Tag? tag = null;
-        _workspace?.FileTags.TryGetValue(entry.Path, out tag);
+        if (_workspace?.FileTags.TryGetValue(entry.Path, out var tags) == true)
+        {
+            tag = tags.FirstOrDefault();
+        }
         return FileRow.From(entry, cut, tag, pane);
     }
 

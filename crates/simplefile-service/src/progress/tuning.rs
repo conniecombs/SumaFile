@@ -15,6 +15,8 @@ static HISTORY_LOCK: Mutex<()> = Mutex::new(());
 /// Qualified samples (each at least five saturated seconds) to hold a setting
 /// after a halving or a revert before probing again.
 const COOLDOWN_SAMPLES: usize = 2;
+/// Cap on the exponential probe back-off: 2 << 4 = 32 cooldown samples.
+const MAX_PROBE_BACKOFF: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -348,6 +350,9 @@ pub(crate) struct Controller {
     learned: bool,
     try_lower: bool,
     lower_tested: bool,
+    /// Upward probes rejected in a row; each one doubles the next cooldown so
+    /// storage whose optimum is below the limit is not re-probed every 40 s.
+    rejected_probes: u32,
 }
 
 impl Controller {
@@ -415,6 +420,7 @@ impl Controller {
             learned: false,
             try_lower: false,
             lower_tested: false,
+            rejected_probes: 0,
         }
     }
 
@@ -485,6 +491,10 @@ impl Controller {
             if rate >= self.best_rate * (if lower { 0.95 } else { 1.08 }) {
                 self.best_rate = rate;
                 self.best_concurrency = self.concurrency;
+                if !lower {
+                    // Only a successful step upward proves the ceiling moved.
+                    self.rejected_probes = 0;
+                }
                 self.explanation = if lower {
                     "Similar speed with fewer simultaneous files"
                 } else {
@@ -492,7 +502,10 @@ impl Controller {
                 };
             } else {
                 self.concurrency = self.best_concurrency;
-                self.cooldown = COOLDOWN_SAMPLES;
+                self.cooldown = COOLDOWN_SAMPLES << self.rejected_probes.min(MAX_PROBE_BACKOFF);
+                if !lower {
+                    self.rejected_probes = self.rejected_probes.saturating_add(1);
+                }
                 self.explanation = "Keeping the faster stable setting";
                 self.try_lower = !lower && !self.lower_tested;
             }
@@ -836,6 +849,47 @@ mod budget_tests {
         assert_eq!(
             policy.budgeted_streams(false),
             policy.buffer_count(false, 1 << 30, "copy")
+        );
+    }
+}
+
+#[cfg(test)]
+mod backoff_tests {
+    use super::{Controller, Policy, COOLDOWN_SAMPLES};
+    use std::time::Duration;
+
+    fn observe(c: &mut Controller, rate: u64) {
+        for _ in 0..2 {
+            c.sample(rate * 5, Duration::from_secs(5), true, 0);
+        }
+    }
+
+    /// Storage whose optimum is below the limit must not be re-probed at the
+    /// same cadence forever: each rejected upward probe lengthens the pause.
+    #[test]
+    fn rejected_probes_lengthen_the_cooldown() {
+        let mut c = Controller::new(Policy::default(), 4 << 20, None);
+        observe(&mut c, 1000); // baseline, starts an upward probe
+        assert!(c.probing && c.concurrency > c.best_concurrency);
+        observe(&mut c, 900); // rejected
+        let first_cooldown = c.cooldown;
+        assert_eq!(first_cooldown, COOLDOWN_SAMPLES);
+
+        // Keep the rate flat until the controller tries upward again.
+        let mut reached_upward_probe = false;
+        for _ in 0..64 {
+            observe(&mut c, 1000);
+            if c.probing && c.concurrency > c.best_concurrency {
+                reached_upward_probe = true;
+                break;
+            }
+        }
+        assert!(reached_upward_probe, "controller never probed upward again");
+        observe(&mut c, 900); // rejected again
+        assert!(
+            c.cooldown >= 2 * COOLDOWN_SAMPLES,
+            "second rejection kept cooldown at {}",
+            c.cooldown
         );
     }
 }

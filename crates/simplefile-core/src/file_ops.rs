@@ -471,8 +471,12 @@ pub fn list_subdirectories(path: &str) -> Result<Vec<TreeNode>, String> {
 
     for entry in read_dir.flatten() {
         if let Ok(file_type) = entry.file_type() {
-            if file_type.is_dir() {
-                let entry_path = entry.path();
+            let entry_path = entry.path();
+            // Junctions and directory symlinks list as folders in the pane;
+            // the tree must show them too.
+            let is_dir = file_type.is_dir()
+                || (file_type.is_symlink() && fs::metadata(&entry_path).is_ok_and(|m| m.is_dir()));
+            if is_dir {
                 let name = entry_path
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())

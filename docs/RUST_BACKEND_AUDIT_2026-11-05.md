@@ -63,10 +63,69 @@ that failed before the change:
 | H13 | `delete_entry` routes to the recycle-bin deleter only for `<drive>:\$Recycle.Bin\S-1-…\$R…` paths. | `file_ops::tests::delete_entry_outside_a_real_recycle_root_never_touches_siblings`, `recycle_bin::tests::recycle_item_path_requires_bin_sid_and_data_prefix` |
 | H14 | Updater HTTP calls have connect/response/idle timeouts; downloads stop at the declared size, are no longer mirrored in memory, and the signature is verified against the file on disk; prerelease/build suffixes never outrank the release. | `updater::tests::{stalled_server_times_out_instead_of_hanging, download_stops_once_the_body_exceeds_the_declared_size, signature_is_verified_against_the_file_on_disk, prerelease_and_build_suffixes_are_not_newer_than_the_release}` |
 
-**Deferred from Round 2:** H9 (one tag per file) needs the `TagMap` IPC type
-and the WinUI `Dictionary<string, Tag>` consumers to change shape, so it is a
-cross-stack change rather than a backend fix. Also still open from H4/H6: the
-seven-process git status query and the archive double parse per listing.
+**Round 3 (2026-11-05, same branch):** Medium findings, each with a test
+that failed before the change unless noted:
+
+| Finding | Change | Test |
+| --- | --- | --- |
+| M1 | Skipped sources count as "explained" when a moved source directory cannot be removed, so a merge-move with Skip succeeds. | `progress::tests::move_merge_with_skip_keeps_skipped_sources_without_failing` |
+| M3 | Planning-time skips are returned from `prepare_transfer_inputs_cached` and reported in the outcome's `skipped` list. | `progress::plan::batch_tests::planning_time_skips_are_reported` |
+| M4 | `StorageFull` is classified permanent, not transient. | `transfer_reliability::classification_tests::disk_full_is_permanent_not_transient` |
+| M5 | A file metadata-preservation failure after a verified copy is logged, matching directories, instead of discarding the file. | no unit test (needs a volume that rejects `SetFileInformationByHandle`) |
+| M6 | `promote_leased_with_policy` returns `Failure`, keeping Busy/Retryable kinds for the high-level retry. | covered by existing promotion tests |
+| M10 | Cancel tokens for search, duplicate and cleanup scans are registered before the job is spawned; `OperationRegistry::remove_token` removes an id only while it still maps to the finishing job's token; searches without a client id get a generated registry id so disconnect cancels them. | `progress::registry::tests::finishing_an_older_job_keeps_the_newer_token_cancellable` |
+| M11 | The parent-liveness monitor opens one `SYNCHRONIZE` handle before waiting for the client and waits on it, so PID reuse and access errors cannot fool it. | `main.rs tests::{exited_parent_is_detected_through_its_handle, live_parent_is_not_reported_exited}` |
+| M12 | Post-transfer cache invalidation no longer walks every transferred item. | no test (performance only) |
+| M14 | The 500 ms per-path watcher debounce is gone; the coalescer already keeps the latest event per path. | `watcher::live_tests::remove_shortly_after_create_is_not_dropped` |
+| M16 | Backslashes are ordinary characters in remote paths. | `remote::path::tests::backslashes_are_ordinary_characters_in_remote_names` |
+| M17 | Credential targets must start with `SumaFile.Remote.`. | `tests/remote_profiles.rs::credential_targets_outside_the_app_namespace_are_rejected` |
+| M18 | `transfer_single` runs recovery on the destination's folder, so downloading over an existing file works. | `remote::transfer::single_download_tests::single_download_over_an_existing_file_succeeds` |
+| M20 | SFTP delete uses `symlink_metadata`, so a link to a directory is removed as a link. | no unit test (needs an SFTP server) |
+| M21 | Listing skips lines the FTP parser rejects. Not reproducible: suppaftp 12 parses every line tried, including banners and empty lines. | `remote::ftp::listing_tests::dot_entries_are_filtered_from_listings` |
+| M22 | The portable fallback runs only when `FindFirstFileExW` itself fails, never after entries were streamed. | `dir_list::enumeration_tests::a_failure_after_entries_were_streamed_does_not_restart_from_scratch` |
+| M23 | Only symlink and mount-point reparse tags count as symlinks; cloud placeholders are not `read_link`'d. | `dir_list::enumeration_tests::directory_junction_is_a_symlink_but_plain_entries_are_not` |
+| M24 | Sorting precomputes one key per entry and applies the permutation in place; name filtering uses the SIMD case-insensitive search. | `dir_list::sort_tests::*` |
+| M25 | Recording a differing byte is O(1) after the row cap; the LCS table uses `u16` cells. | `compare::binary_scan_tests::recording_past_the_row_cap_is_constant_time` |
+| M27 | Zip listing and metadata read raw central-directory entries; extraction refuses password-protected entries before writing anything. | `archive::tests::encrypted_zip_entries_list_but_do_not_extract` |
+| M28 | Skipped MP4 atoms no longer consume the probe budget. | `metadata::tests::video_metadata_survives_a_large_mdat_before_moov` |
+| M29 | Thumbnail writes use a per-call temp name; eviction is throttled to one pass per minute; eviction and clearing refuse a folder without the cache marker. | `thumbnail_cache::safety_tests::*` (written after the change) |
+| M30 | Text previews honour UTF-8/UTF-16 byte-order marks and decode lossily instead of failing. | `preview::tests::{read_file_preview_decodes_utf16_text_with_bom, read_file_preview_is_lossy_for_invalid_utf8}` (written after the change) |
+| M31 | Policy adds `pythonw`, `py`, `pyw`, `java`, `javaw`, `conhost`, `wsl` and the `.py*`/`.psm1`/`.psd1` extensions (regenerated into Rust and C#); versioned interpreter names and NTFS stream/trailing-dot spellings are recognised. | `open_with::tests::{denied_executables_cover_windowless_and_versioned_interpreters, denied_target_extensions_see_through_ntfs_spellings}` |
+| M32 | Disk cleanup ignores zero-byte files; exclusion matching never truncates the path under test. | `cleanup::tests::{scan_disk_cleanup_ignores_zero_byte_files, exclusions_match_arbitrarily_deep_paths}` |
+| M33 | One remote-like file-system vocabulary shared by `drives` and `utils`. | `utils` remote-filesystem test extended with `GoogleDriveFS` |
+
+**Round 4 (2026-11-05, same branch):** the remaining items.
+
+| Finding | Change | Test |
+| --- | --- | --- |
+| H4 (rest) | One `git status --porcelain=v1 -z --branch` run supplies branch, upstream and ahead/behind; repository discovery uses one `rev-parse --show-toplevel`; a 1.5 s status cache per root serves the host's back-to-back file-status and panel-status calls and is dropped by every mutating command. Seven spawns per navigation became three, shared by both calls. | `git::tests::{branch_header_carries_branch_upstream_and_counts, status_with_branch_separates_header_from_records}` |
+| H6 (rest) | Listing routing and cacheability use `archive::is_archive_path` (a path-component check) instead of parsing the archive. | no test (performance only) |
+| H9 | `get_all_file_tags` returns every tag per file (`Dictionary<string, Tag[]>` on the host; IPC bindings regenerated; controller, row badge and test doubles updated). The row badge shows the first tag. | `tags::tests::tags_round_trip_through_metadata_db` (extended), WinUI build and tests |
+| M7 | A lease whose first record write fails removes its record and staging file; recovery compares directory paths by collision key so spelling differences do not skip records. | `transfer_journal::tests::recovery_ignores_path_spelling_differences` |
+| M8 | Each rejected upward probe doubles the next cooldown (capped at 32 samples); an accepted upward probe resets it. | `progress::tuning::backoff_tests::rejected_probes_lengthen_the_cooldown` |
+| M13 | Cached directory listings expire after 10 s regardless of the directory stamp. | no test (timing) |
+| M26 | Zip entries carry the source file's modification time and extraction restores it, so archive edits keep timestamps. | `archive::tests::zip_round_trip_preserves_file_modification_times` |
+| L1 | Frames are limited to 64 KiB until the handshake completes. | `session::tests::oversized_frame_before_handshake_closes_the_session` |
+| L3 | A repeated handshake is refused; five bad tokens close the session. | `dispatch::tests::{handshake_cannot_be_repeated_once_it_succeeded, repeated_bad_tokens_close_the_session}` |
+| L4 | The unused `shared_memory` module is removed. | compile |
+| L5 | Renamed directories add no bytes to progress. | existing progress tests |
+| L6 | Fingerprint comparison lowercases only the algorithm prefix; child names in `join_remote_path` cannot contain `..`. | `remote::sftp::fingerprint_tests::*`, `remote::path::tests::child_names_cannot_escape_their_parent` |
+| L7 | A type filter excludes directories; date bounds exclude entries without a known time; content search strips wildcards and skips queries with interior wildcards. | `search::filter_tests::*` |
+| L9 | Recycle-bin `is_hidden` uses the original file name; restore refuses to replace a file that appeared at the chosen destination. | existing recycle-bin tests |
+| L10 | The folder tree shows junctions and directory symlinks. | existing tree tests |
+| L11 | Read-only git queries run with `--literal-pathspecs`; reported paths use native separators. | existing git tests |
+| L12 | The `7z` PATH probe runs once per process; `.tar.gz` gets tar inspection; size totals use saturating adds. | existing archive tests |
+
+**Not changed, with reasons:** M9 (the same-volume swap would need a journal
+record whose staged path lies outside the destination directory, which the
+recovery format forbids; a redesign of the journal, not a fix); M15 (the host
+reads the final result array, so dropping it would need a protocol version);
+M19 (fewer FTP round trips needs MLST-aware planning across the transfer
+engine); L2, L8 and the remaining redundancy inventory (cleanups without
+behaviour change).
+
+**Round 2 deferrals (H9, the git status spawn count, the archive double parse)
+were closed in Round 4.**
 
 The "Suggested order" section at the end proposes how to sequence the rest.
 

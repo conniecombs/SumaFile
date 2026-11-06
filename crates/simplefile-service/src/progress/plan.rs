@@ -202,6 +202,9 @@ pub(crate) type PlanConflict = (PathBuf, PathBuf, String);
 /// destination)`. Reported so a skip never silently vanishes from the outcome.
 pub(crate) type PlanSkip = (PathBuf, PathBuf);
 
+/// Plans, resolved destination root, per-item conflicts, per-item skips.
+pub(crate) type PlannedInputs = (Vec<TransferPlan>, PathBuf, Vec<PlanConflict>, Vec<PlanSkip>);
+
 #[cfg(test)]
 pub(crate) fn prepare_transfer_inputs(
     sources: Vec<String>,
@@ -224,7 +227,7 @@ pub(crate) fn prepare_transfer_inputs_cached(
     destination: String,
     conflict_action: &str,
     volumes: &mut VolumeKindCache,
-) -> Result<(Vec<TransferPlan>, PathBuf, Vec<PlanConflict>, Vec<PlanSkip>), String> {
+) -> Result<PlannedInputs, String> {
     if sources.is_empty() {
         return Err("No sources specified".to_string());
     }

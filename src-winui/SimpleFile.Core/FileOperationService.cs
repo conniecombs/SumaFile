@@ -645,7 +645,7 @@ public sealed class FileOperationService : ISettingsBackend
     public Task DeleteTagAsync(long id, CancellationToken ct = default) => _ipc.DeleteTagAsync(id, ct);
     public Task<Tag[]> GetTagsForPathAsync(string path, CancellationToken ct = default) => _ipc.GetTagsForPathAsync(path, ct);
     public Task SetTagsForPathAsync(string path, long[] tagIds, CancellationToken ct = default) => _ipc.SetTagsForPathAsync(path, tagIds, ct);
-    public Task<Dictionary<string, Tag>> GetAllFileTagsAsync(CancellationToken ct = default) => _ipc.GetAllFileTagsAsync(ct);
+    public Task<Dictionary<string, Tag[]>> GetAllFileTagsAsync(CancellationToken ct = default) => _ipc.GetAllFileTagsAsync(ct);
     public Task<string[]> GetFilesWithTagAsync(long tagId, CancellationToken ct = default) => _ipc.GetFilesWithTagAsync(tagId, ct);
 
     public Task<SmartFolder[]> LoadSmartFoldersAsync(CancellationToken ct = default) => _ipc.LoadSmartFoldersAsync(ct);

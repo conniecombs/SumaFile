@@ -121,7 +121,19 @@ impl StagingLease {
             },
             staged_file,
         };
-        lease.persist()?;
+        if let Err(error) = lease.persist() {
+            // Nothing was recorded, so nothing must be left behind: an empty
+            // record plus an unowned partial would otherwise live on forever.
+            let record_path = lease.path.clone();
+            let staged = lease.record.staged.clone();
+            let owns_stage = lease.staged_file.is_some();
+            drop(lease);
+            let _ = fs::remove_file(&record_path);
+            if owns_stage {
+                let _ = fs::remove_file(&staged);
+            }
+            return Err(error);
+        }
         Ok(lease)
     }
 
@@ -244,6 +256,15 @@ fn recover(record: &Record) -> Result<(), String> {
     Ok(())
 }
 
+/// Windows paths differ only by spelling (`C:` vs `c:`, mapped drive vs UNC
+/// prefix); a record written under one spelling must still be recovered when
+/// the directory is visited under another.
+fn same_path(left: &Path, right: &Path) -> bool {
+    left == right
+        || simplefile_core::path_conflict::path_collision_key(left)
+            == simplefile_core::path_conflict::path_collision_key(right)
+}
+
 /// One scan per destination directory, rather than one scan per copied file.
 /// A live lock, an invalid/torn record, or an unrelated partial is preserved.
 pub(crate) fn recover_directory(directory: &Path) -> Result<(), String> {
@@ -283,11 +304,17 @@ pub(crate) fn recover_directory(directory: &Path) -> Result<(), String> {
             continue;
         };
         if record.version != 1
-            || record_path(&record.staged) != path
-            || record.staged.parent() != Some(directory)
-            || record.destination.parent() != Some(directory)
+            || !same_path(&record_path(&record.staged), &path)
+            || !record
+                .staged
+                .parent()
+                .is_some_and(|p| same_path(p, directory))
+            || !record
+                .destination
+                .parent()
+                .is_some_and(|p| same_path(p, directory))
             || record.backup.as_ref().is_some_and(|(p, _)| {
-                p.parent() != Some(directory)
+                !p.parent().is_some_and(|p| same_path(p, directory))
                     || !p
                         .file_name()
                         .is_some_and(|n| n.to_string_lossy().ends_with(".sumafile-replace-backup"))
@@ -385,6 +412,24 @@ mod tests {
             }
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    /// A crash during a transfer planned as `C:\\Dest` is still recovered when
+    /// the folder is next visited as `c:\\dest`.
+    #[test]
+    fn recovery_ignores_path_spelling_differences() {
+        let root = root();
+        let destination = root.join("file");
+        let stage = crate::transfer_staging::staging_path_for(&destination, "case").unwrap();
+        let lease = StagingLease::begin("source", &destination, &stage).unwrap();
+        drop(lease);
+        assert!(stage.exists());
+
+        let respelled = PathBuf::from(root.to_string_lossy().to_ascii_lowercase());
+        recover_directory(&respelled).unwrap();
+        assert!(!stage.exists(), "abandoned partial was not cleaned up");
+        assert!(!record_path(&stage).exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -59,8 +59,8 @@ fn list_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
             size: file.size(),
             compressed_size: file.compressed_size(),
         };
-        total_size += file.size();
-        compressed_size += file.compressed_size();
+        total_size = total_size.saturating_add(file.size());
+        compressed_size = compressed_size.saturating_add(file.compressed_size());
         entries.push(entry);
     }
     Ok(ArchiveInfo {
@@ -133,7 +133,7 @@ fn list_tar_archive(path: &str, compression: Option<&str>) -> Result<ArchiveInfo
                     unsafe_entries.push(path_str);
                     continue;
                 }
-                total_size += size;
+                total_size = total_size.saturating_add(size);
                 entries.push(ArchiveEntry {
                     name: path_str
                         .split('/')
@@ -186,7 +186,7 @@ fn list_rar_archive(path: &str) -> Result<ArchiveInfo, String> {
             continue;
         }
 
-        total_size += entry.unpacked_size;
+        total_size = total_size.saturating_add(entry.unpacked_size);
         entries.push(ArchiveEntry {
             name: entry
                 .filename
@@ -221,7 +221,7 @@ fn list_seven_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
             continue;
         }
 
-        total_size += entry.size;
+        total_size = total_size.saturating_add(entry.size);
         entries.push(ArchiveEntry {
             name: archive_entry_name(&entry.path),
             path: entry.path,

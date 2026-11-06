@@ -43,7 +43,19 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
     }
 
     match request.method.as_str() {
-        HANDSHAKE_METHOD => Dispatch::Reply(handshake(state, request)),
+        HANDSHAKE_METHOD if state.handshake_done => Dispatch::Reply(JsonRpcResponse::error(
+            request.id.clone(),
+            ERR_INVALID_REQUEST,
+            "ipc.handshake has already completed for this session",
+        )),
+        HANDSHAKE_METHOD => {
+            let response = handshake(state, request);
+            if state.handshake_failures >= MAX_HANDSHAKE_FAILURES {
+                // Too many bad tokens: close instead of letting a client guess.
+                return Dispatch::Shutdown(response);
+            }
+            Dispatch::Reply(response)
+        }
         HEALTH_METHOD => reply_ok(
             request,
             json!({
@@ -913,6 +925,9 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
     }
 }
 
+/// Bad-token attempts tolerated before the session is closed.
+const MAX_HANDSHAKE_FAILURES: u8 = 5;
+
 fn method_not_found(request: &JsonRpcRequest) -> JsonRpcResponse {
     JsonRpcResponse::error(
         request.id.clone(),
@@ -1036,6 +1051,7 @@ fn handshake(state: &mut SessionState, request: &JsonRpcRequest) -> JsonRpcRespo
         );
     };
     if !auth_token_matches(expected, params.auth_token.as_deref()) {
+        state.handshake_failures = state.handshake_failures.saturating_add(1);
         return JsonRpcResponse::error(
             request.id.clone(),
             ERR_INVALID_REQUEST,

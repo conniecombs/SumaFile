@@ -480,6 +480,37 @@ fn encrypted_zip_entries_list_but_do_not_extract() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// Creating a zip and extracting it again must keep each file's modification
+/// time; stamping everything "now" made archive edits rewrite history.
+#[test]
+fn zip_round_trip_preserves_file_modification_times() {
+    use chrono::Datelike;
+    let root = unique_temp_dir("zip-mtime");
+    let source = root.join("old.txt");
+    fs::write(&source, b"vintage").unwrap();
+    let stamp = filetime::FileTime::from_unix_time(1_276_603_200, 0); // 2010-06-15 12:00 UTC
+    filetime::set_file_mtime(&source, stamp).unwrap();
+
+    let zip_path = root.join("vintage.zip");
+    create_archive(
+        vec![source.to_string_lossy().to_string()],
+        zip_path.to_string_lossy().to_string(),
+        "zip".to_string(),
+    )
+    .expect("create zip");
+    let out = root.join("out");
+    fs::create_dir_all(&out).unwrap();
+    extract_zip(zip_path.to_str().unwrap(), &out).expect("extract zip");
+
+    let extracted = fs::metadata(out.join("old.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let year = chrono::DateTime::<chrono::Local>::from(extracted).year();
+    assert_eq!(year, 2010, "extracted file lost its timestamp");
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn extract_zip_allows_nested_folder_that_does_not_exist_yet() {
     let root = unique_temp_dir("nested");

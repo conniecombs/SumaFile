@@ -23,6 +23,8 @@ pub(crate) use params::ProgressCopyMoveParams;
 
 pub struct SessionState {
     pub handshake_done: bool,
+    /// Failed authentication attempts; the session closes after a few.
+    pub handshake_failures: u8,
     pub binary_hot_frames: Arc<AtomicBool>,
     pub expected_token: Option<String>,
     pub shutdown: bool,
@@ -40,6 +42,7 @@ impl Default for SessionState {
     fn default() -> Self {
         Self {
             handshake_done: false,
+            handshake_failures: 0,
             binary_hot_frames: Arc::new(AtomicBool::new(false)),
             expected_token: None,
             shutdown: false,

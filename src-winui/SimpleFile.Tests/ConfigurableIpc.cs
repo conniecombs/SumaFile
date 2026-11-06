@@ -397,7 +397,7 @@ internal sealed class ConfigurableIpc : NullIpc
     }
 
     public List<Tag> Tags { get; } = [];
-    public Dictionary<string, Tag> FileTags { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, Tag[]> FileTags { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public override Task<Tag[]> GetAllTagsAsync(CancellationToken ct = default)
         => Task.FromResult(Tags.ToArray());
@@ -425,9 +425,17 @@ internal sealed class ConfigurableIpc : NullIpc
     public override Task DeleteTagAsync(long id, CancellationToken ct = default)
     {
         Tags.RemoveAll(candidate => candidate.Id == id);
-        foreach (var key in FileTags.Where(pair => pair.Value.Id == id).Select(pair => pair.Key).ToArray())
+        foreach (var key in FileTags.Keys.ToArray())
         {
-            FileTags.Remove(key);
+            var remaining = FileTags[key].Where(tag => tag.Id != id).ToArray();
+            if (remaining.Length == 0)
+            {
+                FileTags.Remove(key);
+            }
+            else
+            {
+                FileTags[key] = remaining;
+            }
         }
 
         return Task.CompletedTask;
@@ -441,18 +449,22 @@ internal sealed class ConfigurableIpc : NullIpc
         }
         else
         {
-            var tag = Tags.FirstOrDefault(candidate => candidate.Id == tagIds[0]);
-            if (tag is not null)
+            var tags = tagIds
+                .Select(id => Tags.FirstOrDefault(candidate => candidate.Id == id))
+                .Where(tag => tag is not null)
+                .Select(tag => tag!)
+                .ToArray();
+            if (tags.Length > 0)
             {
-                FileTags[path] = tag;
+                FileTags[path] = tags;
             }
         }
 
         return Task.CompletedTask;
     }
 
-    public override Task<Dictionary<string, Tag>> GetAllFileTagsAsync(CancellationToken ct = default)
-        => Task.FromResult(new Dictionary<string, Tag>(FileTags, StringComparer.OrdinalIgnoreCase));
+    public override Task<Dictionary<string, Tag[]>> GetAllFileTagsAsync(CancellationToken ct = default)
+        => Task.FromResult(new Dictionary<string, Tag[]>(FileTags, StringComparer.OrdinalIgnoreCase));
 
     public override Task<SmartFolder[]> LoadSmartFoldersAsync(CancellationToken ct = default)
         => LoadSmartFoldersHandler?.Invoke(ct) ?? throw NotConfigured();

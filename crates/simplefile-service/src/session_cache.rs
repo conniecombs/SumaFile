@@ -82,6 +82,10 @@ struct StampedValue<T> {
     value: T,
 }
 
+/// A directory's own mtime does not change when a child's contents change in
+/// place, so a stamped listing can only be trusted for a short while.
+const DIRECTORY_LISTING_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10);
+
 struct LruSlot<V> {
     value: V,
     estimated_bytes: usize,
@@ -298,6 +302,7 @@ where
 #[derive(Clone)]
 pub struct SessionCache {
     directory_listings: Arc<BoundedByteLru<String, StampedValue<DirectoryListing>>>,
+    listing_stored_at: Arc<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>>,
     entry_info: Arc<BoundedByteLru<String, StampedValue<FileEntry>>>,
     file_metadata: Arc<BoundedByteLru<String, StampedValue<FileMetadata>>>,
     image_metadata: Arc<BoundedByteLru<String, StampedValue<ImageMetadata>>>,
@@ -319,6 +324,7 @@ impl SessionCache {
                 DEFAULT_DIR_LISTING_MAX_ENTRIES,
                 DEFAULT_DIR_LISTING_MAX_BYTES,
             )),
+            listing_stored_at: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             entry_info: Arc::new(BoundedByteLru::new(
                 DEFAULT_ENTRY_INFO_MAX_ENTRIES,
                 DEFAULT_ENTRY_INFO_MAX_BYTES,
@@ -370,10 +376,19 @@ impl SessionCache {
         }
         let current_stamp = PathStamp::for_path(Path::new(path))?;
         let cached = self.directory_listings.get(&key)?;
-        if cached.stamp == current_stamp {
+        let fresh = self
+            .listing_stored_at
+            .lock()
+            .ok()
+            .and_then(|stored| stored.get(&key).copied())
+            .is_some_and(|stored| stored.elapsed() < DIRECTORY_LISTING_MAX_AGE);
+        if fresh && cached.stamp == current_stamp {
             Some(cached.value)
         } else {
             self.directory_listings.remove(&key);
+            if let Ok(mut stored) = self.listing_stored_at.lock() {
+                stored.remove(&key);
+            }
             None
         }
     }
@@ -389,6 +404,9 @@ impl SessionCache {
         let Some(stamp) = PathStamp::for_path(Path::new(path)) else {
             return;
         };
+        if let Ok(mut stored) = self.listing_stored_at.lock() {
+            stored.insert(key.clone(), std::time::Instant::now());
+        }
         let estimated_bytes = estimate_directory_listing_bytes(&listing);
         self.directory_listings.put(
             key,

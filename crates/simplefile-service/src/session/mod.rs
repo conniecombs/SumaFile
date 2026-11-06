@@ -7,7 +7,12 @@ use crate::dispatch::{dispatch, Dispatch, SessionState};
 use crate::progress::OperationRegistry;
 use crate::scheduler::BlockingScheduler;
 use crate::watcher::WatcherState;
-use io::{read_frame, spawn_writer, write_json};
+use io::{read_frame_with_limit, spawn_writer, write_json};
+
+/// Before the handshake only a handshake request is acceptable; nothing that
+/// legitimately arrives then needs more than this, so an unauthenticated
+/// client cannot make the service allocate the full 80 MiB frame limit.
+const PRE_HANDSHAKE_FRAME_LIMIT: u32 = 64 * 1024;
 use jobs::{
     spawn_copy_move_with_progress, spawn_disk_cleanup, spawn_duplicate_check,
     spawn_folder_item_count, spawn_folder_metrics, spawn_folder_size, spawn_generate_thumbnail,
@@ -41,7 +46,12 @@ where
 
     let result = async {
         loop {
-            let payload = match read_frame(&mut reader).await {
+            let frame_limit = if state.handshake_done {
+                simplefile_ipc::MAX_FRAME_BYTES
+            } else {
+                PRE_HANDSHAKE_FRAME_LIMIT
+            };
+            let payload = match read_frame_with_limit(&mut reader, frame_limit).await {
                 Ok(payload) => payload,
                 Err(FrameError::UnexpectedEof) => return Ok(()),
                 Err(FrameError::Oversize { length }) => {

@@ -1508,3 +1508,40 @@ fn remote_transfer_ipc_downloads_and_uploads_files_with_provider() {
     let _ = fs::remove_file(download_path);
     let _ = fs::remove_file(db_path);
 }
+
+#[test]
+fn handshake_cannot_be_repeated_once_it_succeeded() {
+    let mut state = SessionState {
+        expected_token: Some("dev".to_string()),
+        ..SessionState::default()
+    };
+    let params = json!({ "protocolVersion": simplefile_ipc::PROTOCOL_VERSION, "clientName": "t", "authToken": "dev" });
+    let first = reply(dispatch(
+        &mut state,
+        &request("ipc.handshake", 1, params.clone()),
+    ));
+    assert!(first.error.is_none());
+    let second = reply(dispatch(&mut state, &request("ipc.handshake", 2, params)));
+    assert_eq!(
+        second.error.expect("repeat refused").code,
+        ERR_INVALID_REQUEST
+    );
+}
+
+#[test]
+fn repeated_bad_tokens_close_the_session() {
+    let mut state = SessionState {
+        expected_token: Some("dev".to_string()),
+        ..SessionState::default()
+    };
+    let bad = json!({ "protocolVersion": simplefile_ipc::PROTOCOL_VERSION, "clientName": "t", "authToken": "nope" });
+    for attempt in 1..5u64 {
+        let outcome = dispatch(&mut state, &request("ipc.handshake", attempt, bad.clone()));
+        assert!(matches!(outcome, Dispatch::Reply(_)), "attempt {attempt}");
+    }
+    let last = dispatch(&mut state, &request("ipc.handshake", 5, bad));
+    assert!(
+        matches!(last, Dispatch::Shutdown(_)),
+        "fifth failure closes: {last:?}"
+    );
+}

@@ -258,10 +258,7 @@ pub fn list_directory_capturing_raw(
         let listing = list_directory(path, on_chunk)?;
         let cacheable = if !listing.is_network
             && !crate::recycle_bin::is_recycle_bin_path(&listing.path)
-            && crate::archive::list_archive_directory(&listing.path)
-                .ok()
-                .flatten()
-                .is_none()
+            && !crate::archive::is_archive_path(&listing.path)
         {
             Some(listing.clone())
         } else {
@@ -270,9 +267,9 @@ pub fn list_directory_capturing_raw(
         return Ok((listing, cacheable));
     };
 
-    if crate::recycle_bin::is_recycle_bin_path(&path)
-        || crate::archive::list_archive_directory(&path)?.is_some()
-    {
+    // Routing only needs to know whether this is an archive path; parsing the
+    // archive here meant every archive listing was parsed twice.
+    if crate::recycle_bin::is_recycle_bin_path(&path) || crate::archive::is_archive_path(&path) {
         let listing = list_directory_with_options(path, options, on_chunk)?;
         return Ok((listing, None));
     }

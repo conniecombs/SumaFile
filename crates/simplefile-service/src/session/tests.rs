@@ -665,3 +665,27 @@ async fn slow_remote_test_profile_does_not_block_other_requests() {
         .expect("remote_test_profile still replies after the stall");
     assert!(second.get("result").is_some(), "{second}");
 }
+
+/// An unauthenticated client must not be able to make the service allocate
+/// an 80 MiB frame; before the handshake only small frames are accepted.
+#[tokio::test]
+async fn oversized_frame_before_handshake_closes_the_session() {
+    let (mut client, server) = duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server);
+    let server = tokio::spawn(serve_connection(
+        server_read,
+        server_write,
+        SessionState {
+            expected_token: Some("dev".to_string()),
+            ..SessionState::default()
+        },
+    ));
+    let claimed: u32 = 8 * 1024 * 1024;
+    client.write_all(&claimed.to_le_bytes()).await.unwrap();
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("server exits instead of waiting for 8 MiB")
+        .unwrap();
+    let error = outcome.expect_err("oversized pre-handshake frame is an error");
+    assert!(error.contains("too large"), "{error}");
+}

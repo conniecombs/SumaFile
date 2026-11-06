@@ -18,4 +18,4 @@ pub use mutate::{
     materialize_archive_entry_to_temp, move_entry_resolved, rename_archive_entry,
     should_handle_transfer, MaterializedSource,
 };
-pub use path::{is_archive_virtual_path, split_archive_path, ArchivePath};
+pub use path::{is_archive_path, is_archive_virtual_path, split_archive_path, ArchivePath};
