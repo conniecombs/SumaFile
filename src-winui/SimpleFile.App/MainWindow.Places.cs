@@ -36,7 +36,7 @@ public sealed partial class MainWindow
         }
 
         _workspace.SetTagFilter(tag.Id);
-        SetStatusText($"Showing items tagged {tag.Name}");
+        SetStatusText($"Showing items labeled {tag.Name}");
     }
 
     private void ClearTagFilter()
@@ -47,7 +47,7 @@ public sealed partial class MainWindow
         }
 
         _workspace.SetTagFilter(null);
-        SetStatusText("Tag filter cleared");
+        SetStatusText("Label filter cleared");
     }
 
     private async void OnRefreshFolderTree(object sender, RoutedEventArgs e)
@@ -134,7 +134,23 @@ public sealed partial class MainWindow
         ApplySidebarSectionVisibility();
     }
 
-    private async void OnSaveSmartFolder(object sender, RoutedEventArgs e)
+    /// <summary>The search banner's "Save as smart folder" button shares the palette command.</summary>
+    private void InitializeSmartFolderCommands()
+    {
+        PrimaryPane.ContextBar.SaveSmartFolder += async (_, _) =>
+            await RunUiActionAsync("Smart folder", SaveSearchAsSmartFolderAsync);
+        SecondaryPane.ContextBar.SaveSmartFolder += async (_, _) =>
+            await RunUiActionAsync("Smart folder", SaveSearchAsSmartFolderAsync);
+    }
+
+    private async void OnSaveSmartFolder(object sender, RoutedEventArgs e) =>
+        await RunUiActionAsync("Smart folder", SaveSearchAsSmartFolderAsync);
+
+    /// <summary>
+    /// Saves the executed (or typed) search as a smart folder. Used by the sidebar button,
+    /// the search banner and the palette command <c>save-smart-folder</c>.
+    /// </summary>
+    private async Task SaveSearchAsSmartFolderAsync()
     {
         var workspace = _workspace;
         if (workspace is null)
@@ -152,7 +168,7 @@ public sealed partial class MainWindow
         var nameBox = new TextBox { PlaceholderText = "Smart folder name", Text = query };
         var dialog = new ContentDialog
         {
-            Title = "Save Smart Folder",
+            Title = "Save as smart folder",
             Content = nameBox,
             PrimaryButtonText = "Save",
             CloseButtonText = "Cancel",
@@ -178,7 +194,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation("OnSaveSmartFolder");
+        var utilityCts = BeginUtilityOperation("SaveSearchAsSmartFolderAsync");
         try
         {
             await workspace.SaveCurrentSearchAsSmartFolderAsync(nameBox.Text.Trim(), options, utilityCts.Token);
@@ -204,6 +220,21 @@ public sealed partial class MainWindow
     {
         var workspace = _workspace;
         if (workspace == null || sender is not FrameworkElement fe || fe.Tag is not string folderId) return;
+        var name = workspace.SmartFolders.FirstOrDefault(folder => string.Equals(folder.Id, folderId, StringComparison.Ordinal))?.Name;
+        var confirm = new ContentDialog
+        {
+            Title = "Remove smart folder",
+            Content = $"Remove smart folder '{(string.IsNullOrWhiteSpace(name) ? "this search" : name)}'?",
+            PrimaryButtonText = "Remove",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await DialogHost.ShowAsync(confirm) != ContentDialogResult.Primary || !ReferenceEquals(_workspace, workspace))
+        {
+            return;
+        }
+
         var utilityCts = BeginUtilityOperation("OnDeleteSmartFolderClicked");
         try
         {

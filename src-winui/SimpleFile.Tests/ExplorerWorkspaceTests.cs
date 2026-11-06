@@ -335,9 +335,9 @@ public class ExplorerWorkspaceTests
 
         Assert.Equal([@"C:\Users\test\notes.txt"], settingsIpc.OpenedFiles);
         Assert.Equal("tiles", workspace.ViewFor(PaneId.Primary));
-        Assert.Equal(224, workspace.IconSizeFor(PaneId.Primary));
+        Assert.Equal(256, workspace.IconSizeFor(PaneId.Primary));
         Assert.Contains("\"view\":\"tiles\"", settingsIpc.Settings[WorkspaceLayout.SettingsKey]);
-        Assert.Contains("\"iconSize\":224", settingsIpc.Settings[WorkspaceLayout.SettingsKey]);
+        Assert.Contains("\"iconSize\":256", settingsIpc.Settings[WorkspaceLayout.SettingsKey]);
     }
 
     [Fact]
@@ -586,7 +586,7 @@ public class ExplorerWorkspaceTests
         await workspace.RenameSelectedAsync(@"C:\Users\test\notes.txt", "renamed.txt");
 
         Assert.True(workspace.Undo.CanUndo);
-        Assert.Equal("Rename 1 item(s)", workspace.Undo.NextUndoDescription);
+        Assert.Equal("Rename 1 item", workspace.Undo.NextUndoDescription);
     }
 
     [Fact]
@@ -637,7 +637,7 @@ public class ExplorerWorkspaceTests
         await workspace.TrashSelectedAsync([@"C:\Users\test\notes.txt"]);
 
         Assert.True(workspace.Undo.CanUndo);
-        Assert.Equal("Move to Recycle Bin 1 item(s)", workspace.Undo.NextUndoDescription);
+        Assert.Equal("Move to Recycle Bin 1 item", workspace.Undo.NextUndoDescription);
     }
 
     [Fact]
@@ -1222,7 +1222,7 @@ public class ExplorerWorkspaceTests
 
         await workspace.ApplyWorkspaceProfileAsync(renamed.Id);
         Assert.Equal("tiles", workspace.ViewFor(PaneId.Primary));
-        Assert.Equal(192, workspace.IconSizeFor(PaneId.Primary));
+        Assert.Equal(256, workspace.IconSizeFor(PaneId.Primary));
         Assert.Equal("photo", workspace.Settings.ColumnPreset);
         Assert.False(workspace.Settings.EnableGitIntegration);
         Assert.Contains("date", workspace.Columns.VisibleIds);

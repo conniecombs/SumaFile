@@ -38,19 +38,17 @@ public sealed partial class PrimaryToolbarView : UserControl
     public Button WorkspaceProfileSave => WorkspaceProfileSaveButton;
     public Button WorkspaceProfileManage => WorkspaceProfileManageButton;
     public Button ViewButton => PrimaryViewButton;
-    public Button ViewDualPaneToggleButton => ViewDualPaneButton;
-    public FontIcon ViewDualPaneGlyph => ViewDualPaneIcon;
-    public TextBlock ViewDualPaneLabel => ViewDualPaneText;
     public RadioButtons ViewStyleOptions => ViewStyleRadioButtons;
     public TextBlock ViewIconSizeValue => ViewIconSizeValueText;
     public Slider ViewIconSize => ViewIconSizeSlider;
     public Button ViewApplyBoth => ViewApplyBothButton;
-    public Button ViewUseGlobally => ViewUseGloballyButton;
-    public Button ViewUseForFolder => ViewUseForFolderButton;
-    public Button ViewUseForDescendants => ViewUseForDescendantsButton;
     public TextBlock ViewFolderRuleStatus => ViewFolderRuleStatusText;
-    public Button ViewSaveProfile => ViewSaveProfileButton;
-    public StackPanel ViewProfilesList => ViewProfilesHost;
+    public ComboBox ViewRememberScope => ViewRememberScopeBox;
+    public ComboBoxItem ViewRememberFolder => ViewRememberFolderItem;
+    public ComboBoxItem ViewRememberDescendants => ViewRememberDescendantsItem;
+    public Button ViewRemember => ViewRememberButton;
+    public TextBlock ViewIconSizeMin => ViewIconSizeMinLabel;
+    public TextBlock ViewIconSizeMax => ViewIconSizeMaxLabel;
     public Button SettingsButton => PrimarySettingsButton;
     public MenuFlyoutItem NewFolderItem => NewFolderMenuItem;
     public MenuFlyoutItem NewTextItem => NewTextMenuItem;
@@ -76,14 +74,10 @@ public sealed partial class PrimaryToolbarView : UserControl
     public event RoutedEventHandler? WorkspaceProfileSaveClicked;
     public event RoutedEventHandler? WorkspaceProfileManageClicked;
     public event EventHandler<object>? ViewOptionsFlyoutOpening;
-    public event RoutedEventHandler? ViewDualPaneClicked;
     public event SelectionChangedEventHandler? ViewStyleSelectionChanged;
     public event RangeBaseValueChangedEventHandler? ViewIconSizeSliderChanged;
     public event RoutedEventHandler? ViewApplyBothClicked;
-    public event RoutedEventHandler? ViewUseGloballyClicked;
-    public event RoutedEventHandler? ViewUseForFolderClicked;
-    public event RoutedEventHandler? ViewUseForDescendantsClicked;
-    public event RoutedEventHandler? ViewSaveProfileClicked;
+    public event EventHandler<FolderViewScope>? ViewRememberRequested;
     public event RoutedEventHandler? SettingsClicked;
     public event EventHandler<object>? PrimaryMoreMenuOpening;
 
@@ -102,17 +96,20 @@ public sealed partial class PrimaryToolbarView : UserControl
 
     private void OnOmnibarExecuteClick(object sender, RoutedEventArgs e) => OmnibarExecuteClick?.Invoke(sender, e);
 
-    private void OnOmnibarPathModeClick(object sender, RoutedEventArgs e) =>
-        OmnibarModeRequested?.Invoke(this, OmnibarMode.Navigate);
+    private void OnOmnibarPathModeClick(object sender, RoutedEventArgs e) => RequestOmnibarMode(OmnibarMode.Navigate);
 
-    private void OnOmnibarSearchModeClick(object sender, RoutedEventArgs e) =>
-        OmnibarModeRequested?.Invoke(this, OmnibarMode.Search);
+    private void OnOmnibarSearchModeClick(object sender, RoutedEventArgs e) => RequestOmnibarMode(OmnibarMode.Search);
 
-    private void OnOmnibarFilterModeClick(object sender, RoutedEventArgs e) =>
-        OmnibarModeRequested?.Invoke(this, OmnibarMode.Filter);
+    private void OnOmnibarFilterModeClick(object sender, RoutedEventArgs e) => RequestOmnibarMode(OmnibarMode.Filter);
 
-    private void OnOmnibarCommandModeClick(object sender, RoutedEventArgs e) =>
-        OmnibarModeRequested?.Invoke(this, OmnibarMode.Command);
+    private void OnOmnibarCommandModeClick(object sender, RoutedEventArgs e) => RequestOmnibarMode(OmnibarMode.Command);
+
+    /// <summary>Mode toggles are focusable; after a click focus returns to the text box so typing continues.</summary>
+    private void RequestOmnibarMode(OmnibarMode mode)
+    {
+        OmnibarModeRequested?.Invoke(this, mode);
+        OmnibarBox.Focus(FocusState.Programmatic);
+    }
 
     private void OnOmnibarGotFocus(object sender, RoutedEventArgs e) => OmnibarGotFocus?.Invoke(sender, e);
 
@@ -148,8 +145,6 @@ public sealed partial class PrimaryToolbarView : UserControl
 
     private void OnViewOptionsFlyoutOpening(object sender, object e) => ViewOptionsFlyoutOpening?.Invoke(sender, e);
 
-    private void OnViewDualPaneClicked(object sender, RoutedEventArgs e) => ViewDualPaneClicked?.Invoke(sender, e);
-
     private void OnViewStyleSelectionChanged(object sender, SelectionChangedEventArgs e) =>
         ViewStyleSelectionChanged?.Invoke(sender, e);
 
@@ -158,13 +153,20 @@ public sealed partial class PrimaryToolbarView : UserControl
 
     private void OnViewApplyBothClicked(object sender, RoutedEventArgs e) => ViewApplyBothClicked?.Invoke(sender, e);
 
-    private void OnViewUseGloballyClicked(object sender, RoutedEventArgs e) => ViewUseGloballyClicked?.Invoke(sender, e);
-
-    private void OnViewUseForFolderClicked(object sender, RoutedEventArgs e) => ViewUseForFolderClicked?.Invoke(sender, e);
-
-    private void OnViewUseForDescendantsClicked(object sender, RoutedEventArgs e) => ViewUseForDescendantsClicked?.Invoke(sender, e);
-
-    private void OnViewSaveProfileClicked(object sender, RoutedEventArgs e) => ViewSaveProfileClicked?.Invoke(sender, e);
+    /// <summary>
+    /// "Remember this view for" + Remember: raises one request carrying the chosen scope
+    /// (everywhere, this folder, or this folder and subfolders) for the window to save.
+    /// </summary>
+    private void OnViewRememberClicked(object sender, RoutedEventArgs e)
+    {
+        var scope = ((ViewRememberScopeBox.SelectedItem as ComboBoxItem)?.Tag as string) switch
+        {
+            "folder" => FolderViewScope.Folder,
+            "descendants" => FolderViewScope.Descendants,
+            _ => FolderViewScope.Global,
+        };
+        ViewRememberRequested?.Invoke(this, scope);
+    }
 
     private void OnSettingsClicked(object sender, RoutedEventArgs e) => SettingsClicked?.Invoke(sender, e);
 

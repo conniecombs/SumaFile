@@ -161,7 +161,7 @@ pub fn delete_profile_at(path: &Path, id: &str) -> Result<(), String> {
 
 fn normalize_profile_input(input: RemoteProfileInput) -> Result<RemoteProfile, String> {
     if input.protocol == RemoteProtocol::Ftp && !input.insecure_plain_ftp {
-        return Err("Plain FTP requires insecure_plain_ftp acknowledgement".to_string());
+        return Err("Confirm the unencrypted connection to use plain FTP".to_string());
     }
     if matches!(input.protocol, RemoteProtocol::Ftp | RemoteProtocol::Ftps)
         && !matches!(

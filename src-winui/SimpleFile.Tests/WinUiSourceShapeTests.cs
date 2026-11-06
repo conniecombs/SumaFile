@@ -108,7 +108,7 @@ public class WinUiSourceShapeTests
         Assert.True(File.Exists(windowCodePath));
 
         Assert.Contains("x:Name=\"RemoteProfilesSection\"", sidebar);
-        Assert.Contains("Text=\"FTP/SFTP\"", sidebar);
+        Assert.Contains("Text=\"Connections\"", sidebar);
         Assert.Contains("x:Name=\"RemoteProfileList\"", sidebar);
         Assert.Contains("ItemClick=\"OnRemoteProfileClick\"", sidebar);
         Assert.Contains("public StackPanel RemoteProfilesSectionRoot => RemoteProfilesSection;", sidebarCode);
@@ -373,12 +373,13 @@ public class WinUiSourceShapeTests
 
         Assert.Contains("WorkspaceProfileButton", toolbar);
         Assert.Contains("WorkspaceProfilesHost", toolbar);
-        Assert.Contains("ViewProfilesHost", toolbar);
-        Assert.Contains("OnViewSaveProfileClicked", toolbar);
+        // 1.0.4: profiles live only behind the Profiles button; the View flyout no longer repeats them.
+        Assert.DoesNotContain("ViewProfilesHost", toolbar);
+        Assert.DoesNotContain("OnViewSaveProfileClicked", toolbar);
         Assert.Contains("OnWorkspaceProfilesFlyoutOpening", toolbar);
         Assert.Contains("WorkspaceProfileManageButton", toolbar);
         Assert.Contains("RefreshWorkspaceProfilesHostAsync", commands);
-        Assert.Contains("RefreshViewProfilesHostAsync", commands);
+        Assert.DoesNotContain("RefreshViewProfilesHostAsync", commands);
         Assert.Contains("AppendWorkspaceProfileOverflowMenuAsync", commands);
         Assert.Contains("profile:save", commands);
         Assert.Contains("ApplyWorkspaceProfileAsync", commands);
@@ -434,11 +435,16 @@ public class WinUiSourceShapeTests
         var settingsStore = File.ReadAllText(Path.Combine(coreRoot, "WorkspaceSettingsStore.cs"));
         var folderViews = File.ReadAllText(Path.Combine(coreRoot, "FolderViewSettings.cs"));
 
-        Assert.Contains("ViewUseGloballyButton", toolbar);
-        Assert.Contains("ViewUseForFolderButton", toolbar);
-        Assert.Contains("ViewUseForDescendantsButton", toolbar);
+        // 1.0.4: one "Remember this view for" dropdown replaces the three "Use ..." buttons.
+        Assert.Contains("ViewRememberScopeBox", toolbar);
+        Assert.Contains("Header=\"Remember this view for\"", toolbar);
+        Assert.Contains("Content=\"Everywhere\"", toolbar);
+        Assert.Contains("Content=\"This folder\"", toolbar);
+        Assert.Contains("Content=\"This folder and subfolders\"", toolbar);
+        Assert.Contains("Click=\"OnViewRememberClicked\"", toolbar);
+        Assert.DoesNotContain("ViewUseGloballyButton", toolbar);
+        Assert.DoesNotContain("Save view defaults", toolbar);
         Assert.Contains("Current view options", toolbar);
-        Assert.Contains("Save view defaults", toolbar);
         Assert.Contains("SaveFolderViewSettingsFromFlyoutAsync", commands);
         Assert.Contains("ActiveSearchQuery", commands);
         Assert.DoesNotContain("SearchTextBoxFor", commands);
@@ -552,10 +558,9 @@ public class WinUiSourceShapeTests
 
         Assert.Contains("<ComboBoxItem Content=\"Windows default\" Tag=\"System\" />", settingsXaml);
         Assert.Contains("<ComboBoxItem Content=\"Dark\" Tag=\"Dark\" />", settingsXaml);
-        Assert.DoesNotContain("Content=\"Light\"", settingsXaml);
-        Assert.DoesNotContain("Tag=\"Light\"", settingsXaml);
+        Assert.Contains("<ComboBoxItem Content=\"Light\" Tag=\"Light\" />", settingsXaml);
 
-        Assert.DoesNotContain("\"light\" => ElementTheme.Light", commands);
+        Assert.Contains("\"light\" => ElementTheme.Light", commands);
         Assert.Contains("RootGrid.ActualThemeChanged += OnRootActualThemeChanged;", mainWindowCode);
         Assert.Contains("private ElementTheme? _appliedTheme", mainWindowCode);
         Assert.Contains("if (_appliedTheme == next && RootGrid.RequestedTheme == next)", commands);

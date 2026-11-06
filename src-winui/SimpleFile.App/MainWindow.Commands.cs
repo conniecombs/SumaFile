@@ -100,15 +100,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (PreviewRail.Visibility == Visibility.Visible)
-        {
-            _previewManuallyExpanded = true;
-        }
-        else
-        {
-            workspace.Settings.PreviewVisible = !workspace.Settings.PreviewVisible;
-            _previewManuallyExpanded = workspace.Settings.PreviewVisible;
-        }
+        // Strict toggle of the PreviewVisible setting (the rail's own expand button opens the pane).
+        workspace.Settings.PreviewVisible = !workspace.Settings.PreviewVisible;
+        _previewManuallyExpanded = workspace.Settings.PreviewVisible;
         ApplyPreviewVisibility();
         await RunUiActionAsync("Preview pane", () => workspace.SaveUiSettingsAsync());
     }
@@ -164,6 +158,7 @@ public sealed partial class MainWindow
         var next = UiSettings.NormalizeTheme(theme) switch
         {
             "dark" => ElementTheme.Dark,
+            "light" => ElementTheme.Light,
             _ => ElementTheme.Default,
         };
         if (_appliedTheme == next && RootGrid.RequestedTheme == next)
@@ -555,7 +550,7 @@ public sealed partial class MainWindow
     private void OnPrimaryMoreMenuOpening(object sender, object e) =>
         PopulatePaneMoreMenu(sender as MenuFlyout, ActiveUiPane);
 
-    private async void OnViewOptionsFlyoutOpening(object sender, object e)
+    private void OnViewOptionsFlyoutOpening(object sender, object e)
     {
         if (_workspace is null)
         {
@@ -569,52 +564,56 @@ public sealed partial class MainWindow
         _syncingViewOptionsFlyout = true;
         try
         {
-            ViewDualPaneText.Text = _workspace.DualPaneEnabled ? "Close right pane" : "Open second pane";
-            ViewDualPaneIcon.Glyph = _workspace.DualPaneEnabled
-                ? ContextMenuIconCatalog.ClosePane
-                : ContextMenuIconCatalog.OpenPane;
             ViewApplyBothButton.Visibility = _workspace.DualPaneEnabled ? Visibility.Visible : Visibility.Collapsed;
             SelectViewStyle(currentView);
 
-            ViewIconSizeSlider.Minimum = UiSettings.IconSizeMin;
-            ViewIconSizeSlider.Maximum = UiSettings.IconSizeMax;
-            ViewIconSizeSlider.SmallChange = UiSettings.IconSizeStep;
-            ViewIconSizeSlider.LargeChange = UiSettings.IconSizeStep * 2;
-            ViewIconSizeSlider.StepFrequency = UiSettings.IconSizeStep;
-            ViewIconSizeSlider.Value = currentIconSize;
-            UpdateViewIconSizeValueText(currentIconSize);
-            var hasFolderPath = !string.IsNullOrWhiteSpace(_workspace.Pane(pane).Path);
-            ViewUseForFolderButton.IsEnabled = hasFolderPath;
-            ViewUseForDescendantsButton.IsEnabled = hasFolderPath;
-            UpdateFolderViewRuleStatusText();
-            ViewProfilesHost.Children.Clear();
-            ViewProfilesHost.Children.Add(new TextBlock
+            // The slider steps through the icon-size options rather than raw pixel sizes.
+            var options = UiSettings.IconSizeOptions;
+            ViewIconSizeSlider.Minimum = 0;
+            ViewIconSizeSlider.Maximum = Math.Max(0, options.Count - 1);
+            ViewIconSizeSlider.SmallChange = 1;
+            ViewIconSizeSlider.LargeChange = 1;
+            ViewIconSizeSlider.StepFrequency = 1;
+            ViewIconSizeSlider.TickFrequency = 1;
+            ViewIconSizeSlider.Value = IconSizeOptionIndex(currentIconSize);
+            if (options.Count > 0)
             {
-                Text = "Loading profiles...",
-                FontSize = 12,
-                Opacity = 0.65,
-            });
+                PrimaryToolbarPanel.ViewIconSizeMin.Text = options[0].Label;
+                PrimaryToolbarPanel.ViewIconSizeMax.Text = options[^1].Label;
+            }
+
+            UpdateViewIconSizeValueText(currentIconSize);
+
+            var hasFolderPath = !string.IsNullOrWhiteSpace(_workspace.Pane(pane).Path);
+            PrimaryToolbarPanel.ViewRememberFolder.IsEnabled = hasFolderPath;
+            PrimaryToolbarPanel.ViewRememberDescendants.IsEnabled = hasFolderPath;
+            if (!hasFolderPath)
+            {
+                PrimaryToolbarPanel.ViewRememberScope.SelectedIndex = 0;
+            }
+
+            UpdateFolderViewRuleStatusText();
         }
         finally
         {
             _syncingViewOptionsFlyout = false;
         }
+    }
 
-        try
+    /// <summary>Index of the icon-size option nearest to a pixel size.</summary>
+    private static int IconSizeOptionIndex(int iconSize)
+    {
+        var options = UiSettings.IconSizeOptions;
+        var best = 0;
+        for (var index = 1; index < options.Count; index++)
         {
-            await RefreshViewProfilesHostAsync();
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            ViewProfilesHost.Children.Clear();
-            ViewProfilesHost.Children.Add(new TextBlock
+            if (Math.Abs(options[index].Size - iconSize) < Math.Abs(options[best].Size - iconSize))
             {
-                Text = exception.Message,
-                FontSize = 12,
-                Opacity = 0.75,
-                TextWrapping = TextWrapping.Wrap,
-            });
+                best = index;
+            }
         }
+
+        return best;
     }
 
     private void SelectViewStyle(string currentView)
@@ -645,29 +644,15 @@ public sealed partial class MainWindow
         await RunUiActionAsync("View options", () => ApplyViewOptionAsync($"view:{view}"));
     }
 
-    private async void OnViewDualPaneClicked(object sender, RoutedEventArgs e)
-    {
-        await RunUiActionAsync("View options", () => ApplyViewOptionAsync("pane:dual"));
-    }
-
     private async void OnViewApplyBothClicked(object sender, RoutedEventArgs e)
     {
         await RunUiActionAsync("View options", () => ApplyViewOptionAsync("pane:apply-view-to-both"));
     }
 
-    private async void OnViewUseGloballyClicked(object sender, RoutedEventArgs e)
+    /// <summary>"Remember this view for" + Remember in View options: save the current view for the chosen scope.</summary>
+    private async void OnViewRememberRequested(object? sender, FolderViewScope scope)
     {
-        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Global));
-    }
-
-    private async void OnViewUseForFolderClicked(object sender, RoutedEventArgs e)
-    {
-        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Folder));
-    }
-
-    private async void OnViewUseForDescendantsClicked(object sender, RoutedEventArgs e)
-    {
-        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Descendants));
+        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(scope));
     }
 
     private async Task SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope scope)
@@ -702,15 +687,22 @@ public sealed partial class MainWindow
 
     private void OnViewIconSizeSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
-        var iconSize = UiSettings.NormalizeIconSize((int)Math.Round(e.NewValue));
-        if (sender is Slider slider && Math.Abs(slider.Value - iconSize) > 0.01)
+        var options = UiSettings.IconSizeOptions;
+        if (options.Count == 0)
+        {
+            return;
+        }
+
+        var index = Math.Clamp((int)Math.Round(e.NewValue), 0, options.Count - 1);
+        if (sender is Slider slider && Math.Abs(slider.Value - index) > 0.01)
         {
             var wasSyncing = _syncingViewOptionsFlyout;
             _syncingViewOptionsFlyout = true;
-            slider.Value = iconSize;
+            slider.Value = index;
             _syncingViewOptionsFlyout = wasSyncing;
         }
 
+        var iconSize = UiSettings.NormalizeIconSize(options[index].Size);
         UpdateViewIconSizeValueText(iconSize);
         if (_syncingViewOptionsFlyout || _workspace is null)
         {
@@ -723,7 +715,15 @@ public sealed partial class MainWindow
 
     private void UpdateViewIconSizeValueText(int iconSize)
     {
-        ViewIconSizeValueText.Text = $"{UiSettings.NormalizeIconSize(iconSize)} px";
+        var options = UiSettings.IconSizeOptions;
+        if (options.Count == 0)
+        {
+            ViewIconSizeValueText.Text = $"{iconSize} px";
+            return;
+        }
+
+        var option = options[IconSizeOptionIndex(iconSize)];
+        ViewIconSizeValueText.Text = $"{option.Label} ({option.Size} px)";
     }
 
     private void QueueViewIconSizeSave()
@@ -1063,6 +1063,13 @@ public sealed partial class MainWindow
 
         if (e.Key == VirtualKey.Escape)
         {
+            if (IsInlineRenameActive)
+            {
+                e.Handled = true;
+                CancelInlineRename();
+                return;
+            }
+
             if (_commandPaletteOpen)
             {
                 e.Handled = true;
@@ -1082,6 +1089,7 @@ public sealed partial class MainWindow
                 e.Handled = true;
                 await CancelActiveSearchAsync();
                 ClearSearchState();
+                SetOmnibarMode(OmnibarMode.Navigate, focus: false);
                 SyncFromWorkspace();
                 return;
             }
@@ -1089,6 +1097,8 @@ public sealed partial class MainWindow
             if (!string.IsNullOrEmpty(_workspace.FilterQueryFor(ActiveUiPane)))
             {
                 e.Handled = true;
+                // Switch first so the filter text is not carried over into Path mode.
+                SetOmnibarMode(OmnibarMode.Navigate, focus: false);
                 _workspace.SetFilterQuery(ActiveUiPane, "");
                 SyncOmnibarFromWorkspace(force: true);
                 return;

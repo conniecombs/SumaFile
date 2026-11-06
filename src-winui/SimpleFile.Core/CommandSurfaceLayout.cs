@@ -229,7 +229,7 @@ public static class ToolbarActionCatalog
         new(ToolbarOverflowPlanner.DualPane, "Second pane", "View", ContextMenuIconCatalog.OpenPane, ToolbarOverflowPlanner.DualPane, "F6", usesBuiltInControl: true),
         new(ToolbarOverflowPlanner.Profiles, "Profiles", "Profiles", ContextMenuIconCatalog.Switch, usesBuiltInControl: true),
         new(ToolbarOverflowPlanner.ViewOptions, "View", "View", ContextMenuIconCatalog.ViewAll, usesBuiltInControl: true),
-        new(ToolbarOverflowPlanner.Settings, "Settings", "App", ContextMenuIconCatalog.Settings, ToolbarOverflowPlanner.Settings, "Ctrl+Shift+S", usesBuiltInControl: true),
+        new(ToolbarOverflowPlanner.Settings, "Settings", "App", ContextMenuIconCatalog.Settings, ToolbarOverflowPlanner.Settings, "Ctrl+,", usesBuiltInControl: true),
     ];
 
     public static IReadOnlyList<ToolbarAction> All { get; } = BuildAll();
@@ -335,8 +335,7 @@ public static class ToolbarActionCatalog
             "view-content" => ContextMenuIconCatalog.Document,
             "customize-toolbar" or "toggle-toolbar-labels" => ContextMenuIconCatalog.Settings,
             "icon-size-small" or "icon-size-medium" or "icon-size-large"
-                or "icon-size-extra-large" or "icon-size-jumbo" or "icon-size-huge"
-                or "icon-size-maximum" => ContextMenuIconCatalog.ViewAll,
+                or "icon-size-extra-large" or "icon-size-huge" => ContextMenuIconCatalog.ViewAll,
             "properties" => ContextMenuIconCatalog.Info,
             "color-label" => ContextMenuIconCatalog.Label,
             "bookmark-folder" => ContextMenuIconCatalog.Favorite,

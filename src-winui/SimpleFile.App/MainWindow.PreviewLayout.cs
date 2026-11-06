@@ -20,6 +20,8 @@ public sealed partial class MainWindow
             await RunUiActionAsync("Pin preview", () => _workspace.SaveUiSettingsAsync());
         };
         Closed += (_, _) => _previewEmptyTimer?.Stop();
+        // Wired here because this initializer runs once at window construction.
+        InitializeSmartFolderCommands();
     }
 
     private bool PreviewHasContent()

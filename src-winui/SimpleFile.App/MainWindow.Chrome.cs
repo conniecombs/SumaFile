@@ -70,9 +70,12 @@ public sealed partial class MainWindow
 
     private void RebuildTabs(StackPanel host, ExplorerPane pane, PaneId paneId)
     {
+        // A pane's last tab has no close glyph in dual-pane mode (closing it would close the pane).
+        var hideLastClose = pane.Tabs.Count == 1 && _workspace?.DualPaneEnabled == true;
         var key = string.Join(
             '\u001f',
-            pane.Tabs.Select(tab => $"{tab.Id}:{tab.Path}:{tab.Id == pane.ActiveTabId}"));
+            pane.Tabs.Select(tab => $"{tab.Id}:{tab.Path}:{tab.Id == pane.ActiveTabId}"))
+            + $"|{hideLastClose}";
         if (Equals(host.Tag, key) && host.Children.Count > 0)
         {
             return;
@@ -121,6 +124,18 @@ public sealed partial class MainWindow
             select.PointerPressed += OnTabPointerPressed;
             select.KeyDown += OnTabKeyDown;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(select, $"Tab {tab.Title}");
+            select.ContextFlyout = CreateTabContextFlyout(tabId, tab.Path);
+
+            var tabParts = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 2,
+                Children = { select },
+            };
+            if (!hideLastClose)
+            {
+                tabParts.Children.Add(CreateTabCloseButton(tabId, tab.Title));
+            }
 
             var chrome = new Border
             {
@@ -128,16 +143,7 @@ public sealed partial class MainWindow
                 Background = isActive ? Brush("SfBgSelectedBrush") : Brush("SfTransparentBrush"),
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(2, 1, 2, 1),
-                Child = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 2,
-                    Children =
-                    {
-                        select,
-                        CreateTabCloseButton(tabId, tab.Title),
-                    },
-                },
+                Child = tabParts,
             };
             chrome.PointerPressed += OnTabPointerPressed;
             host.Children.Add(chrome);
@@ -154,10 +160,138 @@ public sealed partial class MainWindow
             },
             Tag = paneId,
         };
-        ToolTipService.SetToolTip(add, "New Tab");
+        ToolTipService.SetToolTip(add, "New tab");
         add.Click += OnNewTabClick;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(add, "New tab");
         host.Children.Add(add);
+    }
+
+    /// <summary>Right-click menu for a tab: Close, Close other tabs, Close tabs to the right,
+    /// Duplicate tab, Open in other pane, Copy path.</summary>
+    private MenuFlyout CreateTabContextFlyout(PaneTab tabId, string path)
+    {
+        var flyout = new MenuFlyout();
+        var closeOthers = CreateTabMenuItem("Close other tabs", null, () => CloseOtherTabsAsync(tabId));
+        var closeRight = CreateTabMenuItem("Close tabs to the right", null, () => CloseTabsToTheRightAsync(tabId));
+        var openOther = CreateTabMenuItem("Open in other pane", "\uE8A0", () => OpenTabInOtherPaneAsync(tabId, path));
+        var copyPath = CreateTabMenuItem("Copy path", "\uE16F", () =>
+        {
+            CopyTabPathToClipboard(path);
+            return Task.CompletedTask;
+        });
+        flyout.Items.Add(CreateTabMenuItem("Close", "\uE711", () => CloseTabFromMenuAsync(tabId)));
+        flyout.Items.Add(closeOthers);
+        flyout.Items.Add(closeRight);
+        flyout.Items.Add(new MenuFlyoutSeparator());
+        flyout.Items.Add(CreateTabMenuItem("Duplicate tab", "\uE8C8", () => DuplicateTabAsync(tabId, path)));
+        flyout.Items.Add(openOther);
+        flyout.Items.Add(copyPath);
+        flyout.Opening += (_, _) =>
+        {
+            var tabs = _workspace?.Pane(tabId.Pane).Tabs;
+            var count = tabs?.Count ?? 0;
+            var index = tabs?.FindIndex(tab => tab.Id == tabId.TabId) ?? -1;
+            closeOthers.IsEnabled = count > 1;
+            closeRight.IsEnabled = index >= 0 && index < count - 1;
+            openOther.IsEnabled = !string.IsNullOrEmpty(path);
+            copyPath.IsEnabled = !string.IsNullOrEmpty(path);
+        };
+        return flyout;
+    }
+
+    private MenuFlyoutItem CreateTabMenuItem(string text, string? glyph, Func<Task> action)
+    {
+        var item = new MenuFlyoutItem { Text = text };
+        if (glyph is not null)
+        {
+            item.Icon = new FontIcon { Glyph = glyph, FontFamily = new FontFamily("Segoe Fluent Icons") };
+        }
+
+        item.Click += async (_, _) => await RunUiActionAsync("Tab", action);
+        return item;
+    }
+
+    private Task CloseTabFromMenuAsync(PaneTab tabId) =>
+        _workspace?.CloseTabAsync(tabId.TabId, tabId.Pane) ?? Task.CompletedTask;
+
+    private async Task CloseOtherTabsAsync(PaneTab tabId)
+    {
+        var workspace = _workspace;
+        if (workspace is null)
+        {
+            return;
+        }
+
+        var others = workspace.Pane(tabId.Pane).Tabs
+            .Where(tab => tab.Id != tabId.TabId)
+            .Select(tab => tab.Id)
+            .ToList();
+        if (others.Count == 0)
+        {
+            return;
+        }
+
+        await workspace.SwitchToTabAsync(tabId.TabId, tabId.Pane);
+        foreach (var id in others)
+        {
+            await workspace.CloseTabAsync(id, tabId.Pane);
+        }
+    }
+
+    private async Task CloseTabsToTheRightAsync(PaneTab tabId)
+    {
+        var workspace = _workspace;
+        if (workspace is null)
+        {
+            return;
+        }
+
+        var pane = workspace.Pane(tabId.Pane);
+        var index = pane.Tabs.FindIndex(tab => tab.Id == tabId.TabId);
+        if (index < 0 || index >= pane.Tabs.Count - 1)
+        {
+            return;
+        }
+
+        var right = pane.Tabs.Skip(index + 1).Select(tab => tab.Id).ToList();
+        if (pane.ActiveTabId is { } active && right.Contains(active))
+        {
+            await workspace.SwitchToTabAsync(tabId.TabId, tabId.Pane);
+        }
+
+        foreach (var id in right)
+        {
+            await workspace.CloseTabAsync(id, tabId.Pane);
+        }
+    }
+
+    private Task DuplicateTabAsync(PaneTab tabId, string path) =>
+        _workspace?.OpenNewTabAsync(tabId.Pane, string.IsNullOrEmpty(path) ? null : path) ?? Task.CompletedTask;
+
+    private Task OpenTabInOtherPaneAsync(PaneTab tabId, string path)
+    {
+        var workspace = _workspace;
+        if (workspace is null || string.IsNullOrEmpty(path))
+        {
+            return Task.CompletedTask;
+        }
+
+        // OpenInOtherPaneAsync targets the pane opposite the active one.
+        workspace.ActivatePane(tabId.Pane);
+        return workspace.OpenInOtherPaneAsync(path, isDirectory: true);
+    }
+
+    private void CopyTabPathToClipboard(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        package.SetText(path);
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+        SetStatusText("Path copied");
     }
 
     private Button CreateTabCloseButton(PaneTab tabId, string title)
@@ -260,7 +394,7 @@ public sealed partial class MainWindow
 
     private static void UpdateSidebarToggleButton(Button button, bool sidebarVisible)
     {
-        ToolTipService.SetToolTip(button, sidebarVisible ? "Hide side menu" : "Show side menu");
+        ToolTipService.SetToolTip(button, sidebarVisible ? "Hide sidebar" : "Show sidebar");
     }
 
     private void HighlightSidebarTarget()
@@ -277,10 +411,10 @@ public sealed partial class MainWindow
         SidebarRightButton.Foreground = !leftActive ? Brush("SfAccentBrush") : Brush("SfTextPrimaryBrush");
         SidebarLeftButton.FontWeight = leftActive ? FontWeights.SemiBold : FontWeights.Normal;
         SidebarRightButton.FontWeight = !leftActive ? FontWeights.SemiBold : FontWeights.Normal;
-        AutomationProperties.SetName(SidebarLeftButton, leftActive ? "Side menu target: left pane" : "Navigate left pane");
-        AutomationProperties.SetName(SidebarRightButton, !leftActive ? "Side menu target: right pane" : "Navigate right pane");
-        ToolTipService.SetToolTip(SidebarLeftButton, leftActive ? "Side menu opens folders in the left pane" : "Target the left pane");
-        ToolTipService.SetToolTip(SidebarRightButton, !leftActive ? "Side menu opens folders in the right pane" : "Target the right pane");
+        AutomationProperties.SetName(SidebarLeftButton, leftActive ? "Sidebar target: left pane" : "Navigate left pane");
+        AutomationProperties.SetName(SidebarRightButton, !leftActive ? "Sidebar target: right pane" : "Navigate right pane");
+        ToolTipService.SetToolTip(SidebarLeftButton, leftActive ? "Sidebar opens folders in the left pane" : "Target the left pane");
+        ToolTipService.SetToolTip(SidebarRightButton, !leftActive ? "Sidebar opens folders in the right pane" : "Target the right pane");
     }
 
     private void HighlightActivePane()

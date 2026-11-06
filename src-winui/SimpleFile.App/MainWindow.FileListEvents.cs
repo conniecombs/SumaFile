@@ -376,6 +376,12 @@ public sealed partial class MainWindow
 
     private async Task HandleFileKey(KeyRoutedEventArgs e, PaneId pane)
     {
+        // Keys typed into the inline rename box belong to the box, not to the list.
+        if (e.OriginalSource is TextBox)
+        {
+            return;
+        }
+
         if (e.Key == VirtualKey.Enter)
         {
             e.Handled = true;
@@ -589,5 +595,127 @@ public sealed partial class MainWindow
         }
     }
 
-}
+    private FileRowView? _inlineRenameView;
 
+    private bool _inlineRenamePending;
+
+    private bool IsInlineRenameActive => _inlineRenamePending || _inlineRenameView?.IsRenaming == true;
+
+    /// <summary>
+    /// F2 in the Details view with exactly one item selected renames it in place. Returns
+    /// false (so the caller falls back to the rename dialog) for other views, multiple or no
+    /// selection, or when the row cannot be realized.
+    /// </summary>
+    private bool TryBeginInlineRename()
+    {
+        var workspace = _workspace;
+        if (workspace is null)
+        {
+            return false;
+        }
+
+        if (IsInlineRenameActive)
+        {
+            return true;
+        }
+
+        var pane = ActiveUiPane;
+        if (!string.Equals(workspace.ViewFor(pane), "details", StringComparison.Ordinal)
+            || PathRules.IsRecycleBinPath(workspace.Pane(pane).Path))
+        {
+            return false;
+        }
+
+        var list = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        if (list.Visibility != Visibility.Visible)
+        {
+            return false;
+        }
+
+        var selected = list.SelectedRows;
+        if (selected.Count != 1)
+        {
+            return false;
+        }
+
+        var target = selected[0];
+        if (list.RowViewFor(target) is null)
+        {
+            return false;
+        }
+
+        // Start on a later, low-priority tick: a context menu or the command palette that
+        // invoked Rename restores focus to its previous owner as it closes, and that focus
+        // change would otherwise land on the new box and cancel the rename at once.
+        _inlineRenamePending = true;
+        var queued = DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (!_inlineRenamePending)
+            {
+                // Cancelled (Escape) before the box appeared.
+                return;
+            }
+
+            _inlineRenamePending = false;
+            var stillSelected = list.SelectedRows is { Count: 1 } rows && ReferenceEquals(rows[0], target);
+            if (stillSelected && list.RowViewFor(target) is { } view && view.BeginRename(CommitInlineRenameAsync))
+            {
+                _inlineRenameView = view;
+                return;
+            }
+
+            if (stillSelected)
+            {
+                // The row could not be edited in place after all; fall back to the dialog.
+                _ = RunUiActionAsync("Rename", () => _fileOperationDialogs.PromptAndRenameAsync());
+            }
+        });
+        if (!queued)
+        {
+            _inlineRenamePending = false;
+        }
+
+        return queued;
+    }
+
+    private void CancelInlineRename()
+    {
+        _inlineRenamePending = false;
+        var view = _inlineRenameView;
+        _inlineRenameView = null;
+        view?.CancelRename();
+    }
+
+    private async Task CommitInlineRenameAsync(FileRow row, string newName)
+    {
+        _inlineRenameView = null;
+        var workspace = _workspace;
+        if (workspace is null)
+        {
+            return;
+        }
+
+        // Same rules as the Rename dialog and Advanced Rename.
+        if (!AdvancedRename.IsValidFileName(newName))
+        {
+            ShowMessage(
+                "Rename",
+                $"\"{newName}\" can't be used as a name. Names can't contain < > : \" / \\ | ? * or end with a space or period.",
+                InfoBarSeverity.Warning);
+            return;
+        }
+
+        await RunUiActionAsync("Rename", async () =>
+        {
+            var utilityCts = BeginUtilityOperation("CommitInlineRenameAsync");
+            try
+            {
+                await workspace.RenameSelectedAsync(row.Path, newName, utilityCts.Token);
+            }
+            finally
+            {
+                FinishUtilityOperation(utilityCts);
+            }
+        });
+    }
+}

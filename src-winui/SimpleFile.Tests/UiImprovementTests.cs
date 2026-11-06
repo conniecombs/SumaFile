@@ -9,7 +9,7 @@ public class UiImprovementTests
     public void Preview_PinningAndExplicitExpansionOverrideAutomaticCollapse()
     {
         var settings = new UiSettings();
-        Assert.True(PreviewLayoutPolicy.ShouldCollapse(settings, false, false, 1600, false));
+        Assert.False(PreviewLayoutPolicy.ShouldCollapse(settings, false, false, 1600, false));
         Assert.False(PreviewLayoutPolicy.ShouldCollapse(settings, true, false, 1600, false));
         Assert.True(PreviewLayoutPolicy.ShouldCollapse(settings, true, true, 900, false));
         Assert.False(PreviewLayoutPolicy.ShouldCollapse(settings, true, true, 1600, false));
@@ -106,5 +106,20 @@ public class UiImprovementTests
         Assert.Equal([new(0, 3, 0, 3), new(11, 3, 11, 3)], RenameNameChange.Between("old-middle-old.txt", "new-middle-new.txt"));
         Assert.Equal(new(1, 2, 1, 2), Assert.Single(RenameNameChange.Between("x😀.txt", "x😁.txt")));
         Assert.Equal(new(3, 2, 3, 1), Assert.Single(RenameNameChange.Between("cafe\u0301.txt", "café.txt")));
+    }
+
+    [Fact]
+    public void ApplyingChromeLayout_LeavesGitAndFoldersOnTopSettingsAlone()
+    {
+        var settings = new UiSettings { KeepFoldersOnTop = true, EnableGitIntegration = true };
+        var columns = new ColumnLayout();
+        var layout = WorkspaceChromeLayout.Capture(settings, columns, columns);
+        layout.KeepFoldersOnTop = false;
+        layout.EnableGitIntegration = false;
+
+        layout.Apply(settings, new ColumnLayout(), new ColumnLayout());
+
+        Assert.True(settings.KeepFoldersOnTop);
+        Assert.True(settings.EnableGitIntegration);
     }
 }

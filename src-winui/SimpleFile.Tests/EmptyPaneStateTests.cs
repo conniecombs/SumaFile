@@ -30,7 +30,7 @@ public class EmptyPaneStateTests
         Assert.Equal("No items match this filter", filter.Title);
 
         var hiddenOnly = EmptyPaneState.Resolve(0, 4, false, false, null, "", showHidden: false, @"C:\");
-        Assert.Equal("Hidden items are hidden", hiddenOnly.Title);
+        Assert.Equal("Only hidden items here", hiddenOnly.Title);
         Assert.Contains("Ctrl+H", hiddenOnly.Hint, StringComparison.Ordinal);
 
         var empty = EmptyPaneState.Resolve(0, 0, false, false, null, "", true, @"C:\Empty");
@@ -39,5 +39,13 @@ public class EmptyPaneStateTests
 
         var noPath = EmptyPaneState.Resolve(0, 0, false, false, null, "", true, "");
         Assert.Equal("Select a folder", noPath.Title);
+    }
+
+    [Fact]
+    public void NoPathHintSaysSidebar()
+    {
+        var noPath = EmptyPaneState.Resolve(0, 0, false, false, null, "", true, "");
+        Assert.Contains("sidebar", noPath.Hint, StringComparison.Ordinal);
+        Assert.DoesNotContain("side menu", noPath.Hint, StringComparison.Ordinal);
     }
 }

@@ -322,7 +322,23 @@ public sealed partial class MainWindow
     private void RefreshGitUiVisibility()
     {
         var enabled = IsGitIntegrationEnabled;
-        GitToggleButton.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        var activePath = _workspace?.Active.Path;
+        var inRepository = enabled ? ActivePaneInGitRepository() : false;
+        if (enabled
+            && (_gitStatusPath is null || string.IsNullOrWhiteSpace(activePath) || !PathRules.PathsEqual(_gitStatusPath, activePath)))
+        {
+            // The panel's status is stale for this folder (or the panel is closed): keep the
+            // repository flag that context menus read in step with the active pane's probe.
+            _gitStatus = inRepository == true
+                ? new GitRepositoryStatus { IsRepo = true, Root = _workspace?.Active.GitRepositoryRoot }
+                : null;
+        }
+
+        // Lazy Git: the status-bar button appears only inside a repository (unknown stays hidden),
+        // or while the workbench is open so it can still be closed.
+        GitToggleButton.Visibility = enabled && (inRepository == true || _gitPanelOpen)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         RefreshGitToggleState();
         if (!enabled)
         {
@@ -334,13 +350,45 @@ public sealed partial class MainWindow
         }
 
         RefreshGitActionButtons();
-        var activePath = _workspace?.Active.Path;
         if (_gitPanelOpen
             && !string.IsNullOrWhiteSpace(activePath)
             && (_gitStatusPath is null || !PathRules.PathsEqual(_gitStatusPath, activePath)))
         {
             _ = RefreshGitPanelAsync(silent: true);
         }
+    }
+
+    /// <summary>
+    /// Whether the active pane's folder is inside a Git repository: true/false once a probe
+    /// (the workbench status or the pane's enrichment probe) has answered, null while unknown.
+    /// </summary>
+    private bool? ActivePaneInGitRepository()
+    {
+        var pane = _workspace?.Active;
+        var activePath = pane?.Path;
+        if (pane is null || string.IsNullOrWhiteSpace(activePath))
+        {
+            return null;
+        }
+
+        if (_gitStatus is not null
+            && _gitStatusPath is not null
+            && PathRules.PathsEqual(_gitStatusPath, activePath))
+        {
+            return _gitStatus.IsRepo;
+        }
+
+        if (pane.GitRepositoryRoot is { Length: > 0 } root && PathRules.PathContains(root, activePath))
+        {
+            return true;
+        }
+
+        if (pane.GitProbedPath is { } probed && PathRules.PathsEqual(probed, activePath))
+        {
+            return pane.GitRepositoryRoot is not null;
+        }
+
+        return null;
     }
 
     private static string GitStatusSummary(GitRepositoryStatus status)
@@ -443,7 +491,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (!await ConfirmGitDiscardAsync(selectedPaths.Length))
+        if (!await ConfirmGitDiscardAsync(SelectedGitDiscardRows(selectedPaths)))
         {
             return;
         }
@@ -737,15 +785,79 @@ public sealed partial class MainWindow
             : result.Summary;
     }
 
-    private async Task<bool> ConfirmGitDiscardAsync(int count)
+    /// <summary>
+    /// Rows to confirm for a discard: the workbench selection when there is one, otherwise the
+    /// file-list selection matched against the last repository status (falling back to the
+    /// row's own Git badge so untracked files are still called out).
+    /// </summary>
+    private IReadOnlyList<GitChangeRow> SelectedGitDiscardRows(IReadOnlyList<string> selectedPaths)
+    {
+        var panelRows = ActiveGitWorkbenchView.SelectedChanges;
+        if (panelRows.Length > 0)
+        {
+            return panelRows;
+        }
+
+        var known = (_gitStatus?.Changes ?? [])
+            .Where(change => !string.IsNullOrWhiteSpace(change.AbsolutePath))
+            .GroupBy(change => change.AbsolutePath, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var badges = ActiveSelectedRows
+            .GroupBy(row => row.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().GitText, StringComparer.OrdinalIgnoreCase);
+        return selectedPaths
+            .Select(path => known.TryGetValue(path, out var change)
+                ? GitChangeRow.From(change)
+                : new GitChangeRow
+                {
+                    Path = path,
+                    AbsolutePath = path,
+                    StageText = badges.TryGetValue(path, out var badge)
+                        && string.Equals(badge, "untracked", StringComparison.OrdinalIgnoreCase)
+                            ? "untracked"
+                            : "unstaged",
+                    CanDiscard = true,
+                })
+            .ToList();
+    }
+
+    internal static string GitDiscardConfirmationText(IReadOnlyList<GitChangeRow> rows)
+    {
+        const int listed = 5;
+        var lines = rows
+            .Take(listed)
+            .Select(row => string.IsNullOrWhiteSpace(row.Path) ? row.AbsolutePath : row.Path)
+            .ToList();
+        if (rows.Count > listed)
+        {
+            lines.Add($"and {rows.Count - listed} more");
+        }
+
+        lines.Add("");
+        lines.Add("This cannot be undone.");
+        var untracked = rows.Count(row => string.Equals(row.StageText, "untracked", StringComparison.OrdinalIgnoreCase));
+        if (untracked > 0)
+        {
+            lines.Add(untracked == 1
+                ? "1 untracked file will be deleted from disk, not moved to the Recycle Bin."
+                : $"{untracked} untracked files will be deleted from disk, not moved to the Recycle Bin.");
+        }
+
+        return string.Join("\n", lines);
+    }
+
+    private async Task<bool> ConfirmGitDiscardAsync(IReadOnlyList<GitChangeRow> rows)
     {
         var dialog = new ContentDialog
         {
             XamlRoot = Content.XamlRoot,
-            Title = "Discard Git changes?",
-            Content = count == 1
-                ? "This permanently discards the selected change."
-                : $"This permanently discards {count} selected changes.",
+            Title = rows.Count == 1 ? "Discard this change?" : $"Discard {rows.Count} changes?",
+            Content = new TextBlock
+            {
+                Text = GitDiscardConfirmationText(rows),
+                TextWrapping = TextWrapping.Wrap,
+                IsTextSelectionEnabled = true,
+            },
             PrimaryButtonText = "Discard",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,

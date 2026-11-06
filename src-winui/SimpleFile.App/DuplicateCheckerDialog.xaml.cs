@@ -84,7 +84,13 @@ public sealed partial class DuplicateCheckerDialog : Window, IScanDialog<Duplica
     public DuplicateCheckerDialog()
     {
         InitializeComponent();
-        SecondaryWindowChrome.Apply(this, title: null, 900, 640);
+        SecondaryWindowChrome.Apply(
+            this,
+            title: null,
+            900,
+            640,
+            cancel: OnCancelAccelerator,
+            primary: OnPrimaryAccelerator);
 
         Closed += OnWindowClosed;
         GroupsList.ItemsSource = _groups;
@@ -234,6 +240,30 @@ public sealed partial class DuplicateCheckerDialog : Window, IScanDialog<Duplica
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => CloseWithResult(ContentDialogResult.None);
 
+    // Escape: cancel a running scan or close the window.
+    private void OnCancelAccelerator()
+    {
+        if (IsScanning)
+        {
+            RequestScanCancel();
+        }
+
+        CloseWithResult(ContentDialogResult.None);
+    }
+
+    // Ctrl+Enter: start the scan on the configuration page, or trash the selection on the results page.
+    private void OnPrimaryAccelerator()
+    {
+        if (PhaseConfig.Visibility == Visibility.Visible && StartScanButton.IsEnabled)
+        {
+            StartScanButton_Click(this, new RoutedEventArgs());
+        }
+        else if (PhaseResults.Visibility == Visibility.Visible && TrashButton.IsEnabled)
+        {
+            TrashButton_Click(this, new RoutedEventArgs());
+        }
+    }
+
     private void CancelScanButton_Click(object sender, RoutedEventArgs e)
     {
         RequestScanCancel();
@@ -324,9 +354,9 @@ public sealed partial class DuplicateCheckerDialog : Window, IScanDialog<Duplica
         UpdateSummary();
     }
 
-    private void GlobalKeepFirst_Click(object sender, RoutedEventArgs e)
+    private void GlobalKeepCurrentFolder_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var g in _groups) g.KeepFirst();
+        foreach (var g in _groups) g.KeepCopyInFolder(Directory);
         UpdateSummary();
     }
 
@@ -345,11 +375,11 @@ public sealed partial class DuplicateCheckerDialog : Window, IScanDialog<Duplica
         }
     }
 
-    private void GroupKeepFirst_Click(object sender, RoutedEventArgs e)
+    private void GroupKeepCurrentFolder_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag is DuplicateGroupViewModel g)
         {
-            g.KeepFirst();
+            g.KeepCopyInFolder(Directory);
             UpdateSummary();
         }
     }
@@ -437,14 +467,39 @@ public class DuplicateGroupViewModel
         UpdateCanSelect();
     }
 
-    public void KeepFirst()
+    /// <summary>
+    /// Keeps the copy whose parent is the scanned folder (first in ordinal path order when there
+    /// are several); otherwise the copy with the shortest path, ties broken by ordinal path order.
+    /// </summary>
+    public void KeepCopyInFolder(string folder)
     {
-        var first = Files.FirstOrDefault();
-        if (first != null)
+        var keep = ChooseKeeper(Files, folder);
+        if (keep != null)
         {
-            foreach (var f in Files) f.SetIsSelected(f != first);
+            foreach (var f in Files) f.SetIsSelected(f != keep);
         }
         UpdateCanSelect();
+    }
+
+    internal static DuplicateFileViewModel? ChooseKeeper(IEnumerable<DuplicateFileViewModel> files, string folder)
+    {
+        var ordered = files
+            .OrderBy(f => f.Path.Length)
+            .ThenBy(f => f.Path, StringComparer.Ordinal)
+            .ToArray();
+        if (!string.IsNullOrWhiteSpace(folder))
+        {
+            var inFolder = ordered
+                .Where(f => System.IO.Path.GetDirectoryName(f.Path) is { } parent && PathRules.PathsEqual(parent, folder))
+                .OrderBy(f => f.Path, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (inFolder != null)
+            {
+                return inFolder;
+            }
+        }
+
+        return ordered.FirstOrDefault();
     }
 
     public void ClearSelection()

@@ -16,7 +16,7 @@ public static class PaneRoleFormatter
         }
 
         var active = pane == activePane;
-        var caption = active ? $"{shortName} - Active" : $"{shortName} - Destination";
+        var caption = active ? $"{shortName} · Active" : shortName;
         var tooltip = active
             ? $"{paneName} is active. Copy or move to other pane sends selected items from here. Path: {pathText}"
             : $"{paneName} is the destination for Copy/Move to other pane. Path: {pathText}";

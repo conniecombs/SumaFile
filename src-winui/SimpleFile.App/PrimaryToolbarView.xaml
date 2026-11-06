@@ -21,9 +21,9 @@
                                 <Button
                                     x:Name="PrimarySidebarToggleButton"
                                     Style="{StaticResource SfToolbarButtonStyle}"
-                                    AutomationProperties.Name="Toggle side menu"
+                                    AutomationProperties.Name="Toggle sidebar"
                                     Click="OnToggleSidebar"
-                                    ToolTipService.ToolTip="Hide side menu">
+                                    ToolTipService.ToolTip="Hide sidebar">
                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE700;" />
                                 </Button>
                                 <Button
@@ -62,13 +62,14 @@
                                     x:Name="OmnibarBox"
                                     Padding="116,4,34,4"
                                     VerticalAlignment="Center"
-                                    AutomationProperties.Name="Omnibar"
+                                    AutomationProperties.Name="Address and search"
                                     CornerRadius="6"
                                     GotFocus="OnOmnibarGotFocus"
                                     KeyDown="OnOmnibarKeyDown"
                                     LostFocus="OnOmnibarLostFocus"
                                     TextChanged="OnOmnibarTextChanged"
-                                    PlaceholderText="Path · >command · ?search · ~filter" />
+                                    ToolTipService.ToolTip="Path, or >command ?search ~filter"
+                                    PlaceholderText="Path, or >command ?search ~filter" />
                                 <StackPanel
                                     Margin="2,0,0,0"
                                     HorizontalAlignment="Left"
@@ -77,7 +78,6 @@
                                     Spacing="1">
                                     <ToggleButton
                                         x:Name="OmnibarPathModeButton"
-                                    AllowFocusOnInteraction="False"
                                         Width="28"
                                         Height="28"
                                         MinWidth="28"
@@ -93,7 +93,6 @@
                                     </ToggleButton>
                                     <ToggleButton
                                         x:Name="OmnibarSearchModeButton"
-                                    AllowFocusOnInteraction="False"
                                         Width="28"
                                         Height="28"
                                         MinWidth="28"
@@ -108,7 +107,6 @@
                                     </ToggleButton>
                                     <ToggleButton
                                         x:Name="OmnibarFilterModeButton"
-                                    AllowFocusOnInteraction="False"
                                         Width="28"
                                         Height="28"
                                         MinWidth="28"
@@ -123,7 +121,6 @@
                                     </ToggleButton>
                                     <ToggleButton
                                         x:Name="OmnibarCommandModeButton"
-                                    AllowFocusOnInteraction="False"
                                         Width="28"
                                         Height="28"
                                         MinWidth="28"
@@ -315,23 +312,9 @@
                                                 MinWidth="280"
                                                 Padding="4"
                                                 Spacing="12">
-                                                <Button
-                                                    x:Name="ViewDualPaneButton"
-                                                    Style="{StaticResource SfGhostButtonStyle}"
-                                                    HorizontalAlignment="Stretch"
-                                                    HorizontalContentAlignment="Left"
-                                                    Click="OnViewDualPaneClicked">
-                                                    <StackPanel Orientation="Horizontal" Spacing="10">
-                                                        <FontIcon
-                                                            x:Name="ViewDualPaneIcon"
-                                                            FontFamily="{StaticResource SfIconFont}"
-                                                            FontSize="14" />
-                                                        <TextBlock x:Name="ViewDualPaneText" VerticalAlignment="Center" />
-                                                    </StackPanel>
-                                                </Button>
                                                 <RadioButtons
                                                     x:Name="ViewStyleRadioButtons"
-                                                    Header="Current display style"
+                                                    Header="Display style"
                                                     MaxColumns="2"
                                                     SelectionChanged="OnViewStyleSelectionChanged">
                                                     <RadioButton Content="Details" Tag="details" />
@@ -345,20 +328,26 @@
                                                             <ColumnDefinition Width="*" />
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
-                                                        <TextBlock Text="Current icon size" />
+                                                        <TextBlock Text="Icon size" />
                                                         <TextBlock
                                                             x:Name="ViewIconSizeValueText"
                                                             Grid.Column="1"
                                                             Foreground="{ThemeResource SfTextMutedBrush}" />
                                                     </Grid>
+                                                    <!-- The slider moves between the icon-size options (UiSettings.IconSizeOptions), not raw pixels. -->
                                                     <Slider
                                                         x:Name="ViewIconSizeSlider"
                                                         HorizontalAlignment="Stretch"
-                                                        LargeChange="16"
-                                                        Maximum="256"
-                                                        Minimum="16"
-                                                        SmallChange="8"
-                                                        StepFrequency="8"
+                                                        AutomationProperties.Name="Icon size"
+                                                        IsThumbToolTipEnabled="False"
+                                                        LargeChange="1"
+                                                        Maximum="4"
+                                                        Minimum="0"
+                                                        SmallChange="1"
+                                                        SnapsTo="Ticks"
+                                                        StepFrequency="1"
+                                                        TickFrequency="1"
+                                                        TickPlacement="Outside"
                                                         ValueChanged="OnViewIconSizeSliderChanged" />
                                                     <Grid>
                                                         <Grid.ColumnDefinitions>
@@ -366,14 +355,16 @@
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
                                                         <TextBlock
+                                                            x:Name="ViewIconSizeMinLabel"
                                                             FontSize="11"
                                                             Foreground="{ThemeResource SfTextMutedBrush}"
-                                                            Text="16 px" />
+                                                            Text="Small" />
                                                         <TextBlock
+                                                            x:Name="ViewIconSizeMaxLabel"
                                                             Grid.Column="1"
                                                             FontSize="11"
                                                             Foreground="{ThemeResource SfTextMutedBrush}"
-                                                            Text="256 px" />
+                                                            Text="Huge" />
                                                     </Grid>
                                                 </StackPanel>
                                                 <Button
@@ -384,87 +375,32 @@
                                                     Click="OnViewApplyBothClicked"
                                                     Content="Apply current view to both panes" />
                                                 <StackPanel Spacing="6">
-                                                    <TextBlock
-                                                        FontWeight="SemiBold"
-                                                        Text="Save view defaults" />
-                                                    <Button
-                                                        x:Name="ViewUseGloballyButton"
-                                                        Style="{StaticResource SfGhostButtonStyle}"
-                                                        HorizontalAlignment="Stretch"
-                                                        HorizontalContentAlignment="Left"
-                                                        Click="OnViewUseGloballyClicked">
-                                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                                            <FontIcon
-                                                                FontFamily="{StaticResource SfIconFont}"
-                                                                FontSize="13"
-                                                                Glyph="&#xE774;" />
-                                                            <TextBlock Text="Use globally" />
-                                                        </StackPanel>
-                                                    </Button>
-                                                    <Button
-                                                        x:Name="ViewUseForFolderButton"
-                                                        Style="{StaticResource SfGhostButtonStyle}"
-                                                        HorizontalAlignment="Stretch"
-                                                        HorizontalContentAlignment="Left"
-                                                        Click="OnViewUseForFolderClicked">
-                                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                                            <FontIcon
-                                                                FontFamily="{StaticResource SfIconFont}"
-                                                                FontSize="13"
-                                                                Glyph="&#xE8B7;" />
-                                                            <TextBlock Text="Use for this folder" />
-                                                        </StackPanel>
-                                                    </Button>
-                                                    <Button
-                                                        x:Name="ViewUseForDescendantsButton"
-                                                        Style="{StaticResource SfGhostButtonStyle}"
-                                                        HorizontalAlignment="Stretch"
-                                                        HorizontalContentAlignment="Left"
-                                                        Click="OnViewUseForDescendantsClicked">
-                                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                                            <FontIcon
-                                                                FontFamily="{StaticResource SfIconFont}"
-                                                                FontSize="13"
-                                                                Glyph="&#xE8B7;" />
-                                                            <TextBlock Text="Use for this folder and descendants" />
-                                                        </StackPanel>
-                                                    </Button>
-                                                    <TextBlock
-                                                        x:Name="ViewFolderRuleStatusText"
-                                                        FontSize="12"
-                                                        Foreground="{ThemeResource SfTextMutedBrush}"
-                                                        TextWrapping="Wrap" />
-                                                </StackPanel>
-                                                <Border
-                                                    Height="1"
-                                                    Margin="0,2,0,0"
-                                                    Background="{ThemeResource SfBorderBrush}" />
-                                                <StackPanel Spacing="6">
                                                     <Grid ColumnSpacing="8">
                                                         <Grid.ColumnDefinitions>
                                                             <ColumnDefinition Width="*" />
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
-                                                        <TextBlock
-                                                            VerticalAlignment="Center"
-                                                            FontWeight="SemiBold"
-                                                            Text="Profiles" />
+                                                        <ComboBox
+                                                            x:Name="ViewRememberScopeBox"
+                                                            HorizontalAlignment="Stretch"
+                                                            Header="Remember this view for"
+                                                            SelectedIndex="0">
+                                                            <ComboBoxItem Content="Everywhere" Tag="global" />
+                                                            <ComboBoxItem x:Name="ViewRememberFolderItem" Content="This folder" Tag="folder" />
+                                                            <ComboBoxItem x:Name="ViewRememberDescendantsItem" Content="This folder and subfolders" Tag="descendants" />
+                                                        </ComboBox>
                                                         <Button
-                                                            x:Name="ViewSaveProfileButton"
+                                                            x:Name="ViewRememberButton"
                                                             Grid.Column="1"
-                                                            Style="{StaticResource SfGhostButtonStyle}"
-                                                            Click="OnViewSaveProfileClicked"
-                                                            ToolTipService.ToolTip="Save current profile">
-                                                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                                                <FontIcon
-                                                                    FontFamily="{StaticResource SfIconFont}"
-                                                                    FontSize="13"
-                                                                    Glyph="&#xE74E;" />
-                                                                <TextBlock Text="Save" />
-                                                            </StackPanel>
-                                                        </Button>
+                                                            VerticalAlignment="Bottom"
+                                                            Click="OnViewRememberClicked"
+                                                            Content="Remember" />
                                                     </Grid>
-                                                    <StackPanel x:Name="ViewProfilesHost" Spacing="2" />
+                                                    <TextBlock
+                                                        x:Name="ViewFolderRuleStatusText"
+                                                        FontSize="12"
+                                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                                        TextWrapping="Wrap" />
                                                 </StackPanel>
                                             </StackPanel>
                                         </Flyout>

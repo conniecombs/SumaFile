@@ -10,7 +10,7 @@ public sealed partial class MainWindow
     {
         if (_workspace?.FileOps is null)
         {
-            ShowMessage("FTP/SFTP manager", "The backend service is not ready yet.", InfoBarSeverity.Warning);
+            ShowMessage("FTP/SFTP manager", "SumaFile's file service is not ready yet.", InfoBarSeverity.Warning);
             return;
         }
 
@@ -76,7 +76,8 @@ public sealed partial class MainWindow
         && left.Name == right.Name
         && left.Protocol == right.Protocol
         && left.Host == right.Host
-        && left.Description == right.Description;
+        && left.Description == right.Description
+        && left.IsInsecure == right.IsInsecure;
 
     private void CloseRemoteManagerWindow()
     {

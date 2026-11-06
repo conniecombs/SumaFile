@@ -9,8 +9,10 @@ public sealed partial class PaneContextBar : UserControl
 
     public event EventHandler? ClearFilter;
     public event EventHandler? ReturnToFolder;
+    public event EventHandler? SaveSmartFolder;
     internal Button ClearButton => FilterClearButton;
     internal Button ReturnButton => ReturnFolderButton;
+    internal Button SaveSmartFolderBannerButton => SaveSmartFolderButton;
 
     public void Update(string filter, int visibleCount, int totalCount, bool searching, string query, string root, bool running)
     {
@@ -23,10 +25,12 @@ public sealed partial class PaneContextBar : UserControl
         SearchRow.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;
         SearchText.Text = $"{(running ? "Searching" : "Search")}: {query}";
         ToolTipService.SetToolTip(SearchText, SearchText.Text);
+        SaveSmartFolderButton.IsEnabled = searching && !string.IsNullOrWhiteSpace(query);
         SearchScope.Text = $"{visibleCount:N0} results · {root}";
         ToolTipService.SetToolTip(SearchScope, root);
     }
 
     private void OnClearFilter(object sender, RoutedEventArgs e) => ClearFilter?.Invoke(this, EventArgs.Empty);
     private void OnReturnToFolder(object sender, RoutedEventArgs e) => ReturnToFolder?.Invoke(this, EventArgs.Empty);
+    private void OnSaveSmartFolder(object sender, RoutedEventArgs e) => SaveSmartFolder?.Invoke(this, EventArgs.Empty);
 }

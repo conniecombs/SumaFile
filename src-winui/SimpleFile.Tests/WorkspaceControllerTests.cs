@@ -160,4 +160,92 @@ public class WorkspaceControllerTests
         Assert.Equal("modified", resolved.Options.SortBy);
         Assert.False(resolved.Options.SortAscending);
     }
+
+    [Fact]
+    public async Task PaneEnrichment_OutsideARepositorySkipsGitStatusAndProbesOnce()
+    {
+        var ipc = new GitProbeIpc();
+        var pane = new ExplorerPane(PaneId.Primary)
+        {
+            Path = @"C:\Users\test\Downloads",
+            Entries = [new FileEntry { Name = "a.txt", Path = @"C:\Users\test\Downloads\a.txt", GitStatus = "modified" }],
+        };
+        var controller = new PaneEnrichmentController();
+        var fileOps = new FileOperationService(ipc);
+
+        var changed = await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
+        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
+
+        Assert.True(changed);
+        Assert.Equal(0, ipc.FileStatusCalls);
+        Assert.Equal(1, ipc.ProbeCalls);
+        Assert.Null(pane.GitRepositoryRoot);
+        Assert.Null(pane.Entries[0].GitStatus);
+    }
+
+    [Fact]
+    public async Task PaneEnrichment_InvalidatedProbeAsksGitAgainWhenARepositoryAppears()
+    {
+        var ipc = new GitProbeIpc();
+        var pane = new ExplorerPane(PaneId.Primary)
+        {
+            Path = @"C:\src\new",
+            Entries = [new FileEntry { Name = "a.txt", Path = @"C:\src\new\a.txt" }],
+        };
+        var controller = new PaneEnrichmentController();
+        var fileOps = new FileOperationService(ipc);
+
+        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
+        Assert.Null(pane.GitRepositoryRoot);
+
+        ipc.Repositories.Add(@"C:\src\new");
+        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
+        Assert.Equal(1, ipc.ProbeCalls);
+
+        pane.InvalidateGitProbe();
+        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
+
+        Assert.Equal(2, ipc.ProbeCalls);
+        Assert.Equal(@"C:\src\new", pane.GitRepositoryRoot);
+        Assert.Equal(1, ipc.FileStatusCalls);
+    }
+
+    [Fact]
+    public async Task PaneEnrichment_InsideARepositoryReusesTheProbedRootForSubfolders()
+    {
+        var ipc = new GitProbeIpc();
+        ipc.Repositories.Add(@"C:\src\app");
+        var pane = new ExplorerPane(PaneId.Primary) { Path = @"C:\src\app" };
+        var controller = new PaneEnrichmentController();
+        var fileOps = new FileOperationService(ipc);
+
+        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
+        pane.Path = @"C:\src\app\lib";
+        pane.NextNavigationToken();
+        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
+
+        Assert.Equal(@"C:\src\app", pane.GitRepositoryRoot);
+        Assert.Equal(1, ipc.ProbeCalls);
+        Assert.Equal(2, ipc.FileStatusCalls);
+    }
+
+    private sealed class GitProbeIpc : NullIpc
+    {
+        public List<string> Repositories { get; } = [];
+        public int ProbeCalls { get; private set; }
+        public int FileStatusCalls { get; private set; }
+
+        public override Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default)
+        {
+            ProbeCalls++;
+            var root = Repositories.FirstOrDefault(repo => PathRules.PathContains(repo, path));
+            return Task.FromResult(new GitRepositoryStatus { IsRepo = root is not null, Root = root });
+        }
+
+        public override Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)
+        {
+            FileStatusCalls++;
+            return Task.FromResult(Array.Empty<FileEntry>());
+        }
+    }
 }

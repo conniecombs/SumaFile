@@ -148,6 +148,103 @@ public class RemoteManagerViewModelTests
     }
 
     [Fact]
+    public void ParseConnectError_ReadsUntrustedFingerprintAfterTheLastSeparator()
+    {
+        var outcome = RemoteManagerViewModel.ParseConnectError(
+            "SFTP host fingerprint is not trusted. Check that this fingerprint belongs to the server, then trust it to connect: SHA256:abc+def/123=");
+
+        Assert.False(outcome.Connected);
+        Assert.True(outcome.IsHostKeyProblem);
+        Assert.Equal("SHA256:abc+def/123=", outcome.UntrustedFingerprint);
+        Assert.Null(outcome.MismatchExpected);
+        Assert.Null(outcome.MismatchActual);
+    }
+
+    [Fact]
+    public void ParseConnectError_ReadsExpectedAndReceivedFingerprintsOnMismatch()
+    {
+        var outcome = RemoteManagerViewModel.ParseConnectError(
+            "SFTP host fingerprint mismatch. The server key changed since you trusted it. Expected SHA256:old, got SHA256:new");
+
+        Assert.True(outcome.IsHostKeyProblem);
+        Assert.Null(outcome.UntrustedFingerprint);
+        Assert.Equal("SHA256:old", outcome.MismatchExpected);
+        Assert.Equal("SHA256:new", outcome.MismatchActual);
+    }
+
+    [Theory]
+    [InlineData("SFTP connection failed: connection refused")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void ParseConnectError_LeavesOtherFailuresAlone(string? message)
+    {
+        var outcome = RemoteManagerViewModel.ParseConnectError(message);
+
+        Assert.False(outcome.IsHostKeyProblem);
+        Assert.Null(outcome.UntrustedFingerprint);
+        Assert.Null(outcome.MismatchActual);
+    }
+
+    [Fact]
+    public async Task ConnectSelectedProfileAsync_ReturnsUntrustedFingerprintAndTrustReconnects()
+    {
+        var ipc = new RemoteProfileIpc(
+        [
+            new RemoteProfile
+            {
+                Id = "prod",
+                Name = "Production",
+                Protocol = "sftp",
+                Host = "example.com",
+                Port = 22,
+                Username = "deploy",
+                RootPath = "/",
+                AuthKind = "password",
+                CredentialTarget = "SumaFile:remote:prod",
+            },
+        ])
+        {
+            Session = new RemoteSession { SessionId = "s1", ProfileId = "prod", Protocol = "sftp", RootPath = "/" },
+            Listing = new DirectoryListing { Path = "/", IsNetwork = true, Entries = [] },
+        };
+        ipc.ConnectFailures.Enqueue("SFTP host fingerprint is not trusted. Trust it to connect: SHA256:xyz");
+        var viewModel = new RemoteManagerViewModel(new FileOperationService(ipc));
+        await viewModel.LoadProfilesAsync();
+
+        var first = await viewModel.ConnectSelectedProfileAsync();
+
+        Assert.False(first.Connected);
+        Assert.Equal("SHA256:xyz", first.UntrustedFingerprint);
+        Assert.False(viewModel.IsConnected);
+        Assert.False(viewModel.IsBusy);
+
+        var second = await viewModel.TrustFingerprintAndConnectAsync(first.UntrustedFingerprint!);
+
+        Assert.True(second.Connected);
+        Assert.Equal("SHA256:xyz", ipc.SavedProfile?.TrustedHostFingerprint);
+        Assert.Equal("prod", ipc.SavedProfile?.Id);
+        Assert.Equal("SumaFile:remote:prod", ipc.SavedProfile?.CredentialTarget);
+        Assert.Null(ipc.SavedSecret);
+        Assert.Equal(2, ipc.ConnectCalls);
+        Assert.True(viewModel.IsConnected);
+    }
+
+    [Fact]
+    public async Task ConnectSelectedProfileAsync_StillThrowsForOrdinaryFailures()
+    {
+        var ipc = new RemoteProfileIpc(
+        [
+            new RemoteProfile { Id = "prod", Name = "Production", Protocol = "sftp", Host = "example.com", Port = 22 },
+        ]);
+        ipc.ConnectFailures.Enqueue("SFTP connection failed: connection refused");
+        var viewModel = new RemoteManagerViewModel(new FileOperationService(ipc));
+        await viewModel.LoadProfilesAsync();
+
+        await Assert.ThrowsAsync<IpcException>(() => viewModel.ConnectSelectedProfileAsync());
+        Assert.False(viewModel.IsBusy);
+    }
+
+    [Fact]
     public async Task RemoteMutationMethods_UpdateDirectoryEntriesAndStatus()
     {
         var ipc = new RemoteProfileIpc(
@@ -711,8 +808,17 @@ public class RemoteManagerViewModelTests
         {
             ConnectedProfileId = profileId;
             ConnectedSecret = secret;
+            ConnectCalls++;
+            if (ConnectFailures.Count > 0)
+            {
+                throw new IpcException(-32000, ConnectFailures.Dequeue());
+            }
+
             return Task.FromResult(Session);
         }
+
+        public Queue<string> ConnectFailures { get; } = new();
+        public int ConnectCalls { get; private set; }
 
         public override Task<RemoteProfile> RemoteSaveProfileAsync(
             RemoteProfileInput profile,

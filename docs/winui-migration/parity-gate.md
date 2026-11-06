@@ -332,7 +332,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `profile-save` | Save current workspace profile | Save dialog | Profile workspace tests | Save profile | `PASS` |
 | `profile-standard` `profile-developer` `profile-photos` `profile-transfer` `profile-minimal` | Apply built-in profiles | Profile command handlers | Profile workspace tests | Apply each built-in | `PASS` |
 | `view-details` `view-list` `view-tiles` `view-content` | Palette display style commands | Handler applies file-list presentation | Catalog test | Switch each view | `MANUAL` |
-| `icon-size-small` `icon-size-medium` `icon-size-large` `icon-size-extra-large` `icon-size-jumbo` `icon-size-huge` `icon-size-maximum` | Palette icon size commands | Handler updates file-list icon size | Catalog test | Change each icon size | `MANUAL` |
+| `icon-size-small` `icon-size-medium` `icon-size-large` `icon-size-extra-large` `icon-size-huge` | Palette icon size commands | Handler updates file-list icon size | Catalog test | Change each icon size | `MANUAL` |
 | `search` | Focus find in folder | Handler | Catalog | Ctrl+F | `MANUAL` |
 | `filter` | Focus filter list | Handler | Catalog | Overflow filter | `MANUAL` |
 | `quick-look` | Space | Handler | Catalog + source-shape guard | Space | `PASS` |
@@ -342,6 +342,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `shortcut-for-selected` | Create shortcut to the selected item | Shortcut dialog with target pre-filled | Catalog + `ContextMenuBuilderTests` + source-shape guard | Right-click item > Create shortcut | `PASS` |
 | `color-label` | Tag picker | Dialog | Catalog | — | `MANUAL` |
 | `clear-tag-filter` | Clear active tag filter | Sidebar Tags + command handler | Catalog + source-shape guard | Click a tag, clear it | `PASS` |
+| `save-smart-folder` | Save the current search as a smart folder | Command handler (`SaveSearchAsSmartFolderAsync`) | Catalog test | Search, run the command, open the smart folder | `MANUAL` |
 | `bookmark-folder` | Bookmark current folder | Workspace places | Catalog + places tests | Ctrl+B | `PASS` |
 | `folder-metrics` | Metrics | Dialog | Catalog | — | `MANUAL` |
 | `disk-cleanup` | Cleanup | Dialog | Catalog | — | `MANUAL` |
@@ -358,6 +359,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-preview` | Quick Look | Builder | Same | — | `PASS` |
 | `ctx-send-to-menu` `ctx-tools-menu` `ctx-archive-menu` | Grouped context menu sections | Builder | Context menu tests | Right-click file/folder | `PASS` |
 | `ctx-toolbar-menu` `ctx-toggle-toolbar-labels` `ctx-customize-toolbar` | Pane More toolbar shortcuts | Builder + handlers | Context menu tests | More > Toolbar | `PASS` |
+| `overflow-tools-menu` | Pane More Tools submenu (FTP/SFTP, history, cleanup, terminal) | Builder | Context menu tests | More > Tools | `PASS` |
 | `ctx-compare` | Compare | Builder | Same | Two files | `PASS` |
 | `ctx-view-archive` | View archive contents | Builder + handler | `DesktopPolishTests` | Right-click archive | `PASS` |
 | `ctx-terminal` | Terminal | Builder | Same | — | `PASS` |
@@ -378,7 +380,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-pack` `ctx-unpack` | Pack/unpack | Builder | Same | — | `PASS` |
 | `ctx-compress` | Compress | Builder | Same | — | `PASS` |
 | `ctx-extract-menu` `ctx-extract` `ctx-extract-folder` `ctx-extract-to` | Extract menu | Builder | Same | Archive | `PASS` |
-| `ctx-delete` `ctx-delete-menu` `ctx-delete-recycle` `ctx-delete-permanent` | Delete menu | Builder | `DesktopPolishTests` | Delete / Shift+Delete | `PASS` |
+| `ctx-delete` `ctx-delete-recycle` `ctx-delete-permanent` | Delete menu | Builder | `DesktopPolishTests` | Delete / Shift+Delete | `PASS` |
 | `ctx-info` | Properties | Builder | Same | — | `PASS` |
 | `ctx-refresh` | Refresh (blank-space menu) | Builder + alias to `refresh` | `ContextMenuBuilderTests` | Right-click blank space | `PASS` |
 | `ctx-folder-info` | Current folder properties (blank-space menu) | Builder + alias to `folder-properties` | `ContextMenuBuilderTests` | Right-click blank space | `PASS` |

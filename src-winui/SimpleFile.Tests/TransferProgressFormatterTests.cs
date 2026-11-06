@@ -102,10 +102,10 @@ public class TransferProgressFormatterTests
         var display = TransferProgressFormatter.Format(context, update, 92 * 1024 * 1024, averageFilesPerSecond: null);
 
         Assert.Equal("Finishing copy", display.Title);
-        Assert.Equal("Finalizing", display.Percent);
+        Assert.Equal("Finishing", display.Percent);
         Assert.Equal("Finishing current file", display.FileSummary);
         Assert.Equal("Finishing file", display.FileRate);
-        Assert.Equal("Finalizing", display.Speed);
+        Assert.Equal("Finishing", display.Speed);
         Assert.Equal("Almost done", display.Eta);
         Assert.DoesNotContain("remaining", display.Eta, StringComparison.OrdinalIgnoreCase);
         Assert.False(display.IsIndeterminate);

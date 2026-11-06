@@ -32,7 +32,7 @@ public class UiAuditRegressionTests
     public void PaneMoreMenu_EmitsOnlyAliasedOrContextIds()
     {
         var entries = Flatten(ContextMenuBuilder.BuildPaneMoreMenu(new ContextMenuRequest()))
-            .Where(entry => entry.Kind == ContextMenuKind.Item)
+            .Where(entry => entry.Kind == ContextMenuKind.Item && entry.Children.Count == 0)
             .Select(entry => entry.Id)
             .ToList();
 
@@ -278,7 +278,7 @@ public class ShortcutTextFocusGuardTests
         var shortcuts = File.ReadAllText(Path.Combine(root, "MainWindow.Shortcuts.cs"));
         var accelerator = Slice(shortcuts, "private KeyboardAccelerator CreateCommandAccelerator(", "private void AddFixedTabJumpAccelerators()");
 
-        Assert.Contains("if (!CanRunShortcutNow(commandId))", accelerator);
+        Assert.Contains("if (!CanRunShortcutNow(commandId, modifiers))", accelerator);
         Assert.True(
             accelerator.IndexOf("CanRunShortcutNow", StringComparison.Ordinal)
                 < accelerator.IndexOf("args.Handled = true;", StringComparison.Ordinal),
@@ -609,19 +609,36 @@ public class PreviewWebViewLockdownTests
 
 public class Sprint2ShellTests
 {
-    // S1: clicking the omnibar's own Run/mode buttons moved focus, which reset the typed text.
+    // S1: clicking the omnibar's own Run button moved focus, which reset the typed text.
+    [Fact]
+    public void OmnibarRunButton_DoesNotTakeFocusFromTheInput()
+    {
+        var xaml = File.ReadAllText(Path.Combine(AppRoot(), "PrimaryToolbarView.xaml"));
+        var element = ElementFor(xaml, "OmnibarExecuteButton");
+
+        Assert.Contains("AllowFocusOnInteraction=\"False\"", element);
+    }
+
+    // 1.0.4: the mode toggles are keyboard focusable; a click hands focus back to the text box
+    // and the typed text survives the toggle taking focus.
     [Theory]
-    [InlineData("OmnibarExecuteButton")]
     [InlineData("OmnibarPathModeButton")]
     [InlineData("OmnibarSearchModeButton")]
     [InlineData("OmnibarFilterModeButton")]
     [InlineData("OmnibarCommandModeButton")]
-    public void OmnibarButtons_DoNotTakeFocusFromTheInput(string name)
+    public void OmnibarModeButtons_AreFocusableAndReturnFocusToTheInput(string name)
     {
         var xaml = File.ReadAllText(Path.Combine(AppRoot(), "PrimaryToolbarView.xaml"));
         var element = ElementFor(xaml, name);
+        Assert.DoesNotContain("AllowFocusOnInteraction", element);
 
-        Assert.Contains("AllowFocusOnInteraction=\"False\"", element);
+        var code = File.ReadAllText(Path.Combine(AppRoot(), "PrimaryToolbarView.xaml.cs"));
+        var request = code[code.IndexOf("private void RequestOmnibarMode(", StringComparison.Ordinal)..];
+        Assert.Contains("OmnibarBox.Focus(FocusState.Programmatic)", request);
+
+        var omnibar = File.ReadAllText(Path.Combine(AppRoot(), "MainWindow.Omnibar.cs"));
+        Assert.Contains("IsOmnibarModeButtonFocused()", omnibar);
+        Assert.Contains("_omnibarKeepTypedText", omnibar);
     }
 
     [Fact]
@@ -914,16 +931,17 @@ public class Sprint2WindowTests
     }
 
     // T2: the Transfers window re-activated itself on every start/retry/dequeue.
+    // 1.0.4: an auto-created window stays unactivated too; it is shown on request or after ~3 s.
     [Fact]
-    public void TransferWindow_ActivatesOnlyWhenCreatedOrExplicitlyOpened()
+    public void TransferWindow_ActivatesOnlyWhenExplicitlyOpened()
     {
         var window = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "TransferProgressWindow.xaml.cs"));
         var start = Slice(window, "public void Start(", "private async void OnDefaultsClicked(");
         var ops = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileOperations.cs"));
 
         Assert.DoesNotContain("Activate();", start);
-        Assert.Contains("EnsureTransferProgressWindow(out var created)", ops);
-        Assert.Contains("if (created || activate)", ops);
+        Assert.Contains("EnsureTransferProgressWindow(out _)", ops);
+        Assert.DoesNotContain("if (created || activate)", ops);
     }
 
     // T4: skipped conflicts were reported as full success.

@@ -2,20 +2,36 @@
     x:Class="SimpleFile.App.ConflictDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="File Conflict"
-    PrimaryButtonText="Replace"
-    SecondaryButtonText="Skip"
-    CloseButtonText="Cancel transfer"
-    DefaultButton="Secondary">
+    Title="File conflict"
+    PrimaryButtonText="Continue"
+    CloseButtonText="Stop transfer"
+    DefaultButton="Primary">
     <StackPanel Spacing="12">
         <TextBlock x:Name="OperationSummary" FontWeight="SemiBold" TextWrapping="Wrap" />
         <TextBlock x:Name="DestinationSummary" TextWrapping="Wrap" />
         <TextBlock x:Name="ConflictMessage" TextWrapping="Wrap" />
-        <TextBlock x:Name="ChoiceHint" TextWrapping="Wrap" />
-        <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
             <StackPanel x:Name="ComparisonCards" Spacing="12" />
         </ScrollViewer>
-        <CheckBox x:Name="ApplyToAll" Content="Apply to all remaining conflicts" />
-        <Button x:Name="KeepBothButton" Content="Keep both" HorizontalAlignment="Stretch" />
+        <RadioButtons
+            x:Name="ChoiceButtons"
+            AutomationProperties.Name="Conflict choice"
+            SelectedIndex="1">
+            <StackPanel Spacing="2">
+                <TextBlock Text="Replace the existing file" />
+                <TextBlock
+                    FontSize="12"
+                    Foreground="{ThemeResource SfTextMutedBrush}"
+                    Text="Replaced files cannot be undone." />
+            </StackPanel>
+            <TextBlock Text="Skip this file" />
+            <TextBlock x:Name="KeepBothOption" Text="Keep both" TextWrapping="Wrap" />
+        </RadioButtons>
+        <TextBlock
+            x:Name="ChoiceHint"
+            FontSize="12"
+            Foreground="{ThemeResource SfTextMutedBrush}"
+            TextWrapping="Wrap" />
+        <CheckBox x:Name="ApplyToAll" Content="Do this for all remaining conflicts" />
     </StackPanel>
 </ContentDialog>

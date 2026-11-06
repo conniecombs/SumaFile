@@ -29,6 +29,23 @@ public sealed class ExplorerPane
     public int IconSize { get; set; } = 16;
     public string SortBy { get; set; } = "name";
     public bool SortAscending { get; set; } = true;
+
+    /// <summary>Root of the Git repository found by the last probe, or null when not in one (or not probed).</summary>
+    public string? GitRepositoryRoot { get; set; }
+
+    /// <summary>Path the last repository probe ran for; lets enrichment skip re-probing the same folder.</summary>
+    public string? GitProbedPath { get; set; }
+
+    /// <summary>
+    /// Forgets the cached repository probe so the next enrichment pass asks Git again. Used by an
+    /// explicit refresh, because a repository can be created or removed under the displayed folder.
+    /// </summary>
+    public void InvalidateGitProbe()
+    {
+        GitProbedPath = null;
+        GitRepositoryRoot = null;
+    }
+
     private int _navigationToken;
     private int _contentVersion;
 

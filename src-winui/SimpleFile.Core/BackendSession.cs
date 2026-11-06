@@ -170,7 +170,7 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
         }
 
         await ReconnectAsync(cancellationToken).ConfigureAwait(false);
-        return _client ?? throw IpcException.Transport("IPC reconnect did not produce a client.");
+        return _client ?? throw IpcException.Transport("Reconnecting to SumaFile's file service did not produce a client.");
     }
 
     private async Task StartUnlockedAsync(CancellationToken cancellationToken)

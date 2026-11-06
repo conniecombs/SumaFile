@@ -44,4 +44,69 @@ public class OmnibarIntentParserTests
             OmnibarIntentParser.FilterCommands("git", includeGit: true),
             command => command.Id == "git-panel");
     }
+
+    [Fact]
+    public void Parse_ResolvesRelativeFolderAgainstCurrentPath()
+    {
+        var full = System.IO.Path.Combine("/home/u", "Docs");
+        var intent = OmnibarIntentParser.Parse("Docs", OmnibarMode.Navigate, "/home/u", p => p == full);
+
+        Assert.Equal(OmnibarIntentKind.Navigate, intent.Kind);
+        Assert.Equal(full, intent.Value);
+        Assert.Null(intent.StatusMessage);
+    }
+
+    [Fact]
+    public void Parse_FallsBackToFilterWithMessageWhenRelativeFolderMissing()
+    {
+        var intent = OmnibarIntentParser.Parse("zzz", OmnibarMode.Navigate, @"C:\Users", _ => false);
+
+        Assert.Equal(OmnibarIntentKind.Filter, intent.Kind);
+        Assert.Equal("zzz", intent.Value);
+        Assert.Equal("No folder named 'zzz' here. Filtering instead.", intent.StatusMessage);
+    }
+
+    [Fact]
+    public void Parse_WithoutDirectoryExistsKeepsRawNavigate()
+    {
+        var intent = OmnibarIntentParser.Parse("zzz", OmnibarMode.Navigate, @"C:\Users");
+
+        Assert.Equal(OmnibarIntentKind.Navigate, intent.Kind);
+        Assert.Equal("zzz", intent.Value);
+    }
+
+    [Theory]
+    [InlineData("..")]
+    [InlineData(".")]
+    [InlineData(@"C:\Users")]
+    [InlineData(@"\\server\share")]
+    [InlineData("./x")]
+    [InlineData("/x")]
+    public void Parse_RootedOrDotTokensNavigateWithoutExistenceCheck(string text)
+    {
+        var intent = OmnibarIntentParser.Parse(text, OmnibarMode.Navigate, @"C:\Users", _ => false);
+
+        Assert.Equal(OmnibarIntentKind.Navigate, intent.Kind);
+        Assert.Equal(text, intent.Value);
+    }
+
+    [Fact]
+    public void Parse_DotPrefixedNamesStillCheckForAFolder()
+    {
+        var intent = OmnibarIntentParser.Parse(".git", OmnibarMode.Navigate, @"C:\Users", _ => false);
+
+        Assert.Equal(OmnibarIntentKind.Filter, intent.Kind);
+        Assert.Equal(".git", intent.Value);
+    }
+
+    [Theory]
+    [InlineData("C:", @"C:\")]
+    [InlineData("c:", @"C:\")]
+    public void Parse_BareDriveLetterNormalizesToRoot(string text, string expected)
+    {
+        var intent = OmnibarIntentParser.Parse(text, OmnibarMode.Navigate, @"D:\x", _ => false);
+
+        Assert.Equal(OmnibarIntentKind.Navigate, intent.Kind);
+        Assert.Equal(expected, intent.Value);
+    }
 }

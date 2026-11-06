@@ -24,8 +24,8 @@ public static class StatusCenterFormatter
         {
             var badge = active > 0 ? $"{active} active" : $"{queued} queued";
             var detail = queued > 0
-                ? $"{active} transfer(s) running, {queued} waiting"
-                : $"{active} transfer(s) running";
+                ? $"{Transfers(active)} running, {queued} waiting"
+                : $"{Transfers(active)} running";
             return new StatusCenterSnapshot(
                 badge,
                 "Transfers in progress",
@@ -60,7 +60,7 @@ public static class StatusCenterFormatter
                 "Status",
                 workspaceStatus.Trim(),
                 operationHistoryCount > 0
-                    ? $"{operationHistoryCount} recent operation(s)"
+                    ? Operations(operationHistoryCount)
                     : "No recent file operations",
                 HasWork: false,
                 HasAttention: false);
@@ -70,9 +70,13 @@ public static class StatusCenterFormatter
             "Idle",
             "No active tasks",
             operationHistoryCount > 0
-                ? $"{operationHistoryCount} recent operation(s)"
+                ? Operations(operationHistoryCount)
                 : "SumaFile is ready.",
             HasWork: false,
             HasAttention: false);
     }
+
+    private static string Transfers(int count) => count == 1 ? "1 transfer" : $"{count} transfers";
+
+    private static string Operations(int count) => count == 1 ? "1 recent operation" : $"{count} recent operations";
 }

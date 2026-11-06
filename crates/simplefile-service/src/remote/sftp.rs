@@ -475,7 +475,7 @@ impl client::Handler for VerifiedHostKeyHandler {
             .to_string();
         let Some(expected) = self.expected_fingerprint.as_deref() else {
             return Err(SftpClientError::HostKey(format!(
-                "SFTP host fingerprint is not trusted. Save this fingerprint on the profile and reconnect: {fingerprint}"
+                "SFTP host fingerprint is not trusted. Check that this fingerprint belongs to the server, then trust it to connect: {fingerprint}"
             )));
         };
 
@@ -483,7 +483,7 @@ impl client::Handler for VerifiedHostKeyHandler {
             Ok(true)
         } else {
             Err(SftpClientError::HostKey(format!(
-                "SFTP host fingerprint mismatch. Expected {expected}, got {fingerprint}"
+                "SFTP host fingerprint mismatch. The server key changed since you trusted it. Expected {expected}, got {fingerprint}"
             )))
         }
     }

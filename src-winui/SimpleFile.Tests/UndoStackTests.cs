@@ -19,7 +19,7 @@ public class UndoStackTests
         var stack = new UndoStack();
         stack.Push(new UndoEntry
         {
-            Description = "Copy 1 item(s)",
+            Description = "Copy 1 item",
             Undo = _ => { log.Add("undo"); return Task.CompletedTask; },
             Redo = _ => { log.Add("redo"); return Task.CompletedTask; },
         });
@@ -31,7 +31,7 @@ public class UndoStackTests
         Assert.True(stack.CanRedo);
         await stack.RedoAsync();
         Assert.Equal(["undo", "redo"], log);
-        Assert.Equal("Copy 1 item(s)", stack.History.Single());
+        Assert.Equal("Copy 1 item", stack.History.Single());
     }
     [Fact]
     public async Task UndoStack_UndoCancellationKeepsEntry()
@@ -39,7 +39,7 @@ public class UndoStackTests
         var stack = new UndoStack();
         stack.Push(new UndoEntry
         {
-            Description = "Copy 1 item(s)",
+            Description = "Copy 1 item",
             Undo = _ => throw new OperationCanceledException(),
             Redo = _ => Task.CompletedTask,
         });
@@ -48,7 +48,7 @@ public class UndoStackTests
 
         Assert.True(stack.CanUndo);
         Assert.False(stack.CanRedo);
-        Assert.Equal("Copy 1 item(s)", stack.NextUndoDescription);
+        Assert.Equal("Copy 1 item", stack.NextUndoDescription);
     }
     [Fact]
     public async Task UndoStack_RedoFailureKeepsEntry()
@@ -56,7 +56,7 @@ public class UndoStackTests
         var stack = new UndoStack();
         stack.Push(new UndoEntry
         {
-            Description = "Move 1 item(s)",
+            Description = "Move 1 item",
             Undo = _ => Task.CompletedTask,
             Redo = _ => throw new InvalidOperationException("redo failed"),
         });
@@ -66,7 +66,7 @@ public class UndoStackTests
 
         Assert.False(stack.CanUndo);
         Assert.True(stack.CanRedo);
-        Assert.Equal("Move 1 item(s)", stack.NextRedoDescription);
+        Assert.Equal("Move 1 item", stack.NextRedoDescription);
     }
 
     [Fact]
@@ -173,7 +173,7 @@ public class UndoStackTests
                 @"rename:C:\Users\test\old.txt|new.txt",
             ],
             log);
-        Assert.Equal("Rename 1 item(s)", stack.History.Single());
+        Assert.Equal("Rename 1 item", stack.History.Single());
     }
 
     [Fact]
@@ -243,6 +243,21 @@ public class UndoStackTests
                 @"trash:C:\Users\test\notes.txt",
             ],
             log);
-        Assert.Equal("Move to Recycle Bin 1 item(s)", stack.History.Single());
+        Assert.Equal("Move to Recycle Bin 1 item", stack.History.Single());
+    }
+
+    [Fact]
+    public void PushMoveAndCopy_DescriptionsUseRealPlurals()
+    {
+        var stack = new UndoStack();
+        var ops = new FileOperationService(new ConfigurableIpc());
+        var three = Enumerable.Range(0, 3).Select(i => new TransferResult { Source = $@"C:\s\{i}", Destination = $@"D:\d\{i}" }).ToArray();
+
+        stack.PushMove(three, ops);
+        Assert.Equal("Move 3 items", stack.NextUndoDescription);
+        stack.PushCopy(three.Take(2).ToArray(), ops);
+        Assert.Equal("Copy 2 items", stack.NextUndoDescription);
+        stack.PushCopy(three.Take(1).ToArray(), ops);
+        Assert.Equal("Copy 1 item", stack.NextUndoDescription);
     }
 }

@@ -195,7 +195,13 @@ public sealed partial class SettingsWindow
 
     private void SelectTheme(string? theme)
     {
-        ThemeComboBox.SelectedIndex = UiSettings.NormalizeTheme(theme) == "dark" ? 1 : 0;
+        // Items: Windows default (0), Dark (1), Light (2). Theme reads the selected item's Tag back.
+        ThemeComboBox.SelectedIndex = UiSettings.NormalizeTheme(theme) switch
+        {
+            "dark" => 1,
+            "light" => 2,
+            _ => 0,
+        };
     }
 
     private async void OnBrowseCustomPath(object sender, RoutedEventArgs e)

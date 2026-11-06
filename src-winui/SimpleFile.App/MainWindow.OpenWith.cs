@@ -77,7 +77,7 @@ public sealed partial class MainWindow
 
         if (OpenWithPolicy.IsDeniedTargetPath(row.Path))
         {
-            ShowMessage("Open With", "Open With does not allow executable or script payload files.", InfoBarSeverity.Warning);
+            ShowMessage("Open with", "Open with can't launch .exe, .bat or script files directly. Use Open instead.", InfoBarSeverity.Warning);
             return;
         }
 
@@ -168,7 +168,7 @@ public sealed partial class MainWindow
         {
             body.Children.Add(new TextBlock
             {
-                Text = "No matching apps were found yet.",
+                Text = "No matching apps were found.",
                 Opacity = 0.72,
                 TextWrapping = TextWrapping.Wrap,
             });
@@ -203,6 +203,16 @@ public sealed partial class MainWindow
                     return;
                 }
 
+                if (!IsListedOpenWithApplication(appList, input.Text)
+                    && LooksLikeApplicationPath(input.Text)
+                    && !OpenWithPolicy.IsLaunchableApplication(input.Text.Trim()))
+                {
+                    // Typed or browsed paths must pass the same policy the backend enforces.
+                    status.Text = UntrustedOpenWithApplicationText;
+                    status.Visibility = Visibility.Visible;
+                    return;
+                }
+
                 var opened = await LaunchOpenWithApplicationAsync(
                     workspace,
                     fileOps,
@@ -223,6 +233,20 @@ public sealed partial class MainWindow
         };
 
         await DialogHost.ShowAsync(dialog);
+    }
+
+    internal const string UntrustedOpenWithApplicationText =
+        "SumaFile only launches apps installed under Program Files, your user apps folder or Windows.";
+
+    private static bool IsListedOpenWithApplication(ListView appList, string applicationText) =>
+        appList.SelectedItem is ListViewItem { Tag: OpenWithApplication listed }
+        && string.Equals(listed.ApplicationPath, applicationText.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    // A bare name ("notepad") is resolved by the file service from PATH; only paths are pre-checked.
+    private static bool LooksLikeApplicationPath(string applicationText)
+    {
+        var text = applicationText.Trim();
+        return text.Contains('\\') || text.Contains('/') || text.Contains(':');
     }
 
     private OpenWithApplication? SelectedOpenWithApplication(ListView appList, string applicationText)
@@ -297,9 +321,9 @@ public sealed partial class MainWindow
 
         return application.Source switch
         {
-            "registered" => "Registered app",
-            "suggested" => "Suggested app",
-            _ => "Custom app",
+            "registered" => "Installed",
+            "suggested" => "Suggested",
+            _ => "Other",
         };
     }
 
@@ -342,7 +366,7 @@ public sealed partial class MainWindow
         {
             if (statusText is null)
             {
-                ShowMessage("Open With", exception.Message, InfoBarSeverity.Error);
+                ShowMessage("Open with", exception.Message, InfoBarSeverity.Error);
             }
             else
             {

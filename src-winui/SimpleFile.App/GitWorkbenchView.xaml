@@ -99,18 +99,29 @@
                     </Button>
                     <Button
                         Style="{StaticResource SfGhostButtonStyle}"
-                        Click="OnDiscardClicked"
-                        IsEnabled="{Binding CanDiscard}"
-                        ToolTipService.ToolTip="Discard selected changes">
-                        <TextBlock FontSize="12" Text="Discard" />
-                    </Button>
-                    <Button
-                        Style="{StaticResource SfGhostButtonStyle}"
                         Click="OnDiffClicked"
                         IsEnabled="{Binding CanDiff}"
                         ToolTipService.ToolTip="Preview selected diff">
                         <TextBlock FontSize="12" Text="Diff" />
                     </Button>
+                    <Border
+                        Width="1"
+                        Margin="2,4"
+                        Background="{ThemeResource SfBorderBrush}" />
+                    <Button
+                        x:Name="DiscardButton"
+                        Style="{StaticResource SfGhostButtonStyle}"
+                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                        Click="OnDiscardClicked"
+                        IsEnabled="{Binding CanDiscard}"
+                        AutomationProperties.Name="Discard selected changes"
+                        ToolTipService.ToolTip="Discard selected changes. This cannot be undone.">
+                        <TextBlock FontSize="12" Text="Discard" />
+                    </Button>
+                    <Border
+                        Width="1"
+                        Margin="2,4"
+                        Background="{ThemeResource SfBorderBrush}" />
                     <Button
                         MinWidth="64"
                         Style="{StaticResource SfGhostButtonStyle}"

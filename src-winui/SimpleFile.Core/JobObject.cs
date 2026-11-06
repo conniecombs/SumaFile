@@ -31,7 +31,7 @@ internal sealed class JobObject : IDisposable
         {
             var error = Marshal.GetLastWin32Error();
             throw new InvalidOperationException(
-                $"Failed to create a Windows job object for the backend service (Win32 error {error}). " +
+                $"Failed to create a Windows job object for SumaFile's file service (Win32 error {error}). " +
                 "Refusing to start an orphanable service process that would rely on PID polling.");
         }
 
@@ -109,7 +109,7 @@ internal sealed class JobObject : IDisposable
 
         var error = Marshal.GetLastWin32Error();
         throw new InvalidOperationException(
-            $"Failed to assign backend service PID {process.Id} to the job object (Win32 error {error}). " +
+            $"Failed to assign SumaFile's file service (PID {process.Id}) to the job object (Win32 error {error}). " +
             "Refusing to leave an orphanable service process that would rely on PID polling.");
     }
 

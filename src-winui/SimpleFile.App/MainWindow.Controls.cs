@@ -62,19 +62,11 @@ public sealed partial class MainWindow
     private Button WorkspaceProfileButton => PrimaryToolbarPanel.ProfileButton;
     private StackPanel WorkspaceProfilesHost => PrimaryToolbarPanel.WorkspaceProfilesList;
     private Button PrimaryViewButton => PrimaryToolbarPanel.ViewButton;
-    private Button ViewDualPaneButton => PrimaryToolbarPanel.ViewDualPaneToggleButton;
-    private FontIcon ViewDualPaneIcon => PrimaryToolbarPanel.ViewDualPaneGlyph;
-    private TextBlock ViewDualPaneText => PrimaryToolbarPanel.ViewDualPaneLabel;
     private RadioButtons ViewStyleRadioButtons => PrimaryToolbarPanel.ViewStyleOptions;
     private TextBlock ViewIconSizeValueText => PrimaryToolbarPanel.ViewIconSizeValue;
     private Slider ViewIconSizeSlider => PrimaryToolbarPanel.ViewIconSize;
     private Button ViewApplyBothButton => PrimaryToolbarPanel.ViewApplyBoth;
-    private Button ViewUseGloballyButton => PrimaryToolbarPanel.ViewUseGlobally;
-    private Button ViewUseForFolderButton => PrimaryToolbarPanel.ViewUseForFolder;
-    private Button ViewUseForDescendantsButton => PrimaryToolbarPanel.ViewUseForDescendants;
     private TextBlock ViewFolderRuleStatusText => PrimaryToolbarPanel.ViewFolderRuleStatus;
-    private Button ViewSaveProfileButton => PrimaryToolbarPanel.ViewSaveProfile;
-    private StackPanel ViewProfilesHost => PrimaryToolbarPanel.ViewProfilesList;
     private Button PrimarySettingsButton => PrimaryToolbarPanel.SettingsButton;
     private Button PrimaryMoreButton => PrimaryToolbarPanel.MoreButton;
 
@@ -200,14 +192,10 @@ public sealed partial class MainWindow
         PrimaryToolbarPanel.WorkspaceProfileSaveClicked += OnWorkspaceProfileSaveClicked;
         PrimaryToolbarPanel.WorkspaceProfileManageClicked += OnWorkspaceProfileManageClicked;
         PrimaryToolbarPanel.ViewOptionsFlyoutOpening += (sender, e) => OnViewOptionsFlyoutOpening(sender!, e);
-        PrimaryToolbarPanel.ViewDualPaneClicked += OnViewDualPaneClicked;
         PrimaryToolbarPanel.ViewStyleSelectionChanged += OnViewStyleSelectionChanged;
         PrimaryToolbarPanel.ViewIconSizeSliderChanged += OnViewIconSizeSliderChanged;
         PrimaryToolbarPanel.ViewApplyBothClicked += OnViewApplyBothClicked;
-        PrimaryToolbarPanel.ViewUseGloballyClicked += OnViewUseGloballyClicked;
-        PrimaryToolbarPanel.ViewUseForFolderClicked += OnViewUseForFolderClicked;
-        PrimaryToolbarPanel.ViewUseForDescendantsClicked += OnViewUseForDescendantsClicked;
-        PrimaryToolbarPanel.ViewSaveProfileClicked += OnViewSaveProfileClicked;
+        PrimaryToolbarPanel.ViewRememberRequested += OnViewRememberRequested;
         PrimaryToolbarPanel.SettingsClicked += OnSettingsClicked;
         PrimaryToolbarPanel.PrimaryMoreMenuOpening += (sender, e) => OnPrimaryMoreMenuOpening(sender!, e);
 

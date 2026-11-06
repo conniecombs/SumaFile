@@ -55,9 +55,9 @@
                         Grid.Column="1"
                         Style="{StaticResource SfSidebarIconButtonStyle}"
                         VerticalAlignment="Top"
-                        AutomationProperties.Name="Hide side menu"
+                        AutomationProperties.Name="Hide sidebar"
                         Click="OnToggleSidebar"
-                        ToolTipService.ToolTip="Hide side menu">
+                        ToolTipService.ToolTip="Hide sidebar">
                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="11" Glyph="&#xE711;" />
                     </Button>
                 </Grid>
@@ -69,8 +69,9 @@
                                 <Button
                                     x:Name="QuickAccessCollapseButton"
                                     Style="{StaticResource SfSidebarIconButtonStyle}"
-                                    AutomationProperties.Name="Collapse Quick Access"
-                                    Click="OnToggleQuickAccess">
+                                    AutomationProperties.Name="Collapse Quick access"
+                                    Click="OnToggleQuickAccess"
+                                    ToolTipService.ToolTip="Collapse or expand Quick access">
                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="10" Glyph="&#xE70D;" />
                                 </Button>
                             </Grid>
@@ -117,8 +118,9 @@
                                     <Button
                                         x:Name="MyPcCollapseButton"
                                         Style="{StaticResource SfSidebarIconButtonStyle}"
-                                        AutomationProperties.Name="Collapse My PC"
-                                        Click="OnToggleMyPc">
+                                        AutomationProperties.Name="Collapse This PC"
+                                        Click="OnToggleMyPc"
+                                        ToolTipService.ToolTip="Collapse or expand This PC">
                                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="10" Glyph="&#xE70D;" />
                                     </Button>
                                 </StackPanel>
@@ -205,19 +207,20 @@
 
                         <StackPanel x:Name="RemoteProfilesSection" Spacing="2">
                             <Grid Margin="4,0,0,4">
-                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="FTP/SFTP" />
+                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Connections" />
                                 <Button
                                     Style="{StaticResource SfSidebarIconButtonStyle}"
-                                    AutomationProperties.Name="Manage FTP/SFTP profiles"
+                                    AutomationProperties.Name="Manage connections"
                                     Click="OnManageRemoteProfiles"
-                                    ToolTipService.ToolTip="Manage FTP/SFTP profiles">
+                                    ToolTipService.ToolTip="Manage connections">
                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="11" Glyph="&#xE713;" />
                                 </Button>
                             </Grid>
                             <TextBlock
                                 x:Name="RemoteProfilesEmptyText"
                                 Style="{StaticResource SfEmptyHintStyle}"
-                                Text="No remote profiles" />
+                                TextWrapping="Wrap"
+                                Text="No connections. Open the manager to add one." />
                             <ListView
                                 x:Name="RemoteProfileList"
                                 Style="{StaticResource SfSidebarListStyle}"
@@ -233,6 +236,7 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <FontIcon
@@ -256,18 +260,43 @@
                                                     TextTrimming="CharacterEllipsis"
                                                     TextWrapping="NoWrap" />
                                             </StackPanel>
-                                            <Border
+                                            <StackPanel
                                                 Grid.Column="2"
-                                                Padding="5,1"
                                                 VerticalAlignment="Top"
-                                                Background="{ThemeResource SfAccentSoftBrush}"
-                                                BorderThickness="0"
-                                                CornerRadius="4">
-                                                <TextBlock
-                                                    FontSize="10"
-                                                    Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                                    Text="{x:Bind Protocol}" />
-                                            </Border>
+                                                Orientation="Horizontal"
+                                                Spacing="4">
+                                                <Border
+                                                    Padding="5,1"
+                                                    Background="{ThemeResource SfAccentSoftBrush}"
+                                                    BorderThickness="0"
+                                                    CornerRadius="4">
+                                                    <TextBlock
+                                                        FontSize="10"
+                                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                        Text="{x:Bind Protocol}" />
+                                                </Border>
+                                                <Border
+                                                    Padding="5,0"
+                                                    BorderBrush="{ThemeResource SystemFillColorCriticalBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="4"
+                                                    ToolTipService.ToolTip="Plain FTP: passwords and files are sent without encryption"
+                                                    Visibility="{x:Bind InsecureBadgeVisibility}">
+                                                    <TextBlock
+                                                        FontSize="10"
+                                                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                        Text="Insecure" />
+                                                </Border>
+                                            </StackPanel>
+                                            <FontIcon
+                                                Grid.Column="3"
+                                                VerticalAlignment="Center"
+                                                AutomationProperties.AccessibilityView="Raw"
+                                                FontFamily="{StaticResource SfIconFont}"
+                                                FontSize="11"
+                                                Foreground="{ThemeResource SfTextMutedBrush}"
+                                                Glyph="&#xE8A7;"
+                                                ToolTipService.ToolTip="Opens in the connections window" />
                                         </Grid>
                                     </DataTemplate>
                                 </ListView.ItemTemplate>
@@ -449,14 +478,15 @@
                                     Style="{StaticResource SfSidebarIconButtonStyle}"
                                     AutomationProperties.Name="Save current search as smart folder"
                                     Click="OnSaveSmartFolder"
-                                    ToolTipService.ToolTip="Save current search">
+                                    ToolTipService.ToolTip="Save current search as smart folder">
                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE710;" />
                                 </Button>
                             </Grid>
                             <TextBlock
                                 x:Name="SmartFoldersEmptyText"
                                 Style="{StaticResource SfEmptyHintStyle}"
-                                Text="No smart folders yet" />
+                                TextWrapping="Wrap"
+                                Text="Run a search, then save it here to run it again later." />
                             <ListView
                                 x:Name="SmartFoldersList"
                                 Style="{StaticResource SfSidebarListStyle}"
@@ -505,19 +535,20 @@
 
                         <StackPanel x:Name="TagsSection" Spacing="2">
                             <Grid Margin="4,0,0,4">
-                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Tags" />
+                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Labels" />
                                 <Button
                                     x:Name="TagsCollapseButton"
                                     Style="{StaticResource SfSidebarIconButtonStyle}"
-                                    AutomationProperties.Name="Collapse Tags"
-                                    Click="OnToggleTags">
+                                    AutomationProperties.Name="Collapse Labels"
+                                    Click="OnToggleTags"
+                                    ToolTipService.ToolTip="Collapse or expand Labels">
                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="10" Glyph="&#xE70D;" />
                                 </Button>
                             </Grid>
                             <TextBlock
                                 x:Name="TagsEmptyText"
                                 Style="{StaticResource SfEmptyHintStyle}"
-                                Text="No color labels yet" />
+                                Text="No labels yet" />
                             <ListView
                                 x:Name="TagsList"
                                 Style="{StaticResource SfSidebarListStyle}"

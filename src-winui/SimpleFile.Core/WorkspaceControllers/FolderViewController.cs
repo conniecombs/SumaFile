@@ -80,7 +80,9 @@ internal sealed class FolderViewController
     {
         ArgumentNullException.ThrowIfNull(workspace);
         var target = workspace.Pane(pane);
-        var next = UiSettings.NormalizeIconSize(target.IconSize + (steps * UiSettings.IconSizeStep));
+        var sizes = UiSettings.IconSizeOptions.Select(option => option.Size).ToList();
+        var index = sizes.IndexOf(UiSettings.NormalizeIconSize(target.IconSize));
+        var next = sizes[Math.Clamp(index + steps, 0, sizes.Count - 1)];
         SetFileListIconSize(workspace, pane, next);
         return target.IconSize;
     }

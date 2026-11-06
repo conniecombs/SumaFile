@@ -3,10 +3,25 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     HorizontalAlignment="Stretch">
-    <Grid
-        x:Name="RowGrid"
-        MinHeight="28"
-        HorizontalAlignment="Stretch"
-        Background="Transparent"
-        ColumnSpacing="10" />
+    <Grid x:Name="RowRoot" HorizontalAlignment="Stretch">
+        <Grid
+            x:Name="RowGrid"
+            MinHeight="28"
+            HorizontalAlignment="Stretch"
+            Background="Transparent"
+            ColumnSpacing="10" />
+        <!-- Inline rename (Details view, F2): overlays the name cell while editing. -->
+        <TextBox
+            x:Name="RenameBox"
+            MinHeight="24"
+            Padding="6,2,6,2"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Center"
+            AutomationProperties.Name="New name"
+            FontSize="13"
+            IsSpellCheckEnabled="False"
+            KeyDown="OnRenameBoxKeyDown"
+            LostFocus="OnRenameBoxLostFocus"
+            Visibility="Collapsed" />
+    </Grid>
 </UserControl>
