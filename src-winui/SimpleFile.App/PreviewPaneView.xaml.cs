@@ -13,6 +13,79 @@ public sealed partial class PreviewPaneView : UserControl
         InitializeComponent();
         Loaded += (_, _) => UpdateActionLayout();
         SizeChanged += (_, _) => UpdateActionLayout();
+
+        // The presenter drives the (hidden) option CheckBoxes; mirror them into the
+        // Source | Rendered and Poster | Play segmented controls in the header.
+        foreach (var checkBox in new[] { PreviewRenderHtmlCheckBox, PreviewVideoPlaybackCheckBox })
+        {
+            checkBox.RegisterPropertyChangedCallback(VisibilityProperty, (_, _) => SyncModeSelectors());
+            checkBox.Checked += (_, _) => SyncModeSelectors();
+            checkBox.Unchecked += (_, _) => SyncModeSelectors();
+        }
+
+        PreviewPinButton.Checked += (_, _) => UpdatePinChrome();
+        PreviewPinButton.Unchecked += (_, _) => UpdatePinChrome();
+        SyncModeSelectors();
+        UpdatePinChrome();
+    }
+
+    private bool _syncingModeSelectors;
+
+    private void SyncModeSelectors()
+    {
+        _syncingModeSelectors = true;
+        try
+        {
+            PreviewRenderModeSelector.Visibility = PreviewRenderHtmlCheckBox.Visibility;
+            PreviewRenderModeSelector.SelectedItem = PreviewRenderHtmlCheckBox.IsChecked == true
+                ? PreviewRenderedModeItem
+                : PreviewSourceModeItem;
+            PreviewVideoModeSelector.Visibility = PreviewVideoPlaybackCheckBox.Visibility;
+            PreviewVideoModeSelector.SelectedItem = PreviewVideoPlaybackCheckBox.IsChecked == true
+                ? PreviewVideoPlayItem
+                : PreviewVideoPosterItem;
+        }
+        finally
+        {
+            _syncingModeSelectors = false;
+        }
+    }
+
+    private void OnRenderModeSelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        if (_syncingModeSelectors || sender.SelectedItem is null)
+        {
+            return;
+        }
+
+        var rendered = ReferenceEquals(sender.SelectedItem, PreviewRenderedModeItem);
+        if ((PreviewRenderHtmlCheckBox.IsChecked == true) != rendered)
+        {
+            // Raises Checked/Unchecked, which the presenter persists to PreviewRenderHtml.
+            PreviewRenderHtmlCheckBox.IsChecked = rendered;
+        }
+    }
+
+    private void OnVideoModeSelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        if (_syncingModeSelectors || sender.SelectedItem is null)
+        {
+            return;
+        }
+
+        var play = ReferenceEquals(sender.SelectedItem, PreviewVideoPlayItem);
+        if ((PreviewVideoPlaybackCheckBox.IsChecked == true) != play)
+        {
+            // Raises Checked/Unchecked, which the presenter persists to PreviewVideoPlaybackEnabled.
+            PreviewVideoPlaybackCheckBox.IsChecked = play;
+        }
+    }
+
+    private void UpdatePinChrome()
+    {
+        var label = PreviewPinButton.IsChecked == true ? "Unpin preview" : "Pin preview open";
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PreviewPinButton, label);
+        ToolTipService.SetToolTip(PreviewPinButton, label);
     }
 
     public Border PaneRoot => PreviewPane;
@@ -45,7 +118,15 @@ public sealed partial class PreviewPaneView : UserControl
 
     public event RoutedEventHandler? TogglePreview;
     public event RoutedEventHandler? PinPreview;
-    public bool Pinned { get => PreviewPinButton.IsChecked == true; set => PreviewPinButton.IsChecked = value; }
+    public bool Pinned
+    {
+        get => PreviewPinButton.IsChecked == true;
+        set
+        {
+            PreviewPinButton.IsChecked = value;
+            UpdatePinChrome();
+        }
+    }
     private void OnPinPreview(object sender, RoutedEventArgs e) => PinPreview?.Invoke(sender, e);
     public event RoutedEventHandler? PreviewOpenClick;
     public event RoutedEventHandler? PreviewOpenWithClick;

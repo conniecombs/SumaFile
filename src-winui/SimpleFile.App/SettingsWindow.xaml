@@ -38,6 +38,8 @@
                 <TextBox
                     x:Name="SearchBox"
                     Margin="12,12,12,8"
+                    AutomationProperties.Name="Search settings"
+                    KeyDown="OnSearchBoxKeyDown"
                     PlaceholderText="Search settings..."
                     TextChanged="OnSearchTextChanged" />
             </NavigationView.PaneHeader>
@@ -45,7 +47,7 @@
                 <NavigationViewItem Content="Appearance" Tag="Appearance" />
                 <NavigationViewItem Content="Navigation" Tag="Navigation" />
                 <NavigationViewItem Content="Behavior" Tag="Behavior" />
-                <NavigationViewItem Content="Storage &amp; Cache" Tag="Storage &amp; Cache" />
+                <NavigationViewItem Content="Storage &amp; cache" Tag="Storage &amp; Cache" />
                 <NavigationViewItem Content="Shortcuts" Tag="Shortcuts" />
                 <NavigationViewItem Content="Toolbar" Tag="Toolbar" />
                 <NavigationViewItem Content="Tools" Tag="Tools" />
@@ -66,6 +68,7 @@
                     <ComboBox x:Name="ThemeComboBox" Header="Theme" HorizontalAlignment="Stretch">
                         <ComboBoxItem Content="Windows default" Tag="System" />
                         <ComboBoxItem Content="Dark" Tag="Dark" />
+                        <ComboBoxItem Content="Light" Tag="Light" />
                     </ComboBox>
                     <ComboBox x:Name="DefaultViewComboBox" Header="Default display style" HorizontalAlignment="Stretch">
                         <ComboBoxItem Content="Details" Tag="details" />
@@ -111,41 +114,41 @@
                         </Grid>
                     </StackPanel>
                     <ComboBox x:Name="ColumnPresetComboBox" Header="Default file list columns" HorizontalAlignment="Stretch">
-                        <ComboBoxItem Content="Default" Tag="default" />
-                        <ComboBoxItem Content="Details" Tag="details" />
+                        <ComboBoxItem Content="Basic" Tag="default" />
+                        <ComboBoxItem Content="Full details" Tag="details" />
                         <ComboBoxItem Content="Media" Tag="media" />
                         <ComboBoxItem Content="Developer" Tag="developer" />
                         <ComboBoxItem Content="Photo" Tag="photo" />
                     </ComboBox>
-                    <ToggleSwitch x:Name="ShowHiddenSwitch" Header="Show Hidden Files" />
+                    <ToggleSwitch x:Name="ShowHiddenSwitch" Header="Show hidden files" />
                 </StackPanel>
                 
                 <StackPanel x:Name="NavigationPanel" Spacing="16" Visibility="Collapsed">
                     <TextBlock Text="Navigation" FontSize="18" FontWeight="SemiBold" />
-                    <ComboBox x:Name="StartLocationComboBox" Header="Start Location" HorizontalAlignment="Stretch">
-                        <ComboBoxItem Content="Home" Tag="Home" />
-                        <ComboBoxItem Content="Last" Tag="Last" />
-                        <ComboBoxItem Content="Custom" Tag="Custom" />
+                    <ComboBox x:Name="StartLocationComboBox" Header="Start location" HorizontalAlignment="Stretch">
+                        <ComboBoxItem Content="Home folder" Tag="Home" />
+                        <ComboBoxItem Content="Restore last session (tabs and panes)" Tag="Last" />
+                        <ComboBoxItem Content="Custom folder…" Tag="Custom" />
                     </ComboBox>
                     <Grid ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBox x:Name="CustomPathBox" Header="Custom Path" />
+                        <TextBox x:Name="CustomPathBox" Header="Custom path" />
                         <Button Grid.Column="1" Content="Browse..." VerticalAlignment="Bottom" Click="OnBrowseCustomPath" />
                     </Grid>
                     <TextBlock x:Name="CustomPathStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
                     <ToggleSwitch x:Name="OpenInNewTabSwitch" Header="Open folders in new tab" />
                     <StackPanel Spacing="10">
-                        <TextBlock Text="Side menu" FontWeight="SemiBold" />
-                        <ToggleSwitch x:Name="ShowSideMenuSwitch" Header="Show side menu" />
+                        <TextBlock Text="Sidebar" FontWeight="SemiBold" />
+                        <ToggleSwitch x:Name="ShowSideMenuSwitch" Header="Show sidebar" />
                         <ToggleSwitch x:Name="ShowQuickAccessSwitch" Header="Show Quick access" />
-                        <ToggleSwitch x:Name="ShowFolderTreeSwitch" Header="Show Folders" />
-                        <ToggleSwitch x:Name="ShowBookmarksSwitch" Header="Show Bookmarks" />
-                        <ToggleSwitch x:Name="ShowRecentSwitch" Header="Show Recent" />
-                        <ToggleSwitch x:Name="ShowSmartFoldersSwitch" Header="Show Smart folders" />
-                        <ToggleSwitch x:Name="ShowTagsSwitch" Header="Show Tags" />
+                        <ToggleSwitch x:Name="ShowFolderTreeSwitch" Header="Show folders" />
+                        <ToggleSwitch x:Name="ShowBookmarksSwitch" Header="Show bookmarks" />
+                        <ToggleSwitch x:Name="ShowRecentSwitch" Header="Show recent locations" />
+                        <ToggleSwitch x:Name="ShowSmartFoldersSwitch" Header="Show smart folders" />
+                        <ToggleSwitch x:Name="ShowTagsSwitch" Header="Show labels" />
                         <Button
                             x:Name="ClearRecentHistoryButton"
                             HorizontalAlignment="Left"
@@ -165,17 +168,44 @@
                 
                 <StackPanel x:Name="BehaviorPanel" Spacing="16" Visibility="Collapsed">
                     <TextBlock Text="Behavior" FontSize="18" FontWeight="SemiBold" />
-                    <ToggleSwitch x:Name="ConfirmDeleteSwitch" Header="Confirm before delete" />
+                    <ToggleSwitch x:Name="ConfirmDeleteSwitch" Header="Ask before moving to Recycle Bin" />
                     <ToggleSwitch x:Name="KeepFoldersOnTopSwitch" Header="Keep folders on top when sorting" />
                     <ToggleSwitch x:Name="ShowFolderSizesSwitch" Header="Show folder sizes in file lists" />
-                    <ToggleSwitch x:Name="PreviewRenderHtmlSwitch" Header="Render Markdown and data previews" />
-                    <ToggleSwitch x:Name="PreviewVideoPlaybackSwitch" Header="Enable video playback previews" />
-                    <ToggleSwitch x:Name="PreviewAutoCollapseSwitch" Header="Collapse unpinned preview when empty or panes are cramped" />
-                    <ToggleSwitch x:Name="EnableGitSwitch" Header="Enable Git integration" />
+                    <ToggleSwitch x:Name="PreviewRenderHtmlSwitch" Header="Show rendered view for Markdown and data files" />
+                    <ToggleSwitch x:Name="PreviewVideoPlaybackSwitch" Header="Play videos in the preview" />
+                    <ToggleSwitch x:Name="PreviewAutoCollapseSwitch" Header="Collapse the preview when panes are cramped" />
+
+                    <StackPanel x:Name="TransfersSettingsGroup" Spacing="8">
+                        <TextBlock Text="Transfers" FontWeight="SemiBold" />
+                        <TextBlock Text="Transfer options" />
+                        <TextBlock
+                            Foreground="{ThemeResource SfTextMutedBrush}"
+                            Text="Speed, bandwidth limit, verification and retries."
+                            TextWrapping="Wrap" />
+                        <Button
+                            x:Name="TransferOptionsButton"
+                            HorizontalAlignment="Left"
+                            Click="OnTransferOptionsClicked"
+                            Content="Open transfer options..." />
+                        <TextBlock
+                            x:Name="TransferOptionsStatusText"
+                            Foreground="{ThemeResource SfTextMutedBrush}"
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="DeveloperSettingsGroup" Spacing="8">
+                        <TextBlock Text="Developer" FontWeight="SemiBold" />
+                        <ToggleSwitch x:Name="EnableGitSwitch" Header="Git integration" />
+                        <TextBlock
+                            Foreground="{ThemeResource SfTextMutedBrush}"
+                            Text="Shows Git status for files inside repositories and enables the Git workbench."
+                            TextWrapping="Wrap" />
+                    </StackPanel>
                 </StackPanel>
 
                 <StackPanel x:Name="StoragePanel" Spacing="16" Visibility="Collapsed">
-                    <TextBlock Text="Storage &amp; Cache" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="Storage &amp; cache" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock
                         Foreground="{ThemeResource SfTextMutedBrush}"
                         TextWrapping="Wrap"
@@ -232,7 +262,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBox
                                 x:Name="ThumbnailCachePathBox"
-                                Header="Cache Location"
+                                Header="Cache location"
                                 PlaceholderText="Default: %LOCALAPPDATA%\SumaFile\thumbnail-cache" />
                             <Button
                                 Grid.Column="1"
@@ -518,32 +548,33 @@
                 <StackPanel x:Name="ToolsPanel" Spacing="16" Visibility="Collapsed">
                     <TextBlock Text="Tools" FontSize="18" FontWeight="SemiBold" />
                     <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
-                        <TextBlock Text="FTP/SFTP Connections" FontWeight="SemiBold" />
+                        <TextBlock Text="FTP/SFTP connections" FontWeight="SemiBold" />
                         <TextBlock Text="Create saved FTP, FTPS, and SFTP profiles, manage credentials, and browse remote folders." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
                         <Button
                             x:Name="SettingsRemoteManagerButton"
                             HorizontalAlignment="Left"
-                            Content="Open FTP/SFTP Manager"
+                            Content="Open FTP/SFTP manager"
                             Click="OnOpenRemoteManagerClicked" />
                         <TextBlock x:Name="ToolsStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
                     </StackPanel>
                     <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
-                        <TextBlock Text="Archive Support" FontWeight="SemiBold" />
+                        <TextBlock Text="Archive support" FontWeight="SemiBold" />
                         <TextBlock Text="ZIP, TAR, TAR.GZ, 7z, and RAR extraction are handled by SumaFile. RAR creation is not supported." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
                     </StackPanel>
                 </StackPanel>
                 
                 <StackPanel x:Name="UpdatesPanel" Spacing="16" Visibility="Collapsed">
                     <TextBlock Text="Updates" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock x:Name="CurrentVersionText" Text="Current Version: " />
-                    <Button x:Name="CheckUpdatesButton" Content="Check for Updates" Click="OnCheckUpdatesClicked" />
-                    <Button x:Name="InstallUpdateButton" Content="Open GitHub Releases" Visibility="Collapsed" Click="OnInstallUpdateClicked" />
-                    <TextBlock Text="Signed SumaFile updates can install in-app. Unsigned or incomplete update metadata falls back to GitHub Releases." TextWrapping="Wrap" Foreground="{ThemeResource SfTextMutedBrush}" />
+                    <TextBlock x:Name="CurrentVersionText" Text="Version" />
+                    <TextBlock Text="SumaFile can download and install signed updates. Other releases open the download page." TextWrapping="Wrap" Foreground="{ThemeResource SfTextMutedBrush}" />
+                    <Button x:Name="CheckUpdatesButton" Content="Check for updates" Click="OnCheckUpdatesClicked" />
+                    <Button x:Name="InstallUpdateButton" Content="Open download page" Visibility="Collapsed" Click="OnInstallUpdateClicked" />
                     <TextBlock x:Name="UpdateStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="LastUpdateCheckText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
                 </StackPanel>
                 
                 <StackPanel x:Name="AboutPanel" Spacing="16" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <TextBlock Text="📁" FontSize="64" HorizontalAlignment="Center" />
+                    <Image Width="64" Height="64" HorizontalAlignment="Center" AutomationProperties.Name="SumaFile" Source="ms-appx:///SumaFile.png" />
                     <TextBlock Text="SumaFile" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" />
                     <TextBlock x:Name="AboutVersionText" Text="Version info" HorizontalAlignment="Center" Foreground="{ThemeResource SfTextMutedBrush}" />
                     <HyperlinkButton Content="View on GitHub" Click="OnGitHubClicked" HorizontalAlignment="Center" />

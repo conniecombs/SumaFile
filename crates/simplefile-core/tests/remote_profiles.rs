@@ -102,7 +102,7 @@ fn remote_profiles_reject_plain_ftp_without_explicit_insecure_acknowledgement() 
     let error = save_profile_at(&db, input).expect_err("plain FTP should require acknowledgement");
 
     assert!(
-        error.contains("Plain FTP requires insecure_plain_ftp"),
+        error.contains("Confirm the unencrypted connection to use plain FTP"),
         "unexpected error: {error}"
     );
 

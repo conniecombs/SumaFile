@@ -200,12 +200,26 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
     }
 
-    public async Task ConnectSelectedProfileAsync(string? secret = null, CancellationToken ct = default)
+    /// <summary>True for a plain-FTP profile whose unencrypted connection the user confirmed.</summary>
+    public static bool IsInsecureProfile(string? protocol, bool insecurePlainFtp) =>
+        insecurePlainFtp && string.Equals(protocol?.Trim(), "ftp", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsInsecureProfile(RemoteProfile? profile) =>
+        profile is not null && IsInsecureProfile(profile.Protocol, profile.InsecurePlainFtp);
+
+    public const string UntrustedFingerprintPrefix = "SFTP host fingerprint is not trusted";
+    public const string FingerprintMismatchPrefix = "SFTP host fingerprint mismatch";
+
+    /// <summary>
+    /// Connects the selected profile. Host-key trust failures are returned as an outcome
+    /// (so the window can ask the user) instead of thrown; every other failure still throws.
+    /// </summary>
+    public async Task<ConnectOutcome> ConnectSelectedProfileAsync(string? secret = null, CancellationToken ct = default)
     {
         if (SelectedProfile is null)
         {
             StatusText = "Select a remote profile";
-            return;
+            return new ConnectOutcome(false, null, null, null, StatusText);
         }
 
         IsBusy = true;
@@ -216,11 +230,98 @@ public sealed class RemoteManagerViewModel : ObservableObject
             RemotePath = NormalizeRemotePath(CurrentSession.RootPath);
             await RefreshRemoteDirectoryCoreAsync(RemotePath, ct);
             StatusText = $"Connected to {profileName}";
+            return ConnectOutcome.Success;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException
+            && ParseConnectError(exception.Message) is { IsHostKeyProblem: true } trustOutcome)
+        {
+            StatusText = trustOutcome.UntrustedFingerprint is not null
+                ? "The server's key is not trusted yet"
+                : "The server's key changed";
+            return trustOutcome;
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    /// <summary>
+    /// Saves <paramref name="fingerprint"/> as the selected profile's trusted host key and connects again.
+    /// </summary>
+    public async Task<ConnectOutcome> TrustFingerprintAndConnectAsync(string fingerprint, CancellationToken ct = default)
+    {
+        if (SelectedProfile is null)
+        {
+            StatusText = "Select a remote profile";
+            return new ConnectOutcome(false, null, null, null, StatusText);
+        }
+
+        if (string.IsNullOrWhiteSpace(fingerprint))
+        {
+            throw new ArgumentException("A fingerprint is required.", nameof(fingerprint));
+        }
+
+        var profile = SelectedProfile;
+        await SaveProfileAsync(new RemoteProfileInput
+        {
+            Id = profile.Id,
+            Name = profile.Name,
+            Protocol = profile.Protocol,
+            Host = profile.Host,
+            Port = profile.Port,
+            Username = profile.Username,
+            RootPath = profile.RootPath,
+            AuthKind = profile.AuthKind,
+            InsecurePlainFtp = profile.InsecurePlainFtp,
+            PassiveMode = profile.PassiveMode,
+            CredentialTarget = profile.CredentialTarget,
+            PrivateKeyPath = profile.PrivateKeyPath,
+            TrustedHostFingerprint = fingerprint.Trim(),
+        }, secret: null, ct);
+        return await ConnectSelectedProfileAsync(null, ct);
+    }
+
+    /// <summary>
+    /// Reads the stable SFTP host-key prefixes the service emits. The returned outcome's
+    /// fingerprint fields are null when the message is not a host-key trust failure.
+    /// </summary>
+    public static ConnectOutcome ParseConnectError(string? message)
+    {
+        var text = message ?? "";
+        var untrusted = text.IndexOf(UntrustedFingerprintPrefix, StringComparison.Ordinal);
+        if (untrusted >= 0)
+        {
+            var tail = text[untrusted..];
+            var separator = tail.LastIndexOf(": ", StringComparison.Ordinal);
+            var fingerprint = separator >= 0 ? tail[(separator + 2)..].Trim() : "";
+            return new ConnectOutcome(false, fingerprint.Length == 0 ? null : fingerprint, null, null, text);
+        }
+
+        var mismatch = text.IndexOf(FingerprintMismatchPrefix, StringComparison.Ordinal);
+        if (mismatch >= 0)
+        {
+            const string expectedMarker = "Expected ";
+            const string gotMarker = ", got ";
+            var tail = text[mismatch..];
+            var expectedStart = tail.LastIndexOf(expectedMarker, StringComparison.Ordinal);
+            if (expectedStart >= 0)
+            {
+                var pair = tail[(expectedStart + expectedMarker.Length)..];
+                var gotIndex = pair.IndexOf(gotMarker, StringComparison.Ordinal);
+                if (gotIndex >= 0)
+                {
+                    var expected = pair[..gotIndex].Trim();
+                    var actual = pair[(gotIndex + gotMarker.Length)..].Trim();
+                    if (expected.Length > 0 && actual.Length > 0)
+                    {
+                        return new ConnectOutcome(false, null, expected, actual, text);
+                    }
+                }
+            }
+        }
+
+        return new ConnectOutcome(false, null, null, null, text);
     }
 
     public async Task SaveProfileAsync(
@@ -815,6 +916,19 @@ public sealed class RemoteManagerViewModel : ObservableObject
         var lastSlash = normalized.LastIndexOf('/');
         return lastSlash <= 0 ? "/" : normalized[..lastSlash];
     }
+}
+
+/// <summary>Result of a connect attempt; host-key trust failures carry the parsed fingerprints.</summary>
+public sealed record ConnectOutcome(
+    bool Connected,
+    string? UntrustedFingerprint,
+    string? MismatchExpected,
+    string? MismatchActual,
+    string? Error)
+{
+    public static ConnectOutcome Success { get; } = new(true, null, null, null, null);
+
+    public bool IsHostKeyProblem => UntrustedFingerprint is not null || MismatchActual is not null;
 }
 
 public sealed class RemoteTransferRecord : ObservableObject

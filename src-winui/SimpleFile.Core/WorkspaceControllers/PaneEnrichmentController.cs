@@ -1,3 +1,5 @@
+using SimpleFile.Ipc;
+
 namespace SimpleFile.Core;
 
 internal sealed class PaneEnrichmentController
@@ -33,6 +35,18 @@ internal sealed class PaneEnrichmentController
                 return false;
             }
 
+            var inRepository = await IsInsideRepositoryAsync(state, fileOps, path, cancellationToken).ConfigureAwait(false);
+            if (navigationToken != state.NavigationToken || !PathRules.PathsEqual(state.Path, path))
+            {
+                return false;
+            }
+
+            if (!inRepository)
+            {
+                // Outside a repository there is nothing to enrich: drop stale badges and stop.
+                return ClearGitStatuses(state);
+            }
+
             var statuses = await fileOps.GetGitFileStatusesAsync(path, cancellationToken).ConfigureAwait(false);
             var map = statuses.ToDictionary(
                 entry => entry.Path,
@@ -56,6 +70,50 @@ internal sealed class PaneEnrichmentController
             // Git is optional.
             return false;
         }
+    }
+
+    /// <summary>
+    /// Probes whether <paramref name="path"/> is inside a Git repository, reusing the pane's
+    /// cached root so listings within the same repository (or the same non-repository folder)
+    /// do not probe again. A probe that fails is treated as unknown and lets enrichment try.
+    /// </summary>
+    private static async Task<bool> IsInsideRepositoryAsync(
+        ExplorerPane state,
+        FileOperationService fileOps,
+        string path,
+        CancellationToken cancellationToken)
+    {
+        if (state.GitRepositoryRoot is { Length: > 0 } knownRoot && PathRules.PathContains(knownRoot, path))
+        {
+            return true;
+        }
+
+        if (state.GitProbedPath is { } probed && PathRules.PathsEqual(probed, path))
+        {
+            return state.GitRepositoryRoot is not null;
+        }
+
+        GitRepositoryStatus status;
+        try
+        {
+            status = await fileOps.GetGitRepositoryStatusAsync(path, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            state.GitProbedPath = null;
+            state.GitRepositoryRoot = null;
+            return true;
+        }
+
+        state.GitProbedPath = path;
+        state.GitRepositoryRoot = status.IsRepo
+            ? (string.IsNullOrWhiteSpace(status.Root) ? path : status.Root)
+            : null;
+        return status.IsRepo;
     }
 
     public bool ClearGitStatuses(ExplorerPane primary, ExplorerPane secondary)

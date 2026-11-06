@@ -552,8 +552,7 @@ public class WinUiSourceShapeTests
 
         Assert.Contains("<ComboBoxItem Content=\"Windows default\" Tag=\"System\" />", settingsXaml);
         Assert.Contains("<ComboBoxItem Content=\"Dark\" Tag=\"Dark\" />", settingsXaml);
-        Assert.DoesNotContain("Content=\"Light\"", settingsXaml);
-        Assert.DoesNotContain("Tag=\"Light\"", settingsXaml);
+        Assert.Contains("<ComboBoxItem Content=\"Light\" Tag=\"Light\" />", settingsXaml);
 
         Assert.DoesNotContain("\"light\" => ElementTheme.Light", commands);
         Assert.Contains("RootGrid.ActualThemeChanged += OnRootActualThemeChanged;", mainWindowCode);

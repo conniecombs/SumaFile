@@ -127,16 +127,38 @@
                                     Orientation="Horizontal"
                                     Spacing="12"
                                     Visibility="Collapsed">
-                                    <CheckBox
-                                        x:Name="PreviewRenderHtmlCheckBox"
-                                        AutomationProperties.Name="Render preview"
-                                        Content="Rendered"
-                                        Visibility="Collapsed" />
-                                    <CheckBox
-                                        x:Name="PreviewVideoPlaybackCheckBox"
-                                        AutomationProperties.Name="Preview video playback"
-                                        Content="Preview video"
-                                        Visibility="Collapsed" />
+                                    <SelectorBar
+                                        x:Name="PreviewRenderModeSelector"
+                                        AutomationProperties.Name="Preview view"
+                                        SelectionChanged="OnRenderModeSelectionChanged"
+                                        Visibility="Collapsed">
+                                        <SelectorBarItem x:Name="PreviewSourceModeItem" Text="Source" />
+                                        <SelectorBarItem x:Name="PreviewRenderedModeItem" Text="Rendered" />
+                                    </SelectorBar>
+                                    <SelectorBar
+                                        x:Name="PreviewVideoModeSelector"
+                                        AutomationProperties.Name="Video preview"
+                                        SelectionChanged="OnVideoModeSelectionChanged"
+                                        Visibility="Collapsed">
+                                        <SelectorBarItem x:Name="PreviewVideoPosterItem" Text="Poster" />
+                                        <SelectorBarItem x:Name="PreviewVideoPlayItem" Text="Play" />
+                                    </SelectorBar>
+                                    <!--
+                                        State model the preview presenter reads and writes. The segmented
+                                        controls above mirror these; the host keeps them out of sight.
+                                    -->
+                                    <StackPanel x:Name="PreviewOptionStateHost" Visibility="Collapsed">
+                                        <CheckBox
+                                            x:Name="PreviewRenderHtmlCheckBox"
+                                            AutomationProperties.Name="Show rendered view"
+                                            Content="Rendered"
+                                            Visibility="Collapsed" />
+                                        <CheckBox
+                                            x:Name="PreviewVideoPlaybackCheckBox"
+                                            AutomationProperties.Name="Play video in preview"
+                                            Content="Play"
+                                            Visibility="Collapsed" />
+                                    </StackPanel>
                                 </StackPanel>
                             </StackPanel>
 
