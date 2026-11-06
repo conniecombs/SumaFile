@@ -1,7 +1,7 @@
 # Roadmap
 
-This roadmap tracks SumaFile 1.0.2 and subsequent Windows-focused work.
-Completed changes and limitations are recorded in [v1.0.2 release notes](RELEASE_1.0.2.md).
+This roadmap tracks SumaFile 1.0.3 and subsequent Windows-focused work.
+Completed changes and limitations are recorded in [v1.0.3 release notes](RELEASE_1.0.3.md).
 
 ## Current Release Priorities
 
@@ -18,7 +18,8 @@ Completed changes and limitations are recorded in [v1.0.2 release notes](RELEASE
 - Add targeted tests around mapped network drive display names.
 - Improve large-folder progress and cancellation visibility.
   Version 1.0.2 adds active-file rows, tuning explanations, structured cancellation
-  outcomes, configurable retries and owned-staging recovery. Remaining work includes
+  outcomes, configurable retries and owned-staging recovery. Version 1.0.3 resolves
+  conflicts per file and retries the failed destinations. Remaining work includes
   physical NAS/cloud benchmarking and native remote multi-session concurrency.
 - Continue tightening archive path validation and extraction safety.
 - Expand file metadata support while keeping preview limits conservative.

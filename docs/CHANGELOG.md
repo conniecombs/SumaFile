@@ -8,13 +8,31 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
-No additional changes recorded after the v1.0.2 release preparation.
+Changes after v1.0.3 will be listed here.
+
+---
+
+## [1.0.3] - prepared 2026-11-06
+
+- The omnibar combines navigation, commands, search and filtering. Multi-selection
+  survives refreshes, previews release media when closed, and dialogs respect DPI,
+  theme, keyboard focus and customized shortcuts.
+- One scheduler serves an entire selection. Transfers continue past individual
+  failures and retry the exact failed paths. Folder merges preserve skipped move
+  sources, and the receipt distinguishes them from completed items.
+- Improved Windows staging and metadata handling, bounded busy-file retries,
+  adaptive concurrency, opt-in service-level multistream and checksum verification.
+- Slow operations release the IPC loop. Archive extraction, search, recycle-bin
+  restore, multi-tag persistence, Git status, SFTP sessions and updater downloads
+  have fixes detailed in the [v1.0.3 release notes](RELEASE_1.0.3.md).
+- Updated the WinUI, Rust, installer and lockfile versions and refreshed the
+  README screenshots using generated files on a hosted Windows runner.
 
 ---
 
 ## [1.0.2] - 2026-11-05
 
-Release notes prepared on this date; publication status is recorded on GitHub.
+Published November 5, 2026. The [v1.0.2 release](https://github.com/conniecombs/SumaFile/releases/tag/v1.0.2) contains the Windows downloads.
 The baseline is the published v1.0.1 tag (October 20, 2026), not the earlier
 checklist date. See [complete release notes](RELEASE_1.0.2.md) for all 19
 application commits, dependency changes, upgrade instructions and limitations.
@@ -210,7 +228,7 @@ application commits, dependency changes, upgrade instructions and limitations.
 
 ---
 
-## [1.0.3] - 2026-05-26
+## [SimpleFile 1.0.3] - 2026-05-26
 
 ### Added
 - Recursive Advanced Rename targeting for files inside selected folders, with
@@ -506,12 +524,13 @@ application commits, dependency changes, upgrade instructions and limitations.
 
 ---
 
-[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/conniecombs/SumaFile/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/conniecombs/SumaFile/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/conniecombs/SumaFile/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/conniecombs/SumaFile/releases/tag/v1.0.0
 [1.1.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.3...v1.1.0
-[1.0.3]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.2...v1.0.3
+[SimpleFile 1.0.3]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.2...v1.0.3
 [SimpleFile 1.0.2]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.1...v1.0.2
 [SimpleFile 1.0.1]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.0...v1.0.1
 [SimpleFile 1.0.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v0.2.1...v1.0.0

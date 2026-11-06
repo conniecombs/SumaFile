@@ -1,6 +1,6 @@
 # Transfer tuning
 
-Applies to **SumaFile 1.0.2**. See [release notes](RELEASE_1.0.2.md) for changes from 1.0.1.
+Applies to **SumaFile 1.0.3**. See the [release notes](RELEASE_1.0.3.md) for changes since v1.0.2.
 
 Open **Transfers > Transfer defaults** to choose a policy. A running or queued task's
 **Options** button overrides those defaults for that task; **Use defaults** removes the
@@ -25,6 +25,11 @@ actual stripe/pipeline layouts and verification scratch; smaller buffers cannot
 reuse a larger cached allocation. Two independent jobs may run concurrently.
 Conflicting destination trees remain queued. Bandwidth caps are per job, not a machine-wide network shaper.
 
+With no stored policy, the Rust service uses a 256 MiB budget and zero extra
+streams. When the WinUI options dialog has no saved values to load, it displays
+192 MiB and four streams. Saving the dialog writes the displayed values to the
+policy. Existing settings and per-job overrides take precedence over the defaults.
+
 ## Supported tasks
 
 * Local, removable, mapped-network and mounted-cloud copies use the same adaptive
@@ -40,6 +45,10 @@ Conflicting destination trees remain queued. Bandwidth caps are per job, not a m
 * Archive extraction, checksum scans, server-side operations, and a cloud client's
   internal upload queue are not file-stream jobs controlled by this scheduler.
 
+When a batch hits a file conflict or a permanent error, the remaining files can
+continue. The failure includes the exact source and destination. Resolving a
+conflict or selecting Retry retries only the affected items.
+
 The active list shows files currently assigned to workers and removes them when
 finished. Workers waiting for a shared resource permit may appear in this list.
 Aggregate progress, tuning reason, errors, and cancellation remain visible.
@@ -54,7 +63,9 @@ so the limits are separate. Nonretryable failures still fail immediately.
 The controller compares pairs of five-second samples, ignores noisy or substantially
 under-filled windows, probes additional workers, and rolls back a slower probe. It
 also tests fewer workers after an unsuccessful increase and backs off when a retry
-is observed. Successful slow I/O does not impose a hidden speed cap. Limits protect
+is observed. Sharing violations use a bounded retry and are excluded from the
+tuner’s slowdown signal. Repeated unsuccessful upward probes increase the
+cooldown, up to 32 qualified samples. Successful slow I/O does not impose a hidden speed cap. Limits protect
 resources; they do not guarantee a mathematical optimum. Short jobs may finish before enough evidence is available to tune.
 
 Proven concurrency settings are stored by ordered endpoint identity, copy/move
@@ -73,8 +84,10 @@ metadata preservation, cancellation cleanup and network retry remain in the copy
 path. Workers are joined before a directory is cleaned up or promoted.
 
 For a cloud drive, observed speed is filesystem/cache throughput. The cloud client
-controls caching and remote completion. Windows local copies can use positional
-byte-range streams above the configured cutoff. Moves and checksum copies use the hashing pipeline. Native remote sessions
+controls caching and remote completion. Windows can split a large file across byte ranges when both endpoints qualify as
+local fixed, non-virtual volumes, the stream count is at least two, and the file
+meets the cutoff and memory limits. Checksum mode hashes the bytes and uses
+the sequential pipeline. A move by itself does not enable hashing. Native remote sessions
 use provider-sized buffers; unsupported local concurrency/buffer controls are
 disabled in the remote options dialog. Remote checksum mode performs an additional
 remote read, and retry passes never replay files already completed. Native pCloud

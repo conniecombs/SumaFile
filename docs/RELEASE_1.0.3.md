@@ -2,6 +2,8 @@
 
 Prepared November 6, 2026. This Windows x64 release brings one address, search and filter box, lets a transfer finish the rest of a selection when a file fails, and keeps the file browser responsive while slower operations run. The [source comparison](https://github.com/conniecombs/SumaFile/compare/v1.0.2...ead317bd7a0f549b3fc98cb219cc91225e599735) covers all 20 commits between the v1.0.2 tag and the application code used for this release.
 
+The v1.0.2 downloads were rebuilt after the [UI changes in PR #47](https://github.com/conniecombs/SumaFile/pull/47). If you installed those [rebuilt artifacts](https://github.com/conniecombs/SumaFile/actions/runs/42149815896), you may already see the omnibar and transfer changes. The later [backend fixes in PR #48](https://github.com/conniecombs/SumaFile/pull/48) are included in the v1.0.3 source.
+
 ## Browsing and previews
 
 - The omnibar handles navigation, commands, search and filtering. Filter mode narrows the active pane as you type. Search mode offers content search and cancellation. Each pane shows its active filter or search until you clear it or return to the folder.
@@ -13,7 +15,7 @@ Prepared November 6, 2026. This Windows x64 release brings one address, search a
 
 - One queue serves each selection. Files can begin copying while the rest of a directory tree is still being discovered. An individual failure includes the source, destination and reason. The transfer continues with other files. Retry sends only the affected paths back to the service.
 - Folder merges resolve conflicts per child. Replacing a file with a directory or a directory with a file reports a conflict. During a move, skipped items stay at the source, and the result distinguishes completed, skipped and failed items. A failed undo of a multi-item move can resume.
-- Same-volume moves try a rename first. For streamed transfers, Checksum enables hashing. The new default per-job buffer budget is 256 MiB. Multi-stream copying is opt-in and limited to eligible local fixed volumes. Busy files have bounded retries, and the tuner backs off after unsuccessful concurrency increases.
+- Same-volume moves try a rename first. For streamed transfers, Checksum enables hashing. With no stored policy, the service uses 256 MiB per job and disables multi-stream copying. The WinUI settings dialog initially offers 192 MiB and four streams when no policy is saved. Saving the dialog applies those values. Multiple streams require eligible local fixed volumes. Busy files have bounded retries, and the tuner backs off after unsuccessful concurrency increases.
 - Copied files inherit destination-folder permissions. The Windows copy path applies timestamps and attributes through the open destination handle. An identity check can now verify a staging file while it is open for writing.
 - Native FTP, FTPS and SFTP transfers update totals during the job, and Checksum mode controls the extra hashing work. The remote provider still transfers one file at a time. See [Transfer tuning](https://github.com/conniecombs/SumaFile/blob/v1.0.3/docs/TRANSFER_TUNING.md).
 
@@ -35,9 +37,12 @@ Windows 10 version 2004 or later, or Windows 11, x64. Close SumaFile after activ
 | `SumaFile_1.0.3_x64-winui-setup.exe` | Per-user install or upgrade |
 | `SumaFile_1.0.3_x64-winui.msi` | Windows Installer deployment |
 | `SumaFile_1.0.3_x64-winui-portable.zip` | Extract the complete archive into a fresh folder and launch SumaFile.exe |
+| `SumaFile_1.0.3_x64-winui-setup.exe.sig` | Detached signature for the NSIS installer |
 | `latest-winui.json` | Signed updater manifest used by the application |
 
-Open About after upgrading and check for 1.0.3. Existing settings, bookmarks and layouts use the same application identity. Upgraded profiles can retain earlier transfer settings. Check **Transfers → Transfer defaults** to see the active values.
+Open About after upgrading and check for 1.0.3. Existing settings, bookmarks and layouts use the same application identity. Upgraded profiles can retain earlier transfer settings. Use **Transfers → Transfer defaults** to review or save your preferred values.
+
+Ship the WinUI host and `simplefile-service.exe` from the same package. The IPC tag response now returns every tag for each file, and targeted retries carry per-item destinations and actions. The dependency lockfiles retain their third-party versions. Only the three Rust workspace packages and WinUI project-reference entries change version in the release bump.
 
 ## SimpleFile Data Import
 

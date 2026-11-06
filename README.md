@@ -22,6 +22,7 @@ stay responsive in one local-first app.
 
 ## Contents
 
+- [Screenshots](#screenshots)
 - [Status](#status)
 - [Highlights](#highlights)
 - [Install](#install)
@@ -38,6 +39,30 @@ stay responsive in one local-first app.
 - [Known Limitations](#known-limitations)
 - [Support](#support)
 - [License](#license)
+
+## Screenshots
+
+**Dual-pane workspace.** The left pane filters 10,000 sample files down to 100.
+The right pane keeps its own selection, and the pinned preview shows the selected
+text file while both panes stay open.
+
+![SumaFile 1.0.3 showing a filtered left pane, an active right pane, and the text preview](docs/assets/screenshots/v1.0.3-workspace.png)
+
+**Copy conflict.** When two files have the same name, the dialog compares their
+sizes and modification times. Here **Keep both** previews `report (1).txt`,
+and **Skip** is the default button.
+
+![Copy conflict for report.txt showing incoming and existing files and the Keep both name](docs/assets/screenshots/v1.0.3-copy-conflict.png)
+
+**Advanced Rename.** The `{base}_reviewed` template adds a suffix while preserving
+the extension. The Before and After columns show both proposed names before you
+apply them.
+
+![Advanced Rename previewing the reviewed suffix for two generated text files](docs/assets/screenshots/v1.0.3-advanced-rename.png)
+
+These captures come from the running v1.0.3 WinUI app on a
+[GitHub-hosted Windows runner](https://github.com/conniecombs/SumaFile/actions/runs/42228831689).
+All visible files and paths belong to its generated test workspace.
 
 ## Status
 
@@ -85,7 +110,7 @@ v1.0.2, transfer defaults, upgrade instructions and known limitations.
 Download the latest Windows release from
 [GitHub Releases](https://github.com/conniecombs/SumaFile/releases).
 
-| Artifact | Recommended use |
+| v1.0.3 artifact | Recommended use |
 | --- | --- |
 | `SumaFile_1.0.3_x64-winui-setup.exe` | Normal per-user installation |
 | `SumaFile_1.0.3_x64-winui.msi` | MSI deployment or installer validation |
@@ -107,7 +132,7 @@ the app. Builds without complete trusted metadata fall back to the release page.
 
 1. Open SumaFile.
 2. Choose a location from Quick Access, drives, bookmarks, recents, smart
-   folders, the optional folder tree, or the editable path bar.
+   folders, the optional folder tree, or type a path in the omnibar.
 3. Press `F6` to open or close the second pane.
 4. Press `Ctrl+T` to open a tab in the active pane.
 5. Leave Preview open for continuous inspection, or press `Space` for Quick
@@ -124,7 +149,7 @@ the app. Builds without complete trusted metadata fall back to the release page.
 
 - Dual-pane browsing with independent active-pane state
 - Pane-local tabs with history, close, switch, and direct tab shortcuts
-- Breadcrumb navigation plus an editable path bar with folder suggestions
+- Breadcrumbs and a single omnibar for paths, commands, search, and filtering
 - Quick Access, drives, bookmarks, recent locations, smart folders, and folder
   tree sections
 - Details, list, tiles, and content views
@@ -147,7 +172,8 @@ the app. Builds without complete trusted metadata fall back to the release page.
 - Copy, cut, paste, drag, drop, copy to other pane, and move to other pane
 - Transfer progress with bytes, totals, rate, ETA, cancellation, and operation
   history
-- Conflict handling for skip, replace, keep both, or fail
+- Per-file conflict handling for skip, replace, keep both, or fail. Retry uses
+  each failed file’s original destination, including files nested inside merged folders.
 - Overwrite comparisons show incoming/existing paths, sizes, modification
   dates, and a preview of the Keep both filename
 - Recycle Bin delete and permanent delete
@@ -189,7 +215,7 @@ Inspection tools include:
 
 ### Search and Smart Folders
 
-- Quick filter for the visible directory
+- Filter the active pane as you type in the omnibar’s Filter mode
 - Recursive filename search
 - Optional content search in the omnibar’s Search mode
 - Filters for size, date, depth, and hidden-file inclusion
@@ -370,7 +396,7 @@ Press `F1` or `Ctrl+?` in SumaFile for the live shortcut list.
 | `Ctrl+H` | Show or hide hidden/system files |
 | `Ctrl+B` | Bookmark current folder |
 | `Ctrl+Mouse wheel` | Change icon size |
-| `Ctrl+F` / `F3` | Focus find in folder |
+| `Ctrl+F` / `F3` | Focus the omnibar in Search mode |
 | `Ctrl+Shift+P` | Command palette |
 | `F4` | Open terminal here |
 | `Escape` | Close transient UI, clear filter, or clear selection |
@@ -579,7 +605,7 @@ Before creating a release tag:
 2. Run `npm run check:release`.
 3. Run the WinUI smoke commands required by `docs/RELEASE_1.0.3.md`.
 4. Confirm the Installer Smoke workflow succeeds on the release commit.
-5. Dispatch or create the GitHub release for the matching tag.
+5. Merge the version bump, then tag the merged commit or start a new Release run from the updated `main`.
 
 More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md).
