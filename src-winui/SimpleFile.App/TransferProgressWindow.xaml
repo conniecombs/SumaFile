@@ -115,7 +115,7 @@
                             </StackPanel>
 
                             <Grid Grid.Row="1">
-                                <ProgressBar
+                                <ProgressBar AutomationProperties.Name="Transfer progress"
                                     Height="4"
                                     Minimum="0"
                                     Maximum="100"

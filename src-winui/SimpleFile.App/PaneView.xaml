@@ -1,13 +1,12 @@
 <UserControl
-    x:Class="SimpleFile.App.PrimaryPaneView"
+    x:Class="SimpleFile.App.PaneView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:SimpleFile.App"
     xmlns:core="using:SimpleFile.Core"
     xmlns:ipc="using:SimpleFile.Ipc">
                         <Grid
-                            x:Name="PrimaryPaneRoot"
-                            Grid.Column="0"
+                            x:Name="PartPaneRoot"
                             Background="{ThemeResource SfBgPrimaryBrush}"
                             BorderBrush="{ThemeResource SfBorderBrush}"
                             BorderThickness="0">
@@ -17,7 +16,7 @@
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
                             <Border
-                                x:Name="PrimaryActivePaneRail"
+                                x:Name="PartActivePaneRail"
                                 Grid.RowSpan="3"
                                 Width="3"
                                 HorizontalAlignment="Left"
@@ -25,7 +24,7 @@
                                 IsHitTestVisible="False"
                                 Visibility="Collapsed" />
                             <Grid
-                                x:Name="PrimaryPaneHeader"
+                                x:Name="PartPaneHeader"
                                 Padding="10,6,10,0"
                                 Background="{ThemeResource SfBgSecondaryBrush}"
                                 BorderBrush="{ThemeResource SfBorderBrush}"
@@ -43,20 +42,20 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel
-                                        x:Name="PrimaryPaneCaption"
+                                        x:Name="PartPaneCaption"
                                         VerticalAlignment="Center"
                                         Orientation="Horizontal"
                                         Spacing="5"
                                         Visibility="Collapsed">
                                         <Rectangle
-                                            x:Name="PrimaryPaneCaptionRail"
+                                            x:Name="PartPaneCaptionRail"
                                             Width="3"
                                             Height="14"
                                             Fill="{ThemeResource SfAccentBrush}"
                                             RadiusX="1"
                                             RadiusY="1" />
                                         <TextBlock
-                                            x:Name="PrimaryPaneCaptionText"
+                                            x:Name="PartPaneCaptionText"
                                             VerticalAlignment="Center"
                                             FontSize="11"
                                             FontWeight="SemiBold"
@@ -69,7 +68,7 @@
                                         Grid.Column="1"
                                         HorizontalScrollBarVisibility="Auto"
                                         VerticalScrollBarVisibility="Disabled">
-                                        <StackPanel x:Name="PrimaryTabHost" Orientation="Horizontal" Spacing="2" />
+                                        <StackPanel x:Name="PartTabHost" Orientation="Horizontal" Spacing="2" />
                                     </ScrollViewer>
                                 </Grid>
                                 <Grid
@@ -81,7 +80,7 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <Grid
-                                        x:Name="PrimaryPathBar"
+                                        x:Name="PartPathBar"
                                         Grid.Column="0"
                                         MinHeight="30"
                                         Padding="6,1"
@@ -89,37 +88,38 @@
                                         BorderBrush="{ThemeResource SfBorderBrush}"
                                         BorderThickness="1"
                                         CornerRadius="6"
-                                        PointerPressed="OnPrimaryPathBarPointerPressed">
+                                        PointerPressed="OnPathBarPointerPressed">
                                         <ScrollViewer
-                                            x:Name="PrimaryBreadcrumbScroller"
+                                            x:Name="PartBreadcrumbScroller"
                                             VerticalAlignment="Center"
                                             HorizontalScrollBarVisibility="Auto"
                                             VerticalScrollBarVisibility="Disabled">
-                                            <StackPanel x:Name="PrimaryBreadcrumbHost" VerticalAlignment="Center" Orientation="Horizontal" />
+                                            <StackPanel x:Name="PartBreadcrumbHost" VerticalAlignment="Center" Orientation="Horizontal" />
                                         </ScrollViewer>
                                         <TextBox
-                                            x:Name="PrimaryPathInput"
+                                            x:Name="PartPathInput"
                                             Style="{StaticResource SfTextBoxStyle}"
                                             BorderThickness="0"
                                             PlaceholderText="Enter path..."
                                             Visibility="Collapsed"
-                                            KeyDown="OnPrimaryPathKeyDown"
-                                            LostFocus="OnPrimaryPathLostFocus"
-                                            TextChanged="OnPrimaryPathTextChanged" />
+                                            KeyDown="OnPathKeyDown"
+                                            LostFocus="OnPathLostFocus"
+                                            TextChanged="OnPathTextChanged" />
                                     </Grid>
                                     <Button
-                                        x:Name="PrimaryEditPathButton"
+                                        x:Name="PartEditPathButton"
                                         Grid.Column="1"
                                         Style="{StaticResource SfToolbarButtonStyle}"
-                                        Click="OnEditPrimaryPath"
+                                        Click="OnEditPath"
+                                        AutomationProperties.Name="Edit path"
                                         ToolTipService.ToolTip="Edit path">
                                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="13" Glyph="&#xE70F;" />
                                     </Button>
                                 </Grid>
                             </Grid>
-                            <local:PaneContextBar x:Name="PrimaryContextBar" Grid.Row="1" Visibility="Collapsed" />
+                            <local:PaneContextBar x:Name="PartContextBar" Grid.Row="1" Visibility="Collapsed" />
                             <Grid
-                                x:Name="PrimaryFileSurface"
+                                x:Name="PartFileSurface"
                                 Grid.Row="2"
                                 MinHeight="0">
                                 <Grid.RowDefinitions>
@@ -128,7 +128,7 @@
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <ScrollViewer
-                                    x:Name="PrimaryColumnHeaderViewport"
+                                    x:Name="PartColumnHeaderViewport"
                                     Grid.Row="0"
                                     HorizontalScrollBarVisibility="Disabled"
                                     HorizontalScrollMode="Disabled"
@@ -136,7 +136,7 @@
                                     VerticalScrollMode="Disabled"
                                     ZoomMode="Disabled">
                                     <Grid
-                                        x:Name="PrimaryColumnHeader"
+                                        x:Name="PartColumnHeader"
                                         Padding="10,0,0,0"
                                         HorizontalAlignment="Left"
                                         Background="Transparent"
@@ -144,46 +144,46 @@
                                         BorderThickness="0,0,0,1" />
                                 </ScrollViewer>
                                 <Grid
-                                    x:Name="PrimaryFileViewport"
+                                    x:Name="PartFileViewport"
                                     Grid.Row="1"
                                     Background="Transparent"
-                                    PointerPressed="OnPrimaryMarqueePressed"
+                                    PointerPressed="OnMarqueePressed"
                                     PointerMoved="OnMarqueePointerMoved"
                                     PointerReleased="OnMarqueePointerReleased"
                                     PointerCanceled="OnMarqueePointerCanceled">
                                     <local:DetailsFileListView
-                                        x:Name="PrimaryDetailsFileList"
+                                        x:Name="PartDetailsFileList"
                                         AllowDrop="True"
                                         AutomationProperties.Name="Left pane detail files"
                                         DragLeave="OnFileDragLeave"
-                                        DragOver="OnPrimaryFileDragOver"
-                                        Drop="OnPrimaryFileDrop"
-                                        KeyDown="OnPrimaryDetailsFileKeyDown"
+                                        DragOver="OnFileDragOver"
+                                        Drop="OnFileDrop"
+                                        KeyDown="OnDetailsFileKeyDown"
                                         Visibility="Collapsed" />
                                     <ListView
-                                        x:Name="PrimaryFileList"
+                                        x:Name="PartFileList"
                                         Padding="2,4,2,6"
                                         AllowDrop="True"
                                         CanDragItems="True"
                                         AutomationProperties.Name="Left pane files"
-                                        DoubleTapped="OnPrimaryFileDoubleTapped"
+                                        DoubleTapped="OnFileDoubleTapped"
                                         DragItemsStarting="OnFileDragItemsStarting"
                                         DragItemsCompleted="OnFileDragItemsCompleted"
                                         DragLeave="OnFileDragLeave"
-                                        DragOver="OnPrimaryFileDragOver"
-                                        Drop="OnPrimaryFileDrop"
+                                        DragOver="OnFileDragOver"
+                                        Drop="OnFileDrop"
                                         IsItemClickEnabled="False"
                                         IsMultiSelectCheckBoxEnabled="False"
-                                        KeyDown="OnPrimaryFileKeyDown"
-                                        RightTapped="OnPrimaryFileRightTapped"
-                                        SelectionChanged="OnPrimarySelectionChanged"
+                                        KeyDown="OnFileKeyDown"
+                                        RightTapped="OnFileRightTapped"
+                                        SelectionChanged="OnSelectionChanged"
                                         SelectionMode="Extended"
                                         SingleSelectionFollowsFocus="False">
                                         <ListView.ItemContainerStyle>
                                             <Style BasedOn="{StaticResource SfFileListItemStyle}" TargetType="ListViewItem" />
                                         </ListView.ItemContainerStyle>
                                         <ListView.ContextFlyout>
-                                            <MenuFlyout Opening="OnPrimaryFileListContextOpening" />
+                                            <MenuFlyout Opening="OnFileListContextOpening" />
                                         </ListView.ContextFlyout>
                                         <ListView.ItemTemplate>
                                             <DataTemplate x:DataType="local:FileRow">
@@ -191,9 +191,9 @@
                                             </DataTemplate>
                                         </ListView.ItemTemplate>
                                     </ListView>
-                                    <Canvas x:Name="PrimaryMarqueeCanvas" IsHitTestVisible="False">
+                                    <Canvas x:Name="PartMarqueeCanvas" IsHitTestVisible="False">
                                         <Rectangle
-                                            x:Name="PrimaryMarqueeRect"
+                                            x:Name="PartMarqueeRect"
                                             Visibility="Collapsed"
                                             Stroke="{ThemeResource SfAccentBrush}"
                                             StrokeThickness="1"
@@ -202,7 +202,7 @@
                                             RadiusY="2" />
                                     </Canvas>
                                     <StackPanel
-                                        x:Name="PrimaryEmptyState"
+                                        x:Name="PartEmptyState"
                                         MaxWidth="360"
                                         HorizontalAlignment="Center"
                                         VerticalAlignment="Center"
@@ -210,7 +210,7 @@
                                         Spacing="6"
                                         Visibility="Collapsed">
                                         <TextBlock
-                                            x:Name="PrimaryEmptyTitle"
+                                            x:Name="PartEmptyTitle"
                                             HorizontalAlignment="Center"
                                             FontSize="16"
                                             FontWeight="SemiBold"
@@ -218,7 +218,7 @@
                                             Text="This folder is empty"
                                             TextAlignment="Center" />
                                         <TextBlock
-                                            x:Name="PrimaryEmptyHint"
+                                            x:Name="PartEmptyHint"
                                             HorizontalAlignment="Center"
                                             FontSize="12"
                                             Foreground="{ThemeResource SfTextMutedBrush}"
@@ -228,12 +228,12 @@
                                     </StackPanel>
                                 </Grid>
                                 <ScrollBar
-                                    x:Name="PrimaryDetailsHorizontalScrollBar"
+                                    x:Name="PartDetailsHorizontalScrollBar"
                                     Grid.Row="2"
                                     Height="12"
                                     Orientation="Horizontal"
                                     Visibility="Collapsed"
-                                    ValueChanged="OnPrimaryDetailsHorizontalScrollChanged" />
+                                    ValueChanged="OnDetailsHorizontalScrollChanged" />
                             </Grid>
                         </Grid>
 </UserControl>

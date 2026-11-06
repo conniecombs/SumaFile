@@ -30,7 +30,6 @@ public sealed partial class MainWindow
         _primaryToolbarActionElements.Clear();
         PrimaryActionsHost.Children.Clear();
 
-        AddPrimaryToolbarElement(ToolbarOverflowPlanner.Filter, QuickFilterBox);
         foreach (var item in layout.PrimaryToolbar)
         {
             if (item.IsSeparator)
@@ -186,11 +185,12 @@ public sealed partial class MainWindow
         };
     }
 
-    private static string ToolbarTooltip(ToolbarAction action, string label)
+    private string ToolbarTooltip(ToolbarAction action, string label)
     {
-        return string.IsNullOrWhiteSpace(action.Shortcut)
+        var shortcut = ShortcutLabelFor(action.Id) ?? action.Shortcut;
+        return string.IsNullOrWhiteSpace(shortcut)
             ? label
-            : $"{label} ({action.Shortcut})";
+            : $"{label} ({shortcut})";
     }
 
     private string ToolbarDisplayLabel(ToolbarAction action)
@@ -239,11 +239,6 @@ public sealed partial class MainWindow
     {
         foreach (var pair in _primaryToolbarActionElements)
         {
-            if (string.Equals(pair.Key, ToolbarOverflowPlanner.Filter, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
             var enabledBySettings = !pair.Key.StartsWith("git-", StringComparison.Ordinal)
                 || IsGitIntegrationEnabled;
             SetOverflowVisible(pair.Value, enabledBySettings && !overflowed.Contains(pair.Key));

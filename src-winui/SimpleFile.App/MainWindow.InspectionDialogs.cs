@@ -37,7 +37,7 @@ public sealed partial class MainWindow
             CloseButtonText = "Close",
             XamlRoot = Content.XamlRoot,
         };
-        await dialog.ShowAsync();
+        await DialogHost.ShowAsync(dialog);
     }
 
     private async Task ShowQuickLookAsync()
@@ -58,11 +58,15 @@ public sealed partial class MainWindow
 
         if (fileOps is not null && row.IsDir)
         {
-            var utilityCts = BeginUtilityOperation();
+            var utilityCts = BeginUtilityOperation("ShowQuickLookAsync");
             try
             {
-                var metrics = await fileOps.GetFolderMetricsAsync(row.Path, utilityCts.Token)
-                    .ConfigureAwait(true);
+                var metrics = await DialogHost.RunWithProgressAsync(
+                    Content.XamlRoot,
+                    "Quick Look",
+                    $"Measuring {row.Name}…",
+                    (_, token) => fileOps.GetFolderMetricsAsync(row.Path, token),
+                    utilityCts.Token);
 
                 if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
                 {
@@ -96,7 +100,7 @@ public sealed partial class MainWindow
         }
         else if (fileOps is not null && !row.IsDir)
         {
-            var utilityCts = BeginUtilityOperation();
+            var utilityCts = BeginUtilityOperation("ShowQuickLookAsync");
             try
             {
                 var preview = await fileOps.ReadFilePreviewAsync(row.Path, 80_000, utilityCts.Token);
@@ -221,7 +225,7 @@ public sealed partial class MainWindow
         {
             dialog.Closed += (_, _) => cleanup();
         }
-        await dialog.ShowAsync();
+        await DialogHost.ShowAsync(dialog);
     }
 
     private static void AddQuickLookMetadataRows(StackPanel panel, IEnumerable<InspectionDetailRow> rows)
@@ -337,7 +341,7 @@ public sealed partial class MainWindow
         var checksumText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"), FontSize = 12 };
         var checksumButton = new Button { Content = "Compute checksums", HorizontalAlignment = HorizontalAlignment.Left };
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("Properties");
         try
         {
             var info = await fileOps.GetEntryInfoAsync(row.Path, utilityCts.Token);
@@ -398,7 +402,7 @@ public sealed partial class MainWindow
         {
             checksumButton.IsEnabled = false;
             checksumText.Text = "Computing…";
-            var hashCts = BeginUtilityOperation();
+            var hashCts = BeginUtilityOperation("PropertiesChecksum");
             try
             {
                 var checksums = await fileOps.ComputeChecksumAsync(row.Path, hashCts.Token);
@@ -434,7 +438,7 @@ public sealed partial class MainWindow
             CloseButtonText = "Close",
             XamlRoot = Content.XamlRoot,
         };
-        await dialog.ShowAsync();
+        await DialogHost.ShowAsync(dialog);
     }
 
     private async Task ShowClipboardHistoryAsync()
@@ -472,7 +476,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || list.SelectedItem is not ClipboardHistoryRow row)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary || list.SelectedItem is not ClipboardHistoryRow row)
         {
             return;
         }
@@ -513,34 +517,37 @@ public sealed partial class MainWindow
 
         var paths = folders.Select(f => f.Path).ToArray();
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("ShowFolderMetricsAsync");
         try
         {
-            var lines = new List<string>();
-            ulong totalSize = 0;
-            ulong totalCount = 0;
-
-            foreach (var path in paths)
-            {
-                SetStatusText($"Calculating metrics for {path}...");
-                var metrics = await fileOps.GetFolderMetricsAsync(path, utilityCts.Token);
-                if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
+            var lines = await DialogHost.RunWithProgressAsync(
+                Content.XamlRoot,
+                "Folder metrics",
+                $"Measuring {paths.Length} folders…",
+                async (progress, token) =>
                 {
-                    return;
-                }
+                    var measured = new List<string>();
+                    ulong totalSize = 0;
+                    ulong totalCount = 0;
+                    for (var index = 0; index < paths.Length; index++)
+                    {
+                        var path = paths[index];
+                        progress.Report($"Measuring {index + 1} of {paths.Length}: {path}");
+                        var metrics = await fileOps.GetFolderMetricsAsync(path, token);
+                        measured.Add($"{path}{Environment.NewLine}{EntryPresentation.FormatFileSize(metrics.Size)} · {metrics.ItemCount} item(s)");
+                        totalSize += metrics.Size;
+                        totalCount += metrics.ItemCount;
+                    }
 
-                lines.Add($"{path}{Environment.NewLine}{EntryPresentation.FormatFileSize(metrics.Size)} · {metrics.ItemCount} item(s)");
-                totalSize += metrics.Size;
-                totalCount += metrics.ItemCount;
-            }
-
-            if (paths.Length > 1)
+                    measured.Add(paths.Length > 1
+                        ? $"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s) across {paths.Length} folders"
+                        : $"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s)");
+                    return measured;
+                },
+                utilityCts.Token);
+            if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
             {
-                lines.Add($"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s) across {paths.Length} folders");
-            }
-            else
-            {
-                lines.Add($"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s)");
+                return;
             }
 
             SetStatusText("");
@@ -560,7 +567,7 @@ public sealed partial class MainWindow
                 CloseButtonText = "Close",
                 XamlRoot = Content.XamlRoot,
             };
-            await dialog.ShowAsync();
+            await DialogHost.ShowAsync(dialog);
         }
         catch (OperationCanceledException)
         {
@@ -615,7 +622,6 @@ public sealed partial class MainWindow
             destinationText.Text = row.Display.DestinationSummary;
         }
 
-        list.SelectionChanged += (_, _) => UpdateDetails();
         UpdateDetails();
         var content = new StackPanel
         {
@@ -636,10 +642,20 @@ public sealed partial class MainWindow
             PrimaryButtonText = OperationHistoryFormatter.RetrySelectedLabel,
             SecondaryButtonText = workspace.Undo.CanUndo ? "Undo last" : "",
             CloseButtonText = "Close",
-            DefaultButton = ContentDialogButton.Primary,
+            DefaultButton = ContentDialogButton.Close,
             XamlRoot = Content.XamlRoot,
         };
-        var result = await dialog.ShowAsync();
+        // Retry only makes sense for transfers that did not complete.
+        static bool CanRetry(object? item) =>
+            item is OperationHistoryRow candidate
+            && candidate.Record.Status is "failed" or "cancelled";
+        dialog.IsPrimaryButtonEnabled = CanRetry(list.SelectedItem);
+        list.SelectionChanged += (_, _) =>
+        {
+            UpdateDetails();
+            dialog.IsPrimaryButtonEnabled = CanRetry(list.SelectedItem);
+        };
+        var result = await DialogHost.ShowAsync(dialog);
         if (!ReferenceEquals(_workspace, workspace))
         {
             return;
@@ -658,51 +674,6 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task RunGitAsync(bool pull)
-    {
-        var workspace = _workspace;
-        var fileOps = workspace?.FileOps;
-        if (workspace is null || fileOps is null)
-        {
-            return;
-        }
-
-        var path = workspace.Active.Path;
-        var utilityCts = BeginUtilityOperation();
-        try
-        {
-            if (pull)
-            {
-                SetStatusText($"Pulling Git changes in {path}...");
-                await fileOps.GitPullAsync(path, utilityCts.Token);
-                if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
-                {
-                    ShowMessage("Git", "Pull completed.", InfoBarSeverity.Success);
-                }
-            }
-            else
-            {
-                SetStatusText($"Pushing Git changes from {path}...");
-                await fileOps.GitPushAsync(path, utilityCts.Token);
-                if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
-                {
-                    ShowMessage("Git", "Push completed.", InfoBarSeverity.Success);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception exception)
-        {
-            ShowMessage(pull ? "Git pull" : "Git push", exception.Message, InfoBarSeverity.Error);
-        }
-        finally
-        {
-            FinishUtilityOperation(utilityCts);
-        }
-    }
-
     private async Task OpenPowershellAdminAsync()
     {
         var workspace = _workspace;
@@ -712,7 +683,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("OpenPowershellAdminAsync");
         try
         {
             await fileOps.OpenPowershellAdminAsync(workspace.Active.Path, utilityCts.Token);

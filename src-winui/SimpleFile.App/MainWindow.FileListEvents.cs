@@ -6,10 +6,12 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using SimpleFile.Core;
+using Windows.UI.Core;
 using SimpleFile.Ipc;
 using Windows.Graphics;
 using Windows.System;
@@ -308,11 +310,43 @@ public sealed partial class MainWindow
         UpdateSelectionStatus();
     }
 
-    private async void OnPrimaryFileDoubleTapped(object sender, DoubleTappedRoutedEventArgs e) =>
-        await RunUiActionAsync("Open", () => OpenSelectedFile(PrimaryFileList, PaneId.Primary));
+    private async void OnPrimaryFileDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (DoubleTapHitsRow(e.OriginalSource))
+        {
+            await RunUiActionAsync("Open", () => OpenSelectedFile(PaneId.Primary));
+        }
+    }
 
-    private async void OnSecondaryFileDoubleTapped(object sender, DoubleTappedRoutedEventArgs e) =>
-        await RunUiActionAsync("Open", () => OpenSelectedFile(SecondaryFileList, PaneId.Secondary));
+    private async void OnSecondaryFileDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (DoubleTapHitsRow(e.OriginalSource))
+        {
+            await RunUiActionAsync("Open", () => OpenSelectedFile(PaneId.Secondary));
+        }
+    }
+
+    /// <summary>Double-clicks on blank list space must not open the current selection.</summary>
+    private static bool DoubleTapHitsRow(object? originalSource)
+    {
+        var current = originalSource as DependencyObject;
+        while (current is not null)
+        {
+            if (current is FileRowView or ListViewItem)
+            {
+                return true;
+            }
+
+            if (current is ListView)
+            {
+                return false;
+            }
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return false;
+    }
 
     private async void OnPrimaryDetailsRowInvoked(object? sender, DetailsFileRowEventArgs e) =>
         await RunUiActionAsync("Open", () => OpenSelectedFile(PaneId.Primary));
@@ -321,47 +355,16 @@ public sealed partial class MainWindow
         await RunUiActionAsync("Open", () => OpenSelectedFile(PaneId.Secondary));
 
     private async void OnPrimaryFileKeyDown(object sender, KeyRoutedEventArgs e) =>
-        await RunUiActionAsync("File list", () => HandleFileKey(e, PrimaryFileList, PaneId.Primary));
+        await RunUiActionAsync("File list", () => HandleFileKey(e, PaneId.Primary));
 
     private async void OnSecondaryFileKeyDown(object sender, KeyRoutedEventArgs e) =>
-        await RunUiActionAsync("File list", () => HandleFileKey(e, SecondaryFileList, PaneId.Secondary));
+        await RunUiActionAsync("File list", () => HandleFileKey(e, PaneId.Secondary));
 
     private async void OnPrimaryDetailsFileKeyDown(object sender, KeyRoutedEventArgs e) =>
         await RunUiActionAsync("File list", () => HandleFileKey(e, PaneId.Primary));
 
     private async void OnSecondaryDetailsFileKeyDown(object sender, KeyRoutedEventArgs e) =>
         await RunUiActionAsync("File list", () => HandleFileKey(e, PaneId.Secondary));
-
-    private async Task HandleFileKey(KeyRoutedEventArgs e, ListView list, PaneId pane)
-    {
-        if (e.Key == VirtualKey.Enter)
-        {
-            e.Handled = true;
-            await OpenSelectedFile(list, pane);
-            return;
-        }
-
-        var letter = e.Key.ToString();
-        if (_workspace is not null && letter.Length == 1 && char.IsLetterOrDigit(letter[0]))
-        {
-            var match = _workspace.MatchTypeAhead(letter[0]);
-            if (match is not null)
-            {
-                e.Handled = true;
-                _workspace.SelectPath(match.Path, pane);
-                var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
-                SelectRow(list, rows, match.Path);
-                var row = rows.FirstOrDefault(item =>
-                    string.Equals(item.Path, match.Path, StringComparison.OrdinalIgnoreCase));
-                if (row is not null)
-                {
-                    QueuePreview(row);
-                }
-
-                UpdateSelectionStatus();
-            }
-        }
-    }
 
     private async Task HandleFileKey(KeyRoutedEventArgs e, PaneId pane)
     {
@@ -372,44 +375,46 @@ public sealed partial class MainWindow
             return;
         }
 
-        var letter = e.Key.ToString();
-        if (_workspace is not null && letter.Length == 1 && char.IsLetterOrDigit(letter[0]))
+        if (_workspace is null)
         {
-            var match = _workspace.MatchTypeAhead(letter[0]);
-            if (match is not null)
-            {
-                e.Handled = true;
-                _workspace.SelectPath(match.Path, pane);
-                SelectRow(pane, match.Path);
-                var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
-                var row = rows.FirstOrDefault(item =>
-                    string.Equals(item.Path, match.Path, StringComparison.OrdinalIgnoreCase));
-                if (row is not null)
-                {
-                    QueuePreview(row);
-                }
-
-                UpdateSelectionStatus();
-            }
+            return;
         }
+
+        var chord = IsKeyDown(VirtualKey.Control) || IsKeyDown(VirtualKey.Menu)
+            || IsKeyDown(VirtualKey.LeftWindows) || IsKeyDown(VirtualKey.RightWindows);
+        if (!TypeAhead.TryMapKey(e.Key.ToString(), chord, out var character))
+        {
+            return;
+        }
+
+        // Backspace only edits an active type-ahead buffer; otherwise it stays "go up".
+        if (character == '\b' && _workspace.TypeAheadBuffer.Text.Length == 0)
+        {
+            return;
+        }
+
+        var match = _workspace.MatchTypeAhead(character);
+        if (match is null)
+        {
+            e.Handled = character == '\b';
+            return;
+        }
+
+        e.Handled = true;
+        _workspace.SelectPath(match.Path, pane);
+        SelectRow(pane, match.Path);
+        var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
+        var row = rows.FirstOrDefault(item => PathRules.PathsEqual(item.Path, match.Path));
+        if (row is not null)
+        {
+            QueuePreview(row);
+        }
+
+        UpdateSelectionStatus();
     }
 
-    private async Task OpenSelectedFile(ListView list, PaneId pane)
-    {
-        if (_workspace is not null && list.SelectedItem is FileRow row)
-        {
-            await SaveViewIconSizeNowAsync();
-            if (PathRules.IsRecycleBinPath(_workspace.Pane(pane).Path) && row.IsDir)
-            {
-                await RestoreSelectedAsync();
-                return;
-            }
-
-            await _workspace.OpenEntryAsync(
-                new FileEntry { Name = row.Name, Path = row.Path, IsDir = row.IsDir },
-                pane);
-        }
-    }
+    private static bool IsKeyDown(VirtualKey key) =>
+        InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(CoreVirtualKeyStates.Down);
 
     private async Task OpenSelectedFile(PaneId pane)
     {
@@ -472,7 +477,7 @@ public sealed partial class MainWindow
             visible.Count,
             selectedEntries,
             searchCount,
-            _search is null ? null : ActiveToolbarSearchTextBox().Text);
+            _search is null ? null : ActiveSearchQuery);
         ApplyStatusBarState();
     }
 
@@ -480,6 +485,14 @@ public sealed partial class MainWindow
     {
         ApplyPreviewVisibility();
         _previewPresenter.QueueFromSelection();
+    }
+
+    private void RequeueCurrentPreview()
+    {
+        if (ActiveSelectedRow is { } row)
+        {
+            QueuePreview(row);
+        }
     }
 
     private void QueuePreview(FileRow row)

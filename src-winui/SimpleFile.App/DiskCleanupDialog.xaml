@@ -52,7 +52,7 @@
             <TextBlock
                 Text="Scanning for large files and duplicate groups…"
                 TextWrapping="Wrap" />
-            <ProgressBar x:Name="ScanProgress" IsIndeterminate="True" />
+            <ProgressBar AutomationProperties.Name="Scan progress" x:Name="ScanProgress" IsIndeterminate="True" />
             <TextBlock
                 x:Name="ScanStatusText"
                 Text="Preparing scan"

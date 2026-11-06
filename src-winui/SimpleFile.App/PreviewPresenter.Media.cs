@@ -8,7 +8,31 @@ namespace SimpleFile.App;
 
 internal sealed partial class PreviewPresenter
 {
-    private bool TryRenderPdfPreview(string path, int token, CancellationToken cancellationToken)
+    private MediaSource? _mediaSource;
+
+    /// <summary>
+    /// Stops playback and drops path-backed sources (media, PDF) so a hidden pane neither keeps
+    /// playing audio nor holds the file open. The next selection or re-show reloads the preview.
+    /// </summary>
+    public void ReleasePathBackedPreviews() => CancelPending();
+
+    private void ReleaseMediaSource()
+    {
+        try
+        {
+            _mediaPlayer.MediaPlayer?.Pause();
+        }
+        catch
+        {
+            // Pausing a player with no media throws on some stacks; releasing still proceeds.
+        }
+
+        _mediaPlayer.Source = null;
+        _mediaSource?.Dispose();
+        _mediaSource = null;
+    }
+
+    private async Task<bool> TryRenderPdfPreviewAsync(string path, int token, CancellationToken cancellationToken)
     {
         if (!PreviewPathSupport.CanUsePathBackedPreview(path, "pdf") || !IsCurrent(path, token, cancellationToken))
         {
@@ -20,7 +44,15 @@ internal sealed partial class PreviewPresenter
             ClearIcon();
             _mediaPlayer.Source = null;
             _mediaPlayer.Visibility = Visibility.Collapsed;
-            _pdfView.Source = new Uri(path);
+            var source = new Uri(path);
+            // The built-in PDF viewer needs script; navigation stays pinned to this file.
+            await EnsurePreviewWebViewAsync(allowScript: true, allowedNavigation: source);
+            if (!IsCurrent(path, token, cancellationToken))
+            {
+                return true;
+            }
+
+            _pdfView.Source = source;
             _pdfView.Visibility = Visibility.Visible;
             _emptyText.Visibility = Visibility.Collapsed;
             return true;
@@ -46,7 +78,9 @@ internal sealed partial class PreviewPresenter
             _pdfView.Source = null;
             _pdfView.Visibility = Visibility.Collapsed;
             _mediaPlayer.Height = string.Equals(fileType, "audio", StringComparison.OrdinalIgnoreCase) ? 96 : 220;
-            _mediaPlayer.Source = MediaSource.CreateFromUri(new Uri(path));
+            ReleaseMediaSource();
+            _mediaSource = MediaSource.CreateFromUri(new Uri(path));
+            _mediaPlayer.Source = _mediaSource;
             _mediaPlayer.Visibility = Visibility.Visible;
             if (string.Equals(fileType, "video", StringComparison.OrdinalIgnoreCase))
             {
@@ -62,7 +96,7 @@ internal sealed partial class PreviewPresenter
         }
         catch
         {
-            _mediaPlayer.Source = null;
+            ReleaseMediaSource();
             _mediaPlayer.Visibility = Visibility.Collapsed;
             HideVideoFrameControls();
             return false;
@@ -73,7 +107,7 @@ internal sealed partial class PreviewPresenter
     {
         _pdfView.Source = null;
         _pdfView.Visibility = Visibility.Collapsed;
-        _mediaPlayer.Source = null;
+        ReleaseMediaSource();
         _mediaPlayer.Visibility = Visibility.Collapsed;
     }
 

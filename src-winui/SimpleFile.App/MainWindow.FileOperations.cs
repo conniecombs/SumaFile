@@ -78,10 +78,14 @@ public sealed partial class MainWindow
         {
             _workspace?.Clipboard.SetCopy(paths);
             _workspace?.RememberClipboard();
-            var exported = await TrySetWindowsFileClipboardAsync(paths, ClipboardOperation.Copy);
+            var exported = await TrySetWindowsFileClipboardAsync(
+                paths,
+                ClipboardOperation.Copy,
+                _workspace?.Clipboard.Stamp ?? "");
             SetStatusText(exported
                 ? $"Copied {paths.Length} item(s)"
                 : $"Copied {paths.Length} item(s) in SumaFile");
+            RefreshView();
         }
     }
 
@@ -92,10 +96,14 @@ public sealed partial class MainWindow
         {
             _workspace?.Clipboard.SetCut(paths);
             _workspace?.RememberClipboard();
-            var exported = await TrySetWindowsFileClipboardAsync(paths, ClipboardOperation.Cut);
+            var exported = await TrySetWindowsFileClipboardAsync(
+                paths,
+                ClipboardOperation.Cut,
+                _workspace?.Clipboard.Stamp ?? "");
             SetStatusText(exported
                 ? $"Cut {paths.Length} item(s)"
                 : $"Cut {paths.Length} item(s) in SumaFile");
+            RefreshView();
         }
     }
 
@@ -104,6 +112,7 @@ public sealed partial class MainWindow
         if (_workspace is null) return;
 
         var clipboard = _workspace.Clipboard;
+        clipboard.ReconcileWith(await TryReadWindowsClipboardStampAsync());
         var payload = clipboard.HasItems
             ? new ClipboardTransferPayload(clipboard.Operation, clipboard.SourcePaths, IsInternal: true)
             : await TryReadWindowsFileClipboardAsync();
@@ -129,18 +138,28 @@ public sealed partial class MainWindow
             && outcome == TransferRunStatus.Completed)
         {
             clipboard.Clear();
+            RefreshView();
         }
     }
 
-    private void ShowTransferProgressWindow()
+    /// <summary>
+    /// Shows the Transfers window. It is brought to the front when it is first created or when
+    /// the user asks for it; background starts, retries and dequeues must not steal focus or
+    /// cover a conflict prompt on the main window.
+    /// </summary>
+    private void ShowTransferProgressWindow(bool activate = true)
     {
         if (_transfer is null)
         {
             return;
         }
 
-        var window = EnsureTransferProgressWindow();
+        var window = EnsureTransferProgressWindow(out var created);
         window.Start(_transfer, _workspace?.FileOps);
+        if (created || activate)
+        {
+            window.Activate();
+        }
     }
 
     private void StartTransferProgress(TransferOperationViewModel operation, string operationId)
@@ -152,7 +171,7 @@ public sealed partial class MainWindow
         }
 
         operation.SetOperationId(operationId);
-        ShowTransferProgressWindow();
+        ShowTransferProgressWindow(activate: false);
     }
 
     private void OnTransferProgress(TransferOperationViewModel operation, ProgressUpdate update)
@@ -166,15 +185,15 @@ public sealed partial class MainWindow
         operation.ApplyProgress(update);
     }
 
-    private void CompleteTransferProgress(bool move, int itemCount, string? destination = null)
+    private void CompleteTransferProgress(bool move, int itemCount, string? destination = null, int skipped = 0)
     {
         if (!DispatcherQueue.HasThreadAccess)
         {
-            DispatcherQueue.TryEnqueue(() => CompleteTransferProgress(move, itemCount, destination));
+            DispatcherQueue.TryEnqueue(() => CompleteTransferProgress(move, itemCount, destination, skipped));
             return;
         }
 
-        SetStatusText(TransferProgressFormatter.CompletionReceipt(move, itemCount, destination));
+        SetStatusText(TransferProgressFormatter.CompletionReceipt(move, itemCount, destination, skipped));
     }
 
     private void OnFileProgressCancelRequested(TransferOperationViewModel operation)
@@ -193,12 +212,15 @@ public sealed partial class MainWindow
         CloseTransferProgressWindow();
     }
 
-    private TransferProgressWindow EnsureTransferProgressWindow()
+    private TransferProgressWindow EnsureTransferProgressWindow(out bool created)
     {
+        created = false;
         if (_transferProgressWindow is { IsClosed: false } existing)
         {
             return existing;
         }
+
+        created = true;
 
         var window = new TransferProgressWindow();
         window.CancelRequested += OnFileProgressCancelRequested;

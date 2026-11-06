@@ -90,16 +90,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnGitCloseRequested(object? sender, EventArgs e)
-    {
-        if (sender is GitWorkbenchView view && IsGitWorkbenchDetached && ReferenceEquals(view, _gitWorkbenchWindow!.WorkbenchView))
-        {
-            CloseGitPanel();
-            return;
-        }
-
-        CloseGitPanel();
-    }
+    private void OnGitCloseRequested(object? sender, EventArgs e) => CloseGitPanel();
 
     private async void OnGitWorkbenchSelectionChanged(object? sender, EventArgs e)
     {
@@ -135,6 +126,7 @@ public sealed partial class MainWindow
         }
 
         _gitPanelOpen = true;
+        RefreshGitToggleState();
         if (IsGitWorkbenchDetached)
         {
             _gitWorkbenchWindow!.Activate();
@@ -156,6 +148,7 @@ public sealed partial class MainWindow
         }
 
         _gitPanelOpen = true;
+        RefreshGitToggleState();
         GitPanel.Visibility = Visibility.Collapsed;
         _gitWorkbenchModel.SetHostMode(detached: true);
 
@@ -178,6 +171,7 @@ public sealed partial class MainWindow
         }
 
         _gitPanelOpen = true;
+        RefreshGitToggleState();
         _gitWorkbenchModel.SetHostMode(detached: false);
         CloseGitWorkbenchWindow(forDock: true);
         GitPanel.Visibility = Visibility.Visible;
@@ -187,6 +181,7 @@ public sealed partial class MainWindow
     private void CloseGitPanel()
     {
         _gitPanelOpen = false;
+        RefreshGitToggleState();
         GitPanel.Visibility = Visibility.Collapsed;
         CloseGitWorkbenchWindow(forDock: false);
         _gitCts?.Cancel();
@@ -236,6 +231,7 @@ public sealed partial class MainWindow
         if (!_closingGitWorkbenchWindowForDock)
         {
             _gitPanelOpen = false;
+        RefreshGitToggleState();
             _gitWorkbenchModel.SetHostMode(detached: false);
             _gitDiffCts?.Cancel();
             _gitDiffCts = null;
@@ -298,12 +294,16 @@ public sealed partial class MainWindow
         catch (OperationCanceledException)
         {
         }
-        catch (Exception exception) when (silent)
+        catch (Exception exception)
         {
             _gitStatus = null;
             _gitStatusPath = workspace.Active.Path;
             _gitWorkbenchModel.SetUnavailable(exception.Message);
             RefreshGitActionButtons();
+            if (!silent)
+            {
+                throw;
+            }
         }
         finally
         {
@@ -316,10 +316,14 @@ public sealed partial class MainWindow
         }
     }
 
+    private void RefreshGitToggleState() =>
+        SetToggleChromeState(GitToggleButton, _gitPanelOpen, "Hide Git workbench", "Show Git workbench");
+
     private void RefreshGitUiVisibility()
     {
         var enabled = IsGitIntegrationEnabled;
         GitToggleButton.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        RefreshGitToggleState();
         if (!enabled)
         {
             CloseGitPanel();
@@ -571,7 +575,7 @@ public sealed partial class MainWindow
         };
         input.Loaded += (_, _) => input.Focus(FocusState.Programmatic);
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -601,21 +605,28 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("RunGitRepositoryCommandAsync");
+        _gitWorkbenchModel.SetCommandRunning(true);
         try
         {
             SetStatusText($"Running git {verb}...");
             var result = await action(fileOps, workspace.Active.Path, utilityCts.Token);
             if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
             {
+                SetStatusText($"git {verb} was cancelled.");
                 return;
             }
 
             ShowMessage("Git", GitResultMessage(result), InfoBarSeverity.Success);
             await RefreshAfterGitCommandAsync(workspace, utilityCts.Token, refreshListing);
         }
+        catch (OperationCanceledException)
+        {
+            SetStatusText($"git {verb} was cancelled.");
+        }
         finally
         {
+            _gitWorkbenchModel.SetCommandRunning(false);
             FinishUtilityOperation(utilityCts);
         }
     }
@@ -647,21 +658,28 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("RunGitPathsCommandAsync");
+        _gitWorkbenchModel.SetCommandRunning(true);
         try
         {
             SetStatusText($"Running git {verb}...");
             var result = await action(fileOps, workspace.Active.Path, selectedPaths, utilityCts.Token);
             if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
             {
+                SetStatusText($"git {verb} was cancelled.");
                 return;
             }
 
             ShowMessage("Git", GitResultMessage(result), InfoBarSeverity.Success);
             await RefreshAfterGitCommandAsync(workspace, utilityCts.Token, refreshListing);
         }
+        catch (OperationCanceledException)
+        {
+            SetStatusText($"git {verb} was cancelled.");
+        }
         finally
         {
+            _gitWorkbenchModel.SetCommandRunning(false);
             FinishUtilityOperation(utilityCts);
         }
     }
@@ -733,6 +751,6 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Close,
         };
 
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        return await DialogHost.ShowAsync(dialog) == ContentDialogResult.Primary;
     }
 }

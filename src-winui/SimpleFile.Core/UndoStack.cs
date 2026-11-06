@@ -127,28 +127,46 @@ public sealed class UndoStack
     public void PushMove(IReadOnlyList<TransferResult> transferred, FileOperationService ops)
     {
         var items = transferred.ToArray();
+        // Per-item bookkeeping lets a failed undo be retried for the items still in place
+        // instead of failing forever on the ones already restored.
+        var restored = new bool[items.Length];
         Push(new UndoEntry
         {
             Description = $"Move {items.Length} item(s)",
             Undo = async ct =>
             {
-                foreach (var item in Enumerable.Reverse(items))
+                for (var index = items.Length - 1; index >= 0; index--)
                 {
-                    var parent = PathRules.GetParentPath(item.Source);
-                    if (parent is null)
+                    if (restored[index])
                     {
                         continue;
                     }
 
+                    var item = items[index];
+                    var parent = PathRules.GetParentPath(item.Source);
+                    if (parent is null)
+                    {
+                        restored[index] = true;
+                        continue;
+                    }
+
                     await ops.MoveEntryResolvedAsync(item.Destination, parent, "rename", ct).ConfigureAwait(false);
+                    restored[index] = true;
                 }
             },
             Redo = async ct =>
             {
-                foreach (var item in items)
+                for (var index = 0; index < items.Length; index++)
                 {
+                    if (!restored[index])
+                    {
+                        continue;
+                    }
+
+                    var item = items[index];
                     var parent = PathRules.GetParentPath(item.Destination) ?? item.Destination;
                     await ops.MoveEntryResolvedAsync(item.Source, parent, "rename", ct).ConfigureAwait(false);
+                    restored[index] = false;
                 }
             },
         });

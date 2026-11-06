@@ -39,29 +39,6 @@ internal sealed class OperationLogController
         }
     }
 
-    public async Task<IReadOnlyList<string>> RetryOperationAsync(
-        FileOperationService? fileOps,
-        OperationRecord record,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(record);
-        if (fileOps is null || record.Sources.Length == 0 || string.IsNullOrWhiteSpace(record.Destination))
-        {
-            return [];
-        }
-
-        if (record.Move)
-        {
-            await fileOps.MoveAsync(record.Sources, record.Destination, "keep-both", ct: cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            await fileOps.CopyAsync(record.Sources, record.Destination, "keep-both", ct: cancellationToken).ConfigureAwait(false);
-        }
-
-        return TransferAffectedPaths(record.Sources, record.Destination, record.Move);
-    }
-
     public static IReadOnlyList<string> TransferAffectedPaths(string[] sources, string destination, bool move)
     {
         List<string> paths = [];

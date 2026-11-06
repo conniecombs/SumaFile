@@ -178,7 +178,7 @@ internal static class TransferOptionsDialog
                 SecondaryButtonText = operation is null ? "" : "Use defaults",
                 DefaultButton = ContentDialogButton.Primary,
             };
-            var result = await dialog.ShowAsync();
+            var result = await DialogHost.ShowAsync(dialog);
             if (result == ContentDialogResult.None) return;
             TransferPolicy? updated = result == ContentDialogResult.Secondary
                 ? null
@@ -218,13 +218,13 @@ internal static class TransferOptionsDialog
         }
         catch (Exception error)
         {
-            await new ContentDialog
+            await DialogHost.ShowAsync(new ContentDialog
             {
                 XamlRoot = root,
                 Title = "Transfer options could not be saved",
                 Content = error.Message,
                 CloseButtonText = "Close",
-            }.ShowAsync();
+            });
         }
     }
 

@@ -36,7 +36,7 @@ public sealed partial class MainWindow
         await SmokeWaitAsync(() => workspace.FilterQueryFor(PaneId.Secondary) == "", "clear second filter");
         workspace.ActivatePane(PaneId.Primary);
         _search!.IsPathIndexedCheck = _ => false;
-        SearchBox.Text = "file-0000";
+        _search.Query = "file-0000";
         await StartSearchAsync(PaneId.Primary);
         SmokeAssert(_search.IsActive && PrimaryPane.ContextBar.Visibility == Visibility.Visible, "Search has no persistent return banner");
         SmokeInvoke(PrimaryPane.ContextBar.ReturnButton);

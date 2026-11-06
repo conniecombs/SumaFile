@@ -156,13 +156,175 @@ internal static partial class PreviewHtmlRenderer
         return $"""<pre><code data-language="{WebUtility.HtmlEncode(language)}">{encoded}</code></pre>""";
     }
 
+    // Allowlist sanitizer (build_notes/2026-07-17-markdown-preview-sanitization.md): only the listed
+    // tags survive, with a per-tag attribute allowlist; links keep http/https/mailto/fragment hrefs
+    // only; everything else is dropped. Unknown tags lose their markup but keep their text, while
+    // script-like elements lose their content as well.
+    private static readonly HashSet<string> AllowedTags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "h1", "h2", "h3", "h4", "h5", "h6", "p", "blockquote", "ul", "ol", "li", "dl", "dt", "dd",
+        "pre", "code", "kbd", "em", "strong", "b", "i", "del", "s", "sup", "sub",
+        "table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td",
+        "a", "hr", "br", "input",
+    };
+
+    private static readonly HashSet<string> VoidTags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "hr", "br", "input",
+    };
+
+    private static readonly HashSet<string> DropContentTags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "script", "style", "iframe", "object", "embed", "noscript", "template", "title",
+        "svg", "math", "textarea", "select", "head", "frameset", "frame",
+    };
+
+    private static readonly HashSet<string> GlobalAttributes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "class", "title", "id",
+    };
+
+    private static readonly Dictionary<string, HashSet<string>> TagAttributes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["a"] = new(StringComparer.OrdinalIgnoreCase) { "href" },
+        ["input"] = new(StringComparer.OrdinalIgnoreCase) { "type", "checked", "disabled" },
+        ["ol"] = new(StringComparer.OrdinalIgnoreCase) { "start" },
+        ["td"] = new(StringComparer.OrdinalIgnoreCase) { "colspan", "rowspan", "align" },
+        ["th"] = new(StringComparer.OrdinalIgnoreCase) { "colspan", "rowspan", "align" },
+        ["code"] = new(StringComparer.OrdinalIgnoreCase) { "data-language" },
+    };
+
     private static string SanitizeHtmlFragment(string html)
     {
-        var cleaned = UnsafeElementRegex().Replace(html, "");
-        cleaned = EventAttributeRegex().Replace(cleaned, "");
-        cleaned = DangerousUrlRegex().Replace(cleaned, "$1#");
-        cleaned = DangerousCssRegex().Replace(cleaned, "");
-        return cleaned;
+        var output = new StringBuilder(html.Length);
+        var position = 0;
+        while (position < html.Length)
+        {
+            var match = HtmlTokenRegex().Match(html, position);
+            if (!match.Success)
+            {
+                output.Append(html, position, html.Length - position);
+                break;
+            }
+
+            output.Append(html, position, match.Index - position);
+            position = match.Index + match.Length;
+            if (!match.Groups[2].Success)
+            {
+                // Comment, doctype, CDATA or processing instruction: dropped.
+                continue;
+            }
+
+            var closing = match.Groups[1].Value == "/";
+            var name = match.Groups[2].Value.ToLowerInvariant();
+            if (DropContentTags.Contains(name))
+            {
+                if (!closing)
+                {
+                    var close = Regex.Match(html[position..], "<\\s*/\\s*" + name + "\\s*>", RegexOptions.IgnoreCase);
+                    position = close.Success ? position + close.Index + close.Length : html.Length;
+                }
+
+                continue;
+            }
+
+            if (!AllowedTags.Contains(name))
+            {
+                continue;
+            }
+
+            if (closing)
+            {
+                if (!VoidTags.Contains(name))
+                {
+                    output.Append("</").Append(name).Append('>');
+                }
+
+                continue;
+            }
+
+            output.Append('<').Append(name);
+            AppendAllowedAttributes(output, name, match.Groups[3].Value);
+            output.Append('>');
+        }
+
+        return output.ToString();
+    }
+
+    private static void AppendAllowedAttributes(StringBuilder output, string tag, string rawAttributes)
+    {
+        if (string.IsNullOrWhiteSpace(rawAttributes))
+        {
+            return;
+        }
+
+        TagAttributes.TryGetValue(tag, out var tagAllowed);
+        foreach (Match attribute in AttributeRegex().Matches(rawAttributes))
+        {
+            var attributeName = attribute.Groups[1].Value.ToLowerInvariant();
+            var hasValue = attribute.Groups[2].Success;
+            var value = attribute.Groups[3].Success ? attribute.Groups[3].Value
+                : attribute.Groups[4].Success ? attribute.Groups[4].Value
+                : attribute.Groups[5].Value;
+            value = WebUtility.HtmlDecode(value);
+
+            if (attributeName == "style" && tag is "td" or "th")
+            {
+                var align = Regex.Match(value, "text-align\\s*:\\s*(left|right|center)", RegexOptions.IgnoreCase);
+                if (align.Success)
+                {
+                    output.Append(" align=\"").Append(align.Groups[1].Value.ToLowerInvariant()).Append('"');
+                }
+
+                continue;
+            }
+
+            var allowed = GlobalAttributes.Contains(attributeName) || tagAllowed?.Contains(attributeName) == true;
+            if (!allowed)
+            {
+                continue;
+            }
+
+            if (attributeName == "href" && !IsAllowedHref(value))
+            {
+                continue;
+            }
+
+            if (attributeName is "start" or "colspan" or "rowspan" && !int.TryParse(value, out _))
+            {
+                continue;
+            }
+
+            if (value.Length > 2048)
+            {
+                continue;
+            }
+
+            output.Append(' ').Append(attributeName);
+            if (hasValue)
+            {
+                output.Append("=\"").Append(WebUtility.HtmlEncode(value)).Append('"');
+            }
+        }
+    }
+
+    private static bool IsAllowedHref(string value)
+    {
+        var compact = new string(value.Where(ch => !char.IsControl(ch) && !char.IsWhiteSpace(ch)).ToArray());
+        if (compact.StartsWith('#'))
+        {
+            return true;
+        }
+
+        var colon = compact.IndexOf(':');
+        if (colon <= 0)
+        {
+            // Relative links would resolve against the preview document and are not useful here.
+            return false;
+        }
+
+        var scheme = compact[..colon].ToLowerInvariant();
+        return scheme is "http" or "https" or "mailto";
     }
 
     private static List<string> SplitDelimitedLine(string line, char delimiter)
@@ -205,15 +367,9 @@ internal static partial class PreviewHtmlRenderer
     private static IEnumerable<string> NormalizeLines(string text) =>
         text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
 
-    [GeneratedRegex("<\\s*(script|iframe|object|embed|link|meta)[^>]*>.*?<\\s*/\\s*\\1\\s*>|<\\s*(script|iframe|object|embed|link|meta)[^>]*/?\\s*>", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
-    private static partial Regex UnsafeElementRegex();
+    [GeneratedRegex("<!--.*?-->|<!\\[CDATA\\[.*?\\]\\]>|<![^>]*>|<\\?[^>]*>|<(/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>", RegexOptions.Singleline)]
+    private static partial Regex HtmlTokenRegex();
 
-    [GeneratedRegex("\\s+on[a-z]+\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)", RegexOptions.IgnoreCase)]
-    private static partial Regex EventAttributeRegex();
-
-    [GeneratedRegex("(href|src)\\s*=\\s*(\"|')?\\s*(javascript:|data:text/html)", RegexOptions.IgnoreCase)]
-    private static partial Regex DangerousUrlRegex();
-
-    [GeneratedRegex("@import\\s+url|expression\\s*\\(", RegexOptions.IgnoreCase)]
-    private static partial Regex DangerousCssRegex();
+    [GeneratedRegex("([a-zA-Z_:][-a-zA-Z0-9_:.]*)\\s*(=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s\"'>]+)))?")]
+    private static partial Regex AttributeRegex();
 }

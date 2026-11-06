@@ -39,11 +39,6 @@ public sealed partial class MainWindow
         SetStatusText($"Showing items tagged {tag.Name}");
     }
 
-    private void OnClearTagFilter(object sender, RoutedEventArgs e)
-    {
-        ClearTagFilter();
-    }
-
     private void ClearTagFilter()
     {
         if (_workspace is null)
@@ -147,7 +142,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var query = ActiveToolbarSearchTextBox().Text.Trim();
+        var query = (_search?.ExecutedQuery is { Length: > 0 } executed ? executed : ActiveSearchQuery).Trim();
         if (string.IsNullOrWhiteSpace(query))
         {
             ShowMessage("Smart folder", "Run a search before saving it as a smart folder.", InfoBarSeverity.Informational);
@@ -163,7 +158,7 @@ public sealed partial class MainWindow
             CloseButtonText = "Cancel",
             XamlRoot = Content.XamlRoot,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(nameBox.Text))
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(nameBox.Text))
         {
             return;
         }
@@ -183,7 +178,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("OnSaveSmartFolder");
         try
         {
             await workspace.SaveCurrentSearchAsSmartFolderAsync(nameBox.Text.Trim(), options, utilityCts.Token);
@@ -209,7 +204,7 @@ public sealed partial class MainWindow
     {
         var workspace = _workspace;
         if (workspace == null || sender is not FrameworkElement fe || fe.Tag is not string folderId) return;
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("OnDeleteSmartFolderClicked");
         try
         {
             await workspace.DeleteSmartFolderAsync(folderId, utilityCts.Token);

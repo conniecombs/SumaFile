@@ -295,18 +295,4 @@ internal sealed class WorkspaceFileOpsController
         }
     }
 
-    public async Task RetryOperationAsync(
-        ExplorerWorkspace workspace,
-        OperationRecord record,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(workspace);
-        var affected = await workspace.OperationLogController
-            .RetryOperationAsync(workspace.FileOps, record, cancellationToken)
-            .ConfigureAwait(false);
-        if (affected.Count > 0)
-        {
-            await workspace.RefreshAffectedPanesAsync(affected, cancellationToken).ConfigureAwait(false);
-        }
-    }
 }

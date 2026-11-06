@@ -6,7 +6,7 @@
     PrimaryButtonText="Replace"
     SecondaryButtonText="Skip"
     CloseButtonText="Cancel transfer"
-    DefaultButton="Close">
+    DefaultButton="Secondary">
     <StackPanel Spacing="12">
         <TextBlock x:Name="OperationSummary" FontWeight="SemiBold" TextWrapping="Wrap" />
         <TextBlock x:Name="DestinationSummary" TextWrapping="Wrap" />

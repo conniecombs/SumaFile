@@ -108,6 +108,34 @@ public static class AppCommandCatalog
         new("git-diff-selected", "Git: show selected diff", "Git"),
     ];
 
+    /// <summary>
+    /// Returns the commands with their displayed shortcut taken from the effective keyboard map
+    /// (defaults plus the user's overrides). Commands with no binding show none.
+    /// </summary>
+    public static IReadOnlyList<AppCommand> WithEffectiveShortcuts(
+        IEnumerable<AppCommand> commands,
+        IDictionary<string, List<string>>? overrides)
+    {
+        var effective = KeyboardShortcutMap.EffectiveShortcuts(overrides)
+            .ToDictionary(
+                assignment => assignment.Id,
+                assignment => assignment.Shortcuts.Count > 0 ? assignment.Keys : "",
+                StringComparer.Ordinal);
+        return commands
+            .Select(command =>
+            {
+                var shortcutId = CommandShortcutMap.ShortcutIdFor(command.Id);
+                if (shortcutId is null)
+                {
+                    return command;
+                }
+
+                var keys = effective.TryGetValue(shortcutId, out var value) ? value : "";
+                return new AppCommand(command.Id, command.Label, command.Group, keys);
+            })
+            .ToList();
+    }
+
     public static IReadOnlyList<AppCommand> Filter(string? query)
     {
         var needle = (query ?? "").Trim();

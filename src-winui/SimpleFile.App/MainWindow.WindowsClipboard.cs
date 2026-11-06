@@ -11,6 +11,59 @@ public sealed partial class MainWindow
         string[] SourcePaths,
         bool IsInternal);
 
+    /// <summary>
+    /// Custom clipboard format carrying the <see cref="ClipboardState.Stamp"/> of the export, so the
+    /// app can tell whether the system clipboard still holds what SumaFile last copied.
+    /// </summary>
+    private const string ClipboardStampFormat = "SumaFile.ClipboardStamp";
+
+    private void AttachWindowsClipboard()
+    {
+        Clipboard.ContentChanged += OnWindowsClipboardContentChanged;
+    }
+
+    private void DetachWindowsClipboard()
+    {
+        Clipboard.ContentChanged -= OnWindowsClipboardContentChanged;
+    }
+
+    private void OnWindowsClipboardContentChanged(object? sender, object e)
+    {
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            var workspace = _workspace;
+            if (workspace is null || !workspace.Clipboard.HasItems)
+            {
+                return;
+            }
+
+            var stamp = await TryReadWindowsClipboardStampAsync();
+            workspace.Clipboard.ReconcileWith(stamp);
+            if (!workspace.Clipboard.HasItems)
+            {
+                SyncFromWorkspace();
+            }
+        });
+    }
+
+    private static async Task<string?> TryReadWindowsClipboardStampAsync()
+    {
+        try
+        {
+            var content = Clipboard.GetContent();
+            if (!content.Contains(ClipboardStampFormat))
+            {
+                return null;
+            }
+
+            return await content.GetDataAsync(ClipboardStampFormat) as string;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static bool HasWindowsFileClipboardContent()
     {
         try
@@ -26,7 +79,8 @@ public sealed partial class MainWindow
 
     private static async Task<bool> TrySetWindowsFileClipboardAsync(
         string[] paths,
-        ClipboardOperation operation)
+        ClipboardOperation operation,
+        string stamp)
     {
         try
         {
@@ -38,6 +92,7 @@ public sealed partial class MainWindow
             };
 
             package.SetText(string.Join(Environment.NewLine, paths));
+            package.SetData(ClipboardStampFormat, stamp);
 
             var items = new List<IStorageItem>();
             foreach (var path in paths)

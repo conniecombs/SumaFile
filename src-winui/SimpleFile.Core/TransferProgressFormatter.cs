@@ -30,14 +30,27 @@ public sealed record TransferProgressDisplay(
 
 public static class TransferProgressFormatter
 {
-    public static string CompletionReceipt(bool move, int itemCount, string? destination)
+    public static string CompletionReceipt(bool move, int itemCount, string? destination) =>
+        CompletionReceipt(move, itemCount, destination, skipped: 0);
+
+    /// <summary>
+    /// "Copied 6 of 10 items to X (4 skipped)" when conflicts were skipped, so a partial
+    /// transfer is not reported as a full success.
+    /// </summary>
+    public static string CompletionReceipt(bool move, int itemCount, string? destination, int skipped)
     {
         var verb = move ? "Moved" : "Copied";
-        var noun = itemCount == 1 ? "item" : "items";
-        var receipt = $"{verb} {itemCount} {noun}";
-        return string.IsNullOrWhiteSpace(destination)
-            ? receipt
-            : $"{receipt} to {destination}";
+        var total = itemCount + Math.Max(0, skipped);
+        var noun = total == 1 ? "item" : "items";
+        var receipt = skipped > 0
+            ? $"{verb} {itemCount} of {total} {noun}"
+            : $"{verb} {itemCount} {noun}";
+        if (!string.IsNullOrWhiteSpace(destination))
+        {
+            receipt = $"{receipt} to {destination}";
+        }
+
+        return skipped > 0 ? $"{receipt} ({skipped} skipped)" : receipt;
     }
 
     public static string SkippedReceipt(bool move, int itemCount, string? destination)

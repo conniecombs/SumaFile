@@ -24,7 +24,6 @@ public sealed class UiSettings
     public bool ConfirmDelete { get; set; } = true;
     public bool KeepFoldersOnTop { get; set; } = true;
     public bool OpenInNewTab { get; set; }
-    public bool AutoCollapseTree { get; set; }
     public bool ShowQuickAccess { get; set; } = true;
     public bool ShowFolderTree { get; set; }
     public bool ShowBookmarks { get; set; } = true;

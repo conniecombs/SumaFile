@@ -14,7 +14,6 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition x:Name="PrimarySearchColumn" Width="Auto" />
                                 <ColumnDefinition x:Name="PrimaryActionsColumn" Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
@@ -56,7 +55,7 @@
                                 x:Name="OmnibarHost"
                                 Grid.Column="1"
                                 MinWidth="280"
-                                MaxWidth="760"
+                                MaxWidth="900"
                                 HorizontalAlignment="Stretch"
                                 VerticalAlignment="Center">
                                 <TextBox
@@ -68,7 +67,8 @@
                                     GotFocus="OnOmnibarGotFocus"
                                     KeyDown="OnOmnibarKeyDown"
                                     LostFocus="OnOmnibarLostFocus"
-                                    PlaceholderText="Path, search, filter, or command" />
+                                    TextChanged="OnOmnibarTextChanged"
+                                    PlaceholderText="Path · >command · ?search · ~filter" />
                                 <StackPanel
                                     Margin="2,0,0,0"
                                     HorizontalAlignment="Left"
@@ -77,6 +77,7 @@
                                     Spacing="1">
                                     <ToggleButton
                                         x:Name="OmnibarPathModeButton"
+                                    AllowFocusOnInteraction="False"
                                         Width="28"
                                         Height="28"
                                         MinWidth="28"
@@ -92,6 +93,7 @@
                                     </ToggleButton>
                                     <ToggleButton
                                         x:Name="OmnibarSearchModeButton"
+                                    AllowFocusOnInteraction="False"
                                         Width="28"
                                         Height="28"
                                         MinWidth="28"
@@ -106,6 +108,7 @@
                                     </ToggleButton>
                                     <ToggleButton
                                         x:Name="OmnibarFilterModeButton"
+                                    AllowFocusOnInteraction="False"
                                         Width="28"
                                         Height="28"
                                         MinWidth="28"
@@ -120,6 +123,7 @@
                                     </ToggleButton>
                                     <ToggleButton
                                         x:Name="OmnibarCommandModeButton"
+                                    AllowFocusOnInteraction="False"
                                         Width="28"
                                         Height="28"
                                         MinWidth="28"
@@ -133,58 +137,15 @@
                                         <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE945;" />
                                     </ToggleButton>
                                 </StackPanel>
-                                <Button
-                                    x:Name="OmnibarExecuteButton"
-                                    Width="28"
-                                    Height="28"
-                                    Margin="0,0,2,0"
-                                    Padding="0"
-                                    HorizontalAlignment="Right"
-                                    VerticalAlignment="Center"
-                                    AutomationProperties.Name="Run Omnibar input"
-                                    Click="OnOmnibarExecuteClick"
-                                    Style="{StaticResource SfIconButtonStyle}"
-                                    ToolTipService.ToolTip="Run">
-                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE76C;" />
-                                </Button>
-                            </Grid>
-                            <Grid
-                                x:Name="PrimarySearchHost"
-                                Grid.Column="2"
-                                Width="260"
-                                MinWidth="260"
-                                MaxWidth="480">
-                                <TextBox
-                                    x:Name="SearchBox"
-                                    Padding="30,4,56,4"
-                                    VerticalAlignment="Center"
-                                    AutomationProperties.Name="Find in folder"
-                                    CornerRadius="6"
-                                    KeyDown="OnSearchKeyDown"
-                                    PlaceholderText="Find in folder" />
-                                <Button
-                                    Width="28"
-                                    Height="28"
-                                    Margin="2,0,0,0"
-                                    Padding="0"
-                                    HorizontalAlignment="Left"
-                                    VerticalAlignment="Center"
-                                    AutomationProperties.Name="Find in folder"
-                                    Click="OnSearchClick"
-                                    Style="{StaticResource SfIconButtonStyle}"
-                                    ToolTipService.ToolTip="Find in folder">
-                                    <FontIcon
-                                        FontFamily="{StaticResource SfIconFont}"
-                                        FontSize="12"
-                                        Glyph="&#xE721;" />
-                                </Button>
                                 <StackPanel
                                     Margin="0,0,2,0"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center"
-                                    Orientation="Horizontal">
+                                    Orientation="Horizontal"
+                                    Spacing="1">
                                     <ToggleButton
                                         x:Name="ContentSearchButton"
+                                        AllowFocusOnInteraction="False"
                                         Width="28"
                                         Height="28"
                                         MinWidth="28"
@@ -194,14 +155,13 @@
                                         BorderThickness="0"
                                         AutomationProperties.Name="Search file contents"
                                         Click="OnContentSearchToggle"
-                                        ToolTipService.ToolTip="Search file contents">
-                                        <FontIcon
-                                            FontFamily="{StaticResource SfIconFont}"
-                                            FontSize="12"
-                                            Glyph="&#xE8A5;" />
+                                        ToolTipService.ToolTip="Search file contents"
+                                        Visibility="Collapsed">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE8A5;" />
                                     </ToggleButton>
                                     <Button
                                         x:Name="SearchCancelButton"
+                                        AllowFocusOnInteraction="False"
                                         Width="28"
                                         Height="28"
                                         Padding="0"
@@ -209,30 +169,29 @@
                                         Click="OnCancelSearchClick"
                                         IsEnabled="False"
                                         Style="{StaticResource SfIconButtonStyle}"
-                                        ToolTipService.ToolTip="Cancel search">
-                                        <FontIcon
-                                            FontFamily="{StaticResource SfIconFont}"
-                                            FontSize="11"
-                                            Glyph="&#xE711;" />
+                                        ToolTipService.ToolTip="Cancel search"
+                                        Visibility="Collapsed">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="11" Glyph="&#xE711;" />
+                                    </Button>
+                                    <Button
+                                        x:Name="OmnibarExecuteButton"
+                                        AllowFocusOnInteraction="False"
+                                        Width="28"
+                                        Height="28"
+                                        Padding="0"
+                                        AutomationProperties.Name="Run Omnibar input"
+                                        Click="OnOmnibarExecuteClick"
+                                        Style="{StaticResource SfIconButtonStyle}"
+                                        ToolTipService.ToolTip="Run">
+                                        <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="12" Glyph="&#xE76C;" />
                                     </Button>
                                 </StackPanel>
                             </Grid>
                             <StackPanel
                                 x:Name="PrimaryActionsHost"
-                                Grid.Column="3"
+                                Grid.Column="2"
                                 Orientation="Horizontal"
                                 Spacing="2">
-                                <TextBox
-                                    x:Name="QuickFilterBox"
-                                    Width="128"
-                                    MinWidth="128"
-                                    MaxWidth="200"
-                                    Margin="4,0,6,0"
-                                    VerticalAlignment="Center"
-                                    AutomationProperties.Name="Filter current list"
-                                    Style="{StaticResource SfTextBoxStyle}"
-                                    PlaceholderText="Filter list"
-                                    TextChanged="OnQuickFilterChanged" />
                                 <Button
                                     x:Name="PrimaryNewButton"
                                     Style="{StaticResource SfToolbarButtonStyle}"
@@ -244,7 +203,7 @@
                                                 Text="Folder"
                                                 Tag="new:folder"
                                                 Click="OnNewMenuItemClick"
-                                                KeyboardAcceleratorTextOverride="Ctrl+Shift+N">
+                                                x:Name="NewFolderMenuItem">
                                                 <MenuFlyoutItem.Icon>
                                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8F4;" />
                                                 </MenuFlyoutItem.Icon>
@@ -254,7 +213,7 @@
                                                 Text="Text document"
                                                 Tag="new:text"
                                                 Click="OnNewMenuItemClick"
-                                                KeyboardAcceleratorTextOverride="Ctrl+N">
+                                                x:Name="NewTextMenuItem">
                                                 <MenuFlyoutItem.Icon>
                                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
                                                 </MenuFlyoutItem.Icon>
@@ -278,7 +237,7 @@
                                     Style="{StaticResource SfToolbarButtonStyle}"
                                     AutomationProperties.Name="Open second pane"
                                     Click="OnToggleDualPane"
-                                    ToolTipService.ToolTip="Open second pane (F6)">
+                                    ToolTipService.ToolTip="Open second pane">
                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A0;" />
                                 </Button>
                                 <Button
@@ -517,13 +476,13 @@
                                     Style="{StaticResource SfToolbarButtonStyle}"
                                     AutomationProperties.Name="Settings"
                                     Click="OnSettingsClicked"
-                                    ToolTipService.ToolTip="Settings (Ctrl+Shift+S)">
+                                    ToolTipService.ToolTip="Settings">
                                     <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE713;" />
                                 </Button>
                             </StackPanel>
                             <Button
                                 x:Name="PrimaryMoreButton"
-                                Grid.Column="4"
+                                Grid.Column="3"
                                 Style="{StaticResource SfToolbarButtonStyle}"
                                 AutomationProperties.Name="More"
                                 ToolTipService.ToolTip="More">

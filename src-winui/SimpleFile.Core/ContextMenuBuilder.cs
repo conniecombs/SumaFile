@@ -120,8 +120,8 @@ public static class ContextMenuBuilder
         }
 
         entries.Add(ToolbarMenu(request));
-        entries.Add(Item("ftp-sftp-manager", "FTP/SFTP Manager..."));
-        entries.Add(Item("operation-history", "Operation history..."));
+        entries.Add(Item("overflow-ftp-sftp-manager", "FTP/SFTP Manager..."));
+        entries.Add(Item("overflow-operation-history", "Operation history..."));
         entries.Add(Item("overflow-profiles", "Manage workspace profiles..."));
         entries.Add(Divider());
 
@@ -167,16 +167,6 @@ public static class ContextMenuBuilder
             overflowed.Contains(id);
 
         var items = new List<ContextMenuEntry>();
-        if (Has(ToolbarOverflowPlanner.Search))
-        {
-            items.Add(Item("overflow-search", "Find in folder", shortcut: "Ctrl+F"));
-        }
-
-        if (Has(ToolbarOverflowPlanner.Filter))
-        {
-            items.Add(Item("overflow-filter", "Filter list"));
-        }
-
         var actionOrder = request.ToolbarActionOrder.Count == 0
             ? CommandSurfaceLayout.DefaultPrimaryActionIds
             : request.ToolbarActionOrder;

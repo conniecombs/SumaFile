@@ -220,19 +220,14 @@ public class WinUiSourceShapeTests
     {
         var root = FindRepoRoot();
         var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
-        var primaryPane = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PrimaryPaneView.xaml"));
-        var secondaryPane = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "SecondaryPaneView.xaml"));
+        var paneView = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PaneView.xaml"));
 
-        Assert.Contains("x:Name=\"PrimaryColumnHeaderViewport\"", primaryPane);
-        Assert.Contains("x:Name=\"PrimaryFileSurface\"", primaryPane);
-        Assert.Contains("x:Name=\"PrimaryColumnHeader\"", primaryPane);
-        Assert.Contains("x:Name=\"PrimaryDetailsFileList\"", primaryPane);
-        Assert.Contains("x:Name=\"PrimaryFileList\"", primaryPane);
-        Assert.Contains("x:Name=\"PrimaryDetailsHorizontalScrollBar\"", primaryPane);
-        Assert.Contains("x:Name=\"SecondaryColumnHeaderViewport\"", secondaryPane);
-        Assert.Contains("x:Name=\"SecondaryFileSurface\"", secondaryPane);
-        Assert.Contains("x:Name=\"SecondaryDetailsFileList\"", secondaryPane);
-        Assert.Contains("x:Name=\"SecondaryDetailsHorizontalScrollBar\"", secondaryPane);
+        Assert.Contains("x:Name=\"PartColumnHeaderViewport\"", paneView);
+        Assert.Contains("x:Name=\"PartFileSurface\"", paneView);
+        Assert.Contains("x:Name=\"PartColumnHeader\"", paneView);
+        Assert.Contains("x:Name=\"PartDetailsFileList\"", paneView);
+        Assert.Contains("x:Name=\"PartFileList\"", paneView);
+        Assert.Contains("x:Name=\"PartDetailsHorizontalScrollBar\"", paneView);
         Assert.Contains("PrimaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
         Assert.Contains("SecondaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
         Assert.Contains("PrimaryPane.DetailsHorizontalScrollChanged += OnPrimaryDetailsHorizontalScrollChanged", mainWindow);
@@ -335,8 +330,7 @@ public class WinUiSourceShapeTests
         {
             "SidebarView",
             "PrimaryToolbarView",
-            "PrimaryPaneView",
-            "SecondaryPaneView",
+            "PaneView",
             "PreviewPaneView",
         })
         {
@@ -446,7 +440,7 @@ public class WinUiSourceShapeTests
         Assert.Contains("Current view options", toolbar);
         Assert.Contains("Save view defaults", toolbar);
         Assert.Contains("SaveFolderViewSettingsFromFlyoutAsync", commands);
-        Assert.Contains("ActiveToolbarSearchTextBox", commands);
+        Assert.Contains("ActiveSearchQuery", commands);
         Assert.DoesNotContain("SearchTextBoxFor", commands);
         Assert.Contains("EffectiveFolderViewRuleFor", workspace);
         Assert.Contains("FolderViewSettingsDocument.SettingsKey", settingsStore);
@@ -481,7 +475,7 @@ public class WinUiSourceShapeTests
         Assert.Contains("x:Class=\"SimpleFile.App.SettingsWindow\"", settingsXaml);
         Assert.Contains("<NavigationView", settingsXaml);
         Assert.Contains("SettingsNavigation", settingsCode);
-        Assert.Contains("presenter.IsResizable = true;", settingsCode);
+        Assert.Contains("SecondaryWindowChrome.Apply(this, \"Settings\"", settingsCode);
         Assert.Contains("new SettingsWindow", dialogService);
         Assert.Contains("LoadSettingsAsync(fileOps, workspace.Settings", dialogService);
         Assert.Contains("SettingsWindow.SettingsState.cs", Directory.EnumerateFiles(appRoot, "SettingsWindow*.cs").Select(Path.GetFileName));
@@ -523,8 +517,8 @@ public class WinUiSourceShapeTests
         Assert.Contains("CloseGitWorkbenchWindow", mainWindowCode);
         Assert.Contains("SetHostMode(detached: true)", mainWindowCode);
         Assert.Contains("SetHostMode(detached: false)", mainWindowCode);
-        Assert.Contains("AppWindow.Resize(new SizeInt32(1180, 740))", workbenchWindow);
-        Assert.Contains("presenter.IsResizable = true;", workbenchWindow);
+        Assert.Contains("SecondaryWindowChrome.Apply(this, \"Git Workbench\", 1180, 740)", workbenchWindow);
+        Assert.Contains("presenter.IsResizable = true;", File.ReadAllText(Path.Combine(appRoot, "SecondaryWindowChrome.cs")));
         Assert.Contains("DiffPreviewColumn", workbenchXaml);
         Assert.Contains("Resize Git diff preview", workbenchXaml);
         Assert.Contains("HostActionText", workbenchXaml);
@@ -831,7 +825,7 @@ public class WinUiSourceShapeTests
         var transfer = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Transfer.cs"));
 
         Assert.Contains("var canRegisterUndo = !string.Equals(action, \"replace\", StringComparison.OrdinalIgnoreCase);", transfer);
-        Assert.Contains("if (canRegisterUndo", transfer);
+        Assert.Contains("if (!canRegisterUndo || committedAll.Count == 0", transfer);
     }
 
     [Fact]

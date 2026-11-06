@@ -171,7 +171,8 @@ internal static class FileListThumbnailHost
 
         if (isVideo || ForegroundTaskScheduler.Shared.IsForegroundActive)
         {
-            await ForegroundTaskScheduler.Shared.YieldOrThrottleAsync(cancellationToken).ConfigureAwait(false);
+            // Stay on the UI context: the loaders below construct XAML image sources.
+            await ForegroundTaskScheduler.Shared.YieldOrThrottleAsync(cancellationToken);
             if (cache.TryGetValue(key, out cached))
             {
                 return cached;

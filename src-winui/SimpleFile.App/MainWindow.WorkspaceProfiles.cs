@@ -276,7 +276,7 @@ public sealed partial class MainWindow
             XamlRoot = Content.XamlRoot,
         };
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -418,7 +418,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = Content.XamlRoot,
         };
-        return await dialog.ShowAsync();
+        return await DialogHost.ShowAsync(dialog);
     }
 
     private async Task PromptResetWorkspaceProfileAsync(string id)
@@ -452,7 +452,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = Content.XamlRoot,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -494,7 +494,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = Content.XamlRoot,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -558,7 +558,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
         {
             return null;
         }
@@ -636,62 +636,60 @@ public sealed partial class MainWindow
             UpdateButtons();
         }
 
+        var dialog = new ContentDialog
+        {
+            Title = "Workspace profiles",
+            CloseButtonText = "Close",
+            XamlRoot = Content.XamlRoot,
+        };
+
+        // Sub-prompts are ContentDialogs too, and only one may be open per XamlRoot. Each action
+        // therefore hides the manager, runs after it has closed, and the manager is shown again.
+        Func<Task>? pendingAction = null;
+        void Defer(Func<WorkspaceProfile, Task> action)
+        {
+            if (SelectedProfile() is { } profile)
+            {
+                pendingAction = () => action(profile);
+                dialog.Hide();
+            }
+        }
+
         list.SelectionChanged += (_, _) => UpdateButtons();
-        apply.Click += async (_, _) =>
+        apply.Click += (_, _) => Defer(async profile =>
         {
-            if (SelectedProfile() is { } profile)
-            {
-                await ApplyWorkspaceProfileByIdAsync(profile.Id);
-                await RefreshListAsync(profile.Id);
-            }
-        };
-        duplicate.Click += async (_, _) =>
+            await ApplyWorkspaceProfileByIdAsync(profile.Id);
+            await RefreshListAsync(profile.Id);
+        });
+        duplicate.Click += (_, _) => Defer(async profile =>
         {
-            if (SelectedProfile() is { } profile)
-            {
-                await PromptDuplicateWorkspaceProfileAsync(profile.Id);
-                await RefreshListAsync(_workspace.ActiveProfileId);
-            }
-        };
-        rename.Click += async (_, _) =>
+            await PromptDuplicateWorkspaceProfileAsync(profile.Id);
+            await RefreshListAsync(_workspace.ActiveProfileId);
+        });
+        rename.Click += (_, _) => Defer(async profile =>
         {
-            if (SelectedProfile() is { } profile)
-            {
-                await PromptRenameWorkspaceProfileAsync(profile.Id);
-                await RefreshListAsync(profile.Id);
-            }
-        };
-        overwrite.Click += async (_, _) =>
+            await PromptRenameWorkspaceProfileAsync(profile.Id);
+            await RefreshListAsync(profile.Id);
+        });
+        overwrite.Click += (_, _) => Defer(async profile =>
         {
-            if (SelectedProfile() is { } profile)
-            {
-                await PromptOverwriteWorkspaceProfileAsync(profile.Id);
-                await RefreshListAsync(profile.Id);
-            }
-        };
-        export.Click += async (_, _) =>
+            await PromptOverwriteWorkspaceProfileAsync(profile.Id);
+            await RefreshListAsync(profile.Id);
+        });
+        export.Click += (_, _) => Defer(async profile =>
         {
-            if (SelectedProfile() is { } profile)
-            {
-                await PromptExportWorkspaceProfileAsync(profile.Id);
-            }
-        };
-        reset.Click += async (_, _) =>
+            await PromptExportWorkspaceProfileAsync(profile.Id);
+        });
+        reset.Click += (_, _) => Defer(async profile =>
         {
-            if (SelectedProfile() is { } profile)
-            {
-                await PromptResetWorkspaceProfileAsync(profile.Id);
-                await RefreshListAsync(profile.Id);
-            }
-        };
-        delete.Click += async (_, _) =>
+            await PromptResetWorkspaceProfileAsync(profile.Id);
+            await RefreshListAsync(profile.Id);
+        });
+        delete.Click += (_, _) => Defer(async profile =>
         {
-            if (SelectedProfile() is { } profile)
-            {
-                await PromptDeleteWorkspaceProfileAsync(profile.Id);
-                await RefreshListAsync();
-            }
-        };
+            await PromptDeleteWorkspaceProfileAsync(profile.Id);
+            await RefreshListAsync();
+        });
 
         foreach (var button in new[] { apply, duplicate, rename, overwrite, export, reset, delete })
         {
@@ -722,15 +720,24 @@ public sealed partial class MainWindow
             Children = { list, buttons },
         };
         await RefreshListAsync();
+        dialog.Content = body;
 
-        var dialog = new ContentDialog
+        while (true)
         {
-            Title = "Workspace profiles",
-            Content = body,
-            CloseButtonText = "Close",
-            XamlRoot = Content.XamlRoot,
-        };
-        await dialog.ShowAsync();
+            await DialogHost.ShowAsync(dialog);
+            if (pendingAction is null)
+            {
+                return;
+            }
+
+            var action = pendingAction;
+            pendingAction = null;
+            await action();
+            if (_workspace is null)
+            {
+                return;
+            }
+        }
     }
 
     private static void AddProfileManagerButton(Grid host, Button button, int row, int column)

@@ -1,0 +1,92 @@
+namespace SimpleFile.Core;
+
+/// <summary>
+/// Every palette/toolbar/context command id, so callers reference constants instead of
+/// scattering string literals (the catalog, alias table, routers and tests all agree).
+/// </summary>
+public static class CommandIds
+{
+    public const string GoHome = "go-home";
+    public const string GoRecycleBin = "go-recycle-bin";
+    public const string RestoreSelected = "restore-selected";
+    public const string EmptyRecycleBin = "empty-recycle-bin";
+    public const string GoBack = "go-back";
+    public const string GoForward = "go-forward";
+    public const string GoUp = "go-up";
+    public const string FocusPath = "focus-path";
+    public const string Refresh = "refresh";
+    public const string Copy = "copy";
+    public const string Cut = "cut";
+    public const string Paste = "paste";
+    public const string CopyPath = "copy-path";
+    public const string ClipboardHistory = "clipboard-history";
+    public const string OperationHistory = "operation-history";
+    public const string Transfers = "transfers";
+    public const string ClearRecentHistory = "clear-recent-history";
+    public const string Undo = "undo";
+    public const string Redo = "redo";
+    public const string Delete = "delete";
+    public const string DeletePermanent = "delete-permanent";
+    public const string Rename = "rename";
+    public const string AdvancedRename = "advanced-rename";
+    public const string NewFolder = "new-folder";
+    public const string NewFile = "new-file";
+    public const string NewShortcut = "new-shortcut";
+    public const string CreateArchive = "create-archive";
+    public const string Terminal = "terminal";
+    public const string FtpSftpManager = "ftp-sftp-manager";
+    public const string Preview = "preview";
+    public const string ToggleHidden = "toggle-hidden";
+    public const string ToggleSideMenu = "toggle-side-menu";
+    public const string DualPane = "dual-pane";
+    public const string SwitchPane = "switch-pane";
+    public const string CloseLeftPane = "close-left-pane";
+    public const string CopyToPane = "copy-to-pane";
+    public const string MoveToPane = "move-to-pane";
+    public const string ProfileManage = "profile-manage";
+    public const string ProfileSave = "profile-save";
+    public const string ProfileStandard = "profile-standard";
+    public const string ProfileDeveloper = "profile-developer";
+    public const string ProfilePhotos = "profile-photos";
+    public const string ProfileTransfer = "profile-transfer";
+    public const string ProfileMinimal = "profile-minimal";
+    public const string CustomizeToolbar = "customize-toolbar";
+    public const string ToggleToolbarLabels = "toggle-toolbar-labels";
+    public const string ViewDetails = "view-details";
+    public const string ViewList = "view-list";
+    public const string ViewTiles = "view-tiles";
+    public const string ViewContent = "view-content";
+    public const string IconSizeSmall = "icon-size-small";
+    public const string IconSizeMedium = "icon-size-medium";
+    public const string IconSizeLarge = "icon-size-large";
+    public const string IconSizeExtraLarge = "icon-size-extra-large";
+    public const string IconSizeJumbo = "icon-size-jumbo";
+    public const string IconSizeHuge = "icon-size-huge";
+    public const string IconSizeMaximum = "icon-size-maximum";
+    public const string Search = "search";
+    public const string Filter = "filter";
+    public const string QuickLook = "quick-look";
+    public const string OpenSelectedTab = "open-selected-tab";
+    public const string OpenOtherPane = "open-other-pane";
+    public const string ReopenClosedTab = "reopen-closed-tab";
+    public const string Properties = "properties";
+    public const string ColorLabel = "color-label";
+    public const string ClearTagFilter = "clear-tag-filter";
+    public const string BookmarkFolder = "bookmark-folder";
+    public const string FolderMetrics = "folder-metrics";
+    public const string DiskCleanup = "disk-cleanup";
+    public const string DuplicateChecker = "duplicate-checker";
+    public const string Settings = "settings";
+    public const string CommandPalette = "command-palette";
+    public const string KeyboardHelp = "keyboard-help";
+    public const string GitPanel = "git-panel";
+    public const string GitRefresh = "git-refresh";
+    public const string GitFetch = "git-fetch";
+    public const string GitPull = "git-pull";
+    public const string GitPush = "git-push";
+    public const string GitCommit = "git-commit";
+    public const string GitStageSelected = "git-stage-selected";
+    public const string GitUnstageSelected = "git-unstage-selected";
+    public const string GitDiscardSelected = "git-discard-selected";
+    public const string GitDiffSelected = "git-diff-selected";
+}

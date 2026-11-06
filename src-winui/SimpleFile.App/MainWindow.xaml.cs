@@ -50,7 +50,7 @@ public sealed partial class MainWindow : Window
     private TransferProgressWindow? _transferProgressWindow;
     private RemoteManagerWindow? _remoteManagerWindow;
     private CancellationTokenSource? _archiveCts;
-    private CancellationTokenSource? _utilityCts;
+    private readonly UtilityOperationRegistry _utilityOperations = new();
     private bool _applyingWorkspace;
     private int _folderRefreshToken;
     private CancellationTokenSource? _folderRefreshCts;
@@ -173,7 +173,7 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         ApplyCaptionButtonColors(ElementTheme.Default);
-        AppWindow.Resize(new SizeInt32(1280, 840));
+        SecondaryWindowChrome.Resize(this, 1280, 840);
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.IsResizable = true;
@@ -330,6 +330,7 @@ public sealed partial class MainWindow : Window
             _transfer.PropertyChanged += OnTransferPropertyChanged;
         }
 
+        AttachWindowsClipboard();
     }
 
     private void DetachViewModels()
@@ -347,6 +348,7 @@ public sealed partial class MainWindow : Window
             _transfer.PropertyChanged -= OnTransferPropertyChanged;
         }
 
+        DetachWindowsClipboard();
     }
 
     private void OnBackendDisconnected(object? sender, Exception? error)
@@ -633,18 +635,21 @@ public sealed partial class MainWindow : Window
 
         if (!string.IsNullOrEmpty(_workspace.ErrorMessage))
         {
-            ShowMessage("Could not open folder", _workspace.ErrorMessage, InfoBarSeverity.Error);
+            ShowSyncMessage("Could not open folder", _workspace.ErrorMessage, InfoBarSeverity.Error);
         }
         else if (_workspace.FileOpenUnsupported)
         {
-            ShowMessage(
+            ShowSyncMessage(
                 "Open file",
                 _workspace.StatusMessage ?? "No file operation service is available to open this file.",
                 InfoBarSeverity.Informational);
         }
-        else
+        else if (_messageBarOwnedBySync)
         {
+            // Only messages this sync opened are closed by it; explicit messages stay until
+            // the user dismisses them.
             MessageBar.IsOpen = false;
+            _messageBarOwnedBySync = false;
         }
 
         QueueWatchActiveDirectory();
@@ -790,8 +795,6 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        ApplyResponsiveToolbarSizing(toolbarWidth);
-
         var reserved = MeasuredWidth(PrimaryNavHost)
             + MeasuredWidth(PrimaryMoreButton)
             + OmnibarHost.MinWidth
@@ -809,12 +812,6 @@ public sealed partial class MainWindow : Window
             ToolbarOverflowPlanner.PrimaryHideOrderFor(layout));
 
         ApplyOverflowSet(_primaryToolbarOverflow, overflowed, ApplyPrimaryOverflowVisibility);
-    }
-
-    private void ApplyResponsiveToolbarSizing(double toolbarWidth)
-    {
-        SetWidthIfChanged(PrimarySearchHost, ToolbarOverflowPlanner.SearchWidthFor(toolbarWidth));
-        SetWidthIfChanged(QuickFilterBox, ToolbarOverflowPlanner.FilterWidthFor(toolbarWidth));
     }
 
     private void ApplyOverflowSet(
@@ -846,10 +843,6 @@ public sealed partial class MainWindow : Window
 
     private void ApplyPrimaryOverflowVisibility(IReadOnlySet<string> overflowed)
     {
-        SetOverflowVisible(QuickFilterBox, !overflowed.Contains(ToolbarOverflowPlanner.Filter));
-        var searchVisible = !overflowed.Contains(ToolbarOverflowPlanner.Search);
-        SetOverflowVisible(PrimarySearchHost, searchVisible);
-        PrimarySearchColumn.Width = searchVisible ? GridLength.Auto : new GridLength(0);
         ApplyPrimaryToolbarCommandVisibility(overflowed);
         SetOverflowVisible(ClosePrimaryPaneButton, false);
         var actionsVisible = HasVisiblePrimaryToolbarAction();
@@ -906,11 +899,6 @@ public sealed partial class MainWindow : Window
         var closing = _workspace.DualPaneEnabled;
         await _workspace.ToggleDualPaneAsync();
         SetStatusText(closing ? "Right pane closed" : "Second pane opened");
-    }
-
-    private async Task CloseDualPaneFromUiAsync()
-    {
-        await CloseFilePaneFromUiAsync(PaneId.Secondary);
     }
 
     private async Task CloseFilePaneFromUiAsync(PaneId pane)
@@ -1071,7 +1059,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var result = await dialog.ShowAsync();
+            var result = await DialogHost.ShowAsync(dialog);
             if (!ReferenceEquals(_workspace, workspace) || reconnectCts.IsCancellationRequested)
             {
                 return;
@@ -1098,13 +1086,22 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private bool _messageBarOwnedBySync;
+
     private void ShowMessage(string title, string message, InfoBarSeverity severity)
     {
+        _messageBarOwnedBySync = false;
         MessageBar.Title = title;
         MessageBar.Message = message;
         MessageBar.Severity = severity;
         MessageBar.IsOpen = true;
         SetStatusText(message);
+    }
+
+    private void ShowSyncMessage(string title, string message, InfoBarSeverity severity)
+    {
+        ShowMessage(title, message, severity);
+        _messageBarOwnedBySync = true;
     }
 
     private async Task RunUiActionAsync(string title, Func<Task> action)
@@ -1146,29 +1143,15 @@ public sealed partial class MainWindow : Window
         _archiveCts = null;
     }
 
-    private CancellationTokenSource BeginUtilityOperation()
-    {
-        _utilityCts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _utilityCts = cts;
-        return cts;
-    }
+    /// <summary>
+    /// Starts a cancellable utility operation. Only a repeat of the same <paramref name="kind"/>
+    /// cancels the previous one; unrelated operations run side by side.
+    /// </summary>
+    private CancellationTokenSource BeginUtilityOperation(string kind) => _utilityOperations.Begin(kind);
 
-    private void FinishUtilityOperation(CancellationTokenSource cts)
-    {
-        if (ReferenceEquals(_utilityCts, cts))
-        {
-            _utilityCts = null;
-        }
+    private void FinishUtilityOperation(CancellationTokenSource cts) => _utilityOperations.Finish(cts);
 
-        cts.Dispose();
-    }
-
-    private void CancelUtilityOperation()
-    {
-        _utilityCts?.Cancel();
-        _utilityCts = null;
-    }
+    private void CancelUtilityOperation() => _utilityOperations.CancelAll();
 
     private void CancelNetworkReconnectPrompt()
     {
@@ -1341,6 +1324,7 @@ public sealed partial class MainWindow : Window
         CloseGitWorkbenchWindow(forDock: false);
         _previewPresenter.CancelPending();
         CancelNetworkReconnectPrompt();
+        _fileOperationDialogs.CloseSettingsWindow();
         CancelUtilityOperation();
         CancelArchiveOperation();
         _transfer?.Reset();

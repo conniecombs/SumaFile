@@ -99,6 +99,46 @@ public sealed class TypeAheadBuffer
 
 public static class TypeAhead
 {
+    /// <summary>
+    /// Maps a WinUI <c>VirtualKey</c> name to a type-ahead character: letters, digits (top row
+    /// and numeric keypad) and Backspace. Chords with Ctrl/Alt/Win never type.
+    /// </summary>
+    public static bool TryMapKey(string? virtualKeyName, bool hasCommandModifier, out char character)
+    {
+        character = '\0';
+        if (hasCommandModifier || string.IsNullOrEmpty(virtualKeyName))
+        {
+            return false;
+        }
+
+        if (virtualKeyName.Length == 1 && char.IsLetter(virtualKeyName[0]))
+        {
+            character = char.ToLowerInvariant(virtualKeyName[0]);
+            return true;
+        }
+
+        const string numberPad = "NumberPad";
+        const string number = "Number";
+        var digits = virtualKeyName.StartsWith(numberPad, StringComparison.Ordinal)
+            ? virtualKeyName[numberPad.Length..]
+            : virtualKeyName.StartsWith(number, StringComparison.Ordinal)
+                ? virtualKeyName[number.Length..]
+                : null;
+        if (digits is { Length: 1 } && char.IsAsciiDigit(digits[0]))
+        {
+            character = digits[0];
+            return true;
+        }
+
+        if (virtualKeyName == "Back")
+        {
+            character = '\b';
+            return true;
+        }
+
+        return false;
+    }
+
     public static int MatchIndex(IReadOnlyList<FileEntry> entries, string buffer)
     {
         if (string.IsNullOrEmpty(buffer) || entries.Count == 0)

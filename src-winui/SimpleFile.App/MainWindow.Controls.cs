@@ -39,7 +39,6 @@ public sealed partial class MainWindow
     private ListView TagsList => SidebarPanel.Tags;
 
     private Grid PrimaryToolbar => PrimaryToolbarPanel.ToolbarRoot;
-    private ColumnDefinition PrimarySearchColumn => PrimaryToolbarPanel.SearchColumn;
     private ColumnDefinition PrimaryActionsColumn => PrimaryToolbarPanel.ActionsColumn;
     private StackPanel PrimaryNavHost => PrimaryToolbarPanel.NavHost;
     private Button PrimarySidebarToggleButton => PrimaryToolbarPanel.SidebarToggleButton;
@@ -52,13 +51,12 @@ public sealed partial class MainWindow
     private ToggleButton OmnibarSearchModeButton => PrimaryToolbarPanel.OmnibarSearchMode;
     private ToggleButton OmnibarFilterModeButton => PrimaryToolbarPanel.OmnibarFilterMode;
     private ToggleButton OmnibarCommandModeButton => PrimaryToolbarPanel.OmnibarCommandMode;
-    private Grid PrimarySearchHost => PrimaryToolbarPanel.SearchHost;
-    private TextBox SearchBox => PrimaryToolbarPanel.SearchTextBox;
     private ToggleButton ContentSearchButton => PrimaryToolbarPanel.ContentSearchToggle;
     private Button SearchCancelButton => PrimaryToolbarPanel.SearchCancel;
     private StackPanel PrimaryActionsHost => PrimaryToolbarPanel.ActionsHost;
-    private TextBox QuickFilterBox => PrimaryToolbarPanel.QuickFilterTextBox;
     private Button PrimaryNewButton => PrimaryToolbarPanel.NewButton;
+    private MenuFlyoutItem NewFolderMenuItem => PrimaryToolbarPanel.NewFolderItem;
+    private MenuFlyoutItem NewTextMenuItem => PrimaryToolbarPanel.NewTextItem;
     private Button DualPaneButton => PrimaryToolbarPanel.DualPaneToggleButton;
     private Button ClosePrimaryPaneButton => PrimaryToolbarPanel.ClosePaneButton;
     private Button WorkspaceProfileButton => PrimaryToolbarPanel.ProfileButton;
@@ -192,11 +190,9 @@ public sealed partial class MainWindow
         PrimaryToolbarPanel.OmnibarModeRequested += OnOmnibarModeRequested;
         PrimaryToolbarPanel.OmnibarGotFocus += OnOmnibarGotFocus;
         PrimaryToolbarPanel.OmnibarLostFocus += OnOmnibarLostFocus;
-        PrimaryToolbarPanel.SearchKeyDown += OnSearchKeyDown;
-        PrimaryToolbarPanel.SearchClick += OnSearchClick;
+        PrimaryToolbarPanel.OmnibarTextChanged += OnOmnibarTextChanged;
         PrimaryToolbarPanel.ContentSearchToggleClick += OnContentSearchToggle;
         PrimaryToolbarPanel.CancelSearchClick += OnCancelSearchClick;
-        PrimaryToolbarPanel.QuickFilterChanged += OnQuickFilterChanged;
         PrimaryToolbarPanel.PrimaryNewItemRequested += OnPrimaryNewItemRequested;
         PrimaryToolbarPanel.ToggleDualPane += OnToggleDualPane;
         PrimaryToolbarPanel.ClosePrimaryPane += OnClosePrimaryPane;

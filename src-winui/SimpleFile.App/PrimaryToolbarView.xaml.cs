@@ -14,7 +14,6 @@ public sealed partial class PrimaryToolbarView : UserControl
     }
 
     public Grid ToolbarRoot => PrimaryToolbar;
-    public ColumnDefinition SearchColumn => PrimarySearchColumn;
     public ColumnDefinition ActionsColumn => PrimaryActionsColumn;
     public StackPanel NavHost => PrimaryNavHost;
     public Button SidebarToggleButton => PrimarySidebarToggleButton;
@@ -28,12 +27,9 @@ public sealed partial class PrimaryToolbarView : UserControl
     public ToggleButton OmnibarFilterMode => OmnibarFilterModeButton;
     public ToggleButton OmnibarCommandMode => OmnibarCommandModeButton;
     public Button OmnibarExecute => OmnibarExecuteButton;
-    public Grid SearchHost => PrimarySearchHost;
-    public TextBox SearchTextBox => SearchBox;
     public ToggleButton ContentSearchToggle => ContentSearchButton;
     public Button SearchCancel => SearchCancelButton;
     public StackPanel ActionsHost => PrimaryActionsHost;
-    public TextBox QuickFilterTextBox => QuickFilterBox;
     public Button NewButton => PrimaryNewButton;
     public Button DualPaneToggleButton => DualPaneButton;
     public Button ClosePaneButton => ClosePrimaryPaneButton;
@@ -56,6 +52,8 @@ public sealed partial class PrimaryToolbarView : UserControl
     public Button ViewSaveProfile => ViewSaveProfileButton;
     public StackPanel ViewProfilesList => ViewProfilesHost;
     public Button SettingsButton => PrimarySettingsButton;
+    public MenuFlyoutItem NewFolderItem => NewFolderMenuItem;
+    public MenuFlyoutItem NewTextItem => NewTextMenuItem;
     public Button MoreButton => PrimaryMoreButton;
 
     public event SizeChangedEventHandler? PrimaryToolbarSizeChanged;
@@ -68,11 +66,9 @@ public sealed partial class PrimaryToolbarView : UserControl
     public event EventHandler<OmnibarMode>? OmnibarModeRequested;
     public event RoutedEventHandler? OmnibarGotFocus;
     public event RoutedEventHandler? OmnibarLostFocus;
-    public event KeyEventHandler? SearchKeyDown;
-    public event RoutedEventHandler? SearchClick;
+    public event TextChangedEventHandler? OmnibarTextChanged;
     public event RoutedEventHandler? ContentSearchToggleClick;
     public event RoutedEventHandler? CancelSearchClick;
-    public event TextChangedEventHandler? QuickFilterChanged;
     public event EventHandler<string>? PrimaryNewItemRequested;
     public event RoutedEventHandler? ToggleDualPane;
     public event RoutedEventHandler? ClosePrimaryPane;
@@ -122,15 +118,12 @@ public sealed partial class PrimaryToolbarView : UserControl
 
     private void OnOmnibarLostFocus(object sender, RoutedEventArgs e) => OmnibarLostFocus?.Invoke(sender, e);
 
-    private void OnSearchKeyDown(object sender, KeyRoutedEventArgs e) => SearchKeyDown?.Invoke(sender, e);
-
-    private void OnSearchClick(object sender, RoutedEventArgs e) => SearchClick?.Invoke(sender, e);
+    private void OnOmnibarTextChanged(object sender, TextChangedEventArgs e) => OmnibarTextChanged?.Invoke(sender, e);
 
     private void OnContentSearchToggle(object sender, RoutedEventArgs e) => ContentSearchToggleClick?.Invoke(sender, e);
 
     private void OnCancelSearchClick(object sender, RoutedEventArgs e) => CancelSearchClick?.Invoke(sender, e);
 
-    private void OnQuickFilterChanged(object sender, TextChangedEventArgs e) => QuickFilterChanged?.Invoke(sender, e);
 
     private void OnNewMenuItemClick(object sender, RoutedEventArgs e)
     {

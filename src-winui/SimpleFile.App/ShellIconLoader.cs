@@ -5,6 +5,7 @@ using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SimpleFile.Core;
 
@@ -32,6 +33,9 @@ internal static class ShellIconLoader
 
     public static BoundedLruCacheStats CacheStats => Cache.SnapshotStats();
 
+    /// <summary>Raised on the UI thread when a file-specific icon has replaced its placeholder.</summary>
+    public static event EventHandler? Changed;
+
     public static int InvalidatePath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -57,30 +61,49 @@ internal static class ShellIconLoader
 
             // Use SHGFI_USEFILEATTRIBUTES (useAttributes: true) for the initial call.
             // This never touches the filesystem and returns instantly.
-            var icon = LoadFromSystemImageList(path, isDirectory, requestedSize, useAttributes: true)
-                ?? Load(path, isDirectory, requestedSize, useAttributes: true)
-                ?? CreateFallbackIcon(path, isDirectory, requestedSize);
+            var png = LoadFromSystemImageListPng(path, isDirectory, requestedSize, useAttributes: true)
+                ?? LoadPng(path, isDirectory, requestedSize, useAttributes: true);
+            var icon = png is null
+                ? CreateFallbackIcon(path, isDirectory, requestedSize)
+                : PngToBitmapImage(png, requestedSize);
             Cache.Set(cacheKey, icon, ThumbnailCacheKey.EstimateDecodedBytes(requestedSize, cacheKey));
 
-            // For file-specific icons, queue async extraction in the background.
-            // The cache entry will be updated when the real icon arrives.
-            if (fileSpecific)
+            // File-specific icons (exe, lnk, ico...) need the real file: extract the pixels on the
+            // thread pool, then build the XAML image on the UI thread and tell realized rows.
+            if (fileSpecific && DispatcherQueue.GetForCurrentThread() is { } dispatcher)
             {
                 _ = Task.Run(() =>
                 {
+                    byte[]? realPng;
                     try
                     {
-                        var realIcon = LoadFromSystemImageList(path, isDirectory, requestedSize, useAttributes: false)
-                            ?? Load(path, isDirectory, requestedSize, useAttributes: false);
-                        if (realIcon is not null)
-                        {
-                            Cache.Set(cacheKey, realIcon, ThumbnailCacheKey.EstimateDecodedBytes(requestedSize, cacheKey));
-                        }
+                        realPng = LoadFromSystemImageListPng(path, isDirectory, requestedSize, useAttributes: false)
+                            ?? LoadPng(path, isDirectory, requestedSize, useAttributes: false);
                     }
                     catch
                     {
                         // Best-effort; keep the extension-based icon.
+                        return;
                     }
+
+                    if (realPng is null)
+                    {
+                        return;
+                    }
+
+                    dispatcher.TryEnqueue(() =>
+                    {
+                        try
+                        {
+                            var realIcon = PngToBitmapImage(realPng, requestedSize);
+                            Cache.Set(cacheKey, realIcon, ThumbnailCacheKey.EstimateDecodedBytes(requestedSize, cacheKey));
+                            Changed?.Invoke(null, EventArgs.Empty);
+                        }
+                        catch
+                        {
+                            // Keep the placeholder icon.
+                        }
+                    });
                 });
             }
 
@@ -112,9 +135,11 @@ internal static class ShellIconLoader
 
             // Avoid Directory.Exists() which triggers network I/O. Instead, infer
             // from path shape unless the caller already knows this is a directory.
-            var icon = LoadFromSystemImageList(path, treatAsDirectory, requestedSize, useAttributes: true)
-                ?? Load(path, treatAsDirectory, requestedSize, useAttributes: true)
-                ?? CreateFallbackIcon(path, treatAsDirectory, requestedSize);
+            var png = LoadFromSystemImageListPng(path, treatAsDirectory, requestedSize, useAttributes: true)
+                ?? LoadPng(path, treatAsDirectory, requestedSize, useAttributes: true);
+            var icon = png is null
+                ? CreateFallbackIcon(path, treatAsDirectory, requestedSize)
+                : PngToBitmapImage(png, requestedSize);
             Cache.Set(cacheKey, icon, ThumbnailCacheKey.EstimateDecodedBytes(requestedSize, cacheKey));
             return icon;
         }
@@ -286,7 +311,7 @@ internal static class ShellIconLoader
         };
     }
 
-    private static BitmapImage? Load(string path, bool isDirectory, int iconSize, bool useAttributes = true)
+    private static byte[]? LoadPng(string path, bool isDirectory, int iconSize, bool useAttributes = true)
     {
         var info = new ShFileInfo();
         var attributes = isDirectory ? FileAttributeDirectory : FileAttributeNormal;
@@ -313,7 +338,7 @@ internal static class ShellIconLoader
 
             using var icon = Icon.FromHandle(info.hIcon);
             using var bitmap = icon.ToBitmap();
-            return BitmapToBitmapImage(bitmap, iconSize);
+            return BitmapToPng(bitmap, iconSize);
         }
         catch
         {
@@ -325,7 +350,7 @@ internal static class ShellIconLoader
         }
     }
 
-    private static BitmapImage? LoadFromSystemImageList(string path, bool isDirectory, int iconSize, bool useAttributes)
+    private static byte[]? LoadFromSystemImageListPng(string path, bool isDirectory, int iconSize, bool useAttributes)
     {
         IImageList? imageList = null;
         try
@@ -360,7 +385,7 @@ internal static class ShellIconLoader
             }
 
             return imageList.GetIcon(info.iIcon, IldTransparent, out var hIcon) == 0 && hIcon != IntPtr.Zero
-                ? IconToBitmapImage(hIcon, iconSize)
+                ? IconToPng(hIcon, iconSize)
                 : null;
         }
         catch
@@ -376,13 +401,13 @@ internal static class ShellIconLoader
         }
     }
 
-    private static BitmapImage? IconToBitmapImage(IntPtr hIcon, int iconSize)
+    private static byte[]? IconToPng(IntPtr hIcon, int iconSize)
     {
         try
         {
             using var icon = Icon.FromHandle(hIcon);
             using var bitmap = icon.ToBitmap();
-            return BitmapToBitmapImage(bitmap, iconSize);
+            return BitmapToPng(bitmap, iconSize);
         }
         catch
         {
@@ -394,15 +419,22 @@ internal static class ShellIconLoader
         }
     }
 
-    private static BitmapImage BitmapToBitmapImage(Bitmap bitmap, int iconSize)
+    /// <summary>GDI work only; safe on any thread.</summary>
+    private static byte[] BitmapToPng(Bitmap bitmap, int iconSize)
     {
         using var normalized = NormalizeIconBitmap(bitmap, iconSize);
         using var memory = new MemoryStream();
         normalized.Save(memory, ImageFormat.Png);
-        memory.Position = 0;
+        return memory.ToArray();
+    }
+
+    /// <summary>Creates the XAML image source; must run on the UI thread.</summary>
+    private static BitmapImage PngToBitmapImage(byte[] png, int iconSize)
+    {
+        using var memory = new MemoryStream(png);
         var image = new BitmapImage
         {
-            DecodePixelWidth = normalized.Width,
+            DecodePixelWidth = Math.Clamp(iconSize, UiSettings.IconSizeMin, UiSettings.IconSizeMax),
             DecodePixelType = DecodePixelType.Physical,
         };
         image.SetSource(memory.AsRandomAccessStream());

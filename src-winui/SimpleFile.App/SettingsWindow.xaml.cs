@@ -110,18 +110,10 @@ public sealed partial class SettingsWindow : Window
     {
         _initialCategory = NormalizeCategoryName(initialCategory);
         InitializeComponent();
-        Title = "Settings";
-        AppIcon.ApplyTo(this);
-        SystemBackdrop = new MicaBackdrop();
-        AppWindow.Resize(new SizeInt32(1120, 760));
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = true;
-            presenter.IsMinimizable = true;
-        }
+        SecondaryWindowChrome.Apply(this, "Settings", 1120, 760);
 
         Closed += OnClosed;
+        AppWindow.Closing += OnAppWindowClosing;
         SelectInitialCategory();
         UpdateDefaultIconSizeValueText(DefaultIconSize);
         _shortcutRows = KeyboardShortcutMap.Defaults
@@ -689,8 +681,42 @@ public sealed partial class SettingsWindow : Window
         Close();
     }
 
+    public bool IsClosed { get; private set; }
+
+    private bool _discardConfirmed;
+
+    private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_result == ContentDialogResult.Primary || _discardConfirmed || !HasUnsavedChanges)
+        {
+            return;
+        }
+
+        args.Cancel = true;
+        var dialog = new ContentDialog
+        {
+            Title = "Discard changes?",
+            Content = "You have unsaved settings changes.",
+            PrimaryButtonText = "Discard",
+            CloseButtonText = "Keep editing",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await DialogHost.ShowAsync(dialog) == ContentDialogResult.Primary)
+        {
+            _discardConfirmed = true;
+            Close();
+        }
+    }
+
+    private void OnRestoreDefaultsClicked(object sender, RoutedEventArgs e)
+    {
+        ApplySettingsSnapshot(UiSettings.CreateDefault());
+    }
+
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        IsClosed = true;
         _resultSource.TrySetResult(_result);
     }
 }

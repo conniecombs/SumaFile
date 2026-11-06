@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using System.Text.Json;
 using SimpleFile.Core;
 using Windows.Storage.Pickers;
 
@@ -66,7 +67,36 @@ public sealed partial class SettingsWindow
     {
         _fileOps = fileOps;
         ApplySettingsSnapshot(settings);
+        _loadedSettingsJson = JsonSerializer.Serialize(settings);
+        _loadedStateJson = CurrentStateJson();
         await LoadVersionAsync(fileOps, cancellationToken).ConfigureAwait(true);
+    }
+
+    private string? _loadedSettingsJson;
+    private string? _loadedStateJson;
+
+    /// <summary>True when the controls no longer match the settings that were loaded.</summary>
+    public bool HasUnsavedChanges =>
+        _loadedStateJson is not null
+        && !string.Equals(CurrentStateJson(), _loadedStateJson, StringComparison.Ordinal);
+
+    private string? CurrentStateJson()
+    {
+        if (_loadedSettingsJson is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var probe = JsonSerializer.Deserialize<UiSettings>(_loadedSettingsJson) ?? new UiSettings();
+            ApplyTo(probe);
+            return JsonSerializer.Serialize(probe);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private void ApplySettingsSnapshot(UiSettings settings)

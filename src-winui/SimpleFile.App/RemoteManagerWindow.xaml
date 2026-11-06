@@ -116,6 +116,7 @@
                             Click="OnNewProfileClicked"
                             IsEnabled="{Binding CanCreateProfile}"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="New remote profile"
                             ToolTipService.ToolTip="New remote profile">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -127,6 +128,7 @@
                             Click="OnEditProfileClicked"
                             IsEnabled="{Binding CanEditProfile}"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Edit selected remote profile"
                             ToolTipService.ToolTip="Edit selected remote profile">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -138,6 +140,7 @@
                             Click="OnDeleteProfileClicked"
                             IsEnabled="{Binding CanDeleteProfile}"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Delete selected remote profile"
                             ToolTipService.ToolTip="Delete selected remote profile">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -202,6 +205,7 @@
                             Grid.Column="1"
                             Click="OnLocalUpClicked"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Go to parent local folder"
                             ToolTipService.ToolTip="Go to parent local folder">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -212,6 +216,7 @@
                             Grid.Column="2"
                             Click="OnChooseLocalFolderClicked"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Choose local folder"
                             ToolTipService.ToolTip="Choose local folder">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -223,6 +228,7 @@
                             Click="OnUploadSelectedLocalEntriesClicked"
                             IsEnabled="{Binding CanUseWorkspaceTransfers}"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Upload selected local files to remote pane"
                             ToolTipService.ToolTip="Upload selected local files to remote pane">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -233,6 +239,7 @@
                             Grid.Column="4"
                             Click="OnRefreshLocalClicked"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Refresh local folder"
                             ToolTipService.ToolTip="Refresh local folder">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -307,6 +314,7 @@
                             Click="OnRemoteUpClicked"
                             IsEnabled="{Binding CanMutateRemoteEntries}"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Go to parent remote folder"
                             ToolTipService.ToolTip="Go to parent remote folder">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -318,6 +326,7 @@
                             Click="OnCreateRemoteDirectoryClicked"
                             IsEnabled="{Binding CanMutateRemoteEntries}"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Create remote folder"
                             ToolTipService.ToolTip="Create remote folder">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -329,6 +338,7 @@
                             Click="OnUploadSelectedLocalEntriesClicked"
                             IsEnabled="{Binding CanUseWorkspaceTransfers}"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Upload selected local files to remote pane"
                             ToolTipService.ToolTip="Upload selected local files to remote pane">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -340,6 +350,7 @@
                             Click="OnDownloadSelectedRemoteEntriesClicked"
                             IsEnabled="{Binding CanUseWorkspaceTransfers}"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Download selected remote files and folders to local pane"
                             ToolTipService.ToolTip="Download selected remote files and folders to local pane">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -351,6 +362,7 @@
                             Click="OnRenameRemoteEntryClicked"
                             IsEnabled="{Binding CanMutateRemoteEntries}"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Rename selected remote item"
                             ToolTipService.ToolTip="Rename selected remote item">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"
@@ -362,6 +374,7 @@
                             Click="OnDeleteRemoteEntriesClicked"
                             IsEnabled="{Binding CanMutateRemoteEntries}"
                             Style="{StaticResource SfGhostButtonStyle}"
+                            AutomationProperties.Name="Delete selected remote items"
                             ToolTipService.ToolTip="Delete selected remote items">
                             <FontIcon
                                 FontFamily="{StaticResource SfIconFont}"

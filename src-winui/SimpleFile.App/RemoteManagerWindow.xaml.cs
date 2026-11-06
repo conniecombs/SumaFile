@@ -18,16 +18,8 @@ public sealed partial class RemoteManagerWindow : Window
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         InitializeComponent();
-        Title = "FTP/SFTP Manager";
-        AppIcon.ApplyTo(this);
-        SystemBackdrop = new MicaBackdrop();
-        AppWindow.Resize(new SizeInt32(980, 640));
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = true;
-            presenter.IsMinimizable = true;
-        }
+        // The root grid declares MinWidth 1120 plus 16 px padding each side.
+        SecondaryWindowChrome.Apply(this, "FTP/SFTP Manager", 1180, 680);
 
         Root.DataContext = _viewModel;
         Root.Loaded += OnLoaded;
@@ -68,7 +60,11 @@ public sealed partial class RemoteManagerWindow : Window
         await RunRemoteActionAsync(() => _viewModel.LoadProfilesAsync());
 
     private async void OnConnectClicked(object sender, RoutedEventArgs e) =>
-        await RunRemoteActionAsync(() => _viewModel.ConnectSelectedProfileAsync());
+        await RunRemoteActionAsync(() => DialogHost.RunWithProgressAsync(
+            Root.XamlRoot,
+            "Connecting",
+            $"Connecting to {_viewModel.SelectedProfile?.Name ?? "the selected profile"}…",
+            (_, token) => _viewModel.ConnectSelectedProfileAsync(null, token)));
 
     private async void OnDisconnectClicked(object sender, RoutedEventArgs e) =>
         await RunRemoteActionAsync(() => _viewModel.DisconnectAsync());
@@ -140,7 +136,7 @@ public sealed partial class RemoteManagerWindow : Window
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
         {
             return;
         }
@@ -324,7 +320,7 @@ public sealed partial class RemoteManagerWindow : Window
             Content = message,
             CloseButtonText = "OK",
         };
-        await dialog.ShowAsync();
+        await DialogHost.ShowAsync(dialog);
     }
 
     private async Task<string?> ShowRemoteNameDialogAsync(
@@ -348,7 +344,7 @@ public sealed partial class RemoteManagerWindow : Window
             DefaultButton = ContentDialogButton.Primary,
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         return result == ContentDialogResult.Primary ? input.Text : null;
     }
 
@@ -628,7 +624,7 @@ public sealed partial class RemoteManagerWindow : Window
             }
         };
 
-        var result = await dialog.ShowAsync();
+        var result = await DialogHost.ShowAsync(dialog);
         if (result != ContentDialogResult.Primary)
         {
             return null;
@@ -666,7 +662,7 @@ public sealed partial class RemoteManagerWindow : Window
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        return await DialogHost.ShowAsync(dialog) == ContentDialogResult.Primary;
     }
 
     private static StackPanel CreateProfileDialogSection(string title, params UIElement[] children)

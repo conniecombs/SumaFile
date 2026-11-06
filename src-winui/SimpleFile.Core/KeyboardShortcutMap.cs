@@ -144,6 +144,7 @@ public static class KeyboardShortcutMap
         new("nav.parent", ["Alt+Up", "Backspace"], "Go up", "Navigation"),
         new("nav.back", ["Alt+Left"], "Back", "Navigation"),
         new("nav.forward", ["Alt+Right"], "Forward", "Navigation"),
+        new("nav.home", ["Alt+Home"], "Go home", "Navigation"),
         new("directory.refresh", ["F5"], "Refresh", "Navigation"),
         new("file.open", ["Enter"], "Open", "File"),
         new("file.rename", ["F2"], "Rename", "File"),
@@ -153,6 +154,7 @@ public static class KeyboardShortcutMap
         new("file.cut", ["Ctrl+X"], "Cut", "Clipboard"),
         new("file.paste", ["Ctrl+V"], "Paste", "Clipboard"),
         new("file.copyPath", ["Ctrl+Shift+C"], "Copy path", "Clipboard"),
+        new("clipboard.history", ["Ctrl+Shift+V"], "Clipboard history", "Clipboard"),
         new("file.properties", ["Alt+Enter"], "Properties", "Inspection"),
         new("file.openTab", ["Ctrl+Enter"], "Open folder in new tab", "Tabs"),
         new("selection.all", ["Ctrl+A"], "Select all", "Selection"),
@@ -184,6 +186,34 @@ public static class KeyboardShortcutMap
         new("pane.moveToOther", ["Ctrl+Alt+M"], "Move to other pane", "Panes"),
         new("escape", ["Escape"], "Dismiss overlay / clear", "App", isEditable: false),
     ];
+
+    /// <summary>
+    /// Commands whose default chords (Enter, F2, Delete, Backspace, Space, Tab, Ctrl+C/X/V/A,
+    /// Ctrl+Z/Y, Ctrl+Shift+Left/Right) belong to the text editor while a text input has focus.
+    /// The window must not run them, nor mark the key handled, in that state.
+    /// </summary>
+    private static readonly HashSet<string> SuppressedWhileEditingText = new(StringComparer.Ordinal)
+    {
+        "file.open",
+        "file.rename",
+        "file.delete.trash",
+        "file.delete.permanent",
+        "file.copy",
+        "file.cut",
+        "file.paste",
+        "selection.all",
+        "history.undo",
+        "history.redo",
+        "quickLook.toggle",
+        "pane.switch",
+        "pane.focusPrimary",
+        "pane.focusSecondary",
+        "nav.parent",
+        "commandPalette.open",
+    };
+
+    public static bool IsSuppressedWhileEditingText(string commandId) =>
+        SuppressedWhileEditingText.Contains(commandId);
 
     public static KeyboardShortcut? Find(string id)
     {

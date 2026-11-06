@@ -62,7 +62,6 @@ public sealed partial class MainWindow
             return Task.CompletedTask;
         }
 
-        _search.Query = ActiveToolbarSearchTextBox().Text;
         return _search.StartAsync(requestedPane, DispatchToUi);
     }
 
@@ -95,27 +94,8 @@ public sealed partial class MainWindow
     private void ClearSearchState() =>
         _search?.ClearState();
 
-    private async void OnSearchClick(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("Search", () => StartSearchAsync(ActiveUiPane));
-
     private async void OnCancelSearchClick(object sender, RoutedEventArgs e)
     {
         await RunUiActionAsync("Cancel search", CancelActiveSearchAsync);
-    }
-
-    private async void OnSearchKeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (e.Key == VirtualKey.Enter)
-        {
-            e.Handled = true;
-            await RunUiActionAsync("Search", () => StartSearchAsync(ActiveUiPane));
-        }
-        else if (e.Key == VirtualKey.Escape)
-        {
-            e.Handled = true;
-            await RunUiActionAsync("Cancel search", CancelActiveSearchAsync);
-            ClearSearchState();
-            SyncFromWorkspace();
-        }
     }
 }

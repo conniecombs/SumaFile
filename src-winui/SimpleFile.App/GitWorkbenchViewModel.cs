@@ -140,6 +140,13 @@ public sealed class GitWorkbenchViewModel : INotifyPropertyChanged
         HostActionToolTip = detached ? "Dock Git workbench" : "Detach Git workbench";
     }
 
+    /// <summary>Disables the action buttons while a git command runs.</summary>
+    public void SetCommandRunning(bool running)
+    {
+        _isBusy = running;
+        RefreshActions();
+    }
+
     public void SetLoading()
     {
         _isGitEnabled = true;

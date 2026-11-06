@@ -566,6 +566,12 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <Button
+                x:Name="RestoreDefaultsButton"
+                Grid.Column="0"
+                HorizontalAlignment="Left"
+                Content="Restore defaults"
+                Click="OnRestoreDefaultsClicked" />
+            <Button
                 x:Name="SaveButton"
                 Grid.Column="1"
                 MinWidth="120"

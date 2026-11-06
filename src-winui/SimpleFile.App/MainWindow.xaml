@@ -102,7 +102,7 @@
                             <ColumnDefinition x:Name="SecondaryColumn" Width="0" />
                         </Grid.ColumnDefinitions>
 
-                        <local:PrimaryPaneView x:Name="PrimaryPane" Grid.Column="0" />
+                        <local:PaneView x:Name="PrimaryPane" Pane="Primary" Grid.Column="0" />
 
                         <local:PaneResizeGrip
                             x:Name="PaneDivider"
@@ -119,7 +119,7 @@
                                 Fill="{ThemeResource SfBorderBrush}" />
                         </local:PaneResizeGrip>
 
-                        <local:SecondaryPaneView x:Name="SecondaryPane" Grid.Column="2" />
+                        <local:PaneView x:Name="SecondaryPane" Pane="Secondary" Grid.Column="2" />
                     </Grid>
 
                         <Border

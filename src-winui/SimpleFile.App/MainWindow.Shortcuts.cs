@@ -1,3 +1,4 @@
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using SimpleFile.Core;
 using Windows.System;
@@ -30,6 +31,37 @@ public sealed partial class MainWindow
         }
 
         AddFixedTabJumpAccelerators();
+        ApplyShortcutHints();
+    }
+
+    /// <summary>Toolbar tooltips and menu chords follow the effective map, including remaps.</summary>
+    private void ApplyShortcutHints()
+    {
+        ToolTipService.SetToolTip(PrimarySettingsButton, WithShortcutSuffix("Settings", "settings"));
+        ToolTipService.SetToolTip(DualPaneButton, WithShortcutSuffix("Open second pane", "dual-pane"));
+        NewFolderMenuItem.KeyboardAcceleratorTextOverride = ShortcutLabelFor("new-folder") ?? "";
+        NewTextMenuItem.KeyboardAcceleratorTextOverride = ShortcutLabelFor("new-file") ?? "";
+    }
+
+    private string WithShortcutSuffix(string label, string commandId) =>
+        ShortcutLabelFor(commandId) is { Length: > 0 } keys ? $"{label} ({keys})" : label;
+
+    /// <summary>
+    /// The chord to display for a palette/toolbar/context-menu id, resolved through the alias
+    /// table and the effective shortcut map. Null when the command has no shortcut binding.
+    /// </summary>
+    private string? ShortcutLabelFor(string commandOrMenuId)
+    {
+        var commandId = CommandAliasCatalog.Normalize(commandOrMenuId);
+        var shortcutId = CommandShortcutMap.ShortcutIdFor(commandId);
+        if (shortcutId is null)
+        {
+            return null;
+        }
+
+        var assignment = KeyboardShortcutMap.EffectiveShortcuts(_workspace?.Settings.ShortcutOverrides)
+            .FirstOrDefault(candidate => string.Equals(candidate.Id, shortcutId, StringComparison.Ordinal));
+        return assignment is { Shortcuts.Count: > 0 } ? assignment.Keys : "";
     }
 
     private bool TryCreateKeyboardAccelerator(
@@ -61,10 +93,41 @@ public sealed partial class MainWindow
         };
         accelerator.Invoked += async (_, args) =>
         {
+            if (!CanRunShortcutNow(commandId))
+            {
+                // Leave the key to the focused control (text editing, focus traversal).
+                return;
+            }
+
             args.Handled = true;
             await RunKeyboardShortcutAsync(commandId);
         };
         return accelerator;
+    }
+
+    /// <summary>
+    /// Decided synchronously before the accelerator claims the key: editing and destructive
+    /// commands yield to a focused text input, and pane switching yields when there is one pane.
+    /// </summary>
+    private bool CanRunShortcutNow(string commandId)
+    {
+        if (DialogHost.IsDialogOpen)
+        {
+            return false;
+        }
+
+        if (KeyboardShortcutMap.IsSuppressedWhileEditingText(commandId)
+            && (IsEditingPath || IsTextInputFocused()))
+        {
+            return false;
+        }
+
+        if (commandId == "pane.switch" && _workspace?.DualPaneEnabled != true)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private void AddFixedTabJumpAccelerators()
@@ -180,6 +243,12 @@ public sealed partial class MainWindow
                     await RunUiActionAsync("Navigation", () => _workspace.GoForwardAsync());
                 }
 
+                break;
+            case "nav.home":
+                await RunUiActionAsync("Navigation", () => RunAppCommandAsync("go-home"));
+                break;
+            case "clipboard.history":
+                await RunUiActionAsync("Clipboard history", () => RunAppCommandAsync("clipboard-history"));
                 break;
             case "nav.parent":
                 if (_workspace is not null && !IsEditingPath)

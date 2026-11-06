@@ -178,8 +178,14 @@ public sealed partial class MainWindow
         var hovered = HoveredFileRow(e, pane);
         var target = DropDestination.Resolve(_workspace.Pane(pane).Path, hovered?.Path, hovered?.IsDir == true);
         var sources = await ReadDroppedPathsAsync(e);
-        if (sources.Count == 0 || !DropDestination.IsValidDrop(sources, target.Destination))
+        if (sources.Count == 0)
         {
+            return;
+        }
+
+        if (!DropDestination.IsValidDrop(sources, target.Destination))
+        {
+            SetStatusText("Cannot drop into that location");
             return;
         }
 
@@ -271,7 +277,7 @@ public sealed partial class MainWindow
                 destination,
                 move,
                 token));
-        ShowTransferProgressWindow();
+        ShowTransferProgressWindow(activate: false);
 
         var status = await operation.CompletionTask;
         var finalStatus = TransferStatusToRunStatus(status);
@@ -321,6 +327,29 @@ public sealed partial class MainWindow
             var progress = new Progress<ProgressUpdate>(update => OnTransferProgress(operation, update));
             var tuning = new Progress<TuningUpdate>(operation.ApplyTuning);
             var canRegisterUndo = !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
+            // Everything committed across the first pass and any retry passes is undone as one
+            // entry, and skipped conflicts are counted so the receipt is honest.
+            var committedAll = new List<TransferResult>();
+            var skippedCount = 0;
+            void PushUndoIfAny()
+            {
+                if (!canRegisterUndo || committedAll.Count == 0 || !ReferenceEquals(_workspace, workspace))
+                {
+                    return;
+                }
+
+                if (move)
+                {
+                    workspace.Undo.PushMove(committedAll.ToArray(), fileOps);
+                }
+                else
+                {
+                    workspace.Undo.PushCopy(committedAll.ToArray(), fileOps);
+                }
+
+                committedAll.Clear();
+            }
+
             // After the first pass, failures are resolved one file at a time and
             // sent back as exact (source, destination, action) items.
             TransferItemRequest[]? retryItems = null;
@@ -367,25 +396,17 @@ public sealed partial class MainWindow
                             cancellationToken, tuning, operation.PolicyOverride);
                     }
 
-                    if (canRegisterUndo
-                        && ReferenceEquals(_workspace, workspace)
-                        && !cancellationToken.IsCancellationRequested)
+                    committedAll.AddRange(results);
+                    if (!cancellationToken.IsCancellationRequested)
                     {
-                        if (move)
-                        {
-                            workspace.Undo.PushMove(results, fileOps);
-                        }
-                        else
-                        {
-                            workspace.Undo.PushCopy(results, fileOps);
-                        }
+                        PushUndoIfAny();
                     }
 
                     if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
                     {
-                        CompleteTransferProgress(move, sources.Length, destination);
+                        CompleteTransferProgress(move, sources.Length - skippedCount, destination, skippedCount);
                         await workspace.RefreshAffectedPanesAsync(
-                            TransferAffectedPaths(sources, destination, move),
+                            OperationLogController.TransferAffectedPaths(sources, destination, move),
                             cancellationToken);
                     }
 
@@ -394,24 +415,13 @@ public sealed partial class MainWindow
                 catch (TransferCanceledException exception)
                 {
                     var committed = exception.Outcome.Committed;
-                    if (canRegisterUndo
-                        && committed.Length > 0
-                        && ReferenceEquals(_workspace, workspace))
-                    {
-                        if (move)
-                        {
-                            workspace.Undo.PushMove(committed, fileOps);
-                        }
-                        else
-                        {
-                            workspace.Undo.PushCopy(committed, fileOps);
-                        }
-                    }
+                    committedAll.AddRange(committed);
+                    PushUndoIfAny();
 
                     if (committed.Length > 0 && ReferenceEquals(_workspace, workspace))
                     {
                         await workspace.RefreshAffectedPanesAsync(
-                            TransferAffectedPaths(sources, destination, move),
+                            OperationLogController.TransferAffectedPaths(sources, destination, move),
                             CancellationToken.None);
                     }
 
@@ -420,24 +430,12 @@ public sealed partial class MainWindow
                 catch (TransferOperationException exception) when (!cancellationToken.IsCancellationRequested)
                 {
                     var committed = exception.Outcome.Committed;
-                    if (canRegisterUndo
-                        && committed.Length > 0
-                        && ReferenceEquals(_workspace, workspace))
-                    {
-                        if (move)
-                        {
-                            workspace.Undo.PushMove(committed, fileOps);
-                        }
-                        else
-                        {
-                            workspace.Undo.PushCopy(committed, fileOps);
-                        }
-                    }
+                    committedAll.AddRange(committed);
 
                     if (ReferenceEquals(_workspace, workspace))
                     {
                         await workspace.RefreshAffectedPanesAsync(
-                            TransferAffectedPaths(sources, destination, move),
+                            OperationLogController.TransferAffectedPaths(sources, destination, move),
                             cancellationToken);
                     }
 
@@ -448,7 +446,11 @@ public sealed partial class MainWindow
                         // service): keep the top-level retry path.
                         if (!FileOperationService.IsConflict(exception)) throw;
                         var remaining = exception.RemainingSources(sources);
-                        if (remaining.Length == 0) break;
+                        if (remaining.Length == 0)
+                        {
+                            PushUndoIfAny();
+                            break;
+                        }
                         var retryAction = await ChooseConflictActionFromBackendConflictAsync(
                             exception.Message, destination, move, remaining, conflictSession, cancellationToken);
                         if (retryAction is null) return TransferOperationStatus.Cancelled;
@@ -464,12 +466,14 @@ public sealed partial class MainWindow
                     {
                         return TransferOperationStatus.Cancelled;
                     }
+                    skippedCount += Math.Max(0, failures.Length - items.Length);
                     if (items.Length == 0)
                     {
                         // Every failure was skipped by the user; what was committed stands.
+                        PushUndoIfAny();
                         if (ReferenceEquals(_workspace, workspace))
                         {
-                            CompleteTransferProgress(move, sources.Length, destination);
+                            CompleteTransferProgress(move, sources.Length - skippedCount, destination, skippedCount);
                         }
                         break;
                     }
@@ -521,37 +525,6 @@ public sealed partial class MainWindow
         TransferOperationStatus.Skipped => TransferRunStatus.Skipped,
         _ => TransferRunStatus.NoOp,
     };
-
-    private static IReadOnlyList<string> TransferAffectedPaths(string[] sources, string destination, bool move)
-    {
-        List<string> paths = [];
-        if (!string.IsNullOrWhiteSpace(destination))
-        {
-            paths.Add(destination);
-        }
-
-        if (move)
-        {
-            foreach (var source in sources)
-            {
-                if (string.IsNullOrWhiteSpace(source))
-                {
-                    continue;
-                }
-
-                paths.Add(source);
-                var parent = PathRules.GetParentPath(source);
-                if (!string.IsNullOrWhiteSpace(parent))
-                {
-                    paths.Add(parent);
-                }
-            }
-        }
-
-        return paths
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
 
     private static IReadOnlyList<string> VisiblePanePaths(ExplorerWorkspace workspace) =>
         workspace.DualPaneEnabled
@@ -763,7 +736,7 @@ public sealed partial class MainWindow
                 XamlRoot = Content.XamlRoot,
             };
             using var cancelDialog = cancellationToken.Register(() => DispatcherQueue.TryEnqueue(dialog.Hide));
-            var result = await dialog.ShowAsync();
+            var result = await DialogHost.ShowAsync(dialog);
             cancellationToken.ThrowIfCancellationRequested();
             return result switch
             {
@@ -852,7 +825,7 @@ public sealed partial class MainWindow
             cancellationToken.ThrowIfCancellationRequested();
             dialog.SetComparisons(comparisons);
             using var cancelDialog = cancellationToken.Register(() => DispatcherQueue.TryEnqueue(dialog.Hide));
-            var result = await dialog.ShowAsync();
+            var result = await DialogHost.ShowAsync(dialog);
             cancellationToken.ThrowIfCancellationRequested();
             string? action = dialog.Result == ConflictResolution.KeepBoth
                 ? "keep-both"
@@ -933,7 +906,7 @@ public sealed partial class MainWindow
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = Content.XamlRoot,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(input.Text))
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary || string.IsNullOrWhiteSpace(input.Text))
         {
             return;
         }
@@ -942,7 +915,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("PromptPackIntoFolderAsync");
         try
         {
             await workspace.PackIntoFolderAsync(paths, input.Text.Trim(), utilityCts.Token);
@@ -968,7 +941,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("UnpackSelectedFolderAsync");
         try
         {
             await workspace.UnpackFolderAsync(row.Path, utilityCts.Token);
@@ -1022,7 +995,12 @@ public sealed partial class MainWindow
                 destination = picked;
             }
 
-            await fileOps.ExtractArchiveAsync(info.Path, destination, archiveCts.Token);
+            await DialogHost.RunWithProgressAsync(
+                Content.XamlRoot,
+                "Extract archive",
+                $"Extracting {row.Name} to {destination}…",
+                (_, token) => fileOps.ExtractArchiveAsync(info.Path, destination, token),
+                archiveCts.Token);
             if (ReferenceEquals(_workspace, workspace) && !archiveCts.IsCancellationRequested)
             {
                 await workspace.RefreshAffectedPanesAsync([destination], archiveCts.Token);
@@ -1076,17 +1054,17 @@ public sealed partial class MainWindow
             Extension = row.Extension,
         }).ToArray();
 
-        var dialog = new AdvancedRenameDialog(
+        var renameWindow = new AdvancedRenameDialog(
             selectedEntries,
             workspace.Active.Path,
             (path, cancellationToken) => backend.ListDirectoryAsync(path, onChunk: null, cancellationToken));
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        if (await renameWindow.ShowAsync() != ContentDialogResult.Primary)
         {
             return;
         }
 
-        var requests = dialog.RenameRequests;
+        var requests = renameWindow.RenameRequests;
         if (requests.Length == 0)
         {
             ShowMessage("Advanced rename", "No names would change.", InfoBarSeverity.Informational);
@@ -1094,12 +1072,12 @@ public sealed partial class MainWindow
         }
 
         if (!ReferenceEquals(_workspace, workspace)
-            || !await ConfirmAdvancedRenameAsync(dialog.ChangedRows, requests.Length))
+            || !await ConfirmAdvancedRenameAsync(renameWindow.ChangedRows, requests.Length))
         {
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("PromptAdvancedRenameAsync");
         try
         {
             var renamed = await fileOps.BatchRenameAsync(requests, utilityCts.Token);
@@ -1172,7 +1150,7 @@ public sealed partial class MainWindow
             XamlRoot = Content.XamlRoot,
         };
 
-        return await confirm.ShowAsync() == ContentDialogResult.Primary;
+        return await DialogHost.ShowAsync(confirm) == ContentDialogResult.Primary;
     }
 
     private async Task UndoLastAsync()
@@ -1184,7 +1162,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("UndoLastAsync");
         try
         {
             await workspace.Undo.UndoAsync(utilityCts.Token);
@@ -1216,7 +1194,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        var utilityCts = BeginUtilityOperation();
+        var utilityCts = BeginUtilityOperation("RedoLastAsync");
         try
         {
             await workspace.Undo.RedoAsync(utilityCts.Token);
