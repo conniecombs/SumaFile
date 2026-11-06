@@ -51,6 +51,11 @@ public sealed partial class MainWindow
         PrimaryDetailsFileList.ClearSelection();
         workspace.SelectPath(null, PaneId.Primary);
         _previewEmptySettled = true;
+        // A single pane is roomy by construction (the policy only collapses a cramped dual-pane
+        // layout), so this isolates the empty-selection rule from the runner's screen size.
+        if (workspace.DualPaneEnabled) await workspace.ToggleDualPaneAsync();
+        ApplyDualPaneLayout();
+        await SmokeWaitAsync(() => SecondaryPaneRoot.Visibility == Visibility.Collapsed, "single pane for the empty preview");
         QueuePreviewFromSelection();
         // An empty selection no longer collapses the preview: it stays open with its empty state.
         SmokeAssert(PreviewPanel.Visibility == Visibility.Visible && PreviewRail.Visibility == Visibility.Collapsed,
@@ -61,6 +66,9 @@ public sealed partial class MainWindow
         var roomyPreviewWidth = workspace.Settings.PreviewWidth;
         try
         {
+            if (!workspace.DualPaneEnabled) await workspace.ToggleDualPaneAsync();
+            ApplyDualPaneLayout();
+            await SmokeWaitAsync(() => SecondaryPaneRoot.Visibility == Visibility.Visible, "dual pane for the cramped preview");
             var scale = RootGrid.XamlRoot.RasterizationScale;
             AppWindow.Resize(new Windows.Graphics.SizeInt32((int)Math.Round(1000 * scale), roomySize.Height));
             workspace.Settings.PreviewWidth = UiSettings.PreviewMaxWidth;
