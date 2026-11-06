@@ -14,6 +14,7 @@ public sealed partial class MainWindow
         RootGrid.KeyboardAccelerators.Clear();
 
         var assignments = KeyboardShortcutMap.EffectiveShortcuts(_workspace?.Settings.ShortcutOverrides);
+        var registered = new HashSet<(string Command, VirtualKey Key, VirtualKeyModifiers Modifiers)>();
         foreach (var assignment in assignments.Where(item => item.IsEditable))
         {
             foreach (var shortcut in assignment.Shortcuts)
@@ -25,9 +26,22 @@ public sealed partial class MainWindow
                     continue;
                 }
 
-                if (TryCreateKeyboardAccelerator(assignment.Id, shortcut, out var accelerator))
+                if (TryCreateKeyboardAccelerator(assignment.Id, shortcut, out var accelerator)
+                    && registered.Add((assignment.Id, accelerator.Key, accelerator.Modifiers)))
                 {
                     RootGrid.KeyboardAccelerators.Add(accelerator);
+                }
+
+                // "/" on the main keyboard (Oem2) also answers on the numpad (Divide), e.g. Ctrl+/ for help.
+                if (KeyboardShortcutMap.TryParseShortcut(shortcut, out var gesture, out _)
+                    && gesture is not null
+                    && string.Equals(gesture.Key, "Oem2", StringComparison.Ordinal))
+                {
+                    var modifiers = ToVirtualKeyModifiers(gesture);
+                    if (registered.Add((assignment.Id, VirtualKey.Divide, modifiers)))
+                    {
+                        RootGrid.KeyboardAccelerators.Add(CreateCommandAccelerator(assignment.Id, VirtualKey.Divide, modifiers));
+                    }
                 }
             }
         }

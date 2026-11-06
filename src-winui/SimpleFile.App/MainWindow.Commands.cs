@@ -100,10 +100,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        // Strict toggle: show when hidden or collapsed to the rail, hide when showing.
-        var showing = PreviewPanel.Visibility == Visibility.Visible;
-        workspace.Settings.PreviewVisible = !showing;
-        _previewManuallyExpanded = !showing;
+        // Strict toggle of the PreviewVisible setting (the rail's own expand button opens the pane).
+        workspace.Settings.PreviewVisible = !workspace.Settings.PreviewVisible;
+        _previewManuallyExpanded = workspace.Settings.PreviewVisible;
         ApplyPreviewVisibility();
         await RunUiActionAsync("Preview pane", () => workspace.SaveUiSettingsAsync());
     }

@@ -35,6 +35,13 @@ public class UxShellTests
         Assert.Matches(new Regex(@"""OemComma""[^\n]*=> \(VirtualKey\)188"), map);
         Assert.Matches(new Regex(@"""Oem2""[^\n]*=> \(VirtualKey\)191"), map);
         Assert.Contains("\"Backspace\" => VirtualKey.Back", map);
+        Assert.Contains("\"Slash\" => VirtualKey.Divide", map);
+
+        // Ctrl+/ keeps working on the numpad: an Oem2 chord also registers VirtualKey.Divide.
+        var apply = Slice(Read("MainWindow.Shortcuts.cs"), "private void ApplyKeyboardShortcuts()", "private void ApplyShortcutHints()");
+        Assert.Matches(new Regex(@"string\.Equals\(gesture\.Key, ""Oem2"", StringComparison\.Ordinal\)"), apply);
+        Assert.Contains("CreateCommandAccelerator(assignment.Id, VirtualKey.Divide, modifiers)", apply);
+        Assert.Contains("registered.Add(", apply);
     }
 
     // Change 2: the omnibar returns to Path mode when a search or filter ends.
@@ -183,9 +190,14 @@ public class UxShellTests
     {
         var toggle = Slice(Read("MainWindow.Commands.cs"), "private async void OnTogglePreview(", "private void ApplyPreviewVisibility()");
 
-        Assert.Contains("var showing = PreviewPanel.Visibility == Visibility.Visible;", toggle);
-        Assert.Contains("workspace.Settings.PreviewVisible = !showing;", toggle);
-        Assert.DoesNotContain("PreviewRail.Visibility", toggle);
+        Assert.Contains("workspace.Settings.PreviewVisible = !workspace.Settings.PreviewVisible;", toggle);
+        Assert.Contains("_previewManuallyExpanded = workspace.Settings.PreviewVisible;", toggle);
+        Assert.Contains("ApplyPreviewVisibility();", toggle);
+        Assert.Contains("SaveUiSettingsAsync()", toggle);
+        // No special case for the rail: the button flips the setting every time.
+        Assert.DoesNotContain("PreviewRail", toggle);
+        Assert.DoesNotContain("PreviewPanel.Visibility", toggle);
+        Assert.DoesNotContain("if (", toggle.Replace("if (workspace is null)", ""));
     }
 
     // Add: inline rename in the Details view.
