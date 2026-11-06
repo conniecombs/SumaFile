@@ -220,6 +220,9 @@ public sealed partial class MainWindow
             case "file.properties":
                 await RunUiActionAsync("Properties", () => RunAppCommandAsync("properties"));
                 break;
+            case "directory.properties":
+                await RunUiActionAsync("Folder properties", () => RunAppCommandAsync("folder-properties"));
+                break;
             case "directory.refresh":
                 if (_workspace is not null && !IsEditingPath)
                 {
@@ -346,6 +349,11 @@ public sealed partial class MainWindow
                 await RunUiActionAsync(
                     "New Folder",
                     () => CreateNewItem(_workspace?.ActivePane ?? PaneId.Primary, NewItemTemplate.Folder));
+                break;
+            case "file.newShortcut":
+                await RunUiActionAsync(
+                    "New Shortcut",
+                    () => PromptAndCreateShortcut(_workspace?.ActivePane ?? PaneId.Primary));
                 break;
             case "file.newFile":
                 await RunUiActionAsync(

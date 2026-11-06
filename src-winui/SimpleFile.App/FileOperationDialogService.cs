@@ -120,7 +120,7 @@ internal sealed partial class FileOperationDialogService
         }
     }
 
-    public async Task PromptAndCreateShortcutAsync(PaneId pane)
+    public async Task PromptAndCreateShortcutAsync(PaneId pane, string? initialTarget = null)
     {
         var workspace = _workspace();
         if (workspace is null)
@@ -215,6 +215,11 @@ internal sealed partial class FileOperationDialogService
                 updatingName = false;
                 autoName = true;
             }
+        }
+
+        if (!string.IsNullOrWhiteSpace(initialTarget))
+        {
+            ApplyPickedTarget(initialTarget);
         }
 
         var panel = new StackPanel { Spacing = 12, MinWidth = 420 };

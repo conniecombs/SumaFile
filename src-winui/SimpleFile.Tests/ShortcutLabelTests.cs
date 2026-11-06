@@ -71,6 +71,23 @@ public class ShortcutLabelTests
         Assert.Contains("Ctrl+Alt+H", hidden.Hint);
     }
 
+    [Theory]
+    [InlineData("new-shortcut", "file.newShortcut", "File")]
+    [InlineData("folder-properties", "directory.properties", "Inspection")]
+    public void UnboundCommands_AreBindableInSettings(string commandId, string shortcutId, string group)
+    {
+        Assert.Equal(shortcutId, CommandShortcutMap.ShortcutIdFor(commandId));
+
+        var definition = KeyboardShortcutMap.Find(shortcutId);
+        Assert.NotNull(definition);
+        Assert.True(definition!.IsEditable);
+        Assert.Empty(definition.DefaultShortcuts);
+        Assert.Equal(group, definition.Group);
+
+        var shortcuts = UiAuditSprint3Tests.Read("MainWindow.Shortcuts.cs");
+        Assert.Contains($"case \"{shortcutId}\":", shortcuts);
+    }
+
     [Fact]
     public void Shell_DerivesDisplayedShortcutsFromTheEffectiveMap()
     {

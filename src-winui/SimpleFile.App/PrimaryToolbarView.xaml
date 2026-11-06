@@ -225,7 +225,7 @@
                                             </MenuFlyoutItem>
                                             <MenuFlyoutItem Text="Shortcut..." Tag="new:shortcut" Click="OnNewMenuItemClick">
                                                 <MenuFlyoutItem.Icon>
-                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE8A5;" />
+                                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="14" Glyph="&#xE71B;" />
                                                 </MenuFlyoutItem.Icon>
                                             </MenuFlyoutItem>
                                         </MenuFlyout>

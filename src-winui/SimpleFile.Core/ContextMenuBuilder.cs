@@ -76,6 +76,11 @@ public static class ContextMenuBuilder
             ]);
         }
 
+        if (request.SelectionCount == 0)
+        {
+            return BuildBackgroundMenu(request, canCompare, canCompareFolders);
+        }
+
         var entries = new List<ContextMenuEntry>
         {
             Item("ctx-open", "Open", request.SelectionCount != 1, "Enter"),
@@ -95,6 +100,7 @@ public static class ContextMenuBuilder
             SendToMenu(request, hasOtherPane),
             Divider(),
             Item("ctx-rename", "Rename", request.SelectionCount != 1, "F2"),
+            Item("ctx-create-shortcut", "Create shortcut", request.SelectionCount != 1),
             DeleteMenu(request.SelectionCount == 0),
             Divider(),
             ToolsMenu(request, canCompare, canCompareFolders),
@@ -105,6 +111,31 @@ public static class ContextMenuBuilder
         };
 
         return VisibleEntries(entries);
+    }
+
+    /// <summary>
+    /// The menu for a right-click on blank pane space (nothing selected): create items,
+    /// paste into the current folder, refresh, the folder-level tool and Git groups, and
+    /// the current folder's properties.
+    /// </summary>
+    private static IReadOnlyList<ContextMenuEntry> BuildBackgroundMenu(
+        ContextMenuRequest request,
+        bool canCompare,
+        bool canCompareFolders)
+    {
+        return VisibleEntries(
+        [
+            NewItemMenu(),
+            Divider(),
+            Item("ctx-paste", "Paste", !request.HasClipboard, "Ctrl+V"),
+            Divider(),
+            Item("ctx-refresh", "Refresh", false, "F5"),
+            Divider(),
+            ToolsMenu(request, canCompare, canCompareFolders),
+            GitMenu(request),
+            Divider(),
+            Item("ctx-folder-info", "Properties"),
+        ]);
     }
 
     public static IReadOnlyList<ContextMenuEntry> BuildPaneMoreMenu(ContextMenuRequest request)
@@ -507,11 +538,11 @@ public static class ContextMenuBuilder
             IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-new"),
             Children =
             [
-                Item("new:folder", "Folder", shortcut: "Ctrl+Shift+N", showIcon: false),
+                Item("new:folder", "Folder", shortcut: "Ctrl+Shift+N", iconGlyph: ContextMenuIconCatalog.NewFolder),
                 Divider(),
-                Item("new:text", "Text document", shortcut: "Ctrl+N", showIcon: false),
-                Item("new:empty", "Blank file...", showIcon: false),
-                Item("new:shortcut", "Shortcut...", showIcon: false),
+                Item("new:text", "Text document", shortcut: "Ctrl+N", iconGlyph: ContextMenuIconCatalog.Document),
+                Item("new:empty", "Blank file...", iconGlyph: ContextMenuIconCatalog.Document),
+                Item("new:shortcut", "Shortcut...", iconGlyph: ContextMenuIconCatalog.Link),
             ],
         };
     }

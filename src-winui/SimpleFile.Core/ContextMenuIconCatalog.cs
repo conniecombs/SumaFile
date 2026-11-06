@@ -38,6 +38,8 @@ public static class ContextMenuIconCatalog
     public const string List = "\uEA37";
     public const string Tiles = "\uECA5";
     public const string Branch = "\uE8EF";
+    public const string Refresh = "\uE72C";
+    public const string Link = "\uE71B";
 
     public static string? GlyphFor(string commandId)
     {
@@ -60,6 +62,7 @@ public static class ContextMenuIconCatalog
             "ctx-cleanup" => EraseTool,
             "ctx-duplicates" => SelectAll,
             "ctx-rename" => Rename,
+            "ctx-create-shortcut" => Link,
             "ctx-advanced-rename" => Edit,
             "ctx-copy" or "ctx-copy-to-pane" or "ctx-copy-path" => Copy,
             "ctx-bookmark" => Favorite,
@@ -74,10 +77,10 @@ public static class ContextMenuIconCatalog
             "ctx-compress" or "ctx-view-archive" => Package,
             "ctx-extract-menu" or "ctx-extract-to" => Import,
             "ctx-delete-menu" => Delete,
-            "ctx-info" => Info,
+            "ctx-info" or "ctx-folder-info" => Info,
             "ctx-close-left-pane" or "ctx-close-dual-pane" => ClosePane,
             "ctx-git-menu" or "ctx-git-panel" => Branch,
-            "ctx-git-refresh" => "\uE72C",
+            "ctx-refresh" or "ctx-git-refresh" => Refresh,
             "ctx-git-fetch" or "ctx-git-pull" => Import,
             "ctx-git-push" or "ctx-git-commit" => Save,
             "ctx-git-stage" => "\uE73E",

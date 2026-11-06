@@ -750,6 +750,112 @@ public class Sprint2FileListTests
         Assert.Contains("DoubleTapHitsRow(e.OriginalSource)", events);
     }
 
+    // Right-clicking blank pane space did nothing in Details and kept the stale selection elsewhere.
+    [Fact]
+    public void DetailsRightTap_OnBlankSpaceClearsSelectionAndRaisesBackgroundContext()
+    {
+        var details = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "DetailsFileListView.cs"));
+        var rightTap = Slice(details, "private void OnListRightTapped(", "private void OnListContextRequested(");
+        var contextRequested = Slice(details, "private void OnListContextRequested(", "private void OnListDragItemsStarting(");
+
+        Assert.Contains("public event EventHandler<DetailsFileBackgroundContextEventArgs>? BackgroundContextRequested;", details);
+        Assert.Contains("RaiseBackgroundContext(", rightTap);
+        Assert.Contains("RaiseBackgroundContext(", contextRequested);
+        Assert.DoesNotContain("if (row is null)\n        {\n            return;", rightTap.Replace("\r\n", "\n"));
+
+        var raise = Slice(details, "private void RaiseBackgroundContext(", "private FileRow? RowFromSource(");
+        Assert.Contains("ClearSelection();", raise);
+        Assert.Contains("BackgroundContextRequested?.Invoke(", raise);
+    }
+
+    [Fact]
+    public void PaneView_ForwardsDetailsBackgroundContextToTheWindow()
+    {
+        var appRoot = Sprint2ShellTests.AppRoot();
+        var paneView = File.ReadAllText(Path.Combine(appRoot, "PaneView.xaml.cs"));
+        var window = string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(appRoot, "MainWindow*.cs").OrderBy(Path.GetFileName).Select(File.ReadAllText));
+
+        Assert.Contains("PartDetailsFileList.BackgroundContextRequested += (_, e) => DetailsBackgroundContextRequested?.Invoke(this, e);", paneView);
+        Assert.Contains("PrimaryPane.DetailsBackgroundContextRequested += OnPrimaryDetailsBackgroundContextRequested;", window);
+        Assert.Contains("SecondaryPane.DetailsBackgroundContextRequested += OnSecondaryDetailsBackgroundContextRequested;", window);
+
+        var show = Slice(window, "private void ShowDetailsBackgroundContextMenu(", "private static T? FindAncestor<T>(");
+        Assert.Contains("PopulateFileListContextFlyout(flyout, pane);", show);
+        Assert.Contains("flyout.ShowAt(list, new FlyoutShowOptions { Position = position });", show);
+    }
+
+    [Fact]
+    public void FolderProperties_ShowsTheCurrentFolderThroughTheSharedPropertiesDialog()
+    {
+        var appRoot = Sprint2ShellTests.AppRoot();
+        var routing = File.ReadAllText(Path.Combine(appRoot, "MainWindow.CommandRouting.cs"));
+        var dialogs = File.ReadAllText(Path.Combine(appRoot, "MainWindow.InspectionDialogs.cs"));
+
+        Assert.Contains("[\"folder-properties\"] = ShowCurrentFolderPropertiesAsync,", routing);
+
+        var folder = Slice(dialogs, "private async Task ShowCurrentFolderPropertiesAsync(", "private async Task ShowPropertiesForRowAsync(");
+        Assert.Contains("GetEntryInfoAsync(workspace.Active.Path", folder);
+        Assert.Contains("FileRow.From(", folder);
+        Assert.Contains("await ShowPropertiesForRowAsync(", folder);
+
+        var selected = Slice(dialogs, "private async Task ShowPropertiesAsync(", "private async Task ShowCurrentFolderPropertiesAsync(");
+        Assert.Contains("ActiveSelectedRow", selected);
+        Assert.Contains("await ShowPropertiesForRowAsync(", selected);
+    }
+
+    [Fact]
+    public void PropertiesDialog_SkipsChecksumsForFoldersAndLoadsFolderMetrics()
+    {
+        var dialogs = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.InspectionDialogs.cs"));
+        var shared = Slice(dialogs, "private async Task ShowPropertiesForRowAsync(", "private async Task ShowClipboardHistoryAsync(");
+
+        Assert.Contains("if (!row.IsDir)", shared);
+        Assert.Contains("LoadFolderMetricsIntoAsync(fileOps, row.Path", shared);
+        Assert.Contains("GetFolderMetricsAsync(path, cts.Token)", shared);
+        Assert.Contains("InspectionDetails.FolderMetricRows(", shared);
+        Assert.Contains("dialog.Closed +=", shared);
+        Assert.Contains("await DialogHost.ShowAsync(dialog);", shared);
+    }
+
+    [Fact]
+    public void CreateShortcutForSelection_PrefillsTheTarget()
+    {
+        var appRoot = Sprint2ShellTests.AppRoot();
+        var routing = File.ReadAllText(Path.Combine(appRoot, "MainWindow.CommandRouting.cs"));
+        var fileOperations = File.ReadAllText(Path.Combine(appRoot, "MainWindow.FileOperations.cs"));
+        var dialogService = File.ReadAllText(Path.Combine(appRoot, "FileOperationDialogService.cs"));
+
+        Assert.Contains("[\"shortcut-for-selected\"] = PromptAndCreateShortcutForSelection,", routing);
+
+        var handler = Slice(fileOperations, "private async Task PromptAndCreateShortcutForSelection(", "private async Task CreateNewItem(");
+        Assert.Contains("ActiveSelectedRow", handler);
+        Assert.Contains("PromptAndCreateShortcutAsync(", handler);
+
+        Assert.Contains("public async Task PromptAndCreateShortcutAsync(PaneId pane, string? initialTarget = null)", dialogService);
+        Assert.Contains("ApplyPickedTarget(initialTarget);", dialogService);
+    }
+
+    [Fact]
+    public void ToolbarNewFlyout_UsesTheLinkGlyphForShortcuts()
+    {
+        var toolbar = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "PrimaryToolbarView.xaml"));
+        var shortcutItem = Slice(toolbar, "Tag=\"new:shortcut\"", "</MenuFlyoutItem>");
+
+        Assert.Contains("Glyph=\"&#xE71B;\"", shortcutItem);
+    }
+
+    [Fact]
+    public void ListViewRightTap_OnBlankSpaceClearsSelection()
+    {
+        var events = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileListEvents.cs"));
+        var rightTap = Slice(events, "private void SelectRightTapped(", "private void OnPrimarySelectionChanged(");
+
+        Assert.Contains("if (row is null)", rightTap);
+        Assert.Contains("list.SelectedItems.Clear();", Slice(rightTap, "if (row is null)", "if (list.SelectedItems.OfType<FileRow>().Any("));
+    }
+
     // F9: type-ahead ignored digits, fired on Ctrl/Alt chords and never forwarded Backspace.
     [Theory]
     [InlineData("A", false, 'a')]

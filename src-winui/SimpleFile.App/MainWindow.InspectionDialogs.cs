@@ -306,8 +306,58 @@ public sealed partial class MainWindow
     private async Task ShowPropertiesAsync()
     {
         var workspace = _workspace;
+        if (workspace is null || workspace.FileOps is null || ActiveSelectedRow is not { } row)
+        {
+            return;
+        }
+
+        await ShowPropertiesForRowAsync(workspace, row);
+    }
+
+    // Background-menu Properties: the active pane's folder itself, not a selected row.
+    private async Task ShowCurrentFolderPropertiesAsync()
+    {
+        var workspace = _workspace;
         var fileOps = workspace?.FileOps;
-        if (workspace is null || fileOps is null || ActiveSelectedRow is not { } row)
+        var path = workspace?.Active.Path;
+        if (workspace is null || fileOps is null || string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        FileRow row;
+        var lookupCts = BeginUtilityOperation("FolderProperties");
+        try
+        {
+            var entry = await fileOps.GetEntryInfoAsync(workspace.Active.Path, lookupCts.Token);
+            if (!ReferenceEquals(_workspace, workspace) || lookupCts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            row = FileRow.From(entry, pane: workspace.ActivePane);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ShowMessage("Properties", exception.Message, InfoBarSeverity.Warning);
+            return;
+        }
+        finally
+        {
+            FinishUtilityOperation(lookupCts);
+        }
+
+        await ShowPropertiesForRowAsync(workspace, row);
+    }
+
+    private async Task ShowPropertiesForRowAsync(ExplorerWorkspace workspace, FileRow row)
+    {
+        var fileOps = workspace.FileOps;
+        if (fileOps is null)
         {
             return;
         }
@@ -419,8 +469,12 @@ public sealed partial class MainWindow
             }
         };
 
-        rows.Children.Add(checksumButton);
-        rows.Children.Add(checksumText);
+        // The service refuses checksums for directories, so only files get the button.
+        if (!row.IsDir)
+        {
+            rows.Children.Add(checksumButton);
+            rows.Children.Add(checksumText);
+        }
 
         if (!ReferenceEquals(_workspace, workspace))
         {
@@ -438,7 +492,68 @@ public sealed partial class MainWindow
             CloseButtonText = "Close",
             XamlRoot = Content.XamlRoot,
         };
+
+        if (row.IsDir)
+        {
+            // Folder metrics can take a while on large trees, so they load after the dialog
+            // is visible and stop when it closes.
+            var metricsHost = new StackPanel { Spacing = 8 };
+            metricsHost.Children.Add(new TextBlock { Text = "Contents", FontSize = 11, Opacity = 0.7 });
+            var metricsStatus = new TextBlock { Text = "Calculating…", TextWrapping = TextWrapping.Wrap };
+            metricsHost.Children.Add(metricsStatus);
+            rows.Children.Add(metricsHost);
+
+            var metricsCts = BeginUtilityOperation("PropertiesFolderMetrics");
+            dialog.Closed += (_, _) =>
+            {
+                try
+                {
+                    metricsCts.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The lookup already finished and the registry disposed its token source.
+                }
+            };
+            _ = LoadFolderMetricsIntoAsync(fileOps, row.Path, metricsHost, metricsStatus, metricsCts);
+        }
+
         await DialogHost.ShowAsync(dialog);
+    }
+
+    private async Task LoadFolderMetricsIntoAsync(
+        FileOperationService fileOps,
+        string path,
+        StackPanel host,
+        TextBlock status,
+        CancellationTokenSource cts)
+    {
+        try
+        {
+            var metrics = await fileOps.GetFolderMetricsAsync(path, cts.Token);
+            if (cts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            host.Children.Remove(status);
+            foreach (var detail in InspectionDetails.FolderMetricRows(metrics))
+            {
+                host.Children.Add(new TextBlock { Text = detail.Label, FontSize = 11, Opacity = 0.7 });
+                host.Children.Add(new TextBlock { Text = detail.Value, TextWrapping = TextWrapping.Wrap });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            status.Text = exception.Message;
+        }
+        finally
+        {
+            FinishUtilityOperation(cts);
+        }
     }
 
     private async Task ShowClipboardHistoryAsync()

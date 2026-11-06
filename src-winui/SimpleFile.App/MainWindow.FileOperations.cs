@@ -29,6 +29,17 @@ public sealed partial class MainWindow
         await _fileOperationDialogs.PromptAndCreateShortcutAsync(pane);
     }
 
+    // Row-menu "Create shortcut": the selected item becomes the target and the name is suggested from it.
+    private async Task PromptAndCreateShortcutForSelection()
+    {
+        if (_workspace is null || ActiveSelectedRow is not { } row)
+        {
+            return;
+        }
+
+        await _fileOperationDialogs.PromptAndCreateShortcutAsync(_workspace.ActivePane, row.Path);
+    }
+
     private async Task CreateNewItem(PaneId pane, NewItemTemplate template)
     {
         await _fileOperationDialogs.CreateNewItemFromTemplateAsync(pane, template);

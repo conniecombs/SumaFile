@@ -70,6 +70,8 @@ public static class CommandIds
     public const string OpenOtherPane = "open-other-pane";
     public const string ReopenClosedTab = "reopen-closed-tab";
     public const string Properties = "properties";
+    public const string FolderProperties = "folder-properties";
+    public const string ShortcutForSelected = "shortcut-for-selected";
     public const string ColorLabel = "color-label";
     public const string ClearTagFilter = "clear-tag-filter";
     public const string BookmarkFolder = "bookmark-folder";

@@ -274,6 +274,115 @@ public class ContextMenuBuilderTests
         Assert.DoesNotContain(menu, entry => entry.Id == "ctx-rename");
     }
     [Fact]
+    public void ContextMenu_EmptySelectionShowsBackgroundMenu()
+    {
+        var background = ContextMenuBuilder.Build(new ContextMenuRequest { HasClipboard = true });
+
+        var newMenu = Assert.Single(background, entry => entry.Id == "overflow-new");
+        Assert.Equal("New", newMenu.Label);
+        Assert.Equal(newMenu, background[0]);
+        Assert.Contains(newMenu.Children, child => child.Id == "new:folder" && child.Shortcut == "Ctrl+Shift+N");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:text");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:empty");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:shortcut" && child.Label == "Shortcut...");
+
+        var paste = Assert.Single(background, entry => entry.Id == "ctx-paste");
+        Assert.Equal("Paste", paste.Label);
+        Assert.Null(paste.CommandParameter);
+
+        var refresh = Assert.Single(background, entry => entry.Id == "ctx-refresh");
+        Assert.Equal("Refresh", refresh.Label);
+        Assert.Equal("F5", refresh.Shortcut);
+        Assert.False(string.IsNullOrWhiteSpace(refresh.IconGlyph));
+        Assert.Equal("refresh", CommandAliasCatalog.Normalize("ctx-refresh"));
+
+        Assert.Contains(background, entry => entry.Id == "ctx-tools-menu");
+        Assert.DoesNotContain(Flatten(background), entry => entry.Id == "ctx-copy");
+        Assert.DoesNotContain(Flatten(background), entry => entry.Id == "ctx-rename");
+        Assert.DoesNotContain(Flatten(background), entry => entry.Id == "ctx-info");
+
+        var properties = Assert.Single(background, entry => entry.Id == "ctx-folder-info");
+        Assert.Equal("Properties", properties.Label);
+        Assert.Equal(properties, background[^1]);
+        Assert.Equal(ContextMenuKind.Divider, background[^2].Kind);
+        Assert.False(string.IsNullOrWhiteSpace(properties.IconGlyph));
+        Assert.Equal("folder-properties", CommandAliasCatalog.Normalize("ctx-folder-info"));
+        Assert.Equal("Current folder properties", AppCommandCatalog.Find("folder-properties")?.Label);
+        Assert.Equal("Inspection", AppCommandCatalog.Find("folder-properties")?.Group);
+    }
+
+    [Fact]
+    public void ContextMenu_SingleSelectionOffersCreateShortcut()
+    {
+        var single = ContextMenuBuilder.Build(new ContextMenuRequest { SelectionCount = 1, AllSelectedAreFiles = true });
+        var createShortcut = Assert.Single(single, entry => entry.Id == "ctx-create-shortcut");
+        Assert.Equal("Create shortcut", createShortcut.Label);
+        Assert.Equal(ContextMenuIconCatalog.Link, createShortcut.IconGlyph);
+        var renameIndex = single.ToList().FindIndex(entry => entry.Id == "ctx-rename");
+        Assert.Equal(renameIndex + 1, single.ToList().IndexOf(createShortcut));
+
+        var two = ContextMenuBuilder.Build(new ContextMenuRequest { SelectionCount = 2, AllSelectedAreFiles = true });
+        Assert.DoesNotContain(Flatten(two), entry => entry.Id == "ctx-create-shortcut");
+
+        var folder = ContextMenuBuilder.Build(new ContextMenuRequest { SelectionCount = 1, SelectedIsDirectory = true });
+        Assert.Contains(folder, entry => entry.Id == "ctx-create-shortcut");
+
+        var recycleBin = ContextMenuBuilder.Build(new ContextMenuRequest { SelectionCount = 1, InRecycleBin = true });
+        Assert.DoesNotContain(Flatten(recycleBin), entry => entry.Id == "ctx-create-shortcut");
+
+        Assert.Equal("shortcut-for-selected", CommandAliasCatalog.Normalize("ctx-create-shortcut"));
+        Assert.Equal("Create shortcut to selection", AppCommandCatalog.Find("shortcut-for-selected")?.Label);
+        Assert.Equal("File", AppCommandCatalog.Find("shortcut-for-selected")?.Group);
+    }
+
+    [Fact]
+    public void ContextMenu_BackgroundMenuKeepsTerminalInsideTools()
+    {
+        var background = ContextMenuBuilder.Build(new ContextMenuRequest());
+        Assert.DoesNotContain(background, entry => entry.Id == "ctx-terminal");
+
+        var tools = Assert.Single(background, entry => entry.Id == "ctx-tools-menu");
+        Assert.Contains(tools.Children, child => child.Id == "ctx-terminal" && child.Label == "Open terminal here" && child.Shortcut == "F4");
+        Assert.Contains(tools.Children, child => child.Id == "ctx-powershell-admin");
+    }
+
+    [Fact]
+    public void NewSubmenu_ChildrenCarryIcons()
+    {
+        var background = ContextMenuBuilder.Build(new ContextMenuRequest());
+        var newMenu = Assert.Single(background, entry => entry.Id == "overflow-new");
+
+        Assert.Equal(ContextMenuIconCatalog.NewFolder, newMenu.Children.Single(child => child.Id == "new:folder").IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.Document, newMenu.Children.Single(child => child.Id == "new:text").IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.Document, newMenu.Children.Single(child => child.Id == "new:empty").IconGlyph);
+        Assert.Equal(ContextMenuIconCatalog.Link, newMenu.Children.Single(child => child.Id == "new:shortcut").IconGlyph);
+    }
+
+    [Fact]
+    public void ContextMenu_EmptySelectionHidesPasteWithoutClipboard()
+    {
+        var background = ContextMenuBuilder.Build(new ContextMenuRequest());
+
+        Assert.DoesNotContain(background, entry => entry.Id == "ctx-paste");
+        Assert.Contains(background, entry => entry.Id == "overflow-new");
+        Assert.Contains(background, entry => entry.Id == "ctx-refresh");
+    }
+
+    [Fact]
+    public void ContextMenu_SelectionDoesNotShowBackgroundItems()
+    {
+        var selected = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            SelectionCount = 1,
+            AllSelectedAreFiles = true,
+        });
+
+        Assert.DoesNotContain(Flatten(selected), entry => entry.Id == "overflow-new");
+        Assert.DoesNotContain(Flatten(selected), entry => entry.Id == "ctx-refresh");
+        Assert.DoesNotContain(Flatten(selected), entry => entry.Id == "ctx-folder-info");
+    }
+
+    [Fact]
     public void PaneMoreMenu_UsesPolishedLabelsAndSelectionGating()
     {
         var empty = ContextMenuBuilder.BuildPaneMoreMenu(new ContextMenuRequest());

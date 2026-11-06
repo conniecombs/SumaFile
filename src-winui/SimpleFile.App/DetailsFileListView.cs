@@ -38,6 +38,16 @@ public sealed class DetailsFileRowContextEventArgs(
     public FrameworkElement Anchor { get; } = anchor;
 }
 
+public sealed class DetailsFileBackgroundContextEventArgs(
+    Point? position,
+    FrameworkElement anchor)
+    : EventArgs
+{
+    public Point? Position { get; } = position;
+
+    public FrameworkElement Anchor { get; } = anchor;
+}
+
 public sealed class DetailsFileRowsDragStartingEventArgs(
     IReadOnlyList<FileRow> rows,
     DataPackage data)
@@ -119,6 +129,9 @@ public sealed class DetailsFileListView : UserControl
     public event EventHandler<DetailsFileRowEventArgs>? RowInvoked;
 
     public event EventHandler<DetailsFileRowContextEventArgs>? RowContextRequested;
+
+    /// <summary>Raised for a context gesture on blank space, after the selection is cleared.</summary>
+    public event EventHandler<DetailsFileBackgroundContextEventArgs>? BackgroundContextRequested;
 
     public event EventHandler<DetailsFileRowsDragStartingEventArgs>? RowsDragStarting;
 
@@ -510,6 +523,8 @@ public sealed class DetailsFileListView : UserControl
         var row = RowFromSource(e.OriginalSource);
         if (row is null)
         {
+            RaiseBackgroundContext(e.GetPosition(this), FocusState.Pointer);
+            e.Handled = true;
             return;
         }
 
@@ -529,8 +544,16 @@ public sealed class DetailsFileListView : UserControl
     private void OnListContextRequested(UIElement sender, ContextRequestedEventArgs e)
     {
         var row = RowFromSource(e.OriginalSource) ?? SelectedRow;
+        Point? position = null;
+        if (e.TryGetPosition(this, out var requestPosition))
+        {
+            position = requestPosition;
+        }
+
         if (row is null)
         {
+            RaiseBackgroundContext(position, FocusState.Programmatic);
+            e.Handled = true;
             return;
         }
 
@@ -540,16 +563,17 @@ public sealed class DetailsFileListView : UserControl
             SetSelection([row]);
         }
 
-        Point? position = null;
-        if (e.TryGetPosition(this, out var requestPosition))
-        {
-            position = requestPosition;
-        }
-
         RowContextRequested?.Invoke(
             this,
             new DetailsFileRowContextEventArgs(row, position, AnchorForRow(row) ?? _list));
         e.Handled = true;
+    }
+
+    private void RaiseBackgroundContext(Point? position, FocusState focusState)
+    {
+        Focus(focusState);
+        ClearSelection();
+        BackgroundContextRequested?.Invoke(this, new DetailsFileBackgroundContextEventArgs(position, _list));
     }
 
     private void OnListDragItemsStarting(object sender, DragItemsStartingEventArgs e)

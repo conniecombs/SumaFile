@@ -501,6 +501,35 @@ public sealed partial class MainWindow
         }
     }
 
+    private void OnPrimaryDetailsBackgroundContextRequested(object? sender, DetailsFileBackgroundContextEventArgs e) =>
+        ShowDetailsBackgroundContextMenu(PrimaryDetailsFileList, PaneId.Primary, e);
+
+    private void OnSecondaryDetailsBackgroundContextRequested(object? sender, DetailsFileBackgroundContextEventArgs e) =>
+        ShowDetailsBackgroundContextMenu(SecondaryDetailsFileList, PaneId.Secondary, e);
+
+    // Blank-space context menu: the view has already cleared its selection, so the
+    // builder produces the background (New / Paste / Refresh) menu for the current folder.
+    private void ShowDetailsBackgroundContextMenu(DetailsFileListView list, PaneId pane, DetailsFileBackgroundContextEventArgs e)
+    {
+        if (_workspace is null)
+        {
+            return;
+        }
+
+        _workspace.ActivatePane(pane);
+
+        var flyout = new MenuFlyout();
+        PopulateFileListContextFlyout(flyout, pane);
+        if (e.Position is { } position)
+        {
+            flyout.ShowAt(list, new FlyoutShowOptions { Position = position });
+        }
+        else
+        {
+            flyout.ShowAt(e.Anchor);
+        }
+    }
+
     private static T? FindAncestor<T>(DependencyObject start) where T : class
     {
         var current = VisualTreeHelper.GetParent(start);
