@@ -338,6 +338,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `quick-look` | Space | Handler | Catalog + source-shape guard | Space | `PASS` |
 | `open-selected-tab` `open-other-pane` `reopen-closed-tab` | Tab and pane open commands | Catalog + handlers | Tab workspace tests | Ctrl+Enter / reopen tab | `PASS` |
 | `properties` | Properties | Dialog | Catalog + properties source-shape guard | — | `PASS` |
+| `folder-properties` | Current folder properties | Dialog (shared with `properties`) | Catalog + `ContextMenuBuilderTests` + source-shape guard | Blank-space menu > Properties | `PASS` |
+| `shortcut-for-selected` | Create shortcut to the selected item | Shortcut dialog with target pre-filled | Catalog + `ContextMenuBuilderTests` + source-shape guard | Right-click item > Create shortcut | `PASS` |
 | `color-label` | Tag picker | Dialog | Catalog | — | `MANUAL` |
 | `clear-tag-filter` | Clear active tag filter | Sidebar Tags + command handler | Catalog + source-shape guard | Click a tag, clear it | `PASS` |
 | `bookmark-folder` | Bookmark current folder | Workspace places | Catalog + places tests | Ctrl+B | `PASS` |
@@ -365,6 +367,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-cleanup` | Cleanup | Builder | Same | — | `PASS` |
 | `ctx-duplicates` | Duplicates | Builder | Same | — | `PASS` |
 | `ctx-rename` | Rename | Builder | Same | — | `PASS` |
+| `ctx-create-shortcut` | Create shortcut to selection | Builder + handler | `ContextMenuBuilderTests` | Right-click item | `PASS` |
 | `ctx-advanced-rename` | Advanced rename | Builder | Same | — | `PASS` |
 | `ctx-copy` `ctx-cut` `ctx-paste` | Clipboard | Builder | Same | — | `PASS` |
 | `ctx-copy-path` | Copy full path | Builder + handler | Context menu tests | Paste path in Notepad | `PASS` |
@@ -377,6 +380,8 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-extract-menu` `ctx-extract` `ctx-extract-folder` `ctx-extract-to` | Extract menu | Builder | Same | Archive | `PASS` |
 | `ctx-delete` `ctx-delete-menu` `ctx-delete-recycle` `ctx-delete-permanent` | Delete menu | Builder | `DesktopPolishTests` | Delete / Shift+Delete | `PASS` |
 | `ctx-info` | Properties | Builder | Same | — | `PASS` |
+| `ctx-refresh` | Refresh (blank-space menu) | Builder + alias to `refresh` | `ContextMenuBuilderTests` | Right-click blank space | `PASS` |
+| `ctx-folder-info` | Current folder properties (blank-space menu) | Builder + alias to `folder-properties` | `ContextMenuBuilderTests` | Right-click blank space | `PASS` |
 | `ctx-restore` | Restore Recycle Bin item | Recycle context menu | Context menu tests | Restore | `PASS` |
 | `ctx-empty-recycle-bin` | Empty Recycle Bin | Recycle context / more menu | Context menu tests | Empty Bin | `PASS` |
 | `ctx-git-menu` `ctx-git-panel` `ctx-git-refresh` `ctx-git-diff` `ctx-git-stage` `ctx-git-unstage` `ctx-git-discard` `ctx-git-fetch` `ctx-git-pull` `ctx-git-push` `ctx-git-commit` | Git context menu | `ContextMenuBuilder` + Git workbench handlers | Context menu tests | Right-click changed file in repo | `PASS` |
