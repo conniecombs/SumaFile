@@ -320,8 +320,19 @@ pub(crate) fn copy_file_attempt_versioned(
         .file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.ends_with(".sumafile-partial"));
-    simplefile_core::file_ops::apply_basic_metadata_to_handle(&dst_file, &source_after, is_staging)
-        .map_err(|e| Failure::new(format!("Preserve metadata [{}]: {e}", dst.display()), false))?;
+    // Every byte is already written and verified below; a target that refuses
+    // timestamp or attribute updates (some SMB and FAT volumes) gets the same
+    // treatment as directories: keep the file, log the loss.
+    if let Err(error) = simplefile_core::file_ops::apply_basic_metadata_to_handle(
+        &dst_file,
+        &source_after,
+        is_staging,
+    ) {
+        log::warn!(
+            "Could not preserve file metadata for {}: {error}",
+            dst.display()
+        );
+    }
     drop(dst_file);
     if verify_checksum {
         let mut verify_dst = open_source_sequential(dst)

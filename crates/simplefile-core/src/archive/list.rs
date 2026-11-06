@@ -33,7 +33,9 @@ fn list_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
     let mut total_size = 0u64;
     let mut compressed_size = 0u64;
     for i in 0..archive.len() {
-        let file = archive.by_index(i).map_err(|e| e.to_string())?;
+        // Raw access reads the central directory only, so password-protected
+        // entries list like any other instead of failing the whole archive.
+        let file = archive.by_index_raw(i).map_err(|e| e.to_string())?;
         let entry_path = match file.name() {
             Ok(name) => name.into_owned(),
             Err(_) => {

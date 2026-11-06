@@ -419,6 +419,67 @@ fn seven_zip_extraction_uses_a_bounded_number_of_processes_when_available() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// Mark every entry of a stored zip as encrypted by setting bit 0 of the
+/// general-purpose flags in the local and central headers. The reader then
+/// reports the entries as password protected, exactly like a real ZipCrypto
+/// archive, without needing an encryption feature to write one.
+fn mark_zip_entries_encrypted(zip_path: &Path) {
+    let mut bytes = fs::read(zip_path).unwrap();
+    let mut index = 0;
+    while index + 4 <= bytes.len() {
+        match &bytes[index..index + 4] {
+            b"PK" => {
+                bytes[index + 6] |= 1;
+                index += 4;
+            }
+            b"PK" => {
+                bytes[index + 8] |= 1;
+                index += 4;
+            }
+            _ => index += 1,
+        }
+    }
+    fs::write(zip_path, bytes).unwrap();
+}
+
+/// A zip with password-protected entries is still listable (names and sizes
+/// live in the central directory), and extraction refuses it up front with a
+/// clear message instead of failing half way through.
+#[test]
+fn encrypted_zip_entries_list_but_do_not_extract() {
+    let root = unique_temp_dir("encrypted-zip");
+    let zip_path = root.join("locked.zip");
+    write_test_zip(
+        &zip_path,
+        &[("secret.txt", b"hidden"), ("docs/readme.txt", b"hi")],
+    );
+    mark_zip_entries_encrypted(&zip_path);
+
+    let info = list_archive(zip_path.to_string_lossy().to_string()).expect("list encrypted zip");
+    let mut names: Vec<&str> = info
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["docs/readme.txt", "secret.txt"]);
+
+    let dest = root.join("out");
+    fs::create_dir_all(&dest).unwrap();
+    let error = extract_zip(zip_path.to_str().unwrap(), &dest).expect_err("no password available");
+    assert!(
+        error.to_ascii_lowercase().contains("password")
+            || error.to_ascii_lowercase().contains("encrypted"),
+        "{error}"
+    );
+    assert!(
+        fs::read_dir(&dest).unwrap().next().is_none(),
+        "nothing may be written before the refusal"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn extract_zip_allows_nested_folder_that_does_not_exist_yet() {
     let root = unique_temp_dir("nested");

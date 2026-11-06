@@ -198,6 +198,10 @@ pub(crate) fn resolve_destination(
 /// destination: `(source, destination, message)`.
 pub(crate) type PlanConflict = (PathBuf, PathBuf, String);
 
+/// A top-level item the user's conflict action left in place: `(source,
+/// destination)`. Reported so a skip never silently vanishes from the outcome.
+pub(crate) type PlanSkip = (PathBuf, PathBuf);
+
 #[cfg(test)]
 pub(crate) fn prepare_transfer_inputs(
     sources: Vec<String>,
@@ -205,7 +209,7 @@ pub(crate) fn prepare_transfer_inputs(
     conflict_action: &str,
 ) -> Result<(Vec<TransferPlan>, PathBuf), String> {
     let mut volumes = VolumeKindCache::default();
-    let (plans, dest_path, conflicts) =
+    let (plans, dest_path, conflicts, _skipped) =
         prepare_transfer_inputs_cached(sources, destination, conflict_action, &mut volumes)?;
     if let Some((_, _, message)) = conflicts.into_iter().next() {
         return Err(message);
@@ -220,7 +224,7 @@ pub(crate) fn prepare_transfer_inputs_cached(
     destination: String,
     conflict_action: &str,
     volumes: &mut VolumeKindCache,
-) -> Result<(Vec<TransferPlan>, PathBuf, Vec<PlanConflict>), String> {
+) -> Result<(Vec<TransferPlan>, PathBuf, Vec<PlanConflict>, Vec<PlanSkip>), String> {
     if sources.is_empty() {
         return Err("No sources specified".to_string());
     }
@@ -235,6 +239,7 @@ pub(crate) fn prepare_transfer_inputs_cached(
     let mut plans = Vec::with_capacity(sources.len());
     let mut planned_destinations = HashSet::new();
     let mut conflicts = Vec::new();
+    let mut skipped = Vec::new();
 
     for source in sources {
         // A source that cannot be inspected is reported for that item alone;
@@ -280,6 +285,8 @@ pub(crate) fn prepare_transfer_inputs_cached(
             Err(error) => return Err(error),
         };
         let Some((final_dest, conflict)) = resolved else {
+            let name = source_path.file_name().unwrap_or_default();
+            skipped.push((source_path.clone(), dest_path.join(name)));
             continue;
         };
 
@@ -303,7 +310,7 @@ pub(crate) fn prepare_transfer_inputs_cached(
         });
     }
 
-    Ok((plans, dest_path, conflicts))
+    Ok((plans, dest_path, conflicts, skipped))
 }
 
 /// Sizes were captured while planning; this only sums them (and honours cancel).
@@ -347,7 +354,7 @@ mod batch_tests {
         fs::write(&present, b"here").unwrap();
 
         let mut volumes = VolumeKindCache::default();
-        let (plans, _, failures) = prepare_transfer_inputs_cached(
+        let (plans, _, failures, _) = prepare_transfer_inputs_cached(
             vec![
                 missing.to_string_lossy().to_string(),
                 present.to_string_lossy().to_string(),
@@ -367,6 +374,40 @@ mod batch_tests {
             "a missing source is an error, not a conflict: {}",
             failures[0].2
         );
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    /// A planning-time skip (destination exists, action "skip") is part of the
+    /// outcome, not silently dropped.
+    #[test]
+    fn planning_time_skips_are_reported() {
+        let src_dir = unique_temp_path("skip_src");
+        let dst_dir = unique_temp_path("skip_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let fresh = src_dir.join("fresh.txt");
+        let clash = src_dir.join("clash.txt");
+        fs::write(&fresh, b"fresh").unwrap();
+        fs::write(&clash, b"source").unwrap();
+        fs::write(dst_dir.join("clash.txt"), b"destination").unwrap();
+
+        let mut volumes = VolumeKindCache::default();
+        let (plans, _, conflicts, skipped) = prepare_transfer_inputs_cached(
+            vec![
+                fresh.to_string_lossy().to_string(),
+                clash.to_string_lossy().to_string(),
+            ],
+            dst_dir.to_string_lossy().to_string(),
+            "skip",
+            &mut volumes,
+        )
+        .unwrap();
+
+        assert_eq!(plans.len(), 1);
+        assert!(conflicts.is_empty());
+        assert_eq!(skipped, vec![(clash.clone(), dst_dir.join("clash.txt"))]);
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);

@@ -741,10 +741,11 @@ pub(crate) fn promote_leased_with_policy(
     policy: &crate::progress::Policy,
     lease: &mut crate::transfer_journal::StagingLease,
     mut waiting: impl FnMut(std::time::Duration, &str),
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let mut retry = Retry::from_policy(policy);
     loop {
-        crate::transfer_reliability::wait(std::time::Duration::ZERO, cancel)?;
+        crate::transfer_reliability::wait(std::time::Duration::ZERO, cancel)
+            .map_err(|_| Failure::cancelled())?;
         if !lease.owns_staged() {
             return Err("Transfer staging identity changed; artifact retained".into());
         }
@@ -752,9 +753,13 @@ pub(crate) fn promote_leased_with_policy(
             Ok(()) => return Ok(()),
             Err(error) => {
                 let reason = error.to_string();
-                let delay = retry.failed(error)?;
+                // Keep the kind: a sharing violation or transient error on the
+                // final rename is deferred to the high-level retry, not reported
+                // as permanent with the fully copied file thrown away.
+                let delay = retry.failed_with(error)?;
                 waiting(delay, &reason);
-                crate::transfer_reliability::wait(delay, cancel)?;
+                crate::transfer_reliability::wait(delay, cancel)
+                    .map_err(|_| Failure::cancelled())?;
             }
         }
     }

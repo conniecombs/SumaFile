@@ -12,7 +12,7 @@ use jobs::{
     spawn_copy_move_with_progress, spawn_disk_cleanup, spawn_duplicate_check,
     spawn_folder_item_count, spawn_folder_metrics, spawn_folder_size, spawn_generate_thumbnail,
     spawn_generate_thumbnails, spawn_install_update, spawn_list_directory, spawn_search_files,
-    CopyMoveJob, DiskCleanupJob, DuplicateCheckJob, EventSink,
+    CopyMoveJob, DiskCleanupJob, DuplicateCheckJob, EventSink, SearchJob,
 };
 use serde_json::{json, Value};
 use simplefile_ipc::frame::FrameError;
@@ -152,13 +152,24 @@ where
                     write_json(&writer, &JsonRpcResponse::result(id, json!(cancelled))).await?;
                 }
                 Dispatch::SearchFiles { id, options } => {
+                    // Register before spawning: a cancel that follows the start
+                    // request immediately (type-ahead) must find the token.
+                    let registry_id = options
+                        .search_id
+                        .clone()
+                        .unwrap_or_else(simplefile_core::utils::generate_operation_id);
+                    let cancel = searches.register(&registry_id).await;
                     spawn_search_files(
                         writer.clone(),
                         searches.clone(),
                         scheduler.clone(),
                         events.clone(),
-                        id,
-                        options,
+                        SearchJob {
+                            id,
+                            options,
+                            registry_id,
+                            cancel,
+                        },
                     );
                 }
                 Dispatch::CancelSearch { id, search_id } => {
@@ -193,6 +204,9 @@ where
                     network_mode,
                     operation_id,
                 } => {
+                    let operation_id =
+                        operation_id.unwrap_or_else(simplefile_core::utils::generate_operation_id);
+                    let cancel = duplicate_scans.register(&operation_id).await;
                     spawn_duplicate_check(
                         writer.clone(),
                         duplicate_scans.clone(),
@@ -207,6 +221,7 @@ where
                             exclude_patterns,
                             network_mode,
                             operation_id,
+                            cancel,
                         },
                     );
                 }
@@ -224,6 +239,9 @@ where
                     size_threshold,
                     operation_id,
                 } => {
+                    let operation_id =
+                        operation_id.unwrap_or_else(simplefile_core::utils::generate_operation_id);
+                    let cancel = cleanup_scans.register(&operation_id).await;
                     spawn_disk_cleanup(
                         writer.clone(),
                         cleanup_scans.clone(),
@@ -234,6 +252,7 @@ where
                             directory,
                             size_threshold,
                             operation_id,
+                            cancel,
                         },
                     );
                 }

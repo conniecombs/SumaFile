@@ -1,9 +1,12 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Remote paths are POSIX: only `/` separates components. A backslash is an
+/// ordinary character in a file name, and converting it used to make
+/// delete/rename/download act on a different entry.
 pub(crate) fn normalize_remote_path(path: &str) -> String {
-    let replaced = path.trim().replace('\\', "/");
-    let parts: Vec<&str> = replaced
+    let parts: Vec<&str> = path
+        .trim()
         .split('/')
         .filter(|part| !part.is_empty() && *part != ".")
         .collect();
@@ -16,7 +19,7 @@ pub(crate) fn normalize_remote_path(path: &str) -> String {
 }
 
 pub(crate) fn join_remote_path(parent: &str, child: &str) -> String {
-    let child = child.trim().trim_matches('/').trim_matches('\\');
+    let child = child.trim().trim_matches('/');
     if child.is_empty() {
         return normalize_remote_path(parent);
     }
@@ -95,6 +98,24 @@ mod tests {
             "/var/www/release"
         );
         assert_eq!(join_remote_path("", "release"), "/release");
+    }
+
+    /// POSIX file names may contain backslashes; treating them as separators
+    /// made delete/rename/download act on a different file.
+    #[test]
+    fn backslashes_are_ordinary_characters_in_remote_names() {
+        assert_eq!(
+            normalize_remote_path(r"/dir/report\final.txt"),
+            r"/dir/report\final.txt"
+        );
+        assert_eq!(
+            remote_file_name(r"/dir/report\final.txt"),
+            r"report\final.txt"
+        );
+        assert_eq!(
+            join_remote_path("/dir", r"report\final.txt"),
+            r"/dir/report\final.txt"
+        );
     }
 
     #[test]

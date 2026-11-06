@@ -292,10 +292,7 @@ fn windows_volume_file_system(wide_root: &[u16]) -> Option<String> {
 
 #[cfg(windows)]
 fn is_remote_like_file_system(file_system: &str) -> bool {
-    let lower = file_system.to_ascii_lowercase();
-    ["airlivedrive", "virtual", "sshfs", "sftp", "fuse"]
-        .iter()
-        .any(|token| lower.contains(token))
+    crate::drives::file_system_is_remote_like(file_system)
 }
 
 pub fn generate_operation_id() -> String {
@@ -640,6 +637,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn remote_like_file_system_detects_virtual_mounts() {
+        // Same vocabulary as the drive list: a GoogleDriveFS volume is remote
+        // for caching and multistream decisions too.
+        assert!(is_remote_like_file_system("GoogleDriveFS"));
         assert!(is_remote_like_file_system("AirLiveDrive-7"));
         assert!(is_remote_like_file_system("FuseMountFS"));
         assert!(is_remote_like_file_system("SSHFS"));

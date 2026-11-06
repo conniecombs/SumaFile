@@ -691,13 +691,13 @@ pub(crate) fn copy_selection(
             }
             Err(error) => {
                 let cleanup = lease.abort();
-                let message = match cleanup {
+                let failure = match cleanup {
                     Ok(()) => error,
-                    Err(extra) => format!("{error}; {extra}"),
+                    Err(extra) => Failure::with_kind(format!("{error}; {extra}"), error.kind),
                 };
                 let outcome = &mut root_outcomes[root_index];
                 if outcome.error.is_none() {
-                    outcome.error = Some(Failure::from(message));
+                    outcome.error = Some(failure);
                 }
             }
         }

@@ -151,7 +151,8 @@ fn classify_io(error: &io::Error) -> FailureKind {
 }
 
 fn transient_io(error: &io::Error) -> bool {
-    // Do not retry conflicts, invalid paths, permissions, missing files, or data corruption.
+    // Do not retry conflicts, invalid paths, permissions, missing files, data
+    // corruption, or a full volume: none of those clear up by waiting.
     if matches!(
         error.kind(),
         io::ErrorKind::TimedOut
@@ -161,7 +162,6 @@ fn transient_io(error: &io::Error) -> bool {
             | io::ErrorKind::ConnectionAborted
             | io::ErrorKind::NotConnected
             | io::ErrorKind::BrokenPipe
-            | io::ErrorKind::StorageFull
     ) {
         return true;
     }
@@ -368,5 +368,18 @@ mod tests {
         );
         let err = retry.failed(Failure::new("transient", true)).unwrap_err();
         assert!(err.contains("after 3 attempts"));
+    }
+}
+
+#[cfg(test)]
+mod classification_tests {
+    use super::{classify_io, FailureKind};
+
+    /// A full destination volume does not recover by waiting: retrying it
+    /// ten times with backoff only delays the report and halves concurrency.
+    #[test]
+    fn disk_full_is_permanent_not_transient() {
+        let error = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        assert_eq!(classify_io(&error), FailureKind::Permanent);
     }
 }

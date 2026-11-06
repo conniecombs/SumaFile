@@ -120,3 +120,40 @@ fn remote_profiles_delete_by_id() {
 
     cleanup(&db);
 }
+
+#[test]
+fn credential_targets_outside_the_app_namespace_are_rejected() {
+    use simplefile_core::remote::profiles::prepare_profile_input;
+    use simplefile_core::remote::{RemoteAuthKind, RemoteProfileInput, RemoteProtocol};
+
+    let input = |target: Option<&str>| RemoteProfileInput {
+        id: None,
+        name: "box".to_string(),
+        protocol: RemoteProtocol::Sftp,
+        host: "example.test".to_string(),
+        port: 22,
+        username: "user".to_string(),
+        root_path: "/".to_string(),
+        auth_kind: RemoteAuthKind::Password,
+        insecure_plain_ftp: false,
+        passive_mode: true,
+        credential_target: target.map(str::to_string),
+        private_key_path: None,
+        trusted_host_fingerprint: None,
+    };
+
+    let error = prepare_profile_input(input(Some("git:https://github.com"))).unwrap_err();
+    assert!(error.contains("SumaFile.Remote."), "{error}");
+
+    let own = prepare_profile_input(input(Some("SumaFile.Remote.custom"))).unwrap();
+    assert_eq!(
+        own.credential_target.as_deref(),
+        Some("SumaFile.Remote.custom")
+    );
+
+    let generated = prepare_profile_input(input(None)).unwrap();
+    assert!(generated
+        .credential_target
+        .as_deref()
+        .is_some_and(|target| target.starts_with("SumaFile.Remote.")));
+}

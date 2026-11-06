@@ -385,6 +385,7 @@ fn transfer_with_policy_blocking(
 
     let mut volumes = VolumeKindCache::default();
     let mut failed: Vec<TransferFailure> = Vec::new();
+    let mut skipped: Vec<TransferResult> = Vec::new();
     let planned = match &request {
         Request::Selection {
             sources,
@@ -395,13 +396,19 @@ fn transfer_with_policy_blocking(
             conflict_action,
             &mut volumes,
         )
-        .map(|(plans, _, conflicts)| {
+        .map(|(plans, _, conflicts, planned_skips)| {
             for (source, final_dest, message) in conflicts {
                 failed.push(TransferFailure::new(
                     &source,
                     &final_dest,
                     &Failure::conflict(message),
                 ));
+            }
+            for (source, final_dest) in planned_skips {
+                skipped.push(TransferResult {
+                    source: source.to_string_lossy().into(),
+                    destination: final_dest.to_string_lossy().into(),
+                });
             }
             plans
         }),
@@ -476,7 +483,6 @@ fn transfer_with_policy_blocking(
     let is_move = operation_type == "move";
     let mut completed_bytes = 0u64;
     let mut transferred: Vec<TransferResult> = Vec::with_capacity(plans.len());
-    let mut skipped: Vec<TransferResult> = Vec::new();
     let mut files: Vec<FileTask> = Vec::new();
     let mut roots: Vec<RootTask> = Vec::new();
     let mut reserved: HashSet<String> = plans
@@ -590,10 +596,19 @@ fn transfer_with_policy_blocking(
                 });
             }
         }
+        // Sources that stayed behind on purpose (skipped) or because they
+        // failed both explain a source directory that cannot be removed.
         let failed_paths: Vec<PathBuf> = failed
             .iter()
             .filter(|f| !f.source.is_empty())
             .map(|f| PathBuf::from(&f.source))
+            .chain(
+                result
+                    .copy
+                    .skipped
+                    .iter()
+                    .map(|(_, task)| task.source.clone()),
+            )
             .collect();
         for (root, outcome) in roots.iter().zip(result.roots) {
             match outcome.error {
@@ -1020,6 +1035,44 @@ mod tests {
             !source.exists(),
             "move must remove the whole source tree, including new subfolders"
         );
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    #[test]
+    fn move_merge_with_skip_keeps_skipped_sources_without_failing() {
+        let src_root = unique_temp_path("move_skip_src");
+        let dst_root = unique_temp_path("move_skip_dst");
+        let source = src_root.join("Proj");
+        let existing = dst_root.join("Proj");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&existing).unwrap();
+        fs::write(source.join("same.txt"), b"source").unwrap();
+        fs::write(source.join("new.txt"), b"new").unwrap();
+        fs::write(existing.join("same.txt"), b"destination").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let result = transfer_with_progress_blocking(
+            "move",
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            "op_move_skip_test".to_string(),
+            "skip".to_string(),
+            cancel,
+            &|_| {},
+        )
+        .unwrap_or_else(|error| panic!("skipping is a choice, not a failure: {:?}", error.outcome));
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(fs::read(existing.join("new.txt")).unwrap(), b"new");
+        assert_eq!(fs::read(existing.join("same.txt")).unwrap(), b"destination");
+        assert_eq!(
+            fs::read(source.join("same.txt")).unwrap(),
+            b"source",
+            "a skipped source stays where it was"
+        );
+        assert!(!source.join("new.txt").exists());
 
         let _ = fs::remove_dir_all(&src_root);
         let _ = fs::remove_dir_all(&dst_root);

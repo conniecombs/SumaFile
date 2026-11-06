@@ -40,7 +40,15 @@ pub(super) fn extract_zip(path: &str, dest: &Path) -> Result<(), String> {
 
     let mut planned_paths = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
-        let file = archive.by_index(i).map_err(|e| e.to_string())?;
+        let file = archive.by_index_raw(i).map_err(|e| e.to_string())?;
+        if file.encrypted() {
+            // Refuse before anything is written: failing on the first encrypted
+            // entry mid-way left a partial extraction behind.
+            return Err(format!(
+                "Archive entry is password protected and cannot be extracted: {}",
+                String::from_utf8_lossy(file.name_raw())
+            ));
+        }
         let name = file
             .name()
             .map_err(|e| format!("Invalid ZIP entry name: {e}"))?;

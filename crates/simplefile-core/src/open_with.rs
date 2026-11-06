@@ -14,11 +14,30 @@ fn executable_stem(path: &Path) -> String {
 
 fn executable_name_is_denied(path: &Path) -> bool {
     let stem = executable_stem(path);
-    DENIED_EXECUTABLE_NAMES.contains(&stem.as_str())
+    if DENIED_EXECUTABLE_NAMES.contains(&stem.as_str()) {
+        return true;
+    }
+    // `python3.12`, `node22`: a version suffix does not make a new interpreter.
+    let unversioned = stem.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    !unversioned.is_empty() && DENIED_EXECUTABLE_NAMES.contains(&unversioned)
+}
+
+/// The name NTFS actually opens: an alternate-data-stream suffix (`::$DATA`)
+/// and trailing dots or spaces are dropped by the file system, so the deny
+/// list must look at the same name.
+fn effective_target_name(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let without_stream = name.split(':').next().unwrap_or_default();
+    without_stream.trim_end_matches(['.', ' ']).to_string()
 }
 
 fn target_extension_is_denied(path: &Path) -> bool {
-    path.extension()
+    let name = effective_target_name(path);
+    Path::new(&name)
+        .extension()
         .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
         .is_some_and(|ext| DENIED_TARGET_EXTENSIONS.contains(&ext.as_str()))
 }
@@ -283,6 +302,33 @@ mod tests {
         for name in ["cmd.exe", "powershell.exe", "python3", "node"] {
             assert!(executable_name_is_denied(Path::new(name)));
         }
+    }
+
+    /// Interpreters with a windowless variant or a version suffix, and a
+    /// script extension the interpreters run, must be denied too.
+    #[test]
+    fn denied_executables_cover_windowless_and_versioned_interpreters() {
+        for name in [
+            "pythonw.exe",
+            "python3.12.exe",
+            "pyw.exe",
+            "javaw.exe",
+            "conhost.exe",
+        ] {
+            assert!(executable_name_is_denied(Path::new(name)), "{name}");
+        }
+        for target in ["evil.py", "evil.pyw", "evil.psm1"] {
+            assert!(target_extension_is_denied(Path::new(target)), "{target}");
+        }
+    }
+
+    /// NTFS opens `payload.exe::$DATA` and `payload.exe.` as `payload.exe`;
+    /// the deny list must see through both spellings.
+    #[test]
+    fn denied_target_extensions_see_through_ntfs_spellings() {
+        assert!(target_extension_is_denied(Path::new("payload.exe::$DATA")));
+        assert!(target_extension_is_denied(Path::new("payload.exe.")));
+        assert!(target_extension_is_denied(Path::new("payload.exe ")));
     }
 
     #[test]

@@ -1343,7 +1343,12 @@ pub fn transfer_single(
     };
     let cancel = AtomicBool::new(false);
     if request.direction == "download" {
-        crate::transfer_journal::recover_directory(Path::new(&destination))?;
+        // Recovery scans the folder the file lands in; passing the file path
+        // itself failed with "directory name is invalid" whenever it existed.
+        if let Some(parent) = Path::new(destination).parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            crate::transfer_journal::recover_directory(parent)?;
+        }
     }
     let mut progress = Progress {
         request: &request,
@@ -1371,17 +1376,22 @@ pub fn transfer_single(
 }
 
 #[cfg(test)]
+mod tests_support {
+    pub(super) use super::tests::Fixture;
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use simplefile_core::models::DirectoryListing;
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    struct Fixture {
-        root: PathBuf,
+    pub(super) struct Fixture {
+        pub(super) root: PathBuf,
     }
     impl Fixture {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let root = std::env::temp_dir().join(format!(
                 "sumafile-remote-test-{}",
                 crate::progress::generate_transfer_operation_id()
@@ -1393,7 +1403,7 @@ mod tests {
         fn local(&self) -> String {
             self.root.join("local").to_string_lossy().into_owned()
         }
-        fn provider(&self) -> DiskProvider {
+        pub(super) fn provider(&self) -> DiskProvider {
             DiskProvider {
                 root: self.root.join("remote"),
                 fail_upload: false,
@@ -1437,7 +1447,7 @@ mod tests {
         }
     }
 
-    struct DiskProvider {
+    pub(super) struct DiskProvider {
         root: PathBuf,
         fail_upload: bool,
         fail_promote: bool,
@@ -2231,5 +2241,32 @@ mod tests {
             .map(|i| i.bytes)
             .collect();
         assert_eq!(file_sizes, vec![256, 1024, 4096]);
+    }
+}
+
+#[cfg(test)]
+mod single_download_tests {
+    use super::tests_support::Fixture;
+    use super::transfer_single;
+    use std::fs;
+
+    /// Recovery scans the folder a download lands in. Passing the file path
+    /// itself failed with "directory name is invalid" whenever it existed.
+    #[test]
+    fn single_download_over_an_existing_file_succeeds() {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("remote").join("file.txt"), b"remote").unwrap();
+        let destination = fixture.root.join("local").join("file.txt");
+        fs::write(&destination, b"stale").unwrap();
+
+        let mut provider = fixture.provider();
+        transfer_single(
+            &mut provider,
+            false,
+            "/file.txt",
+            &destination.to_string_lossy(),
+        )
+        .expect("download over an existing file");
+        assert_eq!(fs::read(&destination).unwrap(), b"remote");
     }
 }

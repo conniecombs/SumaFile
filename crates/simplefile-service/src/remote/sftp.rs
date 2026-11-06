@@ -121,9 +121,14 @@ impl RemoteProvider for SftpRemoteProvider {
         let mut deleted = Vec::new();
         for path in paths {
             let normalized = normalize_remote_path(path);
-            let metadata = block_on_runtime(&self.runtime, self.sftp.metadata(normalized.clone()))
-                .map_err(|error| format!("SFTP stat failed for {normalized}: {error}"))?;
-            if metadata.is_dir() {
+            // lstat, not stat: a symlink to a directory is removed as the link
+            // it is; following it would try `rmdir` on the link and fail.
+            let metadata = block_on_runtime(
+                &self.runtime,
+                self.sftp.symlink_metadata(normalized.clone()),
+            )
+            .map_err(|error| format!("SFTP stat failed for {normalized}: {error}"))?;
+            if metadata.is_dir() && !metadata.is_symlink() {
                 block_on_runtime(&self.runtime, self.sftp.remove_dir(normalized.clone())).map_err(
                     |error| format!("SFTP remove directory failed for {normalized}: {error}"),
                 )?;
