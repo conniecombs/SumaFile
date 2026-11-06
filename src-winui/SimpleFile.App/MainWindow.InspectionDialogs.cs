@@ -306,8 +306,58 @@ public sealed partial class MainWindow
     private async Task ShowPropertiesAsync()
     {
         var workspace = _workspace;
+        if (workspace is null || workspace.FileOps is null || ActiveSelectedRow is not { } row)
+        {
+            return;
+        }
+
+        await ShowPropertiesForRowAsync(workspace, row);
+    }
+
+    // Background-menu Properties: the active pane's folder itself, not a selected row.
+    private async Task ShowCurrentFolderPropertiesAsync()
+    {
+        var workspace = _workspace;
         var fileOps = workspace?.FileOps;
-        if (workspace is null || fileOps is null || ActiveSelectedRow is not { } row)
+        var path = workspace?.Active.Path;
+        if (workspace is null || fileOps is null || string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        FileRow row;
+        var lookupCts = BeginUtilityOperation("FolderProperties");
+        try
+        {
+            var entry = await fileOps.GetEntryInfoAsync(workspace.Active.Path, lookupCts.Token);
+            if (!ReferenceEquals(_workspace, workspace) || lookupCts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            row = FileRow.From(entry, pane: workspace.ActivePane);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ShowMessage("Properties", exception.Message, InfoBarSeverity.Warning);
+            return;
+        }
+        finally
+        {
+            FinishUtilityOperation(lookupCts);
+        }
+
+        await ShowPropertiesForRowAsync(workspace, row);
+    }
+
+    private async Task ShowPropertiesForRowAsync(ExplorerWorkspace workspace, FileRow row)
+    {
+        var fileOps = workspace.FileOps;
+        if (fileOps is null)
         {
             return;
         }

@@ -38,6 +38,7 @@ public static class CommandAliasCatalog
         ["ctx-restore"] = "restore-selected",
         ["ctx-empty-recycle-bin"] = "empty-recycle-bin",
         ["ctx-info"] = "properties",
+        ["ctx-folder-info"] = "folder-properties",
         ["ctx-git-panel"] = "git-panel",
         ["ctx-git-diff"] = "git-diff-selected",
         ["ctx-git-stage"] = "git-stage-selected",

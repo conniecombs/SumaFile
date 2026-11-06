@@ -87,6 +87,7 @@ public static class AppCommandCatalog
         new("open-other-pane", "Open selection in other pane", "Panes"),
         new("reopen-closed-tab", "Reopen closed tab", "Tabs"),
         new("properties", "Properties", "Inspection", "Alt+Enter"),
+        new("folder-properties", "Current folder properties", "Inspection"),
         new("color-label", "Set color label", "Organization"),
         new("clear-tag-filter", "Clear tag filter", "Organization"),
         new("bookmark-folder", "Bookmark current folder", "Organization", "Ctrl+B"),

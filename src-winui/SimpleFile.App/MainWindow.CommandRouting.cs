@@ -85,6 +85,7 @@ public sealed partial class MainWindow
             ["filter"] = () => RunSyncCommand(FocusFilterUi),
             ["quick-look"] = ShowQuickLookAsync,
             ["properties"] = ShowPropertiesAsync,
+            ["folder-properties"] = ShowCurrentFolderPropertiesAsync,
             ["color-label"] = SetColorLabelAsync,
             ["clear-tag-filter"] = () => RunSyncCommand(ClearTagFilter),
             ["bookmark-folder"] = BookmarkCurrentFolderAsync,

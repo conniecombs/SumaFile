@@ -787,6 +787,25 @@ public class Sprint2FileListTests
     }
 
     [Fact]
+    public void FolderProperties_ShowsTheCurrentFolderThroughTheSharedPropertiesDialog()
+    {
+        var appRoot = Sprint2ShellTests.AppRoot();
+        var routing = File.ReadAllText(Path.Combine(appRoot, "MainWindow.CommandRouting.cs"));
+        var dialogs = File.ReadAllText(Path.Combine(appRoot, "MainWindow.InspectionDialogs.cs"));
+
+        Assert.Contains("[\"folder-properties\"] = ShowCurrentFolderPropertiesAsync,", routing);
+
+        var folder = Slice(dialogs, "private async Task ShowCurrentFolderPropertiesAsync(", "private async Task ShowPropertiesForRowAsync(");
+        Assert.Contains("GetEntryInfoAsync(workspace.Active.Path", folder);
+        Assert.Contains("FileRow.From(", folder);
+        Assert.Contains("await ShowPropertiesForRowAsync(", folder);
+
+        var selected = Slice(dialogs, "private async Task ShowPropertiesAsync(", "private async Task ShowCurrentFolderPropertiesAsync(");
+        Assert.Contains("ActiveSelectedRow", selected);
+        Assert.Contains("await ShowPropertiesForRowAsync(", selected);
+    }
+
+    [Fact]
     public void ListViewRightTap_OnBlankSpaceClearsSelection()
     {
         var events = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileListEvents.cs"));

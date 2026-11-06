@@ -114,7 +114,8 @@ public static class ContextMenuBuilder
 
     /// <summary>
     /// The menu for a right-click on blank pane space (nothing selected): create items,
-    /// paste into the current folder, refresh, and the folder-level tool and Git groups.
+    /// paste into the current folder, refresh, the folder-level tool and Git groups, and
+    /// the current folder's properties.
     /// </summary>
     private static IReadOnlyList<ContextMenuEntry> BuildBackgroundMenu(
         ContextMenuRequest request,
@@ -131,6 +132,8 @@ public static class ContextMenuBuilder
             Divider(),
             ToolsMenu(request, canCompare, canCompareFolders),
             GitMenu(request),
+            Divider(),
+            Item("ctx-folder-info", "Properties"),
         ]);
     }
 

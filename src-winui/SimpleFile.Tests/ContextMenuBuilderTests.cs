@@ -300,6 +300,15 @@ public class ContextMenuBuilderTests
         Assert.DoesNotContain(Flatten(background), entry => entry.Id == "ctx-copy");
         Assert.DoesNotContain(Flatten(background), entry => entry.Id == "ctx-rename");
         Assert.DoesNotContain(Flatten(background), entry => entry.Id == "ctx-info");
+
+        var properties = Assert.Single(background, entry => entry.Id == "ctx-folder-info");
+        Assert.Equal("Properties", properties.Label);
+        Assert.Equal(properties, background[^1]);
+        Assert.Equal(ContextMenuKind.Divider, background[^2].Kind);
+        Assert.False(string.IsNullOrWhiteSpace(properties.IconGlyph));
+        Assert.Equal("folder-properties", CommandAliasCatalog.Normalize("ctx-folder-info"));
+        Assert.Equal("Current folder properties", AppCommandCatalog.Find("folder-properties")?.Label);
+        Assert.Equal("Inspection", AppCommandCatalog.Find("folder-properties")?.Group);
     }
 
     [Fact]
@@ -323,6 +332,7 @@ public class ContextMenuBuilderTests
 
         Assert.DoesNotContain(Flatten(selected), entry => entry.Id == "overflow-new");
         Assert.DoesNotContain(Flatten(selected), entry => entry.Id == "ctx-refresh");
+        Assert.DoesNotContain(Flatten(selected), entry => entry.Id == "ctx-folder-info");
     }
 
     [Fact]

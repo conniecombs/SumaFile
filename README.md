@@ -139,7 +139,8 @@ the app. Builds without complete trusted metadata fall back to the release page.
    Look on the selected item.
 6. Use right-click menus, toolbar buttons, or `Ctrl+Shift+P` for command
    palette access. Right-click blank pane space for New (folder, text
-   document, blank file, shortcut), Paste, and Refresh.
+   document, blank file, shortcut), Paste, Refresh, and the current
+   folder's Properties.
 7. Open Tools -> FTP/SFTP Manager when you need a saved FTP, FTPS, or SFTP
    profile.
 8. Save repeatable pane/tab/column setups from View options -> Profiles.
