@@ -79,3 +79,6 @@ crashdump/
 *.crdownload
 *.orig
 *.rej
+
+# Claude Code agent worktrees (local scratch)
+.claude/worktrees/
