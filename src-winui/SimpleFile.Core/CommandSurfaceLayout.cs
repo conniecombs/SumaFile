@@ -335,8 +335,7 @@ public static class ToolbarActionCatalog
             "view-content" => ContextMenuIconCatalog.Document,
             "customize-toolbar" or "toggle-toolbar-labels" => ContextMenuIconCatalog.Settings,
             "icon-size-small" or "icon-size-medium" or "icon-size-large"
-                or "icon-size-extra-large" or "icon-size-jumbo" or "icon-size-huge"
-                or "icon-size-maximum" => ContextMenuIconCatalog.ViewAll,
+                or "icon-size-extra-large" or "icon-size-huge" => ContextMenuIconCatalog.ViewAll,
             "properties" => ContextMenuIconCatalog.Info,
             "color-label" => ContextMenuIconCatalog.Label,
             "bookmark-folder" => ContextMenuIconCatalog.Favorite,

@@ -76,7 +76,6 @@ public static class ContextMenuIconCatalog
             "ctx-archive-menu" => Package,
             "ctx-compress" or "ctx-view-archive" => Package,
             "ctx-extract-menu" or "ctx-extract-to" => Import,
-            "ctx-delete-menu" => Delete,
             "ctx-info" or "ctx-folder-info" => Info,
             "ctx-close-left-pane" or "ctx-close-dual-pane" => ClosePane,
             "ctx-git-menu" or "ctx-git-panel" => Branch,

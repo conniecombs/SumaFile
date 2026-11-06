@@ -166,7 +166,7 @@ public class ContextMenuBuilderTests
             tools.Children.Select(child => child.Id).ToArray());
         Assert.Equal("FTP/SFTP manager...", tools.Children[0].Label);
         Assert.Equal("Operation history...", tools.Children[1].Label);
-        Assert.Equal("Large files and duplicates...", tools.Children[2].Label);
+        Assert.Equal("Large files and duplicates here...", tools.Children[2].Label);
         Assert.Equal("F4", tools.Children[3].Shortcut);
         Assert.Contains(more, entry => entry.Id == "overflow-profiles" && entry.Label == "Manage workspace profiles...");
     }
