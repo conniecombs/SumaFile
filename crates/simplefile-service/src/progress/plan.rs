@@ -58,10 +58,9 @@ impl VolumeKindCache {
 pub(crate) fn volume_key(path: &Path) -> String {
     let raw = path.to_string_lossy().replace('/', "\\");
     let trimmed = raw.trim_start_matches("\\\\?\\");
-    let trimmed = trimmed.strip_prefix("UNC\\").map_or_else(
-        || trimmed.to_string(),
-        |rest| format!("\\\\{rest}"),
-    );
+    let trimmed = trimmed
+        .strip_prefix("UNC\\")
+        .map_or_else(|| trimmed.to_string(), |rest| format!("\\\\{rest}"));
     if let Some(rest) = trimmed.strip_prefix("\\\\") {
         let parts: Vec<&str> = rest.split('\\').filter(|s| !s.is_empty()).take(2).collect();
         return format!("\\\\{}", parts.join("\\")).to_lowercase();

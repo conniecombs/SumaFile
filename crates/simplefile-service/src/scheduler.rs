@@ -288,13 +288,10 @@ mod tests {
             .unwrap();
         // A foreground listing still gets the single general permit while the
         // transfer is running.
-        let listed = tokio::time::timeout(
-            Duration::from_secs(2),
-            scheduler.run_foreground(|| 42),
-        )
-        .await
-        .expect("foreground work must not wait for a long transfer")
-        .unwrap();
+        let listed = tokio::time::timeout(Duration::from_secs(2), scheduler.run_foreground(|| 42))
+            .await
+            .expect("foreground work must not wait for a long transfer")
+            .unwrap();
         assert_eq!(listed, 42);
         release_tx.send(()).unwrap();
         transfer.await.unwrap().unwrap();

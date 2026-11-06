@@ -287,7 +287,9 @@ fn unknown_method_is_not_found() {
 
 #[test]
 fn settings_methods_round_trip_through_metadata_db() {
-    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let db_path = temp_file("settings-db", b"");
     fs::remove_file(&db_path).expect("remove seed temp file");
     let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
@@ -537,7 +539,9 @@ fn assert_domain_method_is_wired(state: &mut SessionState, method: &str, id: u64
 
 #[test]
 fn leftover_domain_methods_are_wired() {
-    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let db_path = temp_file("leftover-domain-db", b"");
     fs::remove_file(&db_path).expect("remove seed temp file");
     let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
@@ -602,7 +606,9 @@ fn leftover_domain_methods_are_wired() {
 
 #[test]
 fn tags_and_smart_folders_round_trip_through_core() {
-    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let db_path = temp_file("tags-smart-folders-db", b"");
     fs::remove_file(&db_path).expect("remove seed temp file");
     let app_data = db_path.with_file_name(format!(
@@ -745,7 +751,9 @@ fn tags_and_smart_folders_round_trip_through_core() {
 
 #[test]
 fn remote_profile_ipc_saves_and_lists_profiles_without_secret_material() {
-    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let db_path = temp_file("remote-profiles-db", b"");
     fs::remove_file(&db_path).expect("remove seed temp file");
     let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
@@ -1001,7 +1009,9 @@ impl RemoteProviderFactory for SecretCheckingProviderFactory {
 
 #[test]
 fn remote_test_profile_connects_provider_and_reports_live_capabilities() {
-    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let db_path = temp_file("remote-test-profile-db", b"");
     fs::remove_file(&db_path).expect("remove seed temp file");
     let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
@@ -1073,7 +1083,9 @@ impl RemoteProviderFactory for PrivateKeySecretCheckingProviderFactory {
 
 #[test]
 fn remote_session_ipc_connects_lists_and_disconnects_with_provider() {
-    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let db_path = temp_file("remote-session-db", b"");
     fs::remove_file(&db_path).expect("remove seed temp file");
     let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
@@ -1184,7 +1196,9 @@ fn remote_session_ipc_connects_lists_and_disconnects_with_provider() {
 
 #[test]
 fn remote_profile_ipc_stores_uses_and_deletes_secrets_by_credential_target() {
-    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let db_path = temp_file("remote-secret-db", b"");
     fs::remove_file(&db_path).expect("remove seed temp file");
     let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
@@ -1277,7 +1291,9 @@ fn remote_profile_ipc_stores_uses_and_deletes_secrets_by_credential_target() {
 
 #[test]
 fn remote_profile_ipc_stores_private_key_passphrases_by_credential_target() {
-    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let db_path = temp_file("remote-private-key-secret-db", b"");
     fs::remove_file(&db_path).expect("remove seed temp file");
     let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
@@ -1354,7 +1370,9 @@ fn remote_profile_ipc_stores_private_key_passphrases_by_credential_target() {
 
 #[test]
 fn remote_session_ipc_creates_renames_and_deletes_entries_with_provider() {
-    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let db_path = temp_file("remote-mutation-db", b"");
     fs::remove_file(&db_path).expect("remove seed temp file");
     let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
@@ -1467,7 +1485,9 @@ fn remote_session_ipc_creates_renames_and_deletes_entries_with_provider() {
 
 #[test]
 fn remote_transfer_ipc_downloads_and_uploads_files_with_provider() {
-    let _lock = metadata_db_env_lock().lock().expect("env lock");
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let db_path = temp_file("remote-transfer-db", b"");
     fs::remove_file(&db_path).expect("remove seed temp file");
     let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);

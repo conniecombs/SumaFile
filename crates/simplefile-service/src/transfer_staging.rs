@@ -16,7 +16,7 @@ pub(crate) struct FileIdentity(pub(crate) u64, pub(crate) u64);
 pub(crate) fn file_identity(path: &Path) -> Result<FileIdentity, String> {
     #[cfg(windows)]
     {
-        let file = open_source_for_verification(path)?;
+        let file = open_for_identity(path)?;
         let (volume, index) = file_id_from_handle(&file)
             .ok_or_else(|| format!("Cannot establish file identity [{}]", path.display()))?;
         Ok(FileIdentity(volume as u64, index))
@@ -192,7 +192,9 @@ pub(crate) fn capture_source_version_for_path(path: &Path) -> Result<SourceVersi
     let file_meta = file
         .metadata()
         .map_err(|e| format!("Failed to stat opened source [{}]: {e}", path.display()))?;
-    Ok(capture_source_version_from_open_file(&file, &file_meta, None))
+    Ok(capture_source_version_from_open_file(
+        &file, &file_meta, None,
+    ))
 }
 
 /// Like `capture_source_version_for_path`, with a SHA-256 of a regular file's
@@ -334,6 +336,27 @@ fn open_source_handle(path: &Path, deleting: bool) -> Result<fs::File, String> {
 #[cfg(windows)]
 fn open_source_for_verification(path: &Path) -> Result<fs::File, String> {
     open_source_handle(path, false)
+}
+
+/// Identity only: attribute access with full sharing, so the check succeeds while
+/// this process (the lease still holds the handle it created the staging file
+/// with) or anyone else has the object open for writing. `open_source_handle`
+/// deliberately refuses writers; used here it reported every live owned staging
+/// file as "identity changed".
+#[cfg(windows)]
+fn open_for_identity(path: &Path) -> Result<fs::File, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    const FILE_READ_ATTRIBUTES_ACCESS: u32 = 0x80;
+    fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES_ACCESS)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|e| format!("Failed to open [{}] for identity: {e}", path.display()))
 }
 
 #[cfg(not(windows))]
@@ -692,7 +715,6 @@ fn staging_path_with_salt(final_path: &Path, salt: Option<&str>) -> Result<PathB
     Ok(parent.join(format!(".{file_name}.{key:016x}.sumafile-partial")))
 }
 
-
 #[cfg(test)]
 pub(crate) fn promote_staged_path(
     staged: &Path,
@@ -864,10 +886,8 @@ pub(crate) fn existing_file_matches_source_with_mode(
     }
     match check_mode {
         CheckMode::SizeOnly => Ok(true),
-        CheckMode::SizeAndModTime => {
-            Ok(modified_timestamp(&source).is_some()
-                && modified_timestamp(&source) == modified_timestamp(&destination))
-        }
+        CheckMode::SizeAndModTime => Ok(modified_timestamp(&source).is_some()
+            && modified_timestamp(&source) == modified_timestamp(&destination)),
         CheckMode::IgnoreTimes | CheckMode::Checksum => files_have_same_contents(src, dst),
     }
 }
@@ -915,9 +935,9 @@ pub(crate) fn read_fully(file: &mut fs::File, buffer: &mut [u8]) -> std::io::Res
 #[cfg(test)]
 mod tests {
     use super::{
-        capture_source_version_for_path, delete_verified_source, delete_verified_source_tree,
-        existing_file_matches_source, promote_staged_path, resumable_staging_path_for,
-        TreeCopyManifest,
+        capture_source_version_for_path, capture_source_version_for_path_hashed,
+        delete_verified_source, delete_verified_source_tree, existing_file_matches_source,
+        promote_staged_path, resumable_staging_path_for, TreeCopyManifest,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1063,7 +1083,7 @@ mod tests {
         let root = unique_temp_dir("verified_source_modified");
         let source = root.join("source.txt");
         fs::write(&source, b"v1").unwrap();
-        let snapshot = capture_source_version_for_path(&source).unwrap();
+        let snapshot = capture_source_version_for_path_hashed(&source).unwrap();
 
         // Modify file with same length so even size-preserving edits are caught
         fs::write(&source, b"v2").unwrap();
@@ -1156,20 +1176,52 @@ mod tests {
         let other = root.join("other.txt");
         fs::write(&source, b"NEW").unwrap();
         fs::write(&other, b"OLD").unwrap();
-        let stamp = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let stamp =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         for path in [&source, &other] {
             let file = fs::OpenOptions::new().write(true).open(path).unwrap();
-            file.set_times(fs::FileTimes::new().set_modified(stamp)).unwrap();
+            file.set_times(fs::FileTimes::new().set_modified(stamp))
+                .unwrap();
         }
         // Same size and time, different bytes.
-        assert!(super::existing_file_matches_source_with_mode(&source, &other, CheckMode::SizeOnly).unwrap());
-        assert!(super::existing_file_matches_source_with_mode(&source, &other, CheckMode::SizeAndModTime).unwrap());
-        assert!(!super::existing_file_matches_source_with_mode(&source, &other, CheckMode::IgnoreTimes).unwrap());
-        assert!(!super::existing_file_matches_source_with_mode(&source, &other, CheckMode::Checksum).unwrap());
+        assert!(super::existing_file_matches_source_with_mode(
+            &source,
+            &other,
+            CheckMode::SizeOnly
+        )
+        .unwrap());
+        assert!(super::existing_file_matches_source_with_mode(
+            &source,
+            &other,
+            CheckMode::SizeAndModTime
+        )
+        .unwrap());
+        assert!(!super::existing_file_matches_source_with_mode(
+            &source,
+            &other,
+            CheckMode::IgnoreTimes
+        )
+        .unwrap());
+        assert!(!super::existing_file_matches_source_with_mode(
+            &source,
+            &other,
+            CheckMode::Checksum
+        )
+        .unwrap());
         // Same bytes, different time.
         fs::write(&other, b"NEW").unwrap();
-        assert!(!super::existing_file_matches_source_with_mode(&source, &other, CheckMode::SizeAndModTime).unwrap());
-        assert!(super::existing_file_matches_source_with_mode(&source, &other, CheckMode::IgnoreTimes).unwrap());
+        assert!(!super::existing_file_matches_source_with_mode(
+            &source,
+            &other,
+            CheckMode::SizeAndModTime
+        )
+        .unwrap());
+        assert!(super::existing_file_matches_source_with_mode(
+            &source,
+            &other,
+            CheckMode::IgnoreTimes
+        )
+        .unwrap());
         let _ = fs::remove_dir_all(root);
     }
 }

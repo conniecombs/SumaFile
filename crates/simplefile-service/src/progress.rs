@@ -30,7 +30,9 @@ pub(crate) use reporting::CopyContext;
 
 use crate::transfer_reliability::{Failure, FailureKind, CANCELLED_MESSAGE, CONFLICT_PREFIX};
 use parallel::{FileTask, RootTask, TaskFailure};
-use plan::{prepare_transfer_inputs_cached, prime_transfer, TransferEstimate, TransferPlan, VolumeKindCache};
+use plan::{
+    prepare_transfer_inputs_cached, prime_transfer, TransferEstimate, TransferPlan, VolumeKindCache,
+};
 use serde::Serialize;
 use simplefile_core::models::ProgressUpdate;
 use simplefile_core::path_conflict::{is_already_exists_error, rename_exclusive};
@@ -61,11 +63,7 @@ pub struct TransferFailure {
 
 impl TransferFailure {
     fn from_task(failure: &TaskFailure) -> Self {
-        Self::new(
-            &failure.source,
-            &failure.destination,
-            &failure.failure,
-        )
+        Self::new(&failure.source, &failure.destination, &failure.failure)
     }
 
     fn new(source: &Path, destination: &Path, failure: &Failure) -> Self {
@@ -413,7 +411,13 @@ fn transfer_with_policy_blocking(
         Ok(plans) => plans,
         Err(error) => {
             let failure = Failure::from(error);
-            progress.emit_with_total(0, 0, String::new(), "error", Some(boundary_message(&failure)));
+            progress.emit_with_total(
+                0,
+                0,
+                String::new(),
+                "error",
+                Some(boundary_message(&failure)),
+            );
             return Err(TransferBatchError::failed(
                 operation_id,
                 boundary_message(&failure),
@@ -591,11 +595,15 @@ fn transfer_with_policy_blocking(
             .filter(|f| !f.source.is_empty())
             .map(|f| PathBuf::from(&f.source))
             .collect();
-        for (root, outcome) in roots.iter().zip(result.roots.into_iter()) {
+        for (root, outcome) in roots.iter().zip(result.roots) {
             match outcome.error {
                 Some(error) if error.is_cancelled() => cancelled = true,
                 Some(error) => {
-                    failed.push(TransferFailure::new(&root.source, &root.destination, &error));
+                    failed.push(TransferFailure::new(
+                        &root.source,
+                        &root.destination,
+                        &error,
+                    ));
                 }
                 None if cancelled => {}
                 None => {
@@ -824,10 +832,10 @@ mod tests {
             "copy",
             super::Request::Selection {
                 sources: vec![
-                first.to_string_lossy().to_string(),
-                second.to_string_lossy().to_string(),
-                third.to_string_lossy().to_string(),
-            ],
+                    first.to_string_lossy().to_string(),
+                    second.to_string_lossy().to_string(),
+                    third.to_string_lossy().to_string(),
+                ],
                 conflict_action: "error".to_string(),
             },
             dst_dir.to_string_lossy().to_string(),
@@ -845,7 +853,8 @@ mod tests {
                 mode: super::tuning::Mode::Manual,
                 manual_concurrency: 1,
                 ..super::tuning::Policy::default()
-            })
+            },
+        )
         .expect_err("second item should be reported after the others commit");
 
         assert!(error.message.starts_with("CONFLICT:"));
@@ -1235,10 +1244,10 @@ mod tests {
                     };
                     let result = super::transfer_with_policy_blocking(
                         if moving { "move" } else { "copy" },
-            super::Request::Selection {
-                sources: vec![source.to_string_lossy().into_owned()],
-                conflict_action: "replace".into(),
-            },
+                        super::Request::Selection {
+                            sources: vec![source.to_string_lossy().into_owned()],
+                            conflict_action: "replace".into(),
+                        },
                         dst_root.to_string_lossy().into_owned(),
                         operation_id,
                         cancel.clone(),
@@ -1248,7 +1257,8 @@ mod tests {
                             mode: super::tuning::Mode::Manual,
                             manual_concurrency: 4,
                             ..super::Policy::default()
-                        });
+                        },
+                    );
                     assert!(
                         waiting.load(Ordering::Relaxed),
                         "No storage wait was reported"
@@ -1414,55 +1424,52 @@ mod tests {
 
     #[test]
     fn directory_copy_cancel_before_promotion_preserves_source_and_cleans_staging() {
-        for operation in ["copy"] {
-            let src_root = unique_temp_path("finalizing_cancel_src");
-            let dst_root = unique_temp_path("finalizing_cancel_dst");
-            let source = src_root.join("Movie");
-            let final_destination = dst_root.join("Movie");
-            fs::create_dir_all(&source).unwrap();
-            fs::create_dir_all(&dst_root).unwrap();
-            fs::write(source.join("feature.mkv"), b"feature").unwrap();
+        let operation = "copy";
+        let src_root = unique_temp_path("finalizing_cancel_src");
+        let dst_root = unique_temp_path("finalizing_cancel_dst");
+        let source = src_root.join("Movie");
+        let final_destination = dst_root.join("Movie");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&dst_root).unwrap();
+        fs::write(source.join("feature.mkv"), b"feature").unwrap();
 
-            let operation_id = "op_finalizing_cancel_test";
-            let staging = staging_path_for(&final_destination, operation_id).unwrap();
-            let final_destination_text = final_destination.to_string_lossy().to_string();
-            let cancel = Arc::new(AtomicBool::new(false));
-            let cancel_for_emit = cancel.clone();
-            let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
-            let updates_target = updates.clone();
+        let operation_id = "op_finalizing_cancel_test";
+        let staging = staging_path_for(&final_destination, operation_id).unwrap();
+        let final_destination_text = final_destination.to_string_lossy().to_string();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_emit = cancel.clone();
+        let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
+        let updates_target = updates.clone();
 
-            let result = transfer_with_progress_blocking(
-                operation,
-                vec![source.to_string_lossy().to_string()],
-                dst_root.to_string_lossy().to_string(),
-                operation_id.to_string(),
-                "keep-both".to_string(),
-                cancel,
-                &|update| {
-                    if update.status == "finalizing"
-                        && update.current_item == final_destination_text
-                    {
-                        cancel_for_emit.store(true, Ordering::Relaxed);
-                    }
-                    updates_target.lock().unwrap().push(update);
-                },
-            )
-            .expect_err("cancelled directory copy must return its terminal outcome");
+        let result = transfer_with_progress_blocking(
+            operation,
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            operation_id.to_string(),
+            "keep-both".to_string(),
+            cancel,
+            &|update| {
+                if update.status == "finalizing" && update.current_item == final_destination_text {
+                    cancel_for_emit.store(true, Ordering::Relaxed);
+                }
+                updates_target.lock().unwrap().push(update);
+            },
+        )
+        .expect_err("cancelled directory copy must return its terminal outcome");
 
-            assert_eq!(result.outcome.status, "cancelled");
-            assert!(result.outcome.committed.is_empty());
-            assert!(!final_destination.exists());
-            assert!(!staging.exists());
-            assert_eq!(fs::read(source.join("feature.mkv")).unwrap(), b"feature");
-            let updates = updates.lock().unwrap();
-            assert!(updates.iter().any(|update| {
-                update.status == "finalizing" && update.current_item == final_destination_text
-            }));
-            assert!(updates.iter().any(|update| update.status == "cancelled"));
+        assert_eq!(result.outcome.status, "cancelled");
+        assert!(result.outcome.committed.is_empty());
+        assert!(!final_destination.exists());
+        assert!(!staging.exists());
+        assert_eq!(fs::read(source.join("feature.mkv")).unwrap(), b"feature");
+        let updates = updates.lock().unwrap();
+        assert!(updates.iter().any(|update| {
+            update.status == "finalizing" && update.current_item == final_destination_text
+        }));
+        assert!(updates.iter().any(|update| update.status == "cancelled"));
 
-            let _ = fs::remove_dir_all(&src_root);
-            let _ = fs::remove_dir_all(&dst_root);
-        }
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
     }
 
     #[test]
@@ -1498,7 +1505,8 @@ mod tests {
                 mode: super::tuning::Mode::Manual,
                 manual_concurrency: 3,
                 ..super::tuning::Policy::default()
-            })
+            },
+        )
         .expect_err("conflict must fail safely");
         let reported: Vec<_> = error
             .outcome
@@ -1619,7 +1627,11 @@ mod tests {
             .expect_err("a directory never replaces a file silently");
 
             assert_eq!(result.outcome.status, "failed");
-            assert!(result.message.starts_with("CONFLICT:"), "{}", result.message);
+            assert!(
+                result.message.starts_with("CONFLICT:"),
+                "{}",
+                result.message
+            );
             assert!(result.outcome.committed.is_empty());
             assert_eq!(result.outcome.failed.len(), 1);
             assert_eq!(result.outcome.failed[0].kind, "conflict");
@@ -1694,7 +1706,10 @@ mod tests {
         )
         .expect("both files move; the later write is not this operation's source");
 
-        assert!(modified.load(Ordering::SeqCst), "finalizing hook did not run");
+        assert!(
+            modified.load(Ordering::SeqCst),
+            "finalizing hook did not run"
+        );
         assert!(
             first_deleted_before_second_finalized.load(Ordering::SeqCst),
             "first source should be deleted right after it is published"

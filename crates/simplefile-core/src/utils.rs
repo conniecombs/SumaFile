@@ -243,9 +243,9 @@ pub fn is_local_fixed_volume(path: &Path) -> bool {
         if drive_type != DRIVE_FIXED {
             return false;
         }
-        return !windows_volume_file_system(&wide)
+        !windows_volume_file_system(&wide)
             .as_deref()
-            .is_some_and(is_remote_like_file_system);
+            .is_some_and(is_remote_like_file_system)
     }
     #[cfg(not(windows))]
     {

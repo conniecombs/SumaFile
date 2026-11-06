@@ -47,7 +47,6 @@ impl ConflictAction {
             _ => Self::Error,
         }
     }
-
 }
 
 fn sort_ready_queue(
@@ -97,7 +96,6 @@ pub(crate) struct FileTask {
     /// Files inside staged trees are deleted after the tree is promoted instead.
     pub delete_source: bool,
 }
-
 
 /// A selected directory: walked by the checkers, published as a whole when its
 /// destination did not exist yet.
@@ -292,9 +290,13 @@ pub(crate) fn copy_selection(
             state
                 .created_dirs
                 .push((0, root.source.clone(), staged.clone()));
-            state
-                .staged_dirs
-                .push((0, root_index, staged.clone(), root.destination.clone(), lease));
+            state.staged_dirs.push((
+                0,
+                root_index,
+                staged.clone(),
+                root.destination.clone(),
+                lease,
+            ));
             Ok((staged, true))
         })();
         match seed {
@@ -416,9 +418,13 @@ pub(crate) fn copy_selection(
                             state
                                 .created_dirs
                                 .push((depth, src_dir.clone(), dst_dir.clone()));
-                            state
-                                .staged_dirs
-                                .push((depth, root_index, dst_dir.clone(), final_dir, lease));
+                            state.staged_dirs.push((
+                                depth,
+                                root_index,
+                                dst_dir.clone(),
+                                final_dir,
+                                lease,
+                            ));
                             owned_tree = true;
                         }
                     }
@@ -622,7 +628,10 @@ pub(crate) fn copy_selection(
 
     for (_, src, dst) in state.created_dirs.iter().rev() {
         if let Err(error) = simplefile_core::file_ops::preserve_basic_metadata(src, dst) {
-            log::warn!("Could not preserve directory metadata for {}: {error}", dst.display());
+            log::warn!(
+                "Could not preserve directory metadata for {}: {error}",
+                dst.display()
+            );
         }
     }
     let mut staged_dirs = state.staged_dirs;
@@ -751,16 +760,15 @@ fn copy_task(
     copied: &mut u64,
 ) -> Result<FileOutcome, Failure> {
     if task.delete_source {
-        if let Some(renamed) = super::execute::move_by_rename(
-            &task.source,
-            &task.destination,
-            task.conflict,
-            context,
-        ) {
+        if let Some(renamed) =
+            super::execute::move_by_rename(&task.source, &task.destination, task.conflict, context)
+        {
             let outcome = renamed?;
             if let FileOutcome::Copied { .. } = &outcome {
                 *copied = copied.saturating_add(task.size);
-                context.progress.complete_file(*copied, task.source.to_string_lossy().into());
+                context
+                    .progress
+                    .complete_file(*copied, task.source.to_string_lossy().into());
             }
             return Ok(outcome);
         }
@@ -1549,7 +1557,9 @@ mod tests {
                 }
                 return context.progress.check_cancelled();
             }
-            copy_task(task, context, bytes).map(|_| ()).map_err(String::from)
+            copy_task(task, context, bytes)
+                .map(|_| ())
+                .map_err(String::from)
         };
         let result = copy_files_using(&tasks, &ctx, &mut session, 0, &copy);
         if cancel_during_copy {
@@ -2096,7 +2106,9 @@ mod tests {
             let dispatched_clone = dispatched_sizes.clone();
             let copy = move |task: &FileTask, context: &CopyContext<'_>, bytes: &mut u64| {
                 dispatched_clone.lock().unwrap().push(task.size);
-                copy_task(task, context, bytes).map(|_| ()).map_err(String::from)
+                copy_task(task, context, bytes)
+                    .map(|_| ())
+                    .map_err(String::from)
             };
             let result = copy_files_using(&tasks, &ctx, &mut session, 0, &copy);
             assert!(result.failed.is_empty(), "{:?}", result.failed);

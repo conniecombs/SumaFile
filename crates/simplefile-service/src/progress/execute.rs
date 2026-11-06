@@ -7,9 +7,9 @@ use super::tuning::CheckMode;
 use crate::transfer_reliability::{Failure, FailureKind, Retry};
 use crate::transfer_staging::{
     capture_source_version_for_path, capture_source_version_from_open_file, cleanup_owned_path,
-    conflict_for_existing_destination, existing_file_matches_source_with_mode,
-    hash_file_contents, preallocate_file, promote_leased_with_policy, remove_path,
-    staging_path_for, verify_source_unchanged, ContentHasher, SourceVersion,
+    conflict_for_existing_destination, existing_file_matches_source_with_mode, hash_file_contents,
+    preallocate_file, promote_leased_with_policy, remove_path, staging_path_for,
+    verify_source_unchanged, ContentHasher, SourceVersion,
 };
 use simplefile_core::path_conflict::path_exists_no_follow;
 use simplefile_core::utils::recreate_symlink;
@@ -694,7 +694,10 @@ pub(crate) fn copy_file_multistream(
     if copied != file_len {
         let _ = dst_file.set_len(0);
         return Err(Failure::new(
-            format!("Multistream copy wrote {copied} of {file_len} bytes [{}]", dst.display()),
+            format!(
+                "Multistream copy wrote {copied} of {file_len} bytes [{}]",
+                dst.display()
+            ),
             false,
         ));
     }
@@ -978,9 +981,7 @@ pub(crate) fn copy_file_with_progress_versioned(
                 src.display()
             )));
         }
-        let staged_file = lease
-            .as_mut()
-            .and_then(|owner| owner.take_staged_file());
+        let staged_file = lease.as_mut().and_then(|owner| owner.take_staged_file());
         // The lease created the staging file exclusively, so any bytes already
         // in it came from this operation's previous attempt.
         let trusted_prefix = retry.failures > 0;
@@ -1109,7 +1110,9 @@ pub(crate) fn copy_symlink_with_progress(
     };
     let dst_path = dst_path.as_path();
     if !replace_existing && !ctx.resume_existing && path_exists_no_follow(dst_path) {
-        return Err(Failure::conflict(conflict_for_existing_destination(dst_path)));
+        return Err(Failure::conflict(conflict_for_existing_destination(
+            dst_path,
+        )));
     }
     let version = capture_source_version_for_path(src_path)?;
     let staged_path = staging_path_for(dst_path, ctx.operation_id)?;
@@ -1151,11 +1154,7 @@ pub(crate) fn copy_symlink_with_progress(
             failure
         } else {
             Failure::with_kind(
-                format!(
-                    "Finalize destination [{}]: {}",
-                    dst_path.display(),
-                    failure
-                ),
+                format!("Finalize destination [{}]: {}", dst_path.display(), failure),
                 failure.kind,
             )
         });
@@ -1195,7 +1194,9 @@ pub(crate) fn move_by_rename(
         Ok(()) => Some(renamed_outcome(&dst)),
         Err(error) if is_already_exists_error(&error) || path_exists_no_follow(&dst) => {
             if !replace_existing {
-                return Some(Err(Failure::conflict(conflict_for_existing_destination(&dst))));
+                return Some(Err(Failure::conflict(conflict_for_existing_destination(
+                    &dst,
+                ))));
             }
             let existing_is_dir = fs::symlink_metadata(&dst)
                 .is_ok_and(|meta| meta.file_type().is_dir() && !meta.file_type().is_symlink());

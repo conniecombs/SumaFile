@@ -394,4 +394,22 @@ mod tests {
         assert!(record_path(&stage).exists());
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn owned_staging_identity_holds_while_handles_are_open() {
+        let root = root();
+        let destination = root.join("file");
+        let stage = crate::transfer_staging::staging_path_for(&destination, "open").unwrap();
+        let mut lease = StagingLease::begin("source", &destination, &stage).unwrap();
+        // The lease still holds the handle it created the staging file with.
+        assert!(lease.owns_staged());
+        // A writer that keeps the partial open is not a replacement either.
+        let writer = OpenOptions::new().write(true).open(&stage).unwrap();
+        assert!(lease.owns_staged());
+        drop(writer);
+        drop(lease.take_staged_file());
+        assert!(lease.owns_staged());
+        drop(lease);
+        fs::remove_dir_all(root).unwrap();
+    }
 }

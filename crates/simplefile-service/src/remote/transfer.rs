@@ -705,7 +705,9 @@ fn unique_remote_keep_both(
     let parent = parent_remote_path(path).ok_or("Remote destination has no parent")?;
     let name = path.rsplit('/').next().unwrap_or("");
     let (stem, ext) = match name.rfind('.') {
-        Some(index) if index > 0 && index + 1 < name.len() => (&name[..index], Some(&name[index..])),
+        Some(index) if index > 0 && index + 1 < name.len() => {
+            (&name[..index], Some(&name[index..]))
+        }
         _ => (name, None),
     };
     for index in 1..10000 {
@@ -779,9 +781,7 @@ fn transfer_file(
                 } else {
                     // Same convention as local copies: "name (1).ext".
                     let planned = Path::new(&target);
-                    let parent = planned
-                        .parent()
-                        .ok_or("Local destination has no parent")?;
+                    let parent = planned.parent().ok_or("Local destination has no parent")?;
                     let name = planned
                         .file_name()
                         .ok_or("Local destination has no file name")?;
