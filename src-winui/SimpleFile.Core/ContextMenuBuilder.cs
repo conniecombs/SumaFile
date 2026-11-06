@@ -57,7 +57,7 @@ public static class ContextMenuBuilder
         var canCompareFolders = request.FolderSelectionCount > 1;
         var canUnpack = request.SelectionCount == 1 && request.SelectedIsDirectory;
         var extractFolder = string.IsNullOrEmpty(request.ArchiveExtractFolderName)
-            ? "Extract to Folder"
+            ? "Extract to folder"
             : $"Extract to {request.ArchiveExtractFolderName}/";
 
         if (request.InRecycleBin)
@@ -69,7 +69,7 @@ public static class ContextMenuBuilder
                 Item("ctx-copy", "Copy", request.SelectionCount == 0, "Ctrl+C"),
                 Item("ctx-copy-path", "Copy original path", request.SelectionCount == 0, "Ctrl+Shift+C"),
                 Divider(),
-                Item("ctx-delete-permanent", "Delete Permanently", request.SelectionCount == 0, "Shift+Delete"),
+                Item("ctx-delete-permanent", "Delete permanently", request.SelectionCount == 0, "Shift+Delete"),
                 Item("ctx-empty-recycle-bin", "Empty Recycle Bin"),
                 Divider(),
                 Item("ctx-info", "Properties", request.SelectionCount != 1, "Alt+Enter"),
@@ -101,7 +101,11 @@ public static class ContextMenuBuilder
             Divider(),
             Item("ctx-rename", "Rename", request.SelectionCount != 1, "F2"),
             Item("ctx-create-shortcut", "Create shortcut", request.SelectionCount != 1),
-            DeleteMenu(request.SelectionCount == 0),
+            Item("ctx-copy-path", "Copy path", request.SelectionCount == 0, "Ctrl+Shift+C"),
+            Item("ctx-bookmark", "Bookmark folder", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+B"),
+            Divider(),
+            Item("ctx-delete-recycle", "Delete", request.SelectionCount == 0, "Delete", iconGlyph: ContextMenuIconCatalog.Delete),
+            Item("ctx-delete-permanent", "Delete permanently", request.SelectionCount == 0, "Shift+Delete", iconGlyph: ContextMenuIconCatalog.Delete),
             Divider(),
             ToolsMenu(request, canCompare, canCompareFolders),
             ArchiveMenu(request, canUnpack, extractFolder),
@@ -140,9 +144,6 @@ public static class ContextMenuBuilder
 
     public static IReadOnlyList<ContextMenuEntry> BuildPaneMoreMenu(ContextMenuRequest request)
     {
-        var hasSelection = request.SelectionCount > 0;
-        var singleSelection = request.SelectionCount == 1;
-
         var entries = new List<ContextMenuEntry>();
         entries.AddRange(BuildToolbarOverflowItems(request));
         if (entries.Count > 0)
@@ -151,8 +152,19 @@ public static class ContextMenuBuilder
         }
 
         entries.Add(ToolbarMenu(request));
-        entries.Add(Item("overflow-ftp-sftp-manager", "FTP/SFTP Manager..."));
-        entries.Add(Item("overflow-operation-history", "Operation history..."));
+        entries.Add(new ContextMenuEntry
+        {
+            Id = "overflow-tools-menu",
+            Label = "Tools",
+            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-tools-menu"),
+            Children =
+            [
+                Item("overflow-ftp-sftp-manager", "FTP/SFTP manager...", showIcon: false),
+                Item("overflow-operation-history", "Operation history...", showIcon: false),
+                Item("ctx-cleanup", "Large files and duplicates...", showIcon: false),
+                Item("ctx-terminal", "Open terminal here", false, "F4", showIcon: false),
+            ],
+        });
         entries.Add(Item("overflow-profiles", "Manage workspace profiles..."));
         entries.Add(Divider());
 
@@ -164,23 +176,8 @@ public static class ContextMenuBuilder
 
         entries.AddRange(
         [
-            Item("ctx-close-left-pane", "Close left pane", !request.DualPaneEnabled || request.MenuPane != PaneId.Primary),
-            Item("ctx-close-dual-pane", "Close right pane", !request.DualPaneEnabled, "F6"),
-            Divider(),
-            Item("ctx-rename", "Rename", !singleSelection, "F2"),
-            DeleteMenu(!hasSelection),
-            Item("ctx-color-label", "Set color label...", !hasSelection),
-            Divider(),
-            Item("ctx-view-archive", "View archive contents", !request.SelectedIsArchive),
-            Item("ctx-extract-to", "Extract archive...", !request.SelectedIsArchive),
-            Item("ctx-compress", "Create archive...", !hasSelection),
-            Divider(),
-            Item("ctx-folder-metrics", "Compare folder metrics", request.FolderSelectionCount < 2),
-            Item("ctx-duplicates", "Find duplicates here..."),
-            Item("ctx-cleanup", "Disk cleanup here..."),
-            Divider(),
-            Item("ctx-terminal", "Open terminal here", false, "F4"),
-            GitMenu(request),
+            Item("ctx-close-left-pane", "Close left pane", hidden: !request.DualPaneEnabled || request.MenuPane != PaneId.Primary),
+            Item("ctx-close-dual-pane", "Close right pane", shortcut: "F6", hidden: !request.DualPaneEnabled),
         ]);
 
         return VisibleEntries(entries);
@@ -250,9 +247,7 @@ public static class ContextMenuBuilder
                             Item("icon:32", "Medium icons"),
                             Item("icon:48", "Large icons"),
                             Item("icon:96", "Extra large icons"),
-                            Item("icon:128", "Jumbo icons"),
-                            Item("icon:192", "Huge icons"),
-                            Item("icon:256", "Maximum icons"),
+                            Item("icon:256", "Huge icons"),
                         ],
                     });
                     break;
@@ -292,7 +287,7 @@ public static class ContextMenuBuilder
                 continue;
             }
 
-            if (entry.Hidden || entry.Disabled)
+            if (entry.Hidden)
             {
                 continue;
             }
@@ -313,6 +308,7 @@ public static class ContextMenuBuilder
                     Shortcut = entry.Shortcut,
                     IconGlyph = entry.IconGlyph,
                     CommandParameter = entry.CommandParameter,
+                    Disabled = entry.Disabled,
                     Children = children,
                 });
                 continue;
@@ -356,7 +352,8 @@ public static class ContextMenuBuilder
         string? shortcut = null,
         string? iconGlyph = null,
         string? commandParameter = null,
-        bool showIcon = true)
+        bool showIcon = true,
+        bool hidden = false)
     {
         return new ContextMenuEntry
         {
@@ -367,16 +364,21 @@ public static class ContextMenuBuilder
             IconGlyph = showIcon ? iconGlyph ?? ContextMenuIconCatalog.GlyphFor(id) : null,
             CommandParameter = commandParameter,
             Disabled = disabled,
+            Hidden = hidden,
         };
     }
 
     private static ContextMenuEntry OpenWithMenu(ContextMenuRequest request)
     {
+        if (request.SelectedIsDirectory)
+        {
+            return Item("ctx-open-with", "Open with", hidden: true);
+        }
+
         if (request.SelectionCount != 1
-            || request.SelectedIsDirectory
             || OpenWithPolicy.IsDeniedTargetExtension(request.SelectedExtension))
         {
-            return Item("ctx-open-with", "Open with...", disabled: true);
+            return Item("ctx-open-with", "Open with", disabled: true);
         }
 
         var children = new List<ContextMenuEntry>();
@@ -409,9 +411,9 @@ public static class ContextMenuBuilder
 
     private static ContextMenuEntry GitMenu(ContextMenuRequest request)
     {
-        if (!request.GitEnabled)
+        if (!request.GitEnabled || !request.InGitRepository)
         {
-            return Item("ctx-git-menu", "Git", disabled: true);
+            return Item("ctx-git-menu", "Git", hidden: true);
         }
 
         var hasSelection = request.SelectionCount > 0;
@@ -455,9 +457,6 @@ public static class ContextMenuBuilder
             IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-send-to-menu"),
             Children =
             [
-                Item("ctx-copy-path", "Copy path", request.SelectionCount == 0, "Ctrl+Shift+C", showIcon: false),
-                Item("ctx-bookmark", "Bookmark folder", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+B", showIcon: false),
-                Divider(),
                 Item("ctx-copy-to-pane", copyLabel, request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+C", showIcon: false),
                 Item("ctx-move-to-pane", moveLabel, request.SelectionCount == 0 || !hasOtherPane, "Ctrl+Alt+M", showIcon: false),
             ],
@@ -475,10 +474,10 @@ public static class ContextMenuBuilder
             [
                 Item("ctx-compare", "Compare files", !canCompare, showIcon: false),
                 Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0, showIcon: false),
-                Item("ctx-color-label", "Set color label...", request.SelectionCount == 0, showIcon: false),
+                Item("ctx-color-label", "Set label...", request.SelectionCount == 0, showIcon: false),
                 Divider(),
                 Item("ctx-folder-metrics", "Compare folder metrics", !canCompareFolders, showIcon: false),
-                Item("ctx-cleanup", "Disk cleanup here...", showIcon: false),
+                Item("ctx-cleanup", "Large files and duplicates here...", showIcon: false),
                 Item("ctx-duplicates", "Find duplicates here...", showIcon: false),
                 Divider(),
                 Item("ctx-terminal", "Open terminal here", false, "F4", showIcon: false),
@@ -500,9 +499,9 @@ public static class ContextMenuBuilder
                 Item("ctx-unpack", "Unpack folder here", !canUnpack, showIcon: false),
                 Item("ctx-compress", "Create archive...", request.SelectionCount == 0, showIcon: false),
                 Divider(),
-                Item("ctx-extract-folder", extractFolder, !request.SelectedIsArchive, showIcon: false),
-                Item("ctx-extract", "Extract here", !request.SelectedIsArchive, showIcon: false),
-                Item("ctx-extract-to", "Extract to...", !request.SelectedIsArchive, showIcon: false),
+                Item("ctx-extract-folder", extractFolder, showIcon: false, hidden: !request.SelectedIsArchive),
+                Item("ctx-extract", "Extract here", showIcon: false, hidden: !request.SelectedIsArchive),
+                Item("ctx-extract-to", "Extract to...", showIcon: false, hidden: !request.SelectedIsArchive),
             ],
         };
     }
@@ -543,23 +542,6 @@ public static class ContextMenuBuilder
                 Item("new:text", "Text document", shortcut: "Ctrl+N", iconGlyph: ContextMenuIconCatalog.Document),
                 Item("new:empty", "Blank file...", iconGlyph: ContextMenuIconCatalog.Document),
                 Item("new:shortcut", "Shortcut...", iconGlyph: ContextMenuIconCatalog.Link),
-            ],
-        };
-    }
-
-    private static ContextMenuEntry DeleteMenu(bool disabled)
-    {
-        return new ContextMenuEntry
-        {
-            Kind = ContextMenuKind.Item,
-            Id = "ctx-delete-menu",
-            Label = "Delete:",
-            Disabled = disabled,
-            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-delete-menu"),
-            Children =
-            [
-                Item("ctx-delete-recycle", "Move to Recycle Bin", disabled, "Delete", showIcon: false),
-                Item("ctx-delete-permanent", "Delete Permanently", disabled, "Shift+Delete", showIcon: false),
             ],
         };
     }

@@ -69,7 +69,7 @@ public class OpenWithPolicyTests
             SelectedExtension = ".ps1",
             OpenWithApplications = apps,
         });
-        Assert.DoesNotContain(denied, entry => entry.Id == "ctx-open-with");
+        Assert.True(Assert.Single(denied, entry => entry.Id == "ctx-open-with").Disabled);
 
         var allowed = ContextMenuBuilder.Build(new ContextMenuRequest
         {

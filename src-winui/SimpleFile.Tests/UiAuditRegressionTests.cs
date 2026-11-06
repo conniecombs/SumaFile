@@ -32,7 +32,7 @@ public class UiAuditRegressionTests
     public void PaneMoreMenu_EmitsOnlyAliasedOrContextIds()
     {
         var entries = Flatten(ContextMenuBuilder.BuildPaneMoreMenu(new ContextMenuRequest()))
-            .Where(entry => entry.Kind == ContextMenuKind.Item)
+            .Where(entry => entry.Kind == ContextMenuKind.Item && entry.Children.Count == 0)
             .Select(entry => entry.Id)
             .ToList();
 
