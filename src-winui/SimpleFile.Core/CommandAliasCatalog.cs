@@ -21,6 +21,7 @@ public static class CommandAliasCatalog
         ["ctx-cleanup"] = "disk-cleanup",
         ["ctx-duplicates"] = "duplicate-checker",
         ["ctx-rename"] = "rename",
+        ["ctx-create-shortcut"] = "shortcut-for-selected",
         ["ctx-advanced-rename"] = "advanced-rename",
         ["ctx-copy"] = "copy",
         ["ctx-cut"] = "cut",

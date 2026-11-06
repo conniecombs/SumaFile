@@ -27,6 +27,8 @@ public static class CommandShortcutMap
         ["rename"] = "file.rename",
         ["new-folder"] = "file.newFolder",
         ["new-file"] = "file.newFile",
+        ["new-shortcut"] = "file.newShortcut",
+        ["folder-properties"] = "directory.properties",
         ["terminal"] = "terminal.open",
         ["preview"] = "preview.toggle",
         ["toggle-hidden"] = "view.toggleHidden",

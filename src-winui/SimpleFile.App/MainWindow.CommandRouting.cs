@@ -54,6 +54,7 @@ public sealed partial class MainWindow
             ["new-folder"] = () => CreateNewItem(_workspace!.ActivePane, NewItemTemplate.Folder),
             ["new-file"] = () => CreateNewItem(_workspace!.ActivePane, NewItemTemplate.TextFile),
             ["new-shortcut"] = () => PromptAndCreateShortcut(_workspace!.ActivePane),
+            ["shortcut-for-selected"] = PromptAndCreateShortcutForSelection,
             ["create-archive"] = CreateArchiveAsync,
             ["terminal"] = OpenTerminalInActivePathAsync,
             ["ftp-sftp-manager"] = () => RunSyncCommand(() => ShowRemoteManagerWindow()),

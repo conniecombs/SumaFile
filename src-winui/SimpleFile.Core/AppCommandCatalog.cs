@@ -49,6 +49,7 @@ public static class AppCommandCatalog
         new("new-folder", "New folder", "File", "Ctrl+Shift+N"),
         new("new-file", "New text document", "File", "Ctrl+N"),
         new("new-shortcut", "New shortcut", "File"),
+        new("shortcut-for-selected", "Create shortcut to selection", "File"),
         new("create-archive", "Create archive", "Archive"),
         new("terminal", "Open terminal", "Tools", "F4"),
         new("ftp-sftp-manager", "FTP/SFTP manager", "Tools"),

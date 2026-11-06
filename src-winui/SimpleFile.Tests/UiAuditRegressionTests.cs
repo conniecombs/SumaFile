@@ -806,6 +806,47 @@ public class Sprint2FileListTests
     }
 
     [Fact]
+    public void PropertiesDialog_SkipsChecksumsForFoldersAndLoadsFolderMetrics()
+    {
+        var dialogs = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.InspectionDialogs.cs"));
+        var shared = Slice(dialogs, "private async Task ShowPropertiesForRowAsync(", "private async Task ShowClipboardHistoryAsync(");
+
+        Assert.Contains("if (!row.IsDir)", shared);
+        Assert.Contains("LoadFolderMetricsIntoAsync(fileOps, row.Path", shared);
+        Assert.Contains("GetFolderMetricsAsync(path, cts.Token)", shared);
+        Assert.Contains("InspectionDetails.FolderMetricRows(", shared);
+        Assert.Contains("dialog.Closed +=", shared);
+        Assert.Contains("await DialogHost.ShowAsync(dialog);", shared);
+    }
+
+    [Fact]
+    public void CreateShortcutForSelection_PrefillsTheTarget()
+    {
+        var appRoot = Sprint2ShellTests.AppRoot();
+        var routing = File.ReadAllText(Path.Combine(appRoot, "MainWindow.CommandRouting.cs"));
+        var fileOperations = File.ReadAllText(Path.Combine(appRoot, "MainWindow.FileOperations.cs"));
+        var dialogService = File.ReadAllText(Path.Combine(appRoot, "FileOperationDialogService.cs"));
+
+        Assert.Contains("[\"shortcut-for-selected\"] = PromptAndCreateShortcutForSelection,", routing);
+
+        var handler = Slice(fileOperations, "private async Task PromptAndCreateShortcutForSelection(", "private async Task CreateNewItem(");
+        Assert.Contains("ActiveSelectedRow", handler);
+        Assert.Contains("PromptAndCreateShortcutAsync(", handler);
+
+        Assert.Contains("public async Task PromptAndCreateShortcutAsync(PaneId pane, string? initialTarget = null)", dialogService);
+        Assert.Contains("ApplyPickedTarget(initialTarget);", dialogService);
+    }
+
+    [Fact]
+    public void ToolbarNewFlyout_UsesTheLinkGlyphForShortcuts()
+    {
+        var toolbar = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "PrimaryToolbarView.xaml"));
+        var shortcutItem = Slice(toolbar, "Tag=\"new:shortcut\"", "</MenuFlyoutItem>");
+
+        Assert.Contains("Glyph=\"&#xE71B;\"", shortcutItem);
+    }
+
+    [Fact]
     public void ListViewRightTap_OnBlankSpaceClearsSelection()
     {
         var events = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileListEvents.cs"));

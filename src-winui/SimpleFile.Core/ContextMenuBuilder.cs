@@ -100,6 +100,7 @@ public static class ContextMenuBuilder
             SendToMenu(request, hasOtherPane),
             Divider(),
             Item("ctx-rename", "Rename", request.SelectionCount != 1, "F2"),
+            Item("ctx-create-shortcut", "Create shortcut", request.SelectionCount != 1),
             DeleteMenu(request.SelectionCount == 0),
             Divider(),
             ToolsMenu(request, canCompare, canCompareFolders),
@@ -129,8 +130,9 @@ public static class ContextMenuBuilder
             Item("ctx-paste", "Paste", !request.HasClipboard, "Ctrl+V"),
             Divider(),
             Item("ctx-refresh", "Refresh", false, "F5"),
+            Item("ctx-terminal", "Open terminal here", false, "F4"),
             Divider(),
-            ToolsMenu(request, canCompare, canCompareFolders),
+            ToolsMenu(request, canCompare, canCompareFolders, includeTerminal: false),
             GitMenu(request),
             Divider(),
             Item("ctx-folder-info", "Properties"),
@@ -463,26 +465,37 @@ public static class ContextMenuBuilder
         };
     }
 
-    private static ContextMenuEntry ToolsMenu(ContextMenuRequest request, bool canCompare, bool canCompareFolders)
+    private static ContextMenuEntry ToolsMenu(
+        ContextMenuRequest request,
+        bool canCompare,
+        bool canCompareFolders,
+        bool includeTerminal = true)
     {
+        var children = new List<ContextMenuEntry>
+        {
+            Item("ctx-compare", "Compare files", !canCompare, showIcon: false),
+            Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0, showIcon: false),
+            Item("ctx-color-label", "Set color label...", request.SelectionCount == 0, showIcon: false),
+            Divider(),
+            Item("ctx-folder-metrics", "Compare folder metrics", !canCompareFolders, showIcon: false),
+            Item("ctx-cleanup", "Disk cleanup here...", showIcon: false),
+            Item("ctx-duplicates", "Find duplicates here...", showIcon: false),
+        };
+
+        // The background menu promotes the terminal to the top level, so Tools omits it there.
+        if (includeTerminal)
+        {
+            children.Add(Divider());
+            children.Add(Item("ctx-terminal", "Open terminal here", false, "F4", showIcon: false));
+            children.Add(Item("ctx-powershell-admin", "Open PowerShell as administrator", showIcon: false));
+        }
+
         return new ContextMenuEntry
         {
             Id = "ctx-tools-menu",
             Label = "Tools",
             IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-tools-menu"),
-            Children =
-            [
-                Item("ctx-compare", "Compare files", !canCompare, showIcon: false),
-                Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0, showIcon: false),
-                Item("ctx-color-label", "Set color label...", request.SelectionCount == 0, showIcon: false),
-                Divider(),
-                Item("ctx-folder-metrics", "Compare folder metrics", !canCompareFolders, showIcon: false),
-                Item("ctx-cleanup", "Disk cleanup here...", showIcon: false),
-                Item("ctx-duplicates", "Find duplicates here...", showIcon: false),
-                Divider(),
-                Item("ctx-terminal", "Open terminal here", false, "F4", showIcon: false),
-                Item("ctx-powershell-admin", "Open PowerShell as administrator", showIcon: false),
-            ],
+            Children = children,
         };
     }
 
@@ -537,11 +550,11 @@ public static class ContextMenuBuilder
             IconGlyph = ContextMenuIconCatalog.GlyphFor("overflow-new"),
             Children =
             [
-                Item("new:folder", "Folder", shortcut: "Ctrl+Shift+N", showIcon: false),
+                Item("new:folder", "Folder", shortcut: "Ctrl+Shift+N", iconGlyph: ContextMenuIconCatalog.NewFolder),
                 Divider(),
-                Item("new:text", "Text document", shortcut: "Ctrl+N", showIcon: false),
-                Item("new:empty", "Blank file...", showIcon: false),
-                Item("new:shortcut", "Shortcut...", showIcon: false),
+                Item("new:text", "Text document", shortcut: "Ctrl+N", iconGlyph: ContextMenuIconCatalog.Document),
+                Item("new:empty", "Blank file...", iconGlyph: ContextMenuIconCatalog.Document),
+                Item("new:shortcut", "Shortcut...", iconGlyph: ContextMenuIconCatalog.Link),
             ],
         };
     }

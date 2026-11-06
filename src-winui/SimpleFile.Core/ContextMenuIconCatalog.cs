@@ -39,6 +39,7 @@ public static class ContextMenuIconCatalog
     public const string Tiles = "\uECA5";
     public const string Branch = "\uE8EF";
     public const string Refresh = "\uE72C";
+    public const string Link = "\uE71B";
 
     public static string? GlyphFor(string commandId)
     {
@@ -61,6 +62,7 @@ public static class ContextMenuIconCatalog
             "ctx-cleanup" => EraseTool,
             "ctx-duplicates" => SelectAll,
             "ctx-rename" => Rename,
+            "ctx-create-shortcut" => Link,
             "ctx-advanced-rename" => Edit,
             "ctx-copy" or "ctx-copy-to-pane" or "ctx-copy-path" => Copy,
             "ctx-bookmark" => Favorite,
