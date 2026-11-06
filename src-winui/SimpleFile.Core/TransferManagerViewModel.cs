@@ -436,7 +436,7 @@ public sealed class ActiveTransferFile(string path) : ObservableObject
     public string Path { get; } = path;
     public string Name => System.IO.Path.GetFileName(Path);
     public string Progress { get => _progress; private set => SetProperty(ref _progress, value); }
-    public void Update(ActiveFile file) => Progress = file.Total == 0 ? "Finalizing" :
+    public void Update(ActiveFile file) => Progress = file.Total == 0 ? "Finishing" :
         $"{TransferProgressFormatter.FormatBytes(file.Current)} / {TransferProgressFormatter.FormatBytes(file.Total)}";
 }
 

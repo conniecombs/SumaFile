@@ -38,22 +38,11 @@ public sealed partial class PrimaryToolbarView : UserControl
     public Button WorkspaceProfileSave => WorkspaceProfileSaveButton;
     public Button WorkspaceProfileManage => WorkspaceProfileManageButton;
     public Button ViewButton => PrimaryViewButton;
-    // The dual-pane row, the three "Use ..." buttons and the Profiles block left the View
-    // options flyout in 1.0.4. These detached stand-ins keep older window wiring compiling;
-    // they are never added to the visual tree.
-    public Button ViewDualPaneToggleButton { get; } = new();
-    public FontIcon ViewDualPaneGlyph { get; } = new();
-    public TextBlock ViewDualPaneLabel { get; } = new();
     public RadioButtons ViewStyleOptions => ViewStyleRadioButtons;
     public TextBlock ViewIconSizeValue => ViewIconSizeValueText;
     public Slider ViewIconSize => ViewIconSizeSlider;
     public Button ViewApplyBoth => ViewApplyBothButton;
-    public Button ViewUseGlobally { get; } = new();
-    public Button ViewUseForFolder { get; } = new();
-    public Button ViewUseForDescendants { get; } = new();
     public TextBlock ViewFolderRuleStatus => ViewFolderRuleStatusText;
-    public Button ViewSaveProfile { get; } = new();
-    public StackPanel ViewProfilesList { get; } = new();
     public ComboBox ViewRememberScope => ViewRememberScopeBox;
     public ComboBoxItem ViewRememberFolder => ViewRememberFolderItem;
     public ComboBoxItem ViewRememberDescendants => ViewRememberDescendantsItem;
@@ -85,15 +74,10 @@ public sealed partial class PrimaryToolbarView : UserControl
     public event RoutedEventHandler? WorkspaceProfileSaveClicked;
     public event RoutedEventHandler? WorkspaceProfileManageClicked;
     public event EventHandler<object>? ViewOptionsFlyoutOpening;
-    // No longer raised: the View options flyout lost its dual-pane row and Profiles block.
-    public event RoutedEventHandler? ViewDualPaneClicked { add { } remove { } }
     public event SelectionChangedEventHandler? ViewStyleSelectionChanged;
     public event RangeBaseValueChangedEventHandler? ViewIconSizeSliderChanged;
     public event RoutedEventHandler? ViewApplyBothClicked;
-    public event RoutedEventHandler? ViewUseGloballyClicked;
-    public event RoutedEventHandler? ViewUseForFolderClicked;
-    public event RoutedEventHandler? ViewUseForDescendantsClicked;
-    public event RoutedEventHandler? ViewSaveProfileClicked { add { } remove { } }
+    public event EventHandler<FolderViewScope>? ViewRememberRequested;
     public event RoutedEventHandler? SettingsClicked;
     public event EventHandler<object>? PrimaryMoreMenuOpening;
 
@@ -170,24 +154,18 @@ public sealed partial class PrimaryToolbarView : UserControl
     private void OnViewApplyBothClicked(object sender, RoutedEventArgs e) => ViewApplyBothClicked?.Invoke(sender, e);
 
     /// <summary>
-    /// "Remember this view for" + Remember: raises the existing scope event for the chosen
-    /// item so the window's Use globally / folder / folder-and-subfolders handlers apply it.
+    /// "Remember this view for" + Remember: raises one request carrying the chosen scope
+    /// (everywhere, this folder, or this folder and subfolders) for the window to save.
     /// </summary>
     private void OnViewRememberClicked(object sender, RoutedEventArgs e)
     {
-        var scope = (ViewRememberScopeBox.SelectedItem as ComboBoxItem)?.Tag as string;
-        switch (scope)
+        var scope = ((ViewRememberScopeBox.SelectedItem as ComboBoxItem)?.Tag as string) switch
         {
-            case "folder":
-                ViewUseForFolderClicked?.Invoke(sender, e);
-                break;
-            case "descendants":
-                ViewUseForDescendantsClicked?.Invoke(sender, e);
-                break;
-            default:
-                ViewUseGloballyClicked?.Invoke(sender, e);
-                break;
-        }
+            "folder" => FolderViewScope.Folder,
+            "descendants" => FolderViewScope.Descendants,
+            _ => FolderViewScope.Global,
+        };
+        ViewRememberRequested?.Invoke(this, scope);
     }
 
     private void OnSettingsClicked(object sender, RoutedEventArgs e) => SettingsClicked?.Invoke(sender, e);

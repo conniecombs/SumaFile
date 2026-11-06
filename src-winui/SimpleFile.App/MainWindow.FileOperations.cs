@@ -416,7 +416,7 @@ public sealed partial class MainWindow
     }
 
     private async void OnDiskCleanupClicked(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("Disk cleanup", ShowDiskCleanupAsync);
+        await RunUiActionAsync("Large files and duplicates", ShowDiskCleanupAsync);
 
     private async Task ShowDiskCleanupAsync()
     {

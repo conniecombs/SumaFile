@@ -76,7 +76,8 @@ public sealed partial class MainWindow
         && left.Name == right.Name
         && left.Protocol == right.Protocol
         && left.Host == right.Host
-        && left.Description == right.Description;
+        && left.Description == right.Description
+        && left.IsInsecure == right.IsInsecure;
 
     private void CloseRemoteManagerWindow()
     {

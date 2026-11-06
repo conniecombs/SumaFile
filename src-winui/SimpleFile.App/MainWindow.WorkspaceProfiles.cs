@@ -14,13 +14,6 @@ namespace SimpleFile.App;
 
 public sealed partial class MainWindow
 {
-
-    private async void OnViewSaveProfileClicked(object sender, RoutedEventArgs e)
-    {
-        PrimaryViewButton.Flyout?.Hide();
-        await RunUiActionAsync("Profile", PromptSaveWorkspaceProfileAsync);
-    }
-
     private async void OnWorkspaceProfileSaveClicked(object sender, RoutedEventArgs e)
     {
         WorkspaceProfileButton.Flyout?.Hide();
@@ -58,11 +51,6 @@ public sealed partial class MainWindow
                 TextWrapping = TextWrapping.Wrap,
             });
         }
-    }
-
-    private async Task RefreshViewProfilesHostAsync()
-    {
-        await RefreshWorkspaceProfilesHostAsync(ViewProfilesHost);
     }
 
     private async Task RefreshWorkspaceProfilesHostAsync(StackPanel host)
@@ -302,7 +290,6 @@ public sealed partial class MainWindow
         }
 
         var saved = await _workspace.SaveWorkspaceProfileAsync(name, overwrite: duplicate is not null);
-        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Saved \"{saved.Name}\".", InfoBarSeverity.Success);
     }
@@ -344,7 +331,6 @@ public sealed partial class MainWindow
         }
 
         var saved = await _workspace.DuplicateWorkspaceProfileAsync(id, name);
-        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Duplicated \"{saved.Name}\".", InfoBarSeverity.Success);
     }
@@ -371,7 +357,6 @@ public sealed partial class MainWindow
         }
 
         var saved = await _workspace.RenameWorkspaceProfileAsync(id, name);
-        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Renamed to \"{saved.Name}\".", InfoBarSeverity.Success);
     }
@@ -402,7 +387,6 @@ public sealed partial class MainWindow
         }
 
         var saved = await _workspace.OverwriteWorkspaceProfileAsync(id);
-        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Updated \"{saved.Name}\".", InfoBarSeverity.Success);
     }
@@ -460,7 +444,6 @@ public sealed partial class MainWindow
         await _workspace.ResetWorkspaceProfileAsync(id);
         await _workspace.ApplyWorkspaceProfileAsync(id);
         SyncFromWorkspace();
-        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Reset \"{profile.Name}\".", InfoBarSeverity.Success);
     }
@@ -500,7 +483,6 @@ public sealed partial class MainWindow
         }
 
         await _workspace.DeleteWorkspaceProfileAsync(id);
-        await RefreshViewProfilesHostAsync();
         await RefreshWorkspaceProfilesHostAsync(WorkspaceProfilesHost);
         ShowMessage("Profile", $"Deleted \"{profile.Name}\".", InfoBarSeverity.Success);
     }

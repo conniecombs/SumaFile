@@ -145,7 +145,7 @@ the app. Builds without complete trusted metadata fall back to the release page.
    folder's Properties. Right-click an item for Create
    shortcut, which pre-fills the shortcut target. Unavailable commands stay
    visible but greyed out.
-7. Open More (⋯) -> Tools -> FTP/SFTP Manager when you need a saved FTP, FTPS,
+7. Open More (⋯) -> Tools -> FTP/SFTP manager when you need a saved FTP, FTPS,
    or SFTP connection. Saved connections are also listed under Connections in
    the sidebar.
 8. Save repeatable pane/tab/column setups from the Profiles button on the
@@ -250,7 +250,7 @@ links and special entries that could escape the destination.
 
 ### Organization
 
-- Color labels for files and folders, shown under Labels in the sidebar
+- Labels for files and folders, shown under Labels in the sidebar
 - Bookmarks and recent locations
 - Smart folders
 - Folder metrics
@@ -292,7 +292,8 @@ links and special entries that could escape the destination.
 - Retry remains available after reconnecting to the same profile; transfers
   restart incomplete files from the beginning
 - Symbolic links are reported as unsupported during folder transfers
-- Plain FTP requires an explicit insecure-connection acknowledgement
+- Plain FTP requires an explicit insecure-connection acknowledgement and is
+  marked Insecure in the manager and under Connections in the sidebar
 
 ### Transfer speed and automatic retries
 
@@ -336,13 +337,13 @@ Settings is organized into:
 
 | Section | Controls |
 | --- | --- |
-| Appearance | Theme (Windows default, Light, Dark), default view, icon size, column preset, hidden files |
+| Appearance | Theme (Windows default, Dark, Light), default display style, default icon size, default file list columns, hidden files |
 | Navigation | Start location (Home folder, Restore last session, Custom folder), new-tab behavior, sidebar sections, recent history |
-| Behavior | Recycle Bin prompt, folder sorting, folder sizes, rendered previews, preview collapse, transfer options, and a Developer group for Git integration |
-| Storage & Cache | Thumbnail cache enablement, cache size, and cache location |
+| Behavior | Recycle Bin prompt, folders on top, folder sizes, rendered previews, video playback, preview collapse, transfer options, and a Developer group for Git integration |
+| Storage & cache | Thumbnail cache enablement, cache size, and cache location |
 | Shortcuts | Searchable shortcut list with edit, reset, import, and export |
-| Toolbar | Toolbar label mode, command order, separators, removed commands, and reset |
-| Tools | FTP/SFTP manager launcher and archive support summary |
+| Toolbar | Button labels, command order, separators, removed commands, and reset |
+| Tools | FTP/SFTP connections (opens the FTP/SFTP manager) and archive support summary |
 | Updates | Version, update check, install action |
 | About | Product, version, repository, and build metadata |
 
@@ -382,7 +383,8 @@ Press `F1` or `Ctrl+/` in SumaFile for the live shortcut list.
 | `Alt+Enter` | Properties |
 | `Alt+Home` | Go home |
 | `Alt+Up` | Parent folder |
-| `Alt+Left` / `Backspace` / `Alt+Right` | Back / forward |
+| `Alt+Left` / `Alt+Right` | Back / forward |
+| `Backspace` | Back (when a file list has focus) |
 | `F5` | Refresh |
 | `F6` | Open or close second pane |
 | `Tab` | Switch active pane when a file list has focus and dual pane is open |

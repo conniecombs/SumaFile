@@ -914,7 +914,7 @@ public sealed partial class MainWindow : Window
     }
 
     private async void OnToggleSidebar(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("Side menu", ToggleSidebarAsync);
+        await RunUiActionAsync("Sidebar", ToggleSidebarAsync);
 
     private async Task ToggleSidebarAsync()
     {
@@ -926,7 +926,7 @@ public sealed partial class MainWindow : Window
         _workspace.Settings.SidebarVisible = !_workspace.Settings.SidebarVisible;
         ApplySidebarLayout();
         await _workspace.SaveUiSettingsAsync();
-        SetStatusText(_workspace.Settings.SidebarVisible ? "Side menu shown" : "Side menu hidden");
+        SetStatusText(_workspace.Settings.SidebarVisible ? "Sidebar shown" : "Sidebar hidden");
     }
 
     private void OnSidebarLeft(object sender, RoutedEventArgs e) => _workspace?.ActivatePane(PaneId.Primary);

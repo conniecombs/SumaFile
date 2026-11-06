@@ -379,7 +379,7 @@ public class WinUiSourceShapeTests
         Assert.Contains("OnWorkspaceProfilesFlyoutOpening", toolbar);
         Assert.Contains("WorkspaceProfileManageButton", toolbar);
         Assert.Contains("RefreshWorkspaceProfilesHostAsync", commands);
-        Assert.Contains("RefreshViewProfilesHostAsync", commands);
+        Assert.DoesNotContain("RefreshViewProfilesHostAsync", commands);
         Assert.Contains("AppendWorkspaceProfileOverflowMenuAsync", commands);
         Assert.Contains("profile:save", commands);
         Assert.Contains("ApplyWorkspaceProfileAsync", commands);

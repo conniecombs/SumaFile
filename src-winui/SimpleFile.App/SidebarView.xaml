@@ -260,18 +260,34 @@
                                                     TextTrimming="CharacterEllipsis"
                                                     TextWrapping="NoWrap" />
                                             </StackPanel>
-                                            <Border
+                                            <StackPanel
                                                 Grid.Column="2"
-                                                Padding="5,1"
                                                 VerticalAlignment="Top"
-                                                Background="{ThemeResource SfAccentSoftBrush}"
-                                                BorderThickness="0"
-                                                CornerRadius="4">
-                                                <TextBlock
-                                                    FontSize="10"
-                                                    Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                                    Text="{x:Bind Protocol}" />
-                                            </Border>
+                                                Orientation="Horizontal"
+                                                Spacing="4">
+                                                <Border
+                                                    Padding="5,1"
+                                                    Background="{ThemeResource SfAccentSoftBrush}"
+                                                    BorderThickness="0"
+                                                    CornerRadius="4">
+                                                    <TextBlock
+                                                        FontSize="10"
+                                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                        Text="{x:Bind Protocol}" />
+                                                </Border>
+                                                <Border
+                                                    Padding="5,0"
+                                                    BorderBrush="{ThemeResource SystemFillColorCriticalBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="4"
+                                                    ToolTipService.ToolTip="Plain FTP: passwords and files are sent without encryption"
+                                                    Visibility="{x:Bind InsecureBadgeVisibility}">
+                                                    <TextBlock
+                                                        FontSize="10"
+                                                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                        Text="Insecure" />
+                                                </Border>
+                                            </StackPanel>
                                             <FontIcon
                                                 Grid.Column="3"
                                                 VerticalAlignment="Center"

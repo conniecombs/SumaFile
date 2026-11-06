@@ -160,9 +160,59 @@ public class UxShellTests
 
         var code = Read("PrimaryToolbarView.xaml.cs");
         var remember = Slice(code, "private void OnViewRememberClicked(", "private void OnSettingsClicked(");
-        Assert.Contains("ViewUseForFolderClicked?.Invoke", remember);
-        Assert.Contains("ViewUseForDescendantsClicked?.Invoke", remember);
-        Assert.Contains("ViewUseGloballyClicked?.Invoke", remember);
+        Assert.Contains("FolderViewScope.Folder", remember);
+        Assert.Contains("FolderViewScope.Descendants", remember);
+        Assert.Contains("FolderViewScope.Global", remember);
+        Assert.Contains("ViewRememberRequested?.Invoke", remember);
+
+        // The Remember button still saves through the same folder-view defaults path.
+        Assert.Contains("PrimaryToolbarPanel.ViewRememberRequested += OnViewRememberRequested;", Read("MainWindow.Controls.cs"));
+        var save = Slice(commands, "private async void OnViewRememberRequested(", "private async Task SaveFolderViewSettingsFromFlyoutAsync(");
+        Assert.Contains("SaveFolderViewSettingsFromFlyoutAsync(scope)", save);
+    }
+
+    // Integration: plain-FTP connections carry the same "Insecure" badge in the sidebar as in the manager.
+    [Fact]
+    public void SidebarConnections_ShowInsecureBadgeForPlainFtp()
+    {
+        var rows = Read("ExplorerRows.cs");
+        var row = Slice(rows, "public sealed class RemoteProfileSidebarRow", "private static string FormatDescription(");
+        Assert.Contains("public bool IsInsecure", row);
+        Assert.Contains("IsInsecure = RemoteManagerViewModel.IsInsecureProfile(profile)", row);
+
+        var sidebar = Read("SidebarView.xaml");
+        var template = Slice(sidebar, "<DataTemplate x:DataType=\"local:RemoteProfileSidebarRow\">", "</DataTemplate>");
+        Assert.Contains("Text=\"{x:Bind Protocol}\"", template);
+        Assert.Contains("Visibility=\"{x:Bind InsecureBadgeVisibility}\"", template);
+        Assert.Contains("Text=\"Insecure\"", template);
+        Assert.Contains("left.IsInsecure == right.IsInsecure", Read("MainWindow.Remote.cs"));
+    }
+
+    // Integration: the detached View-flyout stand-ins for the removed rows are gone from App source.
+    [Fact]
+    public void ViewOptions_RemovedRowsLeaveNoStandInsInAppSource()
+    {
+        var stale = new[]
+        {
+            "ViewUseGlobally", "ViewUseForFolder", "ViewUseForDescendants",
+            "ViewDualPaneToggleButton", "ViewDualPaneClicked", "OnViewDualPaneClicked",
+            "ViewProfilesList", "ViewProfilesHost", "ViewSaveProfile", "RefreshViewProfilesHostAsync",
+        };
+        foreach (var file in System.IO.Directory.EnumerateFiles(AppRoot(), "*.*", System.IO.SearchOption.AllDirectories))
+        {
+            if (!(file.EndsWith(".cs", StringComparison.Ordinal) || file.EndsWith(".xaml", StringComparison.Ordinal))
+                || file.Contains($"{System.IO.Path.DirectorySeparatorChar}obj{System.IO.Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                || file.Contains($"{System.IO.Path.DirectorySeparatorChar}bin{System.IO.Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var text = System.IO.File.ReadAllText(file);
+            foreach (var name in stale)
+            {
+                Assert.False(text.Contains(name, StringComparison.Ordinal), $"{System.IO.Path.GetFileName(file)} still references {name}.");
+            }
+        }
     }
 
     // Add: smart folders.

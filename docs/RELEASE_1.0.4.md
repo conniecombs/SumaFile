@@ -56,8 +56,8 @@ that followed the [2026-11-05 UI audit](UI_AUDIT_2026-11-05.md).
   shown, and offers Reveal and Move to Recycle Bin per row.
 - The Duplicate Checker hides hash and network settings under Advanced and
   replaces Keep first with Keep the copy in the current folder.
-- Advanced Rename, Duplicate Checker and Transfers windows close with Escape
-  and run their primary action with Ctrl+Enter.
+- Advanced Rename, Duplicate Checker and Transfers windows close with Escape;
+  Advanced Rename and Duplicate Checker run their primary action with Ctrl+Enter.
 - Quick Look is a lightbox: Left and Right move between files, Space closes.
 - F2 renames in place in the Details view.
 
@@ -69,7 +69,8 @@ that followed the [2026-11-05 UI audit](UI_AUDIT_2026-11-05.md).
   lives in a Developer group in Settings. Discard lists the affected paths and
   warns when untracked files will be deleted from disk.
 - FTP/SFTP profiles are listed as Connections. Plain FTP needs an explicit
-  unencrypted-connection confirmation shown under the protocol choice. A new
+  unencrypted-connection confirmation shown under the protocol choice, and such
+  connections carry an Insecure badge in the manager and the sidebar. A new
   SFTP server key opens a Trust this server prompt; a changed key opens a
   warning. The credential target is no longer an editable field.
 - Settings search finds individual settings, a Light theme is available,

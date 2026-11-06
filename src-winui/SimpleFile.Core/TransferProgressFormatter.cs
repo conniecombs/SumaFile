@@ -84,7 +84,7 @@ public static class TransferProgressFormatter
         return new TransferProgressDisplay(
             Title(context, update),
             summary,
-            isFinalizing ? "Finalizing" : update.Total > 0 ? $"{progressPercent:0}%" : "",
+            isFinalizing ? "Finishing" : update.Total > 0 ? $"{progressPercent:0}%" : "",
             progressPercent,
             isIndeterminate,
             FileSummary(update, currentFiles),
@@ -139,7 +139,7 @@ public static class TransferProgressFormatter
 
         if (update.Status == "finalizing")
         {
-            return current > 0 ? $"{FormatBytes(current)} transferred" : "Finalizing transfer";
+            return current > 0 ? $"{FormatBytes(current)} transferred" : "Finishing transfer";
         }
 
         if (update.Status == "running")
@@ -203,7 +203,7 @@ public static class TransferProgressFormatter
     {
         if (update.Status == "finalizing")
         {
-            return "Finalizing";
+            return "Finishing";
         }
 
         if (update.Status != "running")

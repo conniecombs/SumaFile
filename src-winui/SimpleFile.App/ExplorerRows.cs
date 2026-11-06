@@ -222,6 +222,11 @@ public sealed class RemoteProfileSidebarRow
     public string Host { get; set; } = "";
     public string Description { get; set; } = "";
 
+    /// <summary>Plain FTP the user confirmed: passwords and files travel unencrypted.</summary>
+    public bool IsInsecure { get; set; }
+
+    public Visibility InsecureBadgeVisibility => IsInsecure ? Visibility.Visible : Visibility.Collapsed;
+
     public static RemoteProfileSidebarRow From(RemoteProfile profile)
     {
         ArgumentNullException.ThrowIfNull(profile);
@@ -232,6 +237,7 @@ public sealed class RemoteProfileSidebarRow
             Protocol = profile.Protocol.ToUpperInvariant(),
             Host = profile.Host,
             Description = FormatDescription(profile),
+            IsInsecure = RemoteManagerViewModel.IsInsecureProfile(profile),
         };
     }
 

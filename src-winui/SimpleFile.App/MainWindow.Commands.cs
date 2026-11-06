@@ -643,29 +643,15 @@ public sealed partial class MainWindow
         await RunUiActionAsync("View options", () => ApplyViewOptionAsync($"view:{view}"));
     }
 
-    private async void OnViewDualPaneClicked(object sender, RoutedEventArgs e)
-    {
-        await RunUiActionAsync("View options", () => ApplyViewOptionAsync("pane:dual"));
-    }
-
     private async void OnViewApplyBothClicked(object sender, RoutedEventArgs e)
     {
         await RunUiActionAsync("View options", () => ApplyViewOptionAsync("pane:apply-view-to-both"));
     }
 
-    private async void OnViewUseGloballyClicked(object sender, RoutedEventArgs e)
+    /// <summary>"Remember this view for" + Remember in View options: save the current view for the chosen scope.</summary>
+    private async void OnViewRememberRequested(object? sender, FolderViewScope scope)
     {
-        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Global));
-    }
-
-    private async void OnViewUseForFolderClicked(object sender, RoutedEventArgs e)
-    {
-        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Folder));
-    }
-
-    private async void OnViewUseForDescendantsClicked(object sender, RoutedEventArgs e)
-    {
-        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope.Descendants));
+        await RunUiActionAsync("Folder defaults", () => SaveFolderViewSettingsFromFlyoutAsync(scope));
     }
 
     private async Task SaveFolderViewSettingsFromFlyoutAsync(FolderViewScope scope)

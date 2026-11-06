@@ -781,6 +781,11 @@ public sealed partial class SettingsWindow : Window
             VirtualKey.Decimal => "Period",
             VirtualKey.Divide => "Divide",
             VirtualKey.Multiply => "Multiply",
+            // Main-keyboard OEM keys have no named VirtualKey member; emit the names
+            // KeyboardShortcutMap.NormalizeKey accepts (` terminal, , settings, / help).
+            (VirtualKey)188 => "OemComma",
+            (VirtualKey)191 => "Oem2",
+            (VirtualKey)192 => "Oem3",
             _ => key.ToString(),
         };
     }
