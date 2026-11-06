@@ -40,6 +40,8 @@ public sealed partial class MainWindow
     // A completed transfer offers Undo in the Status Center for this long.
     private static readonly TimeSpan TransferUndoWindow = TimeSpan.FromSeconds(10);
     private TransferOperationViewModel? _undoableTransfer;
+    // The undo entry pushed for that transfer; its Undo buttons work only while it is still the newest.
+    private UndoEntry? _undoableTransferEntry;
     private DispatcherQueueTimer? _undoableTransferTimer;
     private string? _undoReceiptMessage;
     private bool _undoReceiptHooked;
@@ -94,6 +96,13 @@ public sealed partial class MainWindow
             _workspace?.OperationLog.Count ?? 0);
 
         EnsureStatusCenterRowTemplate();
+        if (_undoableTransferEntry is not null && !IsTransferUndoCurrent())
+        {
+            // A later change (rename, delete, another transfer) is now on top: retire the transfer's Undo.
+            ClearTransferUndoable();
+            return;
+        }
+
         StatusCenterBadgeText.Text = snapshot.BadgeText;
         StatusCenterHeaderText.Text = snapshot.HeaderText;
         StatusCenterDetailText.Text = snapshot.DetailText;
@@ -235,12 +244,21 @@ public sealed partial class MainWindow
     private bool IsTransferUndoable(TransferOperationViewModel operation) =>
         ReferenceEquals(operation, _undoableTransfer)
         && operation.Status == TransferOperationStatus.Completed
-        && _workspace?.Undo.CanUndo == true;
+        && IsTransferUndoCurrent();
+
+    /// <summary>True only while the transfer's own undo entry is still the newest one on the undo list.</summary>
+    private bool IsTransferUndoCurrent() =>
+        _workspace is { } workspace && IsNewestUndoEntry(workspace.Undo, _undoableTransferEntry);
+
+    internal static bool IsNewestUndoEntry(UndoStack undo, UndoEntry? entry) =>
+        entry is not null && undo.Entries is { Count: > 0 } entries && ReferenceEquals(entries[^1], entry);
 
     /// <summary>The transfer just pushed an undo entry: offer Undo on its Status Center row for a short while.</summary>
-    private void MarkTransferUndoable(TransferOperationViewModel operation)
+    private void MarkTransferUndoable(TransferOperationViewModel operation, UndoStack undo)
     {
         _undoableTransfer = operation;
+        // Entries runs oldest to newest, so the entry just pushed is the last one.
+        _undoableTransferEntry = undo.Entries is { Count: > 0 } entries ? entries[^1] : null;
         if (_undoableTransferTimer is null)
         {
             _undoableTransferTimer = DispatcherQueue.CreateTimer();
@@ -261,12 +279,13 @@ public sealed partial class MainWindow
     private void ClearTransferUndoable()
     {
         _undoableTransferTimer?.Stop();
-        if (_undoableTransfer is null && _undoReceiptMessage is null)
+        if (_undoableTransfer is null && _undoableTransferEntry is null && _undoReceiptMessage is null)
         {
             return;
         }
 
         _undoableTransfer = null;
+        _undoableTransferEntry = null;
         if (_undoReceiptMessage is not null)
         {
             _undoReceiptMessage = null;
@@ -279,6 +298,22 @@ public sealed partial class MainWindow
     private async void UndoFromStatusCenter()
     {
         StatusCenterButton.Flyout?.Hide();
+        await UndoTransferIfCurrentAsync();
+    }
+
+    /// <summary>
+    /// Undo buttons for a transfer undo that transfer only: if anything else was pushed since,
+    /// nothing is undone and the buttons are retired.
+    /// </summary>
+    private async Task UndoTransferIfCurrentAsync()
+    {
+        if (!IsTransferUndoCurrent())
+        {
+            ClearTransferUndoable();
+            SetStatusText("That transfer is no longer the latest change, so it was not undone.");
+            return;
+        }
+
         await RunUiActionAsync("Undo", UndoLastAsync);
     }
 
@@ -289,7 +324,7 @@ public sealed partial class MainWindow
         undo.Click += async (_, _) =>
         {
             MessageBar.IsOpen = false;
-            await RunUiActionAsync("Undo", UndoLastAsync);
+            await UndoTransferIfCurrentAsync();
         };
 
         _undoReceiptMessage = receipt;

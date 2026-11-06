@@ -362,7 +362,7 @@ public sealed partial class MainWindow
 
                 _lastTransferReplaced = false;
                 undoRegistered = true;
-                MarkTransferUndoable(operation);
+                MarkTransferUndoable(operation, workspace.Undo);
                 committedAll.Clear();
             }
 
@@ -1044,7 +1044,8 @@ public sealed partial class MainWindow
         var destination = _workspace.OtherPanePath();
         if (destination is null)
         {
-            ShowMessage("Dual pane", "Enable dual pane to copy or move to the other pane.", InfoBarSeverity.Informational);
+            // The cross-pane buttons are disabled in single-pane mode; a stray command just says why.
+            SetStatusText("Turn on dual pane to copy or move to the other pane.");
             return;
         }
 
@@ -1379,7 +1380,7 @@ public sealed partial class MainWindow
         e.Handled = true;
         if (wasDragging && _sidebarMoved && _workspace is not null)
         {
-            await RunUiActionAsync("Resize side menu", () => _workspace.SaveUiSettingsAsync());
+            await RunUiActionAsync("Resize sidebar", () => _workspace.SaveUiSettingsAsync());
         }
     }
 

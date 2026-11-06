@@ -186,4 +186,54 @@ public class DialogsAndTransfersUxTests
         var dialogs = Read("FileOperationDialogService.cs");
         Assert.Contains("dialog.SetTags(workspace.AllTags.ToArray(), currentLabels.Length == 1 ? currentLabels[0] : null);", dialogs);
     }
+
+    // Review fix: a transfer's Undo buttons must never undo a later rename or delete.
+    [Fact]
+    public void TransferUndo_RunsOnlyWhileItsOwnEntryIsNewest()
+    {
+        var statusCenter = Read("MainWindow.StatusCenter.cs");
+        Assert.Contains("ReferenceEquals(entries[^1], entry)", statusCenter);
+        Assert.Contains("_undoableTransferEntry = undo.Entries is { Count: > 0 } entries ? entries[^1] : null;", statusCenter);
+
+        var guarded = Slice(statusCenter, "private async Task UndoTransferIfCurrentAsync()", "/// <summary>Completion receipt");
+        Assert.True(
+            guarded.IndexOf("IsTransferUndoCurrent()", StringComparison.Ordinal) < guarded.IndexOf("UndoLastAsync", StringComparison.Ordinal),
+            "the newest-entry check must run before undoing");
+        var buttons = Slice(statusCenter, "private async void UndoFromStatusCenter()", "/// <summary>")
+            + Slice(statusCenter, "private void ShowUndoReceipt(", "_undoReceiptMessage = receipt;");
+        Assert.DoesNotContain("UndoLastAsync", buttons);
+        Assert.Contains("UndoTransferIfCurrentAsync()", buttons);
+        Assert.Contains("&& IsTransferUndoCurrent();", Slice(statusCenter, "private bool IsTransferUndoable(", "private bool IsTransferUndoCurrent()"));
+        Assert.Contains("MarkTransferUndoable(operation, workspace.Undo);", Read("MainWindow.Transfer.cs"));
+    }
+
+    // The rule above relies on Entries running oldest to newest.
+    [Fact]
+    public void UndoStackEntries_EndWithTheNewestEntry()
+    {
+        var undo = new SimpleFile.Core.UndoStack();
+        static SimpleFile.Core.UndoEntry Entry(string name) => new()
+        {
+            Description = name,
+            Undo = _ => Task.CompletedTask,
+            Redo = _ => Task.CompletedTask,
+        };
+        var transfer = Entry("Copy 2 item(s)");
+        undo.Push(transfer);
+        Assert.Same(transfer, undo.Entries[^1]);
+
+        undo.Push(Entry("Rename 1 item"));
+        Assert.NotSame(transfer, undo.Entries[^1]);
+        Assert.Same(transfer, undo.Entries[0]);
+    }
+
+    [Fact]
+    public void CrossPaneTransfer_WithoutDualPaneUsesTheStatusBar()
+    {
+        var transfer = Read("MainWindow.Transfer.cs");
+        var method = Slice(transfer, "private async Task CopyOrMoveToOtherPaneAsync(bool move)", "private async Task PromptPackIntoFolderAsync()");
+        Assert.DoesNotContain("ShowMessage(", method);
+        Assert.Contains("SetStatusText(", method);
+        Assert.DoesNotContain("side menu", transfer, StringComparison.OrdinalIgnoreCase);
+    }
 }
