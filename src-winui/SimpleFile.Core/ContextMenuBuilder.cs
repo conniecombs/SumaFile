@@ -130,9 +130,8 @@ public static class ContextMenuBuilder
             Item("ctx-paste", "Paste", !request.HasClipboard, "Ctrl+V"),
             Divider(),
             Item("ctx-refresh", "Refresh", false, "F5"),
-            Item("ctx-terminal", "Open terminal here", false, "F4"),
             Divider(),
-            ToolsMenu(request, canCompare, canCompareFolders, includeTerminal: false),
+            ToolsMenu(request, canCompare, canCompareFolders),
             GitMenu(request),
             Divider(),
             Item("ctx-folder-info", "Properties"),
@@ -465,37 +464,26 @@ public static class ContextMenuBuilder
         };
     }
 
-    private static ContextMenuEntry ToolsMenu(
-        ContextMenuRequest request,
-        bool canCompare,
-        bool canCompareFolders,
-        bool includeTerminal = true)
+    private static ContextMenuEntry ToolsMenu(ContextMenuRequest request, bool canCompare, bool canCompareFolders)
     {
-        var children = new List<ContextMenuEntry>
-        {
-            Item("ctx-compare", "Compare files", !canCompare, showIcon: false),
-            Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0, showIcon: false),
-            Item("ctx-color-label", "Set color label...", request.SelectionCount == 0, showIcon: false),
-            Divider(),
-            Item("ctx-folder-metrics", "Compare folder metrics", !canCompareFolders, showIcon: false),
-            Item("ctx-cleanup", "Disk cleanup here...", showIcon: false),
-            Item("ctx-duplicates", "Find duplicates here...", showIcon: false),
-        };
-
-        // The background menu promotes the terminal to the top level, so Tools omits it there.
-        if (includeTerminal)
-        {
-            children.Add(Divider());
-            children.Add(Item("ctx-terminal", "Open terminal here", false, "F4", showIcon: false));
-            children.Add(Item("ctx-powershell-admin", "Open PowerShell as administrator", showIcon: false));
-        }
-
         return new ContextMenuEntry
         {
             Id = "ctx-tools-menu",
             Label = "Tools",
             IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-tools-menu"),
-            Children = children,
+            Children =
+            [
+                Item("ctx-compare", "Compare files", !canCompare, showIcon: false),
+                Item("ctx-advanced-rename", "Advanced rename...", request.SelectionCount == 0, showIcon: false),
+                Item("ctx-color-label", "Set color label...", request.SelectionCount == 0, showIcon: false),
+                Divider(),
+                Item("ctx-folder-metrics", "Compare folder metrics", !canCompareFolders, showIcon: false),
+                Item("ctx-cleanup", "Disk cleanup here...", showIcon: false),
+                Item("ctx-duplicates", "Find duplicates here...", showIcon: false),
+                Divider(),
+                Item("ctx-terminal", "Open terminal here", false, "F4", showIcon: false),
+                Item("ctx-powershell-admin", "Open PowerShell as administrator", showIcon: false),
+            ],
         };
     }
 

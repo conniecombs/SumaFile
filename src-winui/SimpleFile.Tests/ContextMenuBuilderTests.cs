@@ -336,23 +336,14 @@ public class ContextMenuBuilderTests
     }
 
     [Fact]
-    public void ContextMenu_BackgroundMenuPromotesTerminalAboveTools()
+    public void ContextMenu_BackgroundMenuKeepsTerminalInsideTools()
     {
-        var background = ContextMenuBuilder.Build(new ContextMenuRequest()).ToList();
-        var terminal = Assert.Single(background, entry => entry.Id == "ctx-terminal");
-        Assert.Equal("Open terminal here", terminal.Label);
-        Assert.Equal("F4", terminal.Shortcut);
-        Assert.False(string.IsNullOrWhiteSpace(terminal.IconGlyph));
-        Assert.Equal(background.FindIndex(entry => entry.Id == "ctx-refresh") + 1, background.IndexOf(terminal));
+        var background = ContextMenuBuilder.Build(new ContextMenuRequest());
+        Assert.DoesNotContain(background, entry => entry.Id == "ctx-terminal");
 
         var tools = Assert.Single(background, entry => entry.Id == "ctx-tools-menu");
-        Assert.DoesNotContain(tools.Children, child => child.Id == "ctx-terminal");
-        Assert.DoesNotContain(tools.Children, child => child.Id == "ctx-powershell-admin");
-
-        var selected = ContextMenuBuilder.Build(new ContextMenuRequest { SelectionCount = 1, AllSelectedAreFiles = true });
-        var selectedTools = Assert.Single(selected, entry => entry.Id == "ctx-tools-menu");
-        Assert.Contains(selectedTools.Children, child => child.Id == "ctx-terminal");
-        Assert.DoesNotContain(selected, entry => entry.Id == "ctx-terminal");
+        Assert.Contains(tools.Children, child => child.Id == "ctx-terminal" && child.Label == "Open terminal here" && child.Shortcut == "F4");
+        Assert.Contains(tools.Children, child => child.Id == "ctx-powershell-admin");
     }
 
     [Fact]
