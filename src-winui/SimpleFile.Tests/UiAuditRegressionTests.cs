@@ -750,6 +750,52 @@ public class Sprint2FileListTests
         Assert.Contains("DoubleTapHitsRow(e.OriginalSource)", events);
     }
 
+    // Right-clicking blank pane space did nothing in Details and kept the stale selection elsewhere.
+    [Fact]
+    public void DetailsRightTap_OnBlankSpaceClearsSelectionAndRaisesBackgroundContext()
+    {
+        var details = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "DetailsFileListView.cs"));
+        var rightTap = Slice(details, "private void OnListRightTapped(", "private void OnListContextRequested(");
+        var contextRequested = Slice(details, "private void OnListContextRequested(", "private void OnListDragItemsStarting(");
+
+        Assert.Contains("public event EventHandler<DetailsFileBackgroundContextEventArgs>? BackgroundContextRequested;", details);
+        Assert.Contains("RaiseBackgroundContext(", rightTap);
+        Assert.Contains("RaiseBackgroundContext(", contextRequested);
+        Assert.DoesNotContain("if (row is null)\n        {\n            return;", rightTap.Replace("\r\n", "\n"));
+
+        var raise = Slice(details, "private void RaiseBackgroundContext(", "private FileRow? RowFromSource(");
+        Assert.Contains("ClearSelection();", raise);
+        Assert.Contains("BackgroundContextRequested?.Invoke(", raise);
+    }
+
+    [Fact]
+    public void PaneView_ForwardsDetailsBackgroundContextToTheWindow()
+    {
+        var appRoot = Sprint2ShellTests.AppRoot();
+        var paneView = File.ReadAllText(Path.Combine(appRoot, "PaneView.xaml.cs"));
+        var window = string.Join(
+            Environment.NewLine,
+            Directory.EnumerateFiles(appRoot, "MainWindow*.cs").OrderBy(Path.GetFileName).Select(File.ReadAllText));
+
+        Assert.Contains("PartDetailsFileList.BackgroundContextRequested += (_, e) => DetailsBackgroundContextRequested?.Invoke(this, e);", paneView);
+        Assert.Contains("PrimaryPane.DetailsBackgroundContextRequested += OnPrimaryDetailsBackgroundContextRequested;", window);
+        Assert.Contains("SecondaryPane.DetailsBackgroundContextRequested += OnSecondaryDetailsBackgroundContextRequested;", window);
+
+        var show = Slice(window, "private void ShowDetailsBackgroundContextMenu(", "private static T? FindAncestor<T>(");
+        Assert.Contains("PopulateFileListContextFlyout(flyout, pane);", show);
+        Assert.Contains("flyout.ShowAt(list, new FlyoutShowOptions { Position = position });", show);
+    }
+
+    [Fact]
+    public void ListViewRightTap_OnBlankSpaceClearsSelection()
+    {
+        var events = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileListEvents.cs"));
+        var rightTap = Slice(events, "private void SelectRightTapped(", "private void OnPrimarySelectionChanged(");
+
+        Assert.Contains("if (row is null)", rightTap);
+        Assert.Contains("list.SelectedItems.Clear();", Slice(rightTap, "if (row is null)", "if (list.SelectedItems.OfType<FileRow>().Any("));
+    }
+
     // F9: type-ahead ignored digits, fired on Ctrl/Alt chords and never forwarded Backspace.
     [Theory]
     [InlineData("A", false, 'a')]

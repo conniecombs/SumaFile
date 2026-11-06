@@ -220,6 +220,7 @@ public sealed partial class MainWindow
         PrimaryPane.DetailsSelectionChanged += OnPrimaryDetailsSelectionChanged;
         PrimaryPane.DetailsRowInvoked += OnPrimaryDetailsRowInvoked;
         PrimaryPane.DetailsRowContextRequested += OnPrimaryDetailsRowContextRequested;
+        PrimaryPane.DetailsBackgroundContextRequested += OnPrimaryDetailsBackgroundContextRequested;
         PrimaryPane.DetailsRowsDragStarting += OnDetailsRowsDragStarting;
         PrimaryPane.DetailsRowsDragCompleted += OnDetailsRowsDragCompleted;
         PrimaryPane.DetailsFileKeyDown += OnPrimaryDetailsFileKeyDown;
@@ -248,6 +249,7 @@ public sealed partial class MainWindow
         SecondaryPane.DetailsSelectionChanged += OnSecondaryDetailsSelectionChanged;
         SecondaryPane.DetailsRowInvoked += OnSecondaryDetailsRowInvoked;
         SecondaryPane.DetailsRowContextRequested += OnSecondaryDetailsRowContextRequested;
+        SecondaryPane.DetailsBackgroundContextRequested += OnSecondaryDetailsBackgroundContextRequested;
         SecondaryPane.DetailsRowsDragStarting += OnDetailsRowsDragStarting;
         SecondaryPane.DetailsRowsDragCompleted += OnDetailsRowsDragCompleted;
         SecondaryPane.DetailsFileKeyDown += OnSecondaryDetailsFileKeyDown;

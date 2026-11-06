@@ -25,6 +25,7 @@ public static class CommandAliasCatalog
         ["ctx-copy"] = "copy",
         ["ctx-cut"] = "cut",
         ["ctx-paste"] = "paste",
+        ["ctx-refresh"] = "refresh",
         ["ctx-copy-path"] = "copy-path",
         ["ctx-bookmark"] = "bookmark-selected-folder",
         ["ctx-copy-to-pane"] = "copy-to-pane",

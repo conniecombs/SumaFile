@@ -38,6 +38,7 @@ public static class ContextMenuIconCatalog
     public const string List = "\uEA37";
     public const string Tiles = "\uECA5";
     public const string Branch = "\uE8EF";
+    public const string Refresh = "\uE72C";
 
     public static string? GlyphFor(string commandId)
     {
@@ -77,7 +78,7 @@ public static class ContextMenuIconCatalog
             "ctx-info" => Info,
             "ctx-close-left-pane" or "ctx-close-dual-pane" => ClosePane,
             "ctx-git-menu" or "ctx-git-panel" => Branch,
-            "ctx-git-refresh" => "\uE72C",
+            "ctx-refresh" or "ctx-git-refresh" => Refresh,
             "ctx-git-fetch" or "ctx-git-pull" => Import,
             "ctx-git-push" or "ctx-git-commit" => Save,
             "ctx-git-stage" => "\uE73E",

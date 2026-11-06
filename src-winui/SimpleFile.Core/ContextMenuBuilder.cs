@@ -76,6 +76,11 @@ public static class ContextMenuBuilder
             ]);
         }
 
+        if (request.SelectionCount == 0)
+        {
+            return BuildBackgroundMenu(request, canCompare, canCompareFolders);
+        }
+
         var entries = new List<ContextMenuEntry>
         {
             Item("ctx-open", "Open", request.SelectionCount != 1, "Enter"),
@@ -105,6 +110,28 @@ public static class ContextMenuBuilder
         };
 
         return VisibleEntries(entries);
+    }
+
+    /// <summary>
+    /// The menu for a right-click on blank pane space (nothing selected): create items,
+    /// paste into the current folder, refresh, and the folder-level tool and Git groups.
+    /// </summary>
+    private static IReadOnlyList<ContextMenuEntry> BuildBackgroundMenu(
+        ContextMenuRequest request,
+        bool canCompare,
+        bool canCompareFolders)
+    {
+        return VisibleEntries(
+        [
+            NewItemMenu(),
+            Divider(),
+            Item("ctx-paste", "Paste", !request.HasClipboard, "Ctrl+V"),
+            Divider(),
+            Item("ctx-refresh", "Refresh", false, "F5"),
+            Divider(),
+            ToolsMenu(request, canCompare, canCompareFolders),
+            GitMenu(request),
+        ]);
     }
 
     public static IReadOnlyList<ContextMenuEntry> BuildPaneMoreMenu(ContextMenuRequest request)

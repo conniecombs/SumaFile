@@ -222,6 +222,14 @@ public sealed partial class MainWindow
         var row = view?.Row;
         if (row is null)
         {
+            // Blank space: drop the stale selection so the ContextFlyout that follows
+            // builds the background menu instead of acting on hidden items.
+            _workspace.ActivatePane(pane);
+            if (list.SelectedItems.Count > 0)
+            {
+                list.SelectedItems.Clear();
+            }
+
             return;
         }
 

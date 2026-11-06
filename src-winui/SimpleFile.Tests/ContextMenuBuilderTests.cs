@@ -274,6 +274,58 @@ public class ContextMenuBuilderTests
         Assert.DoesNotContain(menu, entry => entry.Id == "ctx-rename");
     }
     [Fact]
+    public void ContextMenu_EmptySelectionShowsBackgroundMenu()
+    {
+        var background = ContextMenuBuilder.Build(new ContextMenuRequest { HasClipboard = true });
+
+        var newMenu = Assert.Single(background, entry => entry.Id == "overflow-new");
+        Assert.Equal("New", newMenu.Label);
+        Assert.Equal(newMenu, background[0]);
+        Assert.Contains(newMenu.Children, child => child.Id == "new:folder" && child.Shortcut == "Ctrl+Shift+N");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:text");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:empty");
+        Assert.Contains(newMenu.Children, child => child.Id == "new:shortcut" && child.Label == "Shortcut...");
+
+        var paste = Assert.Single(background, entry => entry.Id == "ctx-paste");
+        Assert.Equal("Paste", paste.Label);
+        Assert.Null(paste.CommandParameter);
+
+        var refresh = Assert.Single(background, entry => entry.Id == "ctx-refresh");
+        Assert.Equal("Refresh", refresh.Label);
+        Assert.Equal("F5", refresh.Shortcut);
+        Assert.False(string.IsNullOrWhiteSpace(refresh.IconGlyph));
+        Assert.Equal("refresh", CommandAliasCatalog.Normalize("ctx-refresh"));
+
+        Assert.Contains(background, entry => entry.Id == "ctx-tools-menu");
+        Assert.DoesNotContain(Flatten(background), entry => entry.Id == "ctx-copy");
+        Assert.DoesNotContain(Flatten(background), entry => entry.Id == "ctx-rename");
+        Assert.DoesNotContain(Flatten(background), entry => entry.Id == "ctx-info");
+    }
+
+    [Fact]
+    public void ContextMenu_EmptySelectionHidesPasteWithoutClipboard()
+    {
+        var background = ContextMenuBuilder.Build(new ContextMenuRequest());
+
+        Assert.DoesNotContain(background, entry => entry.Id == "ctx-paste");
+        Assert.Contains(background, entry => entry.Id == "overflow-new");
+        Assert.Contains(background, entry => entry.Id == "ctx-refresh");
+    }
+
+    [Fact]
+    public void ContextMenu_SelectionDoesNotShowBackgroundItems()
+    {
+        var selected = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            SelectionCount = 1,
+            AllSelectedAreFiles = true,
+        });
+
+        Assert.DoesNotContain(Flatten(selected), entry => entry.Id == "overflow-new");
+        Assert.DoesNotContain(Flatten(selected), entry => entry.Id == "ctx-refresh");
+    }
+
+    [Fact]
     public void PaneMoreMenu_UsesPolishedLabelsAndSelectionGating()
     {
         var empty = ContextMenuBuilder.BuildPaneMoreMenu(new ContextMenuRequest());
