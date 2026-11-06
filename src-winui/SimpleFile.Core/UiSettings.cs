@@ -80,9 +80,7 @@ public sealed class UiSettings
         (32, "Medium icons"),
         (48, "Large icons"),
         (96, "Extra large icons"),
-        (128, "Jumbo icons"),
-        (192, "Huge icons"),
-        (256, "Maximum icons"),
+        (256, "Huge icons"),
     ];
 
     public static string NormalizeTheme(string? theme)
@@ -92,10 +90,14 @@ public sealed class UiSettings
             return "dark";
         }
 
+        if (string.Equals(theme, "light", StringComparison.OrdinalIgnoreCase))
+        {
+            return "light";
+        }
+
         if (string.Equals(theme, "system", StringComparison.OrdinalIgnoreCase)
             || string.Equals(theme, "windows", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(theme, "default", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(theme, "light", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(theme, "default", StringComparison.OrdinalIgnoreCase))
         {
             return "system";
         }
@@ -129,15 +131,21 @@ public sealed class UiSettings
 
     public static int NormalizeIconSize(int? iconSize)
     {
-        if (iconSize is null)
-        {
-            return IconSizeMin;
-        }
+        return iconSize is null ? IconSizeMin : NormalizeIconSize(iconSize.Value);
+    }
 
-        var clamped = Math.Clamp(iconSize.Value, IconSizeMin, IconSizeMax);
-        var snappedOffset = (int)Math.Round((clamped - IconSizeMin) / (double)IconSizeStep, MidpointRounding.AwayFromZero)
-            * IconSizeStep;
-        return Math.Clamp(IconSizeMin + snappedOffset, IconSizeMin, IconSizeMax);
+    /// <summary>Snaps any size (including the retired 128 and 192 steps) to the nearest standard option.</summary>
+    public static int NormalizeIconSize(int size)
+    {
+        return size switch
+        {
+            128 => 96,
+            192 => 256,
+            _ => IconSizeOptions
+                .OrderBy(option => Math.Abs(option.Size - size))
+                .ThenByDescending(option => option.Size)
+                .First().Size,
+        };
     }
 
     public static int NormalizeIconSize(string? iconSize)

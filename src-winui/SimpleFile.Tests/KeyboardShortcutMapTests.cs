@@ -15,7 +15,7 @@ public class KeyboardShortcutMapTests
         Assert.Contains(KeyboardShortcutMap.Defaults, item =>
             item.Id == "pane.switch" && item.Keys == "Tab");
         Assert.Contains(KeyboardShortcutMap.Defaults, item =>
-            item.Id == "preview.toggle" && item.Keys == "Unassigned");
+            item.Id == "preview.toggle" && item.Keys == "Alt+P");
         Assert.Contains(KeyboardShortcutMap.Defaults, item =>
             item.Id == "tabs.reopen" && item.Keys == "Unassigned");
         Assert.Contains(KeyboardShortcutMap.Defaults, item =>
@@ -95,5 +95,46 @@ public class KeyboardShortcutMapTests
             issue.Severity == KeyboardShortcutIssueSeverity.Warning
             && issue.CommandId == "tabs.reopen"
             && issue.Shortcut == "Alt+F4");
+    }
+
+    [Theory]
+    [InlineData("tabs.new", "Ctrl+T, Ctrl+N")]
+    [InlineData("nav.parent", "Alt+Up")]
+    [InlineData("nav.back", "Alt+Left, Backspace")]
+    [InlineData("terminal.open", "Ctrl+`")]
+    [InlineData("settings.open", "Ctrl+,")]
+    [InlineData("help.keyboard", "F1, Ctrl+/")]
+    [InlineData("preview.toggle", "Alt+P")]
+    [InlineData("file.newFile", "Unassigned")]
+    public void Defaults_MatchUxRecommendations(string id, string keys)
+    {
+        Assert.Equal(keys, KeyboardShortcutMap.Find(id)!.Keys);
+    }
+
+    [Theory]
+    [InlineData("Ctrl+`", "Oem3")]
+    [InlineData("Ctrl+backtick", "Oem3")]
+    [InlineData("Ctrl+oem3", "Oem3")]
+    [InlineData("Ctrl+,", "OemComma")]
+    [InlineData("Ctrl+comma", "OemComma")]
+    [InlineData("Ctrl+/", "Oem2")]
+    [InlineData("Ctrl+slash", "Oem2")]
+    [InlineData("Ctrl+Divide", "Divide")]
+    public void TryParseShortcut_NormalizesPunctuationKeys(string text, string key)
+    {
+        Assert.True(KeyboardShortcutMap.TryParseShortcut(text, out var gesture, out _));
+        Assert.Equal(key, gesture!.Key);
+        Assert.True(gesture.Control);
+    }
+
+    [Theory]
+    [InlineData("pane.switch", true)]
+    [InlineData("quickLook.toggle", true)]
+    [InlineData("nav.back", true)]
+    [InlineData("file.copy", false)]
+    [InlineData("nav.parent", false)]
+    public void IsFileListScopedKey_FlagsBareKeyCommands(string id, bool expected)
+    {
+        Assert.Equal(expected, KeyboardShortcutMap.IsFileListScopedKey(id));
     }
 }

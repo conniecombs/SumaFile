@@ -47,7 +47,7 @@ public class ShortcutLabelTests
 
         Assert.Equal("Ctrl+R", commands.Single(command => command.Id == "rename").Shortcut);
         Assert.True(string.IsNullOrEmpty(commands.Single(command => command.Id == "delete").Shortcut));
-        Assert.Equal("Alt+Up, Backspace", commands.Single(command => command.Id == "go-up").Shortcut);
+        Assert.Equal("Alt+Up", commands.Single(command => command.Id == "go-up").Shortcut);
         Assert.Null(commands.Single(command => command.Id == "transfers").Shortcut);
     }
 

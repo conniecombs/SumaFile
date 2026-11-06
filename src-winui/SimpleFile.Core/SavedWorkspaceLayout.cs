@@ -224,8 +224,6 @@ public sealed class WorkspaceChromeLayout
     public void Apply(UiSettings settings, ColumnLayout primaryColumns, ColumnLayout secondaryColumns)
     {
         Normalize();
-        settings.KeepFoldersOnTop = KeepFoldersOnTop;
-        settings.EnableGitIntegration = EnableGitIntegration;
         settings.ProgressQueueVisible = ProgressQueueVisible;
         settings.PreviewVisible = PreviewVisible;
         settings.PreviewPinned = PreviewPinned;

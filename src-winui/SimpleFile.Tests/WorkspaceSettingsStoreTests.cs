@@ -217,7 +217,7 @@ public class WorkspaceSettingsStoreTests
         var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
 
         Assert.True(state.Settings.ShowHidden);
-        Assert.Equal("system", state.Settings.Theme);
+        Assert.Equal("light", state.Settings.Theme);
         Assert.Equal("tiles", state.Settings.DefaultView);
         Assert.Equal(96, state.Settings.DefaultIconSize);
         Assert.False(state.Settings.ConfirmDelete);
@@ -267,7 +267,7 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal("true", ipc.Settings["progressQueue.visible"]);
         Assert.Equal("true", ipc.Settings["preview.renderHtml"]);
         Assert.Equal("true", ipc.Settings["preview.videoPlayback"]);
-        Assert.Equal("system", ipc.Settings["theme"]);
+        Assert.Equal("light", ipc.Settings["theme"]);
         Assert.Equal(1, ipc.GetDbSettingsCalls);
         Assert.Equal(0, ipc.GetDbSettingCalls);
         Assert.Contains("theme", ipc.LastGetDbSettingsKeys);
