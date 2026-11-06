@@ -29,7 +29,7 @@ pub fn connect_typed(
 ) -> Result<Box<dyn RemoteProvider>, Failure> {
     if profile.protocol == RemoteProtocol::Ftp && !profile.insecure_plain_ftp {
         return Err(Failure::new(
-            "Plain FTP requires insecure_plain_ftp acknowledgement",
+            "Confirm the unencrypted connection to use plain FTP",
             false,
         ));
     }

@@ -182,34 +182,185 @@ public sealed partial class SettingsWindow : Window
         }
     }
 
+    private FrameworkElement? _firstSearchMatch;
+
+    private IEnumerable<(string Category, Panel Panel)> CategoryPanels()
+    {
+        yield return ("Appearance", AppearancePanel);
+        yield return ("Navigation", NavigationPanel);
+        yield return ("Behavior", BehaviorPanel);
+        yield return ("Storage & Cache", StoragePanel);
+        yield return ("Shortcuts", ShortcutsPanel);
+        yield return ("Toolbar", ToolbarPanel);
+        yield return ("Tools", ToolsPanel);
+        yield return ("Updates", UpdatesPanel);
+        yield return ("About", AboutPanel);
+    }
+
+    /// <summary>
+    /// Settings search indexes every labelled control in the category panels (headers, content,
+    /// text and combo box choices). A match shows its category, selects it and brings the first
+    /// matching control into view; Enter moves focus to it. Categories without a match hide.
+    /// </summary>
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
     {
         var query = SearchBox.Text.Trim();
-        NavigationViewItem? firstVisible = null;
-        foreach (var item in SettingsNavigation.MenuItems.OfType<NavigationViewItem>())
+        _firstSearchMatch = null;
+        var navItems = SettingsNavigation.MenuItems.OfType<NavigationViewItem>().ToList();
+        if (query.Length == 0)
         {
-            var label = item.Content?.ToString() ?? "";
-            var visible = query.Length == 0 || label.Contains(query, StringComparison.OrdinalIgnoreCase);
-            item.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-            if (visible && firstVisible is null)
+            foreach (var item in navItems)
             {
-                firstVisible = item;
+                item.Visibility = Visibility.Visible;
+            }
+
+            if (SettingsNavigation.SelectedItem is NavigationViewItem current)
+            {
+                ShowCategory(CategoryName(current));
+            }
+
+            return;
+        }
+
+        var matches = new Dictionary<string, FrameworkElement?>(StringComparer.Ordinal);
+        foreach (var (category, panel) in CategoryPanels())
+        {
+            var hit = SearchableElements(panel)
+                .FirstOrDefault(element => SearchText(element).Contains(query, StringComparison.OrdinalIgnoreCase));
+            if (hit is not null)
+            {
+                matches[category] = hit;
             }
         }
 
-        if (SettingsNavigation.SelectedItem is not NavigationViewItem selected
-            || selected.Visibility != Visibility.Visible)
+        foreach (var item in navItems)
         {
-            SettingsNavigation.SelectedItem = firstVisible;
-            if (firstVisible is null)
+            var category = CategoryName(item);
+            if (!matches.ContainsKey(category)
+                && (item.Content?.ToString() ?? "").Contains(query, StringComparison.OrdinalIgnoreCase))
             {
-                HideCategoryPanels();
+                matches[category] = null;
             }
-            else
+
+            item.Visibility = matches.ContainsKey(category) ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        var target = SettingsNavigation.SelectedItem is NavigationViewItem selected
+            && matches.ContainsKey(CategoryName(selected))
+                ? selected
+                : navItems.FirstOrDefault(item => matches.ContainsKey(CategoryName(item)));
+        if (target is null)
+        {
+            SettingsNavigation.SelectedItem = null;
+            HideCategoryPanels();
+            return;
+        }
+
+        if (!ReferenceEquals(SettingsNavigation.SelectedItem, target))
+        {
+            SettingsNavigation.SelectedItem = target;
+        }
+
+        ShowCategory(CategoryName(target));
+        _firstSearchMatch = matches[CategoryName(target)];
+        if (_firstSearchMatch is { } match)
+        {
+            // Wait for the newly shown panel to lay out before scrolling to the control.
+            DispatcherQueue.TryEnqueue(() => match.StartBringIntoView(new BringIntoViewOptions
             {
-                ShowCategory(CategoryName(firstVisible));
+                AnimationDesired = true,
+                VerticalAlignmentRatio = 0.15,
+            }));
+        }
+    }
+
+    private void OnSearchBoxKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Enter || _firstSearchMatch is null)
+        {
+            return;
+        }
+
+        var focusTarget = FocusableSearchTarget(_firstSearchMatch);
+        if (focusTarget is not null && focusTarget.Focus(FocusState.Keyboard))
+        {
+            e.Handled = true;
+        }
+    }
+
+    private static Control? FocusableSearchTarget(FrameworkElement element)
+    {
+        for (DependencyObject? current = element; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is Control { IsTabStop: true, IsEnabled: true } control)
+            {
+                return control;
+            }
+
+            if (current is Panel { Name: "SettingsContentGrid" })
+            {
+                break;
             }
         }
+
+        return null;
+    }
+
+    private static IEnumerable<FrameworkElement> SearchableElements(DependencyObject root)
+    {
+        switch (root)
+        {
+            case ListViewBase:
+                // Shortcut and toolbar lists are searched by their own boxes.
+                yield break;
+            case Panel panel:
+                if (panel.Visibility == Visibility.Visible || panel.Parent is Grid { Name: "SettingsContentGrid" })
+                {
+                    foreach (var child in panel.Children)
+                    {
+                        foreach (var element in SearchableElements(child))
+                        {
+                            yield return element;
+                        }
+                    }
+                }
+
+                yield break;
+            case Border { Child: { } borderChild }:
+                foreach (var element in SearchableElements(borderChild))
+                {
+                    yield return element;
+                }
+
+                yield break;
+            case FrameworkElement element when element.Visibility == Visibility.Visible:
+                yield return element;
+                if (element is ContentControl { Content: DependencyObject content })
+                {
+                    foreach (var nested in SearchableElements(content))
+                    {
+                        yield return nested;
+                    }
+                }
+
+                yield break;
+        }
+    }
+
+    private static string SearchText(FrameworkElement element)
+    {
+        return element switch
+        {
+            ToggleSwitch toggle => toggle.Header?.ToString() ?? "",
+            ComboBox combo => string.Join(
+                "\n",
+                new[] { combo.Header?.ToString() ?? "" }.Concat(
+                    combo.Items.OfType<ComboBoxItem>().Select(item => item.Content?.ToString() ?? ""))),
+            TextBox textBox => $"{textBox.Header}\n{textBox.PlaceholderText}",
+            TextBlock textBlock => textBlock.Text ?? "",
+            ContentControl { Content: string text } => text,
+            _ => "",
+        };
     }
 
     private void HideCategoryPanels()

@@ -28,6 +28,12 @@ public sealed partial class RemoteManagerWindow : Window
 
     public bool IsClosed { get; private set; }
 
+    /// <summary>x:Bind helper for the profile list's "Insecure" badge.</summary>
+    public static Visibility InsecureBadgeVisibility(string protocol, bool insecurePlainFtp) =>
+        RemoteManagerViewModel.IsInsecureProfile(protocol, insecurePlainFtp)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
     private async void OnTransferDefaultsClicked(object sender, RoutedEventArgs e) =>
         await TransferOptionsDialog.ShowAsync(Root.XamlRoot, _viewModel.TransferSettingsBackend, remote: true);
 
@@ -60,11 +66,84 @@ public sealed partial class RemoteManagerWindow : Window
         await RunRemoteActionAsync(() => _viewModel.LoadProfilesAsync());
 
     private async void OnConnectClicked(object sender, RoutedEventArgs e) =>
-        await RunRemoteActionAsync(() => DialogHost.RunWithProgressAsync(
+        await RunRemoteActionAsync(async () =>
+        {
+            var outcome = await DialogHost.RunWithProgressAsync(
+                Root.XamlRoot,
+                "Connecting",
+                $"Connecting to {_viewModel.SelectedProfile?.Name ?? "the selected profile"}…",
+                (_, token) => _viewModel.ConnectSelectedProfileAsync(null, token));
+            await ResolveHostKeyAsync(outcome);
+        });
+
+    /// <summary>
+    /// Asks the user about an untrusted or changed SFTP host key and, on consent, saves the
+    /// fingerprint and reconnects. A changed key defaults to Cancel.
+    /// </summary>
+    private async Task ResolveHostKeyAsync(ConnectOutcome outcome)
+    {
+        var profile = _viewModel.SelectedProfile;
+        if (outcome.Connected || !outcome.IsHostKeyProblem || profile is null || IsClosed)
+        {
+            return;
+        }
+
+        ContentDialog dialog;
+        string fingerprint;
+        if (outcome.UntrustedFingerprint is { } untrusted)
+        {
+            fingerprint = untrusted;
+            dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot,
+                Title = "Trust this server?",
+                Content = HostKeyDialogText($"{profile.Host}:{profile.Port}\nSHA256 fingerprint:\n{untrusted}"),
+                PrimaryButtonText = "Trust and connect",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+        }
+        else
+        {
+            fingerprint = outcome.MismatchActual!;
+            dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot,
+                Title = "Server key changed",
+                Content = HostKeyDialogText(
+                    $"The key for {profile.Host} does not match the trusted fingerprint.\n"
+                    + $"Expected {outcome.MismatchExpected}\n"
+                    + $"Received {outcome.MismatchActual}\n"
+                    + "Only continue if you know why the key changed."),
+                PrimaryButtonText = "Replace trusted key",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Close,
+            };
+        }
+
+        if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var retry = await DialogHost.RunWithProgressAsync(
             Root.XamlRoot,
             "Connecting",
-            $"Connecting to {_viewModel.SelectedProfile?.Name ?? "the selected profile"}…",
-            (_, token) => _viewModel.ConnectSelectedProfileAsync(null, token)));
+            $"Connecting to {profile.Name}…",
+            (_, token) => _viewModel.TrustFingerprintAndConnectAsync(fingerprint, token));
+        if (!retry.Connected && retry.IsHostKeyProblem && !IsClosed)
+        {
+            await ShowErrorAsync(retry.Error ?? "The server's key could not be verified.");
+        }
+    }
+
+    private static TextBlock HostKeyDialogText(string text) => new()
+    {
+        Text = text,
+        TextWrapping = TextWrapping.Wrap,
+        IsTextSelectionEnabled = true,
+        MaxWidth = 460,
+    };
 
     private async void OnDisconnectClicked(object sender, RoutedEventArgs e) =>
         await RunRemoteActionAsync(() => _viewModel.DisconnectAsync());
@@ -460,6 +539,8 @@ public sealed partial class RemoteManagerWindow : Window
             Text = profile?.TrustedHostFingerprint ?? "",
             PlaceholderText = "SHA256:...",
         };
+        // The credential target is an implementation detail: keep its value for saving but do
+        // not show an editable box; it is surfaced as a tooltip on the Authentication section.
         var credentialBox = new TextBox
         {
             Header = "Credential target",
@@ -472,8 +553,19 @@ public sealed partial class RemoteManagerWindow : Window
         };
         var insecureBox = new CheckBox
         {
-            Content = "Allow plain FTP",
+            Content = PlainFtpConsentText,
             IsChecked = profile?.InsecurePlainFtp ?? false,
+        };
+        var captionBrush = App.Current.Resources.TryGetValue("SystemFillColorCriticalBrush", out var criticalBrush)
+            ? criticalBrush as Brush
+            : App.Current.Resources["SfTextMutedBrush"] as Brush;
+        var insecureCaption = new TextBlock
+        {
+            Foreground = captionBrush,
+            FontSize = 12,
+            Text = PlainFtpConsentRequiredText,
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
         };
         var sftpTrustPanel = new StackPanel
         {
@@ -499,7 +591,6 @@ public sealed partial class RemoteManagerWindow : Window
             Children =
             {
                 passiveBox,
-                insecureBox,
             },
         };
         var statusBlock = new TextBlock
@@ -508,6 +599,17 @@ public sealed partial class RemoteManagerWindow : Window
             FontSize = 12,
             TextWrapping = TextWrapping.Wrap,
         };
+
+        var authSection = CreateProfileDialogSection(
+            "Authentication",
+            authBox,
+            secretPanel,
+            privateKeyPanel,
+            sftpTrustPanel);
+        if (!string.IsNullOrWhiteSpace(credentialBox.Text))
+        {
+            ToolTipService.SetToolTip(authSection, $"Saved in Windows Credential Manager as {credentialBox.Text}");
+        }
 
         var form = new StackPanel
         {
@@ -519,19 +621,15 @@ public sealed partial class RemoteManagerWindow : Window
                     "Connection",
                     nameBox,
                     protocolBox,
+                    insecureBox,
+                    insecureCaption,
                     hostBox,
                     portBox,
                     usernameBox,
                     rootBox),
-                CreateProfileDialogSection(
-                    "Authentication",
-                    authBox,
-                    secretPanel,
-                    privateKeyPanel,
-                    sftpTrustPanel),
+                authSection,
                 CreateProfileDialogSection(
                     "Advanced",
-                    credentialBox,
                     ftpOptionsPanel),
                 statusBlock,
             },
@@ -587,6 +685,55 @@ public sealed partial class RemoteManagerWindow : Window
             sftpTrustPanel,
             ftpOptionsPanel,
             insecureBox);
+
+        // Port follows the protocol until the user types their own.
+        var applyingDefaultPort = false;
+        var portEdited = profile is not null
+            && profile.Port > 0
+            && profile.Port != DefaultPortFor(profile.Protocol);
+        portBox.ValueChanged += (_, _) =>
+        {
+            if (!applyingDefaultPort)
+            {
+                portEdited = true;
+            }
+        };
+        void ApplyDefaultPort()
+        {
+            if (portEdited)
+            {
+                return;
+            }
+
+            applyingDefaultPort = true;
+            try
+            {
+                portBox.Value = DefaultPortFor(ComboTag(protocolBox, "sftp"));
+            }
+            finally
+            {
+                applyingDefaultPort = false;
+            }
+        }
+
+        // Plain FTP needs explicit consent before the profile can be saved.
+        void UpdatePlainFtpConsent()
+        {
+            var needsConsent = StringComparer.OrdinalIgnoreCase.Equals(ComboTag(protocolBox, "sftp"), "ftp")
+                && insecureBox.IsChecked != true;
+            insecureCaption.Visibility = needsConsent ? Visibility.Visible : Visibility.Collapsed;
+            dialog.IsPrimaryButtonEnabled = !needsConsent;
+        }
+
+        protocolBox.SelectionChanged += (_, _) =>
+        {
+            ApplyDefaultPort();
+            UpdatePlainFtpConsent();
+        };
+        insecureBox.Checked += (_, _) => UpdatePlainFtpConsent();
+        insecureBox.Unchecked += (_, _) => UpdatePlainFtpConsent();
+        ApplyDefaultPort();
+        UpdatePlainFtpConsent();
 
         RemoteProfileDialogResult? testedResult = null;
         dialog.SecondaryButtonClick += async (_, args) =>
@@ -650,6 +797,12 @@ public sealed partial class RemoteManagerWindow : Window
             LastTested = testedResult,
         };
     }
+
+    internal const string PlainFtpConsentText = "Connect without encryption. Passwords and files are sent in plain text.";
+    internal const string PlainFtpConsentRequiredText = "Confirm the unencrypted connection to save this profile";
+
+    private static int DefaultPortFor(string? protocol) =>
+        StringComparer.OrdinalIgnoreCase.Equals(protocol, "sftp") ? 22 : 21;
 
     private async Task<bool> ConfirmRemoteDeleteAsync(int count)
     {

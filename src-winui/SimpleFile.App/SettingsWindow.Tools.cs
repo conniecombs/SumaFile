@@ -14,17 +14,55 @@ public sealed partial class SettingsWindow
     private bool _checkedUpdateIsInstallable;
     private RemoteManagerWindow? _settingsRemoteManagerWindow;
 
+    // No settings field stores this yet, so it lasts for the session (across Settings reopenings).
+    private static DateTimeOffset? s_lastUpdateCheck;
+
+    private void ShowLastUpdateCheck()
+    {
+        if (s_lastUpdateCheck is not { } checkedAt)
+        {
+            LastUpdateCheckText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        LastUpdateCheckText.Text = $"Last checked: {checkedAt.LocalDateTime:g}";
+        LastUpdateCheckText.Visibility = Visibility.Visible;
+    }
+
+    private async void OnTransferOptionsClicked(object sender, RoutedEventArgs e)
+    {
+        TransferOptionsStatusText.Visibility = Visibility.Collapsed;
+        TransferOptionsButton.IsEnabled = false;
+        try
+        {
+            await TransferOptionsDialog.ShowDefaultsAsync(Content.XamlRoot);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            TransferOptionsStatusText.Text = exception.Message;
+            TransferOptionsStatusText.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            TransferOptionsButton.IsEnabled = true;
+        }
+    }
+
     private async Task LoadVersionAsync(FileOperationService fileOps, CancellationToken cancellationToken = default)
     {
         try
         {
             var version = await fileOps.GetAppVersionAsync(cancellationToken).ConfigureAwait(true);
-            CurrentVersionText.Text = $"Current Version: {version}";
+            CurrentVersionText.Text = $"Version {version}";
             AboutVersionText.Text = $"Version {version}";
+            ShowLastUpdateCheck();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            CurrentVersionText.Text = "Current Version: unavailable";
+            CurrentVersionText.Text = "Version unavailable";
             AboutVersionText.Text = "Version unavailable";
             UpdateStatusText.Text = $"Unable to load version: {exception.Message}";
         }
@@ -36,7 +74,7 @@ public sealed partial class SettingsWindow
         CheckUpdatesButton.IsEnabled = false;
         InstallUpdateButton.Visibility = Visibility.Collapsed;
         _checkedUpdateIsInstallable = false;
-        UpdateStatusText.Text = "Checking...";
+        UpdateStatusText.Text = "Checking for updates...";
         try
         {
             var update = await _fileOps.CheckForUpdateAsync().ConfigureAwait(true);
@@ -45,18 +83,21 @@ public sealed partial class SettingsWindow
                 InstallUpdateButton.Visibility = Visibility.Visible;
                 InstallUpdateButton.IsEnabled = true;
                 _checkedUpdateIsInstallable = update.Installable;
-                InstallUpdateButton.Content = update.Installable ? "Download & Install" : "Open GitHub Releases";
+                InstallUpdateButton.Content = update.Installable ? "Download and install" : "Open download page";
                 var version = string.IsNullOrWhiteSpace(update.Version)
                     ? "an update"
                     : update.Version;
                 UpdateStatusText.Text = update.Installable
-                    ? $"Update available: {version}. The installer metadata is signed and ready to verify before launch."
-                    : $"Update available: {version}. This build cannot verify the installer metadata, so download it from GitHub Releases.";
+                    ? $"Version {version} is available. SumaFile checks the signed installer before running it."
+                    : $"Version {version} is available. Download it from the release page.";
             }
             else
             {
-                UpdateStatusText.Text = "No updates available.";
+                UpdateStatusText.Text = "You have the latest version.";
             }
+
+            s_lastUpdateCheck = DateTimeOffset.Now;
+            ShowLastUpdateCheck();
         }
         catch (OperationCanceledException)
         {
@@ -78,7 +119,7 @@ public sealed partial class SettingsWindow
         InstallUpdateButton.IsEnabled = false;
         UpdateStatusText.Text = _checkedUpdateIsInstallable
             ? "Downloading and verifying installer..."
-            : "Opening GitHub Releases...";
+            : "Opening the download page...";
         try
         {
             if (_checkedUpdateIsInstallable)
@@ -95,19 +136,19 @@ public sealed partial class SettingsWindow
                     }
                 });
                 await _fileOps.InstallUpdateAsync(progress).ConfigureAwait(true);
-                UpdateStatusText.Text = "Verified installer launched. SumaFile may close while the update finishes.";
+                UpdateStatusText.Text = "The installer is running. SumaFile may close while the update finishes.";
             }
             else
             {
                 await _fileOps.OpenExternalUrlAsync(RepositoryUrl + "/releases").ConfigureAwait(true);
-                UpdateStatusText.Text = "Download the latest release from the GitHub page.";
+                UpdateStatusText.Text = "Download the latest release from the page that opened.";
             }
         }
         catch (Exception exception)
         {
-            InstallUpdateButton.Content = "Open GitHub Releases";
+            InstallUpdateButton.Content = "Open download page";
             _checkedUpdateIsInstallable = false;
-            UpdateStatusText.Text = "Could not install in-app. Please visit " + RepositoryUrl + "/releases to download the update. " + exception.Message;
+            UpdateStatusText.Text = "The update couldn't be installed here. Download it from " + RepositoryUrl + "/releases instead. " + exception.Message;
         }
         finally
         {
@@ -154,7 +195,7 @@ public sealed partial class SettingsWindow
     {
         if (_fileOps is null)
         {
-            ToolsStatusText.Text = "The backend service is not ready yet.";
+            ToolsStatusText.Text = "SumaFile's file service is not ready yet.";
             return;
         }
 
