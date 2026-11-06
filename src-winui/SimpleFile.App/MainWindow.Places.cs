@@ -39,11 +39,6 @@ public sealed partial class MainWindow
         SetStatusText($"Showing items tagged {tag.Name}");
     }
 
-    private void OnClearTagFilter(object sender, RoutedEventArgs e)
-    {
-        ClearTagFilter();
-    }
-
     private void ClearTagFilter()
     {
         if (_workspace is null)

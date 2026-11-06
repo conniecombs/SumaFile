@@ -674,51 +674,6 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task RunGitAsync(bool pull)
-    {
-        var workspace = _workspace;
-        var fileOps = workspace?.FileOps;
-        if (workspace is null || fileOps is null)
-        {
-            return;
-        }
-
-        var path = workspace.Active.Path;
-        var utilityCts = BeginUtilityOperation("RunGitAsync");
-        try
-        {
-            if (pull)
-            {
-                SetStatusText($"Pulling Git changes in {path}...");
-                await fileOps.GitPullAsync(path, utilityCts.Token);
-                if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
-                {
-                    ShowMessage("Git", "Pull completed.", InfoBarSeverity.Success);
-                }
-            }
-            else
-            {
-                SetStatusText($"Pushing Git changes from {path}...");
-                await fileOps.GitPushAsync(path, utilityCts.Token);
-                if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
-                {
-                    ShowMessage("Git", "Push completed.", InfoBarSeverity.Success);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception exception)
-        {
-            ShowMessage(pull ? "Git pull" : "Git push", exception.Message, InfoBarSeverity.Error);
-        }
-        finally
-        {
-            FinishUtilityOperation(utilityCts);
-        }
-    }
-
     private async Task OpenPowershellAdminAsync()
     {
         var workspace = _workspace;

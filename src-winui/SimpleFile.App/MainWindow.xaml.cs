@@ -901,11 +901,6 @@ public sealed partial class MainWindow : Window
         SetStatusText(closing ? "Right pane closed" : "Second pane opened");
     }
 
-    private async Task CloseDualPaneFromUiAsync()
-    {
-        await CloseFilePaneFromUiAsync(PaneId.Secondary);
-    }
-
     private async Task CloseFilePaneFromUiAsync(PaneId pane)
     {
         if (_workspace?.DualPaneEnabled != true)

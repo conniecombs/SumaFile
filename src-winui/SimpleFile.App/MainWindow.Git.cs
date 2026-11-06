@@ -90,16 +90,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private void OnGitCloseRequested(object? sender, EventArgs e)
-    {
-        if (sender is GitWorkbenchView view && IsGitWorkbenchDetached && ReferenceEquals(view, _gitWorkbenchWindow!.WorkbenchView))
-        {
-            CloseGitPanel();
-            return;
-        }
-
-        CloseGitPanel();
-    }
+    private void OnGitCloseRequested(object? sender, EventArgs e) => CloseGitPanel();
 
     private async void OnGitWorkbenchSelectionChanged(object? sender, EventArgs e)
     {

@@ -220,19 +220,14 @@ public class WinUiSourceShapeTests
     {
         var root = FindRepoRoot();
         var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
-        var primaryPane = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PrimaryPaneView.xaml"));
-        var secondaryPane = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "SecondaryPaneView.xaml"));
+        var paneView = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PaneView.xaml"));
 
-        Assert.Contains("x:Name=\"PrimaryColumnHeaderViewport\"", primaryPane);
-        Assert.Contains("x:Name=\"PrimaryFileSurface\"", primaryPane);
-        Assert.Contains("x:Name=\"PrimaryColumnHeader\"", primaryPane);
-        Assert.Contains("x:Name=\"PrimaryDetailsFileList\"", primaryPane);
-        Assert.Contains("x:Name=\"PrimaryFileList\"", primaryPane);
-        Assert.Contains("x:Name=\"PrimaryDetailsHorizontalScrollBar\"", primaryPane);
-        Assert.Contains("x:Name=\"SecondaryColumnHeaderViewport\"", secondaryPane);
-        Assert.Contains("x:Name=\"SecondaryFileSurface\"", secondaryPane);
-        Assert.Contains("x:Name=\"SecondaryDetailsFileList\"", secondaryPane);
-        Assert.Contains("x:Name=\"SecondaryDetailsHorizontalScrollBar\"", secondaryPane);
+        Assert.Contains("x:Name=\"PartColumnHeaderViewport\"", paneView);
+        Assert.Contains("x:Name=\"PartFileSurface\"", paneView);
+        Assert.Contains("x:Name=\"PartColumnHeader\"", paneView);
+        Assert.Contains("x:Name=\"PartDetailsFileList\"", paneView);
+        Assert.Contains("x:Name=\"PartFileList\"", paneView);
+        Assert.Contains("x:Name=\"PartDetailsHorizontalScrollBar\"", paneView);
         Assert.Contains("PrimaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
         Assert.Contains("SecondaryPaneRoot.SizeChanged += OnPaneRootSizeChanged", mainWindow);
         Assert.Contains("PrimaryPane.DetailsHorizontalScrollChanged += OnPrimaryDetailsHorizontalScrollChanged", mainWindow);
@@ -335,8 +330,7 @@ public class WinUiSourceShapeTests
         {
             "SidebarView",
             "PrimaryToolbarView",
-            "PrimaryPaneView",
-            "SecondaryPaneView",
+            "PaneView",
             "PreviewPaneView",
         })
         {

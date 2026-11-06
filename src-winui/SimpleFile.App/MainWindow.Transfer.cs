@@ -406,7 +406,7 @@ public sealed partial class MainWindow
                     {
                         CompleteTransferProgress(move, sources.Length - skippedCount, destination, skippedCount);
                         await workspace.RefreshAffectedPanesAsync(
-                            TransferAffectedPaths(sources, destination, move),
+                            OperationLogController.TransferAffectedPaths(sources, destination, move),
                             cancellationToken);
                     }
 
@@ -421,7 +421,7 @@ public sealed partial class MainWindow
                     if (committed.Length > 0 && ReferenceEquals(_workspace, workspace))
                     {
                         await workspace.RefreshAffectedPanesAsync(
-                            TransferAffectedPaths(sources, destination, move),
+                            OperationLogController.TransferAffectedPaths(sources, destination, move),
                             CancellationToken.None);
                     }
 
@@ -435,7 +435,7 @@ public sealed partial class MainWindow
                     if (ReferenceEquals(_workspace, workspace))
                     {
                         await workspace.RefreshAffectedPanesAsync(
-                            TransferAffectedPaths(sources, destination, move),
+                            OperationLogController.TransferAffectedPaths(sources, destination, move),
                             cancellationToken);
                     }
 
@@ -525,37 +525,6 @@ public sealed partial class MainWindow
         TransferOperationStatus.Skipped => TransferRunStatus.Skipped,
         _ => TransferRunStatus.NoOp,
     };
-
-    private static IReadOnlyList<string> TransferAffectedPaths(string[] sources, string destination, bool move)
-    {
-        List<string> paths = [];
-        if (!string.IsNullOrWhiteSpace(destination))
-        {
-            paths.Add(destination);
-        }
-
-        if (move)
-        {
-            foreach (var source in sources)
-            {
-                if (string.IsNullOrWhiteSpace(source))
-                {
-                    continue;
-                }
-
-                paths.Add(source);
-                var parent = PathRules.GetParentPath(source);
-                if (!string.IsNullOrWhiteSpace(parent))
-                {
-                    paths.Add(parent);
-                }
-            }
-        }
-
-        return paths
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
 
     private static IReadOnlyList<string> VisiblePanePaths(ExplorerWorkspace workspace) =>
         workspace.DualPaneEnabled

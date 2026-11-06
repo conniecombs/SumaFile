@@ -30,18 +30,6 @@ public sealed partial class ConflictDialog : ContentDialog
         };
     }
 
-    public void SetConflictPath(string path)
-    {
-        var destination = PathRules.GetParentPath(path) ?? "";
-        var name = PathRules.Basename(path);
-        SetConflict(new TransferConflictPromptContext(
-            Move: false,
-            SourceCount: 1,
-            Destination: destination,
-            TargetPane: null,
-            Conflicts: string.IsNullOrWhiteSpace(name) ? [] : [name]));
-    }
-
     public void SetConflict(string destination, IReadOnlyList<string> conflicts)
     {
         SetConflict(new TransferConflictPromptContext(

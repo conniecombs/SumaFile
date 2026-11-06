@@ -86,9 +86,6 @@ public sealed partial class ExplorerWorkspace
         string status = "completed") =>
         _operationLog.RememberOperation(kind, description, sources, destination, move, status);
 
-    public Task RetryOperationAsync(OperationRecord record, CancellationToken cancellationToken = default) =>
-        _fileOpsController.RetryOperationAsync(this, record, cancellationToken);
-
     public void AddBookmark(string path) =>
         _places.AddBookmark(this, path);
 

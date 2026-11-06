@@ -190,34 +190,6 @@ public sealed partial class DuplicateCheckerDialog : Window, IScanDialog<Duplica
         }
     }
 
-    public void RemovePaths(string[] deletedPaths)
-    {
-        var deletedSet = new HashSet<string>(deletedPaths);
-        var toRemoveGroups = new List<DuplicateGroupViewModel>();
-
-        foreach (var group in _groups)
-        {
-            var remainingFiles = group.Files.Where(f => !deletedSet.Contains(f.Path)).ToList();
-            if (remainingFiles.Count <= 1)
-            {
-                toRemoveGroups.Add(group);
-            }
-            else
-            {
-                group.Files.Clear();
-                foreach (var f in remainingFiles) group.Files.Add(f);
-                group.UpdateCanSelect();
-            }
-        }
-
-        foreach (var g in toRemoveGroups)
-        {
-            _groups.Remove(g);
-        }
-
-        UpdateSummary();
-    }
-
     private void LoadResult(DuplicateCheckResult result)
     {
         _groups.Clear();

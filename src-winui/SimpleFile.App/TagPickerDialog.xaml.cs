@@ -14,9 +14,7 @@ namespace SimpleFile.App;
 
 public sealed partial class TagPickerDialog : ContentDialog
 {
-    public Tag[] AvailableTags { get; set; } = Array.Empty<Tag>();
     public long? SelectedTagId { get; private set; }
-    public bool ApplyRequested { get; private set; }
 
     public ObservableCollection<TagViewModel> TagViewModels { get; } = new();
 
@@ -28,7 +26,6 @@ public sealed partial class TagPickerDialog : ContentDialog
 
     public void SetTags(Tag[] tags, long? currentTagId = null)
     {
-        AvailableTags = tags;
         TagViewModels.Clear();
         
         bool foundCurrent = false;
@@ -51,8 +48,6 @@ public sealed partial class TagPickerDialog : ContentDialog
 
     private void ContentDialog_PrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
-        ApplyRequested = true;
-        
         if (NoTagRadio.IsChecked == true)
         {
             SelectedTagId = null;
@@ -66,7 +61,6 @@ public sealed partial class TagPickerDialog : ContentDialog
 
     private void ContentDialog_SecondaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
-        ApplyRequested = false;
     }
 }
 public class TagViewModel : INotifyPropertyChanged
