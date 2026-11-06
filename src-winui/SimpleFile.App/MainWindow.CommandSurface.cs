@@ -127,17 +127,42 @@ public sealed partial class MainWindow
         AutomationProperties.SetName(button, tooltipLabel);
         ToolTipService.SetToolTip(button, ToolbarTooltip(action, tooltipLabel));
 
-        // Cross-pane copy/move need a second pane with a folder open.
-        if (CrossPaneVerb(action) is { } verb)
+        // Cross-pane copy/move need a second pane with a folder open. WinUI shows no tooltip on a
+        // disabled Button, so the button stays enabled but dimmed: hovering explains why, and a
+        // click repeats the explanation in the status bar instead of running the command.
+        if (CrossPaneUnavailableText(action.CommandId ?? action.Id) is { } unavailable)
         {
-            var dualPaneEnabled = _workspace?.DualPaneEnabled == true;
-            var otherPaneHasPath = !string.IsNullOrEmpty(_workspace?.OtherPanePath());
-            button.IsEnabled = dualPaneEnabled && otherPaneHasPath;
-            if (!button.IsEnabled)
-            {
-                ToolTipService.SetToolTip(button, $"Open the second pane (F6) to {verb.ToLowerInvariant()} there");
-            }
+            button.Opacity = 0.45;
+            ToolTipService.SetToolTip(button, unavailable);
         }
+        else if (CrossPaneVerb(action) is not null)
+        {
+            button.Opacity = 1;
+        }
+    }
+
+    /// <summary>
+    /// Why a cross-pane copy/move button cannot run now ("Open the second pane (F6) to copy
+    /// there"), or null when it can (or the command is not cross-pane).
+    /// </summary>
+    private string? CrossPaneUnavailableText(string commandId)
+    {
+        var verb = commandId switch
+        {
+            "copy-to-pane" => "Copy",
+            "move-to-pane" => "Move",
+            _ => null,
+        };
+        if (verb is null)
+        {
+            return null;
+        }
+
+        var dualPaneEnabled = _workspace?.DualPaneEnabled == true;
+        var otherPaneHasPath = !string.IsNullOrEmpty(_workspace?.OtherPanePath());
+        return dualPaneEnabled && otherPaneHasPath
+            ? null
+            : $"Open the second pane (F6) to {verb.ToLowerInvariant()} there";
     }
 
     private static object CreateToolbarButtonContent(ToolbarAction action, bool showLabels, string displayLabel)
@@ -243,6 +268,12 @@ public sealed partial class MainWindow
     {
         if (sender is Button { Tag: string commandId })
         {
+            if (CrossPaneUnavailableText(commandId) is { } unavailable)
+            {
+                SetStatusText(unavailable);
+                return;
+            }
+
             await RunUiActionAsync("Toolbar", () => RunAppCommandAsync(commandId));
         }
     }

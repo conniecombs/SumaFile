@@ -109,7 +109,7 @@ public sealed partial class MainWindow
         };
         accelerator.Invoked += async (_, args) =>
         {
-            if (!CanRunShortcutNow(commandId))
+            if (!CanRunShortcutNow(commandId, modifiers))
             {
                 // Leave the key to the focused control (text editing, focus traversal).
                 return;
@@ -125,14 +125,19 @@ public sealed partial class MainWindow
     /// Decided synchronously before the accelerator claims the key: editing and destructive
     /// commands yield to a focused text input, and pane switching yields when there is one pane.
     /// </summary>
-    private bool CanRunShortcutNow(string commandId)
+    private bool CanRunShortcutNow(string commandId, VirtualKeyModifiers modifiers)
     {
         if (DialogHost.IsDialogOpen)
         {
             return false;
         }
 
+        // A file-list-scoped command's bare key is kept out of text boxes by the scope check
+        // below; its modified chords (Alt+Left for Back) work everywhere, text boxes included.
+        var bareKey = (modifiers & ~VirtualKeyModifiers.Shift) == VirtualKeyModifiers.None;
+        var scopedChord = !bareKey && KeyboardShortcutMap.IsFileListScopedKey(commandId);
         if (KeyboardShortcutMap.IsSuppressedWhileEditingText(commandId)
+            && !scopedChord
             && (IsEditingPath || IsTextInputFocused()))
         {
             return false;
@@ -143,9 +148,12 @@ public sealed partial class MainWindow
             return false;
         }
 
-        // Bare Tab, Space and Backspace belong to the file list; elsewhere they keep their
-        // normal meaning (focus traversal, pressing a button, editing text).
-        if (KeyboardShortcutMap.IsFileListScopedKey(commandId) && !IsFileListFocused())
+        // Bare Tab, Space and Backspace (Shift alone still counts as bare) belong to the file
+        // list; elsewhere they keep their normal meaning (focus traversal, pressing a button,
+        // editing text). Ctrl/Alt/Win chords (Alt+Left for Back) stay window-wide.
+        if (bareKey
+            && KeyboardShortcutMap.IsFileListScopedKey(commandId)
+            && !IsFileListFocused())
         {
             return false;
         }

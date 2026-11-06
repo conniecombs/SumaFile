@@ -27,6 +27,7 @@ public sealed partial class FileRowView : UserControl
     private string _explicitPresentationKey = "";
     private FileRow? _renameRow;
     private Func<FileRow, string, Task>? _renameCommit;
+    private bool _renameBoxFocused;
 
     public static readonly DependencyProperty RowProperty = DependencyProperty.Register(
         nameof(Row),
@@ -44,6 +45,7 @@ public sealed partial class FileRowView : UserControl
         // Keep pointer gestures inside the rename box from opening or re-selecting the row.
         RenameBox.DoubleTapped += (_, e) => e.Handled = true;
         RenameBox.RightTapped += (_, e) => e.Handled = true;
+        RenameBox.GotFocus += (_, _) => _renameBoxFocused = _renameRow is not null;
     }
 
     /// <summary>True while the inline rename box is showing for this row.</summary>
@@ -77,6 +79,7 @@ public sealed partial class FileRowView : UserControl
 
         _renameRow = row;
         _renameCommit = commit;
+        _renameBoxFocused = false;
         RenameBox.Text = row.Name;
         RenameBox.Visibility = Visibility.Visible;
         _nameText.Opacity = 0;
@@ -148,16 +151,26 @@ public sealed partial class FileRowView : UserControl
 
     private void OnRenameBoxLostFocus(object sender, RoutedEventArgs e)
     {
-        if (_renameRow is not null)
+        // Ignore focus changes from before the box really had focus (a closing menu handing
+        // focus back), and stale ones after focus has already returned to the box.
+        if (_renameRow is null || !_renameBoxFocused)
         {
-            EndRename(restoreFocus: false);
+            return;
         }
+
+        if (XamlRoot is { } root && ReferenceEquals(FocusManager.GetFocusedElement(root), RenameBox))
+        {
+            return;
+        }
+
+        EndRename(restoreFocus: false);
     }
 
     private void EndRename(bool restoreFocus)
     {
         var wasRenaming = _renameRow is not null;
         _renameRow = null;
+        _renameBoxFocused = false;
         _renameCommit = null;
         if (restoreFocus && wasRenaming && FindListItem() is { } item)
         {

@@ -158,6 +158,7 @@ public sealed partial class MainWindow
         var next = UiSettings.NormalizeTheme(theme) switch
         {
             "dark" => ElementTheme.Dark,
+            "light" => ElementTheme.Light,
             _ => ElementTheme.Default,
         };
         if (_appliedTheme == next && RootGrid.RequestedTheme == next)

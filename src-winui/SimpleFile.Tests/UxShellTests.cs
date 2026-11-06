@@ -15,7 +15,13 @@ public class UxShellTests
         var shortcuts = Read("MainWindow.Shortcuts.cs");
         var guard = Slice(shortcuts, "private bool CanRunShortcutNow(", "private void AddFixedTabJumpAccelerators()");
 
-        Assert.Matches(new Regex(@"KeyboardShortcutMap\.IsFileListScopedKey\(commandId\)\s*&&\s*!IsFileListFocused\(\)"), guard);
+        // Only the bare keys are scoped: Alt+Left (Back) keeps working outside the file list.
+        Assert.Contains("var bareKey = (modifiers & ~VirtualKeyModifiers.Shift) == VirtualKeyModifiers.None;", guard);
+        Assert.Matches(new Regex(@"if \(bareKey\s*&&\s*KeyboardShortcutMap\.IsFileListScopedKey\(commandId\)\s*&&\s*!IsFileListFocused\(\)"), guard);
+        Assert.Contains("private bool CanRunShortcutNow(string commandId, VirtualKeyModifiers modifiers)", shortcuts);
+        Assert.Contains("CanRunShortcutNow(commandId, modifiers)", Slice(shortcuts, "private KeyboardAccelerator CreateCommandAccelerator(", "private bool CanRunShortcutNow("));
+        Assert.Contains("var scopedChord = !bareKey && KeyboardShortcutMap.IsFileListScopedKey(commandId);", guard);
+        Assert.Matches(new Regex(@"IsSuppressedWhileEditingText\(commandId\)\s*&&\s*!scopedChord"), guard);
         Assert.Contains("IsSuppressedWhileEditingText", guard);
         Assert.Contains("commandId == \"pane.switch\" && _workspace?.DualPaneEnabled != true", guard);
 
@@ -79,14 +85,24 @@ public class UxShellTests
         Assert.Contains("intent.StatusMessage", omnibar);
     }
 
-    // Change 4: cross-pane toolbar buttons are disabled without a second pane.
+    // Change 4: cross-pane toolbar buttons look unavailable without a second pane and say why.
+    // They stay enabled because WinUI never shows a tooltip on a disabled Button.
     [Fact]
-    public void CrossPaneToolbarButtons_AreDisabledInSinglePaneMode()
+    public void CrossPaneToolbarButtons_ExplainThemselvesInSinglePaneMode()
     {
-        var surface = Slice(Read("MainWindow.CommandSurface.cs"), "private void ConfigureToolbarButton(", "private static object CreateToolbarButtonContent(");
+        var source = Read("MainWindow.CommandSurface.cs");
+        var surface = Slice(source, "private void ConfigureToolbarButton(", "private static object CreateToolbarButtonContent(");
 
-        Assert.Contains("button.IsEnabled = dualPaneEnabled && otherPaneHasPath", surface);
-        Assert.Contains("Open the second pane (F6) to", surface);
+        Assert.DoesNotContain("button.IsEnabled = ", surface);
+        Assert.Contains("CrossPaneUnavailableText(action.CommandId ?? action.Id) is { } unavailable", surface);
+        Assert.Contains("ToolTipService.SetToolTip(button, unavailable)", surface);
+        Assert.Contains("dualPaneEnabled && otherPaneHasPath", surface);
+        Assert.Contains("Open the second pane (F6) to {verb.ToLowerInvariant()} there", surface);
+
+        var click = Slice(source, "private async void OnGeneratedToolbarCommandClick(", "private void ApplyPrimaryToolbarCommandVisibility(");
+        Assert.Contains("SetStatusText(unavailable)", click);
+        Assert.True(click.IndexOf("CrossPaneUnavailableText(commandId)", StringComparison.Ordinal)
+            < click.IndexOf("RunAppCommandAsync(commandId)", StringComparison.Ordinal));
     }
 
     // Add: tab context menu, hidden close glyph on a pane's last tab in dual-pane mode.
@@ -213,6 +229,49 @@ public class UxShellTests
                 Assert.False(text.Contains(name, StringComparison.Ordinal), $"{System.IO.Path.GetFileName(file)} still references {name}.");
             }
         }
+    }
+
+    // Final review C1: the Windows UI smoke must drive the 1.0.4 UI, not removed labels.
+    [Fact]
+    public void UiSmoke_DrivesTheCurrentUiLabels()
+    {
+        var smoke = Read("MainWindow.UiPolishSmoke.cs") + Read("MainWindow.UiSmoke.Transfers.cs") + Read("MainWindow.UiSmoke.cs");
+        foreach (var stale in new[]
+        {
+            "Content?.ToString() == \"Keep both\"",
+            "\"Maximum simultaneous files\"",
+            "\"Bandwidth limit (MiB/s; 0 = unlimited)\"",
+            "\"Empty unpinned preview did not collapse\"",
+            "Side menu", "Disk cleanup",
+        })
+        {
+            Assert.DoesNotContain(stale, smoke);
+        }
+
+        var options = Read("TransferOptionsDialog.cs");
+        foreach (var header in new[] { "\"Files at once\"", "\"Bandwidth limit (MB/s, 0 = unlimited)\"" })
+        {
+            Assert.Contains(header, options);
+            Assert.Contains(header, smoke);
+        }
+
+        Assert.Contains("SmokeDescendants<RadioButtons>(conflict).Single(group => group.Name == \"ChoiceButtons\")", smoke);
+        Assert.Contains("x:Name=\"ChoiceButtons\"", Read("ConflictDialog.xaml"));
+        Assert.Contains("SmokeExpandTransferDetailsAsync(view)", smoke);
+        Assert.Contains("PreviewSubtitle.Text == \"Select a file\"", smoke);
+        Assert.Contains("\"Select a file\"", Read("PreviewPresenter.cs"));
+    }
+
+    // Final review I5: the backend is "SumaFile's file service" in user-facing copy.
+    [Fact]
+    public void ServiceMessages_NameSumaFilesFileService()
+    {
+        var window = Read("MainWindow.xaml.cs");
+        Assert.DoesNotContain("IPC service", window);
+        Assert.DoesNotContain("background service", window);
+        Assert.Contains("\"SumaFile's file service disconnected\"", window);
+        Assert.Contains("\"SumaFile's file service reconnected\"", window);
+        Assert.Contains("\"Could not start or reach SumaFile's file service.\"", window);
     }
 
     // Add: smart folders.

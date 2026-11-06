@@ -176,7 +176,7 @@
                         VerticalAlignment="Center"
                         FontSize="12"
                         Foreground="{ThemeResource SfTextMutedBrush}"
-                        Text="Starting SumaFile service..."
+                        Text="Starting SumaFile's file service..."
                         TextTrimming="CharacterEllipsis" />
                     <Button
                         x:Name="StatusCenterButton"

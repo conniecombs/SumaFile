@@ -560,7 +560,7 @@ public class WinUiSourceShapeTests
         Assert.Contains("<ComboBoxItem Content=\"Dark\" Tag=\"Dark\" />", settingsXaml);
         Assert.Contains("<ComboBoxItem Content=\"Light\" Tag=\"Light\" />", settingsXaml);
 
-        Assert.DoesNotContain("\"light\" => ElementTheme.Light", commands);
+        Assert.Contains("\"light\" => ElementTheme.Light", commands);
         Assert.Contains("RootGrid.ActualThemeChanged += OnRootActualThemeChanged;", mainWindowCode);
         Assert.Contains("private ElementTheme? _appliedTheme", mainWindowCode);
         Assert.Contains("if (_appliedTheme == next && RootGrid.RequestedTheme == next)", commands);

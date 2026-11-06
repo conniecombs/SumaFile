@@ -82,6 +82,11 @@ public class UxRecommendationsSettingsGitRemoteTests
         Assert.Contains("\"light\" => 2", select);
         Assert.Contains("_ => 0", select);
         Assert.Contains("ThemeComboBox.SelectedItem)?.Tag", state);
+
+        // The saved "light" must reach the window: a dark-mode Windows user who picks Light gets Light.
+        var apply = Slice(Read("MainWindow.Commands.cs"), "private void ApplyTheme(string? theme)", "_appliedTheme = next;");
+        Assert.Contains("\"light\" => ElementTheme.Light", apply);
+        Assert.Contains("\"dark\" => ElementTheme.Dark", apply);
     }
 
     [Fact]
@@ -115,6 +120,9 @@ public class UxRecommendationsSettingsGitRemoteTests
         Assert.Contains("SearchText(element)", search);
         Assert.Contains("item.Visibility = matches.ContainsKey(category)", search);
         Assert.Contains("StartBringIntoView(", search);
+        // Clearing a query that matched nothing reselects the first category instead of a blank page.
+        var cleared = Slice(search, "if (query.Length == 0)", "var matches = ");
+        Assert.Contains("SettingsNavigation.SelectedItem = navItems[0];", cleared);
         var text = Slice(code, "private static string SearchText(", "public bool IsClosed");
         foreach (var source in new[] { "ToggleSwitch toggle", "ComboBox combo", "TextBlock textBlock", "ContentControl { Content: string text }" })
         {

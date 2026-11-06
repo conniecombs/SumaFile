@@ -218,6 +218,13 @@ public sealed partial class SettingsWindow : Window
             {
                 ShowCategory(CategoryName(current));
             }
+            else if (navItems.Count > 0)
+            {
+                // A query that matched nothing cleared the selection; clearing it must not
+                // leave a blank page.
+                SettingsNavigation.SelectedItem = navItems[0];
+                ShowCategory(CategoryName(navItems[0]));
+            }
 
             return;
         }

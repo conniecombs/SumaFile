@@ -136,6 +136,14 @@ public class DialogsAndTransfersUxTests
         Assert.Contains("VirtualKey.Escape", chrome);
         Assert.Contains("VirtualKey.Enter, VirtualKeyModifiers.Control", chrome);
 
+        // A popup open inside the window (ContentDialog, flyout, ComboBox dropdown) owns
+        // Escape and Ctrl+Enter; the window must not close or submit underneath it.
+        var invoked = Slice(chrome, "accelerator.Invoked += (_, args) =>", "root.KeyboardAccelerators.Add(accelerator);");
+        Assert.Contains("if (HasOpenPopup(root))", invoked);
+        Assert.True(invoked.IndexOf("if (HasOpenPopup(root))", StringComparison.Ordinal)
+            < invoked.IndexOf("args.Handled = true;", StringComparison.Ordinal), "The popup guard must run before the key is claimed.");
+        Assert.Contains("VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot)", chrome);
+
         foreach (var window in new[] { "AdvancedRenameDialog.xaml.cs", "DuplicateCheckerDialog.xaml.cs", "TransferProgressWindow.xaml.cs" })
         {
             Assert.Contains("cancel:", Read(window));

@@ -278,7 +278,7 @@ public class ShortcutTextFocusGuardTests
         var shortcuts = File.ReadAllText(Path.Combine(root, "MainWindow.Shortcuts.cs"));
         var accelerator = Slice(shortcuts, "private KeyboardAccelerator CreateCommandAccelerator(", "private void AddFixedTabJumpAccelerators()");
 
-        Assert.Contains("if (!CanRunShortcutNow(commandId))", accelerator);
+        Assert.Contains("if (!CanRunShortcutNow(commandId, modifiers))", accelerator);
         Assert.True(
             accelerator.IndexOf("CanRunShortcutNow", StringComparison.Ordinal)
                 < accelerator.IndexOf("args.Handled = true;", StringComparison.Ordinal),

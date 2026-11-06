@@ -597,7 +597,9 @@ public sealed partial class MainWindow
 
     private FileRowView? _inlineRenameView;
 
-    private bool IsInlineRenameActive => _inlineRenameView?.IsRenaming == true;
+    private bool _inlineRenamePending;
+
+    private bool IsInlineRenameActive => _inlineRenamePending || _inlineRenameView?.IsRenaming == true;
 
     /// <summary>
     /// F2 in the Details view with exactly one item selected renames it in place. Returns
@@ -636,18 +638,49 @@ public sealed partial class MainWindow
             return false;
         }
 
-        var view = list.RowViewFor(selected[0]);
-        if (view is null || !view.BeginRename(CommitInlineRenameAsync))
+        var target = selected[0];
+        if (list.RowViewFor(target) is null)
         {
             return false;
         }
 
-        _inlineRenameView = view;
-        return true;
+        // Start on a later, low-priority tick: a context menu or the command palette that
+        // invoked Rename restores focus to its previous owner as it closes, and that focus
+        // change would otherwise land on the new box and cancel the rename at once.
+        _inlineRenamePending = true;
+        var queued = DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (!_inlineRenamePending)
+            {
+                // Cancelled (Escape) before the box appeared.
+                return;
+            }
+
+            _inlineRenamePending = false;
+            var stillSelected = list.SelectedRows is { Count: 1 } rows && ReferenceEquals(rows[0], target);
+            if (stillSelected && list.RowViewFor(target) is { } view && view.BeginRename(CommitInlineRenameAsync))
+            {
+                _inlineRenameView = view;
+                return;
+            }
+
+            if (stillSelected)
+            {
+                // The row could not be edited in place after all; fall back to the dialog.
+                _ = RunUiActionAsync("Rename", () => _fileOperationDialogs.PromptAndRenameAsync());
+            }
+        });
+        if (!queued)
+        {
+            _inlineRenamePending = false;
+        }
+
+        return queued;
     }
 
     private void CancelInlineRename()
     {
+        _inlineRenamePending = false;
         var view = _inlineRenameView;
         _inlineRenameView = null;
         view?.CancelRename();

@@ -206,14 +206,14 @@ public sealed partial class MainWindow : Window
         timer.Mark("begin");
         try
         {
-            SetStatusText("Starting SumaFile service...");
+            SetStatusText("Starting SumaFile's file service...");
             var backend = new BackendSession();
             backend.Disconnected += OnBackendDisconnected;
             _backend = backend;
             await backend.StartAsync();
             timer.Mark("backend-started", backend.ServicePath);
             var client = backend.Client
-                ?? throw new InvalidOperationException("IPC service started without an active client.");
+                ?? throw new InvalidOperationException("SumaFile's file service started without an active client.");
             var journal = OperationJournal.CreateDefault();
 #if DEBUG
             if (UiSmokeRoot() is { } smokeRoot)
@@ -263,7 +263,7 @@ public sealed partial class MainWindow : Window
             }
 #endif
             ShowMessage(
-                "Could not start or reach the IPC service.",
+                "Could not start or reach SumaFile's file service.",
                 exception.Message
                     + Environment.NewLine
                     + Environment.NewLine
@@ -382,10 +382,10 @@ public sealed partial class MainWindow : Window
         ClearSearchState();
         SyncFromWorkspace();
         ShowMessage(
-            "IPC service disconnected",
+            "SumaFile's file service disconnected",
             error is null
-                ? "The background service disconnected. Reconnecting..."
-                : $"The background service disconnected: {error.Message}{Environment.NewLine}Reconnecting...",
+                ? "SumaFile's file service stopped responding. Reconnecting..."
+                : $"SumaFile's file service stopped responding: {error.Message}{Environment.NewLine}Reconnecting...",
             InfoBarSeverity.Warning);
 
         try
@@ -405,7 +405,7 @@ public sealed partial class MainWindow : Window
             QueueWatchActiveDirectory();
             await _workspace.RefreshDrivesAsync();
             await _workspace.RefreshAffectedPanesAsync(VisiblePanePaths(_workspace));
-            ShowMessage("IPC service reconnected", "The background service is running again.", InfoBarSeverity.Success);
+            ShowMessage("SumaFile's file service reconnected", "SumaFile's file service is running again.", InfoBarSeverity.Success);
         }
         catch (OperationCanceledException)
         {
@@ -414,7 +414,7 @@ public sealed partial class MainWindow : Window
         {
             if (ReferenceEquals(_backend, backend) && token == _backendReconnectToken)
             {
-                ShowMessage("IPC service disconnected", exception.Message, InfoBarSeverity.Error);
+                ShowMessage("SumaFile's file service disconnected", exception.Message, InfoBarSeverity.Error);
             }
         }
     }

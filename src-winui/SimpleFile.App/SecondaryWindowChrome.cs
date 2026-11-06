@@ -89,10 +89,29 @@ internal static class SecondaryWindowChrome
         var accelerator = new KeyboardAccelerator { Key = key, Modifiers = modifiers };
         accelerator.Invoked += (_, args) =>
         {
+            // A ContentDialog, flyout or ComboBox dropdown open in this window owns the key:
+            // Escape closes that popup, not the whole window.
+            if (HasOpenPopup(root))
+            {
+                return;
+            }
+
             args.Handled = true;
             invoke();
         };
         root.KeyboardAccelerators.Add(accelerator);
+    }
+
+    /// <summary>True when a popup other than a hover tooltip is open on <paramref name="root"/>'s XamlRoot.</summary>
+    private static bool HasOpenPopup(UIElement root)
+    {
+        if (root.XamlRoot is not { } xamlRoot)
+        {
+            return false;
+        }
+
+        return VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot)
+            .Any(popup => popup.IsOpen && popup.Child is not Microsoft.UI.Xaml.Controls.ToolTip);
     }
 
     /// <summary>Resizes to a size given in device-independent pixels.</summary>
