@@ -10,16 +10,7 @@ public sealed partial class GitWorkbenchWindow : Window
     public GitWorkbenchWindow(GitWorkbenchViewModel viewModel)
     {
         InitializeComponent();
-        Title = "Git Workbench";
-        AppIcon.ApplyTo(this);
-        SystemBackdrop = new MicaBackdrop();
-        AppWindow.Resize(new SizeInt32(1180, 740));
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = true;
-            presenter.IsMinimizable = true;
-        }
+        SecondaryWindowChrome.Apply(this, "Git Workbench", 1180, 740);
 
         Workbench.Start(viewModel);
         Closed += (_, _) => IsClosed = true;

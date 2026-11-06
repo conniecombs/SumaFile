@@ -663,7 +663,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        list.SelectedItem = path is null ? null : rows.FirstOrDefault(row => row.Path == path);
+        list.SelectedItem = path is null ? null : rows.FirstOrDefault(row => PathRules.PathsEqual(row.Path, path));
     }
 
     private void SelectRow(PaneId pane, string? path)

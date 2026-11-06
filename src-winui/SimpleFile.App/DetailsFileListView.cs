@@ -202,9 +202,21 @@ public sealed class DetailsFileListView : UserControl
 
     public void SelectPath(string? path)
     {
+        // Workspace syncs run on every background change; they must not collapse a
+        // multi-selection the user made in the view, nor jump the list to an unchanged selection.
+        if (_selectedRows.Count > 1)
+        {
+            return;
+        }
+
         var row = path is null
             ? null
             : _rows.FirstOrDefault(candidate => PathRules.PathsEqual(candidate.Path, path));
+        if (row is not null && ContainsSelection(row))
+        {
+            return;
+        }
+
         SetSelection(row is null ? [] : [row]);
         if (row is not null)
         {
@@ -483,7 +495,7 @@ public sealed class DetailsFileListView : UserControl
 
     private void OnListDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        var row = RowFromSource(e.OriginalSource) ?? SelectedRow;
+        var row = RowFromSource(e.OriginalSource);
         if (row is null)
         {
             return;

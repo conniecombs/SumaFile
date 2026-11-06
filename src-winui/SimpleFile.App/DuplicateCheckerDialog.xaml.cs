@@ -84,15 +84,7 @@ public sealed partial class DuplicateCheckerDialog : Window, IScanDialog<Duplica
     public DuplicateCheckerDialog()
     {
         InitializeComponent();
-        AppIcon.ApplyTo(this);
-        SystemBackdrop = new MicaBackdrop();
-        AppWindow.Resize(new SizeInt32(900, 640));
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = true;
-            presenter.IsMinimizable = true;
-        }
+        SecondaryWindowChrome.Apply(this, title: null, 900, 640);
 
         Closed += OnWindowClosed;
         GroupsList.ItemsSource = _groups;

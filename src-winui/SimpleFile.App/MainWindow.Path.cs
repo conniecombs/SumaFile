@@ -9,6 +9,9 @@ namespace SimpleFile.App;
 
 public sealed partial class MainWindow
 {
+    private const int PathSuggestDebounceMilliseconds = 150;
+    private int _pathSuggestToken;
+
     private bool IsEditingPath => _editingPrimaryPath || _editingSecondaryPath;
 
     private void OnEditPrimaryPath(object sender, RoutedEventArgs e) => BeginPathEdit(PaneId.Primary);
@@ -114,6 +117,15 @@ public sealed partial class MainWindow
             return;
         }
 
+        // Coalesce keystrokes and drop stale responses so a slower earlier lookup cannot
+        // overwrite the suggestions for the text the user has typed since.
+        var token = Interlocked.Increment(ref _pathSuggestToken);
+        await Task.Delay(PathSuggestDebounceMilliseconds);
+        if (token != Volatile.Read(ref _pathSuggestToken))
+        {
+            return;
+        }
+
         if (!PathCompletion.TrySplit(input.Text, out var directory, out var prefix))
         {
             HidePathSuggestions();
@@ -133,6 +145,11 @@ public sealed partial class MainWindow
             try
             {
                 var nodes = await _workspace.FileOps.ListSubdirectoriesAsync(directory);
+                if (token != Volatile.Read(ref _pathSuggestToken))
+                {
+                    return;
+                }
+
                 candidates = nodes.Select(node => node.Path);
             }
             catch
@@ -183,12 +200,15 @@ public sealed partial class MainWindow
             MaxHeight = 240,
             IsItemClickEnabled = true,
             SelectionMode = ListViewSelectionMode.Single,
+            // Keep keyboard focus in the path box; the flyout must not end the edit.
+            AllowFocusOnInteraction = false,
         };
         _pathSuggestList.ItemClick += OnPathSuggestClick;
         _pathSuggestFlyout = new Flyout
         {
             Content = _pathSuggestList,
             Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft,
+            ShowMode = FlyoutShowMode.Transient,
         };
     }
 

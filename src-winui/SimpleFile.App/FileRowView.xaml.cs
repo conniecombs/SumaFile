@@ -102,6 +102,7 @@ public sealed partial class FileRowView : UserControl
         FileListViewHost.Changed += OnViewSettingsChanged;
         FileListHorizontalScrollHost.Changed += OnHorizontalScrollChanged;
         FileListThumbnailHost.Changed += OnThumbnailsChanged;
+        ShellIconLoader.Changed += OnIconsChanged;
         ApplyColumns();
         ApplyRow();
     }
@@ -112,7 +113,18 @@ public sealed partial class FileRowView : UserControl
         FileListViewHost.Changed -= OnViewSettingsChanged;
         FileListHorizontalScrollHost.Changed -= OnHorizontalScrollChanged;
         FileListThumbnailHost.Changed -= OnThumbnailsChanged;
+        ShellIconLoader.Changed -= OnIconsChanged;
         CancelThumbnailLoad();
+    }
+
+    private void OnIconsChanged(object? sender, EventArgs e)
+    {
+        // A real file icon arrived; re-read it from the cache without restarting thumbnails.
+        if (Row is { } row && _iconImage is not null
+            && !FileListThumbnailHost.ShouldUseThumbnails(row, IconSizeFor(row.Pane)))
+        {
+            _iconImage.Source = ShellIconLoader.ForEntry(row.Path, row.IsDir, IconSizeFor(row.Pane));
+        }
     }
 
     private void OnColumnsChanged(object? sender, EventArgs e)

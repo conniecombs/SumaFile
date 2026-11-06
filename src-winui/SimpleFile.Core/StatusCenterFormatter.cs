@@ -44,6 +44,16 @@ public static class StatusCenterFormatter
                 HasAttention: false);
         }
 
+        if (hasCompletedTransfers)
+        {
+            return new StatusCenterSnapshot(
+                "Done",
+                "Transfers finished",
+                "Open the Status Center to review completed transfers.",
+                HasWork: false,
+                HasAttention: true);
+        }
+
         if (!string.IsNullOrWhiteSpace(workspaceStatus))
         {
             return new StatusCenterSnapshot(
@@ -53,17 +63,7 @@ public static class StatusCenterFormatter
                     ? $"{operationHistoryCount} recent operation(s)"
                     : "No recent file operations",
                 HasWork: false,
-                HasAttention: hasCompletedTransfers);
-        }
-
-        if (hasCompletedTransfers)
-        {
-            return new StatusCenterSnapshot(
-                "Done",
-                "Transfers finished",
-                "Open the Status Center to review completed transfers.",
-                HasWork: false,
-                HasAttention: true);
+                HasAttention: false);
         }
 
         return new StatusCenterSnapshot(

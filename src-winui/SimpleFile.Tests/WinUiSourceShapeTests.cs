@@ -481,7 +481,7 @@ public class WinUiSourceShapeTests
         Assert.Contains("x:Class=\"SimpleFile.App.SettingsWindow\"", settingsXaml);
         Assert.Contains("<NavigationView", settingsXaml);
         Assert.Contains("SettingsNavigation", settingsCode);
-        Assert.Contains("presenter.IsResizable = true;", settingsCode);
+        Assert.Contains("SecondaryWindowChrome.Apply(this, \"Settings\"", settingsCode);
         Assert.Contains("new SettingsWindow", dialogService);
         Assert.Contains("LoadSettingsAsync(fileOps, workspace.Settings", dialogService);
         Assert.Contains("SettingsWindow.SettingsState.cs", Directory.EnumerateFiles(appRoot, "SettingsWindow*.cs").Select(Path.GetFileName));
@@ -523,8 +523,8 @@ public class WinUiSourceShapeTests
         Assert.Contains("CloseGitWorkbenchWindow", mainWindowCode);
         Assert.Contains("SetHostMode(detached: true)", mainWindowCode);
         Assert.Contains("SetHostMode(detached: false)", mainWindowCode);
-        Assert.Contains("AppWindow.Resize(new SizeInt32(1180, 740))", workbenchWindow);
-        Assert.Contains("presenter.IsResizable = true;", workbenchWindow);
+        Assert.Contains("SecondaryWindowChrome.Apply(this, \"Git Workbench\", 1180, 740)", workbenchWindow);
+        Assert.Contains("presenter.IsResizable = true;", File.ReadAllText(Path.Combine(appRoot, "SecondaryWindowChrome.cs")));
         Assert.Contains("DiffPreviewColumn", workbenchXaml);
         Assert.Contains("Resize Git diff preview", workbenchXaml);
         Assert.Contains("HostActionText", workbenchXaml);
@@ -831,7 +831,7 @@ public class WinUiSourceShapeTests
         var transfer = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Transfer.cs"));
 
         Assert.Contains("var canRegisterUndo = !string.Equals(action, \"replace\", StringComparison.OrdinalIgnoreCase);", transfer);
-        Assert.Contains("if (canRegisterUndo", transfer);
+        Assert.Contains("if (!canRegisterUndo || committedAll.Count == 0", transfer);
     }
 
     [Fact]

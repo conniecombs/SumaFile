@@ -12,15 +12,7 @@ public sealed partial class TransferProgressWindow : Window
     public TransferProgressWindow()
     {
         InitializeComponent();
-        Title = "Transfers";
-        AppIcon.ApplyTo(this);
-        AppWindow.Resize(new SizeInt32(800, 620));
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = true;
-            presenter.IsMinimizable = true;
-        }
+        SecondaryWindowChrome.Apply(this, "Transfers", 800, 620, mica: false);
 
         Closed += (_, _) => IsClosed = true;
     }
@@ -36,7 +28,6 @@ public sealed partial class TransferProgressWindow : Window
         _settings = settings;
         Root.DataContext = manager;
         TransferList.ItemsSource = manager.Operations;
-        Activate();
     }
 
     private async void OnDefaultsClicked(object sender, RoutedEventArgs e)

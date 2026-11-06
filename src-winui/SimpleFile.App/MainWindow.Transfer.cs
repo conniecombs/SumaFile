@@ -271,7 +271,7 @@ public sealed partial class MainWindow
                 destination,
                 move,
                 token));
-        ShowTransferProgressWindow();
+        ShowTransferProgressWindow(activate: false);
 
         var status = await operation.CompletionTask;
         var finalStatus = TransferStatusToRunStatus(status);
@@ -321,6 +321,29 @@ public sealed partial class MainWindow
             var progress = new Progress<ProgressUpdate>(update => OnTransferProgress(operation, update));
             var tuning = new Progress<TuningUpdate>(operation.ApplyTuning);
             var canRegisterUndo = !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
+            // Everything committed across the first pass and any retry passes is undone as one
+            // entry, and skipped conflicts are counted so the receipt is honest.
+            var committedAll = new List<TransferResult>();
+            var skippedCount = 0;
+            void PushUndoIfAny()
+            {
+                if (!canRegisterUndo || committedAll.Count == 0 || !ReferenceEquals(_workspace, workspace))
+                {
+                    return;
+                }
+
+                if (move)
+                {
+                    workspace.Undo.PushMove(committedAll.ToArray(), fileOps);
+                }
+                else
+                {
+                    workspace.Undo.PushCopy(committedAll.ToArray(), fileOps);
+                }
+
+                committedAll.Clear();
+            }
+
             // After the first pass, failures are resolved one file at a time and
             // sent back as exact (source, destination, action) items.
             TransferItemRequest[]? retryItems = null;
@@ -367,23 +390,15 @@ public sealed partial class MainWindow
                             cancellationToken, tuning, operation.PolicyOverride);
                     }
 
-                    if (canRegisterUndo
-                        && ReferenceEquals(_workspace, workspace)
-                        && !cancellationToken.IsCancellationRequested)
+                    committedAll.AddRange(results);
+                    if (!cancellationToken.IsCancellationRequested)
                     {
-                        if (move)
-                        {
-                            workspace.Undo.PushMove(results, fileOps);
-                        }
-                        else
-                        {
-                            workspace.Undo.PushCopy(results, fileOps);
-                        }
+                        PushUndoIfAny();
                     }
 
                     if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
                     {
-                        CompleteTransferProgress(move, sources.Length, destination);
+                        CompleteTransferProgress(move, sources.Length - skippedCount, destination, skippedCount);
                         await workspace.RefreshAffectedPanesAsync(
                             TransferAffectedPaths(sources, destination, move),
                             cancellationToken);
@@ -394,19 +409,8 @@ public sealed partial class MainWindow
                 catch (TransferCanceledException exception)
                 {
                     var committed = exception.Outcome.Committed;
-                    if (canRegisterUndo
-                        && committed.Length > 0
-                        && ReferenceEquals(_workspace, workspace))
-                    {
-                        if (move)
-                        {
-                            workspace.Undo.PushMove(committed, fileOps);
-                        }
-                        else
-                        {
-                            workspace.Undo.PushCopy(committed, fileOps);
-                        }
-                    }
+                    committedAll.AddRange(committed);
+                    PushUndoIfAny();
 
                     if (committed.Length > 0 && ReferenceEquals(_workspace, workspace))
                     {
@@ -420,19 +424,7 @@ public sealed partial class MainWindow
                 catch (TransferOperationException exception) when (!cancellationToken.IsCancellationRequested)
                 {
                     var committed = exception.Outcome.Committed;
-                    if (canRegisterUndo
-                        && committed.Length > 0
-                        && ReferenceEquals(_workspace, workspace))
-                    {
-                        if (move)
-                        {
-                            workspace.Undo.PushMove(committed, fileOps);
-                        }
-                        else
-                        {
-                            workspace.Undo.PushCopy(committed, fileOps);
-                        }
-                    }
+                    committedAll.AddRange(committed);
 
                     if (ReferenceEquals(_workspace, workspace))
                     {
@@ -448,7 +440,11 @@ public sealed partial class MainWindow
                         // service): keep the top-level retry path.
                         if (!FileOperationService.IsConflict(exception)) throw;
                         var remaining = exception.RemainingSources(sources);
-                        if (remaining.Length == 0) break;
+                        if (remaining.Length == 0)
+                        {
+                            PushUndoIfAny();
+                            break;
+                        }
                         var retryAction = await ChooseConflictActionFromBackendConflictAsync(
                             exception.Message, destination, move, remaining, conflictSession, cancellationToken);
                         if (retryAction is null) return TransferOperationStatus.Cancelled;
@@ -464,12 +460,14 @@ public sealed partial class MainWindow
                     {
                         return TransferOperationStatus.Cancelled;
                     }
+                    skippedCount += Math.Max(0, failures.Length - items.Length);
                     if (items.Length == 0)
                     {
                         // Every failure was skipped by the user; what was committed stands.
+                        PushUndoIfAny();
                         if (ReferenceEquals(_workspace, workspace))
                         {
-                            CompleteTransferProgress(move, sources.Length, destination);
+                            CompleteTransferProgress(move, sources.Length - skippedCount, destination, skippedCount);
                         }
                         break;
                     }

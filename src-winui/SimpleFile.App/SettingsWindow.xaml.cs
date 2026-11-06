@@ -110,16 +110,7 @@ public sealed partial class SettingsWindow : Window
     {
         _initialCategory = NormalizeCategoryName(initialCategory);
         InitializeComponent();
-        Title = "Settings";
-        AppIcon.ApplyTo(this);
-        SystemBackdrop = new MicaBackdrop();
-        AppWindow.Resize(new SizeInt32(1120, 760));
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = true;
-            presenter.IsMinimizable = true;
-        }
+        SecondaryWindowChrome.Apply(this, "Settings", 1120, 760);
 
         Closed += OnClosed;
         SelectInitialCategory();

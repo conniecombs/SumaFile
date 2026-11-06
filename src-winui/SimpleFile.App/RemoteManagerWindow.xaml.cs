@@ -18,16 +18,8 @@ public sealed partial class RemoteManagerWindow : Window
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         InitializeComponent();
-        Title = "FTP/SFTP Manager";
-        AppIcon.ApplyTo(this);
-        SystemBackdrop = new MicaBackdrop();
-        AppWindow.Resize(new SizeInt32(980, 640));
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = true;
-            presenter.IsMinimizable = true;
-        }
+        // The root grid declares MinWidth 1120 plus 16 px padding each side.
+        SecondaryWindowChrome.Apply(this, "FTP/SFTP Manager", 1180, 680);
 
         Root.DataContext = _viewModel;
         Root.Loaded += OnLoaded;

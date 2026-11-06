@@ -40,16 +40,8 @@ public sealed partial class AdvancedRenameDialog : Window
         _currentPath = currentPath;
         _listDirectoryAsync = listDirectoryAsync;
         InitializeComponent();
-        Title = "Advanced Rename";
-        AppIcon.ApplyTo(this);
-        SystemBackdrop = new MicaBackdrop();
-        AppWindow.Resize(new SizeInt32(1120, 740));
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = true;
-            presenter.IsMinimizable = true;
-        }
+        // 700 logical pixels fits a 768 px work area with the taskbar.
+        SecondaryWindowChrome.Apply(this, "Advanced Rename", 1120, 700);
 
         PreviewList.ItemsSource = _previewRows;
         RenameButton.IsEnabled = false;

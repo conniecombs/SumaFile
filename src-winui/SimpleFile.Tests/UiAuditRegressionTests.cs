@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using SimpleFile.Core;
+using SimpleFile.Ipc;
 using Xunit;
 
 namespace SimpleFile.Tests;
@@ -603,5 +604,338 @@ public class PreviewWebViewLockdownTests
         }
 
         throw new DirectoryNotFoundException("Could not locate src-winui source root.");
+    }
+}
+
+public class Sprint2ShellTests
+{
+    // S1: clicking the omnibar's own Run/mode buttons moved focus, which reset the typed text.
+    [Theory]
+    [InlineData("OmnibarExecuteButton")]
+    [InlineData("OmnibarPathModeButton")]
+    [InlineData("OmnibarSearchModeButton")]
+    [InlineData("OmnibarFilterModeButton")]
+    [InlineData("OmnibarCommandModeButton")]
+    public void OmnibarButtons_DoNotTakeFocusFromTheInput(string name)
+    {
+        var xaml = File.ReadAllText(Path.Combine(AppRoot(), "PrimaryToolbarView.xaml"));
+        var element = ElementFor(xaml, name);
+
+        Assert.Contains("AllowFocusOnInteraction=\"False\"", element);
+    }
+
+    [Fact]
+    public void OmnibarModeSwitch_KeepsTextTheUserTyped()
+    {
+        var omnibar = File.ReadAllText(Path.Combine(AppRoot(), "MainWindow.Omnibar.cs"));
+        var setMode = omnibar[omnibar.IndexOf("private void SetOmnibarMode(", StringComparison.Ordinal)..];
+
+        Assert.Contains("PreserveTypedOmnibarText", setMode);
+    }
+
+    // S2: the suggestion flyout took focus (ending the edit) and suggestions raced per keystroke.
+    [Fact]
+    public void PathSuggestions_AreTransientAndDebounced()
+    {
+        var path = File.ReadAllText(Path.Combine(AppRoot(), "MainWindow.Path.cs"));
+
+        Assert.Contains("ShowMode = FlyoutShowMode.Transient", path);
+        Assert.Contains("_pathSuggestToken", path);
+        Assert.Contains("Task.Delay(", path);
+    }
+
+    // F4: every workspace sync collapsed a Details multi-selection and scrolled to it.
+    [Fact]
+    public void DetailsSelectPath_PreservesMultiSelectionAndOnlyScrollsOnChange()
+    {
+        var details = File.ReadAllText(Path.Combine(AppRoot(), "DetailsFileListView.cs"));
+        var selectPath = details[details.IndexOf("public void SelectPath(string? path)", StringComparison.Ordinal)..];
+        selectPath = selectPath[..selectPath.IndexOf("public bool ContainsSelection", StringComparison.Ordinal)];
+
+        Assert.Contains("_selectedRows.Count > 1", selectPath);
+        Assert.Contains("ContainsSelection(row)", selectPath);
+        var chrome = File.ReadAllText(Path.Combine(AppRoot(), "MainWindow.Chrome.cs"));
+        Assert.DoesNotContain("row.Path == path", chrome);
+    }
+
+    internal static string ElementFor(string xaml, string name)
+    {
+        var at = xaml.IndexOf($"x:Name=\"{name}\"", StringComparison.Ordinal);
+        Assert.True(at >= 0, $"{name} not found");
+        var start = xaml.LastIndexOf('<', at);
+        var end = xaml.IndexOf('>', at);
+        return xaml[start..end];
+    }
+
+    internal static string AppRoot() => Path.Combine(FindRepoRoot(), "SimpleFile.App");
+
+    internal static string FindRepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "SimpleFile.App", "MainWindow.xaml.cs")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate src-winui source root.");
+    }
+}
+
+public class Sprint2FileListTests
+{
+    // F2: thumbnail loads continued on the thread pool and built XAML images there.
+    [Fact]
+    public void ThumbnailLoads_StayOnTheUiContext()
+    {
+        var host = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "FileListThumbnailHost.cs"));
+        Assert.DoesNotContain("ConfigureAwait(false)", host);
+    }
+
+    // F3: real exe/lnk icons were built off-thread and never pushed to realized rows.
+    [Fact]
+    public void RealShellIcons_AreBuiltOnTheUiThreadAndAnnounced()
+    {
+        var loader = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "ShellIconLoader.cs"));
+        var rowView = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "FileRowView.xaml.cs"));
+
+        Assert.Contains("public static event EventHandler? Changed;", loader);
+        var background = loader[loader.IndexOf("Task.Run(", StringComparison.Ordinal)..];
+        background = background[..background.IndexOf("return icon;", StringComparison.Ordinal)];
+        Assert.DoesNotContain("new BitmapImage", background);
+        Assert.Contains("TryEnqueue(", background);
+        Assert.Contains("Changed?.Invoke", background);
+        Assert.Contains("ShellIconLoader.Changed += OnIconsChanged;", rowView);
+        Assert.Contains("ShellIconLoader.Changed -= OnIconsChanged;", rowView);
+    }
+
+    // F6: cut/copy never re-rendered rows, so the cut marker appeared late or stayed stale.
+    [Fact]
+    public void CopyAndCut_RefreshTheView()
+    {
+        var ops = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileOperations.cs"));
+        var copy = Slice(ops, "private async Task CopyToClipboard()", "private async Task CutToClipboard()");
+        var cut = Slice(ops, "private async Task CutToClipboard()", "private async Task PasteFromClipboard(");
+
+        Assert.Contains("RefreshView();", copy);
+        Assert.Contains("RefreshView();", cut);
+    }
+
+    // F7: List/Tiles opened the first selected row while Details opened the last; two overloads.
+    [Fact]
+    public void OpenSelected_UsesOneAnchorRuleForBothViews()
+    {
+        var events = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileListEvents.cs"));
+        var commands = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.Commands.cs"));
+        var anchor = Slice(commands, "private FileRow? SelectedRowForPane(PaneId pane)", "private ContextMenuRequest BuildContextMenuRequest(");
+
+        Assert.DoesNotContain("OpenSelectedFile(ListView list", events);
+        Assert.Single(Regex.Matches(events, @"private async Task HandleFileKey\("));
+        Assert.Contains("LastOrDefault() ?? list.SelectedItem as FileRow", anchor);
+    }
+
+    // F8: double-clicking blank space opened the selected item.
+    [Fact]
+    public void DoubleTap_RequiresARowUnderThePointer()
+    {
+        var details = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "DetailsFileListView.cs"));
+        var doubleTap = Slice(details, "private void OnListDoubleTapped(", "private void OnListRightTapped(");
+        var events = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileListEvents.cs"));
+
+        Assert.DoesNotContain("?? SelectedRow", doubleTap);
+        Assert.Contains("DoubleTapHitsRow(e.OriginalSource)", events);
+    }
+
+    // F9: type-ahead ignored digits, fired on Ctrl/Alt chords and never forwarded Backspace.
+    [Theory]
+    [InlineData("A", false, 'a')]
+    [InlineData("Number5", false, '5')]
+    [InlineData("NumberPad7", false, '7')]
+    [InlineData("Back", false, '\b')]
+    public void TypeAhead_MapsLettersDigitsAndBackspace(string key, bool modifier, char expected)
+    {
+        Assert.True(TypeAhead.TryMapKey(key, modifier, out var character));
+        Assert.Equal(expected, character);
+    }
+
+    [Theory]
+    [InlineData("A", true)]
+    [InlineData("F5", false)]
+    [InlineData("Space", false)]
+    [InlineData("Enter", false)]
+    [InlineData("", false)]
+    public void TypeAhead_IgnoresChordsAndNonTextKeys(string key, bool modifier)
+    {
+        Assert.False(TypeAhead.TryMapKey(key, modifier, out _));
+    }
+
+    [Fact]
+    public void FileListKeys_UseTheSharedTypeAheadMapping()
+    {
+        var events = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileListEvents.cs"));
+        Assert.Contains("TypeAhead.TryMapKey(", events);
+        Assert.DoesNotContain("char.IsLetterOrDigit(letter[0])", events);
+    }
+
+    private static string Slice(string text, string start, string end)
+    {
+        var startIndex = text.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(startIndex >= 0, $"Anchor '{start}' not found.");
+        var endIndex = text.IndexOf(end, startIndex, StringComparison.Ordinal);
+        Assert.True(endIndex > startIndex, $"Anchor '{end}' not found after '{start}'.");
+        return text[startIndex..endIndex];
+    }
+}
+
+public class Sprint2WindowTests
+{
+    // P2: hiding the preview pane left audio/video playing and the file locked.
+    [Fact]
+    public void PreviewPane_ReleasesMediaWhenHiddenAndReloadsWhenShown()
+    {
+        var commands = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.Commands.cs"));
+        var apply = Slice(commands, "private void ApplyPreviewVisibility()", "private void ApplyTheme(");
+        var media = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "PreviewPresenter.Media.cs"));
+
+        Assert.Contains("_previewPresenter.ReleasePathBackedPreviews();", apply);
+        Assert.Contains("RequeueCurrentPreview();", apply);
+        Assert.Contains("_mediaSource?.Dispose();", media);
+        Assert.Contains(".Pause();", media);
+    }
+
+    // T2: the Transfers window re-activated itself on every start/retry/dequeue.
+    [Fact]
+    public void TransferWindow_ActivatesOnlyWhenCreatedOrExplicitlyOpened()
+    {
+        var window = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "TransferProgressWindow.xaml.cs"));
+        var start = Slice(window, "public void Start(", "private async void OnDefaultsClicked(");
+        var ops = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileOperations.cs"));
+
+        Assert.DoesNotContain("Activate();", start);
+        Assert.Contains("EnsureTransferProgressWindow(out var created)", ops);
+        Assert.Contains("if (created || activate)", ops);
+    }
+
+    // T4: skipped conflicts were reported as full success.
+    [Theory]
+    [InlineData(false, 6, 4, "Copied 6 of 10 items to D:\\x (4 skipped)")]
+    [InlineData(true, 1, 1, "Moved 1 of 2 items to D:\\x (1 skipped)")]
+    [InlineData(false, 6, 0, "Copied 6 items to D:\\x")]
+    public void CompletionReceipt_ReportsSkippedItems(bool move, int done, int skipped, string expected)
+    {
+        Assert.Equal(expected, TransferProgressFormatter.CompletionReceipt(move, done, "D:\\x", skipped));
+    }
+
+    // T4: partial failure + retry pushed one undo entry per pass.
+    [Fact]
+    public void TransferRun_PushesASingleUndoEntryPerOperation()
+    {
+        var transfer = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.Transfer.cs"));
+        var run = Slice(transfer, "private async Task<TransferOperationStatus> RunTransferOperationAsync(", "private static TransferRunStatus TransferStatusToRunStatus(");
+
+        Assert.Single(Regex.Matches(run, @"Undo\.PushMove\("));
+        Assert.Single(Regex.Matches(run, @"Undo\.PushCopy\("));
+    }
+
+    // T5: undo of a multi-item move that failed midway could never complete afterwards.
+    [Fact]
+    public async Task PushMove_UndoResumesWithTheRemainingItemsAfterAFailure()
+    {
+        var log = new List<string>();
+        var failOnce = true;
+        var ipc = new ConfigurableIpc
+        {
+            MoveEntryResolvedHandler = (source, destination, action, ct) =>
+            {
+                var name = Path.GetFileName(source);
+                if (name == "b" && failOnce)
+                {
+                    failOnce = false;
+                    log.Add("b:fail");
+                    throw new IOException("locked");
+                }
+
+                log.Add(name);
+                return Task.FromResult(Path.Combine(destination, name));
+            },
+        };
+        var stack = new UndoStack();
+        stack.PushMove(
+            [
+                new TransferResult { Source = @"C:\src\a", Destination = @"D:\dst\a" },
+                new TransferResult { Source = @"C:\src\b", Destination = @"D:\dst\b" },
+                new TransferResult { Source = @"C:\src\c", Destination = @"D:\dst\c" },
+            ],
+            new FileOperationService(ipc));
+
+        await Assert.ThrowsAsync<IOException>(() => stack.UndoAsync());
+        Assert.True(stack.CanUndo);
+        await stack.UndoAsync();
+
+        Assert.Equal(["c", "b:fail", "b", "a"], log);
+        Assert.False(stack.CanUndo);
+    }
+
+    // C7/S12/P5 + X1: every window sized itself in physical pixels and ignored the app theme.
+    [Fact]
+    public void Windows_UseSharedDpiAwareChrome()
+    {
+        var appRoot = Sprint2ShellTests.AppRoot();
+        var chrome = File.ReadAllText(Path.Combine(appRoot, "SecondaryWindowChrome.cs"));
+        Assert.Contains("GetDpiForWindow", chrome);
+        Assert.Contains("RequestedTheme =", chrome);
+
+        foreach (var file in Directory.EnumerateFiles(appRoot, "*.cs"))
+        {
+            var name = Path.GetFileName(file);
+            if (name is "SecondaryWindowChrome.cs" or "MainWindow.UiSmoke.cs")
+            {
+                continue;
+            }
+
+            Assert.False(
+                File.ReadAllText(file).Contains("AppWindow.Resize(new SizeInt32(", StringComparison.Ordinal),
+                $"{name} sizes its window in physical pixels.");
+        }
+
+        foreach (var window in new[] { "SettingsWindow.xaml.cs", "RemoteManagerWindow.xaml.cs", "GitWorkbenchWindow.xaml.cs", "AdvancedRenameDialog.xaml.cs", "DuplicateCheckerDialog.xaml.cs", "TransferProgressWindow.xaml.cs" })
+        {
+            Assert.Contains("SecondaryWindowChrome.Apply(", File.ReadAllText(Path.Combine(appRoot, window)));
+        }
+
+        var commands = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Commands.cs"));
+        Assert.Contains("SecondaryWindowChrome.ApplyTheme(next);", commands);
+    }
+
+    // S7: every workspace sync closed the InfoBar, including messages it did not open.
+    [Fact]
+    public void InfoBar_AutoClosesOnlyMessagesTheSyncOpened()
+    {
+        var mainWindow = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.xaml.cs"));
+        Assert.Contains("_messageBarOwnedBySync", mainWindow);
+    }
+
+    // S8: the badge always read "Status" because the folder path counted as a status message.
+    [Fact]
+    public void StatusCenter_ReportsCompletedTransfersBeforeGenericStatus()
+    {
+        var snapshot = StatusCenterFormatter.Format(0, 0, hasCompletedTransfers: true, listingInProgress: false, workspaceStatus: @"C:\Users\me", operationHistoryCount: 0);
+        Assert.Equal("Done", snapshot.BadgeText);
+
+        var statusCenter = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.StatusCenter.cs"));
+        Assert.DoesNotContain("_toolbar?.StatusText", statusCenter);
+    }
+
+    private static string Slice(string text, string start, string end)
+    {
+        var startIndex = text.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(startIndex >= 0, $"Anchor '{start}' not found.");
+        var endIndex = text.IndexOf(end, startIndex, StringComparison.Ordinal);
+        Assert.True(endIndex > startIndex, $"Anchor '{end}' not found after '{start}'.");
+        return text[startIndex..endIndex];
     }
 }

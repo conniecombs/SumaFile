@@ -173,7 +173,7 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         ApplyCaptionButtonColors(ElementTheme.Default);
-        AppWindow.Resize(new SizeInt32(1280, 840));
+        SecondaryWindowChrome.Resize(this, 1280, 840);
         if (AppWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.IsResizable = true;
@@ -635,18 +635,21 @@ public sealed partial class MainWindow : Window
 
         if (!string.IsNullOrEmpty(_workspace.ErrorMessage))
         {
-            ShowMessage("Could not open folder", _workspace.ErrorMessage, InfoBarSeverity.Error);
+            ShowSyncMessage("Could not open folder", _workspace.ErrorMessage, InfoBarSeverity.Error);
         }
         else if (_workspace.FileOpenUnsupported)
         {
-            ShowMessage(
+            ShowSyncMessage(
                 "Open file",
                 _workspace.StatusMessage ?? "No file operation service is available to open this file.",
                 InfoBarSeverity.Informational);
         }
-        else
+        else if (_messageBarOwnedBySync)
         {
+            // Only messages this sync opened are closed by it; explicit messages stay until
+            // the user dismisses them.
             MessageBar.IsOpen = false;
+            _messageBarOwnedBySync = false;
         }
 
         QueueWatchActiveDirectory();
@@ -1100,13 +1103,22 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private bool _messageBarOwnedBySync;
+
     private void ShowMessage(string title, string message, InfoBarSeverity severity)
     {
+        _messageBarOwnedBySync = false;
         MessageBar.Title = title;
         MessageBar.Message = message;
         MessageBar.Severity = severity;
         MessageBar.IsOpen = true;
         SetStatusText(message);
+    }
+
+    private void ShowSyncMessage(string title, string message, InfoBarSeverity severity)
+    {
+        ShowMessage(title, message, severity);
+        _messageBarOwnedBySync = true;
     }
 
     private async Task RunUiActionAsync(string title, Func<Task> action)

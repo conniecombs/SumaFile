@@ -59,7 +59,7 @@ public sealed partial class MainWindow
             _transfer?.QueuedCount ?? 0,
             _transfer?.HasTerminalOperations == true,
             _workspace is not null && WorkspaceHasListingInProgress(_workspace),
-            _workspace?.ErrorMessage ?? _workspace?.StatusMessage ?? _toolbar?.StatusText,
+            _workspace?.ErrorMessage ?? _workspace?.StatusMessage,
             _workspace?.OperationLog.Count ?? 0);
 
         StatusCenterBadgeText.Text = snapshot.BadgeText;

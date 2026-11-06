@@ -264,7 +264,18 @@ public sealed partial class MainWindow
             _workspace.Settings.PreviewWidth = width;
         }
 
+        var wasShowing = PreviewPanel.Visibility == Visibility.Visible;
         PreviewPanel.Visibility = visible && !collapsed ? Visibility.Visible : Visibility.Collapsed;
+        var showing = PreviewPanel.Visibility == Visibility.Visible;
+        if (wasShowing && !showing)
+        {
+            _previewPresenter.ReleasePathBackedPreviews();
+        }
+        else if (!wasShowing && showing)
+        {
+            RequeueCurrentPreview();
+        }
+
         PreviewPanel.Pinned = _workspace?.Settings.PreviewPinned == true;
         PreviewRail.Visibility = visible && collapsed ? Visibility.Visible : Visibility.Collapsed;
         PreviewDivider.Visibility = visible && !collapsed ? Visibility.Visible : Visibility.Collapsed;
@@ -303,6 +314,8 @@ public sealed partial class MainWindow
         {
             RootGrid.RequestedTheme = next;
         }
+
+        SecondaryWindowChrome.ApplyTheme(next);
 
         ApplyCaptionButtonColors(next);
         RefreshGeneratedThemeResources();
@@ -967,8 +980,8 @@ public sealed partial class MainWindow
         }
 
         var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
-        return list.SelectedItem as FileRow
-            ?? list.SelectedItems.OfType<FileRow>().LastOrDefault();
+        // The last item added to the selection is the one the user acted on, as in Details.
+        return list.SelectedItems.OfType<FileRow>().LastOrDefault() ?? list.SelectedItem as FileRow;
     }
 
     private ContextMenuRequest BuildContextMenuRequest(

@@ -52,15 +52,56 @@ public sealed partial class MainWindow
 
     private void SetOmnibarMode(OmnibarMode mode, bool focus)
     {
+        var typed = PreserveTypedOmnibarText();
         _omnibarMode = mode;
         ApplyOmnibarModeButtons();
         SyncOmnibarFromWorkspace(force: true);
+        if (typed is not null)
+        {
+            OmnibarInput.Text = typed;
+        }
+
         if (focus)
         {
             OmnibarInput.Focus(FocusState.Programmatic);
-            OmnibarInput.SelectAll();
+            if (typed is null)
+            {
+                OmnibarInput.SelectAll();
+            }
+            else
+            {
+                OmnibarInput.SelectionStart = typed.Length;
+            }
         }
     }
+
+    /// <summary>
+    /// Text the user has typed into the focused omnibar that differs from the current mode's
+    /// synced value, so a mode switch carries it over instead of discarding it.
+    /// </summary>
+    private string? PreserveTypedOmnibarText()
+    {
+        if (_workspace is null || !_omnibarFocused)
+        {
+            return null;
+        }
+
+        var typed = OmnibarInput.Text;
+        if (string.IsNullOrEmpty(typed) || string.Equals(typed, SyncedOmnibarTextFor(_omnibarMode), StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return typed;
+    }
+
+    private string SyncedOmnibarTextFor(OmnibarMode mode) => mode switch
+    {
+        OmnibarMode.Search => SearchBox.Text,
+        OmnibarMode.Filter => QuickFilterBox.Text,
+        OmnibarMode.Command => "",
+        _ => _workspace?.Active.Path ?? "",
+    };
 
     private void FocusOmnibar(OmnibarMode mode)
     {
@@ -139,13 +180,7 @@ public sealed partial class MainWindow
         try
         {
             ApplyOmnibarModeButtons();
-            OmnibarInput.Text = _omnibarMode switch
-            {
-                OmnibarMode.Search => SearchBox.Text,
-                OmnibarMode.Filter => QuickFilterBox.Text,
-                OmnibarMode.Command => "",
-                _ => _workspace.Active.Path,
-            };
+            OmnibarInput.Text = SyncedOmnibarTextFor(_omnibarMode);
             OmnibarInput.PlaceholderText = _omnibarMode switch
             {
                 OmnibarMode.Search => "Find in folder",
