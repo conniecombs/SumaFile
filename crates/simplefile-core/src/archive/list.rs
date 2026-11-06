@@ -33,7 +33,9 @@ fn list_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
     let mut total_size = 0u64;
     let mut compressed_size = 0u64;
     for i in 0..archive.len() {
-        let file = archive.by_index(i).map_err(|e| e.to_string())?;
+        // Raw access reads the central directory only, so password-protected
+        // entries list like any other instead of failing the whole archive.
+        let file = archive.by_index_raw(i).map_err(|e| e.to_string())?;
         let entry_path = match file.name() {
             Ok(name) => name.into_owned(),
             Err(_) => {
@@ -57,8 +59,8 @@ fn list_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
             size: file.size(),
             compressed_size: file.compressed_size(),
         };
-        total_size += file.size();
-        compressed_size += file.compressed_size();
+        total_size = total_size.saturating_add(file.size());
+        compressed_size = compressed_size.saturating_add(file.compressed_size());
         entries.push(entry);
     }
     Ok(ArchiveInfo {
@@ -69,6 +71,45 @@ fn list_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
         total_size,
         compressed_size,
     })
+}
+
+/// List an uncompressed tar by seeking over each entry's contents. The plain
+/// `entries()` iterator reads every byte of the archive to reach the next
+/// header, which turned listing a multi-gigabyte tar into a full read.
+pub(super) fn collect_tar_entries_seekable<R: std::io::Read + std::io::Seek>(
+    reader: R,
+    format: ArchiveFormat,
+) -> Result<(Vec<ArchiveEntry>, Vec<String>, u64), String> {
+    let mut archive = tar::Archive::new(reader);
+    let mut entries = Vec::new();
+    let mut unsafe_entries = Vec::new();
+    let mut total_size = 0u64;
+    for entry in archive.entries_with_seek().map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path_str = entry
+            .path()
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .to_string();
+        let size = entry.size();
+        if listing_entry_relative_path(format, &path_str).is_err() {
+            unsafe_entries.push(path_str);
+            continue;
+        }
+        total_size = total_size.saturating_add(size);
+        entries.push(ArchiveEntry {
+            name: path_str
+                .split('/')
+                .next_back()
+                .unwrap_or(&path_str)
+                .to_string(),
+            path: path_str,
+            is_dir: entry.header().entry_type().is_dir(),
+            size,
+            compressed_size: size,
+        });
+    }
+    Ok((entries, unsafe_entries, total_size))
 }
 
 fn list_tar_archive(path: &str, compression: Option<&str>) -> Result<ArchiveInfo, String> {
@@ -92,7 +133,7 @@ fn list_tar_archive(path: &str, compression: Option<&str>) -> Result<ArchiveInfo
                     unsafe_entries.push(path_str);
                     continue;
                 }
-                total_size += size;
+                total_size = total_size.saturating_add(size);
                 entries.push(ArchiveEntry {
                     name: path_str
                         .split('/')
@@ -107,32 +148,11 @@ fn list_tar_archive(path: &str, compression: Option<&str>) -> Result<ArchiveInfo
             }
         }
         None => {
-            let mut archive = tar::Archive::new(file);
-            for entry in archive.entries().map_err(|e| e.to_string())? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                let path_str = entry
-                    .path()
-                    .map_err(|e| e.to_string())?
-                    .to_string_lossy()
-                    .to_string();
-                let size = entry.size();
-                if listing_entry_relative_path(ArchiveFormat::Tar, &path_str).is_err() {
-                    unsafe_entries.push(path_str);
-                    continue;
-                }
-                total_size += size;
-                entries.push(ArchiveEntry {
-                    name: path_str
-                        .split('/')
-                        .next_back()
-                        .unwrap_or(&path_str)
-                        .to_string(),
-                    path: path_str,
-                    is_dir: entry.header().entry_type().is_dir(),
-                    size,
-                    compressed_size: size,
-                });
-            }
+            let (seek_entries, seek_unsafe, seek_total) =
+                collect_tar_entries_seekable(file, ArchiveFormat::Tar)?;
+            entries = seek_entries;
+            unsafe_entries = seek_unsafe;
+            total_size = seek_total;
         }
         _ => return Err("Unsupported compression".to_string()),
     }
@@ -166,7 +186,7 @@ fn list_rar_archive(path: &str) -> Result<ArchiveInfo, String> {
             continue;
         }
 
-        total_size += entry.unpacked_size;
+        total_size = total_size.saturating_add(entry.unpacked_size);
         entries.push(ArchiveEntry {
             name: entry
                 .filename
@@ -201,7 +221,7 @@ fn list_seven_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
             continue;
         }
 
-        total_size += entry.size;
+        total_size = total_size.saturating_add(entry.size);
         entries.push(ArchiveEntry {
             name: archive_entry_name(&entry.path),
             path: entry.path,
@@ -349,4 +369,77 @@ fn archive_entry_name(entry_path: &str) -> String {
         .next()
         .unwrap_or(entry_path)
         .to_string()
+}
+
+#[cfg(test)]
+mod seek_tests {
+    use super::collect_tar_entries_seekable;
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    /// Counts bytes actually read so the test can prove that listing skips
+    /// over entry contents instead of streaming the whole archive.
+    struct CountingReader<R> {
+        inner: R,
+        read: u64,
+    }
+
+    impl<R: Read> Read for CountingReader<R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.read += n as u64;
+            Ok(n)
+        }
+    }
+
+    impl<R: Seek> Seek for CountingReader<R> {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn listing_a_tar_seeks_past_entry_contents() {
+        let payload = vec![b'x'; 8 * 1024 * 1024];
+        let mut archive = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut archive);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(payload.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "big.bin", payload.as_slice())
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        let path = std::env::temp_dir().join(format!(
+            "sumafile-list-seek-{}-{}.tar",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(&archive)
+            .unwrap();
+
+        let mut reader = CountingReader {
+            inner: std::fs::File::open(&path).unwrap(),
+            read: 0,
+        };
+        let (entries, unsafe_entries, total) =
+            collect_tar_entries_seekable(&mut reader, super::ArchiveFormat::Tar).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(entries.len(), 1);
+        assert!(unsafe_entries.is_empty());
+        assert_eq!(total, payload.len() as u64);
+        assert!(
+            reader.read < 1024 * 1024,
+            "listing read {} bytes of an 8 MiB archive",
+            reader.read
+        );
+    }
 }

@@ -247,19 +247,29 @@ fn network_drive_status(wide_path: &[u16], remote_path: Option<&str>) -> (String
     }
 }
 
+/// File-system name fragments that mark a volume as backed by something
+/// remote (cloud mounts, FUSE, network redirectors). Shared with `utils` so
+/// drive listing, caching and multistream decisions agree.
+pub(crate) const REMOTE_LIKE_FILE_SYSTEM_TOKENS: &[&str] = &[
+    "network",
+    "remote",
+    "airlivedrive",
+    "googledrive",
+    "virtual",
+    "sshfs",
+    "sftp",
+    "fuse",
+];
+
+pub(crate) fn file_system_is_remote_like(file_system: &str) -> bool {
+    let lower = file_system.to_ascii_lowercase();
+    REMOTE_LIKE_FILE_SYSTEM_TOKENS
+        .iter()
+        .any(|token| lower.contains(token))
+}
+
 fn is_remote_like_file_system(file_system: Option<&str>) -> bool {
-    let Some(value) = file_system else {
-        return false;
-    };
-    let lower = value.to_ascii_lowercase();
-    lower.contains("network")
-        || lower.contains("remote")
-        || lower.contains("airlivedrive")
-        || lower.contains("googledrive")
-        || lower.contains("virtual")
-        || lower.contains("sshfs")
-        || lower.contains("sftp")
-        || lower.contains("fuse")
+    file_system.is_some_and(file_system_is_remote_like)
 }
 
 fn should_query_disk_space(

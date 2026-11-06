@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use simplefile_core::models::{DirectoryListing, FileEntry};
 use simplefile_core::remote::{RemoteProfile, RemoteProtocol};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -60,10 +61,13 @@ pub struct RemoteSession {
     pub root_path: String,
 }
 
+/// Cheap to clone: handlers hand a clone to the blocking scheduler so network
+/// round trips (connect, list, mutate, transfer) run off the session loop.
+#[derive(Clone)]
 pub struct RemoteSessionRegistry {
-    factory: Box<dyn RemoteProviderFactory>,
-    sessions: HashMap<String, RemoteSessionHandle>,
-    next_session_number: u64,
+    factory: Arc<dyn RemoteProviderFactory>,
+    sessions: Arc<Mutex<HashMap<String, RemoteSessionHandle>>>,
+    next_session_number: Arc<AtomicU64>,
 }
 
 struct RemoteSessionHandle {
@@ -74,27 +78,34 @@ struct RemoteSessionHandle {
 impl RemoteSessionRegistry {
     pub fn new(factory: impl RemoteProviderFactory + 'static) -> Self {
         Self {
-            factory: Box::new(factory),
-            sessions: HashMap::new(),
-            next_session_number: 0,
+            factory: Arc::new(factory),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            next_session_number: Arc::new(AtomicU64::new(0)),
         }
     }
 
+    fn sessions(&self) -> std::sync::MutexGuard<'_, HashMap<String, RemoteSessionHandle>> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub fn connect_profile(
-        &mut self,
+        &self,
         profile: RemoteProfile,
         secret: Option<RemoteSecret>,
     ) -> Result<RemoteSession, String> {
+        // The network handshake runs without holding the registry lock.
         let provider = self.factory.connect(&profile, secret.as_ref())?;
-        self.next_session_number += 1;
+        let number = self.next_session_number.fetch_add(1, Ordering::AcqRel) + 1;
         let session = RemoteSession {
-            session_id: format!("remote-session-{}", self.next_session_number),
+            session_id: format!("remote-session-{number}"),
             profile_id: profile.id,
             protocol: profile.protocol,
             root_path: profile.root_path,
         };
 
-        self.sessions.insert(
+        self.sessions().insert(
             session.session_id.clone(),
             RemoteSessionHandle {
                 session: session.clone(),
@@ -119,72 +130,48 @@ impl RemoteSessionRegistry {
         }
     }
 
-    pub fn list_directory(
-        &mut self,
-        session_id: &str,
-        path: &str,
-    ) -> Result<DirectoryListing, String> {
-        let handle = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle
-            .provider
+    pub fn list_directory(&self, session_id: &str, path: &str) -> Result<DirectoryListing, String> {
+        self.provider(session_id)?
             .with(|provider| provider.list_directory(path))
     }
 
     pub fn create_directory(
-        &mut self,
+        &self,
         session_id: &str,
         path: &str,
         name: &str,
     ) -> Result<FileEntry, String> {
-        let handle = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle
-            .provider
+        self.provider(session_id)?
             .with(|provider| provider.create_directory(path, name))
     }
 
     pub fn rename_entry(
-        &mut self,
+        &self,
         session_id: &str,
         path: &str,
         new_name: &str,
     ) -> Result<FileEntry, String> {
-        let handle = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle
-            .provider
+        self.provider(session_id)?
             .with(|provider| provider.rename_entry(path, new_name))
     }
 
     pub fn delete_entries(
-        &mut self,
+        &self,
         session_id: &str,
         paths: &[String],
     ) -> Result<Vec<String>, String> {
-        let handle = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| format!("remote session not found: {session_id}"))?;
-        handle
-            .provider
+        self.provider(session_id)?
             .with(|provider| provider.delete_entries(paths))
     }
 
     pub fn provider(&self, session_id: &str) -> Result<SharedRemoteProvider, String> {
-        self.sessions
+        self.sessions()
             .get(session_id)
             .map(|handle| handle.provider.clone())
             .ok_or_else(|| format!("remote session not found: {session_id}"))
     }
 
-    pub fn disconnect(&mut self, session_id: &str) -> Result<(), String> {
+    pub fn disconnect(&self, session_id: &str) -> Result<(), String> {
         self.provider(session_id)?.with(|provider| {
             // A lost connection must still be removable so the user can reconnect
             // and retry. Failure to acquire the busy-session lock still propagates.
@@ -193,12 +180,14 @@ impl RemoteSessionRegistry {
             }
             Ok(())
         })?;
-        self.sessions.remove(session_id);
+        self.sessions().remove(session_id);
         Ok(())
     }
 
-    pub fn get(&self, session_id: &str) -> Option<&RemoteSession> {
-        self.sessions.get(session_id).map(|handle| &handle.session)
+    pub fn get(&self, session_id: &str) -> Option<RemoteSession> {
+        self.sessions()
+            .get(session_id)
+            .map(|handle| handle.session.clone())
     }
 }
 

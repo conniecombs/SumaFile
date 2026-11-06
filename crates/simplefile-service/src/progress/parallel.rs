@@ -301,7 +301,11 @@ pub(crate) fn copy_selection(
         })();
         match seed {
             Ok((destination, owned)) => {
-                if is_move && owned {
+                // Every move root needs a manifest, not only owned (staged)
+                // roots: a merge into an existing folder still stages any
+                // subfolder that is new at the destination, and the files
+                // under it are deleted from the manifest after publication.
+                if is_move {
                     match crate::transfer_manifest::DiskManifest::new() {
                         Ok(disk) => manifest = Some(disk),
                         Err(error) => root_error = Some(Failure::from(error)),
@@ -687,13 +691,13 @@ pub(crate) fn copy_selection(
             }
             Err(error) => {
                 let cleanup = lease.abort();
-                let message = match cleanup {
+                let failure = match cleanup {
                     Ok(()) => error,
-                    Err(extra) => format!("{error}; {extra}"),
+                    Err(extra) => Failure::with_kind(format!("{error}; {extra}"), error.kind),
                 };
                 let outcome = &mut root_outcomes[root_index];
                 if outcome.error.is_none() {
-                    outcome.error = Some(Failure::from(message));
+                    outcome.error = Some(failure);
                 }
             }
         }

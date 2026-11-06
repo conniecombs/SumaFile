@@ -78,7 +78,7 @@ pub(super) fn create_zip_archive(paths: &[String], archive_path: &str) -> Result
             .ok_or_else(|| format!("Cannot get file name for: {path_str}"))?
             .to_string_lossy();
         if path.is_file() {
-            zip.start_file(name.as_ref(), options)
+            zip.start_file(name.as_ref(), with_source_mtime(options, path))
                 .map_err(|e| e.to_string())?;
             // Stream file contents rather than reading into a Vec to avoid
             // memory exhaustion when archiving large files.
@@ -92,6 +92,33 @@ pub(super) fn create_zip_archive(paths: &[String], archive_path: &str) -> Result
     }
     zip.finish().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Carry the source file's modification time into the zip entry. Without it
+/// every entry (and every rebuilt archive) is stamped "now".
+fn with_source_mtime(
+    options: zip::write::SimpleFileOptions,
+    path: &Path,
+) -> zip::write::SimpleFileOptions {
+    use chrono::{Datelike, Timelike};
+    let Some(modified) = std::fs::metadata(path).and_then(|m| m.modified()).ok() else {
+        return options;
+    };
+    let local: chrono::DateTime<chrono::Local> = modified.into();
+    let Ok(year) = u16::try_from(local.year()) else {
+        return options;
+    };
+    match zip::DateTime::from_date_and_time(
+        year,
+        local.month() as u8,
+        local.day() as u8,
+        local.hour() as u8,
+        local.minute() as u8,
+        local.second() as u8,
+    ) {
+        Ok(stamp) => options.last_modified_time(stamp),
+        Err(_) => options,
+    }
 }
 
 fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
@@ -108,7 +135,8 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
         // infinite recursion during directory traversal.
         let Ok(ft) = entry.file_type() else { continue };
         if ft.is_file() {
-            zip.start_file(&name, options).map_err(|e| e.to_string())?;
+            zip.start_file(&name, with_source_mtime(options, &path))
+                .map_err(|e| e.to_string())?;
             // Stream rather than buffering the whole file to prevent OOM.
             let mut src = std::fs::File::open(&path).map_err(|e| e.to_string())?;
             std::io::copy(&mut src, zip).map_err(|e| e.to_string())?;
@@ -131,7 +159,7 @@ pub(super) fn create_seven_zip_archive(
         return Err("No files specified".to_string());
     }
 
-    let output = std::process::Command::new(seven_zip_binary)
+    let output = super::seven_zip::seven_zip_command(seven_zip_binary)
         .arg("a")
         .arg("-t7z")
         .arg("-bd")

@@ -476,3 +476,216 @@ async fn session_cache_serves_repeated_listings_and_invalidates_on_file_mutation
     let _ = server.await;
     let _ = std::fs::remove_dir_all(&temp_root);
 }
+
+async fn serve_test_session() -> (
+    tokio::io::DuplexStream,
+    tokio::task::JoinHandle<Result<(), String>>,
+) {
+    let (mut client, server) = duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server);
+    let server = tokio::spawn(serve_connection(
+        server_read,
+        server_write,
+        SessionState {
+            expected_token: Some("dev".to_string()),
+            ..SessionState::default()
+        },
+    ));
+    let handshake = call(
+        &mut client,
+        HANDSHAKE_METHOD,
+        1,
+        json!({
+            "protocolVersion": PROTOCOL_VERSION,
+            "clientName": "test",
+            "authToken": "dev"
+        }),
+    )
+    .await;
+    assert_eq!(handshake["result"]["protocolVersion"], PROTOCOL_VERSION);
+    (client, server)
+}
+
+/// Reads frames until the response carrying `id` arrives, or the deadline passes.
+async fn read_response_with_id(
+    client: &mut tokio::io::DuplexStream,
+    id: u64,
+    timeout: std::time::Duration,
+) -> Option<Value> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        match tokio::time::timeout_at(deadline, read_frame(client)).await {
+            Ok(Ok(payload)) => {
+                let message: Value = serde_json::from_slice(&payload).unwrap();
+                if message.get("id") == Some(&json!(id)) {
+                    return Some(message);
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn scratch_dir(label: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "sumafile_session_{label}_{}_{}",
+        std::process::id(),
+        simplefile_core::utils::generate_operation_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_check_responds_through_session_loop() {
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("dup");
+    std::fs::write(dir.join("a.txt"), b"same").unwrap();
+    std::fs::write(dir.join("b.txt"), b"same").unwrap();
+
+    send_request(
+        &mut client,
+        "duplicate_check",
+        2,
+        json!({ "directory": dir.to_string_lossy(), "operationId": "dup-1", "minSize": 0 }),
+    )
+    .await;
+    let response = read_response_with_id(&mut client, 2, std::time::Duration::from_secs(10)).await;
+    let _ = std::fs::remove_dir_all(&dir);
+    let response = response.expect("duplicate_check never produced a response");
+    assert!(response.get("result").is_some(), "{response}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disk_cleanup_responds_through_session_loop() {
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("cleanup");
+    std::fs::write(dir.join("a.txt"), b"x").unwrap();
+
+    send_request(
+        &mut client,
+        "disk_cleanup",
+        2,
+        json!({ "directory": dir.to_string_lossy(), "operationId": "clean-1" }),
+    )
+    .await;
+    let response = read_response_with_id(&mut client, 2, std::time::Duration::from_secs(10)).await;
+    let _ = std::fs::remove_dir_all(&dir);
+    let response = response.expect("disk_cleanup never produced a response");
+    assert!(response.get("result").is_some(), "{response}");
+}
+
+#[tokio::test]
+async fn malformed_json_frame_gets_parse_error_and_session_continues() {
+    let (mut client, server) = serve_test_session().await;
+
+    let frame = encode_frame(b"{ this is not json").unwrap();
+    client.write_all(&frame).await.unwrap();
+    let response: Value = serde_json::from_slice(&read_frame(&mut client).await.unwrap()).unwrap();
+    assert_eq!(response["error"]["code"], simplefile_ipc::ERR_PARSE);
+    assert!(response.get("id").is_none() || response["id"].is_null());
+
+    let health = call(&mut client, HEALTH_METHOD, 2, json!({})).await;
+    assert_eq!(health["result"]["ok"], true);
+
+    let _ = call(&mut client, "ipc.shutdown", 3, json!({})).await;
+    assert_eq!(server.await.unwrap(), Ok(()));
+}
+
+/// A remote handshake that stalls must not stall the pipe: health (and
+/// cancels) have to be answered while the connect attempt is in flight.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slow_remote_test_profile_does_not_block_other_requests() {
+    use crate::remote::provider::{RemoteProvider, RemoteProviderFactory};
+    struct StallingFactory;
+    impl RemoteProviderFactory for StallingFactory {
+        fn connect(
+            &self,
+            _: &simplefile_core::remote::RemoteProfile,
+            _: Option<&crate::remote::secrets::RemoteSecret>,
+        ) -> Result<Box<dyn RemoteProvider>, String> {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            Err("host unreachable".to_string())
+        }
+    }
+
+    let (mut client, server) = duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server);
+    let mut state = SessionState::with_remote_provider_factory(StallingFactory);
+    state.expected_token = Some("dev".to_string());
+    let _server = tokio::spawn(serve_connection(server_read, server_write, state));
+    let _ = call(
+        &mut client,
+        HANDSHAKE_METHOD,
+        1,
+        json!({ "protocolVersion": PROTOCOL_VERSION, "clientName": "test", "authToken": "dev" }),
+    )
+    .await;
+
+    let started = tokio::time::Instant::now();
+    send_request(
+        &mut client,
+        "remote_test_profile",
+        2,
+        json!({
+            "profile": {
+                "id": null,
+                "name": "stalling",
+                "protocol": "sftp",
+                "host": "203.0.113.1",
+                "port": 22,
+                "username": "user",
+                "root_path": "/",
+                "auth_kind": "anonymous",
+                "insecure_plain_ftp": false,
+                "passive_mode": true,
+                "credential_target": null,
+                "private_key_path": null,
+                "trusted_host_fingerprint": "SHA256:abc"
+            }
+        }),
+    )
+    .await;
+    send_request(&mut client, HEALTH_METHOD, 3, json!({})).await;
+
+    let first: Value = serde_json::from_slice(&read_frame(&mut client).await.unwrap()).unwrap();
+    let health_latency = started.elapsed();
+    assert_eq!(
+        first["id"],
+        json!(3),
+        "health must be answered before the stalled remote handshake: {first}"
+    );
+    assert!(
+        health_latency < std::time::Duration::from_millis(1000),
+        "{health_latency:?}"
+    );
+
+    let second = read_response_with_id(&mut client, 2, std::time::Duration::from_secs(5))
+        .await
+        .expect("remote_test_profile still replies after the stall");
+    assert!(second.get("result").is_some(), "{second}");
+}
+
+/// An unauthenticated client must not be able to make the service allocate
+/// an 80 MiB frame; before the handshake only small frames are accepted.
+#[tokio::test]
+async fn oversized_frame_before_handshake_closes_the_session() {
+    let (mut client, server) = duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server);
+    let server = tokio::spawn(serve_connection(
+        server_read,
+        server_write,
+        SessionState {
+            expected_token: Some("dev".to_string()),
+            ..SessionState::default()
+        },
+    ));
+    let claimed: u32 = 8 * 1024 * 1024;
+    client.write_all(&claimed.to_le_bytes()).await.unwrap();
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("server exits instead of waiting for 8 MiB")
+        .unwrap();
+    let error = outcome.expect_err("oversized pre-handshake frame is an error");
+    assert!(error.contains("too large"), "{error}");
+}

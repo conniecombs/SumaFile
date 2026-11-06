@@ -198,6 +198,13 @@ pub(crate) fn resolve_destination(
 /// destination: `(source, destination, message)`.
 pub(crate) type PlanConflict = (PathBuf, PathBuf, String);
 
+/// A top-level item the user's conflict action left in place: `(source,
+/// destination)`. Reported so a skip never silently vanishes from the outcome.
+pub(crate) type PlanSkip = (PathBuf, PathBuf);
+
+/// Plans, resolved destination root, per-item conflicts, per-item skips.
+pub(crate) type PlannedInputs = (Vec<TransferPlan>, PathBuf, Vec<PlanConflict>, Vec<PlanSkip>);
+
 #[cfg(test)]
 pub(crate) fn prepare_transfer_inputs(
     sources: Vec<String>,
@@ -205,7 +212,7 @@ pub(crate) fn prepare_transfer_inputs(
     conflict_action: &str,
 ) -> Result<(Vec<TransferPlan>, PathBuf), String> {
     let mut volumes = VolumeKindCache::default();
-    let (plans, dest_path, conflicts) =
+    let (plans, dest_path, conflicts, _skipped) =
         prepare_transfer_inputs_cached(sources, destination, conflict_action, &mut volumes)?;
     if let Some((_, _, message)) = conflicts.into_iter().next() {
         return Err(message);
@@ -220,7 +227,7 @@ pub(crate) fn prepare_transfer_inputs_cached(
     destination: String,
     conflict_action: &str,
     volumes: &mut VolumeKindCache,
-) -> Result<(Vec<TransferPlan>, PathBuf, Vec<PlanConflict>), String> {
+) -> Result<PlannedInputs, String> {
     if sources.is_empty() {
         return Err("No sources specified".to_string());
     }
@@ -235,11 +242,32 @@ pub(crate) fn prepare_transfer_inputs_cached(
     let mut plans = Vec::with_capacity(sources.len());
     let mut planned_destinations = HashSet::new();
     let mut conflicts = Vec::new();
+    let mut skipped = Vec::new();
 
     for source in sources {
-        let source_path = validate_path_no_follow(&source)?;
-        let meta = fs::symlink_metadata(&source_path)
-            .map_err(|error| format!("Failed to stat {}: {error}", source_path.display()))?;
+        // A source that cannot be inspected is reported for that item alone;
+        // the rest of the selection still transfers.
+        let source_path = match validate_path_no_follow(&source) {
+            Ok(path) => path,
+            Err(message) => {
+                let fallback = PathBuf::from(source.trim());
+                let name = fallback.file_name().unwrap_or_default();
+                conflicts.push((fallback.clone(), dest_path.join(name), message));
+                continue;
+            }
+        };
+        let meta = match fs::symlink_metadata(&source_path) {
+            Ok(meta) => meta,
+            Err(error) => {
+                let name = source_path.file_name().unwrap_or_default();
+                conflicts.push((
+                    source_path.clone(),
+                    dest_path.join(name),
+                    format!("Failed to stat {}: {error}", source_path.display()),
+                ));
+                continue;
+            }
+        };
         let file_type = meta.file_type();
         let is_symlink = file_type.is_symlink();
         let is_dir = file_type.is_dir() && !is_symlink;
@@ -260,11 +288,16 @@ pub(crate) fn prepare_transfer_inputs_cached(
             Err(error) => return Err(error),
         };
         let Some((final_dest, conflict)) = resolved else {
+            let name = source_path.file_name().unwrap_or_default();
+            skipped.push((source_path.clone(), dest_path.join(name)));
             continue;
         };
 
         if is_dir {
-            ensure_dir_not_inside_itself(&source_path, &final_dest)?;
+            if let Err(message) = ensure_dir_not_inside_itself(&source_path, &final_dest) {
+                conflicts.push((source_path.clone(), final_dest, message));
+                continue;
+            }
         }
         let network = dest_network || volumes.is_network(&source_path);
         planned_destinations.insert(path_collision_key(&final_dest));
@@ -280,7 +313,7 @@ pub(crate) fn prepare_transfer_inputs_cached(
         });
     }
 
-    Ok((plans, dest_path, conflicts))
+    Ok((plans, dest_path, conflicts, skipped))
 }
 
 /// Sizes were captured while planning; this only sums them (and honours cancel).
@@ -295,4 +328,91 @@ pub(crate) fn prime_transfer(
         total.files = total.files.saturating_add(plan.file_count);
     }
     Ok(total)
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::{prepare_transfer_inputs_cached, VolumeKindCache};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_path(name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("simplefile_service_plan_test_{name}_{nanos}"))
+    }
+
+    /// One source that vanished between selection and transfer is reported
+    /// for that item; the rest of the selection still gets planned.
+    #[test]
+    fn missing_source_is_reported_per_item_not_as_a_batch_failure() {
+        let src_dir = unique_temp_path("missing_src");
+        let dst_dir = unique_temp_path("missing_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let present = src_dir.join("present.txt");
+        let missing = src_dir.join("missing.txt");
+        fs::write(&present, b"here").unwrap();
+
+        let mut volumes = VolumeKindCache::default();
+        let (plans, _, failures, _) = prepare_transfer_inputs_cached(
+            vec![
+                missing.to_string_lossy().to_string(),
+                present.to_string_lossy().to_string(),
+            ],
+            dst_dir.to_string_lossy().to_string(),
+            "error",
+            &mut volumes,
+        )
+        .expect("one missing source must not abort the batch");
+
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].source_path, present);
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].0, missing);
+        assert!(
+            !failures[0].2.starts_with("CONFLICT:"),
+            "a missing source is an error, not a conflict: {}",
+            failures[0].2
+        );
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    /// A planning-time skip (destination exists, action "skip") is part of the
+    /// outcome, not silently dropped.
+    #[test]
+    fn planning_time_skips_are_reported() {
+        let src_dir = unique_temp_path("skip_src");
+        let dst_dir = unique_temp_path("skip_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let fresh = src_dir.join("fresh.txt");
+        let clash = src_dir.join("clash.txt");
+        fs::write(&fresh, b"fresh").unwrap();
+        fs::write(&clash, b"source").unwrap();
+        fs::write(dst_dir.join("clash.txt"), b"destination").unwrap();
+
+        let mut volumes = VolumeKindCache::default();
+        let (plans, _, conflicts, skipped) = prepare_transfer_inputs_cached(
+            vec![
+                fresh.to_string_lossy().to_string(),
+                clash.to_string_lossy().to_string(),
+            ],
+            dst_dir.to_string_lossy().to_string(),
+            "skip",
+            &mut volumes,
+        )
+        .unwrap();
+
+        assert_eq!(plans.len(), 1);
+        assert!(conflicts.is_empty());
+        assert_eq!(skipped, vec![(clash.clone(), dst_dir.join("clash.txt"))]);
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
 }

@@ -143,6 +143,34 @@ fn recycle_bin_paths_for_originals_from_entries(
     matched
 }
 
+/// True only for a `$R…` data entry directly inside a per-user SID folder of a
+/// volume's `$Recycle.Bin`, e.g. `C:\$Recycle.Bin\S-1-5-21-…\$RABC123.txt`.
+/// Anything looser (a folder whose name merely contains `$Recycle.Bin`) is an
+/// ordinary path and must go through normal validation and deletion.
+pub fn is_recycle_bin_item_path(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let is_data_entry =
+        name.len() > 2 && name.starts_with('$') && name[1..2].eq_ignore_ascii_case("R");
+    if !is_data_entry {
+        return false;
+    }
+    let Some(sid_dir) = path.parent() else {
+        return false;
+    };
+    let sid_ok = sid_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.to_ascii_uppercase().starts_with("S-1-"));
+    let bin_ok = sid_dir
+        .parent()
+        .and_then(|bin| bin.file_name())
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("$Recycle.Bin"));
+    sid_ok && bin_ok
+}
+
 pub fn paired_info_path(data_path: &Path) -> PathBuf {
     match data_path.file_name().and_then(|name| name.to_str()) {
         Some(name) if name.len() >= 2 && name.as_bytes()[1].eq_ignore_ascii_case(&b'R') => {
@@ -235,8 +263,14 @@ fn unique_destination(path: &Path) -> PathBuf {
 }
 
 fn rename_or_copy(source: &Path, destination: &Path) -> Result<(), String> {
-    match fs::rename(source, destination) {
+    // Never replace a file that appeared between choosing the destination and
+    // moving: the unique name was picked a moment ago, not atomically.
+    match crate::path_conflict::rename_exclusive(source, destination) {
         Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
+            "Restore destination already exists: {}",
+            destination.display()
+        )),
         Err(_) => {
             if source.is_dir() {
                 copy_dir_all(source, destination)?;
@@ -275,7 +309,10 @@ fn copy_dir_all(source: &Path, destination: &Path) -> Result<(), String> {
 
 fn recycle_bin_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Ok(drives) = crate::drives::list_drives() {
+    // Light mode skips the per-drive network probes (3 s each): network and
+    // optical drives are filtered out below anyway, and this runs on every
+    // trash operation.
+    if let Ok(drives) = crate::drives::list_drives_light() {
         for drive in drives {
             let kind = drive.drive_type.to_ascii_lowercase();
             if kind == "network" || kind == "cd-rom" || kind == "optical" {
@@ -352,7 +389,9 @@ fn collect_sid_entries(recycle_root: &Path, entries: &mut Vec<FileEntry>) {
                 path: data_path.to_string_lossy().to_string(),
                 is_dir,
                 is_symlink: false,
-                is_hidden: name_looks_hidden(&parsed.original_path),
+                is_hidden: Path::new(&parsed.original_path)
+                    .file_name()
+                    .is_some_and(|name| name_looks_hidden(&name.to_string_lossy())),
                 is_system: false,
                 size: if is_dir { 0 } else { parsed.size },
                 modified: format_system_time(parsed.deleted),
@@ -520,6 +559,25 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&original_dir);
+    }
+
+    #[test]
+    fn recycle_item_path_requires_bin_sid_and_data_prefix() {
+        assert!(is_recycle_bin_item_path(Path::new(
+            r"C:\$Recycle.Bin\S-1-5-21-1234\$RABC123.txt"
+        )));
+        assert!(is_recycle_bin_item_path(Path::new(
+            r"d:\$recycle.bin\s-1-5-21-1234\$rfolder"
+        )));
+        assert!(!is_recycle_bin_item_path(Path::new(
+            r"C:\$Recycle.Bin\S-1-5-21-1234\$IABC123.txt"
+        )));
+        assert!(!is_recycle_bin_item_path(Path::new(
+            r"D:\Backup\$Recycle.Bin-old\Archive.zip"
+        )));
+        assert!(!is_recycle_bin_item_path(Path::new(
+            r"C:\$Recycle.Bin\$RABC123.txt"
+        )));
     }
 
     #[test]

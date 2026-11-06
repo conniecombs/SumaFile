@@ -3,11 +3,10 @@ use simplefile_core::models::FileChangeEvent;
 use simplefile_core::utils::validate_existing_path_no_resolve;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-const WATCHER_DEBOUNCE: Duration = Duration::from_millis(500);
 const WATCHER_COALESCE_FLUSH: Duration = Duration::from_millis(150);
 const WATCHER_STORM_COLLAPSE_LIMIT: usize = 512;
 
@@ -29,12 +28,9 @@ where
 
     let coalescer = WatcherCoalescer::new(path.clone(), emit)?;
     let event_sender = coalescer.sender();
-    let path_timestamps: Arc<Mutex<HashMap<String, Instant>>> =
-        Arc::new(Mutex::new(HashMap::new()));
 
     let mut watcher = RecommendedWatcher::new(
         {
-            let path_timestamps = path_timestamps.clone();
             move |res: Result<Event, notify::Error>| {
                 let Ok(event) = res else {
                     return;
@@ -55,27 +51,10 @@ where
                     | notify::EventKind::Other => return,
                 };
 
-                let now = Instant::now();
                 for path in event.paths {
                     let path_str = path.to_string_lossy().to_string();
                     if is_ignored_watcher_path(&path) {
                         continue;
-                    }
-
-                    {
-                        let Ok(mut timestamps) = path_timestamps.lock() else {
-                            continue;
-                        };
-                        if let Some(last) = timestamps.get(&path_str) {
-                            if now.duration_since(*last) < WATCHER_DEBOUNCE {
-                                continue;
-                            }
-                        }
-                        timestamps.insert(path_str.clone(), now);
-                        if timestamps.len() > 1000 {
-                            let cutoff = debounce_eviction_cutoff(now);
-                            timestamps.retain(|_, value| *value > cutoff);
-                        }
                     }
 
                     let _ = event_sender.send(FileChangeEvent {
@@ -117,10 +96,6 @@ fn is_ignored_watcher_path(path: &Path) -> bool {
     path.file_name()
         .map(|name| name.to_string_lossy().to_ascii_lowercase())
         .is_some_and(|name| matches!(name.as_str(), ".ds_store" | "desktop.ini" | "thumbs.db"))
-}
-
-fn debounce_eviction_cutoff(now: Instant) -> Instant {
-    now.checked_sub(Duration::from_secs(10)).unwrap_or(now)
 }
 
 struct WatcherCoalescer {
@@ -222,14 +197,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        debounce_eviction_cutoff, flush_coalesced_events, is_ignored_watcher_path,
-        queue_coalesced_event, WATCHER_STORM_COLLAPSE_LIMIT,
+        flush_coalesced_events, is_ignored_watcher_path, queue_coalesced_event,
+        WATCHER_STORM_COLLAPSE_LIMIT,
     };
     use simplefile_core::models::FileChangeEvent;
     use std::collections::HashMap;
     use std::path::Path;
     use std::sync::Mutex;
-    use std::time::Instant;
 
     #[test]
     fn ignored_watcher_path_matches_noise_names_case_insensitively() {
@@ -246,13 +220,6 @@ mod tests {
         assert!(is_ignored_watcher_path(Path::new("archive.part")));
         assert!(is_ignored_watcher_path(Path::new("draft.TMP")));
         assert!(!is_ignored_watcher_path(Path::new("real-file.txt")));
-    }
-
-    #[test]
-    fn debounce_eviction_cutoff_never_panics() {
-        let now = Instant::now();
-
-        assert!(debounce_eviction_cutoff(now) <= now);
     }
 
     #[test]
@@ -300,5 +267,58 @@ mod tests {
         let event = pending.get("C:/Work").expect("collapsed refresh event");
         assert_eq!(event.kind, "modify");
         assert_eq!(pending.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::{unwatch_directory, watch_directory, WatcherState};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    /// A file created and removed within the old 500 ms debounce window must
+    /// still produce the removal: otherwise the UI shows a ghost entry.
+    #[test]
+    fn remove_shortly_after_create_is_not_dropped() {
+        let dir = std::env::temp_dir().join(format!(
+            "sumafile-watch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let mut state = WatcherState::default();
+        watch_directory(
+            dir.to_string_lossy().to_string(),
+            &mut state,
+            move |change| {
+                sink.lock().unwrap().push(change.clone());
+            },
+        )
+        .expect("watch temp dir");
+        std::thread::sleep(Duration::from_millis(200));
+
+        let file = dir.join("flash.txt");
+        std::fs::write(&file, b"x").unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        std::fs::remove_file(&file).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut saw_remove = false;
+        while Instant::now() < deadline && !saw_remove {
+            std::thread::sleep(Duration::from_millis(50));
+            saw_remove = events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| event.kind == "remove" && event.path.ends_with("flash.txt"));
+        }
+        unwatch_directory(&mut state);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(saw_remove, "events seen: {:?}", events.lock().unwrap());
     }
 }

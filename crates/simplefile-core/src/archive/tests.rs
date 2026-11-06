@@ -20,6 +20,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// The 7-Zip launch counter is process-wide, so tests that assert on it (or
+/// contribute launches) take turns.
+static SEVEN_ZIP_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn unique_temp_dir(name: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -319,6 +323,9 @@ fn seven_zip_create_list_extract_round_trip_when_available() {
     if resolve_seven_zip_binary().is_none() {
         return;
     }
+    let _serial = SEVEN_ZIP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let root = unique_temp_dir("sevenzip-round-trip");
     let source = root.join("alpha.txt");
@@ -356,6 +363,151 @@ fn seven_zip_create_list_extract_round_trip_when_available() {
         b"world"
     );
 
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Extraction must not launch one 7-Zip process per entry: for a solid
+/// archive that re-decompresses the whole block for every file.
+#[test]
+fn seven_zip_extraction_uses_a_bounded_number_of_processes_when_available() {
+    if resolve_seven_zip_binary().is_none() {
+        return;
+    }
+    let _serial = SEVEN_ZIP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let root = unique_temp_dir("sevenzip-batch");
+    let source = root.join("src");
+    fs::create_dir_all(source.join("nested")).expect("create source tree");
+    for index in 0..6 {
+        fs::write(
+            source.join(format!("file{index}.txt")),
+            format!("payload {index}"),
+        )
+        .expect("write source file");
+    }
+    fs::write(source.join("nested").join("deep.txt"), b"deep").expect("write nested file");
+
+    let archive_path = root.join("batch.7z");
+    create_archive(
+        vec![source.to_string_lossy().to_string()],
+        archive_path.to_string_lossy().to_string(),
+        "7z".to_string(),
+    )
+    .expect("create 7z archive");
+
+    let out = root.join("out");
+    fs::create_dir_all(&out).expect("create out dir");
+    let before = super::seven_zip::SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst);
+    extract_archive_to_directory(&archive_path, &out).expect("extract 7z archive");
+    let spawned = super::seven_zip::SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst) - before;
+
+    assert_eq!(
+        fs::read(out.join("src").join("file3.txt")).expect("read extracted file"),
+        b"payload 3"
+    );
+    assert_eq!(
+        fs::read(out.join("src").join("nested").join("deep.txt")).expect("read nested"),
+        b"deep"
+    );
+    assert!(
+        spawned <= 2,
+        "extracting 7 entries launched {spawned} 7-Zip processes"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Mark every entry of a stored zip as encrypted by setting bit 0 of the
+/// general-purpose flags in the local and central headers. The reader then
+/// reports the entries as password protected, exactly like a real ZipCrypto
+/// archive, without needing an encryption feature to write one.
+fn mark_zip_entries_encrypted(zip_path: &Path) {
+    let mut bytes = fs::read(zip_path).unwrap();
+    let mut index = 0;
+    while index + 4 <= bytes.len() {
+        match &bytes[index..index + 4] {
+            b"PK" => {
+                bytes[index + 6] |= 1;
+                index += 4;
+            }
+            b"PK" => {
+                bytes[index + 8] |= 1;
+                index += 4;
+            }
+            _ => index += 1,
+        }
+    }
+    fs::write(zip_path, bytes).unwrap();
+}
+
+/// A zip with password-protected entries is still listable (names and sizes
+/// live in the central directory), and extraction refuses it up front with a
+/// clear message instead of failing half way through.
+#[test]
+fn encrypted_zip_entries_list_but_do_not_extract() {
+    let root = unique_temp_dir("encrypted-zip");
+    let zip_path = root.join("locked.zip");
+    write_test_zip(
+        &zip_path,
+        &[("secret.txt", b"hidden"), ("docs/readme.txt", b"hi")],
+    );
+    mark_zip_entries_encrypted(&zip_path);
+
+    let info = list_archive(zip_path.to_string_lossy().to_string()).expect("list encrypted zip");
+    let mut names: Vec<&str> = info
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["docs/readme.txt", "secret.txt"]);
+
+    let dest = root.join("out");
+    fs::create_dir_all(&dest).unwrap();
+    let error = extract_zip(zip_path.to_str().unwrap(), &dest).expect_err("no password available");
+    assert!(
+        error.to_ascii_lowercase().contains("password")
+            || error.to_ascii_lowercase().contains("encrypted"),
+        "{error}"
+    );
+    assert!(
+        fs::read_dir(&dest).unwrap().next().is_none(),
+        "nothing may be written before the refusal"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Creating a zip and extracting it again must keep each file's modification
+/// time; stamping everything "now" made archive edits rewrite history.
+#[test]
+fn zip_round_trip_preserves_file_modification_times() {
+    use chrono::Datelike;
+    let root = unique_temp_dir("zip-mtime");
+    let source = root.join("old.txt");
+    fs::write(&source, b"vintage").unwrap();
+    let stamp = filetime::FileTime::from_unix_time(1_276_603_200, 0); // 2010-06-15 12:00 UTC
+    filetime::set_file_mtime(&source, stamp).unwrap();
+
+    let zip_path = root.join("vintage.zip");
+    create_archive(
+        vec![source.to_string_lossy().to_string()],
+        zip_path.to_string_lossy().to_string(),
+        "zip".to_string(),
+    )
+    .expect("create zip");
+    let out = root.join("out");
+    fs::create_dir_all(&out).unwrap();
+    extract_zip(zip_path.to_str().unwrap(), &out).expect("extract zip");
+
+    let extracted = fs::metadata(out.join("old.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let year = chrono::DateTime::<chrono::Local>::from(extracted).year();
+    assert_eq!(year, 2010, "extracted file lost its timestamp");
     let _ = fs::remove_dir_all(root);
 }
 

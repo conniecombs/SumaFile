@@ -29,10 +29,7 @@ pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePrev
             let mut buffer = vec![0u8; detect_size];
             if let Ok(bytes_read) = file.read(&mut buffer) {
                 buffer.truncate(bytes_read);
-                if buffer
-                    .iter()
-                    .all(|&b| b != 0 && (b >= 32 || b == 9 || b == 10 || b == 13))
-                {
+                if looks_like_text(&buffer) {
                     ("text", "text/plain".to_string())
                 } else {
                     ("binary", "application/octet-stream".to_string())
@@ -49,25 +46,19 @@ pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePrev
 
     let (content, encoding) = match file_type {
         "text" => {
-            if size > max_preview_size {
-                let mut file =
-                    fs::File::open(&path_buf).map_err(|e| format!("Failed to open file: {e}"))?;
-                let mut buffer = vec![0u8; max_preview_size as usize];
-                use std::io::Read;
-                let bytes_read = file
-                    .read(&mut buffer)
-                    .map_err(|e| format!("Failed to read file: {e}"))?;
-                buffer.truncate(bytes_read);
-                let text = String::from_utf8_lossy(&buffer).to_string();
-                (
-                    Some(text + "\n\n[File truncated...]"),
-                    Some("utf-8".to_string()),
-                )
-            } else {
-                let text = fs::read_to_string(&path_buf)
-                    .map_err(|e| format!("Failed to read file: {e}"))?;
-                (Some(text), Some("utf-8".to_string()))
+            use std::io::Read;
+            let truncated = size > max_preview_size;
+            let file =
+                fs::File::open(&path_buf).map_err(|e| format!("Failed to open file: {e}"))?;
+            let mut buffer = Vec::with_capacity(size.min(max_preview_size) as usize);
+            file.take(max_preview_size)
+                .read_to_end(&mut buffer)
+                .map_err(|e| format!("Failed to read file: {e}"))?;
+            let (mut text, encoding) = decode_text_bytes(&buffer);
+            if truncated {
+                text.push_str("\n\n[File truncated...]");
             }
+            (Some(text), Some(encoding.to_string()))
         }
         "image" => {
             // Let the frontend load the image directly by file path.
@@ -137,12 +128,9 @@ pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<Vec<u8>, St
         // Store in cache (fire-and-forget; errors are silently ignored).
         crate::thumbnail_cache::put(&path, file_modified, file_size, thumb_size, &jpeg_bytes);
 
-        // Run eviction in the background — this is cheap when the cache is under
-        // the size limit and only does real work when it exceeds the configured max.
-        std::thread::Builder::new()
-            .name("thumb-cache-evict".into())
-            .spawn(crate::thumbnail_cache::evict_default)
-            .ok();
+        // Eviction walks the whole cache, so it is throttled to one pass a
+        // minute instead of one thread per thumbnail.
+        crate::thumbnail_cache::schedule_eviction();
     }
 
     Ok(jpeg_bytes)
@@ -179,6 +167,45 @@ pub fn generate_thumbnails(paths: Vec<String>, size: Option<u32>) -> Vec<Thumbna
         results.extend(batch);
     }
     results
+}
+
+/// Text detection for files without a known extension. A UTF-16 BOM counts as
+/// text even though the encoding is full of NUL bytes.
+fn looks_like_text(buffer: &[u8]) -> bool {
+    if buffer.starts_with(&[0xFF, 0xFE]) || buffer.starts_with(&[0xFE, 0xFF]) {
+        return true;
+    }
+    buffer
+        .iter()
+        .all(|&b| b != 0 && (b >= 32 || b == 9 || b == 10 || b == 13))
+}
+
+/// Decode a text preview: honour UTF-8 and UTF-16 byte-order marks, and fall
+/// back to lossy UTF-8 instead of refusing the whole preview for one stray
+/// Latin-1 byte.
+fn decode_text_bytes(bytes: &[u8]) -> (String, &'static str) {
+    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        return (String::from_utf8_lossy(rest).into_owned(), "utf-8");
+    }
+    if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        let units: Vec<u16> = rest
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
+            .collect();
+        return (String::from_utf16_lossy(&units), "utf-16le");
+    }
+    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        let units: Vec<u16> = rest
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_be_bytes(*pair))
+            .collect();
+        return (String::from_utf16_lossy(&units), "utf-16be");
+    }
+    (String::from_utf8_lossy(bytes).into_owned(), "utf-8")
 }
 
 fn classify_known_extension(extension: &str) -> Option<(&'static str, String)> {
@@ -432,6 +459,33 @@ mod tests {
             assert_eq!(preview.content, None);
             assert_eq!(preview.encoding, None);
         }
+    }
+
+    /// `.txt` files saved by Notepad in UTF-16 (BOM) are text, not an error.
+    #[test]
+    fn read_file_preview_decodes_utf16_text_with_bom() {
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in "héllo wörld".encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        let path = temp_preview_file("notes-utf16.txt", &bytes);
+        let preview =
+            read_file_preview(path.to_string_lossy().to_string(), Some(4096)).expect("preview");
+        fs::remove_file(path).ok();
+        assert_eq!(preview.content.as_deref(), Some("héllo wörld"));
+        assert_eq!(preview.encoding.as_deref(), Some("utf-16le"));
+    }
+
+    /// A Latin-1 byte must not turn the whole preview into an error.
+    #[test]
+    fn read_file_preview_is_lossy_for_invalid_utf8() {
+        let path = temp_preview_file("latin1.ini", &[b'c', b'a', b'f', 0xE9, b'=', b'1', 10]);
+        let preview =
+            read_file_preview(path.to_string_lossy().to_string(), Some(4096)).expect("preview");
+        fs::remove_file(path).ok();
+        let content = preview.content.expect("text content");
+        assert!(content.starts_with("caf"), "{content}");
+        assert!(content.contains("=1"), "{content}");
     }
 
     fn temp_preview_file(name: &str, content: &[u8]) -> PathBuf {

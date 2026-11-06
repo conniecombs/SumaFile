@@ -29,16 +29,8 @@ pub(super) fn resolve_seven_zip_binary() -> Option<String> {
         }
     }
 
-    for command in ["7z", "7za"] {
-        if std::process::Command::new(command)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .is_ok()
-        {
-            return Some(command.to_string());
-        }
+    if let Some(command) = seven_zip_on_path() {
+        return Some(command);
     }
 
     for path in [
@@ -51,6 +43,25 @@ pub(super) fn resolve_seven_zip_binary() -> Option<String> {
     }
 
     None
+}
+
+/// Probing PATH means launching `7z`; do it once per process instead of on
+/// every archive operation and capability query.
+fn seven_zip_on_path() -> Option<String> {
+    static PROBE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PROBE
+        .get_or_init(|| {
+            ["7z", "7za"].into_iter().find_map(|command| {
+                std::process::Command::new(command)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .output()
+                    .ok()
+                    .map(|_| command.to_string())
+            })
+        })
+        .clone()
 }
 
 pub(super) fn require_seven_zip_binary() -> Result<String, String> {
@@ -80,6 +91,18 @@ pub(super) fn bundled_seven_zip_candidates(app_dir: &Path) -> Vec<PathBuf> {
     .into()
 }
 
+/// Every 7-Zip invocation starts here so tests can count process launches:
+/// extraction used to spawn one process per archive entry.
+pub(super) fn seven_zip_command(binary: &str) -> std::process::Command {
+    #[cfg(test)]
+    SPAWN_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    std::process::Command::new(binary)
+}
+
+#[cfg(test)]
+pub(super) static SPAWN_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 pub(super) fn list_seven_zip_entries(path: &str) -> Result<Vec<SevenZipEntry>, String> {
     let binary = require_seven_zip_binary()?;
     list_seven_zip_entries_with_binary(&binary, path)
@@ -89,7 +112,7 @@ pub(super) fn list_seven_zip_entries_with_binary(
     binary: &str,
     path: &str,
 ) -> Result<Vec<SevenZipEntry>, String> {
-    let output = std::process::Command::new(binary)
+    let output = seven_zip_command(binary)
         .arg("l")
         .arg("-slt")
         .arg("-bd")

@@ -335,7 +335,11 @@ pub fn scan_disk_cleanup(
                     size,
                 });
             }
-            size_map.entry(size).or_default().push(path);
+            // Empty files are trivially identical; grouping every placeholder
+            // and lock file as duplicates is noise and hashes them all.
+            if size > 0 {
+                size_map.entry(size).or_default().push(path);
+            }
             Ok(())
         },
     )?;
@@ -436,7 +440,7 @@ impl ExcludeMatcher {
         }
 
         let name = name.to_ascii_lowercase();
-        let path = normalize_exclude_pattern(&path.to_string_lossy());
+        let path = normalize_exclude_path(&path.to_string_lossy());
         self.patterns
             .iter()
             .any(|pattern| exclude_pattern_matches(pattern, &name, &path))
@@ -444,13 +448,16 @@ impl ExcludeMatcher {
 }
 
 fn normalize_exclude_pattern(pattern: &str) -> String {
-    pattern
-        .trim()
-        .replace('\\', "/")
-        .to_ascii_lowercase()
+    normalize_exclude_path(pattern.trim())
         .chars()
         .take(256)
         .collect()
+}
+
+/// Paths under test are never truncated: cutting them at 256 characters made
+/// slash-containing patterns stop matching below deep directories.
+fn normalize_exclude_path(path: &str) -> String {
+    path.replace('\\', "/").to_ascii_lowercase()
 }
 
 fn exclude_pattern_matches(pattern: &str, name: &str, path: &str) -> bool {
@@ -793,6 +800,45 @@ mod tests {
             .any(|(current, total, _)| *current == 1 && *total == 0));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Empty files are all byte-identical; reporting every placeholder and
+    /// lock file as one giant duplicate group is noise, not a finding.
+    #[test]
+    fn scan_disk_cleanup_ignores_zero_byte_files() {
+        let root = unique_temp_path("cleanup-zero");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("a.lock"), b"").unwrap();
+        fs::write(root.join("b.lock"), b"").unwrap();
+        fs::write(root.join("same1.txt"), b"same").unwrap();
+        fs::write(root.join("same2.txt"), b"same").unwrap();
+        let cancel = AtomicBool::new(false);
+
+        let result =
+            scan_disk_cleanup(&root.to_string_lossy(), Some(1), &cancel, |_, _, _| {}).unwrap();
+
+        assert_eq!(result.duplicates.len(), 1, "{:?}", result.duplicates);
+        assert!(result.duplicates[0]
+            .files
+            .iter()
+            .all(|file| file.ends_with("same1.txt") || file.ends_with("same2.txt")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Paths deeper than 256 characters used to be truncated before matching,
+    /// so a `build/cache` exclusion silently stopped applying down there.
+    #[test]
+    fn exclusions_match_arbitrarily_deep_paths() {
+        let matcher = super::ExcludeMatcher::new(vec!["build/cache".to_string()]);
+        let mut deep = PathBuf::from("C:/projects");
+        for level in 0..30 {
+            deep.push(format!("level-{level:02}-with-a-long-name"));
+        }
+        deep.push("build");
+        deep.push("cache");
+        deep.push("object.o");
+        assert!(deep.to_string_lossy().len() > 256);
+        assert!(matcher.is_excluded(&deep, "object.o"));
     }
 
     #[test]

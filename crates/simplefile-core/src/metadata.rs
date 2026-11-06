@@ -582,7 +582,7 @@ fn scan_mp4_atoms<R: Read + Seek>(
                 reader
                     .seek(SeekFrom::Current(skip as i64))
                     .map_err(|e| format!("Failed to skip ftyp: {e}"))?;
-                bytes_read_limit = bytes_read_limit.saturating_sub(content_size);
+                bytes_read_limit = bytes_read_limit.saturating_sub(4);
             }
             b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" => {
                 scan_mp4_atoms(
@@ -610,7 +610,7 @@ fn scan_mp4_atoms<R: Read + Seek>(
                         .seek(SeekFrom::Current((content_size - buf.len() as u64) as i64))
                         .ok();
                 }
-                bytes_read_limit = bytes_read_limit.saturating_sub(content_size);
+                bytes_read_limit = bytes_read_limit.saturating_sub(buf.len() as u64);
             }
             b"tkhd" => {
                 let mut buf = vec![0u8; content_size.min(100) as usize];
@@ -627,14 +627,15 @@ fn scan_mp4_atoms<R: Read + Seek>(
                         .seek(SeekFrom::Current((content_size - buf.len() as u64) as i64))
                         .ok();
                 }
-                bytes_read_limit = bytes_read_limit.saturating_sub(content_size);
+                bytes_read_limit = bytes_read_limit.saturating_sub(buf.len() as u64);
             }
             _ => {
+                // Seeking past an atom reads nothing, so it costs nothing of the
+                // probe budget. Charging its size made any recording with a
+                // large `mdat` ahead of `moov` report no metadata at all.
                 reader
                     .seek(SeekFrom::Start(content_end))
                     .map_err(|e| format!("Failed to skip atom: {e}"))?;
-                bytes_read_limit =
-                    bytes_read_limit.saturating_sub(content_size.min(bytes_read_limit));
             }
         }
 
@@ -857,9 +858,18 @@ fn extract_archive_metadata(path: &Path, extension: &str) -> Result<FileMetadata
         }
         "tar" => {
             let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
-            extract_tar_archive_metadata(file, archive_format_label(extension))
+            extract_seekable_tar_archive_metadata(file, archive_format_label(extension))
         }
         "tgz" => {
+            let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
+            let decoder = flate2::read::GzDecoder::new(file);
+            extract_tar_archive_metadata(decoder, "Compressed tar archive")
+        }
+        "gz" if path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with(".tar.gz") =>
+        {
             let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
             let decoder = flate2::read::GzDecoder::new(file);
             extract_tar_archive_metadata(decoder, "Compressed tar archive")
@@ -882,7 +892,7 @@ fn extract_zip_archive_metadata(path: &Path, format_label: &str) -> Result<FileM
     let mut compressed = 0u64;
     let mut names = Vec::new();
     for index in 0..archive.len().min(MAX_ARCHIVE_ENTRIES) {
-        if let Ok(file) = archive.by_index(index) {
+        if let Ok(file) = archive.by_index_raw(index) {
             if file.is_dir() {
                 directories += 1;
             } else {
@@ -917,21 +927,40 @@ fn extract_zip_archive_metadata(path: &Path, format_label: &str) -> Result<FileM
     })
 }
 
+/// Plain tar files are seekable, so entry contents are skipped rather than
+/// read; compressed tars (`extract_tar_archive_metadata`) must stream.
+fn extract_seekable_tar_archive_metadata<R: Read + Seek>(
+    reader: R,
+    format_label: &str,
+) -> Result<FileMetadata, String> {
+    let mut archive = tar::Archive::new(reader);
+    let entries = archive
+        .entries_with_seek()
+        .map_err(|e| format!("Failed to read archive: {e}"))?;
+    summarize_tar_entries(entries, format_label)
+}
+
 fn extract_tar_archive_metadata<R: Read>(
     reader: R,
     format_label: &str,
 ) -> Result<FileMetadata, String> {
-    const MAX_ARCHIVE_ENTRIES: usize = 2_000;
     let mut archive = tar::Archive::new(reader);
+    let entries = archive
+        .entries()
+        .map_err(|e| format!("Failed to read archive: {e}"))?;
+    summarize_tar_entries(entries, format_label)
+}
+
+fn summarize_tar_entries<R: Read>(
+    entries: tar::Entries<'_, R>,
+    format_label: &str,
+) -> Result<FileMetadata, String> {
+    const MAX_ARCHIVE_ENTRIES: usize = 2_000;
     let mut files = 0usize;
     let mut directories = 0usize;
     let mut size = 0u64;
     let mut names = Vec::new();
-    for entry in archive
-        .entries()
-        .map_err(|e| format!("Failed to read archive: {e}"))?
-        .take(MAX_ARCHIVE_ENTRIES)
-    {
+    for entry in entries.take(MAX_ARCHIVE_ENTRIES) {
         let entry = entry.map_err(|e| format!("Failed to read archive entry: {e}"))?;
         if entry.header().entry_type().is_dir() {
             directories += 1;
@@ -1567,7 +1596,11 @@ fn header_value(lines: &[String], name: &str) -> Option<String> {
     lines
         .iter()
         .find(|line| {
-            line.len() >= prefix.len() && line[..prefix.len()].eq_ignore_ascii_case(&prefix)
+            // Compare on bytes: a byte-offset slice panics when the header
+            // line holds a multibyte character at that position.
+            line.as_bytes()
+                .get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
         })
         .map(|line| decode_basic_xml_entities(line[prefix.len()..].trim()))
         .filter(|value| !value.is_empty())
@@ -2094,6 +2127,30 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// Camera and phone recordings put a large `mdat` before `moov`. Skipping
+    /// over it must not consume the probe budget: the metadata is still there.
+    #[test]
+    fn video_metadata_survives_a_large_mdat_before_moov() {
+        let dir = temp_dir("mp4-mdat-first");
+        let path = dir.join("recording.mp4");
+        let mut ftyp_payload = Vec::new();
+        ftyp_payload.extend_from_slice(b"isom");
+        ftyp_payload.extend_from_slice(&0u32.to_be_bytes());
+        ftyp_payload.extend_from_slice(b"isom");
+        let mut mvhd = vec![0u8; 100];
+        mvhd[12..16].copy_from_slice(&1_000u32.to_be_bytes());
+        mvhd[16..20].copy_from_slice(&2_000u32.to_be_bytes());
+        let mut bytes = atom(b"ftyp", ftyp_payload);
+        bytes.extend(atom(b"mdat", vec![0u8; 13 * 1024 * 1024]));
+        bytes.extend(atom(b"moov", atom(b"mvhd", mvhd)));
+        fs::write(&path, bytes).unwrap();
+
+        let meta = get_file_metadata(path.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(field_value(&meta, "Duration"), Some("0:02"), "{meta:?}");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn video_metadata_reads_mp4_duration_dimensions_and_brand() {
         let dir = temp_dir("mp4");
@@ -2285,5 +2342,23 @@ mod tests {
         parse_mvhd(&buf, &mut timescale, &mut duration);
         assert_eq!(timescale, 1000);
         assert_eq!(duration, 2500);
+    }
+
+    #[test]
+    fn header_value_tolerates_multibyte_prefix_boundary() {
+        // "a€" is 4 bytes; byte offset 3 (the length of "To:") is inside '€'.
+        let lines = vec!["a€: x".to_string(), "To: Ada".to_string()];
+        assert_eq!(header_value(&lines, "To"), Some("Ada".to_string()));
+        assert_eq!(header_value(&lines, "From"), None);
+    }
+
+    #[test]
+    fn email_metadata_survives_multibyte_header_lines() {
+        let dir = temp_dir("eml-multibyte");
+        let email = dir.join("odd.eml");
+        fs::write(&email, "a€: x\nSubject: ok\n\nBody").unwrap();
+        let meta = get_file_metadata(email.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(field_value(&meta, "Subject"), Some("ok"));
+        let _ = fs::remove_dir_all(dir);
     }
 }

@@ -35,10 +35,7 @@ pub fn connect_typed(
     profile: &RemoteProfile,
     secret: Option<&RemoteSecret>,
 ) -> Result<Box<dyn RemoteProvider>, Failure> {
-    let runtime = Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| Failure::new(format!("SFTP runtime setup failed: {error}"), false))?;
+    let runtime = sftp_runtime()?;
     let profile = profile.clone();
     let secret = secret.cloned();
     let (session, sftp) = block_on_runtime(&runtime, connect_async(profile, secret))?;
@@ -124,9 +121,14 @@ impl RemoteProvider for SftpRemoteProvider {
         let mut deleted = Vec::new();
         for path in paths {
             let normalized = normalize_remote_path(path);
-            let metadata = block_on_runtime(&self.runtime, self.sftp.metadata(normalized.clone()))
-                .map_err(|error| format!("SFTP stat failed for {normalized}: {error}"))?;
-            if metadata.is_dir() {
+            // lstat, not stat: a symlink to a directory is removed as the link
+            // it is; following it would try `rmdir` on the link and fail.
+            let metadata = block_on_runtime(
+                &self.runtime,
+                self.sftp.symlink_metadata(normalized.clone()),
+            )
+            .map_err(|error| format!("SFTP stat failed for {normalized}: {error}"))?;
+            if metadata.is_dir() && !metadata.is_symlink() {
                 block_on_runtime(&self.runtime, self.sftp.remove_dir(normalized.clone())).map_err(
                     |error| format!("SFTP remove directory failed for {normalized}: {error}"),
                 )?;
@@ -520,6 +522,20 @@ fn classify_client_error(host: &str, error: SftpClientError) -> Failure {
     }
 }
 
+/// The provider's private runtime. It owns a worker thread of its own, so the
+/// russh session task (keepalives, inactivity timer, server-side liveness
+/// probes) keeps running between RPCs. A `current_thread` runtime only made
+/// progress inside `block_on`, which let the 15 s inactivity timer expire
+/// while the user was idle and tear the session down on the next click.
+fn sftp_runtime() -> Result<Runtime, Failure> {
+    Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("sumafile-sftp")
+        .enable_all()
+        .build()
+        .map_err(|error| Failure::new(format!("SFTP runtime setup failed: {error}"), false))
+}
+
 fn block_on_runtime<F>(runtime: &Runtime, future: F) -> F::Output
 where
     F: Future,
@@ -531,8 +547,15 @@ where
     }
 }
 
+/// `SHA256:` prefix and padding are cosmetic; the base64 digest itself is
+/// case-sensitive and must be compared exactly.
 fn normalize_fingerprint(value: &str) -> String {
-    value.trim().replace('=', "").to_ascii_lowercase()
+    let value = value.trim();
+    let (prefix, digest) = match value.split_once(':') {
+        Some((prefix, digest)) => (prefix.to_ascii_lowercase(), digest),
+        None => ("sha256".to_string(), value),
+    };
+    format!("{prefix}:{}", digest.trim().replace('=', ""))
 }
 
 fn mode_to_permissions(mode: u32) -> String {
@@ -663,5 +686,53 @@ mod tests {
         assert!(entry.is_dir);
         assert!(entry.is_hidden);
         assert_eq!(entry.extension, "");
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::sftp_runtime;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// russh drives keepalives and the inactivity timer as a spawned task. It
+    /// must keep running between RPCs, i.e. while nothing calls `block_on`,
+    /// or an idle session is torn down the moment the user clicks again.
+    #[test]
+    fn spawned_tasks_progress_while_no_call_is_blocking() {
+        let runtime = sftp_runtime().expect("runtime");
+        let ticked = Arc::new(AtomicBool::new(false));
+        let flag = ticked.clone();
+        runtime.spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            flag.store(true, Ordering::SeqCst);
+        });
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(
+            ticked.load(Ordering::SeqCst),
+            "background task did not run without block_on"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::normalize_fingerprint;
+
+    #[test]
+    fn digest_case_is_significant_but_prefix_and_padding_are_not() {
+        assert_eq!(
+            normalize_fingerprint(" sha256:AbC= "),
+            normalize_fingerprint("SHA256:AbC")
+        );
+        assert_ne!(
+            normalize_fingerprint("SHA256:AbC"),
+            normalize_fingerprint("SHA256:abc")
+        );
+        assert_eq!(
+            normalize_fingerprint("AbC"),
+            normalize_fingerprint("sha256:AbC")
+        );
     }
 }

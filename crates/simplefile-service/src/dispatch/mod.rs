@@ -23,6 +23,8 @@ pub(crate) use params::ProgressCopyMoveParams;
 
 pub struct SessionState {
     pub handshake_done: bool,
+    /// Failed authentication attempts; the session closes after a few.
+    pub handshake_failures: u8,
     pub binary_hot_frames: Arc<AtomicBool>,
     pub expected_token: Option<String>,
     pub shutdown: bool,
@@ -40,6 +42,7 @@ impl Default for SessionState {
     fn default() -> Self {
         Self {
             handshake_done: false,
+            handshake_failures: 0,
             binary_hot_frames: Arc::new(AtomicBool::new(false)),
             expected_token: None,
             shutdown: false,
@@ -108,9 +111,61 @@ fn default_remote_secret_store() -> Arc<dyn RemoteSecretStore> {
     }
 }
 
+/// Which scheduler lane a blocking handler runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BlockingLane {
+    /// Short blocking calls: metadata, previews, git, remote listings.
+    General,
+    /// Whole-file work that can run for minutes: copies, archives, remote
+    /// file transfers. Uses the transfer lane so it never starves listings.
+    Transfer,
+}
+
+/// A handler body that must not run on the session loop. The session spawns
+/// it on the `BlockingScheduler` and replies when it finishes, so frame
+/// reading (and cancellation) continues while it works.
+pub(crate) struct BlockingJob {
+    lane: BlockingLane,
+    run: Box<dyn FnOnce() -> Result<Value, String> + Send + 'static>,
+}
+
+impl BlockingJob {
+    pub(crate) fn new(
+        lane: BlockingLane,
+        run: impl FnOnce() -> Result<Value, String> + Send + 'static,
+    ) -> Self {
+        Self {
+            lane,
+            run: Box::new(run),
+        }
+    }
+
+    pub(crate) fn lane(&self) -> BlockingLane {
+        self.lane
+    }
+
+    pub(crate) fn run(self) -> Result<Value, String> {
+        (self.run)()
+    }
+}
+
+impl std::fmt::Debug for BlockingJob {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BlockingJob")
+            .field("lane", &self.lane)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum Dispatch {
     Reply(JsonRpcResponse),
+    /// Reply with the job's result once it has run off the session loop.
+    Blocking {
+        id: Option<Value>,
+        job: BlockingJob,
+    },
     RemoteTransfer {
         id: Option<Value>,
         provider: crate::remote::session::SharedRemoteProvider,

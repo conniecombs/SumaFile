@@ -1,6 +1,7 @@
 use rusqlite::{Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 const APP_IDENTIFIER: &str = "com.simplefile.desktop";
 const PRODUCT_NAME: &str = "SumaFile";
@@ -145,12 +146,50 @@ fn validate_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn open_metadata_db() -> Result<Connection, String> {
+/// A locked handle to the shared metadata connection for one database path.
+/// Connections are opened once per path and reused: opening SQLite and
+/// re-running schema creation on every settings read was a measurable cost
+/// on hot paths such as thumbnail generation and transfer tuning.
+pub type MetadataDb = MutexGuard<'static, Connection>;
+
+static CONNECTIONS: OnceLock<Mutex<HashMap<PathBuf, &'static Mutex<Connection>>>> = OnceLock::new();
+
+pub fn open_metadata_db() -> Result<MetadataDb, String> {
     let path = metadata_db_path()?;
     open_metadata_db_at(&path)
 }
 
-fn open_metadata_db_at(path: &Path) -> Result<Connection, String> {
+fn open_metadata_db_at(path: &Path) -> Result<MetadataDb, String> {
+    let registry = CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut registry = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let shared = match registry.get(path) {
+        Some(shared) => *shared,
+        None => {
+            let connection = open_fresh_connection(path)?;
+            let shared: &'static Mutex<Connection> = Box::leak(Box::new(Mutex::new(connection)));
+            registry.insert(path.to_path_buf(), shared);
+            shared
+        }
+    };
+    drop(registry);
+    Ok(shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()))
+}
+
+#[cfg(test)]
+pub(crate) fn connection_is_cached(path: &Path) -> bool {
+    CONNECTIONS.get().is_some_and(|registry| {
+        registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(path)
+    })
+}
+
+fn open_fresh_connection(path: &Path) -> Result<Connection, String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -163,7 +202,19 @@ fn open_metadata_db_at(path: &Path) -> Result<Connection, String> {
     Ok(connection)
 }
 
+fn table_exists(connection: &Connection, name: &str) -> rusqlite::Result<bool> {
+    let count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [name],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
 fn init_schema(connection: &Connection) -> rusqlite::Result<()> {
+    // Seed the default tags only when the table is first created. Seeding on
+    // "table is empty" resurrected them every time a user deleted them all.
+    let seed_tags = !table_exists(connection, "tags")?;
     connection.execute(
         "CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -189,17 +240,14 @@ fn init_schema(connection: &Connection) -> rusqlite::Result<()> {
         [],
     )?;
 
-    seed_default_tags(connection)?;
+    if seed_tags {
+        seed_default_tags(connection)?;
+    }
 
     Ok(())
 }
 
 fn seed_default_tags(connection: &Connection) -> rusqlite::Result<()> {
-    let count: i64 = connection.query_row("SELECT COUNT(*) FROM tags", [], |row| row.get(0))?;
-    if count > 0 {
-        return Ok(());
-    }
-
     for (name, color) in [
         ("Important", "#ff3b30"),
         ("Work", "#ff9500"),
@@ -348,6 +396,55 @@ mod tests {
     fn setting_keys_must_not_be_empty() {
         assert!(validate_key("workspace").is_ok());
         assert!(validate_key("  ").is_err());
+    }
+
+    #[test]
+    fn default_tags_are_seeded_once_not_resurrected() {
+        let path = temp_db("seed-once");
+        {
+            let connection = open_metadata_db_at(&path).expect("open");
+            let seeded: i64 = connection
+                .query_row("SELECT COUNT(*) FROM tags", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(seeded, 5);
+            connection.execute("DELETE FROM tags", []).unwrap();
+        }
+        let connection = open_metadata_db_at(&path).expect("reopen");
+        let after: i64 = connection
+            .query_row("SELECT COUNT(*) FROM tags", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(after, 0, "deleting every tag must stick across reopens");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn repeated_opens_reuse_one_connection_per_path() {
+        let path = temp_db("shared-connection");
+        assert!(!connection_is_cached(&path));
+        {
+            let _first = open_metadata_db_at(&path).expect("open");
+        }
+        assert!(connection_is_cached(&path));
+        let second = open_metadata_db_at(&path).expect("reopen");
+        // The reopened handle is the same connection: a temp table created on
+        // the first handle is still visible on the second.
+        second
+            .execute("CREATE TEMP TABLE IF NOT EXISTS probe (x INTEGER)", [])
+            .unwrap();
+        drop(second);
+        let third = open_metadata_db_at(&path).expect("third open");
+        let probe: i64 = third
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_temp_master WHERE name = 'probe'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            probe, 1,
+            "temp tables live on the connection, so a fresh connection would lose it"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[cfg(windows)]

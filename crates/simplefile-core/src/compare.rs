@@ -164,7 +164,9 @@ fn build_diff_ops(left: &[String], right: &[String]) -> Vec<DiffOp> {
     let left_len = left.len();
     let right_len = right.len();
     let width = right_len + 1;
-    let mut table = vec![0usize; (left_len + 1) * width];
+    // LCS lengths never exceed MAX_COMPARE_LINES, so u16 cells cut the table
+    // from 32 MB to 8 MB for two 2000-line files.
+    let mut table = vec![0u16; (left_len + 1) * width];
 
     for i in (0..left_len).rev() {
         for j in (0..right_len).rev() {
@@ -396,16 +398,20 @@ fn read_full_chunk(file: &mut fs::File, buffer: &mut [u8]) -> std::io::Result<us
 
 fn record_binary_difference(scan: &mut BinaryScan, offset: u64) {
     scan.first_difference.get_or_insert(offset);
-    let row_offset = offset - (offset % BINARY_ROW_BYTES as u64);
-    if scan.row_offsets.last() == Some(&row_offset) || scan.row_offsets.contains(&row_offset) {
+    // Called once per differing byte, so everything here must be O(1): offsets
+    // arrive in increasing order, and once the row cap is hit nothing more is
+    // recorded.
+    if scan.rows_truncated {
         return;
     }
-
+    let row_offset = offset - (offset % BINARY_ROW_BYTES as u64);
+    if scan.row_offsets.last() == Some(&row_offset) {
+        return;
+    }
     if scan.row_offsets.len() >= MAX_BINARY_DIFF_ROWS {
         scan.rows_truncated = true;
         return;
     }
-
     scan.row_offsets.push(row_offset);
 }
 
@@ -630,5 +636,33 @@ mod tests {
 
         let _ = fs::remove_file(left);
         let _ = fs::remove_file(right);
+    }
+}
+
+#[cfg(test)]
+mod binary_scan_tests {
+    use super::{record_binary_difference, BinaryScan, BINARY_ROW_BYTES, MAX_BINARY_DIFF_ROWS};
+
+    /// After the row cap is reached, recording another differing byte must be
+    /// O(1): the scan visits every differing byte of multi-gigabyte files.
+    #[test]
+    fn recording_past_the_row_cap_is_constant_time() {
+        let mut scan = BinaryScan::default();
+        for row in 0..(MAX_BINARY_DIFF_ROWS as u64 + 1) {
+            record_binary_difference(&mut scan, row * BINARY_ROW_BYTES as u64);
+        }
+        assert!(scan.rows_truncated);
+        assert_eq!(scan.row_offsets.len(), MAX_BINARY_DIFF_ROWS);
+
+        let started = std::time::Instant::now();
+        let base = (MAX_BINARY_DIFF_ROWS as u64 + 2) * BINARY_ROW_BYTES as u64;
+        for offset in 0..2_000_000u64 {
+            record_binary_difference(&mut scan, base + offset);
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(400),
+            "2M records took {:?}",
+            started.elapsed()
+        );
     }
 }

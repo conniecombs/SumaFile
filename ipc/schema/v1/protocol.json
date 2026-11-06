@@ -51,6 +51,7 @@
       "messagePrefix": "HOST_OWNED:",
       "methods": ["select_directory"]
     },
+    "parseError": { "code": -32700 },
     "invalidRequest": { "code": -32600 },
     "methodNotFound": { "code": -32601 },
     "invalidParams": { "code": -32602 },

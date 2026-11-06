@@ -276,7 +276,7 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task SetTagsForPathAsync(string path, long[] tagIds, CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task<Dictionary<string, Tag>> GetAllFileTagsAsync(CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task<Dictionary<string, Tag[]>> GetAllFileTagsAsync(CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<string[]> GetFilesWithTagAsync(long tagId, CancellationToken ct = default) => throw NotConfigured();
 

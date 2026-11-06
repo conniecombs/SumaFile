@@ -1,9 +1,12 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Remote paths are POSIX: only `/` separates components. A backslash is an
+/// ordinary character in a file name, and converting it used to make
+/// delete/rename/download act on a different entry.
 pub(crate) fn normalize_remote_path(path: &str) -> String {
-    let replaced = path.trim().replace('\\', "/");
-    let parts: Vec<&str> = replaced
+    let parts: Vec<&str> = path
+        .trim()
         .split('/')
         .filter(|part| !part.is_empty() && *part != ".")
         .collect();
@@ -16,7 +19,14 @@ pub(crate) fn normalize_remote_path(path: &str) -> String {
 }
 
 pub(crate) fn join_remote_path(parent: &str, child: &str) -> String {
-    let child = child.trim().trim_matches('/').trim_matches('\\');
+    // A child name cannot climb out of its parent: `..` and `.` components
+    // and empty segments are dropped, so rename/create stay in the folder.
+    let child = child
+        .trim()
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .collect::<Vec<_>>()
+        .join("/");
     if child.is_empty() {
         return normalize_remote_path(parent);
     }
@@ -95,6 +105,34 @@ mod tests {
             "/var/www/release"
         );
         assert_eq!(join_remote_path("", "release"), "/release");
+    }
+
+    /// POSIX file names may contain backslashes; treating them as separators
+    /// made delete/rename/download act on a different file.
+    #[test]
+    fn backslashes_are_ordinary_characters_in_remote_names() {
+        assert_eq!(
+            normalize_remote_path(r"/dir/report\final.txt"),
+            r"/dir/report\final.txt"
+        );
+        assert_eq!(
+            remote_file_name(r"/dir/report\final.txt"),
+            r"report\final.txt"
+        );
+        assert_eq!(
+            join_remote_path("/dir", r"report\final.txt"),
+            r"/dir/report\final.txt"
+        );
+    }
+
+    #[test]
+    fn child_names_cannot_escape_their_parent() {
+        assert_eq!(
+            join_remote_path("/var/www", "../etc/passwd"),
+            "/var/www/etc/passwd"
+        );
+        assert_eq!(join_remote_path("/var/www", ".."), "/var/www");
+        assert_eq!(join_remote_path("/var/www", "./a//b"), "/var/www/a/b");
     }
 
     #[test]

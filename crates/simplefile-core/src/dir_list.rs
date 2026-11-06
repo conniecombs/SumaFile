@@ -258,10 +258,7 @@ pub fn list_directory_capturing_raw(
         let listing = list_directory(path, on_chunk)?;
         let cacheable = if !listing.is_network
             && !crate::recycle_bin::is_recycle_bin_path(&listing.path)
-            && crate::archive::list_archive_directory(&listing.path)
-                .ok()
-                .flatten()
-                .is_none()
+            && !crate::archive::is_archive_path(&listing.path)
         {
             Some(listing.clone())
         } else {
@@ -270,9 +267,9 @@ pub fn list_directory_capturing_raw(
         return Ok((listing, cacheable));
     };
 
-    if crate::recycle_bin::is_recycle_bin_path(&path)
-        || crate::archive::list_archive_directory(&path)?.is_some()
-    {
+    // Routing only needs to know whether this is an archive path; parsing the
+    // archive here meant every archive listing was parsed twice.
+    if crate::recycle_bin::is_recycle_bin_path(&path) || crate::archive::is_archive_path(&path) {
         let listing = list_directory_with_options(path, options, on_chunk)?;
         return Ok((listing, None));
     }
@@ -405,14 +402,26 @@ fn enumerate_directory(
     {
         match enumerate_directory_windows(path, on_entry) {
             Ok(()) => return Ok(()),
-            Err(err) => {
-                // Fall back to portable read_dir if the find API fails.
+            Err(WindowsEnumError::Open(err)) => {
+                // Only fall back to portable read_dir when the find API could
+                // not open the directory at all. Once entries have been
+                // streamed, a second pass would deliver every one of them
+                // again, and the consumer cannot take them back.
                 log::debug!("Windows fast enum failed for {}: {err}", path.display());
             }
+            Err(WindowsEnumError::MidStream(err)) => return Err(err),
         }
     }
 
     enumerate_directory_std(path, on_entry)
+}
+
+#[cfg(windows)]
+enum WindowsEnumError {
+    /// `FindFirstFileExW` failed; nothing was delivered yet.
+    Open(String),
+    /// Enumeration or the consumer failed after entries were delivered.
+    MidStream(String),
 }
 
 fn list_directory_streaming_options(
@@ -560,7 +569,7 @@ fn entry_matches_options(
         return false;
     }
 
-    filter.is_none_or(|value| entry.name.to_lowercase().contains(value))
+    filter.is_none_or(|value| crate::native_accel::contains_case_insensitive(&entry.name, value))
 }
 
 fn apply_light_mode(entry: &mut FileEntry, mode: ListingMode) {
@@ -575,48 +584,91 @@ fn apply_light_mode(entry: &mut FileEntry, mode: ListingMode) {
     entry.git_status = None;
 }
 
-fn sort_entries(entries: &mut [FileEntry], options: &ListDirectoryOptions) {
-    let sort_by = options.sort_by.as_str();
-    entries.sort_by(|left, right| {
-        let mut ordering = left
-            .is_dir
-            .cmp(&right.is_dir)
-            .reverse()
-            .then_with(|| compare_entry_column(left, right, sort_by))
-            .then_with(|| {
-                crate::native_accel::case_fold_for_sort(&left.name)
-                    .cmp(&crate::native_accel::case_fold_for_sort(&right.name))
-            });
-        if !options.sort_ascending && !matches!(sort_by, "name" | "") {
-            ordering = left
-                .is_dir
-                .cmp(&right.is_dir)
-                .reverse()
-                .then_with(|| compare_entry_column(right, left, sort_by))
-                .then_with(|| {
-                    crate::native_accel::case_fold_for_sort(&left.name)
-                        .cmp(&crate::native_accel::case_fold_for_sort(&right.name))
-                });
-        } else if !options.sort_ascending {
-            ordering = left.is_dir.cmp(&right.is_dir).reverse().then_with(|| {
-                crate::native_accel::case_fold_for_sort(&right.name)
-                    .cmp(&crate::native_accel::case_fold_for_sort(&left.name))
-            });
-        }
-        ordering
-    });
+/// Sort key computed once per entry. The old comparator case-folded names
+/// (and the sort column) on every comparison: millions of allocations for a
+/// large folder, repeated for each streamed chunk.
+struct EntrySortKey {
+    column: ColumnKey,
+    name: String,
 }
 
-fn compare_entry_column(left: &FileEntry, right: &FileEntry, sort_by: &str) -> std::cmp::Ordering {
-    match sort_by {
-        "size" => left.size.cmp(&right.size),
-        "modified" | "date" => left.modified.cmp(&right.modified),
-        "extension" | "type" => crate::native_accel::case_fold_for_sort(&left.extension)
-            .cmp(&crate::native_accel::case_fold_for_sort(&right.extension)),
-        "path" => crate::native_accel::case_fold_for_sort(&left.path)
-            .cmp(&crate::native_accel::case_fold_for_sort(&right.path)),
-        _ => crate::native_accel::case_fold_for_sort(&left.name)
-            .cmp(&crate::native_accel::case_fold_for_sort(&right.name)),
+enum ColumnKey {
+    Number(u64),
+    Text(String),
+    Name,
+}
+
+fn entry_sort_key(entry: &FileEntry, sort_by: &str) -> EntrySortKey {
+    let column = match sort_by {
+        "size" => ColumnKey::Number(entry.size),
+        "modified" | "date" => ColumnKey::Text(entry.modified.clone()),
+        "extension" | "type" => {
+            ColumnKey::Text(crate::native_accel::case_fold_for_sort(&entry.extension))
+        }
+        "path" => ColumnKey::Text(crate::native_accel::case_fold_for_sort(&entry.path)),
+        _ => ColumnKey::Name,
+    };
+    EntrySortKey {
+        column,
+        name: crate::native_accel::case_fold_for_sort(&entry.name),
+    }
+}
+
+fn compare_column_keys(left: &EntrySortKey, right: &EntrySortKey) -> std::cmp::Ordering {
+    match (&left.column, &right.column) {
+        (ColumnKey::Number(a), ColumnKey::Number(b)) => a.cmp(b),
+        (ColumnKey::Text(a), ColumnKey::Text(b)) => a.cmp(b),
+        _ => left.name.cmp(&right.name),
+    }
+}
+
+fn sort_entries(entries: &mut [FileEntry], options: &ListDirectoryOptions) {
+    let sort_by = options.sort_by.as_str();
+    let by_name = matches!(sort_by, "name" | "");
+    let ascending = options.sort_ascending;
+    let keys: Vec<EntrySortKey> = entries
+        .iter()
+        .map(|entry| entry_sort_key(entry, sort_by))
+        .collect();
+
+    // Directories first, always. Then the sort column in the requested
+    // direction, then the name as an ascending tiebreak (descending only when
+    // the name itself is the sort column).
+    let mut order: Vec<usize> = (0..entries.len()).collect();
+    order.sort_by(|&a, &b| {
+        let (left, right) = (&entries[a], &entries[b]);
+        let dirs_first = left.is_dir.cmp(&right.is_dir).reverse();
+        let (key_a, key_b) = (&keys[a], &keys[b]);
+        let column = if by_name {
+            if ascending {
+                key_a.name.cmp(&key_b.name)
+            } else {
+                key_b.name.cmp(&key_a.name)
+            }
+        } else if ascending {
+            compare_column_keys(key_a, key_b).then_with(|| key_a.name.cmp(&key_b.name))
+        } else {
+            compare_column_keys(key_b, key_a).then_with(|| key_a.name.cmp(&key_b.name))
+        };
+        dirs_first.then(column)
+    });
+
+    // Apply the permutation in place with swaps: new[i] = old[order[i]].
+    let mut visited = vec![false; entries.len()];
+    for start in 0..entries.len() {
+        if visited[start] {
+            continue;
+        }
+        let mut index = start;
+        loop {
+            visited[index] = true;
+            let next = order[index];
+            if next == start {
+                break;
+            }
+            entries.swap(index, next);
+            index = next;
+        }
     }
 }
 
@@ -689,7 +741,7 @@ fn enumerate_directory_std(
 fn enumerate_directory_windows(
     path: &Path,
     on_entry: &mut dyn FnMut(FileEntry) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<(), WindowsEnumError> {
     use std::mem::MaybeUninit;
     use std::os::windows::ffi::OsStrExt;
     use winapi::um::errhandlingapi::GetLastError;
@@ -720,10 +772,10 @@ fn enumerate_directory_windows(
 
     if handle == INVALID_HANDLE_VALUE {
         let err = unsafe { GetLastError() };
-        return Err(format!(
+        return Err(WindowsEnumError::Open(format!(
             "FindFirstFileExW failed for {} (os error {err})",
             path.display()
-        ));
+        )));
     }
 
     let result = (|| -> Result<(), String> {
@@ -753,7 +805,7 @@ fn enumerate_directory_windows(
         FindClose(handle);
     }
 
-    result
+    result.map_err(WindowsEnumError::MidStream)
 }
 
 #[cfg(windows)]
@@ -798,8 +850,17 @@ fn file_entry_from_find_data(
             .unwrap_or_default()
     };
 
-    // Only pay for read_link when the find data marks a reparse point.
-    let symlink_target = if is_reparse {
+    // A reparse point is a symlink only for the symlink and mount-point
+    // (junction) tags. Cloud placeholders (OneDrive, Dropbox) and dedup stubs
+    // are reparse points too, and read_link on each of them failed anyway.
+    const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+    const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000_000C;
+    let is_symlink = is_reparse
+        && matches!(
+            data.dwReserved0,
+            IO_REPARSE_TAG_MOUNT_POINT | IO_REPARSE_TAG_SYMLINK
+        );
+    let symlink_target = if is_symlink {
         fs::read_link(&path_buf)
             .ok()
             .map(|t| t.to_string_lossy().to_string())
@@ -811,7 +872,7 @@ fn file_entry_from_find_data(
         name: name_str.into_owned(),
         path: file_path,
         is_dir,
-        is_symlink: is_reparse,
+        is_symlink,
         is_hidden,
         is_system,
         size,
@@ -1017,5 +1078,169 @@ mod tests {
         assert_eq!(shown.entries[0].name, "visible.txt");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod enumeration_tests {
+    use super::enumerate_directory;
+    use std::path::Path;
+
+    fn scratch(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "sumafile-enum-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// When the consumer stops accepting entries (client gone) after the
+    /// fast enumeration has already streamed some, the portable fallback must
+    /// not re-enumerate: the client would receive every entry twice.
+    #[test]
+    fn a_failure_after_entries_were_streamed_does_not_restart_from_scratch() {
+        let dir = scratch("midstream");
+        for index in 0..4 {
+            std::fs::write(dir.join(format!("f{index}.txt")), b"x").unwrap();
+        }
+        let mut delivered = 0usize;
+        let result = enumerate_directory(&dir, &mut |_entry| {
+            delivered += 1;
+            Err("client closed".to_string())
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_err());
+        assert_eq!(
+            delivered, 1,
+            "entries were streamed again by a fallback pass"
+        );
+    }
+
+    /// Reparse points that are not links (cloud placeholders, dedup stubs)
+    /// must not be shown as symlinks; real junctions still are.
+    #[cfg(windows)]
+    #[test]
+    fn directory_junction_is_a_symlink_but_plain_entries_are_not() {
+        let dir = scratch("junction");
+        let target = dir.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(dir.join("plain.txt"), b"x").unwrap();
+        let link = dir.join("link");
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .expect("run mklink");
+        assert!(
+            status.status.success(),
+            "{}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+
+        let mut entries = Vec::new();
+        enumerate_directory(Path::new(&dir), &mut |entry| {
+            entries.push(entry);
+            Ok(())
+        })
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let link_entry = entries
+            .iter()
+            .find(|e| e.name == "link")
+            .expect("junction listed");
+        assert!(link_entry.is_symlink);
+        assert!(link_entry.symlink_target.is_some());
+        let plain = entries.iter().find(|e| e.name == "plain.txt").unwrap();
+        assert!(!plain.is_symlink);
+    }
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::{sort_entries, ListDirectoryOptions};
+    use crate::models::FileEntry;
+
+    fn entry(name: &str, is_dir: bool, size: u64) -> FileEntry {
+        FileEntry {
+            name: name.to_string(),
+            path: format!("C:/x/{name}"),
+            is_dir,
+            is_symlink: false,
+            is_hidden: false,
+            is_system: false,
+            size,
+            modified: String::new(),
+            extension: name
+                .rsplit_once('.')
+                .map(|(_, e)| e.to_string())
+                .unwrap_or_default(),
+            permissions: None,
+            symlink_target: None,
+            git_status: None,
+        }
+    }
+
+    fn names(entries: &[FileEntry]) -> Vec<&str> {
+        entries.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    #[test]
+    fn size_descending_keeps_directories_first_and_breaks_ties_by_name() {
+        let mut entries = vec![
+            entry("b.txt", false, 10),
+            entry("Zeta", true, 0),
+            entry("a.txt", false, 10),
+            entry("alpha", true, 0),
+            entry("c.txt", false, 99),
+        ];
+        let options = ListDirectoryOptions {
+            sort_by: "size".to_string(),
+            sort_ascending: false,
+            ..ListDirectoryOptions::default()
+        };
+        sort_entries(&mut entries, &options);
+        assert_eq!(
+            names(&entries),
+            vec!["alpha", "Zeta", "c.txt", "a.txt", "b.txt"]
+        );
+    }
+
+    #[test]
+    fn name_descending_reverses_names_but_not_directory_grouping() {
+        let mut entries = vec![
+            entry("b.txt", false, 1),
+            entry("Dir", true, 0),
+            entry("A.txt", false, 1),
+        ];
+        let options = ListDirectoryOptions {
+            sort_by: "name".to_string(),
+            sort_ascending: false,
+            ..ListDirectoryOptions::default()
+        };
+        sort_entries(&mut entries, &options);
+        assert_eq!(names(&entries), vec!["Dir", "b.txt", "A.txt"]);
+    }
+
+    #[test]
+    fn extension_ascending_is_case_insensitive_with_name_tiebreak() {
+        let mut entries = vec![
+            entry("z.PNG", false, 1),
+            entry("a.txt", false, 1),
+            entry("m.png", false, 1),
+        ];
+        let options = ListDirectoryOptions {
+            sort_by: "extension".to_string(),
+            sort_ascending: true,
+            ..ListDirectoryOptions::default()
+        };
+        sort_entries(&mut entries, &options);
+        assert_eq!(names(&entries), vec!["m.png", "z.PNG", "a.txt"]);
     }
 }

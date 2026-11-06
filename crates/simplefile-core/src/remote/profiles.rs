@@ -194,10 +194,17 @@ fn normalize_profile_input(input: RemoteProfileInput) -> Result<RemoteProfile, S
         _ => required("remote profile username", input.username)?,
     };
     let root_path = normalize_root_path(&input.root_path);
-    let credential_target = input
-        .credential_target
-        .and_then(non_empty)
-        .or_else(|| Some(format!("{CREDENTIAL_TARGET_PREFIX}{id}")));
+    let credential_target = match input.credential_target.and_then(non_empty) {
+        // Only targets in our own namespace: a pipe client must not be able to
+        // overwrite or delete another application's stored credential.
+        Some(target) if target.starts_with(CREDENTIAL_TARGET_PREFIX) => Some(target),
+        Some(target) => {
+            return Err(format!(
+            "remote profile credential target must start with {CREDENTIAL_TARGET_PREFIX}: {target}"
+        ))
+        }
+        None => Some(format!("{CREDENTIAL_TARGET_PREFIX}{id}")),
+    };
     let private_key_path = input.private_key_path.and_then(non_empty);
 
     Ok(RemoteProfile {

@@ -72,6 +72,20 @@ async fn run() -> Result<(), String> {
             startup.elapsed().as_secs_f64() * 1000.0
         );
 
+        // Watch the host before waiting for it to connect: a host that dies
+        // first must not leave the service parked on the pipe forever. The
+        // handle is opened once, so a reused PID cannot pose as the host.
+        if let Some(parent_pid) = args.parent_pid {
+            match open_parent_process(parent_pid) {
+                Some(parent) => {
+                    tokio::spawn(monitor_parent_liveness(parent));
+                }
+                None => eprintln!(
+                    "simplefile-service: cannot open parent process {parent_pid}; liveness monitor disabled"
+                ),
+            }
+        }
+
         server
             .connect()
             .await
@@ -80,12 +94,6 @@ async fn run() -> Result<(), String> {
             "simplefile-service startup client-connected total_ms={:.1}",
             startup.elapsed().as_secs_f64() * 1000.0
         );
-
-        // If parent-pid was specified, spawn a liveness monitor that exits
-        // when the parent process is no longer alive.
-        if let Some(parent_pid) = args.parent_pid {
-            tokio::spawn(monitor_parent_liveness(parent_pid));
-        }
 
         let state = SessionState {
             expected_token: Some(auth_token),
@@ -103,29 +111,51 @@ async fn run() -> Result<(), String> {
     }
 }
 
+/// A `SYNCHRONIZE` handle to the host process, opened once at startup.
 #[cfg(windows)]
-async fn monitor_parent_liveness(parent_pid: u32) {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+struct ParentProcess(windows_sys::Win32::Foundation::HANDLE);
 
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+// The handle is only ever waited on; moving it to the blocking pool is safe.
+#[cfg(windows)]
+unsafe impl Send for ParentProcess {}
 
-        let alive = unsafe {
-            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, parent_pid);
-            if handle.is_null() || handle == 0 as _ {
-                false
-            } else {
-                CloseHandle(handle);
-                true
-            }
-        };
-
-        if !alive {
-            eprintln!("Parent process {parent_pid} is no longer alive, exiting.");
-            std::process::exit(0);
+#[cfg(windows)]
+impl Drop for ParentProcess {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
         }
     }
+}
+
+#[cfg(windows)]
+fn open_parent_process(parent_pid: u32) -> Option<ParentProcess> {
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, parent_pid) };
+    if handle.is_null() {
+        None
+    } else {
+        Some(ParentProcess(handle))
+    }
+}
+
+/// True once the process behind the handle has exited. Waits at most
+/// `timeout_ms`; the handle (not the PID) is what gets signalled, so this
+/// cannot be fooled by PID reuse and does not mistake access errors for death.
+#[cfg(windows)]
+fn parent_has_exited(parent: &ParentProcess, timeout_ms: u32) -> bool {
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+    unsafe { WaitForSingleObject(parent.0, timeout_ms) == WAIT_OBJECT_0 }
+}
+
+#[cfg(windows)]
+async fn monitor_parent_liveness(parent: ParentProcess) {
+    use windows_sys::Win32::System::Threading::INFINITE;
+    let _ =
+        tokio::task::spawn_blocking(move || while !parent_has_exited(&parent, INFINITE) {}).await;
+    eprintln!("Parent process is no longer alive, exiting.");
+    std::process::exit(0);
 }
 
 fn read_required_auth_token() -> Result<String, String> {
@@ -267,6 +297,25 @@ impl Args {
 #[cfg(test)]
 mod tests {
     use super::Args;
+
+    #[cfg(windows)]
+    #[test]
+    fn exited_parent_is_detected_through_its_handle() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "exit 0"])
+            .spawn()
+            .expect("spawn child");
+        let parent = super::open_parent_process(child.id()).expect("open child process");
+        child.wait().expect("child exits");
+        assert!(super::parent_has_exited(&parent, 2000));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn live_parent_is_not_reported_exited() {
+        let parent = super::open_parent_process(std::process::id()).expect("open self");
+        assert!(!super::parent_has_exited(&parent, 50));
+    }
 
     #[test]
     fn rejects_auth_token_cli_flag() {

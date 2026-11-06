@@ -35,14 +35,27 @@ pub(super) struct DuplicateCheckJob {
     pub(super) max_depth: Option<usize>,
     pub(super) exclude_patterns: Vec<String>,
     pub(super) network_mode: Option<bool>,
-    pub(super) operation_id: Option<String>,
+    /// Registered by the session loop before the job is spawned, so a cancel
+    /// that arrives right after the start request finds the token.
+    pub(super) operation_id: String,
+    pub(super) cancel: Arc<AtomicBool>,
 }
 
 pub(super) struct DiskCleanupJob {
     pub(super) id: Option<Value>,
     pub(super) directory: String,
     pub(super) size_threshold: Option<u64>,
-    pub(super) operation_id: Option<String>,
+    pub(super) operation_id: String,
+    pub(super) cancel: Arc<AtomicBool>,
+}
+
+pub(super) struct SearchJob {
+    pub(super) id: Option<Value>,
+    pub(super) options: SearchOptions,
+    /// Registry key: the client's search id, or a generated one so the search
+    /// is still cancellable on disconnect.
+    pub(super) registry_id: String,
+    pub(super) cancel: Arc<AtomicBool>,
 }
 
 pub(super) struct CopyMoveJob {
@@ -72,6 +85,7 @@ pub(super) fn spawn_remote_transfer(
         let operation_id = job.request.operation_id.clone();
         let destination_for_cache = job.request.destination.clone();
         let sources_for_cache = job.request.sources.clone();
+        let cancel = job.cancel.clone();
         let id = job.id;
         let result = scheduler
             .run_transfer(move || {
@@ -95,7 +109,34 @@ pub(super) fn spawn_remote_transfer(
             "failed to serialize remote transfer results",
         );
         let _ = write_json(&writer, &response).await;
-        registry.remove(&operation_id).await;
+        registry.remove_token(&operation_id, &cancel).await;
+    });
+}
+
+/// Run a handler body on the blocking scheduler and write its reply. Used for
+/// every request that touches the disk, the network or a child process, so
+/// the session loop keeps reading frames (including cancels) meanwhile.
+pub(super) fn spawn_blocking_reply(
+    writer: OutboundSink,
+    scheduler: BlockingScheduler,
+    id: Option<Value>,
+    job: crate::dispatch::BlockingJob,
+) {
+    tokio::spawn(async move {
+        let lane = job.lane();
+        let task = move || job.run();
+        let result = match lane {
+            crate::dispatch::BlockingLane::General => scheduler.run_general(task).await,
+            crate::dispatch::BlockingLane::Transfer => scheduler.run_transfer(task).await,
+        };
+        let response = match result {
+            Ok(Ok(value)) => JsonRpcResponse::result(id, value),
+            Ok(Err(message)) => JsonRpcResponse::application_error(id, message),
+            Err(error) => {
+                JsonRpcResponse::application_error(id, format!("blocking task failed: {error}"))
+            }
+        };
+        let _ = write_json(&writer, &response).await;
     });
 }
 
@@ -117,13 +158,27 @@ impl EventSink {
     }
 
     fn emit_progress(&self, update: &ProgressUpdate) {
+        if let Some(payload) = self.progress_payload(update) {
+            let _ = self.outbound.send_payload_blocking(payload);
+        }
+    }
+
+    /// Progress emit for async (tokio task) context. `emit_progress` uses a
+    /// blocking channel send that panics when called on a runtime worker.
+    async fn emit_progress_async(&self, update: &ProgressUpdate) {
+        if let Some(payload) = self.progress_payload(update) {
+            let _ = self.outbound.enqueue_payload(payload).await;
+        }
+    }
+
+    fn progress_payload(&self, update: &ProgressUpdate) -> Option<Vec<u8>> {
         if self.binary_hot_frames.load(Ordering::Relaxed) {
             if let Ok(payload) = crate::binary::encode_progress_update(update) {
-                let _ = self.outbound.send_payload_blocking(payload);
-                return;
+                return Some(payload);
             }
         }
-        self.emit(OPERATION_PROGRESS, update);
+        let params = serde_json::to_value(update).ok()?;
+        encode_json_payload(&JsonRpcNotification::new(OPERATION_PROGRESS, params)).ok()
     }
 
     pub(super) fn emit_file_change(&self, change: &FileChangeEvent) {
@@ -747,6 +802,7 @@ pub(super) fn spawn_copy_move_with_progress(
         let op_id_for_task = op_id.clone();
         let sources_for_cache = sources.clone();
         let destination_for_cache = destination.clone();
+        let cancel_for_task = cancel.clone();
 
         let items = params.items;
         let result = scheduler
@@ -766,7 +822,7 @@ pub(super) fn spawn_copy_move_with_progress(
                             .collect(),
                         destination,
                         op_id_for_task,
-                        cancel,
+                        cancel_for_task.clone(),
                         &emit,
                         &tuning,
                     ),
@@ -776,7 +832,7 @@ pub(super) fn spawn_copy_move_with_progress(
                         destination,
                         op_id_for_task,
                         conflict_action,
-                        cancel,
+                        cancel_for_task.clone(),
                         &emit,
                         &tuning,
                     ),
@@ -784,21 +840,18 @@ pub(super) fn spawn_copy_move_with_progress(
             })
             .await;
 
+        // Invalidating the destination and (for moves) the source roots
+        // already drops every cached subtree and ancestor metric. Walking
+        // each transferred item again was O(items x cache) on the runtime.
         cache.invalidate_path(&destination_for_cache);
         if !is_copy {
             cache.invalidate_paths(&sources_for_cache);
-        }
-        if let Ok(Ok(ref transfer_results)) = result {
-            for item in transfer_results {
-                cache.invalidate_path(&item.source);
-                cache.invalidate_path(&item.destination);
-            }
         }
 
         let response = transfer_result_response(id, result);
 
         let _ = write_json(&writer, &response).await;
-        registry.remove(&op_id).await;
+        registry.remove_token(&op_id, &cancel).await;
     });
 }
 
@@ -807,18 +860,19 @@ pub(super) fn spawn_search_files(
     registry: std::sync::Arc<OperationRegistry>,
     scheduler: BlockingScheduler,
     events: EventSink,
-    id: Option<Value>,
-    options: SearchOptions,
+    job: SearchJob,
 ) {
+    let SearchJob {
+        id,
+        options,
+        registry_id,
+        cancel,
+    } = job;
     tokio::spawn(async move {
         let start = std::time::Instant::now();
         let binary_request_id = binary_response_id(&events.binary_hot_frames, &id);
         let search_id = options.search_id.clone();
-        let cancel = if let Some(search_id) = search_id.as_deref() {
-            registry.register(search_id).await
-        } else {
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
-        };
+        let cancel_for_task = cancel.clone();
 
         let events_for_task = events.clone();
         let search_id_for_task = search_id.clone();
@@ -827,7 +881,8 @@ pub(super) fn spawn_search_files(
                 let emit_batch = |batch: Vec<SearchResult>| {
                     events_for_task.emit_search_results_batch(search_id_for_task.as_deref(), &batch)
                 };
-                let result = crate::search::search_files_blocking(options, cancel, &emit_batch);
+                let result =
+                    crate::search::search_files_blocking(options, cancel_for_task, &emit_batch);
                 if let Ok(results) = &result {
                     events_for_task.emit(
                         SEARCH_COMPLETE,
@@ -850,9 +905,7 @@ pub(super) fn spawn_search_files(
                     match crate::binary::encode_search_results_result(request_id, &results) {
                         Ok(payload) => {
                             let _ = write_binary_response(&writer, id.clone(), &payload).await;
-                            if let Some(search_id) = search_id.as_deref() {
-                                registry.remove(search_id).await;
-                            }
+                            registry.remove_token(&registry_id, &cancel).await;
                             return;
                         }
                         Err(error) => JsonRpcResponse::application_error(
@@ -871,9 +924,7 @@ pub(super) fn spawn_search_files(
         };
 
         let _ = write_json(&writer, &response).await;
-        if let Some(search_id) = search_id.as_deref() {
-            registry.remove(search_id).await;
-        }
+        registry.remove_token(&registry_id, &cancel).await;
     });
 }
 
@@ -893,25 +944,26 @@ pub(super) fn spawn_duplicate_check(
         exclude_patterns,
         network_mode,
         operation_id,
+        cancel,
     } = job;
     tokio::spawn(async move {
-        let operation_id =
-            operation_id.unwrap_or_else(simplefile_core::utils::generate_operation_id);
-        let cancel = registry.register(&operation_id).await;
+        let cancel_for_task = cancel.clone();
         let events_for_task = events.clone();
         let operation_id_for_task = operation_id.clone();
         let queued_directory = directory.clone();
-        events.emit_progress(&ProgressUpdate {
-            operation_id: operation_id.clone(),
-            operation_type: "duplicate-check".to_string(),
-            current: 0,
-            total: 0,
-            current_files: 0,
-            total_files: 0,
-            current_item: queued_directory,
-            status: "queued".to_string(),
-            error: None,
-        });
+        events
+            .emit_progress_async(&ProgressUpdate {
+                operation_id: operation_id.clone(),
+                operation_type: "duplicate-check".to_string(),
+                current: 0,
+                total: 0,
+                current_files: 0,
+                total_files: 0,
+                current_item: queued_directory,
+                status: "queued".to_string(),
+                error: None,
+            })
+            .await;
         let start = std::time::Instant::now();
         let scheduler_for_task = scheduler.clone();
         let result = scheduler
@@ -939,7 +991,7 @@ pub(super) fn spawn_duplicate_check(
                         exclude_patterns,
                         network_mode,
                     ),
-                    &cancel,
+                    &cancel_for_task,
                     emit,
                 )
             })
@@ -954,7 +1006,7 @@ pub(super) fn spawn_duplicate_check(
             "failed to serialize duplicate check result",
         );
         let _ = write_json(&writer, &response).await;
-        registry.remove(&operation_id).await;
+        registry.remove_token(&operation_id, &cancel).await;
     });
 }
 
@@ -970,25 +1022,26 @@ pub(super) fn spawn_disk_cleanup(
         directory,
         size_threshold,
         operation_id,
+        cancel,
     } = job;
     tokio::spawn(async move {
-        let operation_id =
-            operation_id.unwrap_or_else(simplefile_core::utils::generate_operation_id);
-        let cancel = registry.register(&operation_id).await;
+        let cancel_for_task = cancel.clone();
         let events_for_task = events.clone();
         let operation_id_for_task = operation_id.clone();
         let queued_directory = directory.clone();
-        events.emit_progress(&ProgressUpdate {
-            operation_id: operation_id.clone(),
-            operation_type: "cleanup".to_string(),
-            current: 0,
-            total: 0,
-            current_files: 0,
-            total_files: 0,
-            current_item: queued_directory,
-            status: "queued".to_string(),
-            error: None,
-        });
+        events
+            .emit_progress_async(&ProgressUpdate {
+                operation_id: operation_id.clone(),
+                operation_type: "cleanup".to_string(),
+                current: 0,
+                total: 0,
+                current_files: 0,
+                total_files: 0,
+                current_item: queued_directory,
+                status: "queued".to_string(),
+                error: None,
+            })
+            .await;
         let scheduler_for_task = scheduler.clone();
         let result = scheduler
             .run_background(move || {
@@ -1006,7 +1059,7 @@ pub(super) fn spawn_disk_cleanup(
                         error: None,
                     });
                 };
-                scan_disk_cleanup(&directory, size_threshold, &cancel, emit)
+                scan_disk_cleanup(&directory, size_threshold, &cancel_for_task, emit)
             })
             .await;
 
@@ -1017,6 +1070,6 @@ pub(super) fn spawn_disk_cleanup(
             "failed to serialize cleanup result",
         );
         let _ = write_json(&writer, &response).await;
-        registry.remove(&operation_id).await;
+        registry.remove_token(&operation_id, &cancel).await;
     });
 }

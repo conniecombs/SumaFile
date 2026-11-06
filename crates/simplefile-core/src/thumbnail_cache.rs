@@ -10,7 +10,16 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Written at the cache root the first time a thumbnail is stored. Eviction
+/// and clearing refuse to touch a folder without it, so a cache path pointed
+/// at the user's own files never deletes them.
+const CACHE_MARKER: &str = ".sumafile-thumbnail-cache";
+
+/// Eviction walks the whole cache; run it at most this often.
+const EVICTION_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Default maximum cache size in bytes (500 MB).
 const DEFAULT_MAX_CACHE_BYTES: u64 = 500 * 1024 * 1024;
@@ -80,7 +89,10 @@ fn cache_key(path: &str, modified: SystemTime, size: u64, thumb_size: u32) -> St
 
 /// Returns the cache file path for a given hex key.
 fn cache_path(key: &str) -> PathBuf {
-    let root = cache_root();
+    cache_path_in(&cache_root(), key)
+}
+
+fn cache_path_in(root: &Path, key: &str) -> PathBuf {
     // Use first 2 hex chars as first directory, next 2 as second directory.
     let (a, rest) = key.split_at(2.min(key.len()));
     let (b, _) = rest.split_at(2.min(rest.len()));
@@ -98,12 +110,16 @@ pub fn get(path: &str, modified: SystemTime, size: u64, thumb_size: u32) -> Opti
 /// If the cache write fails (e.g. disk full), the error is silently ignored.
 pub fn put(path: &str, modified: SystemTime, size: u64, thumb_size: u32, jpeg_bytes: &[u8]) {
     let key = cache_key(path, modified, size, thumb_size);
-    let cached = cache_path(&key);
+    let root = cache_root();
+    let cached = cache_path_in(&root, &key);
     if let Some(parent) = cached.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    // Write atomically: write to a temp file then rename to prevent partial reads.
-    let temp = cached.with_extension("tmp");
+    ensure_marker(&root);
+    // Write atomically: a per-call temp name, then rename. A shared `<key>.tmp`
+    // let two generators of the same thumbnail truncate each other's file and
+    // publish a half-written JPEG.
+    let temp = temp_path_for(&cached);
     let written = if let Ok(mut file) = fs::File::create(&temp) {
         file.write_all(jpeg_bytes).is_ok()
     } else {
@@ -113,6 +129,35 @@ pub fn put(path: &str, modified: SystemTime, size: u64, thumb_size: u32, jpeg_by
         let _ = fs::rename(&temp, &cached);
     } else {
         let _ = fs::remove_file(&temp);
+    }
+}
+
+fn temp_path_for(cached: &Path) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
+    cached.with_extension(format!("{}.{sequence}.tmp", std::process::id()))
+}
+
+fn ensure_marker(root: &Path) {
+    let marker = root.join(CACHE_MARKER);
+    if !marker.exists() {
+        let _ = fs::create_dir_all(root);
+        let _ = fs::write(
+            marker,
+            b"SumaFile thumbnail cache. Files here are disposable.\n",
+        );
+    }
+}
+
+/// A folder is ours to evict from when it carries the marker, or when it is
+/// still empty or missing (nothing to lose yet).
+fn is_managed_cache_root(root: &Path) -> bool {
+    if root.join(CACHE_MARKER).exists() {
+        return true;
+    }
+    match fs::read_dir(root) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(_) => true,
     }
 }
 
@@ -143,15 +188,26 @@ fn total_size_in(root: &Path) -> u64 {
 /// Uses file modification time as the LRU proxy (last write = creation time for
 /// cache entries since they are write-once).
 pub fn evict_if_needed(max_bytes: u64) {
-    let root = cache_root();
-    let current = total_size_in(&root);
+    evict_if_needed_in(&cache_root(), max_bytes);
+}
+
+fn evict_if_needed_in(root: &Path, max_bytes: u64) {
+    if !is_managed_cache_root(root) {
+        log::warn!(
+            "Thumbnail cache path {} is not a SumaFile cache folder; refusing to evict from it",
+            root.display()
+        );
+        return;
+    }
+    let current = total_size_in(root);
     if current <= max_bytes {
         return;
     }
 
     // Collect all cache files with their modification time and size.
     let mut files: Vec<(PathBuf, SystemTime, u64)> = Vec::new();
-    collect_files(&root, &mut files);
+    collect_files(root, &mut files);
+    files.retain(|(path, _, _)| path.file_name().is_none_or(|name| name != CACHE_MARKER));
 
     // Sort oldest first.
     files.sort_by_key(|(_, mtime, _)| *mtime);
@@ -176,6 +232,52 @@ pub fn evict_default() {
     }
 }
 
+static EVICTION_RUNNING: AtomicBool = AtomicBool::new(false);
+static LAST_EVICTION_SECS: AtomicU64 = AtomicU64::new(0);
+
+/// Decide whether an eviction pass should start now: at most one at a time and
+/// at most once per `EVICTION_INTERVAL`. The caller that gets `true` owns the
+/// pass and must call `finish_eviction` afterwards.
+fn should_run_eviction(now: SystemTime) -> bool {
+    let now_secs = now
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let last = LAST_EVICTION_SECS.load(Ordering::Acquire);
+    if last != 0 && now_secs.saturating_sub(last) < EVICTION_INTERVAL.as_secs() {
+        return false;
+    }
+    if EVICTION_RUNNING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return false;
+    }
+    LAST_EVICTION_SECS.store(now_secs, Ordering::Release);
+    true
+}
+
+fn finish_eviction() {
+    EVICTION_RUNNING.store(false, Ordering::Release);
+}
+
+/// Run eviction in the background if it is due. Generating a folder of
+/// thumbnails used to start one full cache walk per thumbnail.
+pub fn schedule_eviction() {
+    if !should_run_eviction(SystemTime::now()) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("thumb-cache-evict".into())
+        .spawn(|| {
+            evict_default();
+            finish_eviction();
+        });
+    if spawned.is_err() {
+        finish_eviction();
+    }
+}
+
 fn collect_files(dir: &Path, out: &mut Vec<(PathBuf, SystemTime, u64)>) {
     if let Ok(walker) = fs::read_dir(dir) {
         for entry in walker.flatten() {
@@ -193,10 +295,20 @@ fn collect_files(dir: &Path, out: &mut Vec<(PathBuf, SystemTime, u64)>) {
     }
 }
 
-/// Clears the entire thumbnail cache.
+/// Clears the entire thumbnail cache. Refuses a folder that is not ours.
 pub fn clear() {
-    let root = cache_root();
-    let _ = fs::remove_dir_all(&root);
+    clear_in(&cache_root());
+}
+
+fn clear_in(root: &Path) {
+    if !is_managed_cache_root(root) {
+        log::warn!(
+            "Thumbnail cache path {} is not a SumaFile cache folder; refusing to clear it",
+            root.display()
+        );
+        return;
+    }
+    let _ = fs::remove_dir_all(root);
 }
 
 // A simple inline hex encoder to avoid adding the `hex` crate.
@@ -282,5 +394,76 @@ mod tests {
         let t = SystemTime::UNIX_EPOCH;
         let cached = get(r"C:\nonexistent-thumb-cache-test.jpg", t, 0, 128);
         assert!(cached.is_none());
+    }
+}
+
+#[cfg(test)]
+mod safety_tests {
+    use super::{
+        clear_in, evict_if_needed_in, is_managed_cache_root, should_run_eviction, temp_path_for,
+        CACHE_MARKER,
+    };
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime};
+
+    fn scratch(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "sumafile-thumb-safety-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Two generators of the same thumbnail must never share a temp file.
+    #[test]
+    fn temp_paths_are_unique_per_write() {
+        let cached = Path::new("C:/cache/ab/cd/abcd.jpg");
+        let first = temp_path_for(cached);
+        let second = temp_path_for(cached);
+        assert_ne!(first, second);
+        assert!(first.to_string_lossy().ends_with(".tmp"));
+    }
+
+    /// A cache path pointed at the user's own folder must never have its
+    /// oldest files deleted or be wiped.
+    #[test]
+    fn eviction_and_clear_refuse_folders_without_the_marker() {
+        let root = scratch("unmarked");
+        fs::write(root.join("holiday.jpg"), vec![1u8; 4096]).unwrap();
+        assert!(!is_managed_cache_root(&root));
+
+        evict_if_needed_in(&root, 0);
+        assert!(root.join("holiday.jpg").exists());
+        clear_in(&root);
+        assert!(root.join("holiday.jpg").exists());
+
+        fs::write(root.join(CACHE_MARKER), b"marker").unwrap();
+        assert!(is_managed_cache_root(&root));
+        evict_if_needed_in(&root, 0);
+        assert!(!root.join("holiday.jpg").exists());
+        assert!(
+            root.join(CACHE_MARKER).exists(),
+            "the marker itself survives eviction"
+        );
+        clear_in(&root);
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn eviction_runs_at_most_once_per_interval() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        // Reset shared state from other tests by moving far ahead in time.
+        let later = now + Duration::from_secs(10_000);
+        assert!(should_run_eviction(later));
+        super::finish_eviction();
+        assert!(!should_run_eviction(later + Duration::from_secs(5)));
+        assert!(should_run_eviction(later + Duration::from_secs(120)));
+        super::finish_eviction();
     }
 }

@@ -254,8 +254,8 @@ public sealed partial class NamedPipeJsonClient
     public Task SetTagsForPathAsync(string path, long[] tagIds, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.SetTagsForPathMethod, new { path, tagIds }, ct);
 
-    public Task<Dictionary<string, Tag>> GetAllFileTagsAsync(CancellationToken ct = default)
-        => InvokeAsync<Dictionary<string, Tag>>(Protocol.GetAllFileTagsMethod, new { }, ct);
+    public Task<Dictionary<string, Tag[]>> GetAllFileTagsAsync(CancellationToken ct = default)
+        => InvokeAsync<Dictionary<string, Tag[]>>(Protocol.GetAllFileTagsMethod, new { }, ct);
 
     public Task<string[]> GetFilesWithTagAsync(long tagId, CancellationToken ct = default)
         => InvokeAsync<string[]>(Protocol.GetFilesWithTagMethod, new { tagId }, ct);

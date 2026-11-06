@@ -164,14 +164,7 @@ impl RemoteProvider for FtpRemoteProvider {
             .client
             .list(Some(&path))
             .map_err(|error| format!("FTP list failed for {path}: {error}"))?;
-        let mut entries = Vec::new();
-
-        for line in lines {
-            let entry = parse_ftp_list_line(&path, &line)?;
-            if entry.name != "." && entry.name != ".." {
-                entries.push(entry);
-            }
-        }
+        let entries = entries_from_list_lines(&path, &lines);
 
         Ok(DirectoryListing {
             parent: parent_remote_path(&path),
@@ -350,6 +343,21 @@ impl FtpClient {
             Self::Tls(stream) => stream.quit(),
         }
     }
+}
+
+/// Parse a LIST response. A line the parser does not understand (a `total N`
+/// banner, a vendor-specific format) is logged and skipped rather than making
+/// the whole directory unlistable.
+pub(crate) fn entries_from_list_lines(parent_path: &str, lines: &[String]) -> Vec<FileEntry> {
+    let mut entries = Vec::with_capacity(lines.len());
+    for line in lines {
+        match parse_ftp_list_line(parent_path, line) {
+            Ok(entry) if entry.name == "." || entry.name == ".." => {}
+            Ok(entry) => entries.push(entry),
+            Err(error) => log::warn!("Skipping FTP list line in {parent_path}: {error}"),
+        }
+    }
+    entries
 }
 
 pub(crate) fn parse_ftp_list_line(parent_path: &str, line: &str) -> Result<FileEntry, String> {
@@ -628,5 +636,28 @@ mod tests {
         assert!(entry.is_dir);
         assert!(entry.is_hidden);
         assert_eq!(entry.extension, "");
+    }
+}
+
+#[cfg(test)]
+mod listing_tests {
+    use super::entries_from_list_lines;
+
+    /// The listing helper drops the `.` and `..` pseudo-entries and keeps the
+    /// rest in server order. (suppaftp 12 parses even banner lines into
+    /// entries, so an unparseable line cannot be produced here; the helper
+    /// still skips any line the parser rejects instead of failing the listing.)
+    #[test]
+    fn dot_entries_are_filtered_from_listings() {
+        let lines = vec![
+            "drwxr-xr-x   2 user group     4096 Jan 01 12:00 .".to_string(),
+            "drwxr-xr-x   2 user group     4096 Jan 01 12:00 ..".to_string(),
+            "-rw-r--r--   1 user group        5 Jan 01 12:00 notes.txt".to_string(),
+            "drwxr-xr-x   2 user group     4096 Jan 01 12:00 sub".to_string(),
+        ];
+        let entries = entries_from_list_lines("/var", &lines);
+        let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+        assert_eq!(names, vec!["notes.txt", "sub"]);
+        assert_eq!(entries[0].path, "/var/notes.txt");
     }
 }

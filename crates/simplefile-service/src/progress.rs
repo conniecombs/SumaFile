@@ -385,6 +385,7 @@ fn transfer_with_policy_blocking(
 
     let mut volumes = VolumeKindCache::default();
     let mut failed: Vec<TransferFailure> = Vec::new();
+    let mut skipped: Vec<TransferResult> = Vec::new();
     let planned = match &request {
         Request::Selection {
             sources,
@@ -395,13 +396,19 @@ fn transfer_with_policy_blocking(
             conflict_action,
             &mut volumes,
         )
-        .map(|(plans, _, conflicts)| {
+        .map(|(plans, _, conflicts, planned_skips)| {
             for (source, final_dest, message) in conflicts {
                 failed.push(TransferFailure::new(
                     &source,
                     &final_dest,
                     &Failure::conflict(message),
                 ));
+            }
+            for (source, final_dest) in planned_skips {
+                skipped.push(TransferResult {
+                    source: source.to_string_lossy().into(),
+                    destination: final_dest.to_string_lossy().into(),
+                });
             }
             plans
         }),
@@ -476,7 +483,6 @@ fn transfer_with_policy_blocking(
     let is_move = operation_type == "move";
     let mut completed_bytes = 0u64;
     let mut transferred: Vec<TransferResult> = Vec::with_capacity(plans.len());
-    let mut skipped: Vec<TransferResult> = Vec::new();
     let mut files: Vec<FileTask> = Vec::new();
     let mut roots: Vec<RootTask> = Vec::new();
     let mut reserved: HashSet<String> = plans
@@ -492,7 +498,8 @@ fn transfer_with_policy_blocking(
             if is_move {
                 match rename_directory_move(plan, &mut reserved) {
                     RenameOutcome::Done(target) => {
-                        completed_bytes = completed_bytes.saturating_add(1);
+                        // Directories contribute no bytes to the estimate, so
+                        // a renamed one adds none to the progress either.
                         progress.complete_files(
                             plan.file_count,
                             completed_bytes,
@@ -590,10 +597,19 @@ fn transfer_with_policy_blocking(
                 });
             }
         }
+        // Sources that stayed behind on purpose (skipped) or because they
+        // failed both explain a source directory that cannot be removed.
         let failed_paths: Vec<PathBuf> = failed
             .iter()
             .filter(|f| !f.source.is_empty())
             .map(|f| PathBuf::from(&f.source))
+            .chain(
+                result
+                    .copy
+                    .skipped
+                    .iter()
+                    .map(|(_, task)| task.source.clone()),
+            )
             .collect();
         for (root, outcome) in roots.iter().zip(result.roots) {
             match outcome.error {
@@ -613,6 +629,8 @@ fn transfer_with_policy_blocking(
                             &outcome.manifest,
                             &failed_paths,
                         ) {
+                            // The data was copied but the move is incomplete:
+                            // report it once, as a failure, never also as committed.
                             failed.push(TransferFailure::new(
                                 &root.source,
                                 &root.destination,
@@ -620,6 +638,7 @@ fn transfer_with_policy_blocking(
                                     "Copied but failed to delete source: {error}"
                                 )),
                             ));
+                            continue;
                         }
                     }
                     transferred.push(TransferResult {
@@ -928,6 +947,133 @@ mod tests {
         );
         assert_eq!(fs::read(existing.join("keep.txt")).unwrap(), b"keep");
         assert!(source.exists());
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    #[test]
+    fn replace_refuses_to_put_a_file_over_an_existing_directory() {
+        let src_root = unique_temp_path("replace_type_src");
+        let dst_root = unique_temp_path("replace_type_dst");
+        let source = src_root.join("Repos");
+        let existing = dst_root.join("Repos");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(existing.join("docs")).unwrap();
+        fs::write(source.join("docs"), b"a file named docs").unwrap();
+        fs::write(existing.join("docs").join("keep.txt"), b"keep").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let error = transfer_with_progress_blocking(
+            "copy",
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            "op_replace_type_test".to_string(),
+            "replace".to_string(),
+            cancel,
+            &|_| {},
+        )
+        .expect_err("a file must not replace a directory of the same name");
+
+        assert!(
+            existing.join("docs").is_dir(),
+            "destination directory was deleted"
+        );
+        assert_eq!(
+            fs::read(existing.join("docs").join("keep.txt")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(error.outcome.failed.len(), 1, "{:?}", error.outcome);
+        assert_eq!(error.outcome.failed[0].kind, "conflict");
+        assert_eq!(
+            error.outcome.failed[0].destination,
+            existing.join("docs").to_string_lossy()
+        );
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    #[test]
+    fn move_merge_removes_sources_under_new_subfolders() {
+        let src_root = unique_temp_path("move_merge_src");
+        let dst_root = unique_temp_path("move_merge_dst");
+        let source = src_root.join("Proj");
+        let existing = dst_root.join("Proj");
+        fs::create_dir_all(source.join("new")).unwrap();
+        fs::create_dir_all(existing.join("old")).unwrap();
+        fs::create_dir_all(source.join("old")).unwrap();
+        fs::write(source.join("new").join("fresh.txt"), b"fresh").unwrap();
+        fs::write(source.join("old").join("moved.txt"), b"moved").unwrap();
+        fs::write(existing.join("old").join("keep.txt"), b"keep").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let result = transfer_with_progress_blocking(
+            "move",
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            "op_move_merge_test".to_string(),
+            "replace".to_string(),
+            cancel,
+            &|_| {},
+        )
+        .unwrap_or_else(|error| panic!("merge move failed: {:?}", error.outcome));
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            fs::read(existing.join("new").join("fresh.txt")).unwrap(),
+            b"fresh"
+        );
+        assert_eq!(
+            fs::read(existing.join("old").join("moved.txt")).unwrap(),
+            b"moved"
+        );
+        assert_eq!(
+            fs::read(existing.join("old").join("keep.txt")).unwrap(),
+            b"keep"
+        );
+        assert!(
+            !source.exists(),
+            "move must remove the whole source tree, including new subfolders"
+        );
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    #[test]
+    fn move_merge_with_skip_keeps_skipped_sources_without_failing() {
+        let src_root = unique_temp_path("move_skip_src");
+        let dst_root = unique_temp_path("move_skip_dst");
+        let source = src_root.join("Proj");
+        let existing = dst_root.join("Proj");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&existing).unwrap();
+        fs::write(source.join("same.txt"), b"source").unwrap();
+        fs::write(source.join("new.txt"), b"new").unwrap();
+        fs::write(existing.join("same.txt"), b"destination").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let result = transfer_with_progress_blocking(
+            "move",
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            "op_move_skip_test".to_string(),
+            "skip".to_string(),
+            cancel,
+            &|_| {},
+        )
+        .unwrap_or_else(|error| panic!("skipping is a choice, not a failure: {:?}", error.outcome));
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(fs::read(existing.join("new.txt")).unwrap(), b"new");
+        assert_eq!(fs::read(existing.join("same.txt")).unwrap(), b"destination");
+        assert_eq!(
+            fs::read(source.join("same.txt")).unwrap(),
+            b"source",
+            "a skipped source stays where it was"
+        );
+        assert!(!source.join("new.txt").exists());
 
         let _ = fs::remove_dir_all(&src_root);
         let _ = fs::remove_dir_all(&dst_root);

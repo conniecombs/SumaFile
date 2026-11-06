@@ -219,7 +219,7 @@ pub(crate) fn copy_file_attempt_versioned(
     let need_hash = verify_checksum;
     let mut stream_hasher = ContentHasher::new();
     let remaining = file_len.saturating_sub(resume_from);
-    let multi_streams = ctx.policy.multi_thread_streams_count();
+    let multi_streams = ctx.policy.budgeted_streams(ctx.network);
     let multi_cutoff = ctx.policy.multi_thread_cutoff_bytes();
 
     let multistream_eligible = cfg!(windows)
@@ -320,8 +320,19 @@ pub(crate) fn copy_file_attempt_versioned(
         .file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.ends_with(".sumafile-partial"));
-    simplefile_core::file_ops::apply_basic_metadata_to_handle(&dst_file, &source_after, is_staging)
-        .map_err(|e| Failure::new(format!("Preserve metadata [{}]: {e}", dst.display()), false))?;
+    // Every byte is already written and verified below; a target that refuses
+    // timestamp or attribute updates (some SMB and FAT volumes) gets the same
+    // treatment as directories: keep the file, log the loss.
+    if let Err(error) = simplefile_core::file_ops::apply_basic_metadata_to_handle(
+        &dst_file,
+        &source_after,
+        is_staging,
+    ) {
+        log::warn!(
+            "Could not preserve file metadata for {}: {error}",
+            dst.display()
+        );
+    }
     drop(dst_file);
     if verify_checksum {
         let mut verify_dst = open_source_sequential(dst)
@@ -886,7 +897,19 @@ fn resolve_file_conflict(
     resume_existing: bool,
 ) -> Result<Option<(PathBuf, bool)>, Failure> {
     match conflict {
-        ConflictAction::Replace => Ok(Some((dst.to_path_buf(), true))),
+        ConflictAction::Replace => {
+            // Replace swaps a file for a file. A directory occupying the name is
+            // a type conflict the user must resolve; never delete it to make room.
+            let existing_is_dir = fs::symlink_metadata(dst)
+                .is_ok_and(|meta| meta.file_type().is_dir() && !meta.file_type().is_symlink());
+            if existing_is_dir {
+                return Err(Failure::conflict(format!(
+                    "destination exists with a different type: {}",
+                    dst.display()
+                )));
+            }
+            Ok(Some((dst.to_path_buf(), true)))
+        }
         ConflictAction::Error => Ok(Some((dst.to_path_buf(), false))),
         ConflictAction::Skip => {
             if !resume_existing && path_exists_no_follow(dst) {
@@ -1052,7 +1075,7 @@ pub(crate) fn copy_file_with_progress_versioned(
                     if let Some(owner) = lease.take() {
                         let _ = owner.abort();
                     }
-                    let failure = Failure::from(error);
+                    let failure = error;
                     return Err(if failure.is_conflict() || failure.is_cancelled() {
                         failure
                     } else {
@@ -1149,7 +1172,7 @@ pub(crate) fn copy_symlink_with_progress(
         },
     ) {
         let _ = lease.abort();
-        let failure = Failure::from(error);
+        let failure = error;
         return Err(if failure.is_conflict() || failure.is_cancelled() {
             failure
         } else {

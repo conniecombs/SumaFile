@@ -7,12 +7,17 @@ use crate::dispatch::{dispatch, Dispatch, SessionState};
 use crate::progress::OperationRegistry;
 use crate::scheduler::BlockingScheduler;
 use crate::watcher::WatcherState;
-use io::{read_frame, spawn_writer, write_json};
+use io::{read_frame_with_limit, spawn_writer, write_json};
+
+/// Before the handshake only a handshake request is acceptable; nothing that
+/// legitimately arrives then needs more than this, so an unauthenticated
+/// client cannot make the service allocate the full 80 MiB frame limit.
+const PRE_HANDSHAKE_FRAME_LIMIT: u32 = 64 * 1024;
 use jobs::{
     spawn_copy_move_with_progress, spawn_disk_cleanup, spawn_duplicate_check,
     spawn_folder_item_count, spawn_folder_metrics, spawn_folder_size, spawn_generate_thumbnail,
     spawn_generate_thumbnails, spawn_install_update, spawn_list_directory, spawn_search_files,
-    CopyMoveJob, DiskCleanupJob, DuplicateCheckJob, EventSink,
+    CopyMoveJob, DiskCleanupJob, DuplicateCheckJob, EventSink, SearchJob,
 };
 use serde_json::{json, Value};
 use simplefile_ipc::frame::FrameError;
@@ -41,7 +46,12 @@ where
 
     let result = async {
         loop {
-            let payload = match read_frame(&mut reader).await {
+            let frame_limit = if state.handshake_done {
+                simplefile_ipc::MAX_FRAME_BYTES
+            } else {
+                PRE_HANDSHAKE_FRAME_LIMIT
+            };
+            let payload = match read_frame_with_limit(&mut reader, frame_limit).await {
                 Ok(payload) => payload,
                 Err(FrameError::UnexpectedEof) => return Ok(()),
                 Err(FrameError::Oversize { length }) => {
@@ -50,8 +60,20 @@ where
                 Err(error) => return Err(error.to_string()),
             };
 
-            let request: JsonRpcRequest = serde_json::from_slice(&payload)
-                .map_err(|error| format!("invalid JSON-RPC request: {error}"))?;
+            // A malformed frame is the client's bug, not grounds to drop the
+            // session: answer with a JSON-RPC parse error and keep serving.
+            let request: JsonRpcRequest = match serde_json::from_slice(&payload) {
+                Ok(request) => request,
+                Err(error) => {
+                    let response = JsonRpcResponse::error(
+                        None,
+                        simplefile_ipc::ERR_PARSE,
+                        format!("invalid JSON-RPC request: {error}"),
+                    );
+                    write_json(&writer, &response).await?;
+                    continue;
+                }
+            };
 
             let dispatch_start = Instant::now();
             let action = dispatch(&mut state, &request);
@@ -59,6 +81,9 @@ where
 
             match action {
                 Dispatch::Reply(response) => write_json(&writer, &response).await?,
+                Dispatch::Blocking { id, job } => {
+                    jobs::spawn_blocking_reply(writer.clone(), scheduler.clone(), id, job);
+                }
                 Dispatch::RemoteTransfer {
                     id,
                     provider,
@@ -137,13 +162,24 @@ where
                     write_json(&writer, &JsonRpcResponse::result(id, json!(cancelled))).await?;
                 }
                 Dispatch::SearchFiles { id, options } => {
+                    // Register before spawning: a cancel that follows the start
+                    // request immediately (type-ahead) must find the token.
+                    let registry_id = options
+                        .search_id
+                        .clone()
+                        .unwrap_or_else(simplefile_core::utils::generate_operation_id);
+                    let cancel = searches.register(&registry_id).await;
                     spawn_search_files(
                         writer.clone(),
                         searches.clone(),
                         scheduler.clone(),
                         events.clone(),
-                        id,
-                        options,
+                        SearchJob {
+                            id,
+                            options,
+                            registry_id,
+                            cancel,
+                        },
                     );
                 }
                 Dispatch::CancelSearch { id, search_id } => {
@@ -178,6 +214,9 @@ where
                     network_mode,
                     operation_id,
                 } => {
+                    let operation_id =
+                        operation_id.unwrap_or_else(simplefile_core::utils::generate_operation_id);
+                    let cancel = duplicate_scans.register(&operation_id).await;
                     spawn_duplicate_check(
                         writer.clone(),
                         duplicate_scans.clone(),
@@ -192,6 +231,7 @@ where
                             exclude_patterns,
                             network_mode,
                             operation_id,
+                            cancel,
                         },
                     );
                 }
@@ -209,6 +249,9 @@ where
                     size_threshold,
                     operation_id,
                 } => {
+                    let operation_id =
+                        operation_id.unwrap_or_else(simplefile_core::utils::generate_operation_id);
+                    let cancel = cleanup_scans.register(&operation_id).await;
                     spawn_disk_cleanup(
                         writer.clone(),
                         cleanup_scans.clone(),
@@ -219,6 +262,7 @@ where
                             directory,
                             size_threshold,
                             operation_id,
+                            cancel,
                         },
                     );
                 }

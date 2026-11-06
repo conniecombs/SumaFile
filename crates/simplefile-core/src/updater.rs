@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const APP_NAME: &str = "SumaFile";
 const APP_IDENTIFIER: &str = "com.simplefile.desktop";
@@ -50,7 +50,6 @@ struct UpdatePackage<'a> {
 
 struct DownloadedUpdate {
     path: PathBuf,
-    bytes: Vec<u8>,
     size: u64,
     sha256: String,
 }
@@ -174,7 +173,7 @@ where
     })
     .and_then(|downloaded| {
         verify_download_metadata(&downloaded, package)?;
-        verify_payload_signature(&downloaded.bytes, package.signature, public_key)?;
+        verify_downloaded_signature(&downloaded, package.signature, public_key)?;
         Ok(downloaded)
     });
 
@@ -293,8 +292,8 @@ fn current_platform_key() -> &'static str {
 }
 
 fn is_newer_version(candidate: &str, current: &str) -> bool {
-    let candidate = version_parts(candidate);
-    let current = version_parts(current);
+    let (candidate, candidate_prerelease) = version_parts(candidate);
+    let (current, current_prerelease) = version_parts(current);
     let max_len = candidate.len().max(current.len());
     for index in 0..max_len {
         let left = *candidate.get(index).unwrap_or(&0);
@@ -306,17 +305,25 @@ fn is_newer_version(candidate: &str, current: &str) -> bool {
             return false;
         }
     }
-    false
+    // Same numeric core: a release is newer than its own prerelease, and a
+    // prerelease (or build-tagged copy) is never offered over the release.
+    current_prerelease && !candidate_prerelease
 }
 
-fn version_parts(version: &str) -> Vec<u64> {
-    version
-        .trim()
-        .trim_start_matches('v')
+/// Numeric components of the version core, plus whether a prerelease tag
+/// follows it. Build metadata (`+...`) is ignored, as semver requires.
+fn version_parts(version: &str) -> (Vec<u64>, bool) {
+    let version = version.trim().trim_start_matches('v');
+    let (core, prerelease) = match version.find(['-', '+']) {
+        Some(index) => (&version[..index], version[index..].starts_with('-')),
+        None => (version, false),
+    };
+    let parts = core
         .split(|character: char| !character.is_ascii_digit())
         .filter(|part| !part.is_empty())
         .map(|part| part.parse().unwrap_or(0))
-        .collect()
+        .collect();
+    (parts, prerelease)
 }
 
 fn update_installer_path(url: &str) -> Result<PathBuf, String> {
@@ -332,8 +339,48 @@ fn update_installer_path(url: &str) -> Result<PathBuf, String> {
     Ok(std::env::temp_dir().join(format!("sumafile-update-{millis}-{file_name}")))
 }
 
+/// Timeouts for the updater's HTTP calls. ureq's default configuration has
+/// none, which let a stalled connection freeze the caller indefinitely.
+#[derive(Clone, Copy, Debug)]
+struct HttpTimeouts {
+    connect: Duration,
+    response: Duration,
+    idle_read: Duration,
+    global: Option<Duration>,
+}
+
+const MANIFEST_TIMEOUTS: HttpTimeouts = HttpTimeouts {
+    connect: Duration::from_secs(15),
+    response: Duration::from_secs(30),
+    idle_read: Duration::from_secs(30),
+    global: Some(Duration::from_secs(60)),
+};
+
+const DOWNLOAD_TIMEOUTS: HttpTimeouts = HttpTimeouts {
+    connect: Duration::from_secs(15),
+    response: Duration::from_secs(60),
+    idle_read: Duration::from_secs(60),
+    global: None,
+};
+
+fn http_agent(timeouts: HttpTimeouts) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_connect(Some(timeouts.connect))
+        .timeout_send_request(Some(timeouts.connect))
+        .timeout_recv_response(Some(timeouts.response))
+        .timeout_per_read(Some(timeouts.idle_read))
+        .timeout_global(timeouts.global)
+        .build()
+        .into()
+}
+
 fn download_text(url: &str) -> Result<String, String> {
-    let response = ureq::get(url)
+    download_text_with_agent(&http_agent(MANIFEST_TIMEOUTS), url)
+}
+
+fn download_text_with_agent(agent: &ureq::Agent, url: &str) -> Result<String, String> {
+    let response = agent
+        .get(url)
         .call()
         .map_err(|error| format!("Failed to check for updates: {error}"))?;
     response
@@ -351,14 +398,14 @@ fn download_file<F>(
 where
     F: FnMut(u64, u64),
 {
-    let response = ureq::get(url)
+    let response = http_agent(DOWNLOAD_TIMEOUTS)
+        .get(url)
         .call()
         .map_err(|error| format!("Failed to download update: {error}"))?;
     let mut reader = response.into_body().into_reader();
     let mut file = std::fs::File::create(path)
         .map_err(|error| format!("Failed to create update file: {error}"))?;
     let mut hasher = Sha256::new();
-    let mut bytes = Vec::new();
     let mut downloaded = 0u64;
     let mut buffer = [0u8; 64 * 1024];
 
@@ -369,11 +416,17 @@ where
         if read == 0 {
             break;
         }
+        // Stop at the manifest's declared size: an oversized response is
+        // rejected before it fills the disk or the hash is wasted on it.
+        if downloaded.saturating_add(read as u64) > total {
+            return Err(format!(
+                "Downloaded update exceeds the declared size of {total} bytes."
+            ));
+        }
         file.write_all(&buffer[..read])
             .map_err(|error| format!("Failed to write update file: {error}"))?;
         hasher.update(&buffer[..read]);
-        bytes.extend_from_slice(&buffer[..read]);
-        downloaded = downloaded.saturating_add(read as u64);
+        downloaded += read as u64;
         progress(downloaded, total);
     }
 
@@ -382,10 +435,21 @@ where
 
     Ok(DownloadedUpdate {
         path: path.to_path_buf(),
-        bytes,
         size: downloaded,
         sha256: hex_encode(hasher.finalize()),
     })
+}
+
+/// Verify the installer that will actually be launched: the bytes on disk,
+/// read back after the download, rather than a second in-memory copy.
+fn verify_downloaded_signature(
+    downloaded: &DownloadedUpdate,
+    signature_b64: &str,
+    public_key_b64: &str,
+) -> Result<(), String> {
+    let payload = std::fs::read(&downloaded.path)
+        .map_err(|error| format!("Failed to read downloaded update for verification: {error}"))?;
+    verify_payload_signature(&payload, signature_b64, public_key_b64)
 }
 
 #[cfg(windows)]
@@ -405,14 +469,115 @@ fn launch_installer(_path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_newer_version, validate_sha256, validate_update_url, verify_download_metadata,
-        verify_payload_signature, DownloadedUpdate, ManifestPlatform, UpdatePackage,
+        download_file, download_text_with_agent, http_agent, is_newer_version, validate_sha256,
+        validate_update_url, verify_download_metadata, verify_downloaded_signature,
+        verify_payload_signature, DownloadedUpdate, HttpTimeouts, ManifestPlatform, UpdatePackage,
     };
     use std::path::PathBuf;
+    use std::time::Duration;
+
+    #[test]
+    fn stalled_server_times_out_instead_of_hanging() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                std::thread::sleep(Duration::from_secs(3));
+                drop(stream);
+            }
+        });
+        let agent = http_agent(HttpTimeouts {
+            connect: Duration::from_millis(500),
+            response: Duration::from_millis(200),
+            idle_read: Duration::from_millis(200),
+            global: Some(Duration::from_millis(400)),
+        });
+        let started = std::time::Instant::now();
+        let error = download_text_with_agent(&agent, &format!("http://{address}/latest.json"))
+            .expect_err("a silent server must time out");
+        assert!(started.elapsed() < Duration::from_secs(2), "{error}");
+    }
+
+    #[test]
+    fn signature_is_verified_against_the_file_on_disk() {
+        let path = std::env::temp_dir().join(format!(
+            "sumafile-updater-ondisk-{}.exe",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"").unwrap();
+        let downloaded = DownloadedUpdate {
+            path: path.clone(),
+            size: 0,
+            sha256: String::new(),
+        };
+        verify_downloaded_signature(
+            &downloaded,
+            RFC8032_EMPTY_MESSAGE_SIGNATURE,
+            RFC8032_PUBLIC_KEY,
+        )
+        .expect("empty file matches the RFC8032 empty-message signature");
+        std::fs::write(&path, b"tampered after download").unwrap();
+        assert!(verify_downloaded_signature(
+            &downloaded,
+            RFC8032_EMPTY_MESSAGE_SIGNATURE,
+            RFC8032_PUBLIC_KEY
+        )
+        .is_err());
+        let _ = std::fs::remove_file(&path);
+    }
 
     const RFC8032_PUBLIC_KEY: &str = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=";
     const RFC8032_EMPTY_MESSAGE_SIGNATURE: &str =
         "5VZDAMNgrHKQhuLMgG6CioSHfx645dl02HPgZSJJAVVfuIIVkKM7rMYeOXAc+bRr0lv18FlbviRlUUFDjnoQCw==";
+
+    #[test]
+    fn prerelease_and_build_suffixes_are_not_newer_than_the_release() {
+        assert!(!is_newer_version("1.1.0-beta.2", "1.1.0"));
+        assert!(!is_newer_version("1.0.2+build5", "1.0.2"));
+        assert!(is_newer_version("1.1.0", "1.1.0-beta.2"));
+        assert!(is_newer_version("1.1.1-rc.1", "1.1.0"));
+    }
+
+    fn serve_once(response: Vec<u8>) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut request = [0u8; 4096];
+                let _ = stream.read(&mut request);
+                let _ = stream.write_all(&response);
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{address}/update.exe")
+    }
+
+    #[test]
+    fn download_stops_once_the_body_exceeds_the_declared_size() {
+        let declared = 1024u64;
+        let body = vec![b'x'; 8 * 1024];
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(&body);
+        let url = serve_once(response);
+        let path = std::env::temp_dir().join(format!(
+            "sumafile-updater-cap-{}-{}.exe",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let result = download_file(&url, &path, declared, |_, _| {});
+        let _ = std::fs::remove_file(&path);
+        let error = result.err().expect("oversized body must be rejected");
+        assert!(error.contains("exceeds"), "{error}");
+    }
 
     #[test]
     fn version_compare_handles_multi_digit_parts() {
@@ -485,7 +650,6 @@ mod tests {
         };
         let downloaded = DownloadedUpdate {
             path: PathBuf::from("SumaFile_1.0.1_x64-winui-setup.exe"),
-            bytes: Vec::new(),
             size: 0,
             sha256: package.sha256.to_string(),
         };
