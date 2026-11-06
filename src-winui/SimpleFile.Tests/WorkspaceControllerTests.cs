@@ -184,6 +184,33 @@ public class WorkspaceControllerTests
     }
 
     [Fact]
+    public async Task PaneEnrichment_InvalidatedProbeAsksGitAgainWhenARepositoryAppears()
+    {
+        var ipc = new GitProbeIpc();
+        var pane = new ExplorerPane(PaneId.Primary)
+        {
+            Path = @"C:\src\new",
+            Entries = [new FileEntry { Name = "a.txt", Path = @"C:\src\new\a.txt" }],
+        };
+        var controller = new PaneEnrichmentController();
+        var fileOps = new FileOperationService(ipc);
+
+        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
+        Assert.Null(pane.GitRepositoryRoot);
+
+        ipc.Repositories.Add(@"C:\src\new");
+        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
+        Assert.Equal(1, ipc.ProbeCalls);
+
+        pane.InvalidateGitProbe();
+        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
+
+        Assert.Equal(2, ipc.ProbeCalls);
+        Assert.Equal(@"C:\src\new", pane.GitRepositoryRoot);
+        Assert.Equal(1, ipc.FileStatusCalls);
+    }
+
+    [Fact]
     public async Task PaneEnrichment_InsideARepositoryReusesTheProbedRootForSubfolders()
     {
         var ipc = new GitProbeIpc();

@@ -222,10 +222,20 @@ public sealed partial class MainWindow
     private void OnTransferRevealTimerTick(DispatcherQueueTimer sender, object args)
     {
         sender.Stop();
-        if (HasRunningTransfer())
+        if (!HasRunningTransfer())
         {
-            ShowTransferProgressWindow(activate: true);
+            return;
         }
+
+        if (DialogHost.IsDialogOpen)
+        {
+            // A conflict or retry prompt is waiting on the main window; revealing the Transfers
+            // window now would cover it. Try again after another delay.
+            sender.Start();
+            return;
+        }
+
+        ShowTransferProgressWindow(activate: true);
     }
 
     private void CancelTransferWindowRevealIfIdle()
