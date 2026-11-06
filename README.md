@@ -3,7 +3,7 @@
 [![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
 [![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
 [![Installer Smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
-![Version](https://img.shields.io/badge/version-1.0.3-2563eb)
+![Version](https://img.shields.io/badge/version-1.0.4-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%7C%20Windows%2011-0078D4?logo=windows)
 ![UI](https://img.shields.io/badge/UI-WinUI%203-5b8def)
 ![Backend](https://img.shields.io/badge/backend-Rust%20IPC-b7410e?logo=rust)
@@ -68,7 +68,7 @@ All visible files and paths belong to its generated test workspace.
 
 | Area | Current state |
 | --- | --- |
-| Product version | `1.0.3` |
+| Product version | `1.0.4` |
 | Platform | Windows 10 2004+ / Windows 11, x64 |
 | UI | Unpackaged WinUI 3 desktop app |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
@@ -80,16 +80,18 @@ The active application is the WinUI host under `src-winui/` plus the Rust crates
 under `crates/`. Historical migration notes remain in `docs/winui-migration/`,
 but the Svelte/Tauri surface is not the shipping UI for this branch.
 
-## What changed in 1.0.3
+## What changed in 1.0.4
 
-Use the omnibar to enter a path, search a folder, or filter the active pane.
-Copy and move jobs now continue past individual failures. When you retry, SumaFile
-retries the affected files at their original destinations. Slow Git, network and
-filesystem requests run separately from the service's request loop so you can
-continue browsing.
+Menus grey out what is unavailable instead of hiding it, Delete is a direct
+menu item, and the omnibar returns to Path mode when a search or filter ends.
+The conflict dialog uses one choice list with Continue as the default, the
+Transfers window no longer steals focus, and transfer options show three
+settings with the rest under Advanced. Git controls appear only inside a
+repository, FTP/SFTP profiles get a trust prompt for new server keys, and
+labels, the sidebar, profiles and connections each have one name everywhere.
 
-See the [v1.0.3 release notes](docs/RELEASE_1.0.3.md) for the changes since
-v1.0.2, transfer defaults, upgrade instructions and known limitations.
+See the [v1.0.4 release notes](docs/RELEASE_1.0.4.md) for the changes since
+v1.0.3, upgrade instructions and known limitations.
 
 ## Highlights
 
@@ -112,9 +114,9 @@ Download the latest Windows release from
 
 | v1.0.3 artifact | Recommended use |
 | --- | --- |
-| `SumaFile_1.0.3_x64-winui-setup.exe` | Normal per-user installation |
-| `SumaFile_1.0.3_x64-winui.msi` | MSI deployment or installer validation |
-| `SumaFile_1.0.3_x64-winui-portable.zip` | Portable, extracted-folder usage |
+| `SumaFile_1.0.4_x64-winui-setup.exe` | Normal per-user installation |
+| `SumaFile_1.0.4_x64-winui.msi` | MSI deployment or installer validation |
+| `SumaFile_1.0.4_x64-winui-portable.zip` | Portable, extracted-folder usage |
 | `latest-winui.json` | Signed updater metadata for published releases |
 
 Requirements:
@@ -141,10 +143,13 @@ the app. Builds without complete trusted metadata fall back to the release page.
    palette access. Right-click blank pane space for New (folder, text
    document, blank file, shortcut), Paste, Refresh, and the current
    folder's Properties. Right-click an item for Create
-   shortcut, which pre-fills the shortcut target.
-7. Open Tools -> FTP/SFTP Manager when you need a saved FTP, FTPS, or SFTP
-   profile.
-8. Save repeatable pane/tab/column setups from View options -> Profiles.
+   shortcut, which pre-fills the shortcut target. Unavailable commands stay
+   visible but greyed out.
+7. Open More (⋯) -> Tools -> FTP/SFTP Manager when you need a saved FTP, FTPS,
+   or SFTP connection. Saved connections are also listed under Connections in
+   the sidebar.
+8. Save repeatable pane/tab/column setups from the Profiles button on the
+   toolbar.
 
 ## Feature Reference
 
@@ -245,7 +250,7 @@ links and special entries that could escape the destination.
 
 ### Organization
 
-- Color labels and file/folder tags
+- Color labels for files and folders, shown under Labels in the sidebar
 - Bookmarks and recent locations
 - Smart folders
 - Folder metrics
@@ -263,7 +268,7 @@ links and special entries that could escape the destination.
   diff preview, stage, unstage, discard, fetch, pull, push, and commit actions
 - Settings -> Behavior can completely disable Git integration, hiding Git UI
   and preventing Git status/command calls
-- Open terminal here with `F4`
+- Open terminal here with ``Ctrl+` ``
 - Elevated PowerShell launch
 - Open With menu and chooser
 - Pinned and recent Open With apps per extension
@@ -331,9 +336,9 @@ Settings is organized into:
 
 | Section | Controls |
 | --- | --- |
-| Appearance | Theme, default view, icon size, column preset, hidden files |
-| Navigation | Start location, custom path, new-tab behavior, sidebar sections, recent history |
-| Behavior | Delete confirmation, folder sorting, folder sizes, rendered previews, video playback previews, Git integration |
+| Appearance | Theme (Windows default, Light, Dark), default view, icon size, column preset, hidden files |
+| Navigation | Start location (Home folder, Restore last session, Custom folder), new-tab behavior, sidebar sections, recent history |
+| Behavior | Recycle Bin prompt, folder sorting, folder sizes, rendered previews, preview collapse, transfer options, and a Developer group for Git integration |
 | Storage & Cache | Thumbnail cache enablement, cache size, and cache location |
 | Shortcuts | Searchable shortcut list with edit, reset, import, and export |
 | Toolbar | Toolbar label mode, command order, separators, removed commands, and reset |
@@ -343,8 +348,9 @@ Settings is organized into:
 
 Startup can open Home, the last used workspace, or a custom path. Last-used
 state persists panes, active pane, tabs, view mode, icon size, sort, and filter
-context. Named layouts are separate snapshots available from View options ->
-Layouts.
+context. Named profiles are separate snapshots available from the Profiles
+button on the toolbar; applying a profile does not change the Git or
+folders-on-top settings.
 
 Persistent compatibility data stays at:
 
@@ -366,7 +372,7 @@ Runtime diagnostics are written under:
 
 ## Keyboard Shortcuts
 
-Press `F1` or `Ctrl+?` in SumaFile for the live shortcut list.
+Press `F1` or `Ctrl+/` in SumaFile for the live shortcut list.
 
 | Shortcut | Action |
 | --- | --- |
@@ -375,14 +381,14 @@ Press `F1` or `Ctrl+?` in SumaFile for the live shortcut list.
 | `Ctrl+Enter` | Open folder in new tab |
 | `Alt+Enter` | Properties |
 | `Alt+Home` | Go home |
-| `Alt+Up` / `Backspace` | Parent folder |
-| `Alt+Left` / `Alt+Right` | Back / forward |
+| `Alt+Up` | Parent folder |
+| `Alt+Left` / `Backspace` / `Alt+Right` | Back / forward |
 | `F5` | Refresh |
 | `F6` | Open or close second pane |
-| `Tab` | Switch active pane when dual pane is open |
+| `Tab` | Switch active pane when a file list has focus and dual pane is open |
 | `Alt+1` / `Alt+2` | Focus left / right pane |
 | `Ctrl+Shift+Left` / `Ctrl+Shift+Right` | Focus left / right pane |
-| `Ctrl+T` / `Ctrl+W` | New tab / close tab |
+| `Ctrl+T` or `Ctrl+N` / `Ctrl+W` | New tab / close tab |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Ctrl+1`-`Ctrl+9` | Jump to tab; `9` means last tab |
 | `F2` | Rename |
@@ -391,17 +397,19 @@ Press `F1` or `Ctrl+?` in SumaFile for the live shortcut list.
 | `Ctrl+Shift+C` | Copy path |
 | `Ctrl+Shift+V` | Clipboard history |
 | `Ctrl+A` | Select all |
-| `Ctrl+N` / `Ctrl+Shift+N` | New file / new folder |
+| `Ctrl+Shift+N` | New folder (New text document is in the New menu) |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
 | `Ctrl+Alt+C` / `Ctrl+Alt+M` | Copy / move to other pane |
-| `Space` | Quick Look |
+| `Space` | Quick Look (when a file list has focus) |
+| `Alt+P` | Show or hide the preview pane |
 | `Ctrl+H` | Show or hide hidden/system files |
 | `Ctrl+B` | Bookmark current folder |
 | `Ctrl+Mouse wheel` | Change icon size |
 | `Ctrl+F` / `F3` | Focus the omnibar in Search mode |
 | `Ctrl+Shift+P` | Command palette |
-| `F4` | Open terminal here |
+| ``Ctrl+` `` | Open terminal here |
+| `Ctrl+,` | Settings |
 | `Escape` | Close transient UI, clear filter, or clear selection |
 
 ## Development
@@ -646,7 +654,7 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 
 ## Known Limitations
 
-- SumaFile 1.0.3 is Windows-only.
+- SumaFile 1.0.4 is Windows-only.
 - Installing SumaFile for the first time is manual; in-app update installation requires a
   newer published release with signed `latest-winui.json` metadata.
 - RAR archives can be listed and extracted, but RAR creation and in-place RAR
@@ -658,6 +666,8 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
   task state requires editing the Markdown source.
 - Some Windows-reserved shortcuts may not be assignable; shortcut remapping,
   import, and export live in Settings -> Shortcuts.
+- Inline rename is available in the Details view; List, Tiles and Content views
+  still open the rename dialog.
 
 ## Support
 

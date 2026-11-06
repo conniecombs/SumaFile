@@ -8,7 +8,32 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
-Changes after v1.0.3 will be listed here.
+Changes after v1.0.4 will be listed here.
+
+---
+
+## [1.0.4] - prepared 2026-11-06
+
+- Context menus grey out unavailable commands, Delete is a direct item, and
+  the More menu keeps only toolbar, Tools, Profiles and pane commands.
+- Tab, Space and Backspace act on the file list only; new default chords for
+  new tab (Ctrl+N), back (Backspace), terminal (Ctrl+`), Settings (Ctrl+,),
+  shortcut help (Ctrl+/) and the preview pane (Alt+P).
+- The omnibar returns to Path mode after a search or filter and resolves bare
+  names against the current folder before falling back to a filter.
+- Conflict dialog with one choice list and Continue; the Transfers window no
+  longer activates itself; transfer options split into basic and Advanced;
+  failure text in plain language; Recycle Bin prompt defaults to confirm.
+- Advanced Rename drops its second confirmation; Large files and duplicates
+  replaces Disk cleanup; Duplicate Checker hides engine settings; Quick Look
+  becomes a lightbox; inline rename in Details.
+- Preview collapses only when cramped; Source/Rendered switch; Git UI only
+  inside repositories; Discard warns about untracked files.
+- FTP/SFTP connections: visible plain-FTP consent, SFTP trust prompt, hidden
+  credential target. Settings search covers controls, Light theme, sentence
+  case labels, Developer group, Transfer options row.
+- One name per concept: Labels, sidebar, Profiles, Connections.
+- See the [v1.0.4 release notes](RELEASE_1.0.4.md).
 
 ---
 
