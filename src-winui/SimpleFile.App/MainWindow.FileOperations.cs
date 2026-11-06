@@ -1,3 +1,4 @@
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SimpleFile.Core;
@@ -7,6 +8,10 @@ namespace SimpleFile.App;
 
 public sealed partial class MainWindow
 {
+    // One shared timer: a transfer still running after this delay brings the Transfers window up.
+    private static readonly TimeSpan TransferWindowRevealDelay = TimeSpan.FromSeconds(3);
+    private DispatcherQueueTimer? _transferRevealTimer;
+
     private ListView ActiveFileList
         => _workspace?.ActivePane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
 
@@ -69,6 +74,12 @@ public sealed partial class MainWindow
 
     private async Task PromptAndRename()
     {
+        // Details view renames in place; other views (or no editable row) use the dialog.
+        if (TryBeginInlineRename())
+        {
+            return;
+        }
+
         await _fileOperationDialogs.PromptAndRenameAsync();
     }
 
@@ -154,9 +165,10 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// Shows the Transfers window. It is brought to the front when it is first created or when
-    /// the user asks for it; background starts, retries and dequeues must not steal focus or
-    /// cover a conflict prompt on the main window.
+    /// Shows the Transfers window. It is brought to the front only when the user asks for it
+    /// (Status Center, the Transfers command) or when a job is still running after a few
+    /// seconds; auto-created windows stay unactivated so background starts, retries and
+    /// dequeues never steal focus or cover a conflict prompt on the main window.
     /// </summary>
     private void ShowTransferProgressWindow(bool activate = true)
     {
@@ -165,9 +177,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        var window = EnsureTransferProgressWindow(out var created);
+        var window = EnsureTransferProgressWindow(out _);
         window.Start(_transfer, _workspace?.FileOps);
-        if (created || activate)
+        if (activate)
         {
             window.Activate();
         }
@@ -183,7 +195,49 @@ public sealed partial class MainWindow
 
         operation.SetOperationId(operationId);
         ShowTransferProgressWindow(activate: false);
+        ScheduleTransferWindowReveal(operation);
     }
+
+    private void ScheduleTransferWindowReveal(TransferOperationViewModel operation)
+    {
+        if (_transferRevealTimer is null)
+        {
+            _transferRevealTimer = DispatcherQueue.CreateTimer();
+            _transferRevealTimer.Interval = TransferWindowRevealDelay;
+            _transferRevealTimer.IsRepeating = false;
+            _transferRevealTimer.Tick += OnTransferRevealTimerTick;
+        }
+
+        if (!_transferRevealTimer.IsRunning)
+        {
+            _transferRevealTimer.Start();
+        }
+
+        // A job that finishes first cancels the reveal (unless another one is still running).
+        _ = operation.CompletionTask.ContinueWith(
+            _ => DispatcherQueue.TryEnqueue(CancelTransferWindowRevealIfIdle),
+            TaskScheduler.Default);
+    }
+
+    private void OnTransferRevealTimerTick(DispatcherQueueTimer sender, object args)
+    {
+        sender.Stop();
+        if (HasRunningTransfer())
+        {
+            ShowTransferProgressWindow(activate: true);
+        }
+    }
+
+    private void CancelTransferWindowRevealIfIdle()
+    {
+        if (_transferRevealTimer is { IsRunning: true } timer && !HasRunningTransfer())
+        {
+            timer.Stop();
+        }
+    }
+
+    private bool HasRunningTransfer() =>
+        _transfer?.Operations.Any(operation => operation.Status == TransferOperationStatus.Running) == true;
 
     private void OnTransferProgress(TransferOperationViewModel operation, ProgressUpdate update)
     {
@@ -196,15 +250,25 @@ public sealed partial class MainWindow
         operation.ApplyProgress(update);
     }
 
-    private void CompleteTransferProgress(bool move, int itemCount, string? destination = null, int skipped = 0)
+    private void CompleteTransferProgress(
+        bool move,
+        int itemCount,
+        string? destination = null,
+        int skipped = 0,
+        bool undoable = false)
     {
         if (!DispatcherQueue.HasThreadAccess)
         {
-            DispatcherQueue.TryEnqueue(() => CompleteTransferProgress(move, itemCount, destination, skipped));
+            DispatcherQueue.TryEnqueue(() => CompleteTransferProgress(move, itemCount, destination, skipped, undoable));
             return;
         }
 
-        SetStatusText(TransferProgressFormatter.CompletionReceipt(move, itemCount, destination, skipped));
+        var receipt = TransferProgressFormatter.CompletionReceipt(move, itemCount, destination, skipped);
+        SetStatusText(receipt);
+        if (undoable)
+        {
+            ShowUndoReceipt(move ? "Move" : "Copy", receipt);
+        }
     }
 
     private void OnFileProgressCancelRequested(TransferOperationViewModel operation)
@@ -360,7 +424,7 @@ public sealed partial class MainWindow
     }
 
     private async void OnSetColorLabelClicked(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("Color label", SetColorLabelAsync);
+        await RunUiActionAsync("Set label", SetColorLabelAsync);
 
     private async Task SetColorLabelAsync()
     {

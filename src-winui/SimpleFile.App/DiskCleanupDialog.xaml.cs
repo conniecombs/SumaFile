@@ -16,10 +16,18 @@ public sealed partial class DiskCleanupDialog : ContentDialog, IScanDialog<Clean
     public string Directory { get; set; } = string.Empty;
     public ulong ThresholdBytes => ToThresholdBytes(ThresholdInput.Value);
     public bool AnalyzeRequested { get; private set; }
+
+    /// <summary>Set when a row asked to move its file to the Recycle Bin; the host confirms and trashes after the dialog closes.</summary>
+    public bool TrashRequested { get; private set; }
+    public string[] PathsToTrash { get; private set; } = [];
+
+    /// <summary>Set when the user chose to open the Duplicate Finder for this folder instead.</summary>
+    public bool DuplicateFinderRequested { get; private set; }
     public bool IsScanning { get; private set; }
     public bool ScanWasCancelled { get; private set; }
 
     public event EventHandler? ScanCancelled;
+    public event EventHandler<string>? RevealRequested;
 
     public ObservableCollection<LargeFileViewModel> LargeFiles { get; } = new();
     public ObservableCollection<CleanupDuplicateGroupViewModel> Duplicates { get; } = new();
@@ -36,7 +44,10 @@ public sealed partial class DiskCleanupDialog : ContentDialog, IScanDialog<Clean
         IsScanning = false;
         ScanWasCancelled = false;
         AnalyzeRequested = false;
-        Title = "Analyze Cleanup";
+        TrashRequested = false;
+        PathsToTrash = [];
+        DuplicateFinderRequested = false;
+        Title = "Large files and duplicates";
         PrimaryButtonText = "Analyze";
         CloseButtonText = "Cancel";
         DefaultButton = ContentDialogButton.Primary;
@@ -51,7 +62,7 @@ public sealed partial class DiskCleanupDialog : ContentDialog, IScanDialog<Clean
     public void ShowScanning()
     {
         IsScanning = true;
-        Title = "Analyzing Cleanup";
+        Title = "Analyzing folder";
         PrimaryButtonText = string.Empty;
         CloseButtonText = "Cancel";
         DefaultButton = ContentDialogButton.Close;
@@ -69,12 +80,12 @@ public sealed partial class DiskCleanupDialog : ContentDialog, IScanDialog<Clean
     public void ShowResults(CleanupResult result)
     {
         IsScanning = false;
-        Title = "Cleanup Results";
+        Title = "Results";
         PrimaryButtonText = string.Empty;
         CloseButtonText = "Close";
         DefaultButton = ContentDialogButton.Close;
         DialogRoot.Width = 620;
-        DialogRoot.Height = 460;
+        DialogRoot.Height = 500;
 
         LargeFiles.Clear();
         foreach (var file in result.LargeFiles.Take(LargeFileLimit))
@@ -91,6 +102,9 @@ public sealed partial class DiskCleanupDialog : ContentDialog, IScanDialog<Clean
         SummaryLargeFiles.Text = result.LargeFiles.Count.ToString("N0");
         SummaryDuplicates.Text = result.Duplicates.Count.ToString("N0");
         SummaryScanned.Text = result.ScannedFiles.ToString("N0");
+
+        SetFooter(LargeFilesFooter, LargeFiles.Count, result.LargeFiles.Count, "large files");
+        SetFooter(DuplicatesFooter, Duplicates.Count, result.Duplicates.Count, "duplicate groups");
 
         LargeFilesEmpty.Visibility = LargeFiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         DuplicatesEmpty.Visibility = Duplicates.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -156,6 +170,49 @@ public sealed partial class DiskCleanupDialog : ContentDialog, IScanDialog<Clean
             ScanWasCancelled = true;
             ScanCancelled?.Invoke(this, EventArgs.Empty);
         }
+    }
+
+    /// <summary>"Showing first 50 of 312 large files" when the list is truncated.</summary>
+    internal static string TruncationFooter(int shown, int total, string noun) =>
+        total > shown ? $"Showing first {shown:N0} of {total:N0} {noun}" : string.Empty;
+
+    private static void SetFooter(TextBlock footer, int shown, int total, string noun)
+    {
+        footer.Text = TruncationFooter(shown, total, noun);
+        footer.Visibility = footer.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static string? RowPath(object sender) => (sender as FrameworkElement)?.Tag switch
+    {
+        LargeFileViewModel file => file.Path,
+        string path when path.Length > 0 => path,
+        _ => null,
+    };
+
+    private void OnRevealClicked(object sender, RoutedEventArgs e)
+    {
+        if (RowPath(sender) is { } path)
+        {
+            RevealRequested?.Invoke(this, path);
+        }
+    }
+
+    // Trashing needs a confirmation dialog, which cannot open over this one: close first,
+    // and the host trashes through the workspace (undoable, panes refresh).
+    private void OnRecycleClicked(object sender, RoutedEventArgs e)
+    {
+        if (RowPath(sender) is { } path)
+        {
+            PathsToTrash = [path];
+            TrashRequested = true;
+            Hide();
+        }
+    }
+
+    private void OnOpenDuplicateFinderClicked(object sender, RoutedEventArgs e)
+    {
+        DuplicateFinderRequested = true;
+        Hide();
     }
 
     private static ulong ToThresholdBytes(double megabytes)
