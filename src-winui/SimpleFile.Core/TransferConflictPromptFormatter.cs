@@ -36,6 +36,29 @@ public static class TransferConflictPromptFormatter
             "Choose how SumaFile should handle this transfer.");
     }
 
+    /// <summary>Label for the keep-both choice; names the preview when one is known.</summary>
+    public static string KeepBothLabel(string? previewName) =>
+        string.IsNullOrWhiteSpace(previewName) ? "Keep both" : $"Keep both (saves as {previewName})";
+
+    /// <summary>"Newer" / "Larger" badges for <paramref name="item"/> compared with <paramref name="other"/>.</summary>
+    public static IReadOnlyList<string> Badges(ConflictFileSnapshot item, ConflictFileSnapshot other)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(other);
+        var badges = new List<string>(2);
+        if (item.ModifiedUtc is { } mine && other.ModifiedUtc is { } theirs && mine > theirs)
+        {
+            badges.Add("Newer");
+        }
+
+        if (item.Size is { } size && other.Size is { } otherSize && size > otherSize)
+        {
+            badges.Add("Larger");
+        }
+
+        return badges;
+    }
+
     private static string ConflictSummary(IReadOnlyList<string>? conflicts)
     {
         if (conflicts is null || conflicts.Count == 0)

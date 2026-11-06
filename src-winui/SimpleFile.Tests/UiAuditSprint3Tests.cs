@@ -31,7 +31,7 @@ public class UiAuditSprint3Tests
         Assert.Contains("ProgressRing", host);
 
         var inspection = Read("MainWindow.InspectionDialogs.cs");
-        Assert.Contains("RunWithProgressAsync(", Slice(inspection, "private async Task ShowQuickLookAsync()", "private static void AddQuickLookMetadataRows("));
+        Assert.Contains("RunWithProgressAsync(", Slice(inspection, "private async Task ShowQuickLookAsync()", "private async Task<(UIElement Body, Action? Cleanup)> LoadQuickLookBodyAsync("));
         Assert.Contains("RunWithProgressAsync(", Slice(inspection, "private async Task ShowFolderMetricsAsync()", "private async Task ShowOperationHistoryAsync()"));
 
         var dialogs = Read("FileOperationDialogService.cs");
@@ -155,10 +155,13 @@ public class UiAuditSprint3Tests
     }
 
     // T8 / T9: Enter cancelled the whole transfer; Enter in history re-ran a completed copy.
+    // 1.0.4: Enter is Continue with the selected choice, and the choice starts on Skip.
     [Fact]
     public void ConflictAndHistoryDialogs_HaveSafeDefaults()
     {
-        Assert.Contains("DefaultButton=\"Secondary\"", Read("ConflictDialog.xaml"));
+        var conflict = Read("ConflictDialog.xaml");
+        Assert.Contains("DefaultButton=\"Primary\"", conflict);
+        Assert.Contains("SelectedIndex=\"1\"", conflict);
         var history = Slice(Read("MainWindow.InspectionDialogs.cs"), "private async Task ShowOperationHistoryAsync()", "await DialogHost.ShowAsync(dialog);");
         Assert.Contains("DefaultButton = ContentDialogButton.Close", history);
         Assert.Contains("IsPrimaryButtonEnabled", history);

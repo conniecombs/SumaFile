@@ -931,16 +931,17 @@ public class Sprint2WindowTests
     }
 
     // T2: the Transfers window re-activated itself on every start/retry/dequeue.
+    // 1.0.4: an auto-created window stays unactivated too; it is shown on request or after ~3 s.
     [Fact]
-    public void TransferWindow_ActivatesOnlyWhenCreatedOrExplicitlyOpened()
+    public void TransferWindow_ActivatesOnlyWhenExplicitlyOpened()
     {
         var window = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "TransferProgressWindow.xaml.cs"));
         var start = Slice(window, "public void Start(", "private async void OnDefaultsClicked(");
         var ops = File.ReadAllText(Path.Combine(Sprint2ShellTests.AppRoot(), "MainWindow.FileOperations.cs"));
 
         Assert.DoesNotContain("Activate();", start);
-        Assert.Contains("EnsureTransferProgressWindow(out var created)", ops);
-        Assert.Contains("if (created || activate)", ops);
+        Assert.Contains("EnsureTransferProgressWindow(out _)", ops);
+        Assert.DoesNotContain("if (created || activate)", ops);
     }
 
     // T4: skipped conflicts were reported as full success.

@@ -12,7 +12,8 @@ public sealed partial class TransferProgressWindow : Window
     public TransferProgressWindow()
     {
         InitializeComponent();
-        SecondaryWindowChrome.Apply(this, "Transfers", 800, 620, mica: false);
+        // Escape closes the window; transfers keep running in the background.
+        SecondaryWindowChrome.Apply(this, "Transfers", 800, 620, mica: false, cancel: () => CloseRequested?.Invoke());
 
         Closed += (_, _) => IsClosed = true;
     }

@@ -91,12 +91,19 @@
                                     Foreground="{ThemeResource SfTextPrimaryBrush}"
                                     Text="{Binding StatusLabel}" />
                             </Grid>
-                            <StackPanel Grid.Row="3" Spacing="6">
+                            <Expander
+                                Grid.Row="3"
+                                Header="Details"
+                                IsExpanded="False"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch">
+                            <StackPanel Spacing="6">
                                 <Grid ColumnSpacing="8">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding TuningText}" TextWrapping="Wrap" FontSize="12"
                                                Foreground="{ThemeResource SfTextMutedBrush}" />
                                     <Button Grid.Column="1" Content="Options" Click="OnTaskOptionsClicked" Tag="{Binding}"
+                                            AutomationProperties.Name="Transfer options for this task"
                                             IsEnabled="{Binding CanCancel}" Style="{StaticResource SfGhostButtonStyle}" />
                                 </Grid>
                                 <ScrollViewer MaxHeight="180" HorizontalScrollBarVisibility="Disabled">
@@ -113,6 +120,7 @@
                                     </ItemsControl>
                                 </ScrollViewer>
                             </StackPanel>
+                            </Expander>
 
                             <Grid Grid.Row="1">
                                 <ProgressBar AutomationProperties.Name="Transfer progress"

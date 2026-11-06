@@ -478,22 +478,9 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var itemText = FormatItemCount(paths.Length);
-        if (workspace.Settings.ConfirmDelete)
+        if (workspace.Settings.ConfirmDelete && !await ConfirmRecycleAsync(paths))
         {
-            var dialog = new ContentDialog
-            {
-                Title = "Move to Recycle Bin",
-                Content = $"Move {itemText} to the Recycle Bin?",
-                PrimaryButtonText = "Move to Recycle Bin",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Close,
-                XamlRoot = _xamlRoot(),
-            };
-            if (await DialogHost.ShowAsync(dialog) != ContentDialogResult.Primary)
-            {
-                return;
-            }
+            return;
         }
 
         if (!ReferenceEquals(_workspace(), workspace))
@@ -808,7 +795,7 @@ internal sealed partial class FileOperationDialogService
         }
     }
 
-    public async Task ShowDuplicateCheckerAsync()
+    public async Task ShowDuplicateCheckerAsync(string? folder = null)
     {
         var workspace = _workspace();
         var fileOps = workspace?.FileOps;
@@ -817,7 +804,7 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
-        var path = workspace.Active.Path;
+        var path = folder ?? workspace.Active.Path;
         if (string.IsNullOrWhiteSpace(path))
         {
             return;
@@ -878,21 +865,9 @@ internal sealed partial class FileOperationDialogService
                     return;
                 }
 
-                if (workspace.Settings.ConfirmDelete)
+                if (workspace.Settings.ConfirmDelete && !await ConfirmRecycleAsync(trash))
                 {
-                    var confirm = new ContentDialog
-                    {
-                        Title = "Move to Recycle Bin",
-                        Content = $"Move {FormatItemCount(trash.Length)} to the Recycle Bin?",
-                        PrimaryButtonText = "Move to Recycle Bin",
-                        CloseButtonText = "Cancel",
-                        DefaultButton = ContentDialogButton.Close,
-                        XamlRoot = _xamlRoot(),
-                    };
-                    if (await DialogHost.ShowAsync(confirm) != ContentDialogResult.Primary)
-                    {
-                        return;
-                    }
+                    return;
                 }
 
                 try
@@ -943,16 +918,58 @@ internal sealed partial class FileOperationDialogService
         }
 
         var dialog = new DiskCleanupDialog { XamlRoot = _xamlRoot(), Directory = path };
+        dialog.RevealRequested += async (_, filePath) =>
+        {
+            await _runUiActionAsync(
+                "Reveal in folder",
+                () => ReferenceEquals(_workspace(), workspace)
+                    ? fileOps.RevealInFolderAsync(filePath)
+                    : Task.CompletedTask);
+        };
         await RunScanDialogAsync(
             workspace,
             fileOps,
             dialog,
-            "Disk cleanup",
+            "Large files and duplicates",
             (scanDialog, progress, token) => fileOps.DiskCleanupAsync(
                 path,
                 scanDialog.ThresholdBytes,
                 progress,
-                token));
+                token),
+            async (scanDialog, _, token) =>
+            {
+                // Same path as the Duplicate Finder: confirm, then trash through the workspace.
+                if (!scanDialog.TrashRequested || scanDialog.PathsToTrash.Length == 0)
+                {
+                    return;
+                }
+
+                var trash = scanDialog.PathsToTrash;
+                if (workspace.Settings.ConfirmDelete && !await ConfirmRecycleAsync(trash))
+                {
+                    return;
+                }
+
+                try
+                {
+                    await workspace.TrashSelectedAsync(trash, token);
+                }
+                catch (IpcException ipcException) when (FileOperationService.IsTrashUnavailable(ipcException))
+                {
+                    await PromptPermanentDeleteAfterTrashUnavailableAsync(trash, workspace, ipcException, token);
+                    return;
+                }
+
+                if (ReferenceEquals(_workspace(), workspace) && !token.IsCancellationRequested)
+                {
+                    await workspace.RefreshAffectedPanesAsync(trash, token);
+                }
+            });
+
+        if (dialog.DuplicateFinderRequested && ReferenceEquals(_workspace(), workspace))
+        {
+            await ShowDuplicateCheckerAsync(path);
+        }
     }
 
     public async Task SetColorLabelAsync()
@@ -969,8 +986,13 @@ internal sealed partial class FileOperationDialogService
             return;
         }
 
+        // Preselect the label the selection already shares, if any.
+        var currentLabels = selected
+            .Select(entry => workspace.FileTags.TryGetValue(entry.Path, out var tags) ? tags.FirstOrDefault()?.Id : null)
+            .Distinct()
+            .ToArray();
         var dialog = new TagPickerDialog { XamlRoot = _xamlRoot() };
-        dialog.SetTags(workspace.AllTags.ToArray());
+        dialog.SetTags(workspace.AllTags.ToArray(), currentLabels.Length == 1 ? currentLabels[0] : null);
         var result = await DialogHost.ShowAsync(dialog);
         if (result == ContentDialogResult.Primary)
         {
@@ -1002,7 +1024,7 @@ internal sealed partial class FileOperationDialogService
             }
             catch (Exception exception)
             {
-                _showMessage("Color label", exception.Message, InfoBarSeverity.Error);
+                _showMessage("Set label", exception.Message, InfoBarSeverity.Error);
             }
             finally
             {
@@ -1107,6 +1129,27 @@ internal sealed partial class FileOperationDialogService
         {
             _showMessage("Delete", deleteException.Message, InfoBarSeverity.Error);
         }
+    }
+
+    /// <summary>
+    /// The one Recycle Bin confirmation (selection and Duplicate Finder): names the item, and
+    /// Enter confirms because the move can be undone. Permanent delete keeps Cancel as default.
+    /// </summary>
+    private async Task<bool> ConfirmRecycleAsync(string[] paths)
+    {
+        var content = paths.Length == 1
+            ? $"Move \"{PathRules.Basename(paths[0])}\" to the Recycle Bin?"
+            : $"Move {paths.Length:N0} items to the Recycle Bin?";
+        var dialog = new ContentDialog
+        {
+            Title = "Move to Recycle Bin",
+            Content = content,
+            PrimaryButtonText = "Move to Recycle Bin",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = _xamlRoot(),
+        };
+        return await DialogHost.ShowAsync(dialog) == ContentDialogResult.Primary;
     }
 
     private static string FormatItemCount(int count) =>

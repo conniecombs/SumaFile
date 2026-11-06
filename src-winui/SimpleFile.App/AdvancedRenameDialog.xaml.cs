@@ -41,7 +41,19 @@ public sealed partial class AdvancedRenameDialog : Window
         _listDirectoryAsync = listDirectoryAsync;
         InitializeComponent();
         // 700 logical pixels fits a 768 px work area with the taskbar.
-        SecondaryWindowChrome.Apply(this, "Advanced Rename", 1120, 700);
+        SecondaryWindowChrome.Apply(
+            this,
+            "Advanced Rename",
+            1120,
+            700,
+            cancel: () => CloseWithResult(ContentDialogResult.None),
+            primary: () =>
+            {
+                if (RenameButton.IsEnabled)
+                {
+                    OnRenameClicked(this, new RoutedEventArgs());
+                }
+            });
 
         PreviewList.ItemsSource = _previewRows;
         RenameButton.IsEnabled = false;

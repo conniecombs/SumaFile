@@ -58,10 +58,6 @@ public sealed partial class TagPickerDialog : ContentDialog
             SelectedTagId = selected?.Id;
         }
     }
-
-    private void ContentDialog_SecondaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
-    {
-    }
 }
 public class TagViewModel : INotifyPropertyChanged
 {

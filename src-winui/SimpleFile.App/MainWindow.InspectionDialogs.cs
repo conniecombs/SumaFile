@@ -40,6 +40,13 @@ public sealed partial class MainWindow
         await DialogHost.ShowAsync(dialog);
     }
 
+    // Same text budget as the preview pane, so Quick Look never shows less than the pane does.
+    private const int QuickLookTextBudget = 2_000_000;
+
+    /// <summary>
+    /// Quick Look is a lightbox: wide, the file name as the only header, Left / Right step to the
+    /// adjacent item in the active pane, Space or Escape close. Folders open Properties instead.
+    /// </summary>
     private async Task ShowQuickLookAsync()
     {
         if (ActiveSelectedRow is not { } row)
@@ -47,220 +54,198 @@ public sealed partial class MainWindow
             return;
         }
 
+        if (row.IsDir)
+        {
+            await ShowPropertiesAsync();
+            return;
+        }
+
         var workspace = _workspace;
         var fileOps = workspace?.FileOps;
-        var body = new StackPanel { Spacing = 8, Width = 560 };
-        body.Children.Add(new TextBlock { Text = row.Name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        body.Children.Add(new TextBlock { Text = row.Path, TextWrapping = TextWrapping.Wrap, Opacity = 0.8 });
-        body.Children.Add(new TextBlock { Text = $"{row.TypeText}  {row.SizeText}  {row.ModifiedText}" });
-        var hasVisualPreview = false;
+        var pane = workspace?.ActivePane ?? PaneId.Primary;
+        var windowWidth = (Content as FrameworkElement)?.ActualWidth ?? 0;
+        var windowHeight = (Content as FrameworkElement)?.ActualHeight ?? 0;
+        var width = Math.Max(480, windowWidth > 0 ? windowWidth * 0.8 : 720);
+        var previewHeight = Math.Max(240, windowHeight > 0 ? windowHeight * 0.62 : 480);
+        var host = new Grid { Width = width, MinHeight = 200 };
         Action? cleanup = null;
 
-        if (fileOps is not null && row.IsDir)
+        var utilityCts = BeginUtilityOperation("ShowQuickLookAsync");
+        try
         {
-            var utilityCts = BeginUtilityOperation("ShowQuickLookAsync");
-            try
+            var (body, bodyCleanup) = await DialogHost.RunWithProgressAsync(
+                Content.XamlRoot,
+                "Quick Look",
+                $"Loading {row.Name}…",
+                (_, token) => LoadQuickLookBodyAsync(row, fileOps, width, previewHeight, token),
+                utilityCts.Token);
+            if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
             {
-                var metrics = await DialogHost.RunWithProgressAsync(
-                    Content.XamlRoot,
-                    "Quick Look",
-                    $"Measuring {row.Name}…",
-                    (_, token) => fileOps.GetFolderMetricsAsync(row.Path, token),
-                    utilityCts.Token);
-
-                if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                var statsPanel = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
-                statsPanel.Children.Add(new TextBlock
-                {
-                    Text = "Folder Contents",
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Opacity = 0.7,
-                    FontSize = 12,
-                });
-                AddQuickLookMetadataRows(statsPanel, InspectionDetails.FolderMetricRows(metrics));
-                body.Children.Add(statsPanel);
-                hasVisualPreview = true;
-            }
-            catch (OperationCanceledException)
-            {
+                bodyCleanup?.Invoke();
                 return;
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                body.Children.Add(new TextBlock { Text = exception.Message });
-            }
-            finally
-            {
-                FinishUtilityOperation(utilityCts);
-            }
+
+            host.Children.Add(body);
+            cleanup = bodyCleanup;
         }
-        else if (fileOps is not null && !row.IsDir)
-        {
-            var utilityCts = BeginUtilityOperation("ShowQuickLookAsync");
-            try
-            {
-                var preview = await fileOps.ReadFilePreviewAsync(row.Path, 80_000, utilityCts.Token);
-                if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                if (preview.FileType == "text" && preview.Content is not null)
-                {
-                    body.Children.Add(new TextBox
-                    {
-                        Text = preview.Content,
-                        IsReadOnly = true,
-                        AcceptsReturn = true,
-                        FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
-                        FontSize = 12,
-                        MaxHeight = 280,
-                    });
-                    hasVisualPreview = true;
-                }
-                else if (preview.FileType == "image" && await TryAddQuickLookImageAsync(body, row, preview, fileOps, utilityCts.Token))
-                {
-                    hasVisualPreview = true;
-                }
-                else if (PreviewPresenter.TryCreatePathBackedPreview(
-                    row,
-                    preview,
-                    520,
-                    out var pathBackedPreview,
-                    out var pathBackedPreviewCleanup)
-                    && pathBackedPreview is not null)
-                {
-                    body.Children.Add(pathBackedPreview);
-                    cleanup = pathBackedPreviewCleanup;
-                    hasVisualPreview = true;
-                }
-                else
-                {
-                    body.Children.Add(PreviewPresenter.CreateFileTypePreviewIcon(row, 96));
-                    body.Children.Add(new TextBlock { Text = PreviewPresenter.IconPreviewMessage(preview), TextWrapping = TextWrapping.Wrap });
-                    hasVisualPreview = true;
-                }
-
-                // Rich file metadata: show structured properties when available.
-                try
-                {
-                    var metadata = await fileOps.GetFileMetadataAsync(row.Path, utilityCts.Token);
-                    if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
-                    {
-                        return;
-                    }
-
-                    var detailRows = InspectionDetails.MetadataRows(
-                        metadata,
-                        includeSummary: false,
-                        includeKind: false,
-                        maxFields: 12);
-                    if (detailRows.Count > 0)
-                    {
-                        var metaPanel = new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0) };
-                        metaPanel.Children.Add(new TextBlock
-                        {
-                            Text = InspectionDetails.MetadataHeading(metadata),
-                            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                            Opacity = 0.7,
-                            FontSize = 12,
-                        });
-
-                        AddQuickLookMetadataRows(metaPanel, detailRows);
-
-                        if (metadata.Fields.Count > 12)
-                        {
-                            metaPanel.Children.Add(new TextBlock
-                            {
-                                Text = InspectionDetails.MoreFieldsText(metadata.Fields.Count - 12),
-                                Opacity = 0.6,
-                                FontSize = 12,
-                            });
-                        }
-
-                        body.Children.Add(metaPanel);
-                    }
-                }
-                catch
-                {
-                    // Best-effort: metadata extraction may fail for some file types.
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                body.Children.Add(new TextBlock { Text = exception.Message });
-            }
-            finally
-            {
-                FinishUtilityOperation(utilityCts);
-            }
-        }
-
-        if (!hasVisualPreview)
-        {
-            body.Children.Add(PreviewPresenter.CreateFileTypePreviewIcon(row, 96));
-        }
-
-        if (workspace is not null && !ReferenceEquals(_workspace, workspace))
+        catch (OperationCanceledException)
         {
             return;
+        }
+        finally
+        {
+            FinishUtilityOperation(utilityCts);
         }
 
         var dialog = new ContentDialog
         {
-            Title = "Quick Look",
-            Content = body,
+            Title = row.Name,
+            Content = host,
             CloseButtonText = "Close",
+            DefaultButton = ContentDialogButton.Close,
             XamlRoot = Content.XamlRoot,
+            KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden,
         };
-        if (cleanup is not null)
+        dialog.Resources["ContentDialogMaxWidth"] = width + 64;
+        dialog.Resources["ContentDialogMaxHeight"] = previewHeight + 200;
+
+        var current = row;
+        CancellationTokenSource? navigationCts = null;
+        async Task StepAsync(int delta)
         {
-            dialog.Closed += (_, _) => cleanup();
+            var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
+            var index = rows.IndexOf(current);
+            if (index < 0)
+            {
+                index = rows.ToList().FindIndex(candidate => PathRules.PathsEqual(candidate.Path, current.Path));
+            }
+
+            var nextIndex = index + delta;
+            if (index < 0 || nextIndex < 0 || nextIndex >= rows.Count)
+            {
+                return;
+            }
+
+            current = rows[nextIndex];
+            SelectRow(pane, current.Path);
+            dialog.Title = current.Name;
+            navigationCts?.Cancel();
+            var cts = new CancellationTokenSource();
+            navigationCts = cts;
+            cleanup?.Invoke();
+            cleanup = null;
+            host.Children.Clear();
+            host.Children.Add(new ProgressRing
+            {
+                IsActive = true,
+                Width = 32,
+                Height = 32,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            try
+            {
+                var (body, bodyCleanup) = await LoadQuickLookBodyAsync(current, fileOps, width, previewHeight, cts.Token);
+                if (cts.IsCancellationRequested || !ReferenceEquals(navigationCts, cts))
+                {
+                    bodyCleanup?.Invoke();
+                    return;
+                }
+
+                host.Children.Clear();
+                host.Children.Add(body);
+                cleanup = bodyCleanup;
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
+
+        void AddAccelerator(VirtualKey key, Action invoke)
+        {
+            var accelerator = new KeyboardAccelerator { Key = key };
+            accelerator.Invoked += (_, args) =>
+            {
+                args.Handled = true;
+                invoke();
+            };
+            dialog.KeyboardAccelerators.Add(accelerator);
+        }
+
+        AddAccelerator(VirtualKey.Left, () => _ = StepAsync(-1));
+        AddAccelerator(VirtualKey.Right, () => _ = StepAsync(1));
+        AddAccelerator(VirtualKey.Space, dialog.Hide);
+        dialog.Closed += (_, _) =>
+        {
+            navigationCts?.Cancel();
+            cleanup?.Invoke();
+            cleanup = null;
+        };
         await DialogHost.ShowAsync(dialog);
     }
 
-    private static void AddQuickLookMetadataRows(StackPanel panel, IEnumerable<InspectionDetailRow> rows)
+    /// <summary>The Quick Look body for one item: the preview only, no metadata card.</summary>
+    private async Task<(UIElement Body, Action? Cleanup)> LoadQuickLookBodyAsync(
+        FileRow row,
+        FileOperationService? fileOps,
+        double width,
+        double previewHeight,
+        CancellationToken cancellationToken)
     {
-        foreach (var row in rows)
+        var body = new StackPanel { Spacing = 8, HorizontalAlignment = HorizontalAlignment.Stretch };
+        if (row.IsDir || fileOps is null)
         {
-            panel.Children.Add(QuickLookMetadataRow(row.Label, row.Value));
+            body.Children.Add(PreviewPresenter.CreateFileTypePreviewIcon(row, 96));
+            return (body, null);
         }
-    }
 
-    private static Grid QuickLookMetadataRow(string label, string value)
-    {
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var labelBlock = new TextBlock
+        Action? cleanup = null;
+        try
         {
-            Text = label,
-            Opacity = 0.7,
-            FontSize = 13,
-        };
-        Grid.SetColumn(labelBlock, 0);
-        grid.Children.Add(labelBlock);
-
-        var valueBlock = new TextBlock
+            var preview = await fileOps.ReadFilePreviewAsync(row.Path, QuickLookTextBudget, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (preview.FileType == "text" && preview.Content is not null)
+            {
+                body.Children.Add(new TextBox
+                {
+                    Text = preview.Content,
+                    IsReadOnly = true,
+                    AcceptsReturn = true,
+                    TextWrapping = TextWrapping.NoWrap,
+                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+                    FontSize = 12,
+                    Height = previewHeight,
+                });
+            }
+            else if (preview.FileType == "image"
+                && await TryAddQuickLookImageAsync(body, row, preview, fileOps, previewHeight, cancellationToken))
+            {
+                // The image is in the body.
+            }
+            else if (PreviewPresenter.TryCreatePathBackedPreview(
+                row,
+                preview,
+                previewHeight,
+                out var pathBackedPreview,
+                out var pathBackedPreviewCleanup)
+                && pathBackedPreview is not null)
+            {
+                body.Children.Add(pathBackedPreview);
+                cleanup = pathBackedPreviewCleanup;
+            }
+            else
+            {
+                body.Children.Add(PreviewPresenter.CreateFileTypePreviewIcon(row, 96));
+                body.Children.Add(new TextBlock { Text = PreviewPresenter.IconPreviewMessage(preview), TextWrapping = TextWrapping.Wrap });
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            Text = value,
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 13,
-        };
-        Grid.SetColumn(valueBlock, 1);
-        grid.Children.Add(valueBlock);
+            body.Children.Add(PreviewPresenter.CreateFileTypePreviewIcon(row, 96));
+            body.Children.Add(new TextBlock { Text = exception.Message, TextWrapping = TextWrapping.Wrap });
+        }
 
-        return grid;
+        return (body, cleanup);
     }
 
     private static async Task<bool> TryAddQuickLookImageAsync(
@@ -268,6 +253,7 @@ public sealed partial class MainWindow
         FileRow row,
         FilePreview preview,
         FileOperationService fileOps,
+        double maxHeight,
         CancellationToken cancellationToken)
     {
         byte[]? imageData = string.IsNullOrWhiteSpace(preview.Content)
@@ -291,7 +277,7 @@ public sealed partial class MainWindow
             body.Children.Add(new Image
             {
                 Source = source,
-                MaxHeight = 420,
+                MaxHeight = maxHeight,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Stretch = Stretch.Uniform,
             });
@@ -620,7 +606,8 @@ public sealed partial class MainWindow
         var folders = ActiveSelectedRows.Where(row => row.IsDir).ToArray();
         if (folders.Length == 1)
         {
-            await ShowQuickLookAsync();
+            // One folder: Properties measures it (Quick Look no longer shows folder metrics).
+            await ShowPropertiesForRowAsync(workspace, folders[0]);
             return;
         }
 
@@ -755,7 +742,9 @@ public sealed partial class MainWindow
             Title = "Operation history",
             Content = content,
             PrimaryButtonText = OperationHistoryFormatter.RetrySelectedLabel,
-            SecondaryButtonText = workspace.Undo.CanUndo ? "Undo last" : "",
+            SecondaryButtonText = workspace.Undo.CanUndo
+                ? (workspace.Undo.NextUndoDescription is { Length: > 0 } nextUndo ? $"Undo: {nextUndo}" : "Undo last")
+                : "",
             CloseButtonText = "Close",
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = Content.XamlRoot,

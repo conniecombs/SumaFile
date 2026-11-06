@@ -152,11 +152,68 @@
                                     Content="Keep extension"
                                     IsChecked="True"
                                     Unchecked="OnPlanChanged" />
-                                <TextBlock
+                                <Button
+                                    x:Name="TemplateTokensButton"
+                                    Padding="8,2"
+                                    AutomationProperties.Name="Template tokens"
+                                    Content="Tokens"
                                     FontSize="12"
-                                    Foreground="{ThemeResource SfTextMutedBrush}"
-                                    Text="{}{base} {ext} {name} {parent} {n} {yyyy} {mm} {dd} {hh} {min} {ss} {date} {time}"
-                                    TextWrapping="Wrap" />
+                                    ToolTipService.ToolTip="Show the tokens a pattern can use">
+                                    <Button.Flyout>
+                                        <Flyout Placement="BottomEdgeAlignedLeft">
+                                            <StackPanel Spacing="8">
+                                                <TextBlock FontWeight="SemiBold" Text="Pattern tokens" />
+                                                <Grid ColumnSpacing="16" RowSpacing="4">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+                                                    <TextBlock Grid.Row="0" FontFamily="Consolas" Text="{}{base}" />
+                                                    <TextBlock Grid.Row="0" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="report" />
+                                                    <TextBlock Grid.Row="1" FontFamily="Consolas" Text="{}{ext}" />
+                                                    <TextBlock Grid.Row="1" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text=".txt" />
+                                                    <TextBlock Grid.Row="2" FontFamily="Consolas" Text="{}{name}" />
+                                                    <TextBlock Grid.Row="2" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="report.txt" />
+                                                    <TextBlock Grid.Row="3" FontFamily="Consolas" Text="{}{parent}" />
+                                                    <TextBlock Grid.Row="3" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="folder name" />
+                                                    <TextBlock Grid.Row="4" FontFamily="Consolas" Text="{}{n}" />
+                                                    <TextBlock Grid.Row="4" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="001" />
+                                                    <TextBlock Grid.Row="5" FontFamily="Consolas" Text="{}{yyyy}" />
+                                                    <TextBlock Grid.Row="5" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="2026" />
+                                                    <TextBlock Grid.Row="6" FontFamily="Consolas" Text="{}{mm}" />
+                                                    <TextBlock Grid.Row="6" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="11" />
+                                                    <TextBlock Grid.Row="7" FontFamily="Consolas" Text="{}{dd}" />
+                                                    <TextBlock Grid.Row="7" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="06" />
+                                                    <TextBlock Grid.Row="8" FontFamily="Consolas" Text="{}{hh}" />
+                                                    <TextBlock Grid.Row="8" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="14" />
+                                                    <TextBlock Grid.Row="9" FontFamily="Consolas" Text="{}{min}" />
+                                                    <TextBlock Grid.Row="9" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="05" />
+                                                    <TextBlock Grid.Row="10" FontFamily="Consolas" Text="{}{ss}" />
+                                                    <TextBlock Grid.Row="10" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="09" />
+                                                    <TextBlock Grid.Row="11" FontFamily="Consolas" Text="{}{date}" />
+                                                    <TextBlock Grid.Row="11" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="2026-11-06" />
+                                                    <TextBlock Grid.Row="12" FontFamily="Consolas" Text="{}{time}" />
+                                                    <TextBlock Grid.Row="12" Grid.Column="1" Foreground="{ThemeResource SfTextMutedBrush}" Text="14-05-09" />
+                                                </Grid>
+                                            </StackPanel>
+                                        </Flyout>
+                                    </Button.Flyout>
+                                </Button>
                             </StackPanel>
                         </StackPanel>
                     </Border>

@@ -37,6 +37,9 @@ public sealed partial class MainWindow
     private double _columnDragStartX;
     private double _columnDragStartWidth;
 
+    // True when the last finished transfer replaced files, so no undo entry was recorded.
+    private bool _lastTransferReplaced;
+
     private void OnFileDragItemsStarting(object sender, DragItemsStartingEventArgs e)
     {
         if (!PopulateFileDragData(e.Items.OfType<FileRow>(), e.Data))
@@ -310,6 +313,9 @@ public sealed partial class MainWindow
         CancellationToken cancellationToken)
     {
         var conflictSession = new TransferConflictSession();
+        // Per-name choices made up front when several top-level names conflict; the engine
+        // reports those items as conflicts and they are resolved here without a second prompt.
+        var preDecided = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         try
         {
@@ -318,6 +324,7 @@ public sealed partial class MainWindow
                 destination,
                 move,
                 conflictSession,
+                preDecided,
                 cancellationToken);
             if (action is null)
             {
@@ -331,8 +338,14 @@ public sealed partial class MainWindow
             // entry, and skipped conflicts are counted so the receipt is honest.
             var committedAll = new List<TransferResult>();
             var skippedCount = 0;
+            var undoRegistered = false;
             void PushUndoIfAny()
             {
+                if (!canRegisterUndo && committedAll.Count > 0)
+                {
+                    _lastTransferReplaced = true;
+                }
+
                 if (!canRegisterUndo || committedAll.Count == 0 || !ReferenceEquals(_workspace, workspace))
                 {
                     return;
@@ -347,6 +360,9 @@ public sealed partial class MainWindow
                     workspace.Undo.PushCopy(committedAll.ToArray(), fileOps);
                 }
 
+                _lastTransferReplaced = false;
+                undoRegistered = true;
+                MarkTransferUndoable(operation, workspace.Undo);
                 committedAll.Clear();
             }
 
@@ -404,7 +420,7 @@ public sealed partial class MainWindow
 
                     if (ReferenceEquals(_workspace, workspace) && !cancellationToken.IsCancellationRequested)
                     {
-                        CompleteTransferProgress(move, sources.Length - skippedCount, destination, skippedCount);
+                        CompleteTransferProgress(move, sources.Length - skippedCount, destination, skippedCount, undoRegistered);
                         await workspace.RefreshAffectedPanesAsync(
                             OperationLogController.TransferAffectedPaths(sources, destination, move),
                             cancellationToken);
@@ -461,7 +477,7 @@ public sealed partial class MainWindow
                     }
 
                     var items = await ResolveTransferFailuresAsync(
-                        failures, destination, move, sources, conflictSession, cancellationToken);
+                        failures, destination, move, sources, conflictSession, cancellationToken, preDecided);
                     if (items is null)
                     {
                         return TransferOperationStatus.Cancelled;
@@ -473,7 +489,7 @@ public sealed partial class MainWindow
                         PushUndoIfAny();
                         if (ReferenceEquals(_workspace, workspace))
                         {
-                            CompleteTransferProgress(move, sources.Length - skippedCount, destination, skippedCount);
+                            CompleteTransferProgress(move, sources.Length - skippedCount, destination, skippedCount, undoRegistered);
                         }
                         break;
                     }
@@ -511,8 +527,14 @@ public sealed partial class MainWindow
         }
         catch (Exception exception)
         {
-            operation.SetErrorMessage(exception.Message);
-            ShowMessage(move ? "Move" : "Copy", exception.Message, InfoBarSeverity.Error);
+            var (summary, details) = TransferFailureText.Describe(null, exception.Message, null);
+            operation.SetErrorMessage(summary);
+            ShowMessage(
+                move ? "Move" : "Copy",
+                string.IsNullOrWhiteSpace(details) || string.Equals(details, summary, StringComparison.Ordinal)
+                    ? summary
+                    : $"{summary}{Environment.NewLine}Details: {details}",
+                InfoBarSeverity.Error);
             return TransferOperationStatus.Failed;
         }
     }
@@ -536,6 +558,7 @@ public sealed partial class MainWindow
         string destination,
         bool move,
         TransferConflictSession session,
+        Dictionary<string, string> preDecided,
         CancellationToken cancellationToken)
     {
         if (_workspace is null)
@@ -554,7 +577,117 @@ public sealed partial class MainWindow
             return "error";
         }
 
-        return await PromptConflictActionAsync(destination, conflicts, move, sources, session, cancellationToken);
+        if (conflicts.Count == 1)
+        {
+            return await PromptConflictActionAsync(destination, conflicts, move, sources, session, cancellationToken);
+        }
+
+        return await PromptEachConflictAsync(destination, conflicts, move, sources, session, preDecided, cancellationToken);
+    }
+
+    /// <summary>
+    /// Several top-level names conflict: ask once per name (one dialog instance reused) until
+    /// "Do this for all remaining conflicts" is ticked. When every answer is the same that action
+    /// runs the whole transfer; otherwise the transfer runs with "error" and each reported
+    /// conflict is resolved from <paramref name="preDecided"/>.
+    /// </summary>
+    private async Task<string?> PromptEachConflictAsync(
+        string destination,
+        IReadOnlyList<string> conflicts,
+        bool move,
+        string[] sources,
+        TransferConflictSession session,
+        Dictionary<string, string> preDecided,
+        CancellationToken cancellationToken)
+    {
+        ConflictDialog? dialog = null;
+        string? first = null;
+        var allSame = true;
+        for (var index = 0; index < conflicts.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var name = conflicts[index];
+            string? chosen;
+            if (session.TryGetSticky(out var sticky))
+            {
+                chosen = sticky;
+            }
+            else
+            {
+                dialog ??= new ConflictDialog { XamlRoot = Content.XamlRoot };
+                chosen = await PromptConflictActionAsync(
+                    destination,
+                    [name],
+                    move,
+                    sources,
+                    session,
+                    cancellationToken,
+                    existingConflictPath: null,
+                    reuse: dialog,
+                    position: (index + 1, conflicts.Count));
+            }
+
+            if (chosen is null)
+            {
+                return null;
+            }
+
+            preDecided[name] = chosen;
+            if (first is null)
+            {
+                first = chosen;
+            }
+            else if (!string.Equals(first, chosen, StringComparison.OrdinalIgnoreCase))
+            {
+                allSame = false;
+            }
+        }
+
+        if (allSame && first is not null)
+        {
+            preDecided.Clear();
+            return first;
+        }
+
+        return "error";
+    }
+
+    /// <summary>The up-front choice for a reported conflict, matched by its top-level name under the destination.</summary>
+    private static bool TryGetPreDecidedAction(
+        IReadOnlyDictionary<string, string>? preDecided,
+        string destination,
+        TransferFailure failure,
+        out string action)
+    {
+        action = "";
+        if (preDecided is null || preDecided.Count == 0 || string.IsNullOrWhiteSpace(failure.Destination))
+        {
+            return false;
+        }
+
+        string relative;
+        try
+        {
+            relative = System.IO.Path.GetRelativePath(destination, failure.Destination);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+
+        if (relative.StartsWith("..", StringComparison.Ordinal) || System.IO.Path.IsPathRooted(relative))
+        {
+            return false;
+        }
+
+        var top = relative.Split([System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar], 2)[0];
+        if (top.Length > 0 && preDecided.TryGetValue(top, out var found))
+        {
+            action = found;
+            return true;
+        }
+
+        return false;
     }
 
     private async Task<IReadOnlyList<string>?> ProbeDestinationConflictsAsync(
@@ -631,7 +764,8 @@ public sealed partial class MainWindow
         bool move,
         string[] sources,
         TransferConflictSession session,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? preDecided = null)
     {
         var items = new List<TransferItemRequest>();
         var errors = new List<TransferFailure>();
@@ -649,7 +783,12 @@ public sealed partial class MainWindow
             }
 
             string? chosen;
-            if (session.TryGetSticky(out var sticky))
+            // A per-name answer given up front wins over a later "do this for all" choice.
+            if (TryGetPreDecidedAction(preDecided, destination, failure, out var decided))
+            {
+                chosen = decided;
+            }
+            else if (session.TryGetSticky(out var sticky))
             {
                 chosen = sticky;
             }
@@ -715,20 +854,31 @@ public sealed partial class MainWindow
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var lines = errors
-                .Take(6)
-                .Select(failure => $"{PathRules.Basename(failure.Source)} — {failure.Error}");
-            var detail = string.Join(Environment.NewLine, lines);
+            var rows = new StackPanel { Spacing = 4 };
+            foreach (var failure in errors.Take(6))
+            {
+                var (summary, details) = TransferFailureText.Describe(failure.Kind, failure.Error, failure.Source);
+                var row = new TextBlock { Text = FailureRowText(failure.Source, summary), TextWrapping = TextWrapping.Wrap };
+                if (!string.IsNullOrWhiteSpace(details))
+                {
+                    // Compact rows keep the raw error in a tooltip.
+                    ToolTipService.SetToolTip(row, details);
+                }
+
+                rows.Children.Add(row);
+            }
+
             if (errors.Count > 6)
             {
-                detail += Environment.NewLine + $"… and {errors.Count - 6} more";
+                rows.Children.Add(new TextBlock { Text = $"… and {errors.Count - 6} more", Opacity = 0.8 });
             }
+
             var dialog = new ContentDialog
             {
                 Title = errors.Count == 1
                     ? $"1 item could not be {(move ? "moved" : "copied")}"
                     : $"{errors.Count} items could not be {(move ? "moved" : "copied")}",
-                Content = new TextBlock { Text = detail, TextWrapping = TextWrapping.Wrap },
+                Content = rows,
                 PrimaryButtonText = "Retry",
                 SecondaryButtonText = "Skip",
                 CloseButtonText = "Cancel",
@@ -749,6 +899,15 @@ public sealed partial class MainWindow
         {
             _transferPromptGate.Release();
         }
+    }
+
+    /// <summary>One retry-prompt row: the plain summary, prefixed with the file name when it does not already name it.</summary>
+    private static string FailureRowText(string source, string summary)
+    {
+        var name = PathRules.Basename(source);
+        return string.IsNullOrWhiteSpace(name) || summary.Contains(name, StringComparison.OrdinalIgnoreCase)
+            ? summary
+            : $"{name} — {summary}";
     }
 
     private async Task<string?> ChooseConflictActionFromBackendConflictAsync(
@@ -802,7 +961,9 @@ public sealed partial class MainWindow
         string[] sources,
         TransferConflictSession session,
         CancellationToken cancellationToken,
-        string? existingConflictPath = null)
+        string? existingConflictPath = null,
+        ConflictDialog? reuse = null,
+        (int Index, int Count)? position = null)
     {
         if (session.TryGetSticky(out var sticky))
         {
@@ -813,28 +974,32 @@ public sealed partial class MainWindow
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var dialog = new ConflictDialog { XamlRoot = Content.XamlRoot };
+            var dialog = reuse ?? new ConflictDialog { XamlRoot = Content.XamlRoot };
             dialog.SetConflict(new TransferConflictPromptContext(
                 Move: move,
                 SourceCount: sources.Length,
                 Destination: destination,
                 TargetPane: PaneForDestination(destination),
                 Conflicts: conflicts));
+            if (position is { } at)
+            {
+                dialog.Title = $"{dialog.Title} ({at.Index} of {at.Count})";
+            }
             var comparisons = await Task.Run(() => TransferConflictComparisonLoader.Load(
                 sources, destination, conflicts, cancellationToken, existingConflictPath), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             dialog.SetComparisons(comparisons);
             using var cancelDialog = cancellationToken.Register(() => DispatcherQueue.TryEnqueue(dialog.Hide));
-            var result = await DialogHost.ShowAsync(dialog);
+            await DialogHost.ShowAsync(dialog);
             cancellationToken.ThrowIfCancellationRequested();
-            string? action = dialog.Result == ConflictResolution.KeepBoth
-                ? "keep-both"
-                : result switch
-                {
-                    ContentDialogResult.Primary => "replace",
-                    ContentDialogResult.Secondary => "skip",
-                    _ => null,
-                };
+            // The dialog's own Result is the radio choice made with Continue; Stop / Escape is Cancel.
+            string? action = dialog.Result switch
+            {
+                ConflictResolution.Replace => "replace",
+                ConflictResolution.Skip => "skip",
+                ConflictResolution.KeepBoth => "keep-both",
+                _ => null,
+            };
             if (action is null)
             {
                 return null;
@@ -879,7 +1044,8 @@ public sealed partial class MainWindow
         var destination = _workspace.OtherPanePath();
         if (destination is null)
         {
-            ShowMessage("Dual pane", "Enable dual pane to copy or move to the other pane.", InfoBarSeverity.Informational);
+            // The cross-pane buttons are disabled in single-pane mode; a stray command just says why.
+            SetStatusText("Turn on dual pane to copy or move to the other pane.");
             return;
         }
 
@@ -1071,8 +1237,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (!ReferenceEquals(_workspace, workspace)
-            || !await ConfirmAdvancedRenameAsync(renameWindow.ChangedRows, requests.Length))
+        if (!ReferenceEquals(_workspace, workspace))
         {
             return;
         }
@@ -1107,69 +1272,28 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task<bool> ConfirmAdvancedRenameAsync(
-        IReadOnlyList<AdvancedRenamePreviewRow> changedRows,
-        int requestCount)
-    {
-        var body = new StackPanel { Spacing = 10, Width = 460 };
-        body.Children.Add(new TextBlock
-        {
-            Text = requestCount == 1 ? "1 item will be renamed." : $"{requestCount} items will be renamed.",
-            TextWrapping = TextWrapping.Wrap,
-        });
-
-        var previewRows = changedRows.Take(8).ToArray();
-        var list = new StackPanel { Spacing = 4 };
-        foreach (var row in previewRows)
-        {
-            list.Children.Add(new TextBlock
-            {
-                Text = $"{row.OldName} -> {row.NewName}",
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            });
-        }
-
-        body.Children.Add(list);
-
-        var extra = requestCount - previewRows.Length;
-        if (extra > 0)
-        {
-            body.Children.Add(new TextBlock
-            {
-                Text = extra == 1 ? "And 1 more rename." : $"And {extra} more renames.",
-            });
-        }
-
-        var confirm = new ContentDialog
-        {
-            Title = requestCount == 1 ? "Rename 1 Item" : $"Rename {requestCount} Items",
-            Content = body,
-            PrimaryButtonText = "Rename",
-            CloseButtonText = "Back",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = Content.XamlRoot,
-        };
-
-        return await DialogHost.ShowAsync(confirm) == ContentDialogResult.Primary;
-    }
-
     private async Task UndoLastAsync()
     {
         var workspace = _workspace;
         if (workspace is null || !workspace.Undo.CanUndo)
         {
-            SetStatusText("Nothing to undo");
+            SetStatusText(_lastTransferReplaced
+                ? "Nothing to undo (replaced files can't be restored)"
+                : "Nothing to undo");
             return;
         }
 
+        // Captured before undoing: the entry is gone afterwards.
+        var description = workspace.Undo.NextUndoDescription;
         var utilityCts = BeginUtilityOperation("UndoLastAsync");
         try
         {
             await workspace.Undo.UndoAsync(utilityCts.Token);
+            ClearTransferUndoable();
             if (ReferenceEquals(_workspace, workspace) && !utilityCts.IsCancellationRequested)
             {
                 await workspace.RefreshAffectedPanesAsync(VisiblePanePaths(workspace), utilityCts.Token);
-                SetStatusText("Undone");
+                SetStatusText(string.IsNullOrWhiteSpace(description) ? "Undone" : $"Undid: {description}");
             }
         }
         catch (OperationCanceledException)
@@ -1256,7 +1380,7 @@ public sealed partial class MainWindow
         e.Handled = true;
         if (wasDragging && _sidebarMoved && _workspace is not null)
         {
-            await RunUiActionAsync("Resize side menu", () => _workspace.SaveUiSettingsAsync());
+            await RunUiActionAsync("Resize sidebar", () => _workspace.SaveUiSettingsAsync());
         }
     }
 

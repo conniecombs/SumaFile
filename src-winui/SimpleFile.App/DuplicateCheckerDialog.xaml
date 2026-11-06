@@ -65,28 +65,11 @@
                                 SpinButtonPlacementMode="Compact"
                                 HorizontalAlignment="Stretch" />
                             <CheckBox x:Name="IncludeEmptyCheck" Content="Include empty files" />
-                            <NumberBox
-                                x:Name="PartialHashInput"
-                                Header="Partial hash size (KB)"
-                                Value="1024"
-                                Minimum="4"
-                                Maximum="16384"
-                                SpinButtonPlacementMode="Compact"
-                                HorizontalAlignment="Stretch" />
                         </StackPanel>
 
                         <StackPanel
                             Grid.Column="1"
                             Spacing="12">
-                            <ComboBox
-                                x:Name="NetworkModeBox"
-                                Header="Network mode"
-                                HorizontalAlignment="Stretch"
-                                SelectedIndex="0">
-                                <ComboBoxItem Content="Auto" Tag="Auto" />
-                                <ComboBoxItem Content="NAS optimized" Tag="On" />
-                                <ComboBoxItem Content="Local optimized" Tag="Off" />
-                            </ComboBox>
                             <CheckBox
                                 x:Name="LimitDepthCheck"
                                 Content="Limit folder depth"
@@ -110,6 +93,38 @@
                         Height="92"
                         PlaceholderText="@eaDir; #recycle; *.tmp"
                         TextWrapping="Wrap" />
+
+                    <Expander
+                        x:Name="AdvancedExpander"
+                        Header="Advanced"
+                        IsExpanded="False"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <NumberBox
+                                x:Name="PartialHashInput"
+                                Header="Partial hash size (KB)"
+                                Value="1024"
+                                Minimum="4"
+                                Maximum="16384"
+                                SpinButtonPlacementMode="Compact"
+                                HorizontalAlignment="Stretch" />
+                            <ComboBox
+                                x:Name="NetworkModeBox"
+                                Grid.Column="1"
+                                Header="Network mode"
+                                HorizontalAlignment="Stretch"
+                                SelectedIndex="0">
+                                <ComboBoxItem Content="Auto" Tag="Auto" />
+                                <ComboBoxItem Content="NAS optimized" Tag="On" />
+                                <ComboBoxItem Content="Local optimized" Tag="Off" />
+                            </ComboBox>
+                        </Grid>
+                    </Expander>
 
                     <StackPanel
                         Orientation="Horizontal"
@@ -213,7 +228,7 @@
                     Spacing="8"
                     Margin="0,0,0,12">
                     <Button Content="Keep newest" Click="GlobalKeepNewest_Click" />
-                    <Button Content="Keep first" Click="GlobalKeepFirst_Click" />
+                    <Button Content="Keep the copy in the current folder" Click="GlobalKeepCurrentFolder_Click" />
                     <Button Content="Clear selection" Click="GlobalClear_Click" />
                 </StackPanel>
 
@@ -232,7 +247,7 @@
                                     <TextBlock Text="{Binding HeaderText}" FontWeight="SemiBold" VerticalAlignment="Center" />
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
                                         <Button Content="Keep newest" Tag="{Binding}" Click="GroupKeepNewest_Click" Padding="4,2" FontSize="12" />
-                                        <Button Content="Keep first" Tag="{Binding}" Click="GroupKeepFirst_Click" Padding="4,2" FontSize="12" />
+                                        <Button Content="Keep the copy in the current folder" Tag="{Binding}" Click="GroupKeepCurrentFolder_Click" Padding="4,2" FontSize="12" />
                                         <Button Content="Clear" Tag="{Binding}" Click="GroupClear_Click" Padding="4,2" FontSize="12" />
                                     </StackPanel>
                                 </Grid>
@@ -280,9 +295,8 @@
                         Click="CloseButton_Click" />
                     <Button
                         x:Name="TrashButton"
-                        Background="#AA0000"
-                        Content="Move selected to Trash"
-                        Foreground="White"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Content="Move selected to Recycle Bin"
                         IsEnabled="False"
                         Click="TrashButton_Click" />
                 </StackPanel>
