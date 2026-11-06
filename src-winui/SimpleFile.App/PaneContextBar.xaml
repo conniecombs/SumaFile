@@ -18,12 +18,14 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel VerticalAlignment="Center" Spacing="2">
                 <TextBlock x:Name="SearchText" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" />
                 <TextBlock x:Name="SearchScope" TextTrimming="CharacterEllipsis" FontSize="12" Foreground="{ThemeResource SfTextMutedBrush}" />
             </StackPanel>
-            <Button x:Name="ReturnFolderButton" Grid.Column="1" Content="Return to folder" Style="{StaticResource SfGhostButtonStyle}" Click="OnReturnToFolder" />
+            <Button x:Name="SaveSmartFolderButton" Grid.Column="1" Content="Save as smart folder" Style="{StaticResource SfGhostButtonStyle}" ToolTipService.ToolTip="Save this search in the sidebar to run it again later" Click="OnSaveSmartFolder" />
+            <Button x:Name="ReturnFolderButton" Grid.Column="2" Content="Return to folder" Style="{StaticResource SfGhostButtonStyle}" Click="OnReturnToFolder" />
         </Grid>
     </StackPanel>
 </UserControl>

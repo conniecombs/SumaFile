@@ -126,6 +126,18 @@ public sealed partial class MainWindow
         button.VerticalContentAlignment = VerticalAlignment.Center;
         AutomationProperties.SetName(button, tooltipLabel);
         ToolTipService.SetToolTip(button, ToolbarTooltip(action, tooltipLabel));
+
+        // Cross-pane copy/move need a second pane with a folder open.
+        if (CrossPaneVerb(action) is { } verb)
+        {
+            var dualPaneEnabled = _workspace?.DualPaneEnabled == true;
+            var otherPaneHasPath = !string.IsNullOrEmpty(_workspace?.OtherPanePath());
+            button.IsEnabled = dualPaneEnabled && otherPaneHasPath;
+            if (!button.IsEnabled)
+            {
+                ToolTipService.SetToolTip(button, $"Open the second pane (F6) to {verb.ToLowerInvariant()} there");
+            }
+        }
     }
 
     private static object CreateToolbarButtonContent(ToolbarAction action, bool showLabels, string displayLabel)

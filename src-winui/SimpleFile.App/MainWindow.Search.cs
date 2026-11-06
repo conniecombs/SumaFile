@@ -16,6 +16,12 @@ public sealed partial class MainWindow
 
     private void OnSearchCleared(object? sender, EventArgs e)
     {
+        // A finished search returns the omnibar to Path mode.
+        if (_omnibarMode == OmnibarMode.Search)
+        {
+            SetOmnibarMode(OmnibarMode.Navigate, focus: false);
+        }
+
         SyncFromWorkspace();
     }
 

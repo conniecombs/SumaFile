@@ -1,5 +1,7 @@
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using SimpleFile.Core;
 using Windows.System;
 
@@ -12,6 +14,7 @@ public sealed partial class MainWindow
         RootGrid.KeyboardAccelerators.Clear();
 
         var assignments = KeyboardShortcutMap.EffectiveShortcuts(_workspace?.Settings.ShortcutOverrides);
+        var registered = new HashSet<(string Command, VirtualKey Key, VirtualKeyModifiers Modifiers)>();
         foreach (var assignment in assignments.Where(item => item.IsEditable))
         {
             foreach (var shortcut in assignment.Shortcuts)
@@ -23,9 +26,22 @@ public sealed partial class MainWindow
                     continue;
                 }
 
-                if (TryCreateKeyboardAccelerator(assignment.Id, shortcut, out var accelerator))
+                if (TryCreateKeyboardAccelerator(assignment.Id, shortcut, out var accelerator)
+                    && registered.Add((assignment.Id, accelerator.Key, accelerator.Modifiers)))
                 {
                     RootGrid.KeyboardAccelerators.Add(accelerator);
+                }
+
+                // "/" on the main keyboard (Oem2) also answers on the numpad (Divide), e.g. Ctrl+/ for help.
+                if (KeyboardShortcutMap.TryParseShortcut(shortcut, out var gesture, out _)
+                    && gesture is not null
+                    && string.Equals(gesture.Key, "Oem2", StringComparison.Ordinal))
+                {
+                    var modifiers = ToVirtualKeyModifiers(gesture);
+                    if (registered.Add((assignment.Id, VirtualKey.Divide, modifiers)))
+                    {
+                        RootGrid.KeyboardAccelerators.Add(CreateCommandAccelerator(assignment.Id, VirtualKey.Divide, modifiers));
+                    }
                 }
             }
         }
@@ -127,7 +143,50 @@ public sealed partial class MainWindow
             return false;
         }
 
+        // Bare Tab, Space and Backspace belong to the file list; elsewhere they keep their
+        // normal meaning (focus traversal, pressing a button, editing text).
+        if (KeyboardShortcutMap.IsFileListScopedKey(commandId) && !IsFileListFocused())
+        {
+            return false;
+        }
+
         return true;
+    }
+
+    /// <summary>True when keyboard focus is inside one of the panes' file lists (details or list views).</summary>
+    private bool IsFileListFocused()
+    {
+        if (Content?.XamlRoot is not { } root)
+        {
+            return false;
+        }
+
+        var lists = new DependencyObject[]
+        {
+            PrimaryDetailsFileList,
+            SecondaryDetailsFileList,
+            PrimaryFileList,
+            SecondaryFileList,
+        };
+        for (var current = FocusManager.GetFocusedElement(root) as DependencyObject;
+            current is not null;
+            current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is TextBox or PasswordBox or RichEditBox)
+            {
+                return false;
+            }
+
+            foreach (var list in lists)
+            {
+                if (ReferenceEquals(current, list))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private void AddFixedTabJumpAccelerators()
@@ -316,7 +375,12 @@ public sealed partial class MainWindow
 
                 break;
             case "file.rename":
-                await RunUiActionAsync("Rename", PromptAndRename);
+                // Details view renames in place; other views and multi-selection use the dialog.
+                if (!TryBeginInlineRename())
+                {
+                    await RunUiActionAsync("Rename", PromptAndRename);
+                }
+
                 break;
             case "file.delete.permanent":
                 await RunUiActionAsync("Delete", DeleteSelected);
@@ -450,6 +514,10 @@ public sealed partial class MainWindow
             "Period" => VirtualKey.Decimal,
             "Slash" => VirtualKey.Divide,
             "Backslash" => VirtualKey.Divide,
+            // OEM keys on the main keyboard: ` (terminal), , (settings), / (help).
+            "Oem3" or "Backquote" or "Backtick" or "Grave" => (VirtualKey)192,
+            "OemComma" => (VirtualKey)188,
+            "Oem2" or "OemQuestion" => (VirtualKey)191,
             _ => Enum.TryParse<VirtualKey>(key, out var parsed) ? parsed : default,
         };
 

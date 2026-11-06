@@ -11,16 +11,44 @@ public sealed partial class MainWindow
     private OmnibarMode _omnibarMode = OmnibarMode.Navigate;
     private bool _omnibarFocused;
     private bool _syncingOmnibar;
+    private bool _omnibarKeepTypedText;
+    private PaneId? _omnibarTrackedPane;
+    private string? _omnibarTrackedPath;
+
+    /// <summary>Path-mode placeholder and the box tooltip: the prefix hint is permanent.</summary>
+    private const string OmnibarPrefixHint = "Path, or >command ?search ~filter";
 
     private void OnOmnibarGotFocus(object sender, RoutedEventArgs e)
     {
         _omnibarFocused = true;
+        _omnibarKeepTypedText = false;
     }
 
     private void OnOmnibarLostFocus(object sender, RoutedEventArgs e)
     {
         _omnibarFocused = false;
+        if (IsOmnibarModeButtonFocused())
+        {
+            // A mode toggle took focus; keep what the user typed so the switch can carry it.
+            _omnibarKeepTypedText = true;
+            return;
+        }
+
         SyncOmnibarFromWorkspace(force: true);
+    }
+
+    private bool IsOmnibarModeButtonFocused()
+    {
+        if (Content?.XamlRoot is not { } root)
+        {
+            return false;
+        }
+
+        var focused = FocusManager.GetFocusedElement(root);
+        return ReferenceEquals(focused, OmnibarPathModeButton)
+            || ReferenceEquals(focused, OmnibarSearchModeButton)
+            || ReferenceEquals(focused, OmnibarFilterModeButton)
+            || ReferenceEquals(focused, OmnibarCommandModeButton);
     }
 
     private void OnOmnibarModeRequested(object? sender, OmnibarMode mode)
@@ -53,6 +81,7 @@ public sealed partial class MainWindow
     private void SetOmnibarMode(OmnibarMode mode, bool focus)
     {
         var typed = PreserveTypedOmnibarText();
+        _omnibarKeepTypedText = false;
         _omnibarMode = mode;
         ApplyOmnibarModeButtons();
         SyncOmnibarFromWorkspace(force: true);
@@ -81,7 +110,7 @@ public sealed partial class MainWindow
     /// </summary>
     private string? PreserveTypedOmnibarText()
     {
-        if (_workspace is null || !_omnibarFocused)
+        if (_workspace is null || !(_omnibarFocused || _omnibarKeepTypedText))
         {
             return null;
         }
@@ -126,7 +155,11 @@ public sealed partial class MainWindow
             return;
         }
 
-        var intent = OmnibarIntentParser.Parse(OmnibarInput.Text, _omnibarMode, _workspace.Active.Path);
+        var intent = OmnibarIntentParser.Parse(
+            OmnibarInput.Text,
+            _omnibarMode,
+            _workspace.Active.Path,
+            System.IO.Directory.Exists);
         switch (intent.Kind)
         {
             case OmnibarIntentKind.Navigate:
@@ -157,6 +190,13 @@ public sealed partial class MainWindow
                 await ExecuteOmnibarCommandAsync(intent.Value);
                 break;
         }
+
+        // e.g. "No folder named 'X' here. Filtering instead."
+        if (intent.StatusMessage is { Length: > 0 } statusMessage)
+        {
+            SetStatusText(statusMessage);
+        }
+
         SyncOmnibarFromWorkspace(force: true);
     }
 
@@ -185,6 +225,12 @@ public sealed partial class MainWindow
             return;
         }
 
+        if (ResetOmnibarModeAfterNavigation())
+        {
+            // SetOmnibarMode already re-synced the box for Navigate mode.
+            return;
+        }
+
         if (!force && _omnibarFocused)
         {
             return;
@@ -200,13 +246,41 @@ public sealed partial class MainWindow
                 OmnibarMode.Search => "Find in folder",
                 OmnibarMode.Filter => "Filter current folder",
                 OmnibarMode.Command => "Type a command",
-                _ => "Path",
+                _ => OmnibarPrefixHint,
             };
+            ToolTipService.SetToolTip(OmnibarInput, OmnibarPrefixHint);
         }
         finally
         {
             _syncingOmnibar = false;
         }
+    }
+
+    /// <summary>
+    /// A search or filter ends when the active pane navigates elsewhere: return the omnibar to
+    /// Path mode. Switching the active pane alone is not navigation.
+    /// </summary>
+    private bool ResetOmnibarModeAfterNavigation()
+    {
+        if (_workspace is null)
+        {
+            return false;
+        }
+
+        var pane = _workspace.ActivePane;
+        var path = _workspace.Active.Path ?? "";
+        var navigated = _omnibarTrackedPane == pane
+            && _omnibarTrackedPath is not null
+            && !string.Equals(_omnibarTrackedPath, path, StringComparison.OrdinalIgnoreCase);
+        _omnibarTrackedPane = pane;
+        _omnibarTrackedPath = path;
+        if (!navigated || _omnibarMode is not (OmnibarMode.Search or OmnibarMode.Filter))
+        {
+            return false;
+        }
+
+        SetOmnibarMode(OmnibarMode.Navigate, focus: false);
+        return true;
     }
 
     private void ApplyOmnibarModeButtons()
