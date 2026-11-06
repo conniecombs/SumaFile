@@ -109,7 +109,11 @@ unchanged defaults move to the new chords.
 7. Open Settings, search for "hidden", switch the theme to Light.
 8. Browse a Git repository and a plain folder; the Git button appears only in the repository.
 9. Connect an SFTP profile to a new server and accept the trust prompt.
-10. Run `npm run smoke:winui-ui` and the installer smoke before publishing.
+10. Verify MSI, NSIS and portable startup and exercise both the latest-release upgrade and `npm run smoke:winui-upgrade-from-ref` against the v1.0.3 baseline.
+
+## SimpleFile Data Import
+
+No manual import is needed for normal SimpleFile-to-SumaFile use. SumaFile keeps the existing application data identifier, `com.simplefile.desktop`.
 
 ## Known Limitations
 
@@ -117,3 +121,5 @@ The WinUI host was changed without a Windows build in the authoring
 environment; the Windows CI run on the release commit is the compile and
 smoke gate. Inline rename covers the Details view only. Quick Look navigation
 follows the active pane's current sort order.
+
+Release checklist: run the repository, Rust, .NET, packaging and Windows UI checks on the release commit. Require a signed test release before claiming in-app updater installation is proven.
