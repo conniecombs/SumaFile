@@ -131,7 +131,7 @@ pub(super) fn create_seven_zip_archive(
         return Err("No files specified".to_string());
     }
 
-    let output = std::process::Command::new(seven_zip_binary)
+    let output = super::seven_zip::seven_zip_command(seven_zip_binary)
         .arg("a")
         .arg("-t7z")
         .arg("-bd")

@@ -80,6 +80,18 @@ pub(super) fn bundled_seven_zip_candidates(app_dir: &Path) -> Vec<PathBuf> {
     .into()
 }
 
+/// Every 7-Zip invocation starts here so tests can count process launches:
+/// extraction used to spawn one process per archive entry.
+pub(super) fn seven_zip_command(binary: &str) -> std::process::Command {
+    #[cfg(test)]
+    SPAWN_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    std::process::Command::new(binary)
+}
+
+#[cfg(test)]
+pub(super) static SPAWN_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 pub(super) fn list_seven_zip_entries(path: &str) -> Result<Vec<SevenZipEntry>, String> {
     let binary = require_seven_zip_binary()?;
     list_seven_zip_entries_with_binary(&binary, path)
@@ -89,7 +101,7 @@ pub(super) fn list_seven_zip_entries_with_binary(
     binary: &str,
     path: &str,
 ) -> Result<Vec<SevenZipEntry>, String> {
-    let output = std::process::Command::new(binary)
+    let output = seven_zip_command(binary)
         .arg("l")
         .arg("-slt")
         .arg("-bd")

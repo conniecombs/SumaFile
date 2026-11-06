@@ -12,6 +12,7 @@ pub const BINARY_FRAME_VERSION: u8 = 1;
 
 pub const ERR_APPLICATION: i32 = -32000;
 pub const ERR_HOST_OWNED: i32 = -32001;
+pub const ERR_PARSE: i32 = -32700;
 pub const ERR_INVALID_REQUEST: i32 = -32600;
 pub const ERR_METHOD_NOT_FOUND: i32 = -32601;
 pub const ERR_INVALID_PARAMS: i32 = -32602;

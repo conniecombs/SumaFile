@@ -3,6 +3,7 @@ use crate::utils::{get_file_entry, hidden_command, validate_existing_path_no_res
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 struct RepoContext {
     root: PathBuf,
@@ -441,9 +442,36 @@ fn git_output(path: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn git_output_os(path: &Path, args: &[OsString]) -> Result<String, String> {
+    command_output(git_query_command(path, args)).map(|result| result.stdout)
+}
+
+/// Local git invocations never wait longer than this: a repository on a
+/// disconnected share must not freeze the request.
+const GIT_LOCAL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Fetch, pull and push talk to a remote and may legitimately take minutes.
+const GIT_REMOTE_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Read-only queries (status, branch, rev-parse) run against whatever
+/// repository the user happens to browse. Such a repository's own config can
+/// name executables (`core.fsmonitor`, `core.hooksPath`), so a listing must
+/// never let it run them. Hooks are only re-enabled for the user's own
+/// explicit actions (commit, push).
+fn git_query_command(path: &Path, args: &[OsString]) -> Command {
     let mut command = hidden_command("git");
+    harden_against_repo_config(&mut command, true);
     command.arg("-C").arg(path).args(args);
-    command_output(command).map(|result| result.stdout)
+    command
+}
+
+fn harden_against_repo_config(command: &mut Command, disable_hooks: bool) {
+    command.arg("-c").arg("core.fsmonitor=false");
+    if disable_hooks {
+        // A hooks directory that does not exist means no hook ever runs.
+        let no_hooks = std::env::temp_dir().join("sumafile-git-no-hooks");
+        let mut value = OsString::from("core.hooksPath=");
+        value.push(no_hooks.as_os_str());
+        command.arg("-c").arg(value);
+    }
 }
 
 fn run_git_path_command(
@@ -475,6 +503,7 @@ fn git_root_command(root: &Path, args: &[OsString], literal_pathspecs: bool) -> 
     if literal_pathspecs {
         command.arg("--literal-pathspecs");
     }
+    harden_against_repo_config(&mut command, false);
     command.arg("-C").arg(root).args(args);
     command
 }
@@ -484,19 +513,58 @@ fn command_output(command: Command) -> Result<GitCommandResult, String> {
 }
 
 fn command_output_with_name(
+    command: Command,
+    command_name: &str,
+    summary: &str,
+) -> Result<GitCommandResult, String> {
+    command_output_with_timeout(command, command_name, summary, GIT_LOCAL_TIMEOUT)
+}
+
+/// Run `command` to completion, killing it if it exceeds `timeout`. Output is
+/// drained on helper threads so a chatty process cannot deadlock on a full
+/// pipe while we wait for it.
+fn command_output_with_timeout(
     mut command: Command,
     command_name: &str,
     summary: &str,
+    timeout: Duration,
 ) -> Result<GitCommandResult, String> {
     command
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GCM_INTERACTIVE", "Never")
-        .stdin(Stdio::null());
-    let output = command.output().map_err(|error| error.to_string())?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exit_code = output.status.code().unwrap_or(-1);
-    if output.status.success() {
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdout_reader = child.stdout.take().map(drain_in_background);
+    let stderr_reader = child.stderr.take().map(drain_in_background);
+
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "git {command_name} timed out after {} seconds",
+                    timeout.as_secs()
+                ));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(15)),
+            Err(error) => return Err(error.to_string()),
+        }
+    };
+    let stdout = stdout_reader
+        .map(|reader| reader.join().unwrap_or_default())
+        .unwrap_or_default();
+    let stderr = stderr_reader
+        .map(|reader| reader.join().unwrap_or_default())
+        .unwrap_or_default();
+    let stdout = String::from_utf8_lossy(&stdout).to_string();
+    let stderr = String::from_utf8_lossy(&stderr).to_string();
+    let exit_code = status.code().unwrap_or(-1);
+    if status.success() {
         Ok(GitCommandResult {
             command: format!("git {command_name}"),
             exit_code,
@@ -512,6 +580,16 @@ fn command_output_with_name(
         ]);
         Err(message)
     }
+}
+
+fn drain_in_background<R: std::io::Read + Send + 'static>(
+    mut reader: R,
+) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = reader.read_to_end(&mut buffer);
+        buffer
+    })
 }
 
 fn combine_results(
@@ -660,13 +738,19 @@ fn run_git_remote_command(
     let path = validate_existing_path_no_resolve(path)?;
     let mut command = hidden_command("git");
     command.args(git_remote_args(&path, subcommand, subcommand_args));
-    command_output_with_name(command, subcommand, &format!("Git {subcommand} completed."))
+    command_output_with_timeout(
+        command,
+        subcommand,
+        &format!("Git {subcommand} completed."),
+        GIT_REMOTE_TIMEOUT,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        git_remote_args, git_root_command, parse_porcelain_status, repo_relative_path, status_label,
+        command_output_with_timeout, git_query_command, git_remote_args, git_root_command,
+        parse_porcelain_status, repo_relative_path, status_label,
     };
     use std::ffi::OsString;
     use std::path::Path;
@@ -694,9 +778,53 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(args[0], "--literal-pathspecs");
-        assert_eq!(args[1], "-C");
-        assert_eq!(args[2], "repo");
-        assert_eq!(args[3], "add");
+        // Hardening `-c` pairs may sit between the flag and the repo path.
+        let repo_at = args.iter().position(|arg| arg == "-C").expect("-C present");
+        assert_eq!(args[repo_at + 1], "repo");
+        assert_eq!(args[repo_at + 2], "add");
+    }
+
+    #[test]
+    fn hung_git_process_is_killed_after_the_timeout() {
+        let mut command = crate::utils::hidden_command("powershell");
+        command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 20"]);
+        let started = std::time::Instant::now();
+        let error = command_output_with_timeout(
+            command,
+            "sleep",
+            "unused",
+            std::time::Duration::from_millis(300),
+        )
+        .expect_err("a process that never exits must time out");
+        assert!(error.contains("timed out"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn read_only_queries_disable_repo_controlled_executables() {
+        let command = git_query_command(Path::new("repo"), &[OsString::from("status")]);
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect();
+        let joined = args.join(" ");
+        assert!(joined.contains("core.fsmonitor=false"), "{joined}");
+        assert!(joined.contains("core.hooksPath="), "{joined}");
+        assert!(joined.ends_with("-C repo status"), "{joined}");
+    }
+
+    #[test]
+    fn mutating_commands_only_disable_fsmonitor() {
+        let command = git_root_command(Path::new("repo"), &[OsString::from("commit")], false);
+        let args = to_strings(command.get_args().map(|arg| arg.to_os_string()).collect());
+        assert!(
+            args.iter().any(|arg| arg == "core.fsmonitor=false"),
+            "{args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg.starts_with("core.hooksPath")),
+            "commit must keep the user's hooks: {args:?}"
+        );
     }
 
     #[test]

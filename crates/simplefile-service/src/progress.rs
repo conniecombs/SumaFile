@@ -613,6 +613,8 @@ fn transfer_with_policy_blocking(
                             &outcome.manifest,
                             &failed_paths,
                         ) {
+                            // The data was copied but the move is incomplete:
+                            // report it once, as a failure, never also as committed.
                             failed.push(TransferFailure::new(
                                 &root.source,
                                 &root.destination,
@@ -620,6 +622,7 @@ fn transfer_with_policy_blocking(
                                     "Copied but failed to delete source: {error}"
                                 )),
                             ));
+                            continue;
                         }
                     }
                     transferred.push(TransferResult {
@@ -928,6 +931,95 @@ mod tests {
         );
         assert_eq!(fs::read(existing.join("keep.txt")).unwrap(), b"keep");
         assert!(source.exists());
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    #[test]
+    fn replace_refuses_to_put_a_file_over_an_existing_directory() {
+        let src_root = unique_temp_path("replace_type_src");
+        let dst_root = unique_temp_path("replace_type_dst");
+        let source = src_root.join("Repos");
+        let existing = dst_root.join("Repos");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(existing.join("docs")).unwrap();
+        fs::write(source.join("docs"), b"a file named docs").unwrap();
+        fs::write(existing.join("docs").join("keep.txt"), b"keep").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let error = transfer_with_progress_blocking(
+            "copy",
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            "op_replace_type_test".to_string(),
+            "replace".to_string(),
+            cancel,
+            &|_| {},
+        )
+        .expect_err("a file must not replace a directory of the same name");
+
+        assert!(
+            existing.join("docs").is_dir(),
+            "destination directory was deleted"
+        );
+        assert_eq!(
+            fs::read(existing.join("docs").join("keep.txt")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(error.outcome.failed.len(), 1, "{:?}", error.outcome);
+        assert_eq!(error.outcome.failed[0].kind, "conflict");
+        assert_eq!(
+            error.outcome.failed[0].destination,
+            existing.join("docs").to_string_lossy()
+        );
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    #[test]
+    fn move_merge_removes_sources_under_new_subfolders() {
+        let src_root = unique_temp_path("move_merge_src");
+        let dst_root = unique_temp_path("move_merge_dst");
+        let source = src_root.join("Proj");
+        let existing = dst_root.join("Proj");
+        fs::create_dir_all(source.join("new")).unwrap();
+        fs::create_dir_all(existing.join("old")).unwrap();
+        fs::create_dir_all(source.join("old")).unwrap();
+        fs::write(source.join("new").join("fresh.txt"), b"fresh").unwrap();
+        fs::write(source.join("old").join("moved.txt"), b"moved").unwrap();
+        fs::write(existing.join("old").join("keep.txt"), b"keep").unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        let result = transfer_with_progress_blocking(
+            "move",
+            vec![source.to_string_lossy().to_string()],
+            dst_root.to_string_lossy().to_string(),
+            "op_move_merge_test".to_string(),
+            "replace".to_string(),
+            cancel,
+            &|_| {},
+        )
+        .unwrap_or_else(|error| panic!("merge move failed: {:?}", error.outcome));
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            fs::read(existing.join("new").join("fresh.txt")).unwrap(),
+            b"fresh"
+        );
+        assert_eq!(
+            fs::read(existing.join("old").join("moved.txt")).unwrap(),
+            b"moved"
+        );
+        assert_eq!(
+            fs::read(existing.join("old").join("keep.txt")).unwrap(),
+            b"keep"
+        );
+        assert!(
+            !source.exists(),
+            "move must remove the whole source tree, including new subfolders"
+        );
 
         let _ = fs::remove_dir_all(&src_root);
         let _ = fs::remove_dir_all(&dst_root);

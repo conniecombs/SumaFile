@@ -88,14 +88,7 @@ pub fn delete_entry(path: &str) -> Result<(), String> {
         return crate::archive::delete_archive_entry(path);
     }
 
-    let in_recycle_bin = path.contains("$Recycle.Bin") || path.contains("$recycle.bin");
-    let recycle_data = Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.len() >= 2 && name.as_bytes()[1].eq_ignore_ascii_case(&b'R'));
-    if in_recycle_bin
-        && (crate::recycle_bin::paired_info_path(Path::new(path)).exists() || recycle_data)
-    {
+    if crate::recycle_bin::is_recycle_bin_item_path(Path::new(path)) {
         return crate::recycle_bin::delete_recycle_item(path);
     }
 
@@ -247,16 +240,41 @@ fn delete_with_shell_permanently(path: &Path) -> io::Result<()> {
 pub fn move_to_trash(paths: &[String]) -> Result<Vec<String>, String> {
     let previous_recycle_paths = crate::recycle_bin::recycle_bin_data_path_set();
     let mut trashed_original_paths = Vec::new();
+    let mut failures = Vec::new();
+    let mut trash_unavailable = false;
 
+    // Keep going past a failed item so one locked or missing file does not
+    // abandon the rest of the selection; report every failure at the end.
     for path in paths {
         if crate::archive::is_archive_virtual_path(path) {
-            crate::archive::delete_archive_entry(path)?;
+            if let Err(error) = crate::archive::delete_archive_entry(path) {
+                failures.push(error);
+            }
             continue;
         }
 
-        let validated = validate_path_no_follow(path)?;
-        trash::delete(&validated).map_err(|e| format!("TRASH_UNAVAILABLE: {e}"))?;
+        let validated = match validate_path_no_follow(path) {
+            Ok(validated) => validated,
+            Err(error) => {
+                failures.push(error);
+                continue;
+            }
+        };
+        if let Err(error) = trash::delete(&validated) {
+            trash_unavailable = true;
+            failures.push(format!("{}: {error}", validated.display()));
+            continue;
+        }
         trashed_original_paths.push(validated.to_string_lossy().to_string());
+    }
+
+    if !failures.is_empty() {
+        let message = failures.join("; ");
+        return Err(if trash_unavailable {
+            format!("TRASH_UNAVAILABLE: {message}")
+        } else {
+            message
+        });
     }
 
     if trashed_original_paths.is_empty() {
@@ -541,7 +559,7 @@ fn batch_rename_recovery_error(
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::{delete_entry, preserve_basic_metadata};
+    use super::{delete_entry, move_to_trash, preserve_basic_metadata};
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -600,6 +618,48 @@ mod tests {
 
         clear_readonly(&src);
         clear_readonly(&dst);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delete_entry_outside_a_real_recycle_root_never_touches_siblings() {
+        // A folder whose name merely contains "$Recycle.Bin" is an ordinary
+        // folder: deleting "Archive.zip" must not also remove "AIchive.zip".
+        let root = temp_dir("not-a-recycle-root").join("$Recycle.Bin-old");
+        fs::create_dir_all(&root).unwrap();
+        let archive = root.join("Archive.zip");
+        let lookalike = root.join("AIchive.zip");
+        fs::write(&archive, b"zip").unwrap();
+        fs::write(&lookalike, b"other").unwrap();
+
+        delete_entry(&archive.to_string_lossy()).expect("delete the archive");
+
+        assert!(!archive.exists());
+        assert!(lookalike.exists(), "unrelated sibling was deleted");
+        let _ = fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    #[test]
+    fn delete_entry_of_missing_path_is_an_error_even_near_recycle_bin() {
+        let root = temp_dir("missing-recycle").join("$Recycle.Bin-copy");
+        fs::create_dir_all(&root).unwrap();
+        let missing = root.join("$Rnothing.txt");
+        assert!(delete_entry(&missing.to_string_lossy()).is_err());
+        let _ = fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    #[test]
+    fn move_to_trash_reports_every_failed_path_instead_of_stopping_at_the_first() {
+        let root = temp_dir("trash-missing");
+        let first = root.join("missing-one.txt");
+        let second = root.join("missing-two.txt");
+        let error = move_to_trash(&[
+            first.to_string_lossy().to_string(),
+            second.to_string_lossy().to_string(),
+        ])
+        .expect_err("missing paths cannot be trashed");
+        assert!(error.contains("missing-one.txt"), "{error}");
+        assert!(error.contains("missing-two.txt"), "{error}");
         let _ = fs::remove_dir_all(root);
     }
 

@@ -50,8 +50,20 @@ where
                 Err(error) => return Err(error.to_string()),
             };
 
-            let request: JsonRpcRequest = serde_json::from_slice(&payload)
-                .map_err(|error| format!("invalid JSON-RPC request: {error}"))?;
+            // A malformed frame is the client's bug, not grounds to drop the
+            // session: answer with a JSON-RPC parse error and keep serving.
+            let request: JsonRpcRequest = match serde_json::from_slice(&payload) {
+                Ok(request) => request,
+                Err(error) => {
+                    let response = JsonRpcResponse::error(
+                        None,
+                        simplefile_ipc::ERR_PARSE,
+                        format!("invalid JSON-RPC request: {error}"),
+                    );
+                    write_json(&writer, &response).await?;
+                    continue;
+                }
+            };
 
             let dispatch_start = Instant::now();
             let action = dispatch(&mut state, &request);
@@ -59,6 +71,9 @@ where
 
             match action {
                 Dispatch::Reply(response) => write_json(&writer, &response).await?,
+                Dispatch::Blocking { id, job } => {
+                    jobs::spawn_blocking_reply(writer.clone(), scheduler.clone(), id, job);
+                }
                 Dispatch::RemoteTransfer {
                     id,
                     provider,

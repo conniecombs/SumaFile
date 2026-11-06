@@ -145,53 +145,111 @@ fn extract_seven_zip(path: &str, dest: &Path) -> Result<(), String> {
     }
 
     let root_remap = top_level_remap(&dest_canonical, &relative_paths);
+    // One 7-Zip process extracts the whole archive into a private staging
+    // folder; entries are then moved into place one by one so every name
+    // still passes the same validation and collision handling. Spawning a
+    // process per entry re-decompressed a solid archive's block every time.
+    let staging = SevenZipStaging::create(&dest_canonical)?;
+    run_seven_zip_extract(&binary, path, staging.path(), None)?;
     for (entry, relative_path) in planned {
         let outpath = output_path_for_entry(&dest_canonical, &relative_path, root_remap.as_ref());
         ensure_extract_path_within_destination(&dest_canonical, &outpath)?;
         if entry.is_dir {
             create_dir_all(&outpath)?;
-        } else {
-            if let Some(parent) = outpath.parent() {
-                create_dir_all(parent)?;
-            }
-            let final_outpath = unique_file_path_if_needed(&outpath);
-            ensure_extract_path_within_destination(&dest_canonical, &final_outpath)?;
-            extract_seven_zip_entry_to_file(&binary, path, &entry.path, &final_outpath)?;
+            continue;
         }
+        if let Some(parent) = outpath.parent() {
+            create_dir_all(parent)?;
+        }
+        let final_outpath = unique_file_path_if_needed(&outpath);
+        ensure_extract_path_within_destination(&dest_canonical, &final_outpath)?;
+        staging.move_entry(&entry.path, &final_outpath)?;
     }
 
     Ok(())
 }
 
-fn extract_seven_zip_entry_to_file(
+/// A private folder beside the destination that a single 7-Zip run extracts
+/// into. Removed on drop, so a failed extraction leaves nothing behind.
+struct SevenZipStaging {
+    path: PathBuf,
+}
+
+impl SevenZipStaging {
+    fn create(dest: &Path) -> Result<Self, String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let path = dest.join(format!(".sumafile-7z-{}-{nanos}", std::process::id()));
+        std::fs::create_dir(&path)
+            .map_err(|e| format!("Failed to create 7-Zip staging folder: {e}"))?;
+        Ok(Self { path })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Names of the entries one selective run should extract, one per line.
+    fn write_listfile<'a>(&self, names: impl Iterator<Item = &'a str>) -> Result<PathBuf, String> {
+        let listfile = self.path.join(".sumafile-7z-include.txt");
+        let mut content = String::new();
+        for name in names {
+            content.push_str(name);
+            content.push('\n');
+        }
+        std::fs::write(&listfile, content)
+            .map_err(|e| format!("Failed to write 7-Zip include list: {e}"))?;
+        Ok(listfile)
+    }
+
+    /// Move one extracted entry out of staging. 7-Zip writes each entry at its
+    /// archive path relative to the output folder.
+    fn move_entry(&self, entry_path: &str, destination: &Path) -> Result<(), String> {
+        let staged = self.path.join(entry_path);
+        if std::fs::rename(&staged, destination).is_ok() {
+            return Ok(());
+        }
+        std::fs::copy(&staged, destination)
+            .map(|_| ())
+            .map_err(|e| format!("Failed to place extracted entry {entry_path}: {e}"))
+    }
+}
+
+impl Drop for SevenZipStaging {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn run_seven_zip_extract(
     binary: &str,
     archive_path: &str,
-    entry_path: &str,
-    output_path: &Path,
+    staging: &Path,
+    include_listfile: Option<&Path>,
 ) -> Result<(), String> {
-    let outfile = create_file(output_path)?;
-    let output = std::process::Command::new(binary)
-        .arg("e")
-        .arg("-so")
+    let mut command = super::seven_zip::seven_zip_command(binary);
+    command
+        .arg("x")
+        .arg(format!("-o{}", staging.display()))
         .arg("-bd")
         .arg("-bb0")
         .arg("-sccUTF-8")
+        .arg("-scsUTF-8")
         .arg("-y")
         .arg("-spd")
+        .arg("-aoa");
+    if let Some(listfile) = include_listfile {
+        command.arg(format!("-i@{}", listfile.display()));
+    }
+    let output = command
         .arg("--")
         .arg(archive_path)
-        .arg(entry_path)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(outfile))
         .output()
         .map_err(|e| format!("Failed to run 7-Zip extract command: {e}"))?;
-
-    if let Err(error) = super::seven_zip::ensure_seven_zip_success(&output, "7-Zip extraction") {
-        let _ = std::fs::remove_file(output_path);
-        return Err(error);
-    }
-
-    Ok(())
+    super::seven_zip::ensure_seven_zip_success(&output, "7-Zip extraction")
 }
 
 fn extract_rar(path: &str, dest: &Path) -> Result<(), String> {
@@ -474,29 +532,39 @@ fn extract_seven_zip_entry_matching(
     }
     reject_if_over_budget(declared_total, selected.len() as u32, limits)?;
 
+    // One 7-Zip run for the selected entries (named through an include list,
+    // which also sidesteps command-line length limits), then move them out.
+    let staging = SevenZipStaging::create(&dest_canonical)?;
+    let listfile = staging.write_listfile(
+        selected
+            .iter()
+            .filter(|(entry, _)| !entry.is_dir)
+            .map(|(entry, _)| entry.path.as_str()),
+    )?;
+    run_seven_zip_extract(&binary, path, staging.path(), Some(&listfile))?;
+
     let mut written_total = 0u64;
     for (entry, relative_path) in selected {
         let outpath = dest_canonical.join(&relative_path);
         ensure_extract_path_within_destination(&dest_canonical, &outpath)?;
         if entry.is_dir {
             create_dir_all(&outpath)?;
-        } else {
-            if let Some(parent) = outpath.parent() {
-                create_dir_all(parent)?;
-            }
-            ensure_extract_path_within_destination(&dest_canonical, &outpath)?;
-            extract_seven_zip_entry_to_file(&binary, path, &entry.path, &outpath)?;
-            let written = std::fs::metadata(&outpath).map(|m| m.len()).unwrap_or(0);
-            written_total = written_total
-                .checked_add(written)
-                .ok_or_else(|| "Archive extract size overflow".to_string())?;
-            if written_total > limits.max_uncompressed_bytes {
-                let _ = std::fs::remove_file(&outpath);
-                return Err(format!(
-                    "Archive extract exceeds size limit of {} bytes",
-                    limits.max_uncompressed_bytes
-                ));
-            }
+            continue;
+        }
+        if let Some(parent) = outpath.parent() {
+            create_dir_all(parent)?;
+        }
+        staging.move_entry(&entry.path, &outpath)?;
+        let written = std::fs::metadata(&outpath).map(|m| m.len()).unwrap_or(0);
+        written_total = written_total
+            .checked_add(written)
+            .ok_or_else(|| "Archive extract size overflow".to_string())?;
+        if written_total > limits.max_uncompressed_bytes {
+            let _ = std::fs::remove_file(&outpath);
+            return Err(format!(
+                "Archive extract exceeds size limit of {} bytes",
+                limits.max_uncompressed_bytes
+            ));
         }
     }
     Ok(())

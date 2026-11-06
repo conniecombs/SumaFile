@@ -66,9 +66,7 @@ impl Drop for EnvVarGuard {
 fn rejects_methods_before_handshake() {
     let mut state = SessionState::default();
     let outcome = dispatch(&mut state, &request("get_home_dir", 1, json!({})));
-    let Dispatch::Reply(response) = outcome else {
-        panic!("expected reply");
-    };
+    let response = reply(outcome);
     assert_eq!(response.error.unwrap().code, ERR_INVALID_REQUEST);
 }
 
@@ -90,16 +88,12 @@ fn handshake_then_home_dir() {
             }),
         ),
     );
-    let Dispatch::Reply(ready) = handshake else {
-        panic!("expected handshake reply");
-    };
+    let ready = reply(handshake);
     assert!(ready.error.is_none());
     assert!(state.handshake_done);
 
     let home = dispatch(&mut state, &request("get_home_dir", 2, json!({})));
-    let Dispatch::Reply(response) = home else {
-        panic!("expected home dir reply");
-    };
+    let response = reply(home);
     let path = response.result.unwrap().as_str().unwrap().to_string();
     assert!(!path.is_empty());
 }
@@ -116,9 +110,7 @@ fn move_to_trash_empty_selection_returns_tracked_paths_array() {
         &request("move_to_trash", 30, json!({ "paths": [] })),
     );
 
-    let Dispatch::Reply(response) = outcome else {
-        panic!("expected reply");
-    };
+    let response = reply(outcome);
     assert_eq!(response.result.unwrap(), json!([]));
 }
 
@@ -137,9 +129,7 @@ fn handshake_requires_configured_token() {
             }),
         ),
     );
-    let Dispatch::Reply(ready) = handshake else {
-        panic!("expected handshake reply");
-    };
+    let ready = reply(handshake);
     assert!(ready.error.is_some());
     assert!(!state.handshake_done);
 }
@@ -162,9 +152,7 @@ fn handshake_rejects_wrong_token() {
             }),
         ),
     );
-    let Dispatch::Reply(ready) = handshake else {
-        panic!("expected handshake reply");
-    };
+    let ready = reply(handshake);
     assert!(ready.error.is_some());
     assert!(!state.handshake_done);
 }
@@ -264,9 +252,7 @@ fn select_directory_is_host_owned() {
         ..SessionState::default()
     };
     let outcome = dispatch(&mut state, &request("select_directory", 3, json!({})));
-    let Dispatch::Reply(response) = outcome else {
-        panic!("expected reply");
-    };
+    let response = reply(outcome);
     let error = response.error.unwrap();
     assert_eq!(error.code, ERR_HOST_OWNED);
     assert!(error.message.starts_with(PREFIX_HOST_OWNED));
@@ -279,9 +265,7 @@ fn unknown_method_is_not_found() {
         ..SessionState::default()
     };
     let outcome = dispatch(&mut state, &request("not_a_real_method", 4, json!({})));
-    let Dispatch::Reply(response) = outcome else {
-        panic!("expected reply");
-    };
+    let response = reply(outcome);
     assert_eq!(response.error.unwrap().code, ERR_METHOD_NOT_FOUND);
 }
 
@@ -306,18 +290,14 @@ fn settings_methods_round_trip_through_metadata_db() {
             json!({ "key": "winui.layout", "value": "{\"dualPane\":true}" }),
         ),
     );
-    let Dispatch::Reply(set_response) = set else {
-        panic!("expected settings set reply");
-    };
+    let set_response = reply(set);
     assert!(set_response.error.is_none());
 
     let get = dispatch(
         &mut state,
         &request("get_db_setting", 6, json!({ "key": "winui.layout" })),
     );
-    let Dispatch::Reply(get_response) = get else {
-        panic!("expected settings get reply");
-    };
+    let get_response = reply(get);
     assert_eq!(
         get_response.result.unwrap().as_str(),
         Some("{\"dualPane\":true}")
@@ -327,9 +307,7 @@ fn settings_methods_round_trip_through_metadata_db() {
         &mut state,
         &request("get_db_setting", 7, json!({ "key": "missing" })),
     );
-    let Dispatch::Reply(missing_response) = missing else {
-        panic!("expected missing settings reply");
-    };
+    let missing_response = reply(missing);
     assert!(missing_response.result.unwrap().is_null());
 
     let batch = dispatch(
@@ -340,9 +318,7 @@ fn settings_methods_round_trip_through_metadata_db() {
             json!({ "keys": ["winui.layout", "missing"] }),
         ),
     );
-    let Dispatch::Reply(batch_response) = batch else {
-        panic!("expected batch settings reply");
-    };
+    let batch_response = reply(batch);
     let batch_result = batch_response.result.unwrap();
     assert_eq!(
         batch_result["winui.layout"].as_str(),
@@ -370,9 +346,7 @@ fn inspection_methods_use_core_logic() {
             json!({ "path": left.to_string_lossy(), "maxSize": 1024 }),
         ),
     );
-    let Dispatch::Reply(preview_response) = preview else {
-        panic!("expected preview reply");
-    };
+    let preview_response = reply(preview);
     let preview_value = preview_response.result.unwrap();
     assert_eq!(preview_value["file_type"], "text");
     assert_eq!(preview_value["content"], "alpha\nbravo\n");
@@ -385,9 +359,7 @@ fn inspection_methods_use_core_logic() {
             json!({ "path": left.to_string_lossy() }),
         ),
     );
-    let Dispatch::Reply(checksum_response) = checksum else {
-        panic!("expected checksum reply");
-    };
+    let checksum_response = reply(checksum);
     assert!(
         checksum_response.result.unwrap()["sha256"]
             .as_str()
@@ -407,9 +379,7 @@ fn inspection_methods_use_core_logic() {
             }),
         ),
     );
-    let Dispatch::Reply(compare_response) = compare else {
-        panic!("expected compare reply");
-    };
+    let compare_response = reply(compare);
     let compare_value = compare_response.result.unwrap();
     assert_eq!(compare_value["identical"], false);
     assert_eq!(compare_value["comparison_type"], "text");
@@ -428,9 +398,7 @@ fn inspection_methods_use_core_logic() {
             }),
         ),
     );
-    let Dispatch::Reply(binary_compare_response) = binary_compare else {
-        panic!("expected binary compare reply");
-    };
+    let binary_compare_response = reply(binary_compare);
     let binary_compare_value = binary_compare_response.result.unwrap();
     assert_eq!(binary_compare_value["comparison_type"], "binary");
     assert_eq!(binary_compare_value["first_difference"], 2);
@@ -456,9 +424,7 @@ fn inspection_methods_use_core_logic() {
             }),
         ),
     );
-    let Dispatch::Reply(create_archive_response) = create_archive else {
-        panic!("expected create archive reply");
-    };
+    let create_archive_response = reply(create_archive);
     assert!(create_archive_response.error.is_none());
     assert!(archive_path.exists());
 
@@ -470,9 +436,7 @@ fn inspection_methods_use_core_logic() {
             json!({ "path": archive_path.to_string_lossy() }),
         ),
     );
-    let Dispatch::Reply(list_archive_response) = list_archive else {
-        panic!("expected list archive reply");
-    };
+    let list_archive_response = reply(list_archive);
     let archive_value = list_archive_response.result.unwrap();
     assert_eq!(archive_value["format"], "zip");
     assert_eq!(
@@ -498,9 +462,7 @@ fn inspection_methods_use_core_logic() {
             }),
         ),
     );
-    let Dispatch::Reply(extract_archive_response) = extract_archive else {
-        panic!("expected extract archive reply");
-    };
+    let extract_archive_response = reply(extract_archive);
     assert!(extract_archive_response.error.is_none());
     assert!(extract_dir.join(left.file_name().unwrap()).exists());
 
@@ -512,8 +474,24 @@ fn inspection_methods_use_core_logic() {
     let _ = fs::remove_dir_all(extract_dir);
 }
 
+/// Resolve a dispatch outcome to its JSON-RPC reply, running a deferred
+/// blocking job inline the way the session loop's scheduler would.
+fn reply(outcome: Dispatch) -> simplefile_ipc::rpc::JsonRpcResponse {
+    match outcome {
+        Dispatch::Reply(response) => response,
+        Dispatch::Blocking { id, job } => match job.run() {
+            Ok(value) => simplefile_ipc::rpc::JsonRpcResponse::result(id, value),
+            Err(message) => simplefile_ipc::rpc::JsonRpcResponse::application_error(id, message),
+        },
+        other => panic!("expected a reply, got {other:?}"),
+    }
+}
+
 fn assert_domain_method_is_wired(state: &mut SessionState, method: &str, id: u64, params: Value) {
     match dispatch(state, &request(method, id, params)) {
+        // A deferred job is wired by construction; running it here would hit
+        // the real disk, network or recycle bin.
+        Dispatch::Blocking { .. } => {}
         Dispatch::Reply(response) => {
             if let Some(error) = response.error {
                 assert_ne!(
@@ -627,9 +605,7 @@ fn tags_and_smart_folders_round_trip_through_core() {
     };
 
     let seeded = dispatch(&mut state, &request("get_all_tags", 60, json!({})));
-    let Dispatch::Reply(seeded_response) = seeded else {
-        panic!("expected seeded tags reply");
-    };
+    let seeded_response = reply(seeded);
     let seeded_tags = seeded_response.result.unwrap();
     assert!(
         seeded_tags.as_array().map(|tags| tags.len()).unwrap_or(0) >= 5,
@@ -644,9 +620,7 @@ fn tags_and_smart_folders_round_trip_through_core() {
             json!({ "name": "Review", "color": "#123456" }),
         ),
     );
-    let Dispatch::Reply(created_response) = created else {
-        panic!("expected create_tag reply");
-    };
+    let created_response = reply(created);
     let created_tag = created_response.result.unwrap();
     let tag_id = created_tag["id"].as_i64().expect("tag id");
     assert_eq!(created_tag["name"], "Review");
@@ -659,18 +633,14 @@ fn tags_and_smart_folders_round_trip_through_core() {
             json!({ "path": "C:\\file.txt", "tagIds": [tag_id] }),
         ),
     );
-    let Dispatch::Reply(set_tags_response) = set_tags else {
-        panic!("expected set_tags_for_path reply");
-    };
+    let set_tags_response = reply(set_tags);
     assert!(set_tags_response.error.is_none());
 
     let path_tags = dispatch(
         &mut state,
         &request("get_tags_for_path", 63, json!({ "path": "C:\\file.txt" })),
     );
-    let Dispatch::Reply(path_tags_response) = path_tags else {
-        panic!("expected get_tags_for_path reply");
-    };
+    let path_tags_response = reply(path_tags);
     assert_eq!(
         path_tags_response.result.unwrap()[0]["id"].as_i64(),
         Some(tag_id)
@@ -705,15 +675,11 @@ fn tags_and_smart_folders_round_trip_through_core() {
             }),
         ),
     );
-    let Dispatch::Reply(save_response) = save else {
-        panic!("expected save_smart_folder reply");
-    };
+    let save_response = reply(save);
     assert!(save_response.error.is_none());
 
     let loaded = dispatch(&mut state, &request("load_smart_folders", 65, json!({})));
-    let Dispatch::Reply(loaded_response) = loaded else {
-        panic!("expected load_smart_folders reply");
-    };
+    let loaded_response = reply(loaded);
     assert_eq!(loaded_response.result.unwrap()[0]["id"], "sf-review");
 
     let git_status = dispatch(
@@ -724,9 +690,7 @@ fn tags_and_smart_folders_round_trip_through_core() {
             json!({ "path": std::env::temp_dir().to_string_lossy() }),
         ),
     );
-    let Dispatch::Reply(git_status_response) = git_status else {
-        panic!("expected get_git_status reply");
-    };
+    let git_status_response = reply(git_status);
     assert!(git_status_response.error.is_none());
     assert_eq!(git_status_response.result.unwrap()["is_repo"], false);
 
@@ -734,9 +698,7 @@ fn tags_and_smart_folders_round_trip_through_core() {
         &mut state,
         &request("get_archive_capabilities", 67, json!({})),
     );
-    let Dispatch::Reply(capabilities_response) = capabilities else {
-        panic!("expected get_archive_capabilities reply");
-    };
+    let capabilities_response = reply(capabilities);
     let formats = capabilities_response.result.unwrap()["formats"]
         .as_array()
         .expect("formats array")
@@ -786,9 +748,7 @@ fn remote_profile_ipc_saves_and_lists_profiles_without_secret_material() {
             }),
         ),
     );
-    let Dispatch::Reply(save_response) = save else {
-        panic!("expected remote_save_profile reply");
-    };
+    let save_response = reply(save);
     assert!(
         save_response.error.is_none(),
         "unexpected save error: {:?}",
@@ -801,9 +761,7 @@ fn remote_profile_ipc_saves_and_lists_profiles_without_secret_material() {
     assert!(saved.get("secret").is_none());
 
     let list = dispatch(&mut state, &request("remote_list_profiles", 81, json!({})));
-    let Dispatch::Reply(list_response) = list else {
-        panic!("expected remote_list_profiles reply");
-    };
+    let list_response = reply(list);
     assert!(
         list_response.error.is_none(),
         "unexpected list error: {:?}",
@@ -1042,9 +1000,7 @@ fn remote_test_profile_connects_provider_and_reports_live_capabilities() {
             }),
         ),
     );
-    let Dispatch::Reply(test_response) = test else {
-        panic!("expected remote_test_profile reply");
-    };
+    let test_response = reply(test);
     assert!(
         test_response.error.is_none(),
         "unexpected test error: {:?}",
@@ -1116,9 +1072,7 @@ fn remote_session_ipc_connects_lists_and_disconnects_with_provider() {
             }),
         ),
     );
-    let Dispatch::Reply(save_response) = save else {
-        panic!("expected remote_save_profile reply");
-    };
+    let save_response = reply(save);
     let saved = save_response.result.expect("saved profile");
     let profile_id = saved["id"].as_str().expect("profile id");
 
@@ -1130,9 +1084,7 @@ fn remote_session_ipc_connects_lists_and_disconnects_with_provider() {
             json!({ "profileId": profile_id, "secret": "not-returned" }),
         ),
     );
-    let Dispatch::Reply(connect_response) = connect else {
-        panic!("expected remote_connect reply");
-    };
+    let connect_response = reply(connect);
     assert!(
         connect_response.error.is_none(),
         "unexpected connect error: {:?}",
@@ -1153,9 +1105,7 @@ fn remote_session_ipc_connects_lists_and_disconnects_with_provider() {
             json!({ "remoteSessionId": session_id, "path": "/" }),
         ),
     );
-    let Dispatch::Reply(list_response) = list else {
-        panic!("expected remote_list_directory reply");
-    };
+    let list_response = reply(list);
     assert!(list_response.error.is_none());
     let listing = list_response.result.expect("remote listing");
     assert_eq!(listing["path"], "/");
@@ -1170,9 +1120,7 @@ fn remote_session_ipc_connects_lists_and_disconnects_with_provider() {
             json!({ "remoteSessionId": session_id }),
         ),
     );
-    let Dispatch::Reply(disconnect_response) = disconnect else {
-        panic!("expected remote_disconnect reply");
-    };
+    let disconnect_response = reply(disconnect);
     assert!(disconnect_response.error.is_none());
 
     let after_disconnect = dispatch(
@@ -1183,9 +1131,7 @@ fn remote_session_ipc_connects_lists_and_disconnects_with_provider() {
             json!({ "remoteSessionId": session_id, "path": "/" }),
         ),
     );
-    let Dispatch::Reply(after_disconnect_response) = after_disconnect else {
-        panic!("expected remote_list_directory reply");
-    };
+    let after_disconnect_response = reply(after_disconnect);
     let error = after_disconnect_response
         .error
         .expect("missing session error");
@@ -1233,9 +1179,7 @@ fn remote_profile_ipc_stores_uses_and_deletes_secrets_by_credential_target() {
             }),
         ),
     );
-    let Dispatch::Reply(save_response) = save else {
-        panic!("expected remote_save_profile reply");
-    };
+    let save_response = reply(save);
     assert!(
         save_response.error.is_none(),
         "unexpected save error: {:?}",
@@ -1258,9 +1202,7 @@ fn remote_profile_ipc_stores_uses_and_deletes_secrets_by_credential_target() {
         &mut state,
         &request("remote_connect", 111, json!({ "profileId": profile_id })),
     );
-    let Dispatch::Reply(connect_response) = connect else {
-        panic!("expected remote_connect reply");
-    };
+    let connect_response = reply(connect);
     assert!(
         connect_response.error.is_none(),
         "unexpected connect error: {:?}",
@@ -1275,9 +1217,7 @@ fn remote_profile_ipc_stores_uses_and_deletes_secrets_by_credential_target() {
             json!({ "profileId": profile_id }),
         ),
     );
-    let Dispatch::Reply(delete_response) = delete else {
-        panic!("expected remote_delete_profile reply");
-    };
+    let delete_response = reply(delete);
     assert!(delete_response.error.is_none());
     assert_eq!(
         secret_store
@@ -1329,9 +1269,7 @@ fn remote_profile_ipc_stores_private_key_passphrases_by_credential_target() {
             }),
         ),
     );
-    let Dispatch::Reply(save_response) = save else {
-        panic!("expected remote_save_profile reply");
-    };
+    let save_response = reply(save);
     assert!(
         save_response.error.is_none(),
         "unexpected save error: {:?}",
@@ -1356,9 +1294,7 @@ fn remote_profile_ipc_stores_private_key_passphrases_by_credential_target() {
         &mut state,
         &request("remote_connect", 114, json!({ "profileId": profile_id })),
     );
-    let Dispatch::Reply(connect_response) = connect else {
-        panic!("expected remote_connect reply");
-    };
+    let connect_response = reply(connect);
     assert!(
         connect_response.error.is_none(),
         "unexpected connect error: {:?}",
@@ -1403,9 +1339,7 @@ fn remote_session_ipc_creates_renames_and_deletes_entries_with_provider() {
             }),
         ),
     );
-    let Dispatch::Reply(save_response) = save else {
-        panic!("expected remote_save_profile reply");
-    };
+    let save_response = reply(save);
     let saved = save_response.result.expect("saved profile");
     let profile_id = saved["id"].as_str().expect("profile id");
 
@@ -1417,9 +1351,7 @@ fn remote_session_ipc_creates_renames_and_deletes_entries_with_provider() {
             json!({ "profileId": profile_id, "secret": "not-returned" }),
         ),
     );
-    let Dispatch::Reply(connect_response) = connect else {
-        panic!("expected remote_connect reply");
-    };
+    let connect_response = reply(connect);
     let session = connect_response.result.expect("remote session");
     let session_id = session["session_id"]
         .as_str()
@@ -1434,9 +1366,7 @@ fn remote_session_ipc_creates_renames_and_deletes_entries_with_provider() {
             json!({ "remoteSessionId": session_id, "path": "/", "name": "incoming" }),
         ),
     );
-    let Dispatch::Reply(create_response) = create else {
-        panic!("expected remote_create_directory reply");
-    };
+    let create_response = reply(create);
     assert!(
         create_response.error.is_none(),
         "unexpected create error: {:?}",
@@ -1455,9 +1385,7 @@ fn remote_session_ipc_creates_renames_and_deletes_entries_with_provider() {
             json!({ "remoteSessionId": session_id, "path": "/incoming", "newName": "archive" }),
         ),
     );
-    let Dispatch::Reply(rename_response) = rename else {
-        panic!("expected remote_rename_entry reply");
-    };
+    let rename_response = reply(rename);
     assert!(rename_response.error.is_none());
     let renamed = rename_response.result.expect("renamed entry");
     assert_eq!(renamed["name"], "archive");
@@ -1471,9 +1399,7 @@ fn remote_session_ipc_creates_renames_and_deletes_entries_with_provider() {
             json!({ "remoteSessionId": session_id, "paths": ["/archive"] }),
         ),
     );
-    let Dispatch::Reply(delete_response) = delete else {
-        panic!("expected remote_delete_entries reply");
-    };
+    let delete_response = reply(delete);
     assert!(delete_response.error.is_none());
     assert_eq!(
         delete_response.result.expect("deleted paths"),
@@ -1518,9 +1444,7 @@ fn remote_transfer_ipc_downloads_and_uploads_files_with_provider() {
             }),
         ),
     );
-    let Dispatch::Reply(save_response) = save else {
-        panic!("expected remote_save_profile reply");
-    };
+    let save_response = reply(save);
     let saved = save_response.result.expect("saved profile");
     let profile_id = saved["id"].as_str().expect("profile id");
 
@@ -1532,9 +1456,7 @@ fn remote_transfer_ipc_downloads_and_uploads_files_with_provider() {
             json!({ "profileId": profile_id, "secret": "not-returned" }),
         ),
     );
-    let Dispatch::Reply(connect_response) = connect else {
-        panic!("expected remote_connect reply");
-    };
+    let connect_response = reply(connect);
     let session = connect_response.result.expect("remote session");
     let session_id = session["session_id"]
         .as_str()
@@ -1555,9 +1477,7 @@ fn remote_transfer_ipc_downloads_and_uploads_files_with_provider() {
             }),
         ),
     );
-    let Dispatch::Reply(download_response) = download else {
-        panic!("expected remote_download_file reply");
-    };
+    let download_response = reply(download);
     assert!(download_response.error.is_none());
     assert_eq!(
         fs::read(&download_path).expect("read downloaded file"),
@@ -1577,9 +1497,7 @@ fn remote_transfer_ipc_downloads_and_uploads_files_with_provider() {
             }),
         ),
     );
-    let Dispatch::Reply(upload_response) = upload else {
-        panic!("expected remote_upload_file reply");
-    };
+    let upload_response = reply(upload);
     assert!(upload_response.error.is_none());
     let uploaded = upload_response.result.expect("uploaded entry");
     assert_eq!(uploaded["name"], "app.txt");

@@ -154,7 +154,7 @@ fn remote_session_registry_connects_lists_and_disconnects() {
         private_key_path: None,
         trusted_host_fingerprint: None,
     };
-    let mut registry = RemoteSessionRegistry::new(FakeFactory);
+    let registry = RemoteSessionRegistry::new(FakeFactory);
 
     let session = registry
         .connect_profile(profile.clone(), None)
@@ -207,7 +207,7 @@ fn remote_session_registry_mutates_entries_through_provider() {
         private_key_path: None,
         trusted_host_fingerprint: None,
     };
-    let mut registry = RemoteSessionRegistry::new(FakeFactory);
+    let registry = RemoteSessionRegistry::new(FakeFactory);
     let session = registry.connect_profile(profile, None).expect("connect");
 
     let created = registry
@@ -246,7 +246,7 @@ fn remote_session_registry_reads_and_writes_files_through_provider() {
         private_key_path: None,
         trusted_host_fingerprint: None,
     };
-    let mut registry = RemoteSessionRegistry::new(FakeFactory);
+    let registry = RemoteSessionRegistry::new(FakeFactory);
     let session = registry.connect_profile(profile, None).expect("connect");
 
     let mut bytes = Vec::new();

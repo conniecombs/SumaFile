@@ -219,7 +219,7 @@ pub(crate) fn copy_file_attempt_versioned(
     let need_hash = verify_checksum;
     let mut stream_hasher = ContentHasher::new();
     let remaining = file_len.saturating_sub(resume_from);
-    let multi_streams = ctx.policy.multi_thread_streams_count();
+    let multi_streams = ctx.policy.budgeted_streams(ctx.network);
     let multi_cutoff = ctx.policy.multi_thread_cutoff_bytes();
 
     let multistream_eligible = cfg!(windows)
@@ -886,7 +886,19 @@ fn resolve_file_conflict(
     resume_existing: bool,
 ) -> Result<Option<(PathBuf, bool)>, Failure> {
     match conflict {
-        ConflictAction::Replace => Ok(Some((dst.to_path_buf(), true))),
+        ConflictAction::Replace => {
+            // Replace swaps a file for a file. A directory occupying the name is
+            // a type conflict the user must resolve; never delete it to make room.
+            let existing_is_dir = fs::symlink_metadata(dst)
+                .is_ok_and(|meta| meta.file_type().is_dir() && !meta.file_type().is_symlink());
+            if existing_is_dir {
+                return Err(Failure::conflict(format!(
+                    "destination exists with a different type: {}",
+                    dst.display()
+                )));
+            }
+            Ok(Some((dst.to_path_buf(), true)))
+        }
         ConflictAction::Error => Ok(Some((dst.to_path_buf(), false))),
         ConflictAction::Skip => {
             if !resume_existing && path_exists_no_follow(dst) {

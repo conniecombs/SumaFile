@@ -295,7 +295,16 @@ pub(crate) fn recover_directory(directory: &Path) -> Result<(), String> {
         {
             continue;
         }
-        recover(&record)?;
+        // A record that cannot be recovered safely (its artifact changed
+        // identity) is retained for inspection and logged. It must not fail
+        // every later transfer into this directory.
+        if let Err(error) = recover(&record) {
+            log::warn!(
+                "Retained unrecoverable transfer record [{}]: {error}",
+                path.display()
+            );
+            continue;
+        }
         fs::remove_file(&path)
             .map_err(|e| format!("Remove recovered transfer record [{}]: {e}", path.display()))?;
     }
@@ -379,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn recovery_refuses_replaced_artifact_identity() {
+    fn recovery_retains_replaced_artifact_without_blocking_the_directory() {
         let root = root();
         let destination = root.join("file");
         let stage = crate::transfer_staging::staging_path_for(&destination, "swap").unwrap();
@@ -387,9 +396,9 @@ mod tests {
         fs::rename(&stage, root.join("original-stage")).unwrap();
         fs::write(&stage, b"another transfer").unwrap();
         drop(lease);
-        assert!(recover_directory(&root)
-            .unwrap_err()
-            .contains("identity changed"));
+        // A record whose artifact changed identity is kept for inspection, but
+        // it must not make every later transfer into this folder fail.
+        recover_directory(&root).expect("conflicting record is retained, not fatal");
         assert_eq!(fs::read(&stage).unwrap(), b"another transfer");
         assert!(record_path(&stage).exists());
         fs::remove_dir_all(root).unwrap();

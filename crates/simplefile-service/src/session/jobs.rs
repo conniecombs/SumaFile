@@ -99,6 +99,33 @@ pub(super) fn spawn_remote_transfer(
     });
 }
 
+/// Run a handler body on the blocking scheduler and write its reply. Used for
+/// every request that touches the disk, the network or a child process, so
+/// the session loop keeps reading frames (including cancels) meanwhile.
+pub(super) fn spawn_blocking_reply(
+    writer: OutboundSink,
+    scheduler: BlockingScheduler,
+    id: Option<Value>,
+    job: crate::dispatch::BlockingJob,
+) {
+    tokio::spawn(async move {
+        let lane = job.lane();
+        let task = move || job.run();
+        let result = match lane {
+            crate::dispatch::BlockingLane::General => scheduler.run_general(task).await,
+            crate::dispatch::BlockingLane::Transfer => scheduler.run_transfer(task).await,
+        };
+        let response = match result {
+            Ok(Ok(value)) => JsonRpcResponse::result(id, value),
+            Ok(Err(message)) => JsonRpcResponse::application_error(id, message),
+            Err(error) => {
+                JsonRpcResponse::application_error(id, format!("blocking task failed: {error}"))
+            }
+        };
+        let _ = write_json(&writer, &response).await;
+    });
+}
+
 impl EventSink {
     pub(super) fn new(outbound: OutboundSink, binary_hot_frames: Arc<AtomicBool>) -> Self {
         Self {
@@ -117,13 +144,27 @@ impl EventSink {
     }
 
     fn emit_progress(&self, update: &ProgressUpdate) {
+        if let Some(payload) = self.progress_payload(update) {
+            let _ = self.outbound.send_payload_blocking(payload);
+        }
+    }
+
+    /// Progress emit for async (tokio task) context. `emit_progress` uses a
+    /// blocking channel send that panics when called on a runtime worker.
+    async fn emit_progress_async(&self, update: &ProgressUpdate) {
+        if let Some(payload) = self.progress_payload(update) {
+            let _ = self.outbound.enqueue_payload(payload).await;
+        }
+    }
+
+    fn progress_payload(&self, update: &ProgressUpdate) -> Option<Vec<u8>> {
         if self.binary_hot_frames.load(Ordering::Relaxed) {
             if let Ok(payload) = crate::binary::encode_progress_update(update) {
-                let _ = self.outbound.send_payload_blocking(payload);
-                return;
+                return Some(payload);
             }
         }
-        self.emit(OPERATION_PROGRESS, update);
+        let params = serde_json::to_value(update).ok()?;
+        encode_json_payload(&JsonRpcNotification::new(OPERATION_PROGRESS, params)).ok()
     }
 
     pub(super) fn emit_file_change(&self, change: &FileChangeEvent) {
@@ -901,17 +942,19 @@ pub(super) fn spawn_duplicate_check(
         let events_for_task = events.clone();
         let operation_id_for_task = operation_id.clone();
         let queued_directory = directory.clone();
-        events.emit_progress(&ProgressUpdate {
-            operation_id: operation_id.clone(),
-            operation_type: "duplicate-check".to_string(),
-            current: 0,
-            total: 0,
-            current_files: 0,
-            total_files: 0,
-            current_item: queued_directory,
-            status: "queued".to_string(),
-            error: None,
-        });
+        events
+            .emit_progress_async(&ProgressUpdate {
+                operation_id: operation_id.clone(),
+                operation_type: "duplicate-check".to_string(),
+                current: 0,
+                total: 0,
+                current_files: 0,
+                total_files: 0,
+                current_item: queued_directory,
+                status: "queued".to_string(),
+                error: None,
+            })
+            .await;
         let start = std::time::Instant::now();
         let scheduler_for_task = scheduler.clone();
         let result = scheduler
@@ -978,17 +1021,19 @@ pub(super) fn spawn_disk_cleanup(
         let events_for_task = events.clone();
         let operation_id_for_task = operation_id.clone();
         let queued_directory = directory.clone();
-        events.emit_progress(&ProgressUpdate {
-            operation_id: operation_id.clone(),
-            operation_type: "cleanup".to_string(),
-            current: 0,
-            total: 0,
-            current_files: 0,
-            total_files: 0,
-            current_item: queued_directory,
-            status: "queued".to_string(),
-            error: None,
-        });
+        events
+            .emit_progress_async(&ProgressUpdate {
+                operation_id: operation_id.clone(),
+                operation_type: "cleanup".to_string(),
+                current: 0,
+                total: 0,
+                current_files: 0,
+                total_files: 0,
+                current_item: queued_directory,
+                status: "queued".to_string(),
+                error: None,
+            })
+            .await;
         let scheduler_for_task = scheduler.clone();
         let result = scheduler
             .run_background(move || {

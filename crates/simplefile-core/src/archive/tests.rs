@@ -20,6 +20,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// The 7-Zip launch counter is process-wide, so tests that assert on it (or
+/// contribute launches) take turns.
+static SEVEN_ZIP_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn unique_temp_dir(name: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -319,6 +323,9 @@ fn seven_zip_create_list_extract_round_trip_when_available() {
     if resolve_seven_zip_binary().is_none() {
         return;
     }
+    let _serial = SEVEN_ZIP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let root = unique_temp_dir("sevenzip-round-trip");
     let source = root.join("alpha.txt");
@@ -354,6 +361,59 @@ fn seven_zip_create_list_extract_round_trip_when_available() {
     assert_eq!(
         fs::read(out.join("folder").join("beta.txt")).expect("read extracted beta"),
         b"world"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Extraction must not launch one 7-Zip process per entry: for a solid
+/// archive that re-decompresses the whole block for every file.
+#[test]
+fn seven_zip_extraction_uses_a_bounded_number_of_processes_when_available() {
+    if resolve_seven_zip_binary().is_none() {
+        return;
+    }
+    let _serial = SEVEN_ZIP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let root = unique_temp_dir("sevenzip-batch");
+    let source = root.join("src");
+    fs::create_dir_all(source.join("nested")).expect("create source tree");
+    for index in 0..6 {
+        fs::write(
+            source.join(format!("file{index}.txt")),
+            format!("payload {index}"),
+        )
+        .expect("write source file");
+    }
+    fs::write(source.join("nested").join("deep.txt"), b"deep").expect("write nested file");
+
+    let archive_path = root.join("batch.7z");
+    create_archive(
+        vec![source.to_string_lossy().to_string()],
+        archive_path.to_string_lossy().to_string(),
+        "7z".to_string(),
+    )
+    .expect("create 7z archive");
+
+    let out = root.join("out");
+    fs::create_dir_all(&out).expect("create out dir");
+    let before = super::seven_zip::SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst);
+    extract_archive_to_directory(&archive_path, &out).expect("extract 7z archive");
+    let spawned = super::seven_zip::SPAWN_COUNT.load(std::sync::atomic::Ordering::SeqCst) - before;
+
+    assert_eq!(
+        fs::read(out.join("src").join("file3.txt")).expect("read extracted file"),
+        b"payload 3"
+    );
+    assert_eq!(
+        fs::read(out.join("src").join("nested").join("deep.txt")).expect("read nested"),
+        b"deep"
+    );
+    assert!(
+        spawned <= 2,
+        "extracting 7 entries launched {spawned} 7-Zip processes"
     );
 
     let _ = fs::remove_dir_all(root);

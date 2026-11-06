@@ -171,16 +171,27 @@ impl Policy {
         3
     }
 
+    /// Multistream stripes that fit the job's memory budget alongside the
+    /// 128 KiB scratch reservation. The configured stream count is an upper
+    /// bound: with a small budget and a large buffer, reserving one buffer per
+    /// configured stripe would exceed the budget and fail every large file.
+    pub fn budgeted_streams(&self, network: bool) -> usize {
+        let buffer = self.buffer_bytes(network).max(1);
+        let affordable = self.memory_bytes().saturating_sub(128 * 1024) / buffer;
+        self.multi_thread_streams_count().min(affordable.max(1))
+    }
+
     pub fn buffer_count(&self, network: bool, file_len: u64, _operation: &str) -> usize {
         let buffer = self.buffer_bytes(network) as u64;
+        let streams = self.budgeted_streams(network);
         if cfg!(windows)
             && !network
             && self.check_mode != CheckMode::Checksum
-            && self.multi_thread_streams_count() >= 2
+            && streams >= 2
             && file_len >= self.multi_thread_cutoff_bytes()
             && file_len >= buffer * 2
         {
-            self.multi_thread_streams_count()
+            streams
         } else if file_len > buffer {
             3
         } else {
@@ -781,5 +792,50 @@ mod tests {
             64,
         );
         assert_eq!(max_small.concurrency, 16);
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::Policy;
+
+    fn reservation(policy: &Policy, network: bool, file_len: u64) -> usize {
+        policy.buffer_bytes(network) * policy.buffer_count(network, file_len, "copy") + 128 * 1024
+    }
+
+    /// The per-file reservation must always fit the job's memory budget, or
+    /// every file above the multistream cutoff fails with a misleading
+    /// "budget changed" error.
+    #[test]
+    fn multistream_reservation_fits_the_memory_budget() {
+        let small_budget = Policy {
+            buffer_size_kib: 4096,
+            multi_thread_streams: 4,
+            memory_budget_mb: 16,
+            ..Policy::default()
+        };
+        assert!(reservation(&small_budget, false, 1 << 30) <= small_budget.memory_bytes());
+
+        let many_streams = Policy {
+            buffer_size_kib: 65_536,
+            multi_thread_streams: 16,
+            memory_budget_mb: 64,
+            ..Policy::default()
+        };
+        assert!(reservation(&many_streams, false, 1 << 31) <= many_streams.memory_bytes());
+    }
+
+    #[test]
+    fn stripes_used_for_copying_match_the_reserved_buffers() {
+        let policy = Policy {
+            buffer_size_kib: 4096,
+            multi_thread_streams: 4,
+            memory_budget_mb: 16,
+            ..Policy::default()
+        };
+        assert_eq!(
+            policy.budgeted_streams(false),
+            policy.buffer_count(false, 1 << 30, "copy")
+        );
     }
 }

@@ -857,7 +857,7 @@ fn extract_archive_metadata(path: &Path, extension: &str) -> Result<FileMetadata
         }
         "tar" => {
             let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
-            extract_tar_archive_metadata(file, archive_format_label(extension))
+            extract_seekable_tar_archive_metadata(file, archive_format_label(extension))
         }
         "tgz" => {
             let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
@@ -917,21 +917,40 @@ fn extract_zip_archive_metadata(path: &Path, format_label: &str) -> Result<FileM
     })
 }
 
+/// Plain tar files are seekable, so entry contents are skipped rather than
+/// read; compressed tars (`extract_tar_archive_metadata`) must stream.
+fn extract_seekable_tar_archive_metadata<R: Read + Seek>(
+    reader: R,
+    format_label: &str,
+) -> Result<FileMetadata, String> {
+    let mut archive = tar::Archive::new(reader);
+    let entries = archive
+        .entries_with_seek()
+        .map_err(|e| format!("Failed to read archive: {e}"))?;
+    summarize_tar_entries(entries, format_label)
+}
+
 fn extract_tar_archive_metadata<R: Read>(
     reader: R,
     format_label: &str,
 ) -> Result<FileMetadata, String> {
-    const MAX_ARCHIVE_ENTRIES: usize = 2_000;
     let mut archive = tar::Archive::new(reader);
+    let entries = archive
+        .entries()
+        .map_err(|e| format!("Failed to read archive: {e}"))?;
+    summarize_tar_entries(entries, format_label)
+}
+
+fn summarize_tar_entries<R: Read>(
+    entries: tar::Entries<'_, R>,
+    format_label: &str,
+) -> Result<FileMetadata, String> {
+    const MAX_ARCHIVE_ENTRIES: usize = 2_000;
     let mut files = 0usize;
     let mut directories = 0usize;
     let mut size = 0u64;
     let mut names = Vec::new();
-    for entry in archive
-        .entries()
-        .map_err(|e| format!("Failed to read archive: {e}"))?
-        .take(MAX_ARCHIVE_ENTRIES)
-    {
+    for entry in entries.take(MAX_ARCHIVE_ENTRIES) {
         let entry = entry.map_err(|e| format!("Failed to read archive entry: {e}"))?;
         if entry.header().entry_type().is_dir() {
             directories += 1;
@@ -1567,7 +1586,11 @@ fn header_value(lines: &[String], name: &str) -> Option<String> {
     lines
         .iter()
         .find(|line| {
-            line.len() >= prefix.len() && line[..prefix.len()].eq_ignore_ascii_case(&prefix)
+            // Compare on bytes: a byte-offset slice panics when the header
+            // line holds a multibyte character at that position.
+            line.as_bytes()
+                .get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
         })
         .map(|line| decode_basic_xml_entities(line[prefix.len()..].trim()))
         .filter(|value| !value.is_empty())
@@ -2285,5 +2308,23 @@ mod tests {
         parse_mvhd(&buf, &mut timescale, &mut duration);
         assert_eq!(timescale, 1000);
         assert_eq!(duration, 2500);
+    }
+
+    #[test]
+    fn header_value_tolerates_multibyte_prefix_boundary() {
+        // "a€" is 4 bytes; byte offset 3 (the length of "To:") is inside '€'.
+        let lines = vec!["a€: x".to_string(), "To: Ada".to_string()];
+        assert_eq!(header_value(&lines, "To"), Some("Ada".to_string()));
+        assert_eq!(header_value(&lines, "From"), None);
+    }
+
+    #[test]
+    fn email_metadata_survives_multibyte_header_lines() {
+        let dir = temp_dir("eml-multibyte");
+        let email = dir.join("odd.eml");
+        fs::write(&email, "a€: x\nSubject: ok\n\nBody").unwrap();
+        let meta = get_file_metadata(email.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(field_value(&meta, "Subject"), Some("ok"));
+        let _ = fs::remove_dir_all(dir);
     }
 }

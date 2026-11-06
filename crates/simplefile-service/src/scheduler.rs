@@ -6,6 +6,10 @@ use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 const MIN_GENERAL_BLOCKING_PERMITS: usize = 2;
 const DEFAULT_TRANSFER_PERMITS: usize = 2;
 const FOREGROUND_YIELD_POLL: Duration = Duration::from_millis(25);
+/// Longest a queued background job waits for foreground work to drain.
+const BACKGROUND_WAIT_CAP: Duration = Duration::from_millis(500);
+/// Longest a running background job pauses per yield point.
+const BACKGROUND_YIELD_CAP: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
 pub(crate) struct BlockingScheduler {
@@ -66,14 +70,21 @@ impl BlockingScheduler {
         self.foreground_in_flight.load(Ordering::Acquire) > 0
     }
 
+    /// Pause a running background job while foreground work is active, for
+    /// at most `BACKGROUND_YIELD_CAP` per call. The cap keeps a long search
+    /// from freezing thumbnails and folder sizes for its whole duration.
     pub(crate) fn yield_if_foreground_active_blocking(&self) {
-        while self.is_foreground_active() {
+        let started = std::time::Instant::now();
+        while self.is_foreground_active() && started.elapsed() < BACKGROUND_YIELD_CAP {
             std::thread::sleep(Duration::from_millis(8));
         }
     }
 
+    /// Wait for foreground work to drain, bounded by `BACKGROUND_WAIT_CAP` so a
+    /// steady stream of foreground requests cannot starve background jobs.
     pub(crate) async fn wait_for_foreground_idle(&self) {
-        while self.is_foreground_active() {
+        let started = tokio::time::Instant::now();
+        while self.is_foreground_active() && started.elapsed() < BACKGROUND_WAIT_CAP {
             let notified = self.foreground_notify.notified();
             if !self.is_foreground_active() {
                 break;
@@ -87,12 +98,15 @@ impl BlockingScheduler {
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
+        // Count the job as foreground only once it holds a permit. Counting
+        // while still queued let background jobs spin on a foreground job that
+        // itself waited on permits those background jobs were holding.
+        let permits = self.acquire_general().await?;
         self.foreground_in_flight.fetch_add(1, Ordering::AcqRel);
         let guard = ForegroundGuard {
             counter: self.foreground_in_flight.clone(),
             notify: self.foreground_notify.clone(),
         };
-        let permits = self.acquire_general().await?;
         tokio::task::spawn_blocking(move || {
             let _guard = guard;
             let _permits = permits;
@@ -107,7 +121,6 @@ impl BlockingScheduler {
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
-        self.wait_for_foreground_idle().await;
         let permits = self.acquire_background().await?;
         self.wait_for_foreground_idle().await;
         run_with_permits(permits, task).await
@@ -342,5 +355,69 @@ mod tests {
         bg_handle.await.unwrap().unwrap();
         assert_eq!(bg_started.load(Ordering::SeqCst), 1);
         assert!(!scheduler.is_foreground_active());
+    }
+}
+
+#[cfg(test)]
+mod starvation_tests {
+    use super::BlockingScheduler;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{mpsc, Arc};
+    use std::time::{Duration, Instant};
+    use tokio::sync::oneshot;
+
+    /// A long foreground job must delay background work, not stall it for
+    /// the job's whole duration: otherwise one multi-minute search freezes
+    /// every thumbnail and folder-size request in the app.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn background_work_starts_while_a_long_foreground_job_is_running() {
+        let scheduler = BlockingScheduler::new(4, 2);
+        let (fg_entered_tx, fg_entered_rx) = oneshot::channel();
+        let (fg_release_tx, fg_release_rx) = mpsc::channel();
+        let bg_started = Arc::new(AtomicUsize::new(0));
+
+        let fg_handle = {
+            let scheduler = scheduler.clone();
+            tokio::spawn(async move {
+                scheduler
+                    .run_foreground(move || {
+                        fg_entered_tx.send(()).unwrap();
+                        fg_release_rx.recv().unwrap();
+                    })
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(2), fg_entered_rx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let started = Instant::now();
+        let bg_handle = {
+            let scheduler = scheduler.clone();
+            let bg_started = bg_started.clone();
+            tokio::spawn(async move {
+                scheduler
+                    .run_background(move || {
+                        bg_started.fetch_add(1, Ordering::SeqCst);
+                    })
+                    .await
+            })
+        };
+
+        let outcome = tokio::time::timeout(Duration::from_secs(3), bg_handle).await;
+        let waited = started.elapsed();
+        fg_release_tx.send(()).unwrap();
+        fg_handle.await.unwrap().unwrap();
+
+        assert!(
+            outcome.is_ok(),
+            "background job never ran while foreground stayed active"
+        );
+        assert_eq!(bg_started.load(Ordering::SeqCst), 1);
+        assert!(
+            waited >= Duration::from_millis(50),
+            "background should still yield briefly to foreground work"
+        );
     }
 }
