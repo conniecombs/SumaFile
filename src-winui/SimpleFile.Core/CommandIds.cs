@@ -60,9 +60,7 @@ public static class CommandIds
     public const string IconSizeMedium = "icon-size-medium";
     public const string IconSizeLarge = "icon-size-large";
     public const string IconSizeExtraLarge = "icon-size-extra-large";
-    public const string IconSizeJumbo = "icon-size-jumbo";
     public const string IconSizeHuge = "icon-size-huge";
-    public const string IconSizeMaximum = "icon-size-maximum";
     public const string Search = "search";
     public const string Filter = "filter";
     public const string QuickLook = "quick-look";
@@ -74,6 +72,7 @@ public static class CommandIds
     public const string ShortcutForSelected = "shortcut-for-selected";
     public const string ColorLabel = "color-label";
     public const string ClearTagFilter = "clear-tag-filter";
+    public const string SaveSmartFolder = "save-smart-folder";
     public const string BookmarkFolder = "bookmark-folder";
     public const string FolderMetrics = "folder-metrics";
     public const string DiskCleanup = "disk-cleanup";
