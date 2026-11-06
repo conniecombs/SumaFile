@@ -2,8 +2,8 @@
 
 ## Supported Branch
 
-Security reports for `main` and SumaFile 1.0.2 should be evaluated against the Windows release scope: local files, mapped network drives, archives, previews, metadata, Git status, cleanup tools, FTP/FTPS/SFTP sessions, updater metadata, and Windows installers.
-See [v1.0.2 release notes](RELEASE_1.0.2.md) for the release boundary.
+Security reports for `main` and SumaFile 1.0.3 should be evaluated against the Windows release scope: local files, mapped network drives, archives, previews, metadata, Git status, cleanup tools, FTP/FTPS/SFTP sessions, updater metadata, and Windows installers.
+See [v1.0.3 release notes](RELEASE_1.0.3.md) for the release boundary.
 
 ## Sensitive Files
 

@@ -1,6 +1,6 @@
 # SumaFile 1.0.1 Release Checklist
 
-> Historical release checklist. See [SumaFile 1.0.2](RELEASE_1.0.2.md) for current release notes, artifacts and upgrade guidance.
+> Historical release checklist. See [SumaFile 1.0.3](RELEASE_1.0.3.md) for current release notes, artifacts and upgrade guidance.
 
 SumaFile 1.0.1 is a WinUI 3 + Rust IPC maintenance release focused on the
 settings workspace, command-surface customization, and release-path cleanup.

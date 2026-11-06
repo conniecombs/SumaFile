@@ -191,6 +191,9 @@ jobs:
           path: |
             test-results/ui-smoke/**/report.json
             test-results/ui-smoke/**/progress.json
+            test-results/ui-smoke/**/workspace-polish.png
+            test-results/ui-smoke/**/conflict-polish.png
+            test-results/ui-smoke/**/rename-polish.png
           if-no-files-found: warn
           retention-days: 14
 

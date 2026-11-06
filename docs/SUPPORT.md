@@ -1,11 +1,11 @@
 # Support
 
-Use this file when collecting information for SumaFile 1.0.2 Windows support issues.
-See [release notes](RELEASE_1.0.2.md) for upgrade behavior and known limitations.
+Use this file when collecting information for SumaFile 1.0.3 Windows support issues.
+See [release notes](RELEASE_1.0.3.md) for upgrade behavior and known limitations.
 
 ## Before Reporting
 
-1. Record the installed version or development commit from `main`; the current release target is v1.0.2.
+1. Record the installed version or development commit from `main`; the current release target is v1.0.3.
 2. Run `npm run check` when reporting a development issue.
 3. For installer issues, also run `npm run smoke:winui-msi`, `npm run smoke:winui-installer`, and `npm run smoke:winui-upgrade`.
 4. For startup issues, capture whether the app window appears, whether settings load, and whether the updater check starts.
@@ -32,7 +32,8 @@ See [release notes](RELEASE_1.0.2.md) for upgrade behavior and known limitations
 
 Include the transfer mode, concurrency/buffer limits, integrity and retry settings,
 source/destination storage types, and whether the operation was a copy or move.
-Record committed/pending outcomes and any recovery message. Preserve ownership
+Record the failing item's source, destination and failure kind, the committed,
+skipped and pending counts, and any recovery message. Preserve ownership
 records and replacement backups for diagnosis; filenames alone do not establish
 which data may be discarded. Redact paths and account details before sharing.
 For UI smoke failures, include both `report.json` (if written) and `progress.json`

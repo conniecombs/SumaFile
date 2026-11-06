@@ -1,5 +1,7 @@
 # SumaFile 1.0.2 Release Notes
 
+Published November 5, 2026. For the next version, see the [1.0.3 release notes](RELEASE_1.0.3.md).
+
 Prepared November 5, 2026 for **v1.0.2**. This release brings configurable parallel
 transfers, safer copy/move recovery, clearer transfer outcomes, and improvements
 to everyday pane, preview, conflict and rename workflows.

@@ -1,6 +1,6 @@
 # WinUI runtime verification
 
-Current release target: **SumaFile 1.0.2**. See [release notes](RELEASE_1.0.2.md) for the complete change set.
+Current release target: **SumaFile 1.0.3**. See [release notes](RELEASE_1.0.3.md) for the complete change set.
 
 Run `npm run smoke:winui-ui` from a Windows desktop session. The script builds
 the Debug WinUI application and Rust service, generates folders containing
@@ -64,6 +64,15 @@ contain the scenario runner. No user settings or folders are modified.
 - Advanced Rename renders its Before/After rows, preserves extensions, and
   updates the rename scope. The run captures `workspace-polish.png`,
   `conflict-polish.png`, and `rename-polish.png` alongside the JSON report.
+
+## Refresh the README screenshots
+
+Use the `sumafile-winui-runtime` artifact from a successful **WinUI host** job on
+a GitHub-hosted Windows runner at the intended application revision. The three PNGs
+come from the running app with generated fixtures and isolated settings. Review
+each image at full size, including its sidebar, breadcrumbs and title. Use only
+runner-generated sample data for public screenshots. Record the source run next
+to the images in the README.
 
 ## Measurements and evidence
 

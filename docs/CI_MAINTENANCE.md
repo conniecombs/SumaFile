@@ -53,7 +53,7 @@ Local preview commands do not update files or GitHub:
 npm ci --ignore-scripts
 npm run maintenance:toolchains
 npm run maintenance:plan
-npm run release:prepare -- 1.0.2
+npm run release:prepare -- 1.0.3
 ```
 
 Add `--write` to `maintenance:toolchains` or `release:prepare` only to apply that

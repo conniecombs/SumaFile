@@ -1,6 +1,6 @@
 # Transport engine review and repairs
 
-These repairs are included in [SumaFile 1.0.2](RELEASE_1.0.2.md).
+The initial repairs shipped in [SumaFile 1.0.2](RELEASE_1.0.2.md). The [v1.0.3 follow-up](#v103-repairs) covers per-file retries and the transfer scheduler. See the [1.0.3 release notes](RELEASE_1.0.3.md) for upgrade guidance.
 
 Scope: local, removable, UNC and mounted-cloud copy/move; FTP/FTPS/SFTP streaming;
 Rust scheduling and staging; C# terminal outcomes, conflict retries and settings.

@@ -1,7 +1,7 @@
 # Feature Opportunities
 
 This branch should prioritize Windows-native file-manager improvements.
-See [v1.0.2 release notes](RELEASE_1.0.2.md) for the current completed scope.
+See [v1.0.3 release notes](RELEASE_1.0.3.md) for the current completed scope.
 
 ## Candidate Work
 

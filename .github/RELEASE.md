@@ -20,8 +20,8 @@ runners provide the Windows SDK.
 Preview and apply a coordinated version change locally:
 
 ```powershell
-npm run release:prepare -- 1.0.2
-npm run release:prepare -- 1.0.2 --write
+npm run release:prepare -- 1.0.3
+npm run release:prepare -- 1.0.3 --write
 ```
 
 The current user-facing version comes from `Directory.Build.props`. The command
@@ -37,7 +37,7 @@ keeps these display and numeric identities in sync:
 - [`README.md`](../README.md) — version badge
 
 Update [`docs/CHANGELOG.md`](../docs/CHANGELOG.md) and the version-specific
-[`docs/RELEASE_1.0.2.md`](../docs/RELEASE_1.0.2.md) notes separately. Preserve historical
+[`docs/RELEASE_1.0.3.md`](../docs/RELEASE_1.0.3.md) notes separately. Preserve historical
 release records. The release workflow validates the matching notes file and
 uses it as the GitHub release body through `body_path`; its heading must match
 the selected version. The command also updates workspace entries in `Cargo.lock` and
@@ -65,11 +65,11 @@ git pull origin main
 
 ### 3. Create a Git Tag
 
-Tags must use `vMAJOR.MINOR.PATCH` format, for example `v1.0.2`.
+Tags must use `vMAJOR.MINOR.PATCH` format, for example `v1.0.3`.
 
 ```bash
-git tag v1.0.2
-git push origin v1.0.2
+git tag v1.0.3
+git push origin v1.0.3
 ```
 
 ### 4. Automated Build Process
@@ -100,9 +100,9 @@ The release workflow will:
 You can also trigger a release manually:
 
 1. Go to Actions → Release.
-2. Click **Run workflow**.
+2. After the version PR has merged, click **Run workflow** and select the updated `main` branch. Start a fresh run so the checkout contains the new manifests.
 3. Leave the version blank to use the checked-out manifest version, or enter an
-   expected version such as `v1.0.2` to verify that it matches.
+   expected version such as `v1.0.3` to verify that it matches.
 4. Choose whether to create a draft release.
 
 If `draft` is set to `false`, the workflow publishes the release after the
@@ -112,9 +112,9 @@ Windows build succeeds.
 
 | Platform | Installer Type | Example File |
 |----------|----------------|--------------|
-| Windows x64 | NSIS setup executable | `SumaFile_1.0.2_x64-winui-setup.exe` |
-| Windows x64 | MSI installer | `SumaFile_1.0.2_x64-winui.msi` |
-| Windows x64 | Portable zip | `SumaFile_1.0.2_x64-winui-portable.zip` |
+| Windows x64 | NSIS setup executable | `SumaFile_1.0.3_x64-winui-setup.exe` |
+| Windows x64 | MSI installer | `SumaFile_1.0.3_x64-winui.msi` |
+| Windows x64 | Portable zip | `SumaFile_1.0.3_x64-winui-portable.zip` |
 | Windows updater | Static JSON / signatures | `latest-winui.json`, SHA-256, size, and `.sig` files |
 
 ## Auto-Update
@@ -158,10 +158,10 @@ Add these secrets for Windows code signing when ready:
 
 ## Versioning
 
-The current user-facing version is **1.0.2**. Technical packaging fields that require x.y.z also use `1.0.2`. Future numbered releases can follow Semantic Versioning:
+The current user-facing version is **1.0.3**. Technical packaging fields that require x.y.z also use `1.0.3`. Future numbered releases can follow Semantic Versioning:
 
 - **MAJOR**: breaking changes
 - **MINOR**: backward-compatible features
 - **PATCH**: backward-compatible fixes and release/process improvements
 
-Pre-release examples: `v1.0.2-beta.1`, `v1.0.2-rc.1`.
+Pre-release examples: `v1.0.3-beta.1`, `v1.0.3-rc.1`.
