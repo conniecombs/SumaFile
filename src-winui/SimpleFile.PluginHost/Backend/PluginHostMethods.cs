@@ -18,7 +18,7 @@ public static partial class PluginHostMethods
     public const string Log = "host.log";
     public const string Notify = "host.notify";
 
-    [GeneratedRegex("^[a-z0-9][a-zA-Z0-9_-]{0,63}$")]
+    [GeneratedRegex("^[a-z0-9][a-zA-Z0-9_-]{0,63}\\z")]
     private static partial Regex KeyPattern();
 
     public static string SettingsKey(string pluginId, string key) => $"plugin.{pluginId}.{key}";
@@ -36,6 +36,18 @@ public static partial class PluginHostMethods
     {
         // Operations this backend started; ids from elsewhere are rejected.
         var operations = new ConcurrentDictionary<string, byte>();
+
+        // A dead backend can never finish its operations; fail them so the UI does not show them forever.
+        connection.Lost += (_, _) =>
+        {
+            foreach (var openId in operations.Keys.ToList())
+            {
+                if (operations.TryRemove(openId, out var removed))
+                {
+                    try { progress.Fail(openId, "Plugin backend stopped."); } catch { }
+                }
+            }
+        };
 
         connection.OnHostRequest(GetSettings, async (p, ct) =>
         {
@@ -84,7 +96,8 @@ public static partial class PluginHostMethods
         connection.OnHostRequest(ProgressBegin, (p, _) =>
         {
             var title = RequireString(p, "title");
-            var id = progress.Begin(pluginId, title, () => { });
+            string? id = null;
+            id = progress.Begin(pluginId, title, () => SendCancel(connection, id!));
             operations[id] = 0;
             return Task.FromResult<object?>(new { operationId = id });
         });
@@ -139,6 +152,16 @@ public static partial class PluginHostMethods
             var isError = p.TryGetProperty("isError", out var e) && e.ValueKind == JsonValueKind.True;
             notifier.Notify(pluginId, message, isError);
             return Task.FromResult<object?>(null);
+        });
+    }
+
+    private static void SendCancel(PluginBackendConnection connection, string operationId)
+    {
+        // Fire and forget; a dead pipe just means there is nothing left to cancel.
+        _ = Task.Run(async () =>
+        {
+            try { await connection.InvokeAsync<object?>("cancel", new { operationId }, CancellationToken.None).ConfigureAwait(false); }
+            catch { }
         });
     }
 

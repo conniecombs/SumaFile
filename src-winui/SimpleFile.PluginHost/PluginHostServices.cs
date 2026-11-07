@@ -7,13 +7,15 @@ namespace SimpleFile.PluginHost;
 /// <summary>The <see cref="IPluginHost"/> a plugin's C# half receives.</summary>
 public sealed class PluginHostServices : IPluginHost
 {
-    private readonly Func<CancellationToken, Task<PluginBackendConnection>> _backendFactory;
+    private readonly Func<Action<PluginBackendConnection>, CancellationToken, Task<PluginBackendConnection>> _backendFactory;
+    private readonly List<Func<PluginBackendConnection, IDisposable>> _pending = [];
+    private PluginBackendConnection? _connection;
     private readonly object _gate = new();
     private Task<PluginBackendConnection>? _backend;
 
     public PluginHostServices(
         string pluginId,
-        Func<CancellationToken, Task<PluginBackendConnection>> backend,
+        Func<Action<PluginBackendConnection>, CancellationToken, Task<PluginBackendConnection>> backend,
         ISettingsBackend settings,
         IPluginProgressSink progress,
         IPluginDialogs dialogs,
@@ -41,7 +43,7 @@ public sealed class PluginHostServices : IPluginHost
         lock (_gate)
         {
             // Started once with no caller token so one caller's cancellation cannot poison the shared start.
-            return _backend ??= _backendFactory(CancellationToken.None);
+            return _backend ??= _backendFactory(Configure, CancellationToken.None);
         }
     }
 
@@ -51,14 +53,41 @@ public sealed class PluginHostServices : IPluginHost
         return await connection.InvokeAsync<T>(method, args, ct).ConfigureAwait(false);
     }
 
+    // Called by the backend host before the handshake, so subscriptions are in place before any event can arrive.
+    private void Configure(PluginBackendConnection connection)
+    {
+        lock (_gate)
+        {
+            _connection = connection;
+            foreach (var attach in _pending)
+            {
+                attach(connection);
+            }
+
+            _pending.Clear();
+        }
+    }
+
     public IDisposable OnBackendEvent<T>(string eventName, Action<T> handler)
     {
         var subscription = new DeferredSubscription();
-        _ = GetBackend().ContinueWith(
-            t => subscription.Attach(t.Result.On(eventName, handler)),
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnRanToCompletion,
-            TaskScheduler.Default);
+        Func<PluginBackendConnection, IDisposable> attach = c =>
+        {
+            subscription.Attach(c.On(eventName, handler));
+            return subscription;
+        };
+        lock (_gate)
+        {
+            if (_connection is { } connection)
+            {
+                attach(connection);
+            }
+            else
+            {
+                _pending.Add(attach);
+            }
+        }
+
         return subscription;
     }
 

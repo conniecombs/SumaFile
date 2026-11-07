@@ -111,12 +111,17 @@ public class PluginHostMethodsTests : IAsyncLifetime
             (PluginHostMethods.SetSetting, new { key = "a.b", value = "v" }),
             (PluginHostMethods.SetSetting, new { key = "", value = "v" }),
             (PluginHostMethods.SetSetting, new { key = new string('a', 65), value = "v" }),
-            (PluginHostMethods.SetSetting, new { key = "../x", value = "v" }));
+            (PluginHostMethods.SetSetting, new { key = "../x", value = "v" }),
+            (PluginHostMethods.SetSetting, new { key = "theme\n", value = "v" }));
 
         Assert.All(replies, r => Assert.Equal(Protocol.ErrInvalidParams, ErrorCode(r)));
         Assert.Empty(_settings.Written);
 
-        var ok = await Call((PluginHostMethods.SetSetting, new { key = "theme", value = "dark" }));
+        var max = new string('a', 64);
+        var ok = await Call(
+            (PluginHostMethods.SetSetting, new { key = "theme", value = "dark" }),
+            (PluginHostMethods.SetSetting, new { key = max, value = "v" }));
+        Assert.Equal("v", _settings.Written["plugin.com.example.a." + max]);
         Assert.Equal(JsonValueKind.Null, ok[0].GetProperty("result").ValueKind);
         Assert.Equal("dark", _settings.Written["plugin.com.example.a.theme"]);
     }
@@ -166,7 +171,7 @@ public class PluginHostMethodsTests : IAsyncLifetime
     [Fact]
     public async Task Services_Settings_UsesPrefixedKey()
     {
-        var services = NewServices(_ => throw new InvalidOperationException());
+        var services = NewServices((_, _) => throw new InvalidOperationException());
 
         await services.Settings.SetAsync("theme", "dark", CancellationToken.None);
         _settings.Values["plugin.com.example.a.other"] = "x";
@@ -192,11 +197,10 @@ public class PluginHostMethodsTests : IAsyncLifetime
             await Task.Delay(Timeout.Infinite, ct);
         });
         var starts = 0;
-        await using var connection = await host.StartAsync(Plugin(), CancellationToken.None);
-        var services = NewServices(_ =>
+        var services = NewServices((configure, ct) =>
         {
             Interlocked.Increment(ref starts);
-            return Task.FromResult(connection);
+            return host.StartAsync(Plugin(), ct, configure);
         });
 
         var results = await Task.WhenAll(
@@ -208,9 +212,86 @@ public class PluginHostMethodsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Services_OnBackendEvent_ReceivesEventSentRightAfterHandshake()
+    {
+        var host = Host(async (s, ct) =>
+        {
+            await Handshake(s, ct);
+            await s.SendNotificationAsync("tick", 5, ct);
+            var request = await s.ReadRequestAsync(ct);
+            await s.SendResultAsync(request.Id, 1, ct);
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        var services = NewServices((configure, ct) => host.StartAsync(Plugin(), ct, configure));
+        var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var subscription = services.OnBackendEvent<int>("tick", v => received.TrySetResult(v));
+
+        await services.InvokeBackendAsync<int>("echo", null, CancellationToken.None);
+
+        Assert.Equal(5, await received.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task Progress_Cancel_IsSentToBackend()
+    {
+        var began = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancel = new TaskCompletionSource<JsonRpcRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var host = Host(async (s, ct) =>
+        {
+            await Handshake(s, ct);
+            await s.SendRequestAsync(1, PluginHostMethods.ProgressBegin, new { title = "T" }, ct);
+            await s.ReadResponseAsync(ct);
+            began.TrySetResult();
+            var request = await s.ReadRequestAsync(ct);
+            cancel.TrySetResult(request);
+            await s.SendResultAsync(request.Id, null, ct);
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        await using var connection = await host.StartAsync(
+            Plugin(),
+            CancellationToken.None,
+            c => PluginHostMethods.Register(c, PluginId, _settings, _sink, _notifier, (_, _) => { }));
+        await began.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        _sink.CancelLast();
+
+        var request = await cancel.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("cancel", request.Method);
+        Assert.Equal("op-1", ((JsonElement)request.Params!).GetProperty("operationId").GetString());
+    }
+
+    [Fact]
+    public async Task Progress_BackendLost_FailsOpenOperations()
+    {
+        var began = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var host = Host(async (s, ct) =>
+        {
+            await Handshake(s, ct);
+            await s.SendRequestAsync(1, PluginHostMethods.ProgressBegin, new { title = "T" }, ct);
+            await s.ReadResponseAsync(ct);
+            began.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        await using var connection = await host.StartAsync(
+            Plugin(),
+            CancellationToken.None,
+            c => PluginHostMethods.Register(c, PluginId, _settings, _sink, _notifier, (_, _) => { }));
+        await began.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        _launchers.Last().Process!.SimulateExit();
+
+        for (var i = 0; i < 100 && !_sink.Events.Contains("fail:op-1:Plugin backend stopped."); i++)
+        {
+            await Task.Delay(50);
+        }
+
+        Assert.Contains("fail:op-1:Plugin backend stopped.", _sink.Events);
+    }
+
+    [Fact]
     public void Services_ProgressOperation_CancelFromSinkCancelsToken()
     {
-        var services = NewServices(_ => throw new InvalidOperationException());
+        var services = NewServices((_, _) => throw new InvalidOperationException());
 
         using var operation = services.Progress.Begin("Copy");
         Assert.False(operation.CancellationToken.IsCancellationRequested);
@@ -220,7 +301,8 @@ public class PluginHostMethodsTests : IAsyncLifetime
         Assert.True(operation.CancellationToken.IsCancellationRequested);
     }
 
-    private PluginHostServices NewServices(Func<CancellationToken, Task<PluginBackendConnection>> backend) =>
+    private PluginHostServices NewServices(
+        Func<Action<PluginBackendConnection>, CancellationToken, Task<PluginBackendConnection>> backend) =>
         new(PluginId, backend, _settings, _sink, null!, null!, (_, _) => { });
 
     private sealed class FakeSettings : ISettingsBackend
