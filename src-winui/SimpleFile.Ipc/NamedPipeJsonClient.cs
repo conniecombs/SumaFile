@@ -646,7 +646,7 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
 
             try
             {
-                var payload = JsonSerializer.SerializeToUtf8Bytes(reply, IpcJson.Options);
+                var payload = JsonSerializer.SerializeToUtf8Bytes(reply, ReplyJsonOptions);
                 await WriteFrameAsync(payload, token).ConfigureAwait(false);
             }
             catch
@@ -655,6 +655,12 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
             }
         });
     }
+
+    // IpcJson.Options drops null properties; a reply must always carry result or error.
+    private static readonly JsonSerializerOptions ReplyJsonOptions = new(IpcJson.Options)
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
+    };
 
     private static object ErrorReply(int id, int code, string message) =>
         new { jsonrpc = Protocol.JsonRpc, id, error = new { code, message } };

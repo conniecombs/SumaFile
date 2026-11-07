@@ -1235,4 +1235,22 @@ public class NamedPipeJsonClientTests
         Assert.Equal(9, response.GetProperty("id").GetInt32());
         Assert.True(response.GetProperty("result").GetProperty("done").GetBoolean());
     }
+
+    [Fact]
+    public async Task InboundRequest_NullResult_ReplyContainsExplicitNullResult()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        using var sub = client.OnRequest("host.log", (_, _) => Task.FromResult<object?>(null));
+
+        await server.SendRequestAsync(11, "host.log", new { }, ct);
+        var response = await server.ReadResponseAsync(ct);
+
+        Assert.Equal(11, response.GetProperty("id").GetInt32());
+        Assert.True(response.TryGetProperty("result", out var result));
+        Assert.Equal(JsonValueKind.Null, result.ValueKind);
+    }
 }
