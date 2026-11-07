@@ -315,8 +315,9 @@ There is no sandbox. The design is explicit with users about what runs.
   installer writing their manifest hashes to the approval store.
 - **Signature.** `signature.json` holds an ed25519 signature over
   `plugin.json` plus the SHA-256 of every file listed in a `files` array. The
-  host verifies it with the publisher's `publicKey` using the updater's
-  verifier and shows "Verified publisher" with the key fingerprint. Unsigned
+  host verifies it with the publisher's `publicKey` using an Ed25519
+  verifier in the host (BouncyCastle) with the same raw 32-byte base64 public
+  key format the updater uses, and shows "Verified publisher" with the key fingerprint. Unsigned
   or mismatched plugins show a warning but can still be enabled.
 - **Change detection.** The approval store records the manifest hash and
   signature state. When either changes, the plugin returns to the consent

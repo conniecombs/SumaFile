@@ -16,5 +16,9 @@
   <ItemGroup>
     <ProjectReference Include="..\SimpleFile.Ipc\SimpleFile.Ipc.csproj" />
     <ProjectReference Include="..\SimpleFile.Core\SimpleFile.Core.csproj" />
+    <ProjectReference Include="..\SimpleFile.PluginSdk\SimpleFile.PluginSdk.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Fixtures\PluginSdkSurface.v1.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

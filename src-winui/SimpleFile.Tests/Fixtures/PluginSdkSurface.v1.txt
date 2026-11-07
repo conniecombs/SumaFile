@@ -1,0 +1,70 @@
+SimpleFile.PluginSdk.ICommandHandler: <type>
+SimpleFile.PluginSdk.ICommandHandler: System.Threading.Tasks.Task ExecuteAsync(SimpleFile.PluginSdk.PluginCommandContext, System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPlugin: <type>
+SimpleFile.PluginSdk.IPlugin: System.Threading.Tasks.Task ActivateAsync(SimpleFile.PluginSdk.IPluginHost, System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPlugin: System.Threading.Tasks.Task DeactivateAsync()
+SimpleFile.PluginSdk.IPluginDialogs: <type>
+SimpleFile.PluginSdk.IPluginDialogs: System.Threading.Tasks.Task ShowMessageAsync(System.String, System.String, System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPluginDialogs: System.Threading.Tasks.Task`1[System.Boolean] ConfirmAsync(System.String, System.String, System.String, System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPluginDialogs: System.Threading.Tasks.Task`1[System.String] PickFolderAsync(System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPluginHost: <type>
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginDialogs Dialogs
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginDialogs get_Dialogs()
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginLogger Logger
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginLogger get_Logger()
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginProgress Progress
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginProgress get_Progress()
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginSettings Settings
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginSettings get_Settings()
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginWorkspace Workspace
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginWorkspace get_Workspace()
+SimpleFile.PluginSdk.IPluginHost: System.IDisposable OnBackendEvent[T](System.String, System.Action`1[T])
+SimpleFile.PluginSdk.IPluginHost: System.String PluginId
+SimpleFile.PluginSdk.IPluginHost: System.String get_PluginId()
+SimpleFile.PluginSdk.IPluginHost: System.Threading.Tasks.Task`1[T] InvokeBackendAsync[T](System.String, System.Object, System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPluginLogger: <type>
+SimpleFile.PluginSdk.IPluginLogger: Void Error(System.String, System.Exception)
+SimpleFile.PluginSdk.IPluginLogger: Void Info(System.String)
+SimpleFile.PluginSdk.IPluginLogger: Void Warn(System.String)
+SimpleFile.PluginSdk.IPluginOperation: <type>
+SimpleFile.PluginSdk.IPluginOperation: System.Threading.CancellationToken CancellationToken
+SimpleFile.PluginSdk.IPluginOperation: System.Threading.CancellationToken get_CancellationToken()
+SimpleFile.PluginSdk.IPluginOperation: Void Complete()
+SimpleFile.PluginSdk.IPluginOperation: Void Fail(System.String)
+SimpleFile.PluginSdk.IPluginOperation: Void Report(Int64, Int64, System.String)
+SimpleFile.PluginSdk.IPluginProgress: <type>
+SimpleFile.PluginSdk.IPluginProgress: SimpleFile.PluginSdk.IPluginOperation Begin(System.String)
+SimpleFile.PluginSdk.IPluginSettings: <type>
+SimpleFile.PluginSdk.IPluginSettings: System.Threading.Tasks.Task SetAsync(System.String, System.String, System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPluginSettings: System.Threading.Tasks.Task`1[System.String] GetAsync(System.String, System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPluginWorkspace: <type>
+SimpleFile.PluginSdk.IPluginWorkspace: System.Collections.Generic.IReadOnlyList`1[System.String] SelectedPaths
+SimpleFile.PluginSdk.IPluginWorkspace: System.Collections.Generic.IReadOnlyList`1[System.String] get_SelectedPaths()
+SimpleFile.PluginSdk.IPluginWorkspace: System.EventHandler Changed
+SimpleFile.PluginSdk.IPluginWorkspace: System.String ActivePath
+SimpleFile.PluginSdk.IPluginWorkspace: System.String get_ActivePath()
+SimpleFile.PluginSdk.IPluginWorkspace: System.Threading.Tasks.Task NavigateAsync(System.String, System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPluginWorkspace: Void add_Changed(System.EventHandler)
+SimpleFile.PluginSdk.IPluginWorkspace: Void remove_Changed(System.EventHandler)
+SimpleFile.PluginSdk.PluginCommandContext: <type>
+SimpleFile.PluginSdk.PluginCommandContext: Boolean Equals(SimpleFile.PluginSdk.PluginCommandContext)
+SimpleFile.PluginSdk.PluginCommandContext: Boolean Equals(System.Object)
+SimpleFile.PluginSdk.PluginCommandContext: Boolean op_Equality(SimpleFile.PluginSdk.PluginCommandContext, SimpleFile.PluginSdk.PluginCommandContext)
+SimpleFile.PluginSdk.PluginCommandContext: Boolean op_Inequality(SimpleFile.PluginSdk.PluginCommandContext, SimpleFile.PluginSdk.PluginCommandContext)
+SimpleFile.PluginSdk.PluginCommandContext: Int32 GetHashCode()
+SimpleFile.PluginSdk.PluginCommandContext: SimpleFile.PluginSdk.PluginCommandContext <Clone>$()
+SimpleFile.PluginSdk.PluginCommandContext: System.Collections.Generic.IReadOnlyList`1[System.String] SelectedPaths
+SimpleFile.PluginSdk.PluginCommandContext: System.Collections.Generic.IReadOnlyList`1[System.String] get_SelectedPaths()
+SimpleFile.PluginSdk.PluginCommandContext: System.String ActivePath
+SimpleFile.PluginSdk.PluginCommandContext: System.String CommandId
+SimpleFile.PluginSdk.PluginCommandContext: System.String ToString()
+SimpleFile.PluginSdk.PluginCommandContext: System.String get_ActivePath()
+SimpleFile.PluginSdk.PluginCommandContext: System.String get_CommandId()
+SimpleFile.PluginSdk.PluginCommandContext: Void .ctor(System.String, System.String, System.Collections.Generic.IReadOnlyList`1[System.String])
+SimpleFile.PluginSdk.PluginCommandContext: Void Deconstruct(System.String ByRef, System.String ByRef, System.Collections.Generic.IReadOnlyList`1[System.String] ByRef)
+SimpleFile.PluginSdk.PluginCommandContext: Void set_ActivePath(System.String)
+SimpleFile.PluginSdk.PluginCommandContext: Void set_CommandId(System.String)
+SimpleFile.PluginSdk.PluginCommandContext: Void set_SelectedPaths(System.Collections.Generic.IReadOnlyList`1[System.String])
+SimpleFile.PluginSdk.PluginSdk: <type>
+SimpleFile.PluginSdk.PluginSdk: Int32 Major
+SimpleFile.PluginSdk.PluginSdk: System.String Version

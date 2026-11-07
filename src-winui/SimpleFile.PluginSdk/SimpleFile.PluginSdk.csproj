@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Description>Contracts for SumaFile plugins</Description>
+    <RootNamespace>SimpleFile.PluginSdk</RootNamespace>
+  </PropertyGroup>
+</Project>
