@@ -1,0 +1,15 @@
+[package]
+name = "sumafile-sevenz-evaluation"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Deliberately isolated: evaluating a replacement must not change the shipping
+# dependency graph or silently remove the reference engine before parity passes.
+[workspace]
+
+[dependencies]
+sevenz-rust2 = { version = "=0.25.0", features = ["deflate"] }
+serde_json = "1"
+sha2 = "0.11"
+simplefile-core = { path = "../../crates/simplefile-core" }
