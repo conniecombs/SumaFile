@@ -42,26 +42,28 @@ stay responsive in one local-first app.
 
 ## Screenshots
 
-**Dual-pane workspace.** The left pane filters 10,000 sample files down to 100.
-The right pane keeps its own selection, and the pinned preview shows the selected
-text file while both panes stay open.
+**Dual-pane workspace.** The left pane filters 10,000 sample files down to 100
+and shows the filter banner with its Clear filter action. The right pane is
+marked active, keeps its own selection, and the pinned preview shows the
+selected text file while both panes stay open.
 
-![SumaFile 1.0.3 showing a filtered left pane, an active right pane, and the text preview](docs/assets/screenshots/v1.0.3-workspace.png)
+![SumaFile 1.0.4 showing a filtered left pane, an active right pane, and the text preview](docs/assets/screenshots/v1.0.4-workspace.png)
 
-**Copy conflict.** When two files have the same name, the dialog compares their
-sizes and modification times. Here **Keep both** previews `report (1).txt`,
-and **Skip** is the default button.
+**Copy conflict.** The dialog compares the incoming and existing files, marks
+which one is larger and which is newer, and offers Replace, Skip and Keep both
+as one choice. Skip is selected by default, **Continue** confirms, and the
+Keep both option previews `report (1).txt`.
 
-![Copy conflict for report.txt showing incoming and existing files and the Keep both name](docs/assets/screenshots/v1.0.3-copy-conflict.png)
+![Copy conflict for report.txt showing the Larger and Newer badges and the Replace, Skip and Keep both choices](docs/assets/screenshots/v1.0.4-copy-conflict.png)
 
 **Advanced Rename.** The `{base}_reviewed` template adds a suffix while preserving
 the extension. The Before and After columns show both proposed names before you
-apply them.
+apply them, and the Tokens button explains each placeholder.
 
-![Advanced Rename previewing the reviewed suffix for two generated text files](docs/assets/screenshots/v1.0.3-advanced-rename.png)
+![Advanced Rename previewing the reviewed suffix for two generated text files](docs/assets/screenshots/v1.0.4-advanced-rename.png)
 
-These captures come from the running v1.0.3 WinUI app on a
-[GitHub-hosted Windows runner](https://github.com/conniecombs/SumaFile/actions/runs/42228831689).
+These captures come from the running v1.0.4 WinUI app on a
+[GitHub-hosted Windows runner](https://github.com/conniecombs/SumaFile/actions/runs/42298176359).
 All visible files and paths belong to its generated test workspace.
 
 ## Status
