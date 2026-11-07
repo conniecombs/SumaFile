@@ -42,26 +42,28 @@ stay responsive in one local-first app.
 
 ## Screenshots
 
-**Dual-pane workspace.** The left pane filters 10,000 sample files down to 100.
-The right pane keeps its own selection, and the pinned preview shows the selected
-text file while both panes stay open.
+**Dual-pane workspace.** The left pane filters 10,000 sample files down to 100
+and shows the filter banner with its Clear filter action. The right pane is
+marked active, keeps its own selection, and the pinned preview shows the
+selected text file while both panes stay open.
 
-![SumaFile 1.0.3 showing a filtered left pane, an active right pane, and the text preview](docs/assets/screenshots/v1.0.3-workspace.png)
+![SumaFile 1.0.4 showing a filtered left pane, an active right pane, and the text preview](docs/assets/screenshots/v1.0.4-workspace.png)
 
-**Copy conflict.** When two files have the same name, the dialog compares their
-sizes and modification times. Here **Keep both** previews `report (1).txt`,
-and **Skip** is the default button.
+**Copy conflict.** The dialog compares the incoming and existing files, marks
+which one is larger and which is newer, and offers Replace, Skip and Keep both
+as one choice. Skip is selected by default, **Continue** confirms, and the
+Keep both option previews `report (1).txt`.
 
-![Copy conflict for report.txt showing incoming and existing files and the Keep both name](docs/assets/screenshots/v1.0.3-copy-conflict.png)
+![Copy conflict for report.txt showing the Larger and Newer badges and the Replace, Skip and Keep both choices](docs/assets/screenshots/v1.0.4-copy-conflict.png)
 
 **Advanced Rename.** The `{base}_reviewed` template adds a suffix while preserving
 the extension. The Before and After columns show both proposed names before you
-apply them.
+apply them, and the Tokens button explains each placeholder.
 
-![Advanced Rename previewing the reviewed suffix for two generated text files](docs/assets/screenshots/v1.0.3-advanced-rename.png)
+![Advanced Rename previewing the reviewed suffix for two generated text files](docs/assets/screenshots/v1.0.4-advanced-rename.png)
 
-These captures come from the running v1.0.3 WinUI app on a
-[GitHub-hosted Windows runner](https://github.com/conniecombs/SumaFile/actions/runs/42228831689).
+These captures come from the running v1.0.4 WinUI app on a
+[GitHub-hosted Windows runner](https://github.com/conniecombs/SumaFile/actions/runs/42298176359).
 All visible files and paths belong to its generated test workspace.
 
 ## Status
@@ -112,7 +114,7 @@ v1.0.3, upgrade instructions and known limitations.
 Download the latest Windows release from
 [GitHub Releases](https://github.com/conniecombs/SumaFile/releases).
 
-| v1.0.3 artifact | Recommended use |
+| v1.0.4 artifact | Recommended use |
 | --- | --- |
 | `SumaFile_1.0.4_x64-winui-setup.exe` | Normal per-user installation |
 | `SumaFile_1.0.4_x64-winui.msi` | MSI deployment or installer validation |
@@ -136,7 +138,7 @@ the app. Builds without complete trusted metadata fall back to the release page.
 2. Choose a location from Quick Access, drives, bookmarks, recents, smart
    folders, the optional folder tree, or type a path in the omnibar.
 3. Press `F6` to open or close the second pane.
-4. Press `Ctrl+T` to open a tab in the active pane.
+4. Press `Ctrl+T` or `Ctrl+N` to open a tab in the active pane.
 5. Leave Preview open for continuous inspection, or press `Space` for Quick
    Look on the selected item.
 6. Use right-click menus, toolbar buttons, or `Ctrl+Shift+P` for command
@@ -616,7 +618,7 @@ Before creating a release tag:
 
 1. Confirm the version fields above match.
 2. Run `npm run check:release`.
-3. Run the WinUI smoke commands required by `docs/RELEASE_1.0.3.md`.
+3. Run the WinUI smoke commands required by `docs/RELEASE_1.0.4.md`.
 4. Confirm the Installer Smoke workflow succeeds on the release commit.
 5. Merge the version bump, then tag the merged commit or start a new Release run from the updated `main`.
 
@@ -635,6 +637,7 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 | [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
 | [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
 | [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | Signed updater releases |
+| [docs/RELEASE_1.0.4.md](docs/RELEASE_1.0.4.md) | Changes since v1.0.3, upgrade instructions and release checklist |
 | [docs/RELEASE_1.0.3.md](docs/RELEASE_1.0.3.md) | Changes since v1.0.2, upgrade instructions and release checklist |
 | [docs/RELEASE_1.0.2.md](docs/RELEASE_1.0.2.md) | Complete 1.0.1 → 1.0.2 release notes, upgrade guidance and checklist |
 | [docs/RELEASE_1.0.1.md](docs/RELEASE_1.0.1.md) | Historical 1.0.1 release checklist |
