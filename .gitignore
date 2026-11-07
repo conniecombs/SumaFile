@@ -82,3 +82,6 @@ crashdump/
 
 # Claude Code agent worktrees (local scratch)
 .claude/worktrees/
+
+# Superpowers scratch
+.superpowers/

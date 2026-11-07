@@ -12,8 +12,8 @@
 
 ## Global Constraints
 
-- Every C# project: `net10.0-windows10.0.19041.0`, `TreatWarningsAsErrors`, `Nullable` enabled, `RestorePackagesWithLockFile` (commit the updated `packages.lock.json` after any package change; run `dotnet restore --force-evaluate` on the project).
-- Windows App SDK package version is exactly `2.4.0`, matching `SimpleFile.App.csproj`.
+- New C# library projects (`SimpleFile.PluginSdk`, `SimpleFile.PluginHost`, the Hello fixture) target `net10.0-windows`, the same as `SimpleFile.Core` and `SimpleFile.Ipc`, so the `net10.0-windows` test project can reference them. Only `SimpleFile.App` targets `net10.0-windows10.0.19041.0`. All projects inherit `TreatWarningsAsErrors`, `Nullable` and `RestorePackagesWithLockFile` from `Directory.Build.props` (commit the updated `packages.lock.json` after any package change; run `dotnet restore --force-evaluate` on the project).
+- No new project references `Microsoft.WindowsAppSDK` in this phase; the SDK gains it only when a later phase adds WinUI-typed contracts.
 - Rust: workspace edition 2021; `cargo test --locked --all-features` and `cargo clippy --locked --all-targets --all-features -- -D warnings` must pass; commit `Cargo.lock` changes.
 - `npm run check` must stay green. In particular `scripts/check-ipc-schema.mjs` asserts the exact domain method count, which Task 13 raises from 97 to 99.
 - Startup budgets in `StartupTimingBudget` and `scripts/check-winui-startup-budget.mjs` stay as they are; plugin discovery adds a new stage `MainWindow.Connect.plugins-discovered` whose delta must be under 50 ms.
@@ -86,7 +86,7 @@
   - `public interface IPluginDialogs { Task ShowMessageAsync(string title, string message, CancellationToken ct); Task<bool> ConfirmAsync(string title, string message, string confirmLabel, CancellationToken ct); Task<string?> PickFolderAsync(CancellationToken ct); }`
   - `public interface IPluginWorkspace { string? ActivePath { get; } IReadOnlyList<string> SelectedPaths { get; } event EventHandler? Changed; Task NavigateAsync(string path, CancellationToken ct); }`
   - `public interface IPluginLogger { void Info(string message); void Warn(string message); void Error(string message, Exception? exception = null); }`
-- The csproj targets `net10.0-windows10.0.19041.0`, `UseWinUI` true, references `Microsoft.WindowsAppSDK` 2.4.0 so later phases can add WinUI-typed contracts without a retarget. No other references.
+- The csproj targets `net10.0-windows` with no package or project references.
 
 - [ ] **Step 1: Write the failing surface test**
 
@@ -297,7 +297,7 @@ git commit -m "Add plugin approval storage and Ed25519 signature verification"
 
 **Files:**
 - Modify: `src-winui/SimpleFile.Ipc/NamedPipeJsonClient.cs:347-376` (`HandlePayload`, `IsNotification`), `src-winui/SimpleFile.Ipc/ISimpleFileIpc.cs`
-- Modify: `src-winui/SimpleFile.Tests/FakeIpcServer.cs`
+- Modify: `src-winui/SimpleFile.Tests/FakeIpcServer.cs`, `src-winui/SimpleFile.Tests/NullIpc.cs` (implement the new interface member by throwing `NotSupportedException`)
 - Test: `src-winui/SimpleFile.Tests/NamedPipeJsonClientTests.cs`
 
 **Interfaces:**
@@ -458,7 +458,7 @@ git commit -m "Serve host.* requests to plugin backends and implement IPluginHos
 - Produces, namespace `SimpleFile.PluginHost.Loading`:
   - `public sealed class PluginLoadContext : AssemblyLoadContext { public PluginLoadContext(string pluginFolder, string mainAssemblyPath); }` — non-collectible; `Load` returns null (defer to default context) for assembly names starting with `SimpleFile.PluginSdk`, `Microsoft.WindowsAppSDK`, `Microsoft.UI`, `Microsoft.Windows`, `WinRT`, `CommunityToolkit.Mvvm`, `System.`, `Microsoft.Extensions.`; everything else resolves through an `AssemblyDependencyResolver` for the main assembly path.
   - `public static class PluginActivator { public static IPlugin CreateInstance(DiscoveredPlugin plugin); }` — loads `Ui.Assembly` from the plugin folder, finds `Ui.EntryType`, requires a public parameterless constructor and `IPlugin`; failures throw `PluginLoadException(string message, Exception? inner)`.
-- Fixture `HelloPlugin` (`SimpleFile.Tests.Fixtures.HelloPlugin.HelloPlugin : IPlugin, ICommandHandler`): on `ActivateAsync` stores the host and sets `static bool Activated`; `ExecuteAsync` records `context.CommandId` into `static List<string> ExecutedCommands` and for command `plugin:com.sumafile.hello:backend-ping` calls `host.InvokeBackendAsync<JsonElement>("ping", null, ct)` and logs the result. The fixture project references only `SimpleFile.PluginSdk`. Its `plugin.json`:
+- Fixture `HelloPlugin` (`SimpleFile.Tests.Fixtures.HelloPlugin.HelloPlugin : IPlugin, ICommandHandler`). Because the fixture loads in its own `AssemblyLoadContext` and the test project does not reference its assembly, it reports through marker files, not statics: `public static class HelloMarkers { public static string Directory => Environment.GetEnvironmentVariable("SUMAFILE_HELLO_MARKER_DIR") is { Length: > 0 } d ? d : Path.Combine(Path.GetTempPath(), "sumafile-hello"); }`; `ActivateAsync` writes `activated.txt` there; `ExecuteAsync` appends `context.CommandId` plus newline to `commands.log` there, and for command `plugin:com.sumafile.hello:backend-ping` also calls `host.InvokeBackendAsync<JsonElement>("ping", null, ct)` and logs the result through `host.Logger`. Tests set the environment variable to a fresh temp folder per test. The fixture project references only `SimpleFile.PluginSdk`. Its `plugin.json`:
 
 ```json
 {
@@ -495,7 +495,7 @@ git commit -m "Serve host.* requests to plugin backends and implement IPluginHos
 [Fact] public void CreateInstance_SdkTypeUnifies()                         // typeof(IPlugin).IsAssignableFrom(instance.GetType()) and instance is IPlugin (same SDK assembly)
 [Fact] public void CreateInstance_MissingAssembly_ThrowsPluginLoadException()
 [Fact] public void CreateInstance_MissingType_ThrowsPluginLoadException()
-[Fact] public async Task Fixture_ExecuteGreet_RecordsCommand()             // host = fake IPluginHost; ExecutedCommands contains the id
+[Fact] public async Task Fixture_ExecuteGreet_RecordsCommand()             // host = fake IPluginHost; commands.log in the marker dir contains the id
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
@@ -540,7 +540,7 @@ git commit -m "Load plugin assemblies in their own context and add the Hello fix
 [Fact] public async Task Enable_WritesApprovalAndContributes()
 [Fact] public async Task Discover_ApprovedUnchangedPlugin_IsEnabled()
 [Fact] public async Task Discover_ApprovedButManifestChanged_NeedsConsentAgain()
-[Fact] public async Task RunCommand_ActivatesOnceThenExecutes()           // fixture from Task 8; HelloPlugin.Activated true; two runs -> one activation
+[Fact] public async Task RunCommand_ActivatesOnceThenExecutes()           // fixture from Task 8; activated.txt exists once; commands.log has two lines after two runs
 [Fact] public async Task RunCommand_LoadFailure_SetsLoadFailedWithError()  // manifest pointing at missing dll
 [Fact] public async Task Backend_StartupActivate_StartsDuringDiscover()    // fake launcher sees a launch during DiscoverAsync
 [Fact] public async Task Backend_ThreeFailures_SetsFaulted()
