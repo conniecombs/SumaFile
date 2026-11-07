@@ -1,0 +1,177 @@
+using SimpleFile.Core;
+using SimpleFile.PluginHost.Backend;
+using SimpleFile.PluginSdk;
+
+namespace SimpleFile.PluginHost;
+
+/// <summary>The <see cref="IPluginHost"/> a plugin's C# half receives.</summary>
+public sealed class PluginHostServices : IPluginHost
+{
+    private readonly Func<CancellationToken, Task<PluginBackendConnection>> _backendFactory;
+    private readonly object _gate = new();
+    private Task<PluginBackendConnection>? _backend;
+
+    public PluginHostServices(
+        string pluginId,
+        Func<CancellationToken, Task<PluginBackendConnection>> backend,
+        ISettingsBackend settings,
+        IPluginProgressSink progress,
+        IPluginDialogs dialogs,
+        IPluginWorkspace workspace,
+        Action<string, string> log)
+    {
+        PluginId = pluginId;
+        _backendFactory = backend;
+        Settings = new SettingsFacade(pluginId, settings);
+        Progress = new ProgressFacade(pluginId, progress);
+        Dialogs = dialogs;
+        Workspace = workspace;
+        Logger = new LoggerFacade(pluginId, log);
+    }
+
+    public string PluginId { get; }
+    public IPluginSettings Settings { get; }
+    public IPluginProgress Progress { get; }
+    public IPluginDialogs Dialogs { get; }
+    public IPluginWorkspace Workspace { get; }
+    public IPluginLogger Logger { get; }
+
+    private Task<PluginBackendConnection> GetBackend()
+    {
+        lock (_gate)
+        {
+            // Started once with no caller token so one caller's cancellation cannot poison the shared start.
+            return _backend ??= _backendFactory(CancellationToken.None);
+        }
+    }
+
+    public async Task<T> InvokeBackendAsync<T>(string method, object? args, CancellationToken ct)
+    {
+        var connection = await GetBackend().WaitAsync(ct).ConfigureAwait(false);
+        return await connection.InvokeAsync<T>(method, args, ct).ConfigureAwait(false);
+    }
+
+    public IDisposable OnBackendEvent<T>(string eventName, Action<T> handler)
+    {
+        var subscription = new DeferredSubscription();
+        _ = GetBackend().ContinueWith(
+            t => subscription.Attach(t.Result.On(eventName, handler)),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnRanToCompletion,
+            TaskScheduler.Default);
+        return subscription;
+    }
+
+    private sealed class DeferredSubscription : IDisposable
+    {
+        private readonly object _lock = new();
+        private IDisposable? _inner;
+        private bool _disposed;
+
+        public void Attach(IDisposable inner)
+        {
+            lock (_lock)
+            {
+                if (!_disposed)
+                {
+                    _inner = inner;
+                    return;
+                }
+            }
+
+            inner.Dispose();
+        }
+
+        public void Dispose()
+        {
+            IDisposable? inner;
+            lock (_lock)
+            {
+                _disposed = true;
+                inner = _inner;
+                _inner = null;
+            }
+
+            inner?.Dispose();
+        }
+    }
+
+    private sealed class SettingsFacade(string pluginId, ISettingsBackend backend) : IPluginSettings
+    {
+        public Task<string?> GetAsync(string key, CancellationToken ct) =>
+            backend.GetSettingAsync(Prefixed(key), ct);
+
+        public Task SetAsync(string key, string value, CancellationToken ct) =>
+            backend.SetSettingAsync(Prefixed(key), value, ct);
+
+        private string Prefixed(string key)
+        {
+            if (!PluginHostMethods.IsValidSettingKey(key))
+            {
+                throw new ArgumentException($"Invalid settings key '{key}'.", nameof(key));
+            }
+
+            return PluginHostMethods.SettingsKey(pluginId, key);
+        }
+    }
+
+    private sealed class ProgressFacade(string pluginId, IPluginProgressSink sink) : IPluginProgress
+    {
+        public IPluginOperation Begin(string title)
+        {
+            var cts = new CancellationTokenSource();
+            var id = sink.Begin(pluginId, title, () =>
+            {
+                try { cts.Cancel(); } catch (ObjectDisposedException) { }
+            });
+            return new Operation(sink, id, cts);
+        }
+    }
+
+    private sealed class Operation(IPluginProgressSink sink, string id, CancellationTokenSource cts) : IPluginOperation
+    {
+        private int _finished;
+
+        public CancellationToken CancellationToken => cts.Token;
+
+        public void Report(long current, long total, string? detail)
+        {
+            if (Volatile.Read(ref _finished) == 0)
+            {
+                sink.Report(id, current, total, detail);
+            }
+        }
+
+        public void Complete()
+        {
+            if (Interlocked.Exchange(ref _finished, 1) == 0)
+            {
+                sink.Complete(id);
+            }
+        }
+
+        public void Fail(string message)
+        {
+            if (Interlocked.Exchange(ref _finished, 1) == 0)
+            {
+                sink.Fail(id, message);
+            }
+        }
+
+        public void Dispose()
+        {
+            Complete();
+            cts.Dispose();
+        }
+    }
+
+    private sealed class LoggerFacade(string pluginId, Action<string, string> log) : IPluginLogger
+    {
+        public void Info(string message) => log(pluginId, $"[info] {message}");
+
+        public void Warn(string message) => log(pluginId, $"[warn] {message}");
+
+        public void Error(string message, Exception? exception = null) =>
+            log(pluginId, exception is null ? $"[error] {message}" : $"[error] {message}: {exception}");
+    }
+}
