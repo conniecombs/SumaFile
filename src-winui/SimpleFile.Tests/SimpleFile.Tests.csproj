@@ -20,6 +20,25 @@
     <ProjectReference Include="..\SimpleFile.PluginHost\SimpleFile.PluginHost.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="Fixtures\HelloPlugin\SimpleFile.Tests.Fixtures.HelloPlugin.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Fixtures\HelloPlugin\**" />
+    <None Remove="Fixtures\HelloPlugin\**" />
+    <Content Remove="Fixtures\HelloPlugin\**" />
+    <EmbeddedResource Remove="Fixtures\HelloPlugin\**" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="Fixtures\PluginSdkSurface.v1.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <Target Name="CopyHelloFixture" AfterTargets="Build">
+    <PropertyGroup>
+      <HelloOut>$(MSBuildThisFileDirectory)Fixtures\HelloPlugin\bin\$(Configuration)\$(TargetFramework)\</HelloOut>
+      <HelloDest>$(OutDir)Fixtures\plugins\com.sumafile.hello\</HelloDest>
+    </PropertyGroup>
+    <ItemGroup>
+      <HelloFile Include="$(HelloOut)SimpleFile.Tests.Fixtures.HelloPlugin.dll;$(HelloOut)SimpleFile.Tests.Fixtures.HelloPlugin.deps.json;$(HelloOut)plugin.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(HelloFile)" DestinationFolder="$(HelloDest)" SkipUnchangedFiles="true" />
+  </Target>
 </Project>
