@@ -28,6 +28,8 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual IDisposable On<T>(string eventName, Action<T> handler) => throw NotConfigured();
 
+    public virtual IDisposable OnRequest(string method, InboundRequestHandler handler) => throw new NotSupportedException();
+
     public virtual Task<DirectoryListing> ListDirectoryAsync(
         string path,
         Action<DirectoryListingChunk>? onChunk = null,

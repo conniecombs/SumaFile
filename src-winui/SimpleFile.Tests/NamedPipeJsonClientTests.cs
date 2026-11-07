@@ -1116,4 +1116,123 @@ public class NamedPipeJsonClientTests
         await server.SendResultAsync(showRequest.Id, null);
         await show;
     }
+
+    private static CancellationToken TestToken() => new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token;
+
+    [Fact]
+    public async Task InboundRequest_DispatchesToHandlerAndReplies()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        string? received = null;
+        using var sub = client.OnRequest("host.log", (p, _) =>
+        {
+            received = p.GetProperty("message").GetString();
+            return Task.FromResult<object?>(new { ok = true });
+        });
+
+        await server.SendRequestAsync(7, "host.log", new { message = "hi" }, ct);
+        var response = await server.ReadResponseAsync(ct);
+
+        Assert.Equal("hi", received);
+        Assert.Equal(7, response.GetProperty("id").GetInt32());
+        Assert.Equal("2.0", response.GetProperty("jsonrpc").GetString());
+        Assert.True(response.GetProperty("result").GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
+    public async Task InboundRequest_UnknownMethod_RepliesMethodNotFound()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        await server.SendRequestAsync(3, "host.nope", new { }, ct);
+        var response = await server.ReadResponseAsync(ct);
+
+        Assert.Equal(3, response.GetProperty("id").GetInt32());
+        var error = response.GetProperty("error");
+        Assert.Equal(Protocol.ErrMethodNotFound, error.GetProperty("code").GetInt32());
+        Assert.Equal("Unknown host method 'host.nope'.", error.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task InboundRequest_HandlerThrowsIpcException_RepliesWithItsCode()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        using var sub = client.OnRequest("host.fail", (_, _) => throw new IpcException(-32001, "nope"));
+
+        await server.SendRequestAsync(4, "host.fail", new { }, ct);
+        var response = await server.ReadResponseAsync(ct);
+
+        var error = response.GetProperty("error");
+        Assert.Equal(-32001, error.GetProperty("code").GetInt32());
+        Assert.Equal("nope", error.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task InboundRequest_HandlerThrows_RepliesInternalError()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        using var sub = client.OnRequest("host.boom", (_, _) => throw new InvalidOperationException("kaput"));
+
+        await server.SendRequestAsync(5, "host.boom", new { }, ct);
+        var response = await server.ReadResponseAsync(ct);
+
+        var error = response.GetProperty("error");
+        Assert.Equal(Protocol.ErrInternal, error.GetProperty("code").GetInt32());
+        Assert.Equal("kaput", error.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task Notification_WithoutId_StillDispatchesToOn()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = client.On<JsonElement>("evt.ping", p => tcs.TrySetResult(p.GetProperty("v").GetString()!));
+
+        await server.SendNotificationAsync("evt.ping", new { v = "x" }, ct);
+
+        Assert.Equal("x", await tcs.Task.WaitAsync(ct));
+    }
+
+    [Fact]
+    public async Task InboundRequest_DoesNotBlockConcurrentOutboundCall()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        var gate = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = client.OnRequest("host.slow", (_, _) => gate.Task);
+
+        await server.SendRequestAsync(9, "host.slow", new { }, ct);
+
+        var health = client.HealthAsync(ct);
+        var healthRequest = await server.ReadRequestAsync(ct);
+        await server.SendResultAsync(healthRequest.Id, new HealthResult { Ok = true, ProtocolVersion = 1, AppVersion = "1" });
+        Assert.True((await health.WaitAsync(ct)).Ok);
+
+        gate.SetResult(new { done = true });
+        var response = await server.ReadResponseAsync(ct);
+        Assert.Equal(9, response.GetProperty("id").GetInt32());
+        Assert.True(response.GetProperty("result").GetProperty("done").GetBoolean());
+    }
 }

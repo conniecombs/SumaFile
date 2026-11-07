@@ -106,6 +106,26 @@ internal sealed class FakeIpcServer : IAsyncDisposable
             cancellationToken);
     }
 
+    public Task SendRequestAsync(int id, string method, object? @params, CancellationToken ct = default)
+    {
+        return WriteAsync(
+            new
+            {
+                jsonrpc = Protocol.JsonRpc,
+                id,
+                method,
+                @params,
+            },
+            ct);
+    }
+
+    public async Task<JsonElement> ReadResponseAsync(CancellationToken ct = default)
+    {
+        var payload = await ReadFrameAsync(ct).ConfigureAwait(false);
+        using var document = JsonDocument.Parse(payload);
+        return document.RootElement.Clone();
+    }
+
     public Task SendBinaryFrameAsync(byte[] payload, CancellationToken cancellationToken = default)
     {
         return WritePayloadAsync(payload, cancellationToken);

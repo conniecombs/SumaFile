@@ -1,5 +1,7 @@
 namespace SimpleFile.Ipc;
 
+public delegate Task<object?> InboundRequestHandler(System.Text.Json.JsonElement @params, CancellationToken ct);
+
 public interface ISimpleFileIpc : IAsyncDisposable
 {
     bool IsConnected { get; }
@@ -16,6 +18,8 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task InvokeAsync(string method, object? args, CancellationToken cancellationToken = default);
 
     IDisposable On<T>(string eventName, Action<T> handler);
+
+    IDisposable OnRequest(string method, InboundRequestHandler handler);
 
     Task<DirectoryListing> ListDirectoryAsync(
         string path,

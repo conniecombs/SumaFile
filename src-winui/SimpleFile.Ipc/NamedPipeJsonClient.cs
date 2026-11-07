@@ -20,6 +20,7 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
     private readonly ConcurrentDictionary<int, TaskCompletionSource<IpcResultPayload>> _pending = new();
     private readonly object _handlersLock = new();
     private readonly Dictionary<string, List<Subscription>> _handlers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, InboundRequestHandler> _requestHandlers = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _loopCts = new();
     private readonly Task _receiveLoop;
     private readonly byte[] _headerBuffer = new byte[4];
@@ -234,6 +235,44 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
         }
 
         return subscription;
+    }
+
+    public IDisposable OnRequest(string method, InboundRequestHandler handler)
+    {
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(method);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        lock (_handlersLock)
+        {
+            _requestHandlers[method] = handler;
+        }
+
+        return new RequestRegistration(this, method, handler);
+    }
+
+    private void RemoveRequestHandler(string method, InboundRequestHandler handler)
+    {
+        lock (_handlersLock)
+        {
+            if (_requestHandlers.TryGetValue(method, out var current) && ReferenceEquals(current, handler))
+            {
+                _requestHandlers.Remove(method);
+            }
+        }
+    }
+
+    private sealed class RequestRegistration(NamedPipeJsonClient client, string method, InboundRequestHandler handler) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                client.RemoveRequestHandler(method, handler);
+            }
+        }
     }
 
     private async Task<TResult> InvokeAllocatedAsync<TResult>(
@@ -485,6 +524,12 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
             using var document = JsonDocument.Parse(payload);
             var root = document.RootElement;
 
+            if (IsInboundRequest(root, out var inboundId))
+            {
+                DispatchInboundRequest(root, inboundId);
+                return;
+            }
+
             if (IsNotification(root))
             {
                 DispatchNotification(root);
@@ -550,6 +595,69 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
             DispatchTypedNotification(message.EventName, message.Payload);
         }
     }
+
+    private static bool IsInboundRequest(JsonElement root, out int id)
+    {
+        id = 0;
+        return root.TryGetProperty("method", out var method)
+            && method.ValueKind == JsonValueKind.String
+            && root.TryGetProperty("id", out var idElement)
+            && idElement.ValueKind == JsonValueKind.Number
+            && idElement.TryGetInt32(out id)
+            && !root.TryGetProperty("result", out _)
+            && !root.TryGetProperty("error", out _);
+    }
+
+    private void DispatchInboundRequest(JsonElement root, int id)
+    {
+        var method = root.GetProperty("method").GetString() ?? "";
+        var paramsElement = root.TryGetProperty("params", out var p) ? p.Clone() : default;
+        var token = _loopCts.Token;
+
+        InboundRequestHandler? handler;
+        lock (_handlersLock)
+        {
+            _requestHandlers.TryGetValue(method, out handler);
+        }
+
+        _ = Task.Run(async () =>
+        {
+            object reply;
+            try
+            {
+                if (handler is null)
+                {
+                    reply = ErrorReply(id, Protocol.ErrMethodNotFound, $"Unknown host method '{method}'.");
+                }
+                else
+                {
+                    var result = await handler(paramsElement, token).ConfigureAwait(false);
+                    reply = new { jsonrpc = Protocol.JsonRpc, id, result };
+                }
+            }
+            catch (IpcException ex)
+            {
+                reply = ErrorReply(id, ex.Code, ex.Message);
+            }
+            catch (Exception ex)
+            {
+                reply = ErrorReply(id, Protocol.ErrInternal, ex.Message);
+            }
+
+            try
+            {
+                var payload = JsonSerializer.SerializeToUtf8Bytes(reply, IpcJson.Options);
+                await WriteFrameAsync(payload, token).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Client disposed or pipe closed, or the result was unserializable; nothing more to do.
+            }
+        });
+    }
+
+    private static object ErrorReply(int id, int code, string message) =>
+        new { jsonrpc = Protocol.JsonRpc, id, error = new { code, message } };
 
     private static bool IsNotification(JsonElement root)
     {
