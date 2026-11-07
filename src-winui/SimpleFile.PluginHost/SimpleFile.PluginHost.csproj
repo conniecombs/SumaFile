@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Description>Plugin discovery, manifest reading and hosting for SimpleFile</Description>
+    <RootNamespace>SimpleFile.PluginHost</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SimpleFile.PluginSdk\SimpleFile.PluginSdk.csproj" />
+    <ProjectReference Include="..\SimpleFile.Ipc\SimpleFile.Ipc.csproj" />
+    <ProjectReference Include="..\SimpleFile.Core\SimpleFile.Core.csproj" />
+  </ItemGroup>
+</Project>

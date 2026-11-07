@@ -159,6 +159,14 @@
       "simplefile.ipc": {
         "type": "Project"
       },
+      "simplefile.pluginhost": {
+        "type": "Project",
+        "dependencies": {
+          "SimpleFile.Core": "[1.0.4, )",
+          "SimpleFile.Ipc": "[1.0.4, )",
+          "SimpleFile.PluginSdk": "[1.0.4, )"
+        }
+      },
       "simplefile.pluginsdk": {
         "type": "Project"
       }
