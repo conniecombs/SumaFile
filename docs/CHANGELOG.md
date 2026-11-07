@@ -8,7 +8,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
-Changes after v1.0.4 will be listed here.
+- "Write directly to the destination" now applies to folder copies, replaced
+  files and remote downloads, not only to new single files. Folders are
+  created under their final names and replaced files are overwritten in
+  place; the option's note states that a cancelled or failed transfer leaves
+  partial files behind.
+- Show hidden files now lists SumaFile's own transfer artifacts (partial
+  files, ownership records and replacement backups) instead of always
+  dropping them; they stay hidden while hidden files are hidden.
 
 ---
 

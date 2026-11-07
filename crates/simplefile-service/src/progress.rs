@@ -1115,6 +1115,161 @@ mod tests {
         let _ = fs::remove_dir_all(&dst_dir);
     }
 
+    fn staging_artifacts_in(dir: &std::path::Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .filter(|name| {
+                        name.ends_with(".sumafile-partial")
+                            || name.ends_with(".sumafile-replace-backup")
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn inplace_policy_creates_folders_under_their_final_names() {
+        let src_dir = unique_temp_path("inplace_dir_src");
+        let dst_dir = unique_temp_path("inplace_dir_dst");
+        fs::create_dir_all(src_dir.join("Folder").join("nested")).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let file = src_dir.join("Folder").join("nested").join("file.bin");
+        fs::write(&file, vec![0x5Au8; 64 * 1024]).unwrap();
+        let file_text = file.to_string_lossy().to_string();
+        let final_dir = dst_dir.join("Folder");
+        let final_nested = final_dir.join("nested");
+        let seen = Arc::new(Mutex::new(
+            Vec::<(bool, bool, Vec<String>, Vec<String>)>::new(),
+        ));
+        let seen_target = seen.clone();
+        let dst_for_emit = dst_dir.clone();
+        let final_for_emit = final_dir.clone();
+
+        super::transfer_with_policy_blocking(
+            "copy",
+            super::Request::Selection {
+                sources: vec![src_dir.join("Folder").to_string_lossy().to_string()],
+                conflict_action: "error".to_string(),
+            },
+            dst_dir.to_string_lossy().to_string(),
+            "op_inplace_dir_test".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|update| {
+                if update.current_item == file_text {
+                    seen_target.lock().unwrap().push((
+                        final_for_emit.is_dir(),
+                        final_for_emit.join("nested").is_dir(),
+                        staging_artifacts_in(&dst_for_emit),
+                        staging_artifacts_in(&final_for_emit),
+                    ));
+                }
+            },
+            &|_| {},
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 1,
+                inplace: true,
+                ..super::tuning::Policy::default()
+            },
+        )
+        .expect("in-place folder copy should complete");
+
+        let seen = seen.lock().unwrap();
+        assert!(
+            !seen.is_empty(),
+            "the file inside the folder never reported progress"
+        );
+        for (root_final, nested_final, root_artifacts, nested_artifacts) in seen.iter() {
+            assert!(
+                root_final,
+                "root folder was not created under its final name"
+            );
+            assert!(
+                nested_final,
+                "subfolder was not created under its final name"
+            );
+            assert!(
+                root_artifacts.is_empty(),
+                "staged folder in destination: {root_artifacts:?}"
+            );
+            assert!(
+                nested_artifacts.is_empty(),
+                "staged subfolder: {nested_artifacts:?}"
+            );
+        }
+        assert_eq!(
+            fs::read(final_nested.join("file.bin")).unwrap().len(),
+            64 * 1024
+        );
+        assert!(staging_artifacts_in(&dst_dir).is_empty());
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[test]
+    fn inplace_policy_replaces_existing_file_without_staging() {
+        let src_dir = unique_temp_path("inplace_replace_src");
+        let dst_dir = unique_temp_path("inplace_replace_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("a.txt");
+        fs::write(&source, b"source").unwrap();
+        let destination = dst_dir.join("a.txt");
+        fs::write(&destination, b"original").unwrap();
+        let artifacts = Arc::new(Mutex::new(Vec::<String>::new()));
+        let artifacts_target = artifacts.clone();
+        let finalizing_seen = Arc::new(AtomicBool::new(false));
+        let finalizing_target = finalizing_seen.clone();
+        let dst_for_emit = dst_dir.clone();
+
+        super::transfer_with_policy_blocking(
+            "copy",
+            super::Request::Selection {
+                sources: vec![source.to_string_lossy().to_string()],
+                conflict_action: "replace".to_string(),
+            },
+            dst_dir.to_string_lossy().to_string(),
+            "op_inplace_replace_test".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|update| {
+                if update.status == "finalizing" {
+                    finalizing_target.store(true, Ordering::Relaxed);
+                }
+                artifacts_target
+                    .lock()
+                    .unwrap()
+                    .extend(staging_artifacts_in(&dst_for_emit));
+            },
+            &|_| {},
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 1,
+                inplace: true,
+                ..super::tuning::Policy::default()
+            },
+        )
+        .expect("in-place replace should complete");
+
+        assert!(
+            finalizing_seen.load(Ordering::Relaxed),
+            "no finalizing update was observed"
+        );
+        let artifacts = artifacts.lock().unwrap();
+        assert!(
+            artifacts.is_empty(),
+            "replace used staging artifacts: {artifacts:?}"
+        );
+        assert_eq!(fs::read(&destination).unwrap(), b"source");
+        assert_eq!(fs::read_dir(&dst_dir).unwrap().count(), 1);
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
     #[test]
     fn transfer_emits_completed_progress() {
         let src_dir = unique_temp_path("complete_src");

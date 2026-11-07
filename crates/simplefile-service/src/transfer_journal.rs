@@ -58,13 +58,25 @@ fn open_locked(path: &Path, create: bool) -> Result<File, String> {
 }
 
 impl StagingLease {
-    pub fn begin(source: &str, destination: &Path, staged: &Path) -> Result<Self, String> {
+    /// `overwrite` is only for an in-place replacement (`staged == destination`):
+    /// the existing destination is truncated and rewritten, so an interrupted
+    /// copy leaves no original to restore.
+    pub fn begin(
+        source: &str,
+        destination: &Path,
+        staged: &Path,
+        overwrite: bool,
+    ) -> Result<Self, String> {
         let path = record_path(staged);
         // Recovery runs once per directory before scheduling. An existing
         // unrecorded partial cannot establish ownership and is left intact.
         let file = open_locked(&path, true)?;
         let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
+        if overwrite && staged == destination {
+            options.write(true).create(true).truncate(true);
+        } else {
+            options.write(true).create_new(true);
+        }
         #[cfg(windows)]
         {
             use std::os::windows::fs::OpenOptionsExt;
@@ -351,7 +363,7 @@ mod tests {
         let root = root();
         let destination = root.join("file");
         let stage = crate::transfer_staging::staging_path_for(&destination, "active").unwrap();
-        let lease = StagingLease::begin("source", &destination, &stage).unwrap();
+        let lease = StagingLease::begin("source", &destination, &stage, false).unwrap();
         fs::write(&stage, b"active").unwrap();
         let unknown = root.join(".file.legacy.sumafile-partial");
         fs::write(&unknown, b"unrelated").unwrap();
@@ -371,7 +383,7 @@ mod tests {
             let stage = crate::transfer_staging::staging_path_for(&destination, "crash").unwrap();
             let backup = root.join(".file.original.sumafile-replace-backup");
             fs::write(&destination, b"old").unwrap();
-            let mut lease = StagingLease::begin("source", &destination, &stage).unwrap();
+            let mut lease = StagingLease::begin("source", &destination, &stage, false).unwrap();
             fs::write(&stage, b"new").unwrap();
             lease.backup_intent(&backup, &destination).unwrap();
             fs::rename(&destination, &backup).unwrap();
@@ -398,7 +410,8 @@ mod tests {
         for committed in [false, true] {
             let root = root();
             let destination = root.join("inplace");
-            let mut lease = StagingLease::begin("source", &destination, &destination).unwrap();
+            let mut lease =
+                StagingLease::begin("source", &destination, &destination, false).unwrap();
             fs::write(&destination, b"downloaded").unwrap();
             if committed {
                 lease.record.committed = true;
@@ -421,7 +434,7 @@ mod tests {
         let root = root();
         let destination = root.join("file");
         let stage = crate::transfer_staging::staging_path_for(&destination, "case").unwrap();
-        let lease = StagingLease::begin("source", &destination, &stage).unwrap();
+        let lease = StagingLease::begin("source", &destination, &stage, false).unwrap();
         drop(lease);
         assert!(stage.exists());
 
@@ -437,7 +450,7 @@ mod tests {
         let root = root();
         let destination = root.join("file");
         let stage = crate::transfer_staging::staging_path_for(&destination, "swap").unwrap();
-        let lease = StagingLease::begin("source", &destination, &stage).unwrap();
+        let lease = StagingLease::begin("source", &destination, &stage, false).unwrap();
         fs::rename(&stage, root.join("original-stage")).unwrap();
         fs::write(&stage, b"another transfer").unwrap();
         drop(lease);
@@ -454,7 +467,7 @@ mod tests {
         let root = root();
         let destination = root.join("file");
         let stage = crate::transfer_staging::staging_path_for(&destination, "open").unwrap();
-        let mut lease = StagingLease::begin("source", &destination, &stage).unwrap();
+        let mut lease = StagingLease::begin("source", &destination, &stage, false).unwrap();
         // The lease still holds the handle it created the staging file with.
         assert!(lease.owns_staged());
         // A writer that keeps the partial open is not a replacement either.

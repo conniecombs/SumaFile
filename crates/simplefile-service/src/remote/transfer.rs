@@ -909,7 +909,7 @@ fn transfer_file(
         let expected_size = expected_entry.size;
         let expected_modified = expected_entry.modified.clone();
 
-        let use_inplace = progress.policy.inplace && !exists;
+        let use_inplace = progress.policy.inplace;
         let staging = if use_inplace {
             Path::new(&target).to_path_buf()
         } else {
@@ -918,8 +918,12 @@ fn transfer_file(
                 &progress.request.operation_id,
             )?
         };
-        let mut lease =
-            crate::transfer_journal::StagingLease::begin(source, Path::new(&target), &staging)?;
+        let mut lease = crate::transfer_journal::StagingLease::begin(
+            source,
+            Path::new(&target),
+            &staging,
+            use_inplace && replace,
+        )?;
         let result = retry_stream(provider, progress, source, &target, |provider, progress| {
             if !lease.owns_staged() {
                 return Err(Failure::new("Transfer staging identity changed", false));
@@ -1412,6 +1416,7 @@ mod tests {
                 commit_before_promote_error: false,
                 truncate_download_bytes: None,
                 mutate_local_during_upload: None,
+                snapshot_local_during_download: None,
                 transient_reconnect_failures: 0,
                 permanent_reconnect_failure: false,
                 cancel: None,
@@ -1455,6 +1460,7 @@ mod tests {
         commit_before_promote_error: bool,
         truncate_download_bytes: Option<usize>,
         mutate_local_during_upload: Option<(PathBuf, Vec<u8>)>,
+        snapshot_local_during_download: Option<(PathBuf, Arc<std::sync::Mutex<Vec<String>>>)>,
         transient_reconnect_failures: usize,
         permanent_reconnect_failure: bool,
         cancel: Option<Arc<AtomicBool>>,
@@ -1571,6 +1577,14 @@ mod tests {
             destination: &mut dyn Write,
         ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
             self.attempts += 1;
+            if let Some((dir, names)) = &self.snapshot_local_during_download {
+                names.lock().unwrap().extend(
+                    fs::read_dir(dir)
+                        .unwrap()
+                        .flatten()
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned()),
+                );
+            }
             if self.transient_failures > 0 {
                 self.transient_failures -= 1;
                 destination.write_all(b"bad partial").unwrap();
@@ -1659,6 +1673,41 @@ mod tests {
             assert_eq!(fs::read(&local).unwrap(), b"original");
             assert_eq!(fs::read_dir(fixture.local()).unwrap().count(), 1);
         }
+    }
+
+    #[test]
+    fn inplace_download_replaces_existing_file_without_staging() {
+        let fixture = Fixture::new();
+        let mut provider = fixture.provider();
+        fs::write(provider.path("/source"), b"new").unwrap();
+        let local = Path::new(&fixture.local()).join("source");
+        fs::write(&local, b"original").unwrap();
+        let names = Arc::new(std::sync::Mutex::new(Vec::new()));
+        provider.snapshot_local_during_download =
+            Some((PathBuf::from(fixture.local()), names.clone()));
+        let request = fixture.request("download", vec!["/source".into()]);
+        let outcome = transfer_entries_with_policy(
+            &mut provider,
+            &request,
+            &AtomicBool::new(false),
+            &|_| {},
+            &|_| {},
+            &|| Policy {
+                inplace: true,
+                ..Policy::default()
+            },
+        )
+        .unwrap();
+        assert!(outcome.retry_sources.is_empty());
+        let names = names.lock().unwrap();
+        assert!(!names.is_empty(), "download never started");
+        assert!(
+            names.iter().all(|name| !name.ends_with(".sumafile-partial")
+                && !name.ends_with(".sumafile-replace-backup")),
+            "download used staging artifacts: {names:?}"
+        );
+        assert_eq!(fs::read(&local).unwrap(), b"new");
+        assert_eq!(fs::read_dir(fixture.local()).unwrap().count(), 1);
     }
 
     #[test]

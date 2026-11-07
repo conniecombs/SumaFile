@@ -257,6 +257,7 @@ pub(crate) fn copy_selection(
     let operation_id = ctx.operation_id;
     let checker_count = ctx.policy.checkers_limit().clamp(1, 32);
     let channel_cap = ctx.policy.backlog_limit().clamp(64, 8192);
+    let inplace = ctx.policy.inplace;
 
     let mut manifests: Vec<Option<Arc<crate::transfer_manifest::DiskManifest>>> = Vec::new();
     let march_state = Mutex::new(MarchState::default());
@@ -277,6 +278,17 @@ pub(crate) fn copy_selection(
                     "destination exists with a different type: {}",
                     root.destination.display()
                 )));
+            }
+            if inplace {
+                // Written under the final name from the start; a cancelled or
+                // failed transfer leaves the partially filled folder behind.
+                create_dir_exclusive(&root.destination)?;
+                march_state
+                    .lock()
+                    .expect("march state lock poisoned")
+                    .created_dirs
+                    .push((0, root.source.clone(), root.destination.clone()));
+                return Ok((root.destination.clone(), false));
             }
             let staged =
                 crate::transfer_staging::staging_path_for(&root.destination, operation_id)?;
@@ -395,9 +407,10 @@ pub(crate) fn copy_selection(
                                 "destination exists with a different type: {}",
                                 dst_dir.display()
                             )));
-                        } else if owned_tree {
+                        } else if owned_tree || inplace {
                             // The outer staging lease owns this entire unpublished
-                            // subtree. Keep ordinary child names and one root lock.
+                            // subtree, or the policy writes every folder under its
+                            // final name. Keep ordinary child names and one root lock.
                             create_dir_exclusive(&dst_dir)?;
                             march_state
                                 .lock()

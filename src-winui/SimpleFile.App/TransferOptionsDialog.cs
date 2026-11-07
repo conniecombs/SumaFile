@@ -111,6 +111,13 @@ internal static class TransferOptionsDialog
                 Content = "Write directly to the destination instead of a temporary file",
                 IsChecked = policy.Inplace,
             };
+            var inplaceNote = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 12,
+                Margin = new Thickness(28, -8, 0, 0),
+                Text = "Files and folders appear under their final names while they copy, and replaced files are overwritten in place. A cancelled or failed transfer leaves partial files behind.",
+            };
             var preallocate = new CheckBox
             {
                 Content = "Pre-allocate disk space",
@@ -150,7 +157,8 @@ internal static class TransferOptionsDialog
             {
                 foreach (var control in new Control[] { mode, filesAtOnce, maxConcurrency, checkers, maxBacklog, bufferSize, memory, multiThreadCutoff, multiThreadStreams })
                     control.IsEnabled = false;
-                inplace.Content = "Write downloads directly to new destination files";
+                inplace.Content = "Write downloads directly to the destination instead of a temporary file";
+                inplaceNote.Text = "Downloads appear under their final names while they run, and replaced files are overwritten in place. A cancelled or failed download leaves a partial file behind.";
                 preallocate.Content = "Pre-allocate local download space";
                 flushOnClose.Content = "Flush local downloads to disk before finishing each file";
                 highLevelRetries.Header = "Retry rounds per failed file";
@@ -176,6 +184,7 @@ internal static class TransferOptionsDialog
             advanced.Children.Add(multiThreadStreams);
             advanced.Children.Add(compareBy);
             advanced.Children.Add(inplace);
+            advanced.Children.Add(inplaceNote);
             advanced.Children.Add(preallocate);
             advanced.Children.Add(flushOnClose);
             advanced.Children.Add(lowLevelRetries);

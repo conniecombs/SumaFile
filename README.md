@@ -328,6 +328,11 @@ Same-volume moves can use a direct rename.
   file from byte zero. Completed files are retained; failed moves retain sources.
   The first error is preserved alongside any later failure. Buffered writes and
   durability checks still complete before a filesystem destination is promoted.
+- **Write directly to the destination** (Advanced transfer options) skips the
+  hidden temporary files. New files and folders are created under their final
+  names, replaced files are overwritten in place, and remote downloads behave
+  the same. A cancelled or failed transfer then leaves partial files and
+  folders behind instead of the untouched original.
 - SumaFile does not read or control pCloud Drive's cache occupancy. Its buffer
   budget is RAM, and temporary files are on the destination. A synchronous OS
   filesystem call may remain blocked until its driver returns. Archive creation/

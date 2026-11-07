@@ -978,7 +978,11 @@ pub(crate) fn copy_file_with_progress_versioned(
     };
     let dst = dst.as_path();
 
-    let use_inplace = ctx.policy.inplace && !path_exists_no_follow(dst);
+    let exists = path_exists_no_follow(dst);
+    let use_inplace = ctx.policy.inplace;
+    if use_inplace && exists && !replace_existing {
+        return Err(Failure::conflict(conflict_for_existing_destination(dst)));
+    }
     let staged_path = if use_inplace {
         dst.to_path_buf()
     } else {
@@ -988,6 +992,7 @@ pub(crate) fn copy_file_with_progress_versioned(
         &src.to_string_lossy(),
         dst,
         &staged_path,
+        use_inplace && exists,
     )?);
     let must_sync = ctx.policy.flush_on_close;
     let mut retry = Retry::from_policy(&ctx.policy);
