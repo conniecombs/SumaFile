@@ -65,11 +65,13 @@ public class PluginManifestReaderTests
     [InlineData("..")]
     [InlineData("ex/ample")]
     [InlineData("ex\\ample")]
+    [InlineData("com.example\n")]
     public void Read_RejectsBadIds(string id)
     {
-        var r = PluginManifestReader.Read(Minimal(id), id);
+        var r = PluginManifestReader.Read(Minimal(id), id == "com.example\n" ?"com.example" : id);
         Assert.False(r.IsValid);
         Assert.Contains(r.Errors, e => e.Contains("id"));
+        Assert.Contains(r.Errors, e => e.Contains("is invalid"));
     }
 
     [Fact]
@@ -149,5 +151,70 @@ public class PluginManifestReaderTests
         Assert.Empty(m.Contributions.ContextMenu);
         Assert.Empty(m.Contributions.Toolbar);
         Assert.Empty(m.Contributions.ArchiveFormats);
+    }
+
+    private static string Toolbar(string placementJson) =>
+        ", \"contributions\": { \"toolbar\": [ { \"command\": \"c\", \"label\": \"L\", \"glyph\": \"g\"" + placementJson + " } ] }";
+
+    [Fact]
+    public void Read_DefaultsOmittedToolbarPlacementToOverflow()
+    {
+        var r = PluginManifestReader.Read(Minimal(extra: Toolbar("")), "com.example.a");
+        Assert.True(r.IsValid, string.Join("; ", r.Errors));
+        Assert.Equal("overflow", r.Manifest!.Contributions.Toolbar[0].Placement);
+    }
+
+    [Fact]
+    public void Read_RejectsWrongTypedToolbarPlacement()
+    {
+        var r = PluginManifestReader.Read(Minimal(extra: Toolbar(", \"placement\": 5")), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Single(r.Errors);
+        Assert.Contains("placement", r.Errors[0]);
+    }
+
+    [Fact]
+    public void Read_RejectsEnumSettingWithoutOptions()
+    {
+        var extra = ", \"settings\": [ { \"key\": \"k\", \"type\": \"enum\", \"label\": \"K\", \"options\": [] } ]";
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(r.Errors, e => e.Contains("settings[0].options"));
+    }
+
+    [Fact]
+    public void Read_RejectsOptionsOnNonEnumSetting()
+    {
+        var extra = ", \"settings\": [ { \"key\": \"k\", \"type\": \"string\", \"label\": \"K\", \"options\": [\"a\"] } ]";
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(r.Errors, e => e.Contains("settings[0].options"));
+    }
+
+    [Fact]
+    public void Read_RejectsDuplicateSettingKeys()
+    {
+        var extra = ", \"settings\": [ { \"key\": \"dup\", \"type\": \"string\", \"label\": \"A\" }, { \"key\": \"dup\", \"type\": \"string\", \"label\": \"B\" } ]";
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(r.Errors, e => e.Contains("dup"));
+    }
+
+    [Fact]
+    public void Read_RejectsNonBareUiAssembly()
+    {
+        var extra = ", \"ui\": { \"assembly\": \"..\\\\evil.dll\", \"entryType\": \"T\" }";
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(r.Errors, e => e.Contains("ui.assembly"));
+    }
+
+    [Fact]
+    public void Read_RejectsNonBareBackendExecutable()
+    {
+        var extra = ", \"backend\": { \"executable\": \"C:/x.exe\" }";
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(r.Errors, e => e.Contains("backend.executable"));
     }
 }

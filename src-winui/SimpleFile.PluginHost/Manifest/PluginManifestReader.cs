@@ -5,7 +5,7 @@ namespace SimpleFile.PluginHost.Manifest;
 
 public static class PluginManifestReader
 {
-    private static readonly Regex IdPattern = new("^[a-z0-9][a-z0-9.-]{1,63}$", RegexOptions.CultureInvariant);
+    private static readonly Regex IdPattern = new(@"^[a-z0-9][a-z0-9.-]{1,63}\z",RegexOptions.CultureInvariant);
     private static readonly Regex SemVerPattern = new(@"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", RegexOptions.CultureInvariant);
 
     private static readonly string[] ActivateOnValues = ["first-call", "startup"];
@@ -98,6 +98,7 @@ public static class PluginManifestReader
         var el = OptionalObject(root, "ui", "ui", errors);
         if (el is null) return null;
         var assembly = RequiredString(el.Value, "assembly", "ui.assembly", errors);
+        RequireBareFileName(assembly, "ui.assembly", errors);
         var entry = RequiredString(el.Value, "entryType", "ui.entryType", errors);
         return assembly is null || entry is null ? null : new PluginUiSpec(assembly, entry);
     }
@@ -107,6 +108,7 @@ public static class PluginManifestReader
         var el = OptionalObject(root, "backend", "backend", errors);
         if (el is null) return null;
         var exe = RequiredString(el.Value, "executable", "backend.executable", errors);
+        RequireBareFileName(exe, "backend.executable", errors);
         var args = OptionalStringList(el.Value, "args", "backend.args", errors) ?? [];
         var activateOn = OptionalString(el.Value, "activateOn", "backend.activateOn", errors) ?? "first-call";
         if (!ActivateOnValues.Contains(activateOn, StringComparer.Ordinal))
@@ -159,10 +161,13 @@ public static class PluginManifestReader
                 var cmd = RequiredString(item, "command", path + ".command", errors);
                 var label = RequiredString(item, "label", path + ".label", errors);
                 var glyph = OptionalString(item, "glyph", path + ".glyph", errors) ?? "";
-                var placement = OptionalString(item, "placement", path + ".placement", errors) ?? "primary";
-                if (!PlacementValues.Contains(placement, StringComparer.Ordinal))
+                var hasPlacement = item.TryGetProperty("placement", out var pEl) && pEl.ValueKind != JsonValueKind.Null;
+                var placement = OptionalString(item, "placement", path + ".placement", errors);
+                if (!hasPlacement)
+                    placement = "overflow";
+                else if (placement is not null && !PlacementValues.Contains(placement, StringComparer.Ordinal))
                     errors.Add($"The {path}.placement value '{placement}' is not recognised; use 'primary' or 'overflow'.");
-                if (cmd is not null && label is not null)
+                if (cmd is not null && label is not null && placement is not null && PlacementValues.Contains(placement, StringComparer.Ordinal))
                     toolbar.Add(new PluginToolbarSpec(cmd, label, glyph, placement));
             }
 
@@ -185,6 +190,7 @@ public static class PluginManifestReader
     private static List<PluginSettingSpec> ReadSettings(JsonElement root, List<string> errors)
     {
         var result = new List<PluginSettingSpec>();
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (item, path) in Items(root, "settings", "settings", errors))
         {
             var key = RequiredString(item, "key", path + ".key", errors);
@@ -198,10 +204,23 @@ public static class PluginManifestReader
                 : null;
             if (type is not null && !SettingTypes.Contains(type, StringComparer.Ordinal))
                 errors.Add($"The {path}.type value '{type}' is not recognised; use boolean, string, integer, enum or path.");
+            if (key is not null && !seenKeys.Add(key))
+                errors.Add($"The setting key '{key}' is declared more than once in settings.");
+            if (type == "enum" && (options is null || options.Count == 0))
+                errors.Add($"The {path}.options field must be a non-empty array for an enum setting.");
+            else if (type is not null && type != "enum" && options is not null)
+                errors.Add($"The {path}.options field is only allowed on enum settings.");
             if (key is not null && type is not null && label is not null)
                 result.Add(new PluginSettingSpec(key, type, label, description, def, group, options));
         }
         return result;
+    }
+
+    private static void RequireBareFileName(string? value, string path, List<string> errors)
+    {
+        if (value is null) return;
+        if (value.IndexOfAny(['/', '\\', ':']) >= 0 || value is "." or "..")
+            errors.Add($"The {path} value '{value}' must be a bare file name without directories, drive letters or '..' segments.");
     }
 
     private static IEnumerable<(JsonElement Item, string Path)> Items(JsonElement parent, string property, string path, List<string> errors)
