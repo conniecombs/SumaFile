@@ -9,19 +9,16 @@ public sealed class PluginBackendConnection : IAsyncDisposable
     private int _lost;
     private int _disposed;
 
-    internal PluginBackendConnection(
-        NamedPipeJsonClient client,
-        IPluginProcess process,
-        PluginHandshakeResult handshake)
+    internal PluginBackendConnection(NamedPipeJsonClient client, IPluginProcess process)
     {
         _client = client;
         _process = process;
-        Handshake = handshake;
         _client.Disconnected += (_, ex) => RaiseLost(ex);
         _process.Exited += (_, _) => RaiseLost(null);
     }
 
-    public PluginHandshakeResult Handshake { get; }
+    /// <summary>Set by the host once the handshake completes; null-forgiving until then (callers only see started connections).</summary>
+    public PluginHandshakeResult Handshake { get; internal set; } = null!;
 
     public event EventHandler<Exception?>? Lost;
 

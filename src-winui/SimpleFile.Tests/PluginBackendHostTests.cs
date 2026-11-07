@@ -211,19 +211,20 @@ public class PluginBackendHostTests : IAsyncLifetime
     public async Task Connection_HostRequestFromBackend_IsAnswered()
     {
         var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var registered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var launcher = Launcher(async (s, ct) =>
         {
             await AnswerHandshake(s, ct);
-            await registered.Task.WaitAsync(ct);
             await s.SendRequestAsync(77, "host.log", new { message = "hi" }, ct);
             reply.TrySetResult(await s.ReadResponseAsync(ct));
             await Task.Delay(Timeout.Infinite, ct);
         });
         var host = Host(launcher);
-        await using var connection = await host.StartAsync(Plugin(), CancellationToken.None);
-        connection.OnHostRequest("host.log", (p, _) => Task.FromResult<object?>(new { ok = p.GetProperty("message").GetString() }));
-        registered.SetResult();
+        await using var connection = await host.StartAsync(
+            Plugin(),
+            CancellationToken.None,
+            c => c.OnHostRequest(
+                "host.log",
+                (p, _) => Task.FromResult<object?>(new { ok = p.GetProperty("message").GetString() })));
 
         var response = await reply.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(77, response.GetProperty("id").GetInt32());

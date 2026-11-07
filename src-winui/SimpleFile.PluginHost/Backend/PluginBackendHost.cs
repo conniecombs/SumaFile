@@ -49,7 +49,10 @@ public sealed class PluginBackendHost
         _connectTimeout = connectTimeout;
     }
 
-    public async Task<PluginBackendConnection> StartAsync(DiscoveredPlugin plugin, CancellationToken ct)
+    public async Task<PluginBackendConnection> StartAsync(
+        DiscoveredPlugin plugin,
+        CancellationToken ct,
+        Action<PluginBackendConnection>? configure = null)
     {
         var backend = plugin.Manifest?.Backend
             ?? throw new PluginBackendException($"Plugin '{plugin.Id}' declares no backend.");
@@ -93,6 +96,11 @@ public sealed class PluginBackendHost
                 }
             }
 
+            // Built before the handshake so host.* handlers registered by `configure` are in place
+            // before the backend can send its first request.
+            var connection = new PluginBackendConnection(client, process);
+            configure?.Invoke(connection);
+
             PluginHandshakeResult handshake;
             using (var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
@@ -129,7 +137,7 @@ public sealed class PluginBackendHost
                     $"host provides {SimpleFile.PluginSdk.PluginSdk.Version}.");
             }
 
-            var connection = new PluginBackendConnection(client, process, handshake);
+            connection.Handshake = handshake;
             if (process.HasExited)
             {
                 await connection.DisposeAsync().ConfigureAwait(false);
