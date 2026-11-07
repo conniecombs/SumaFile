@@ -9,4 +9,7 @@
     <ProjectReference Include="..\SimpleFile.Ipc\SimpleFile.Ipc.csproj" />
     <ProjectReference Include="..\SimpleFile.Core\SimpleFile.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SimpleFile.Tests" />
+  </ItemGroup>
 </Project>

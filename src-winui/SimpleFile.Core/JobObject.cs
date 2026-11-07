@@ -7,7 +7,7 @@ namespace SimpleFile.Core;
 /// Windows job object that kills the backend service when the host exits, while allowing
 /// ShellExecute/Open With children (Notepad, viewers, players) out of the job so they survive SumaFile exit.
 /// </summary>
-internal sealed class JobObject : IDisposable
+public sealed class JobObject : IDisposable
 {
     internal const uint JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800;
     internal const uint JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000;

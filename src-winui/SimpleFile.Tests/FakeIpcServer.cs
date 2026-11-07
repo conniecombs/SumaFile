@@ -18,9 +18,11 @@ internal sealed class FakeIpcServer : IAsyncDisposable
 
     public string PipeName { get; }
 
-    public static FakeIpcServer Create()
+    public static FakeIpcServer Create() => Create("SumaFile.Test." + Guid.NewGuid().ToString("N"));
+
+    public static FakeIpcServer Create(string pipeName)
     {
-        var name = "SumaFile.Test." + Guid.NewGuid().ToString("N");
+        var name = pipeName;
         var pipe = new NamedPipeServerStream(
             name,
             PipeDirection.InOut,
