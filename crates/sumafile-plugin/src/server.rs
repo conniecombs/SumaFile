@@ -12,12 +12,14 @@ use std::sync::Arc;
 use serde_json::Value;
 use simplefile_ipc::frame::decode_length;
 use simplefile_ipc::rpc::JsonRpcResponse;
-use simplefile_ipc::{ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_PARSE};
+use simplefile_ipc::{
+    ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_PARSE, JSONRPC_VERSION,
+};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::mpsc;
 
-use crate::handshake::{handshake_result, HANDSHAKE_METHOD};
+use crate::handshake::{handshake_result, is_service_client, HANDSHAKE_METHOD};
 use crate::{Args, HostClient, PluginHandler, PluginInfo};
 
 const CANCEL_METHOD: &str = "cancel";
@@ -137,9 +139,7 @@ async fn run_connection(
     while let Some(incoming) = read_incoming(&mut reader).await {
         match incoming {
             Incoming::Message(message) => connection.route(message),
-            Incoming::Malformed => {
-                connection.reply(JsonRpcResponse::error(None, ERR_PARSE, "Parse error"))
-            }
+            Incoming::Malformed => connection.reply_null_id(ERR_PARSE, "Parse error"),
         }
     }
     // Wakes every `host.*` call still waiting; handler tasks may still be
@@ -150,6 +150,16 @@ async fn run_connection(
 impl Connection {
     fn reply(&self, response: JsonRpcResponse) {
         self.host.send_message(&response);
+    }
+
+    /// Parse and invalid-request errors carry `"id": null`, which
+    /// `JsonRpcResponse` would omit.
+    fn reply_null_id(&self, code: i32, message: &str) {
+        self.host.send_message(&serde_json::json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": null,
+            "error": { "code": code, "message": message },
+        }));
     }
 
     fn route(&mut self, message: Value) {
@@ -163,11 +173,7 @@ impl Connection {
             return;
         }
         let Some(id) = id else {
-            self.reply(JsonRpcResponse::error(
-                None,
-                ERR_INVALID_REQUEST,
-                "Invalid request",
-            ));
+            self.reply_null_id(ERR_INVALID_REQUEST, "Invalid request");
             return;
         };
         let error = message.get("error").filter(|error| !error.is_null());
@@ -197,6 +203,9 @@ impl Connection {
     fn request(&mut self, id: Value, method: &str, params: Value) {
         if method == HANDSHAKE_METHOD {
             self.handshaken = true;
+            if is_service_client(&params) {
+                self.host.set_service_mode();
+            }
             self.reply(JsonRpcResponse::result(
                 Some(id),
                 handshake_result(&self.info),
@@ -231,9 +240,16 @@ impl Connection {
         let host = self.host.clone();
         let method = method.to_string();
         tokio::spawn(async move {
-            let response = match handler.handle(&method, params, &host).await {
-                Ok(result) => JsonRpcResponse::result(Some(id), result),
-                Err(error) => JsonRpcResponse::error(Some(id), error.code(), error.message()),
+            // The handler runs on its own task so a panic surfaces as a
+            // `JoinError` here and the request still gets an answer.
+            let call = {
+                let host = host.clone();
+                tokio::spawn(async move { handler.handle(&method, params, &host).await })
+            };
+            let response = match call.await {
+                Ok(Ok(result)) => JsonRpcResponse::result(Some(id), result),
+                Ok(Err(error)) => JsonRpcResponse::error(Some(id), error.code(), error.message()),
+                Err(_) => JsonRpcResponse::error(Some(id), ERR_INTERNAL, "plugin handler panicked"),
             };
             host.send_message(&response);
         });

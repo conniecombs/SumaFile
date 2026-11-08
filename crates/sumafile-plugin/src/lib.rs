@@ -15,7 +15,7 @@ mod host;
 mod server;
 
 pub use async_trait::async_trait;
-pub use host::HostClient;
+pub use host::{HostClient, DEFAULT_CALL_TIMEOUT, SERVICE_CONNECTION_ERROR};
 pub use server::serve;
 
 /// Version of the plugin SDK protocol this crate speaks.
@@ -112,6 +112,12 @@ impl std::error::Error for PluginError {}
 /// whether the client is the host or the service.
 #[async_trait]
 pub trait PluginHandler: Send + Sync + 'static {
+    /// Answers one request. Each call runs on its own task; a panic is
+    /// answered with `-32603` "plugin handler panicked".
+    ///
+    /// `archive.*` requests arrive on the service connection; do not rely on
+    /// host services there: `host.log` is a no-op and every other `host.*`
+    /// call fails at once with [`SERVICE_CONNECTION_ERROR`].
     async fn handle(
         &self,
         method: &str,

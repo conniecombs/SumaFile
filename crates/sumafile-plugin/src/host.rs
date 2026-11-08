@@ -5,8 +5,9 @@
 //! feature, [`HostClient::fake`] gives an in-memory host with the same API.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use simplefile_ipc::rpc::JsonRpcNotification;
@@ -15,7 +16,23 @@ use tokio::sync::{mpsc, oneshot};
 
 type Reply = Result<Value, String>;
 
+/// How long a `host.*` call waits for the host's reply by default.
+pub const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Error every `host.*` call except `log` returns on the service connection.
+pub const SERVICE_CONNECTION_ERROR: &str =
+    "host services are not available on the service connection";
+
 /// Talks to the host on behalf of one connection. Cheap to clone.
+///
+/// Each `host.*` call waits at most [`DEFAULT_CALL_TIMEOUT`] (30 s) for the
+/// reply and then fails with an error naming the method.
+///
+/// On the connection of the Rust service (handshake `client` is
+/// `"simplefile-service"`), which never answers inbound requests, the client
+/// is in service mode: `log` is a local no-op returning `Ok(())`,
+/// `is_cancelled` works as usual, and every other `host.*` method and `emit`
+/// fail at once with [`SERVICE_CONNECTION_ERROR`] without sending anything.
 #[derive(Clone)]
 pub struct HostClient {
     inner: Arc<Inner>,
@@ -32,6 +49,8 @@ pub(crate) struct PipeHost {
     pending: Mutex<Pending>,
     next_id: AtomicU64,
     cancelled: Mutex<HashSet<String>>,
+    service: AtomicBool,
+    timeout_ms: AtomicU64,
 }
 
 #[derive(Default)]
@@ -62,6 +81,8 @@ impl HostClient {
                 pending: Mutex::new(Pending::default()),
                 next_id: AtomicU64::new(0),
                 cancelled: Mutex::new(HashSet::new()),
+                service: AtomicBool::new(false),
+                timeout_ms: AtomicU64::new(DEFAULT_CALL_TIMEOUT.as_millis() as u64),
             })),
         }
     }
@@ -114,6 +135,28 @@ impl HostClient {
         }
     }
 
+    /// Puts this connection's client in service mode (see [`HostClient`]).
+    pub(crate) fn set_service_mode(&self) {
+        if let Some(pipe) = self.pipe_host() {
+            pipe.service.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn is_service(&self) -> bool {
+        self.pipe_host()
+            .is_some_and(|pipe| pipe.service.load(Ordering::Relaxed))
+    }
+
+    /// Changes how long `host.*` calls on this connection wait for a reply.
+    /// Meant for tests; the default is [`DEFAULT_CALL_TIMEOUT`].
+    #[doc(hidden)]
+    pub fn set_call_timeout(&self, timeout: Duration) {
+        if let Some(pipe) = self.pipe_host() {
+            let millis = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+            pipe.timeout_ms.store(millis, Ordering::Relaxed);
+        }
+    }
+
     /// True once this connection's client sent `cancel` for `operation_id`.
     pub fn is_cancelled(&self, operation_id: &str) -> bool {
         match &*self.inner {
@@ -127,6 +170,9 @@ impl HostClient {
         let Some(pipe) = self.pipe_host() else {
             return Err(format!("{method} is not available"));
         };
+        if self.is_service() {
+            return Err(SERVICE_CONNECTION_ERROR.to_string());
+        }
         let id = pipe.next_id.fetch_add(1, Ordering::Relaxed) + 1;
         let (sender, receiver) = oneshot::channel();
         {
@@ -146,9 +192,17 @@ impl HostClient {
             lock(&pipe.pending).waiters.remove(&id);
             return Err("The host connection is closed".to_string());
         }
-        receiver
-            .await
-            .unwrap_or_else(|_| Err("The host connection is closed".to_string()))
+        let timeout = Duration::from_millis(pipe.timeout_ms.load(Ordering::Relaxed));
+        match tokio::time::timeout(timeout, receiver).await {
+            Ok(reply) => reply.unwrap_or_else(|_| Err("The host connection is closed".to_string())),
+            Err(_) => {
+                lock(&pipe.pending).waiters.remove(&id);
+                Err(format!(
+                    "{method} timed out after {} ms waiting for the host",
+                    timeout.as_millis()
+                ))
+            }
+        }
     }
 
     pub async fn get_settings(
@@ -251,6 +305,9 @@ impl HostClient {
             lock(&fake.log).push((level.to_string(), message.to_string()));
             return Ok(());
         }
+        if self.is_service() {
+            return Ok(());
+        }
         self.call("host.log", json!({ "level": level, "message": message }))
             .await
             .map(drop)
@@ -272,6 +329,9 @@ impl HostClient {
     pub async fn emit(&self, event: &str, params: Value) -> Result<(), String> {
         if self.is_fake() {
             return Ok(());
+        }
+        if self.is_service() {
+            return Err(SERVICE_CONNECTION_ERROR.to_string());
         }
         if self.send_message(&JsonRpcNotification::new(event, params)) {
             Ok(())

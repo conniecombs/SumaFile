@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sumafile_plugin::{serve, Args, HostClient, PluginError, PluginHandler, PluginInfo};
+use sumafile_plugin::{
+    serve, Args, HostClient, PluginError, PluginHandler, PluginInfo, SERVICE_CONNECTION_ERROR,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 
@@ -28,6 +30,21 @@ impl PluginHandler for EchoHandler {
                     .map_err(PluginError::Application)?;
                 Ok(json!({ "logged": true }))
             }
+            "read_settings" => {
+                let values = host
+                    .get_settings(&["k"])
+                    .await
+                    .map_err(PluginError::Application)?;
+                Ok(json!(values))
+            }
+            "slow_host" => {
+                host.set_call_timeout(Duration::from_millis(200));
+                host.get_settings(&["k"])
+                    .await
+                    .map_err(PluginError::Application)?;
+                Ok(Value::Null)
+            }
+            "panic" => panic!("handler exploded on purpose"),
             "check_cancel" => Ok(json!(host.is_cancelled("op-1"))),
             "bad_params" => Err(PluginError::InvalidParams("nope".into())),
             "fail" => Err(PluginError::Application("boom".into())),
@@ -86,6 +103,10 @@ async fn send(client: &mut NamedPipeClient, message: Value) {
 }
 
 async fn receive(client: &mut NamedPipeClient) -> Value {
+    serde_json::from_str(&receive_raw(client).await).unwrap()
+}
+
+async fn receive_raw(client: &mut NamedPipeClient) -> String {
     let mut header = [0u8; 4];
     tokio::time::timeout(Duration::from_secs(5), client.read_exact(&mut header))
         .await
@@ -94,7 +115,7 @@ async fn receive(client: &mut NamedPipeClient) -> Value {
     let length = simplefile_ipc::frame::decode_length(header).unwrap() as usize;
     let mut payload = vec![0u8; length];
     client.read_exact(&mut payload).await.unwrap();
-    serde_json::from_slice(&payload).unwrap()
+    String::from_utf8(payload).unwrap()
 }
 
 async fn call(client: &mut NamedPipeClient, id: u64, method: &str, params: Value) -> Value {
@@ -236,6 +257,101 @@ async fn cancel_sets_a_per_connection_flag() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(!task.is_finished(), "serve must wait for the last client");
     drop(second);
+    assert_serve_returns(task).await;
+}
+
+async fn service_handshake(client: &mut NamedPipeClient) -> Value {
+    call(
+        client,
+        1,
+        "plugin.handshake",
+        json!({
+            "pluginId": "com.example.echo",
+            "hostVersion": "1.0.4",
+            "sdkVersion": "1.0.0",
+            "client": "simplefile-service"
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn service_connection_fails_host_calls_fast_and_logs_locally() {
+    let (pipe_name, task) = start(true);
+    let mut client = connect(&pipe_name).await;
+    service_handshake(&mut client).await;
+
+    let started = std::time::Instant::now();
+    // `call` asserts the next frame is the reply, so no host.* request was sent.
+    let reply = call(&mut client, 2, "read_settings", json!({})).await;
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(reply["error"]["code"], json!(-32000));
+    assert_eq!(reply["error"]["message"], json!(SERVICE_CONNECTION_ERROR));
+
+    let reply = call(&mut client, 3, "ask_host", json!({})).await;
+    assert_eq!(reply["result"], json!({ "logged": true }));
+
+    drop(client);
+    assert_serve_returns(task).await;
+}
+
+#[tokio::test]
+async fn unanswered_host_call_times_out() {
+    let (pipe_name, task) = start(false);
+    let mut client = connect(&pipe_name).await;
+    handshake(&mut client).await;
+
+    send(
+        &mut client,
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "slow_host", "params": {} }),
+    )
+    .await;
+    let inbound = receive(&mut client).await;
+    assert_eq!(inbound["method"], json!("host.get_settings"));
+    // Never answered.
+    let reply = receive(&mut client).await;
+    assert_eq!(reply["id"], json!(2));
+    assert_eq!(reply["error"]["code"], json!(-32000));
+    let message = reply["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("host.get_settings") && message.contains("timed out"),
+        "{message}"
+    );
+
+    drop(client);
+    assert_serve_returns(task).await;
+}
+
+#[tokio::test]
+async fn panicking_handler_is_answered_and_connection_survives() {
+    let (pipe_name, task) = start(false);
+    let mut client = connect(&pipe_name).await;
+    handshake(&mut client).await;
+
+    let reply = call(&mut client, 2, "panic", json!({})).await;
+    assert_eq!(reply["error"]["code"], json!(-32603));
+    assert_eq!(reply["error"]["message"], json!("plugin handler panicked"));
+    let reply = call(&mut client, 3, "echo", json!({ "still": "here" })).await;
+    assert_eq!(reply["result"], json!({ "still": "here" }));
+
+    drop(client);
+    assert_serve_returns(task).await;
+}
+
+#[tokio::test]
+async fn malformed_frame_gets_parse_error_with_null_id() {
+    let (pipe_name, task) = start(false);
+    let mut client = connect(&pipe_name).await;
+
+    let frame = simplefile_ipc::frame::encode_frame(b"{not json").unwrap();
+    client.write_all(&frame).await.unwrap();
+    client.flush().await.unwrap();
+    let raw = receive_raw(&mut client).await;
+    assert!(raw.contains(r#""id":null"#), "{raw}");
+    let reply: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(reply["error"]["code"], json!(-32700));
+
+    drop(client);
     assert_serve_returns(task).await;
 }
 
