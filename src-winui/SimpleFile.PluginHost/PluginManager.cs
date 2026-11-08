@@ -37,6 +37,9 @@ public sealed class PluginManager : IAsyncDisposable
     private readonly object _gate = new();
     // Serializes scans, enable/disable, restart and dispose; commands do not take it.
     private readonly SemaphoreSlim _ops = new(1, 1);
+    private static readonly TimeSpan InflightStartGrace = TimeSpan.FromSeconds(2);
+
+    private readonly HashSet<Task> _inflightStarts = [];
     private List<PluginRecord> _records = [];
     private bool _disposed;
 
@@ -131,7 +134,11 @@ public sealed class PluginManager : IAsyncDisposable
         }
 
         RaiseChanged();
-        await Task.WhenAll(toStart.Select(StartQuietlyAsync)).ConfigureAwait(false);
+        // Fire-and-forget: discovery never waits on a backend (spec: discovery stays under 50 ms at startup).
+        foreach (var record in toStart)
+        {
+            StartInBackground(record);
+        }
     }
 
     private static bool CanKeep(PluginRecord previous, PluginRecord candidate) =>
@@ -202,7 +209,7 @@ public sealed class PluginManager : IAsyncDisposable
         if (changed)
         {
             RaiseChanged();
-            if (StartsAtStartup(record)) await StartQuietlyAsync(record).ConfigureAwait(false);
+            if (StartsAtStartup(record)) StartInBackground(record);
         }
     }
 
@@ -357,12 +364,24 @@ public sealed class PluginManager : IAsyncDisposable
         try
         {
             List<PluginRecord> records;
+            Task[] starts;
             lock (_gate)
             {
                 if (_disposed) return;
                 _disposed = true;
                 records = _records;
             }
+
+            lock (_inflightStarts)
+            {
+                starts = _inflightStarts.ToArray();
+            }
+
+            // A start that finishes now sees _disposed and disposes its own connection; give it a moment so
+            // no child process outlives the manager. A start still hanging after that is killed when its
+            // connect or handshake timeout ends it.
+            try { await Task.WhenAll(starts).WaitAsync(InflightStartGrace).ConfigureAwait(false); }
+            catch { }
 
             foreach (var record in records)
             {
@@ -378,10 +397,11 @@ public sealed class PluginManager : IAsyncDisposable
     // ---- backend lifecycle ----
 
     /// <summary>
-    /// Starts an <c>activateOn: startup</c> backend and waits for the outcome, which lands on the record
-    /// (<see cref="PluginRecord.BackendRunning"/> or <see cref="PluginRecord.Error"/>); never throws.
+    /// Kicks off an <c>activateOn: startup</c> backend without waiting. The start is the services
+    /// generation's cached start, so a later <c>InvokeBackendAsync</c> awaits the same one; its outcome
+    /// lands on the record (<see cref="PluginRecord.BackendRunning"/> or <see cref="PluginRecord.Error"/>).
     /// </summary>
-    private async Task StartQuietlyAsync(PluginRecord record)
+    private void StartInBackground(PluginRecord record)
     {
         PluginRuntime runtime;
         lock (_gate)
@@ -390,8 +410,29 @@ public sealed class PluginManager : IAsyncDisposable
             runtime = RuntimeFor(record);
         }
 
-        try { await runtime.EnsureBackendAsync(CancellationToken.None).ConfigureAwait(false); }
-        catch { }
+        _ = Observe(runtime.EnsureBackendAsync(CancellationToken.None));
+
+        static async Task Observe(Task task)
+        {
+            try { await task.ConfigureAwait(false); } catch { }
+        }
+    }
+
+    /// <summary>Remembers an in-flight start until it settles so <see cref="DisposeAsync"/> can wait for it.</summary>
+    private Task<PluginBackendConnection> TrackStart(Task<PluginBackendConnection> start)
+    {
+        // Called by PluginHostServices under its own lock, so this uses a leaf lock, never _gate.
+        lock (_inflightStarts)
+        {
+            _inflightStarts.Add(start);
+        }
+
+        start.ContinueWith(
+            t => { lock (_inflightStarts) _inflightStarts.Remove(t); },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return start;
     }
 
     /// <summary>The backend factory of one services generation; see <see cref="PluginRuntime"/>.</summary>
@@ -553,7 +594,7 @@ public sealed class PluginManager : IAsyncDisposable
         PluginRuntime runtime = null!;
         runtime = new PluginRuntime(
             record.Id,
-            (services, configure, ct) => StartBackendAsync(record, runtime, services, configure, ct),
+            (services, configure, ct) => TrackStart(StartBackendAsync(record, runtime, services, configure, ct)),
             () =>
             {
                 lock (_gate) return ReferenceEquals(record.Runtime, runtime) && record.State == PluginState.Enabled;

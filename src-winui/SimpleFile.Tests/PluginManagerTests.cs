@@ -234,7 +234,9 @@ public class PluginManagerTests : IAsyncLifetime
 
         await manager.DiscoverAsync(CancellationToken.None);
 
-        Assert.Equal(Path.Combine(folder, "backend.exe"), launcher.LastExecutable);
+        // Discovery does not wait for the backend; the launch follows shortly after.
+        var executable = await launcher.Launched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(Path.Combine(folder, "backend.exe"), executable);
         await WaitUntil(() => Record(manager, BackendId).BackendRunning);
         Assert.Equal(PluginState.Enabled, Record(manager, BackendId).State);
     }
@@ -379,8 +381,8 @@ public class PluginManagerTests : IAsyncLifetime
         var plugin = new SubscribingPlugin();
         manager.InstanceFactory = _ => plugin;
 
-        // DiscoverAsync waits for startup backends, so it completes only after the launch is released.
-        var discover = Task.Run(() => manager.DiscoverAsync(CancellationToken.None));
+        // Discovery returns while the startup launch is still blocked.
+        await Task.Run(() => manager.DiscoverAsync(CancellationToken.None)).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(launcher.Entered.Wait(TimeSpan.FromSeconds(5)), "startup launch never began");
 
         await Task.Run(() => manager.RunCommandAsync(
@@ -389,9 +391,34 @@ public class PluginManagerTests : IAsyncLifetime
         Assert.True(plugin.Subscribed);
 
         launcher.Release.Set();
-        await discover.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.NotNull(Record(manager, HelloFixture.Id).Error);
+        await WaitUntil(() => Record(manager, HelloFixture.Id).Error is not null);
         Assert.Equal(PluginState.Enabled, Record(manager, HelloFixture.Id).State);
+    }
+
+    [Fact]
+    public async Task Dispose_WithStartupBackendInFlight_KillsIt()
+    {
+        var folder = WriteBackendPlugin("startup");
+        Approve(BackendId, folder);
+        var launcher = new FakePluginProcessLauncher(async (server, ct) =>
+        {
+            await server.WaitForConnectionAsync(ct);
+            var request = await server.ReadRequestAsync(ct);
+            await Task.Delay(300, ct);
+            await server.SendResultAsync(
+                request.Id, new { pluginId = BackendId, pluginVersion = "1.0.0", sdkVersion = "1.0.0" }, ct);
+            await Task.Delay(Timeout.Infinite, ct);
+        }, createServer: true);
+        _launchers.Add(launcher);
+        var manager = Manager(launcher);
+        await manager.DiscoverAsync(CancellationToken.None);
+        await launcher.Launched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(Record(manager, BackendId).BackendRunning);
+
+        await manager.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(launcher.Process!.Killed);
+        Assert.False(Record(manager, BackendId).BackendRunning);
     }
 
     [Fact]

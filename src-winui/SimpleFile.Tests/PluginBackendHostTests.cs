@@ -278,6 +278,9 @@ internal sealed class FakePluginProcessLauncher : IPluginProcessLauncher, IAsync
     public string? PipeName { get; private set; }
     public FakePluginProcess? Process { get; private set; }
 
+    /// <summary>Completed with the executable path when <see cref="Launch"/> is called.</summary>
+    public TaskCompletionSource<string> Launched { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public IPluginProcess Launch(
         string executable, IReadOnlyList<string> args, string workingDirectory, Action<string> onStderrLine)
     {
@@ -287,6 +290,7 @@ internal sealed class FakePluginProcessLauncher : IPluginProcessLauncher, IAsync
         var index = args.ToList().IndexOf("--pipe-name");
         PipeName = args[index + 1];
         Process = new FakePluginProcess();
+        Launched.TrySetResult(executable);
         if (_createServer && _serve is not null)
         {
             _server = FakeIpcServer.Create(PipeName);
