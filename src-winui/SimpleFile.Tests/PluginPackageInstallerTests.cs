@@ -91,20 +91,63 @@ public sealed class PluginPackageInstallerTests : IDisposable
         File.WriteAllText(Path.Combine(existing, "plugin.json"), Manifest(version: "0.9.0"));
         var evilDrive = Path.Combine(_temp, "evil-rooted.txt");
 
-        foreach (var evil in new[] { "..\evil.txt", "../../evil.txt", "a/../../evil.txt", evilDrive, "/evil.txt" })
+        foreach (var evil in EvilEntries(evilDrive))
         {
             var package = Package(("plugin.json", Manifest(version: "2.0.0")), ("ok.txt", "ok"), (evil, "pwned"));
 
             Assert.Throws<PluginInstallException>(() => PluginPackageInstaller.Install(package, UserRoot));
         }
 
-        Assert.False(File.Exists(Path.Combine(UserRoot, "evil.txt")));
-        Assert.False(File.Exists(Path.Combine(_temp, "evil.txt")));
-        Assert.False(File.Exists(evilDrive));
+        AssertNoStrayFiles(evilDrive);
         Assert.False(File.Exists(Path.Combine(existing, "ok.txt")));
         Assert.Contains("0.9.0", File.ReadAllText(Path.Combine(existing, "plugin.json")));
         Assert.Equal(new[] { Id }, Directory.GetDirectories(UserRoot).Select(Path.GetFileName).ToArray());
         Assert.Empty(Directory.GetFiles(UserRoot));
+    }
+
+    [Fact]
+    public void Install_ZipSlipEntry_WithoutExistingInstall_LeavesNoTargetFolder()
+    {
+        var evilDrive = Path.Combine(_temp, "evil-rooted.txt");
+
+        foreach (var evil in EvilEntries(evilDrive))
+        {
+            var package = Package(("plugin.json", Manifest()), ("ok.txt", "ok"), (evil, "pwned"));
+
+            var thrown = Assert.Throws<PluginInstallException>(() => PluginPackageInstaller.Install(package, UserRoot));
+            Assert.Contains(evil, thrown.Message, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(Path.Combine(UserRoot, Id)), evil);
+            Assert.False(Directory.Exists(UserRoot) && Directory.EnumerateFileSystemEntries(UserRoot).Any(), evil);
+        }
+
+        AssertNoStrayFiles(evilDrive);
+    }
+
+    private static string[] EvilEntries(string evilDrive) =>
+    [
+        @"..\evil.txt",
+        @"a\..\..\x.txt",
+        @"sub/..\..\evil.txt",
+        "../evil/",
+        "../../evil.txt",
+        "a/../../evil.txt",
+        evilDrive,
+        "/evil.txt",
+    ];
+
+    private void AssertNoStrayFiles(string evilDrive)
+    {
+        Assert.False(File.Exists(evilDrive));
+        Assert.False(Directory.Exists(Path.Combine(_temp, "evil")));
+        Assert.False(File.Exists(Path.Combine(_temp, "evil.txt")));
+        Assert.False(File.Exists(Path.Combine(_temp, "x.txt")));
+        Assert.False(File.Exists(Path.Combine(UserRoot, "evil.txt")));
+        Assert.False(File.Exists(Path.Combine(UserRoot, "x.txt")));
+        // Only the generated packages remain beside the user root.
+        Assert.All(Directory.GetFiles(_temp), file => Assert.EndsWith(".sfplugin", file, StringComparison.Ordinal));
+        Assert.All(
+            Directory.GetDirectories(_temp).Select(Path.GetFileName),
+            name => Assert.Equal("user", name));
     }
 
     [Fact]

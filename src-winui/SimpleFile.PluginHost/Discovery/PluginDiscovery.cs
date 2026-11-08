@@ -25,6 +25,10 @@ public static class PluginDiscovery
 
             foreach (var folder in folders)
             {
+                // Dot-prefixed folders are the installer's staging, replaced and removing folders; they hold a real
+                // plugin.json but can never match the id grammar, so they are not plugins.
+                if (Path.GetFileName(folder).StartsWith('.')) continue;
+
                 var manifestPath = Path.Combine(folder, ManifestFileName);
                 if (!File.Exists(manifestPath)) continue;
 

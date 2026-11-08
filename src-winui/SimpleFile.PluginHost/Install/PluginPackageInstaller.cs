@@ -138,7 +138,12 @@ public static class PluginPackageInstaller
                 ex);
         }
 
-        TryDelete(removing);
+        if (!TryDelete(removing))
+        {
+            // Already out of discovery's sight (dot-prefixed); only its files are left behind.
+            throw new PluginInstallException(
+                $"The plugin {name} was removed, but some of its files are still in use. Restart SumaFile to finish removing them.");
+        }
     }
 
     private static string ReadManifestId(ZipArchive zip)
@@ -267,18 +272,35 @@ public static class PluginPackageInstaller
         TryDelete(backup);
     }
 
-    private static void TryDelete(string folder)
+    private static readonly TimeSpan DeleteRetryDelay = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// Deletes one of the installer's own staging, replaced or removing folders, trying once more after a short
+    /// delay (antivirus scanners and the indexer often hold freshly written files briefly). Returns false when the
+    /// folder is still there; discovery ignores such dot-prefixed leftovers.
+    /// </summary>
+    private static bool TryDelete(string folder)
     {
-        try
+        for (var attempt = 0; ; attempt++)
         {
-            if (Directory.Exists(folder))
+            try
             {
-                Directory.Delete(folder, recursive: true);
+                if (Directory.Exists(folder))
+                {
+                    Directory.Delete(folder, recursive: true);
+                }
+
+                return true;
             }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Best-effort cleanup of a staging or replaced folder.
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt >= 1)
+                {
+                    return false;
+                }
+
+                Thread.Sleep(DeleteRetryDelay);
+            }
         }
     }
 }

@@ -121,6 +121,30 @@ public class PluginDiscoveryTests
     }
 
     [Fact]
+    public void Scan_SkipsDotPrefixedFolders()
+    {
+        var tmp = NewTemp();
+        try
+        {
+            Plugin(tmp, "com.example.a");
+            // Installer staging, replaced and removing folders carry a real plugin.json.
+            Plugin(tmp, ".com.example.a.installing-0123", Manifest("com.example.a"));
+            Plugin(tmp, ".com.example.a.replaced-4567", Manifest("com.example.a"));
+            Plugin(tmp, ".com.example.b.removing-89ab", Manifest("com.example.b"));
+
+            var result = PluginDiscovery.Scan([tmp]);
+
+            var only = Assert.Single(result);
+            Assert.Equal("com.example.a", only.Id);
+            Assert.Equal(DiscoveryState.Valid, only.State);
+        }
+        finally
+        {
+            try { Directory.Delete(tmp, true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public void DefaultRoots_InstallThenLocalAppData()
     {
         var roots = PluginDiscovery.DefaultRoots();
