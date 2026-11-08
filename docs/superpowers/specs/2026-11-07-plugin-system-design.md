@@ -178,6 +178,30 @@ XAML becomes supported and the Git plugin keeps its XAML. If it fails, the Git
 plugin converts its three XAML files to code and compiled XAML stays
 unsupported in SDK 1.
 
+Spike outcome (2026-11-07, plan task 17): **failed; compiled XAML stays
+unsupported in SDK 1.** A WinUI class library (`UseWinUI`, WASDK 2.4.0) holding
+a copy of `GitWorkbenchView` was loaded through `PluginActivator` from
+`target\fixture-plugins\com.sumafile.spike\`; the assembly loaded into its
+`plugin:` context, but `new SpikeWorkbenchView()` threw
+`Microsoft.UI.Xaml.Markup.XamlParseException` (HRESULT `0x802B000A`, "XAML
+parsing failed.") from `Application.LoadComponent` in the generated
+`InitializeComponent` under (a) nothing extra, (b) the library's
+`SimpleFile_Spike_XamlLib_XamlTypeInfo.XamlMetaDataProvider` added to the App
+provider's `OtherProviders`, and (c) (b) plus the library's `.pri` copied next
+to `SumaFile.exe` and opened with `ResourceManager`. The cause is the URI, not
+the type metadata: the generated locator is
+`ms-appx:///SimpleFile.Spike.XamlLib/SpikeWorkbenchView.xaml`, and in this
+unpackaged app `ms-appx:///` is rooted at the executable's folder (the copied
+PRI itself resolves the XBF to `<exe dir>\SimpleFile.Spike.XamlLib\SpikeWorkbenchView.xbf`).
+Copying the plugin's `SimpleFile.Spike.XamlLib\` folder under the app
+directory made the view load and render in a `ContentDialog` with or without
+lever (b), and a plugin-side `Application.LoadComponent` with a `file:///` URI
+into the plugin folder (XBF or XAML) failed with the same `0x802B000A`. Writing
+plugin files into the install folder is not acceptable (per-machine installs
+are read-only, assembly-named folders collide, upgrades wipe them), so phase 4
+converts the Git plugin's three XAML views to code-built UI (or `XamlReader.Load`
+strings, which remain supported), and the spike project and probe were deleted.
+
 ## 6. Backend half
 
 ### 6.1 Ownership
