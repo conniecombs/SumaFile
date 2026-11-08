@@ -4,6 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using Org.BouncyCastle.Crypto.Generators;
+using Org.BouncyCastle.Crypto.Parameters;
+using Org.BouncyCastle.Crypto.Signers;
+using Org.BouncyCastle.Security;
 using SimpleFile.PluginHost.Manifest;
 using SimpleFile.PluginHost.Trust;
 using Xunit;
@@ -117,21 +121,6 @@ public class PluginTrustTests
     }
 
     [Fact]
-    public void Verify_DefaultPrimitive_IsInvalidWithUnavailableMessage()
-    {
-        var tmp = NewTemp();
-        try
-        {
-            var dir = Package(tmp, out var files);
-            WriteSignature(dir, files, Sig);
-            var state = PluginSignatureVerifier.Verify(dir, Manifest(Convert.ToBase64String(Key)));
-            Assert.Equal(SignatureStatus.Invalid, state.Status);
-            Assert.Equal("Ed25519 verification is unavailable in this build.", state.Error);
-        }
-        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
-    }
-
-    [Fact]
     public void Verify_TamperedListedFile_IsInvalid()
     {
         var tmp = NewTemp();
@@ -157,31 +146,120 @@ public class PluginTrustTests
         }
     }
 
+    private static (byte[] Pub, Ed25519PrivateKeyParameters Priv) NewKeyPair()
+    {
+        var gen = new Ed25519KeyPairGenerator();
+        gen.Init(new Ed25519KeyGenerationParameters(new SecureRandom()));
+        var pair = gen.GenerateKeyPair();
+        return (((Ed25519PublicKeyParameters)pair.Public).GetEncoded(), (Ed25519PrivateKeyParameters)pair.Private);
+    }
+
+    private static byte[] Sign(Ed25519PrivateKeyParameters priv, byte[] payload)
+    {
+        var signer = new Ed25519Signer();
+        signer.Init(true, priv);
+        signer.BlockUpdate(payload, 0, payload.Length);
+        return signer.GenerateSignature();
+    }
+
+    [Fact]
+    public void Verify_ValidSignature_IsVerifiedWithFingerprint()
+    {
+        var tmp = NewTemp();
+        try
+        {
+            var dir = Package(tmp, out var files);
+            var (pub, priv) = NewKeyPair();
+            WriteSignature(dir, files, Sign(priv, PluginSignatureVerifier.CanonicalPayload(dir, files)));
+
+            var state = PluginSignatureVerifier.Verify(dir, Manifest(Convert.ToBase64String(pub)));
+
+            Assert.Equal(SignatureStatus.Verified, state.Status);
+            Assert.Null(state.Error);
+            Assert.Equal(Hex(SHA256.HashData(pub))[..16], state.KeyFingerprint);
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
     [Fact]
     public void Verify_TamperedManifest_IsInvalid()
     {
-        // The manifest only enters the signature through the canonical payload, so the primitive
-        // is what rejects it. This delegate stands in for a real verifier that signed the original.
+        var tmp = NewTemp();
+        try
+        {
+            var dir = Package(tmp, out var files);
+            var (pub, priv) = NewKeyPair();
+            WriteSignature(dir, files, Sign(priv, PluginSignatureVerifier.CanonicalPayload(dir, files)));
+            File.WriteAllText(Path.Combine(dir, "plugin.json"), "{\"id\":\"" + Id + "\",\"evil\":true}");
+
+            var state = PluginSignatureVerifier.Verify(dir, Manifest(Convert.ToBase64String(pub)));
+
+            Assert.Equal(SignatureStatus.Invalid, state.Status);
+            Assert.NotNull(state.Error);
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
+    [Fact]
+    public void Verify_WrongKey_IsInvalid()
+    {
+        var tmp = NewTemp();
+        try
+        {
+            var dir = Package(tmp, out var files);
+            var (_, privA) = NewKeyPair();
+            var (pubB, _) = NewKeyPair();
+            WriteSignature(dir, files, Sign(privA, PluginSignatureVerifier.CanonicalPayload(dir, files)));
+
+            var state = PluginSignatureVerifier.Verify(dir, Manifest(Convert.ToBase64String(pubB)));
+
+            Assert.Equal(SignatureStatus.Invalid, state.Status);
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
+    [Fact]
+    public void Verify_PrimitiveThrows_IsInvalidWithMessage()
+    {
         var tmp = NewTemp();
         var original = PluginSignatureVerifier.Ed25519Verify;
         try
         {
             var dir = Package(tmp, out var files);
             WriteSignature(dir, files, Sig);
-            var signedPayload = PluginSignatureVerifier.CanonicalPayload(dir, files);
-            File.WriteAllText(Path.Combine(dir, "plugin.json"), "{\"id\":\"" + Id + "\",\"evil\":true}");
-            PluginSignatureVerifier.Ed25519Verify = (_, p, _) => p.AsSpan().SequenceEqual(signedPayload);
+            PluginSignatureVerifier.Ed25519Verify = (_, _, _) => throw new InvalidCastException("boom");
 
             var state = PluginSignatureVerifier.Verify(dir, Manifest(Convert.ToBase64String(Key)));
 
             Assert.Equal(SignatureStatus.Invalid, state.Status);
-            Assert.NotNull(state.Error);
+            Assert.Contains("boom", state.Error);
         }
         finally
         {
             PluginSignatureVerifier.Ed25519Verify = original;
             if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
         }
+    }
+
+    [Fact]
+    public void Ed25519Verify_RejectsNull() =>
+        Assert.Throws<ArgumentNullException>(() => PluginSignatureVerifier.Ed25519Verify = null!);
+
+    [Fact]
+    public void Load_NullRecord_IsTreatedAsAbsent()
+    {
+        var tmp = NewTemp();
+        try
+        {
+            Directory.CreateDirectory(tmp);
+            var path = Path.Combine(tmp, "a.json");
+            File.WriteAllText(path, "{ \"" + Id + "\": null }");
+            var store = new PluginApprovalStore(path);
+            Assert.Equal(ApprovalState.NeedsConsent, store.Resolve(Id, "h", SignatureStatus.Unsigned));
+            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Enabled);
+            Assert.Equal(ApprovalState.Enabled, store.Resolve(Id, "h", SignatureStatus.Unsigned));
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
 
     [Fact]

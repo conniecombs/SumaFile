@@ -63,8 +63,11 @@ public sealed class PluginApprovalStore
         if (!File.Exists(_path)) return new();
         try
         {
-            return JsonSerializer.Deserialize<Dictionary<string, ApprovalRecord>>(File.ReadAllText(_path), Json)
-                   ?? new();
+            var loaded = JsonSerializer.Deserialize<Dictionary<string, ApprovalRecord?>>(File.ReadAllText(_path), Json);
+            // A null entry (hand-edited file) counts as no record.
+            return loaded is null
+                ? new()
+                : loaded.Where(kv => kv.Value is not null).ToDictionary(kv => kv.Key, kv => kv.Value!);
         }
         catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException)
         {

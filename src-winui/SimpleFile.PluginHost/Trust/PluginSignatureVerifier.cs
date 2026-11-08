@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Org.BouncyCastle.Crypto.Parameters;
+using Org.BouncyCastle.Crypto.Signers;
 using SimpleFile.PluginHost.Manifest;
 
 namespace SimpleFile.PluginHost.Trust;
@@ -11,16 +13,25 @@ public sealed record SignatureState(SignatureStatus Status, string? KeyFingerpri
 
 public static class PluginSignatureVerifier
 {
-    private const string UnavailableMessage = "Ed25519 verification is unavailable in this build.";
-
-    private static readonly Func<byte[], byte[], byte[], bool> UnavailableEd25519 = (_, _, _) => false;
+    private static Func<byte[], byte[], byte[], bool> _ed25519Verify = BouncyCastleEd25519;
 
     /// <summary>
-    /// The one Ed25519 primitive, as (publicKey, payload, signature). The default always returns
-    /// false and makes <see cref="Verify"/> report <see cref="UnavailableMessage"/>. Task 4b replaces
-    /// this default with a BouncyCastle implementation; Verify itself does not change.
+    /// The Ed25519 primitive, as (publicKey, payload, signature). Defaults to BouncyCastle; replaceable
+    /// so tests can observe the arguments Verify passes.
     /// </summary>
-    public static Func<byte[], byte[], byte[], bool> Ed25519Verify { get; set; } = UnavailableEd25519;
+    public static Func<byte[], byte[], byte[], bool> Ed25519Verify
+    {
+        get => _ed25519Verify;
+        set => _ed25519Verify = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    private static bool BouncyCastleEd25519(byte[] publicKey, byte[] payload, byte[] signature)
+    {
+        var signer = new Ed25519Signer();
+        signer.Init(false, new Ed25519PublicKeyParameters(publicKey, 0));
+        signer.BlockUpdate(payload, 0, payload.Length);
+        return signer.VerifySignature(signature);
+    }
 
     public static SignatureState Verify(string folder, PluginManifest manifest)
     {
@@ -77,10 +88,15 @@ public static class PluginSignatureVerifier
                     return Invalid($"Listed file \"{path}\" does not match its recorded hash.");
             }
 
-            if (ReferenceEquals(Ed25519Verify, UnavailableEd25519)) return Invalid(UnavailableMessage);
-
             var payload = CanonicalPayload(folder, files);
-            return Ed25519Verify(pub, payload, sig)
+            bool ok;
+            try { ok = Ed25519Verify(pub, payload, sig); }
+            catch (Exception e)
+            {
+                // Verification must never throw: any primitive failure means the signature is not valid.
+                return new(SignatureStatus.Invalid, fingerprint, "Signature check failed: " + e.Message);
+            }
+            return ok
                 ? new(SignatureStatus.Verified, fingerprint, null)
                 : new(SignatureStatus.Invalid, fingerprint, "Signature does not match the package contents.");
         }
