@@ -62,4 +62,39 @@ public class PluginMenuWhenTests
         Assert.NotEqual("", error);
         Assert.False(PluginMenuWhen.IsValid("a ? b", out _));
     }
+
+    [Theory]
+    [InlineData(32, true)]
+    [InlineData(33, false)]
+    public void NotChain_IsBoundedInDepth(int depth, bool valid)
+    {
+        var expression = new string('!', depth) + "singleFile";
+        Assert.Equal(valid, PluginMenuWhen.IsValid(expression, out var error));
+        if (!valid)
+        {
+            Assert.Contains("nesting", error);
+            Assert.False(PluginMenuWhen.Evaluate(expression, "com.a", Request(1)));
+        }
+    }
+
+    [Theory]
+    [InlineData(32, true)]
+    [InlineData(33, false)]
+    public void ParenChain_IsBoundedInDepth(int depth, bool valid)
+    {
+        var expression = new string('(', depth) + "singleFile" + new string(')', depth);
+        Assert.Equal(valid, PluginMenuWhen.IsValid(expression, out var error));
+        if (!valid)
+        {
+            Assert.Contains("nesting", error);
+            Assert.False(PluginMenuWhen.Evaluate(expression, "com.a", Request(1)));
+        }
+    }
+
+    [Fact]
+    public void HugeChains_DoNotOverflowTheStack()
+    {
+        Assert.False(PluginMenuWhen.IsValid(new string('!', 200000) + "singleFile", out _));
+        Assert.False(PluginMenuWhen.IsValid(new string('(', 200000), out _));
+    }
 }

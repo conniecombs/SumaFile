@@ -21,7 +21,7 @@ public class PluginManifestReaderTests
           { "id": "wave", "label": "Wave", "group": "hello" }
         ],
         "contextMenu": [
-          { "group": "hello", "items": [ { "command": "greet", "label": "Greet", "when": "file" } ] }
+          { "group": "hello", "items": [ { "command": "greet", "label": "Greet", "when": "singleFile" } ] }
         ],
         "toolbar": [ { "command": "greet", "label": "Greet", "glyph": "E70F", "placement": "primary" } ],
         "archiveFormats": [
@@ -216,5 +216,32 @@ public class PluginManifestReaderTests
         var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
         Assert.False(r.IsValid);
         Assert.Contains(r.Errors, e => e.Contains("backend.executable"));
+    }
+
+    private static string MenuWhen(string when) =>
+        ", \"contributions\": { \"contextMenu\": [ { \"group\": \"g\", \"items\": [ " +
+        "{ \"command\": \"c\", \"label\": \"L\", \"when\": \"" + when + "\" } ] } ] }";
+
+    [Fact]
+    public void Read_RejectsOverlongWhen()
+    {
+        var r = PluginManifestReader.Read(Minimal(extra: MenuWhen(new string('a', 513))), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(r.Errors, e => e.Contains("contextMenu") && e.Contains("when") && e.Contains("512"));
+    }
+
+    [Fact]
+    public void Read_RejectsInvalidWhen()
+    {
+        var r = PluginManifestReader.Read(Minimal(extra: MenuWhen("selectionCount >")), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(r.Errors, e => e.Contains("contextMenu") && e.Contains("when") && e.Contains("Expected a number"));
+    }
+
+    [Fact]
+    public void Read_AcceptsValidWhen()
+    {
+        var r = PluginManifestReader.Read(Minimal(extra: MenuWhen("selectionCount >= 1")), "com.example.a");
+        Assert.True(r.IsValid);
     }
 }

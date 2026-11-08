@@ -9,6 +9,7 @@ public static class PluginManifestReader
     private static readonly Regex SemVerPattern = new(@"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", RegexOptions.CultureInvariant);
 
     private static readonly string[] ActivateOnValues = ["first-call", "startup"];
+    private const int MaxWhenLength = 512;
     private static readonly string[] PlacementValues = ["primary", "overflow"];
     private static readonly string[] SettingTypes = ["boolean", "string", "integer", "enum", "path"];
 
@@ -150,6 +151,17 @@ public static class PluginManifestReader
                     var cmd = RequiredString(sub, "command", subPath + ".command", errors);
                     var label = RequiredString(sub, "label", subPath + ".label", errors);
                     var when = OptionalString(sub, "when", subPath + ".when", errors) ?? "";
+                    if (when.Length > MaxWhenLength)
+                    {
+                        errors.Add($"The {subPath}.when expression is longer than {MaxWhenLength} characters.");
+                        when = "";
+                    }
+                    else if (!SimpleFile.Core.PluginMenuWhen.IsValid(when, out var whenError))
+                    {
+                        errors.Add($"The {subPath}.when expression is invalid: {whenError}");
+                        when = "";
+                    }
+
                     if (cmd is not null && label is not null)
                         items.Add(new PluginContextMenuItemSpec(cmd, label, when));
                 }

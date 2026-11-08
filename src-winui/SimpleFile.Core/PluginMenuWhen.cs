@@ -35,6 +35,8 @@ public static class PluginMenuWhen
         return parser.TryParse(out _, out error);
     }
 
+    private const int MaxDepth = 32;
+
     private enum TokenKind { Ident, Number, Op, And, Or, Not, LParen, RParen, Arg, End }
 
     private readonly record struct Token(TokenKind Kind, string Text);
@@ -48,6 +50,7 @@ public static class PluginMenuWhen
         private readonly ContextMenuRequest _request;
         private List<Token> _tokens = [];
         private int _pos;
+        private int _depth;
 
         public Parser(string source, string pluginId, ContextMenuRequest request)
         {
@@ -77,6 +80,14 @@ public static class PluginMenuWhen
                 value = false;
                 error = ex.Message;
                 return false;
+            }
+        }
+
+        private void Enter()
+        {
+            if (++_depth > MaxDepth)
+            {
+                throw new SyntaxError($"Expression nesting is deeper than {MaxDepth} levels.");
             }
         }
 
@@ -115,7 +126,10 @@ public static class PluginMenuWhen
             if (Peek.Kind == TokenKind.Not)
             {
                 Next();
-                return !ParseNot();
+                Enter();
+                var inner = ParseNot();
+                _depth--;
+                return !inner;
             }
 
             return ParsePrimary();
@@ -128,8 +142,10 @@ public static class PluginMenuWhen
             {
                 case TokenKind.LParen:
                 {
+                    Enter();
                     var inner = ParseOr();
                     Expect(TokenKind.RParen, "Expected ')'.");
+                    _depth--;
                     return inner;
                 }
                 case TokenKind.Ident:
