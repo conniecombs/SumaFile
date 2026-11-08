@@ -619,6 +619,44 @@ public class PluginManagerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ArchivePlugin_UnregisterInFlightDuringRestart_ReplacementRegistersAfterIt()
+    {
+        var folder = WriteArchivePlugin();
+        Approve(BackendId, folder);
+        var launcher = HandshakingLauncher();
+        var releaseUnregister = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registrar = new RecordingRegistrar { UnregisterGate = releaseUnregister.Task };
+        var manager = Manager(launcher, registrar, pipePerStart: true);
+        await manager.DiscoverAsync(CancellationToken.None);
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning);
+        var first = launcher.Process!;
+        var firstRegister = $"register:{Assert.Single(registrar.Registered).PipeName}";
+
+        // Generation 1 crashes; its unregister reaches the registrar and blocks there.
+        first.SimulateExit();
+        await registrar.UnregisterEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Generation 2 starts and handshakes while that unregister is still in flight.
+        var restart = manager.RestartBackendAsync(BackendId, CancellationToken.None);
+        await WaitUntil(() => !ReferenceEquals(launcher.Process, first));
+        await Task.Delay(300);
+        Assert.Equal([firstRegister], registrar.Calls);
+
+        releaseUnregister.SetResult();
+        await restart.WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning);
+
+        // The service saw unregister-1 complete before register-2, so generation 2 stays registered.
+        var calls = registrar.Calls;
+        Assert.Equal(3, calls.Count);
+        Assert.Equal(firstRegister, calls[0]);
+        Assert.Equal("unregister", calls[1]);
+        Assert.StartsWith("register:", calls[2], StringComparison.Ordinal);
+        Assert.NotEqual(firstRegister, calls[2]);
+        Assert.Equal(PluginState.Enabled, Record(manager, BackendId).State);
+    }
+
+    [Fact]
     public async Task ArchivePlugin_RegistrationFails_SetsFaultedAndStopsBackend()
     {
         var folder = WriteArchivePlugin();
@@ -690,6 +728,18 @@ public class PluginManagerTests : IAsyncLifetime
         private readonly object _lock = new();
         private readonly List<(string PluginId, string PipeName, IReadOnlyList<SimpleFile.PluginHost.Manifest.PluginArchiveFormatSpec> Formats)> _registered = [];
         private readonly List<string> _unregistered = [];
+        private readonly List<string> _calls = [];
+
+        /// <summary>Awaited inside UnregisterAsync, so a test can hold an unregister in flight.</summary>
+        public Task UnregisterGate { get; init; } = Task.CompletedTask;
+
+        public TaskCompletionSource UnregisterEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Calls in the order they completed: "register:{pipe}" or "unregister".</summary>
+        public IReadOnlyList<string> Calls
+        {
+            get { lock (_lock) return _calls.ToList(); }
+        }
 
         public Exception? Failure { get; init; }
 
@@ -710,14 +760,24 @@ public class PluginManagerTests : IAsyncLifetime
             CancellationToken ct)
         {
             if (Failure is not null) return Task.FromException(Failure);
-            lock (_lock) _registered.Add((pluginId, pipeName, formats));
+            lock (_lock)
+            {
+                _registered.Add((pluginId, pipeName, formats));
+                _calls.Add($"register:{pipeName}");
+            }
+
             return Task.CompletedTask;
         }
 
-        public Task UnregisterAsync(string pluginId, CancellationToken ct)
+        public async Task UnregisterAsync(string pluginId, CancellationToken ct)
         {
-            lock (_lock) _unregistered.Add(pluginId);
-            return Task.CompletedTask;
+            UnregisterEntered.TrySetResult();
+            await UnregisterGate.WaitAsync(ct);
+            lock (_lock)
+            {
+                _unregistered.Add(pluginId);
+                _calls.Add("unregister");
+            }
         }
     }
 

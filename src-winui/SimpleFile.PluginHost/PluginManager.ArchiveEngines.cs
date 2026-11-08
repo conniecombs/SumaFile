@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using SimpleFile.PluginHost.Backend;
 
 namespace SimpleFile.PluginHost;
@@ -12,6 +13,8 @@ namespace SimpleFile.PluginHost;
 public sealed partial class PluginManager
 {
     private static readonly TimeSpan ArchiveUnregisterTimeout = TimeSpan.FromSeconds(5);
+
+    private readonly ConcurrentDictionary<string, ArchiveRegistration> _archiveRegistrations = new(StringComparer.Ordinal);
 
     private static bool DeclaresArchiveFormats(PluginRecord record) =>
         record.Discovered.Manifest is { Backend: not null } manifest
@@ -29,51 +32,87 @@ public sealed partial class PluginManager
         CancellationToken ct)
     {
         var registrar = _options.ArchiveEngines!;
+        var registration = RegistrationFor(record.Id);
+        Exception? failure = null;
+        var acquired = false;
         try
         {
+            await registration.Lock.WaitAsync(ct).ConfigureAwait(false);
+            acquired = true;
+
+            // Re-checked inside the lock: while this waited, a newer generation may have registered (so this one
+            // must not overwrite it), or this backend may have been lost, disabled or restarted.
+            if (registration.Generation > generation)
+            {
+                _options.Log(record.Id, $"[info] Skipped registering the archive engines of backend generation {generation}: newer generation {registration.Generation} has registered.");
+                return;
+            }
+
+            lock (_gate)
+            {
+                if (!IsLiveConnection(record, runtime, connection)) return;
+            }
+
             await registrar
                 .RegisterAsync(record.Id, connection.PipeName, record.Discovered.Manifest!.Contributions.ArchiveFormats, ct)
                 .ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            var message = $"Archive engine registration failed: {ex.Message}";
-            bool stopped;
+            // The service now holds this generation's registration, live or not.
+            registration.Generation = generation;
+
+            bool live;
             lock (_gate)
             {
-                stopped = ReferenceEquals(runtime.Connection, connection);
-                if (stopped)
+                live = IsLiveConnection(record, runtime, connection);
+                if (live)
                 {
-                    runtime.Connection = null;
-                    runtime.NewGeneration();
-                    record.BackendRunning = false;
-                    if (record.State == PluginState.Enabled) record.State = PluginState.Faulted;
-                    record.Error = message;
+                    runtime.ArchiveEnginesGeneration = generation;
+                    record.BackendRunning = true;
                 }
             }
 
-            _options.Log(record.Id, $"[error] {message}");
-            await connection.DisposeAsync().ConfigureAwait(false);
-            if (stopped) RaiseChanged();
-            throw new PluginBackendException(message, ex);
+            // Lost, disabled or restarted while registering: the stop path saw no registration, so undo it here,
+            // still under the lock so no newer registration can slip in between.
+            if (!live)
+            {
+                using var cts = new CancellationTokenSource(ArchiveUnregisterTimeout);
+                await CallUnregisterAsync(registrar, record.Id, cts.Token).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+        finally
+        {
+            if (acquired) registration.Lock.Release();
         }
 
-        bool live;
+        if (failure is null) return;
+
+        var message = $"Archive engine registration failed: {failure.Message}";
+        bool stopped;
         lock (_gate)
         {
-            // Lost, disabled or restarted while registering: the stop path saw no registration, so undo it here.
-            // The service now holds this generation's registration, live or not.
-            record.ArchiveRegistrationGeneration = generation;
-            live = ReferenceEquals(runtime.Connection, connection) && record.State == PluginState.Enabled;
-            if (live)
+            stopped = ReferenceEquals(runtime.Connection, connection);
+            if (stopped)
             {
-                runtime.ArchiveEnginesGeneration = generation;
-                record.BackendRunning = true;
+                runtime.Connection = null;
+                runtime.NewGeneration();
+                record.BackendRunning = false;
+                if (record.State == PluginState.Enabled) record.State = PluginState.Faulted;
+                record.Error = message;
             }
         }
 
-        if (!live) await UnregisterArchiveEnginesAsync(record, generation).ConfigureAwait(false);
+        _options.Log(record.Id, $"[error] {message}");
+        await connection.DisposeAsync().ConfigureAwait(false);
+        if (stopped) RaiseChanged();
+        throw new PluginBackendException(message, failure);
     }
+
+    /// <summary>Call under <c>_gate</c>.</summary>
+    private static bool IsLiveConnection(PluginRecord record, PluginRuntime runtime, PluginBackendConnection connection) =>
+        ReferenceEquals(runtime.Connection, connection) && record.State == PluginState.Enabled;
 
     /// <summary>
     /// Call under <c>_gate</c>: the generation whose engines the runtime still has registered (0 when none);
@@ -96,25 +135,63 @@ public sealed partial class PluginManager
     {
         if (_options.ArchiveEngines is not { } registrar) return;
         var pluginId = record.Id;
-        if (generation is { } own)
+        var registration = RegistrationFor(pluginId);
+
+        // One budget for waiting on the plugin's registrar lock and for the call itself.
+        using var cts = new CancellationTokenSource(ArchiveUnregisterTimeout);
+        try
         {
-            long registered;
-            lock (_gate) registered = record.ArchiveRegistrationGeneration;
-            if (registered > own)
-            {
-                _options.Log(pluginId, $"[info] Skipped unregistering the archive engines of backend generation {own}: newer generation {registered} has registered.");
-                return;
-            }
+            await registration.Lock.WaitAsync(cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            _options.Log(pluginId, "[error] Archive engine unregistration failed: a registration of the same plugin did not finish in time.");
+            return;
         }
 
         try
         {
-            using var cts = new CancellationTokenSource(ArchiveUnregisterTimeout);
-            await registrar.UnregisterAsync(pluginId, cts.Token).WaitAsync(ArchiveUnregisterTimeout).ConfigureAwait(false);
+            // Checked inside the lock, right before the call, so a newer registration cannot land in between.
+            if (generation is { } own && registration.Generation > own)
+            {
+                _options.Log(pluginId, $"[info] Skipped unregistering the archive engines of backend generation {own}: newer generation {registration.Generation} has registered.");
+                return;
+            }
+
+            await CallUnregisterAsync(registrar, pluginId, cts.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            registration.Lock.Release();
+        }
+    }
+
+    /// <summary>Call while holding the plugin's registrar lock; logs instead of throwing.</summary>
+    private async Task CallUnregisterAsync(IArchiveEngineRegistrar registrar, string pluginId, CancellationToken ct)
+    {
+        try
+        {
+            await registrar.UnregisterAsync(pluginId, ct).WaitAsync(ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             _options.Log(pluginId, $"[error] Archive engine unregistration failed: {ex.Message}");
         }
+    }
+
+    private ArchiveRegistration RegistrationFor(string pluginId) =>
+        _archiveRegistrations.GetOrAdd(pluginId, _ => new ArchiveRegistration());
+
+    /// <summary>
+    /// Per plugin id, since the service keys registrations by id and a rescan can replace the record. Every
+    /// registrar call for the plugin runs under <see cref="Lock"/>, so the service sees them in the order the
+    /// manager decided them; <see cref="Generation"/> is the backend generation that last registered (0: never).
+    /// </summary>
+    private sealed class ArchiveRegistration
+    {
+        public SemaphoreSlim Lock { get; } = new(1, 1);
+
+        /// <summary>Guarded by <see cref="Lock"/>.</summary>
+        public long Generation { get; set; }
     }
 }
