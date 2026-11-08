@@ -54,6 +54,29 @@ public sealed partial class MainWindow
         ApplyPrimaryToolbarOverflow();
     }
 
+    private void AttachCommandCatalogEvents()
+    {
+        ToolbarActionCatalog.Changed -= OnToolbarActionCatalogChanged;
+        ToolbarActionCatalog.Changed += OnToolbarActionCatalogChanged;
+    }
+
+    private void DetachCommandCatalogEvents()
+    {
+        ToolbarActionCatalog.Changed -= OnToolbarActionCatalogChanged;
+    }
+
+    // Plugin toolbar actions came or went: rebuild the toolbar from the layout (raised on any thread).
+    private void OnToolbarActionCatalogChanged(object? sender, EventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_workspace is not null)
+            {
+                ApplyCommandSurfaceLayout();
+            }
+        });
+    }
+
     private IReadOnlyList<string> CurrentPrimaryToolbarActionOrder()
     {
         var layout = _workspace?.Settings.CommandSurface ?? CommandSurfaceLayout.CreateDefault();

@@ -75,6 +75,40 @@ public class StartupTimingBudgetTests
         Assert.Equal(5, report.SessionEvents.Count);
     }
 
+    [Fact]
+    public void Evaluate_FlagsSlowPluginDiscovery()
+    {
+        var report = StartupTimingBudget.Evaluate(
+            [
+                Line("MainWindow.Connect.begin", 0.0, 0.0),
+                Line("BackendSession.Start.ready", 230.0, 4.0),
+                Line("MainWindow.Connect.plugins-discovered", 320.0, 80.0),
+                Line("MainWindow.Connect.workspace-initialized", 900.0, 580.0),
+                Line("MainWindow.Connect.first-sync", 1100.0, 200.0),
+                Line("MainWindow.Connect.ready", 1150.0, 50.0),
+            ]);
+
+        Assert.False(report.Passed);
+        var violation = Assert.Single(report.Violations);
+        Assert.Contains("plugins-discovered", violation, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Evaluate_PassesWithoutPluginStage()
+    {
+        var report = StartupTimingBudget.Evaluate(
+            [
+                Line("MainWindow.Connect.begin", 0.0, 0.0),
+                Line("BackendSession.Start.ready", 230.0, 4.0),
+                Line("MainWindow.Connect.workspace-initialized", 900.0, 670.0),
+                Line("MainWindow.Connect.first-sync", 1100.0, 200.0),
+                Line("MainWindow.Connect.ready", 1150.0, 50.0),
+            ]);
+
+        Assert.True(report.Passed);
+        Assert.Empty(report.Violations);
+    }
+
     private static string Line(string stage, double total, double delta, int minute = 0) =>
         $"[2026-09-17T16:{minute:D2}:00.0000000-05:00] {stage} total_ms={total:0.0} delta_ms={delta:0.0}";
 }

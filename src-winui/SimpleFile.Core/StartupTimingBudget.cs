@@ -30,6 +30,9 @@ public sealed record StartupPerformanceReport(
 
 public static partial class StartupTimingBudget
 {
+    /// <summary>Most plugin discovery may add to startup; the stage is optional.</summary>
+    public const double PluginDiscoveryMaxDeltaMs = 50;
+
     private static readonly StartupPerformanceBudget DefaultBudget = new();
 
     public static StartupPerformanceReport Evaluate(
@@ -51,6 +54,7 @@ public static partial class StartupTimingBudget
         CheckMaximum(sessionEvents, "MainWindow.Connect.workspace-initialized", budget.MaxWorkspaceInitializedMilliseconds, violations);
         CheckMaximum(sessionEvents, "MainWindow.Connect.first-sync", budget.MaxFirstSyncMilliseconds, violations);
         CheckMaximum(sessionEvents, "MainWindow.Connect.ready", budget.MaxReadyMilliseconds, violations);
+        CheckMaximumDelta(sessionEvents, "MainWindow.Connect.plugins-discovered", PluginDiscoveryMaxDeltaMs, violations);
         CheckDeferredDriveRefresh(sessionEvents, budget.MinStartupDriveRefreshMilliseconds, violations);
 
         return new StartupPerformanceReport(violations.Count == 0, violations, sessionEvents);
@@ -121,6 +125,20 @@ public static partial class StartupTimingBudget
         if (entry.TotalMilliseconds > maximumMilliseconds)
         {
             violations.Add($"{stage} took {entry.TotalMilliseconds:N1} ms; budget is {maximumMilliseconds:N0} ms");
+        }
+    }
+
+    /// <summary>Flags an optional stage whose own step took longer than allowed; absence is not a violation.</summary>
+    private static void CheckMaximumDelta(
+        IReadOnlyList<StartupTimingEvent> events,
+        string stage,
+        double maximumDeltaMilliseconds,
+        List<string> violations)
+    {
+        var entry = events.LastOrDefault(item => string.Equals(item.Stage, stage, StringComparison.Ordinal));
+        if (entry is not null && entry.DeltaMilliseconds > maximumDeltaMilliseconds)
+        {
+            violations.Add($"{stage} took {entry.DeltaMilliseconds:N1} ms; budget is {maximumDeltaMilliseconds:N0} ms");
         }
     }
 

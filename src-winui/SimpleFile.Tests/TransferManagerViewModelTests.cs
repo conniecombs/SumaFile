@@ -240,6 +240,66 @@ public class TransferManagerViewModelTests
         await operation.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task EnqueueExternal_RunsAtOnceWithItsOwnTitleAndLeavesTransferSlotsFree()
+    {
+        var manager = new TransferManagerViewModel { MaxConcurrentTransfers = 1 };
+        var started = new ConcurrentQueue<string>();
+        var externalRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var transferRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var external = manager.EnqueueExternal("Hashing files", "Hello fixture", Runner("external", started, externalRelease));
+        var transfer = manager.Enqueue([@"C:\src\one.txt"], @"D:\one", move: false, Runner("transfer", started, transferRelease));
+
+        await WaitUntilAsync(() => Started(started, "external") && Started(started, "transfer"));
+        Assert.Equal("Hashing files", external.Title);
+        Assert.Equal("Hello fixture", external.RouteText);
+        Assert.Equal(TransferOperationStatus.Running, external.Status);
+        Assert.Equal(TransferOperationStatus.Running, transfer.Status);
+        Assert.Same(external, manager.Operations[1]);
+
+        externalRelease.SetResult();
+        transferRelease.SetResult();
+        Assert.Equal(TransferOperationStatus.Completed, await external.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        await transfer.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ApplyExternalProgress_ShowsCountsAndDetailInsteadOfBytes()
+    {
+        var manager = new TransferManagerViewModel();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var external = manager.EnqueueExternal("Hashing files", "Hello fixture", Runner("external", new(), release));
+
+        external.ApplyExternalProgress(3, 12, "photo.jpg");
+
+        Assert.False(external.IsIndeterminate);
+        Assert.Equal(25, external.ProgressPercent);
+        Assert.Equal("25%", external.PercentText);
+        Assert.Equal("3 of 12", external.SummaryText);
+        Assert.Equal("photo.jpg", external.CurrentItemText);
+
+        external.ApplyExternalProgress(0, 0, null);
+        Assert.True(external.IsIndeterminate);
+
+        release.SetResult();
+        await external.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Cancel_ExternalOperationCancelsItsRunner()
+    {
+        var manager = new TransferManagerViewModel();
+        var external = manager.EnqueueExternal(
+            "Hashing files",
+            "Hello fixture",
+            Runner("external", new(), new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)));
+
+        manager.Cancel(external);
+
+        Assert.Equal(TransferOperationStatus.Cancelled, await external.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
     private static TransferOperationRunner Runner(
         string name,
         ConcurrentQueue<string> started,

@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using SimpleFile.Core;
+using SimpleFile.PluginHost;
 
 namespace SimpleFile.App;
 
@@ -11,6 +12,12 @@ public sealed partial class MainWindow
     {
         if (_workspace is null)
         {
+            return;
+        }
+
+        if (PluginManager.TryParseHostCommandId(id, out _, out _))
+        {
+            await RunPluginCommandAsync(id);
             return;
         }
 

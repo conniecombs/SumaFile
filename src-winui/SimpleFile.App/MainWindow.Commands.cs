@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
+using SimpleFile.PluginHost;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -905,6 +906,7 @@ public sealed partial class MainWindow
             GitEnabled = IsGitIntegrationEnabled,
             InGitRepository = _gitStatus?.IsRepo == true || selected.Any(row => !string.IsNullOrWhiteSpace(row.GitText)),
             SelectionHasGitStatus = selected.Any(row => !string.IsNullOrWhiteSpace(row.GitText)),
+            PluginMenus = _pluginMenus,
         };
     }
 
@@ -986,6 +988,12 @@ public sealed partial class MainWindow
 
     private async Task RunContextCommandAsync(string id, string? commandParameter = null)
     {
+        if (PluginManager.TryParseHostCommandId(id, out _, out _))
+        {
+            await RunPluginCommandAsync(id);
+            return;
+        }
+
         if (id == "ctx-paste" && !string.IsNullOrWhiteSpace(commandParameter))
         {
             await PasteFromClipboard(commandParameter);

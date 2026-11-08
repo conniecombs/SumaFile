@@ -43,6 +43,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SimpleFile.Core\SimpleFile.Core.csproj" />
+    <ProjectReference Include="..\SimpleFile.PluginHost\SimpleFile.PluginHost.csproj" />
+    <ProjectReference Include="..\SimpleFile.PluginSdk\SimpleFile.PluginSdk.csproj" />
   </ItemGroup>
 
   <!-- WASDK self-contained deletes the merged resources.pri after runtime MSIX extract.

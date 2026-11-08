@@ -27,6 +27,8 @@ public sealed class TransferOperationViewModel : ObservableObject
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly string[] _potentialDestinationPaths;
     private readonly TransferProgressRateTracker _rateTracker;
+    // Set for an operation that is not a file transfer (a plugin's long-running work).
+    private readonly string? _externalTitle;
 
     private TransferOperationStatus _status = TransferOperationStatus.Queued;
     private bool _isWaitingForDestination;
@@ -83,6 +85,24 @@ public sealed class TransferOperationViewModel : ObservableObject
             .ToArray();
         _rateTracker = new TransferProgressRateTracker(now);
     }
+
+    internal TransferOperationViewModel(
+        string title,
+        string detail,
+        TransferOperationRunner runner,
+        Func<DateTimeOffset>? now = null)
+    {
+        _externalTitle = title;
+        Sources = [];
+        Destination = detail;
+        _runner = runner;
+        Context = new TransferProgressContext(false, 0, "", detail);
+        _potentialDestinationPaths = [];
+        _rateTracker = new TransferProgressRateTracker(now);
+    }
+
+    /// <summary>True for an operation added with <see cref="TransferManagerViewModel.EnqueueExternal"/>.</summary>
+    public bool IsExternal => _externalTitle is not null;
 
     public string Id { get; } = Guid.NewGuid().ToString("n");
 
@@ -202,13 +222,18 @@ public sealed class TransferOperationViewModel : ObservableObject
     {
         get
         {
+            if (_externalTitle is not null)
+            {
+                return _externalTitle;
+            }
+
             var verb = Move ? "Move" : "Copy";
             var noun = Sources.Length == 1 ? "item" : "items";
             return $"{verb} {Math.Max(Sources.Length, 1)} {noun}";
         }
     }
 
-    public string RouteText => $"{Context.Source} -> {Destination}";
+    public string RouteText => IsExternal ? Destination : $"{Context.Source} -> {Destination}";
 
     public string StatusLabel => Status switch
     {
@@ -283,6 +308,22 @@ public sealed class TransferOperationViewModel : ObservableObject
         CurrentItemText = display.CurrentItemName;
         SpeedText = update.Status is "running" or "finalizing" ? display.Speed : "";
         EtaText = update.Status is "running" or "finalizing" ? display.Eta : "";
+    }
+
+    /// <summary>Progress of an external operation, in its own units rather than bytes.</summary>
+    public void ApplyExternalProgress(long current, long total, string? detail)
+    {
+        if (IsTerminal)
+        {
+            return;
+        }
+
+        var bounded = total > 0 ? Math.Clamp(current, 0, total) : Math.Max(current, 0);
+        IsIndeterminate = total <= 0;
+        ProgressPercent = total > 0 ? TransferProgressFormatter.Percent((ulong)bounded, (ulong)total) : 0;
+        PercentText = total > 0 ? $"{ProgressPercent:0}%" : "";
+        SummaryText = total > 0 ? $"{bounded:N0} of {total:N0}" : bounded > 0 ? $"{bounded:N0} done" : "Working";
+        CurrentItemText = string.IsNullOrWhiteSpace(detail) ? Title : detail;
     }
 
     internal void MarkQueued(bool waitingForDestination)
@@ -383,6 +424,11 @@ public sealed class TransferOperationViewModel : ObservableObject
 
     internal bool DestinationOverlaps(TransferOperationViewModel other)
     {
+        if (IsExternal || other.IsExternal)
+        {
+            return false;
+        }
+
         if (PathOverlaps(Destination, other.Destination))
         {
             return true;
@@ -539,6 +585,25 @@ public sealed class TransferManagerViewModel : ObservableObject
         return operation;
     }
 
+    /// <summary>
+    /// Adds an operation that is not a file transfer (a plugin's work) as a row with its own title.
+    /// It starts at once and does not take one of the <see cref="MaxConcurrentTransfers"/> slots.
+    /// </summary>
+    public TransferOperationViewModel EnqueueExternal(string title, string detail, TransferOperationRunner runner)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(title);
+        ArgumentNullException.ThrowIfNull(detail);
+        ArgumentNullException.ThrowIfNull(runner);
+
+        var operation = new TransferOperationViewModel(title, detail, runner, _now);
+        Operations.Insert(0, operation);
+        _running.Add(operation);
+        operation.MarkRunning();
+        _ = RunOperationAsync(operation);
+        RefreshCounts();
+        return operation;
+    }
+
     public void Cancel(TransferOperationViewModel operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
@@ -623,7 +688,7 @@ public sealed class TransferManagerViewModel : ObservableObject
     private void PumpQueue()
     {
         RefreshQueuedDestinationState();
-        while (_running.Count < MaxConcurrentTransfers)
+        while (_running.Count(operation => !operation.IsExternal) < MaxConcurrentTransfers)
         {
             var next = _queued.FirstOrDefault(operation => !_running.Any(operation.DestinationOverlaps));
             if (next is null)

@@ -11,6 +11,7 @@ const budgets = {
   firstSyncMs: 7000,
   readyMs: 8000,
   driveRefreshMinMs: 4500,
+  pluginsDiscoveredDeltaMs: 50,
 };
 
 if (!fs.existsSync(logPath)) {
@@ -32,6 +33,7 @@ checkMaximum(session, 'BackendSession.Start.ready', budgets.backendReadyMs, viol
 checkMaximum(session, 'MainWindow.Connect.workspace-initialized', budgets.workspaceInitializedMs, violations);
 checkMaximum(session, 'MainWindow.Connect.first-sync', budgets.firstSyncMs, violations);
 checkMaximum(session, 'MainWindow.Connect.ready', budgets.readyMs, violations);
+checkMaximumDelta(session, 'MainWindow.Connect.plugins-discovered', budgets.pluginsDiscoveredDeltaMs, violations);
 checkDeferredDriveRefresh(session, budgets.driveRefreshMinMs, violations);
 
 if (violations.length) {
@@ -94,6 +96,14 @@ function checkMaximum(session, stage, maxMs, violations) {
 
   if (event.totalMs > maxMs) {
     violations.push(`${stage} took ${event.totalMs.toFixed(1)} ms; budget is ${maxMs} ms`);
+  }
+}
+
+// Optional stage: only its own step is budgeted, and its absence is not a violation.
+function checkMaximumDelta(session, stage, maxDeltaMs, violations) {
+  const event = session.findLast(item => item.stage === stage);
+  if (event && event.deltaMs > maxDeltaMs) {
+    violations.push(`${stage} took ${event.deltaMs.toFixed(1)} ms; budget is ${maxDeltaMs} ms`);
   }
 }
 

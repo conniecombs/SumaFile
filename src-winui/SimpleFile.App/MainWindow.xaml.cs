@@ -220,6 +220,7 @@ public sealed partial class MainWindow : Window
                 journal = new OperationJournal(System.IO.Path.Combine(smokeRoot, "operations.jsonl"));
 #endif
             var fileOps = new FileOperationService(client, journal);
+            await InitializePluginsAsync(fileOps, timer);
             _workspace = new ExplorerWorkspace(_backend, fileOps);
             AppServices.Configure(_workspace);
             _search = AppServices.GetRequired<SearchViewModel>();
@@ -232,6 +233,7 @@ public sealed partial class MainWindow : Window
             _fileChangeSubscription = client.On<FileChangeEvent>(Protocol.FileChangeEvent, OnFileChange);
             await _workspace.InitializeAsync(deferInitialNavigation: true);
             timer.Mark("workspace-initialized");
+            OnPluginWorkspaceInitialized();
             ApplyKeyboardShortcuts();
             await LoadOpenWithPreferencesAsync(fileOps, CancellationToken.None);
             timer.Mark("open-with-preferences");
@@ -282,6 +284,7 @@ public sealed partial class MainWindow : Window
         var cts = new CancellationTokenSource();
         _startupNavigationCts = cts;
         _ = RunDeferredStartupNavigationAsync(workspace, cts);
+        QueuePluginConsentPrompts();
     }
 
     private async Task RunDeferredStartupNavigationAsync(ExplorerWorkspace workspace, CancellationTokenSource cts)
@@ -422,6 +425,7 @@ public sealed partial class MainWindow : Window
     private void OnWorkspaceChanged(object? sender, EventArgs e)
     {
         DispatcherQueue.TryEnqueue(QueueWorkspaceSync);
+        RefreshPluginWorkspace();
     }
 
     private void DispatchToUi(Action action)
@@ -1401,6 +1405,9 @@ public sealed partial class MainWindow : Window
             _toolbar = null;
             _workspace = null;
         }
+
+        // Before the service goes: plugin settings go through it, and backends must die with the window.
+        await DisposePluginsAsync();
 
         if (_backend is not null)
         {
