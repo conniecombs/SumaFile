@@ -15,6 +15,9 @@ pub fn list_archive(path: String) -> Result<ArchiveInfo, String> {
         Some(ArchiveFormat::TarGz) => list_tar_archive(&path, Some("gz")),
         Some(ArchiveFormat::Rar) => list_rar_archive(&path),
         Some(ArchiveFormat::SevenZip) => list_seven_zip_archive(&path),
+        None if super::engine::engine_for_path(Path::new(&path)).is_some() => {
+            list_engine_archive(&path)
+        }
         None => Err(format!(
             "Unsupported archive format: {}",
             Path::new(&path)
@@ -235,6 +238,47 @@ fn list_seven_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
     Ok(ArchiveInfo {
         path: path.to_string(),
         format: "7z".to_string(),
+        entries,
+        unsafe_entries,
+        total_size,
+        compressed_size,
+    })
+}
+
+fn list_engine_archive(path: &str) -> Result<ArchiveInfo, String> {
+    let (engine, format) = super::engine::engine_for_path(Path::new(path))
+        .ok_or_else(|| format!("No archive engine handles {path}"))?;
+    if !format.can_list {
+        return Err(format!(
+            "{} cannot list {} archives",
+            engine.name(),
+            format.extension
+        ));
+    }
+    let mut entries = Vec::new();
+    let mut unsafe_entries = Vec::new();
+    let mut total_size = 0u64;
+
+    for entry in engine.list_entries(Path::new(path))? {
+        if archive_entry_relative_path_from_name(&entry.path, engine.name()).is_err() {
+            unsafe_entries.push(entry.path);
+            continue;
+        }
+
+        total_size = total_size.saturating_add(entry.size);
+        entries.push(ArchiveEntry {
+            name: archive_entry_name(&entry.path),
+            path: entry.path,
+            is_dir: entry.is_dir,
+            size: entry.size,
+            compressed_size: entry.compressed_size,
+        });
+    }
+
+    let compressed_size = std::fs::metadata(path).map_or(0, |m| m.len());
+    Ok(ArchiveInfo {
+        path: path.to_string(),
+        format: super::engine::format_label(&format),
         entries,
         unsafe_entries,
         total_size,

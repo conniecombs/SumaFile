@@ -3,13 +3,13 @@ use super::params::{
     parse_params, BatchRenameParams, CompareParams, CopyMoveParams, CreateArchiveParams,
     DriveListParams, ExternalUrlParams, ExtractArchiveParams, GetFilesWithTagParams,
     GitCommitParams, GitDiffPathParams, GitPathsParams, HandshakeParams, NameParams,
-    OpenWithParams, PathParams, PathsParams, PreviewParams, RemoteConnectParams,
-    RemoteCreateDirectoryParams, RemoteDeleteEntriesParams, RemoteDownloadFileParams,
-    RemoteListDirectoryParams, RemoteProfileIdParams, RemoteProfileParams, RemoteRenameEntryParams,
-    RemoteSessionIdParams, RemoteUploadFileParams, RenameParams, ResolvedCopyMoveParams,
-    SetTagsForPathParams, SettingKeyParams, SettingKeysParams, SettingValueParams, ShortcutParams,
-    SmartFolderIdParams, SmartFolderParams, TagCreateParams, TagForPathParams, TagIdParams,
-    TagUpdateParams,
+    OpenWithParams, PathParams, PathsParams, PluginIdParams, PreviewParams,
+    RegisterArchiveEngineParams, RemoteConnectParams, RemoteCreateDirectoryParams,
+    RemoteDeleteEntriesParams, RemoteDownloadFileParams, RemoteListDirectoryParams,
+    RemoteProfileIdParams, RemoteProfileParams, RemoteRenameEntryParams, RemoteSessionIdParams,
+    RemoteUploadFileParams, RenameParams, ResolvedCopyMoveParams, SetTagsForPathParams,
+    SettingKeyParams, SettingKeysParams, SettingValueParams, ShortcutParams, SmartFolderIdParams,
+    SmartFolderParams, TagCreateParams, TagForPathParams, TagIdParams, TagUpdateParams,
 };
 use super::{async_ops, BlockingJob, BlockingLane, Dispatch, SessionState, APP_VERSION};
 use crate::remote::secrets::RemoteSecret;
@@ -743,6 +743,38 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                     cache.invalidate_path(&p.archive_path);
                     Ok::<_, String>(Value::Null)
                 })
+            }
+            Err(r) => Dispatch::Reply(r),
+        },
+        METHOD_REGISTER_ARCHIVE_ENGINE => {
+            match parse_params::<RegisterArchiveEngineParams>(request) {
+                Ok(p) => reply_blocking(request, BlockingLane::General, move || {
+                    let formats = p
+                        .formats
+                        .into_iter()
+                        .map(|format| crate::plugin_archive::PluginArchiveFormat {
+                            extension: format.extension,
+                            can_list: format.can_list,
+                            can_extract: format.can_extract,
+                            can_create: format.can_create,
+                            can_modify: format.can_modify,
+                            engine_name: format.engine_name,
+                        })
+                        .collect();
+                    crate::plugin_archive::register_plugin_engine(
+                        &p.plugin_id,
+                        &p.pipe_name,
+                        formats,
+                    )
+                    .map(|()| Value::Null)
+                }),
+                Err(r) => Dispatch::Reply(r),
+            }
+        }
+        METHOD_UNREGISTER_ARCHIVE_ENGINE => match parse_params::<PluginIdParams>(request) {
+            Ok(p) => {
+                crate::plugin_archive::unregister_plugin_engine(&p.plugin_id);
+                reply_ok(request, Value::Null)
             }
             Err(r) => Dispatch::Reply(r),
         },

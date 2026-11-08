@@ -21,8 +21,33 @@ pub fn create_archive(
             let binary = super::seven_zip::require_seven_zip_binary()?;
             create_seven_zip_archive(&paths, &archive_path, &binary)
         }
-        _ => Err(format!("Unsupported format: {format}")),
+        _ => create_engine_archive(&paths, &archive_path, &normalized_format)
+            .unwrap_or_else(|| Err(format!("Unsupported format: {format}"))),
     }
+}
+
+/// Hand creation to a registered engine when one serves the archive's
+/// extension and that extension is the requested format. `None` means no
+/// engine applies.
+fn create_engine_archive(
+    paths: &[String],
+    archive_path: &str,
+    normalized_format: &str,
+) -> Option<Result<(), String>> {
+    let archive = Path::new(archive_path);
+    let (engine, format) = super::engine::engine_for_path(archive)?;
+    if super::engine::format_label(&format) != normalized_format {
+        return None;
+    }
+    if !format.can_create {
+        return Some(Err(format!(
+            "{} cannot create {} archives",
+            engine.name(),
+            format.extension
+        )));
+    }
+    let sources: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    Some(engine.create(archive, &sources))
 }
 
 fn validate_archive_create_request(paths: &[String], archive_path: &str) -> Result<(), String> {

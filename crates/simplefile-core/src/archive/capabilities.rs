@@ -3,7 +3,7 @@ use crate::models::{ArchiveCapabilities, ArchiveFormatCapability};
 pub fn get_archive_capabilities() -> ArchiveCapabilities {
     let seven_zip_available = super::seven_zip::resolve_seven_zip_binary().is_some();
 
-    ArchiveCapabilities {
+    let mut capabilities = ArchiveCapabilities {
         formats: vec![
             ArchiveFormatCapability {
                 format: "zip".to_string(),
@@ -64,5 +64,20 @@ pub fn get_archive_capabilities() -> ArchiveCapabilities {
                 note: Some("RAR archives can be listed and extracted, but SumaFile does not create or rewrite RAR archives.".to_string()),
             },
         ],
+    };
+
+    for (owner, format, _engine_name) in super::engine::registered_formats() {
+        capabilities.formats.push(ArchiveFormatCapability {
+            format: super::engine::format_label(&format),
+            extension: format.extension,
+            can_list: format.can_list,
+            can_extract: format.can_extract,
+            can_create: format.can_create,
+            can_modify: format.can_modify,
+            engine: format!("plugin:{owner}"),
+            note: None,
+        });
     }
+
+    capabilities
 }

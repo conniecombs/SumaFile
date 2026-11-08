@@ -1,5 +1,6 @@
 mod capabilities;
 mod create;
+pub mod engine;
 mod extract;
 mod list;
 mod mutate;
@@ -11,6 +12,10 @@ mod tests;
 
 pub use capabilities::get_archive_capabilities;
 pub use create::create_archive;
+pub use engine::{
+    engine_for_path, register_engine, registered_formats, unregister_engine, ArchiveEngine,
+    EngineEntry, EngineFormat,
+};
 pub use extract::extract_archive;
 pub use list::{list_archive, list_archive_directory};
 pub use mutate::{

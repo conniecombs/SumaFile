@@ -327,6 +327,31 @@ pub(super) struct ExtractArchiveParams {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ArchiveEngineFormat {
+    pub(super) extension: String,
+    pub(super) can_list: bool,
+    pub(super) can_extract: bool,
+    pub(super) can_create: bool,
+    pub(super) can_modify: bool,
+    pub(super) engine_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RegisterArchiveEngineParams {
+    pub(super) plugin_id: String,
+    pub(super) pipe_name: String,
+    pub(super) formats: Vec<ArchiveEngineFormat>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PluginIdParams {
+    pub(super) plugin_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct CreateArchiveParams {
     pub(super) paths: Vec<String>,
     #[serde(rename = "archivePath")]

@@ -270,6 +270,25 @@ fn unknown_method_is_not_found() {
 }
 
 #[test]
+fn unregister_archive_engine_for_unknown_plugin_is_ok_null() {
+    let mut state = SessionState {
+        handshake_done: true,
+        ..SessionState::default()
+    };
+    let outcome = dispatch(
+        &mut state,
+        &request(
+            "unregister_archive_engine",
+            5,
+            json!({ "pluginId": "com.test.never-registered" }),
+        ),
+    );
+    let response = reply(outcome);
+    assert!(response.error.is_none(), "{:?}", response.error);
+    assert_eq!(response.result, Some(Value::Null));
+}
+
+#[test]
 fn settings_methods_round_trip_through_metadata_db() {
     let _lock = metadata_db_env_lock()
         .lock()

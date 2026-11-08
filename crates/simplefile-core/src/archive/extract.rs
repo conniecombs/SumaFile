@@ -12,6 +12,19 @@ use std::path::PathBuf;
 pub fn extract_archive(archive_path: String, destination: String) -> Result<(), String> {
     let archive = Path::new(&archive_path);
     let dest = Path::new(&destination);
+    if archive_format_for_path(archive).is_none() {
+        if let Some((engine, format)) = super::engine::engine_for_path(archive) {
+            if !format.can_extract {
+                return Err(format!(
+                    "{} cannot extract {} archives",
+                    engine.name(),
+                    format.extension
+                ));
+            }
+            create_dir_all(dest)?;
+            return engine.extract(archive, dest, None);
+        }
+    }
     create_dir_all(dest)?;
     extract_archive_to_directory(archive, dest)
 }

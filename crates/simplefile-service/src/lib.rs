@@ -2,6 +2,7 @@
 
 mod binary;
 pub mod dispatch;
+pub mod plugin_archive;
 pub mod progress;
 pub mod remote;
 mod scheduler;

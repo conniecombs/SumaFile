@@ -204,6 +204,10 @@
       "source": "crates/simplefile-service/src/remote/session.rs",
       "fields": ["session_id", "profile_id", "protocol", "root_path"]
     },
+    "ArchiveEngineFormat": {
+      "source": "crates/simplefile-service/src/dispatch/params.rs",
+      "fields": ["extension", "can_list", "can_extract", "can_create", "can_modify", "engine_name"]
+    },
     "RenameRequest": {
       "source": "crates/simplefile-core/src/file_ops.rs",
       "fields": ["path", "new_name"]

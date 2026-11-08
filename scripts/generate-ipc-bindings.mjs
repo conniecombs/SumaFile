@@ -154,7 +154,9 @@ for (const tag of binaryTags) {
 }
 
 const manualClientMethods = new Set(['ipc.handshake', 'list_directory', 'search_files']);
-const intentionallyUnexposedClientMethods = new Set();
+// The host's plugin layer sends these itself; the typed client has no
+// wrapper for them yet.
+const intentionallyUnexposedClientMethods = new Set(['register_archive_engine', 'unregister_archive_engine']);
 const wrappers = [
   { method: 'ipc.health', signature: 'public Task<HealthResult> HealthAsync(CancellationToken cancellationToken = default)', body: 'InvokeAsync<HealthResult>(Protocol.HealthMethod, new { }, cancellationToken)' },
   { method: 'ipc.shutdown', signature: 'public Task ShutdownAsync(CancellationToken cancellationToken = default)', body: 'InvokeAsync(Protocol.ShutdownMethod, new { }, cancellationToken)' },

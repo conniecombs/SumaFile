@@ -84,8 +84,15 @@ pub fn split_archive_path(path: &str) -> Result<Option<ArchivePath>, String> {
 
 /// True for an archive file or any path inside one, decided from the path
 /// components alone (no archive is opened).
+///
+/// A file whose extension a registered engine serves also counts, though
+/// browsing inside it stays unsupported (`split_archive_path` ignores it).
 pub fn is_archive_path(path: &str) -> bool {
-    split_archive_path(path).ok().flatten().is_some()
+    if split_archive_path(path).ok().flatten().is_some() {
+        return true;
+    }
+    let path = Path::new(path);
+    super::engine::engine_for_path(path).is_some() && path.is_file()
 }
 
 pub fn is_archive_virtual_path(path: &str) -> bool {

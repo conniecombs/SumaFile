@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 97,
+  "domainMethodCount": 99,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -141,6 +141,12 @@
       "params": { "paths": "string[]", "archivePath": "string", "format": "ArchiveFormat" },
       "result": "null"
     },
+    "register_archive_engine": {
+      "params": { "pluginId": "string", "pipeName": "string", "formats": "ArchiveEngineFormat[]" },
+      "result": "null",
+      "notes": "Connects to the plugin backend pipe and handshakes before registering; a failed connection registers nothing."
+    },
+    "unregister_archive_engine": { "params": { "pluginId": "string" }, "result": "null" },
     "get_db_setting": { "params": { "key": "string" }, "result": "string?" },
     "get_db_settings": { "params": { "keys": "string[]" }, "result": "SettingMap" },
     "set_db_setting": { "params": { "key": "string", "value": "string" }, "result": "null" },

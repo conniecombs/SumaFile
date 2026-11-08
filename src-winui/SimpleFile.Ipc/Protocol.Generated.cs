@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 97;
+    public const int DomainMethodCount = 99;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -61,6 +61,8 @@ public static partial class Protocol
     public const string GetArchiveCapabilitiesMethod = "get_archive_capabilities";
     public const string ExtractArchiveMethod = "extract_archive";
     public const string CreateArchiveMethod = "create_archive";
+    public const string RegisterArchiveEngineMethod = "register_archive_engine";
+    public const string UnregisterArchiveEngineMethod = "unregister_archive_engine";
     public const string GetDbSettingMethod = "get_db_setting";
     public const string GetDbSettingsMethod = "get_db_settings";
     public const string SetDbSettingMethod = "set_db_setting";
@@ -169,6 +171,8 @@ public static partial class Protocol
         "get_archive_capabilities",
         "extract_archive",
         "create_archive",
+        "register_archive_engine",
+        "unregister_archive_engine",
         "get_db_setting",
         "get_db_settings",
         "set_db_setting",

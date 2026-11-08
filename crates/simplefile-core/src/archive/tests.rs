@@ -1060,3 +1060,266 @@ fn copy_archive_entry_into_archive_uses_selective_materialize() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+/// Records what the archive layer forwarded to a registered engine.
+#[derive(Default)]
+struct MockEngine {
+    entries: Vec<EngineEntry>,
+    calls: std::sync::Mutex<Vec<String>>,
+}
+
+impl ArchiveEngine for MockEngine {
+    fn name(&self) -> &str {
+        "mock-engine"
+    }
+
+    fn list_entries(&self, archive: &Path) -> Result<Vec<EngineEntry>, String> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("list {}", archive.display()));
+        Ok(self.entries.clone())
+    }
+
+    fn extract(
+        &self,
+        archive: &Path,
+        destination: &Path,
+        inner_path: Option<&Path>,
+    ) -> Result<(), String> {
+        self.calls.lock().unwrap().push(format!(
+            "extract {} -> {} ({:?})",
+            archive.display(),
+            destination.display(),
+            inner_path
+        ));
+        Ok(())
+    }
+
+    fn create(&self, archive: &Path, paths: &[PathBuf]) -> Result<(), String> {
+        self.calls.lock().unwrap().push(format!(
+            "create {} from {}",
+            archive.display(),
+            paths.len()
+        ));
+        Ok(())
+    }
+}
+
+/// The engine registry is process-wide, so every test registers under its
+/// own owner and extension and removes them again on the way out.
+struct EngineRegistration(&'static str);
+
+impl Drop for EngineRegistration {
+    fn drop(&mut self) {
+        unregister_engine(self.0);
+    }
+}
+
+fn engine_format(extension: &str) -> EngineFormat {
+    EngineFormat {
+        extension: extension.to_string(),
+        can_list: true,
+        can_extract: true,
+        can_create: true,
+        can_modify: false,
+    }
+}
+
+fn register_mock(
+    owner: &'static str,
+    extensions: &[&str],
+    engine: std::sync::Arc<MockEngine>,
+) -> EngineRegistration {
+    register_engine(
+        owner,
+        extensions.iter().map(|ext| engine_format(ext)).collect(),
+        engine,
+    );
+    EngineRegistration(owner)
+}
+
+#[test]
+fn engine_registry_resolves_by_extension_case_insensitively() {
+    let _short = register_mock(
+        "com.test.resolve",
+        &[".EngResolve"],
+        std::sync::Arc::new(MockEngine::default()),
+    );
+    let _long = register_mock(
+        "com.test.resolve.long",
+        &[".tar.engresolve", ".ZIP", ".tar.gz"],
+        std::sync::Arc::new(MockEngine::default()),
+    );
+
+    let (_, format) =
+        engine_for_path(Path::new(r"C:\data\Backup.ENGRESOLVE")).expect("engine for upper case");
+    assert_eq!(format.extension, ".engresolve");
+    let (_, format) =
+        engine_for_path(Path::new(r"C:\data\backup.Tar.EngResolve")).expect("longest extension");
+    assert_eq!(format.extension, ".tar.engresolve");
+    assert!(engine_for_path(Path::new(r"C:\data\backup.engresolvex")).is_none());
+    // Built-in formats never fall through to an engine.
+    assert!(engine_for_path(Path::new(r"C:\data\backup.zip")).is_none());
+
+    let owners: Vec<_> = registered_formats()
+        .into_iter()
+        .filter(|(owner, _, _)| owner.starts_with("com.test.resolve"))
+        .map(|(owner, format, name)| (owner, format.extension, name))
+        .collect();
+    assert!(
+        owners
+            .iter()
+            .all(|(_, extension, _)| extension != ".zip" && extension != ".tar.gz"),
+        "built-in extensions are never registered: {owners:?}"
+    );
+    assert!(owners.contains(&(
+        "com.test.resolve".to_string(),
+        ".engresolve".to_string(),
+        "mock-engine".to_string()
+    )));
+}
+
+#[test]
+fn engine_list_archive_uses_registered_engine() {
+    let engine = std::sync::Arc::new(MockEngine {
+        entries: vec![
+            EngineEntry {
+                path: "docs/readme.txt".to_string(),
+                is_dir: false,
+                size: 12,
+                compressed_size: 7,
+            },
+            EngineEntry {
+                path: "../evil".to_string(),
+                is_dir: false,
+                size: 1,
+                compressed_size: 1,
+            },
+        ],
+        ..MockEngine::default()
+    });
+    let _registration = register_mock("com.test.list", &[".englist"], engine.clone());
+    let root = unique_temp_dir("engine-list");
+    let archive = root.join("sample.englist");
+    fs::write(&archive, b"fake").expect("write fake archive");
+
+    let info = list_archive(archive.to_string_lossy().into_owned()).expect("list via engine");
+
+    assert_eq!(info.format, "englist");
+    assert_eq!(info.entries.len(), 1);
+    assert_eq!(info.entries[0].path, "docs/readme.txt");
+    assert_eq!(info.entries[0].name, "readme.txt");
+    assert_eq!(info.entries[0].size, 12);
+    assert_eq!(info.entries[0].compressed_size, 7);
+    assert_eq!(info.unsafe_entries, vec!["../evil".to_string()]);
+    assert_eq!(info.total_size, 12);
+    assert_eq!(engine.calls.lock().unwrap().len(), 1);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn engine_extract_and_create_forward_to_engine() {
+    let engine = std::sync::Arc::new(MockEngine::default());
+    let _registration = register_mock("com.test.forward", &[".engfwd"], engine.clone());
+    let root = unique_temp_dir("engine-forward");
+    let archive = root.join("sample.engfwd");
+    fs::write(&archive, b"fake").expect("write fake archive");
+    let destination = root.join("out");
+    let source = root.join("source.txt");
+    fs::write(&source, b"content").expect("write source");
+
+    extract_archive(
+        archive.to_string_lossy().into_owned(),
+        destination.to_string_lossy().into_owned(),
+    )
+    .expect("extract via engine");
+    assert!(destination.is_dir(), "destination is created first");
+
+    let created = root.join("created.engfwd");
+    create_archive(
+        vec![source.to_string_lossy().into_owned()],
+        created.to_string_lossy().into_owned(),
+        "engfwd".to_string(),
+    )
+    .expect("create via engine");
+
+    let calls = engine.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls,
+        vec![
+            format!(
+                "extract {} -> {} (None)",
+                archive.display(),
+                destination.display()
+            ),
+            format!("create {} from 1", created.display()),
+        ]
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn engine_capabilities_include_registered_formats() {
+    let _registration = register_mock(
+        "com.test",
+        &[".engcaps"],
+        std::sync::Arc::new(MockEngine::default()),
+    );
+
+    let capabilities = get_archive_capabilities();
+
+    let format = capabilities
+        .formats
+        .iter()
+        .find(|format| format.extension == ".engcaps")
+        .expect("registered format is listed");
+    assert_eq!(format.format, "engcaps");
+    assert_eq!(format.engine, "plugin:com.test");
+    assert!(format.can_list && format.can_extract && format.can_create);
+    assert!(!format.can_modify);
+    assert!(format.note.is_none());
+    assert!(capabilities
+        .formats
+        .iter()
+        .any(|format| format.extension == ".zip" && format.engine == "built-in"));
+}
+
+#[test]
+fn engine_unregister_removes_formats() {
+    let registration = register_mock(
+        "com.test.unregister",
+        &[".engunreg"],
+        std::sync::Arc::new(MockEngine::default()),
+    );
+    assert!(engine_for_path(Path::new("a.engunreg")).is_some());
+
+    drop(registration);
+
+    assert!(engine_for_path(Path::new("a.engunreg")).is_none());
+    assert!(registered_formats()
+        .iter()
+        .all(|(owner, _, _)| owner != "com.test.unregister"));
+    assert!(!get_archive_capabilities()
+        .formats
+        .iter()
+        .any(|format| format.extension == ".engunreg"));
+}
+
+#[test]
+fn engine_is_archive_path_true_for_registered_extension() {
+    let root = unique_temp_dir("engine-is-archive");
+    let archive = root.join("sample.engisarc");
+    fs::write(&archive, b"fake").expect("write fake archive");
+    let archive_string = archive.to_string_lossy().into_owned();
+    assert!(!is_archive_path(&archive_string));
+
+    let _registration = register_mock(
+        "com.test.is-archive",
+        &[".engisarc"],
+        std::sync::Arc::new(MockEngine::default()),
+    );
+
+    assert!(is_archive_path(&archive_string));
+    let _ = fs::remove_dir_all(root);
+}
