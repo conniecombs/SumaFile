@@ -67,6 +67,12 @@ public static class PluginManifestReader
             var settings = ReadSettings(root, errors);
             var permissions = OptionalStringList(root, "permissions", "permissions", errors) ?? [];
 
+            // The service connects to an archive engine's pipe alongside the host (spec section 6.4), so the
+            // backend must accept a second client. Such plugins are always started at startup; see
+            // PluginManager.StartsAtStartup.
+            if (contributions.ArchiveFormats.Count > 0 && backend is not { AcceptsMultipleClients: true })
+                errors.Add("A plugin that declares contributions.archiveFormats needs a backend with backend.acceptsMultipleClients set to true.");
+
             if (errors.Count > 0)
                 return new ManifestReadResult(null, errors);
 
@@ -216,6 +222,13 @@ public static class PluginManifestReader
                 : null;
             if (type is not null && !SettingTypes.Contains(type, StringComparer.Ordinal))
                 errors.Add($"The {path}.type value '{type}' is not recognised; use boolean, string, integer, enum or path.");
+            // Same grammar host.get_settings, host.set_setting and IPluginSettings enforce, so a declared key can
+            // never reach into another plugin's plugin.<id>.<key> namespace.
+            if (key is not null && !Backend.PluginHostMethods.IsValidSettingKey(key))
+            {
+                errors.Add($"The {path}.key value '{key}' is invalid: use 1 to 64 letters, digits, '_' or '-', starting with a lowercase letter or digit.");
+                key = null;
+            }
             if (key is not null && !seenKeys.Add(key))
                 errors.Add($"The setting key '{key}' is declared more than once in settings.");
             if (type == "enum" && (options is null || options.Count == 0))

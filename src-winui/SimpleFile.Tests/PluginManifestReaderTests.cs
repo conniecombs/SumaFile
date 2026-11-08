@@ -244,4 +244,43 @@ public class PluginManifestReaderTests
         var r = PluginManifestReader.Read(Minimal(extra: MenuWhen("selectionCount >= 1")), "com.example.a");
         Assert.True(r.IsValid);
     }
+
+    [Theory]
+    [InlineData("b.c")]
+    [InlineData("..x")]
+    public void Read_RejectsSettingKeysOutsideTheKeyGrammar(string key)
+    {
+        var extra = ", \"settings\": [ { \"key\": \"" + key + "\", \"type\": \"string\", \"label\": \"A\" } ]";
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(r.Errors, e => e.Contains("settings[0].key") && e.Contains(key));
+    }
+
+    private const string HelloFormat =
+        "\"contributions\": { \"archiveFormats\": [ { \"extension\": \".hello\", \"canList\": true, \"engineName\": \"hello\" } ] }";
+
+    [Fact]
+    public void Read_RejectsArchiveFormatsWithoutBackend()
+    {
+        var r = PluginManifestReader.Read(Minimal(extra: ", " + HelloFormat), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(r.Errors, e => e.Contains("archiveFormats") && e.Contains("acceptsMultipleClients"));
+    }
+
+    [Fact]
+    public void Read_RejectsArchiveFormatsWithSingleClientBackend()
+    {
+        var extra = ", \"backend\": { \"executable\": \"b.exe\", \"acceptsMultipleClients\": false }, " + HelloFormat;
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(r.Errors, e => e.Contains("archiveFormats") && e.Contains("acceptsMultipleClients"));
+    }
+
+    [Fact]
+    public void Read_AcceptsArchiveFormatsWithMultiClientBackend()
+    {
+        var extra = ", \"backend\": { \"executable\": \"b.exe\", \"acceptsMultipleClients\": true }, " + HelloFormat;
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.True(r.IsValid, string.Join("; ", r.Errors));
+    }
 }

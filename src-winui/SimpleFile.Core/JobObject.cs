@@ -38,7 +38,26 @@ public sealed class JobObject : IDisposable
         return job;
     }
 
-    public static JobObject? TryCreate()
+    /// <summary>
+    /// A job whose every descendant dies with it: kill-on-close without breakaway, so a plugin backend's own
+    /// child processes (archivers, git, ssh) cannot silently leave the job and outlive SumaFile.
+    /// </summary>
+    public static JobObject CreateKillOnCloseOnly()
+    {
+        var job = TryCreate(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE);
+        if (job is null)
+        {
+            var error = Marshal.GetLastWin32Error();
+            throw new InvalidOperationException(
+                $"Failed to create a Windows job object for a SumaFile plugin backend (Win32 error {error}).");
+        }
+
+        return job;
+    }
+
+    public static JobObject? TryCreate() => TryCreate(DefaultLimitFlags);
+
+    private static JobObject? TryCreate(uint limitFlags)
     {
         var handle = CreateJobObjectW(IntPtr.Zero, null);
         if (handle == IntPtr.Zero)
@@ -50,7 +69,7 @@ public sealed class JobObject : IDisposable
         {
             BasicLimitInformation = new JOBOBJECT_BASIC_LIMIT_INFORMATION
             {
-                LimitFlags = DefaultLimitFlags,
+                LimitFlags = limitFlags,
             },
         };
 

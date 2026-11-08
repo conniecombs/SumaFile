@@ -34,6 +34,9 @@ public sealed class HelloPlugin : IPlugin, ICommandHandler
         {
             var result = await host.InvokeBackendAsync<JsonElement>("ping", null, ct);
             host.Logger.Info("ping -> " + result.ToString());
+            // The UI smoke cannot rely on plugins.log, so record the round trip next to the command marker.
+            var greeting = result.TryGetProperty("greeting", out var g) && g.ValueKind == JsonValueKind.String ? g.GetString() : "";
+            File.AppendAllText(Path.Combine(HelloMarkers.Directory, "commands.log"), "ping:" + greeting + Environment.NewLine);
         }
     }
 }

@@ -63,14 +63,14 @@ $start.EnvironmentVariables['SIMPLEFILE_SERVICE_PATH'] = $service
 $start.EnvironmentVariables['SIMPLEFILE_APP_DATA_DIR'] = Join-Path $testRoot 'state'
 $start.EnvironmentVariables['SIMPLEFILE_METADATA_DB'] = Join-Path $testRoot 'state\metadata.db'
 if ($PluginsDir) {
-    # Same shape PluginApprovalStore writes (string enums, PascalCase), at a disposable path, so no consent dialog appears.
+    # Same shape PluginApprovalStore writes (string enums, PascalCase, the plugin's full folder path), at a disposable path, so no consent dialog appears.
     $approvals = [ordered]@{}
     foreach ($folder in $pluginFolders) {
         # .NET directly: Get-FileHash is missing when Windows PowerShell inherits a pwsh PSModulePath.
         $sha = [System.Security.Cryptography.SHA256]::Create()
         try { $digest = $sha.ComputeHash([System.IO.File]::ReadAllBytes((Join-Path $folder.FullName 'plugin.json'))) } finally { $sha.Dispose() }
         $hash = ([System.BitConverter]::ToString($digest) -replace '-', '').ToLowerInvariant()
-        $approvals[$folder.Name] = [ordered]@{ ManifestHash = $hash; SignatureStatus = 'Unsigned'; State = 'Enabled'; UpdatedAt = [DateTimeOffset]::UtcNow.ToString('o') }
+        $approvals[$folder.Name] = [ordered]@{ ManifestHash = $hash; SignatureStatus = 'Unsigned'; State = 'Enabled'; UpdatedAt = [DateTimeOffset]::UtcNow.ToString('o'); Folder = $folder.FullName }
     }
     $approvalsPath = Join-Path $testRoot 'state\plugin-approvals.json'
     [System.IO.File]::WriteAllText($approvalsPath, ($approvals | ConvertTo-Json -Depth 4))

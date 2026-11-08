@@ -19,6 +19,7 @@ namespace SimpleFile.Tests;
 public class PluginTrustTests
 {
     private const string Id = "com.example.a";
+    private const string Folder = @"C:\SumaFile\plugins\com.example.a";
 
     private static string NewTemp() =>
         Path.Combine(Path.GetTempPath(), "sumafile-tests", Guid.NewGuid().ToString("N"));
@@ -112,6 +113,57 @@ public class PluginTrustTests
             Assert.Equal(Key, gotKey);
             Assert.Equal(Sig, gotSig);
             Assert.Equal(PluginSignatureVerifier.CanonicalPayload(dir, files), gotPayload);
+        }
+        finally
+        {
+            PluginSignatureVerifier.Ed25519Verify = original;
+            if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
+        }
+    }
+
+    [Theory]
+    [InlineData("ui")]
+    [InlineData("backend")]
+    public void Verify_ValidSignatureNotCoveringDeclaredCode_IsInvalid(string kind)
+    {
+        var tmp = NewTemp();
+        var original = PluginSignatureVerifier.Ed25519Verify;
+        try
+        {
+            var dir = Package(tmp, out var files);
+            File.WriteAllText(Path.Combine(dir, "unlisted.bin"), "swapped code");
+            WriteSignature(dir, files, Sig);
+            PluginSignatureVerifier.Ed25519Verify = (_, _, _) => true;
+            var manifest = Manifest(Convert.ToBase64String(Key));
+            manifest = kind == "ui"
+                ? manifest with { Ui = new PluginUiSpec("unlisted.bin", "T") }
+                : manifest with { Backend = new PluginBackendSpec("unlisted.bin", [], "first-call", true) };
+
+            var state = PluginSignatureVerifier.Verify(dir, manifest);
+
+            Assert.Equal(SignatureStatus.Invalid, state.Status);
+            Assert.Contains("unlisted.bin", state.Error);
+        }
+        finally
+        {
+            PluginSignatureVerifier.Ed25519Verify = original;
+            if (Directory.Exists(tmp)) Directory.Delete(tmp, true);
+        }
+    }
+
+    [Fact]
+    public void Verify_ValidSignatureCoveringDeclaredCode_IsVerified()
+    {
+        var tmp = NewTemp();
+        var original = PluginSignatureVerifier.Ed25519Verify;
+        try
+        {
+            var dir = Package(tmp, out var files);
+            WriteSignature(dir, files, Sig);
+            PluginSignatureVerifier.Ed25519Verify = (_, _, _) => true;
+            var manifest = Manifest(Convert.ToBase64String(Key)) with { Ui = new PluginUiSpec("a.dll", "T") };
+
+            Assert.Equal(SignatureStatus.Verified, PluginSignatureVerifier.Verify(dir, manifest).Status);
         }
         finally
         {
@@ -255,9 +307,9 @@ public class PluginTrustTests
             var path = Path.Combine(tmp, "a.json");
             File.WriteAllText(path, "{ \"" + Id + "\": null }");
             var store = new PluginApprovalStore(path);
-            Assert.Equal(ApprovalState.NeedsConsent, store.Resolve(Id, "h", SignatureStatus.Unsigned));
-            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Enabled);
-            Assert.Equal(ApprovalState.Enabled, store.Resolve(Id, "h", SignatureStatus.Unsigned));
+            Assert.Equal(ApprovalState.NeedsConsent, store.Resolve(Id, "h", SignatureStatus.Unsigned, Folder));
+            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Enabled, Folder);
+            Assert.Equal(ApprovalState.Enabled, store.Resolve(Id, "h", SignatureStatus.Unsigned, Folder));
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
@@ -294,7 +346,7 @@ public class PluginTrustTests
         try
         {
             var store = new PluginApprovalStore(Path.Combine(tmp, "a.json"));
-            Assert.Equal(ApprovalState.NeedsConsent, store.Resolve(Id, "h", SignatureStatus.Unsigned));
+            Assert.Equal(ApprovalState.NeedsConsent, store.Resolve(Id, "h", SignatureStatus.Unsigned, Folder));
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
@@ -306,10 +358,10 @@ public class PluginTrustTests
         try
         {
             var store = new PluginApprovalStore(Path.Combine(tmp, "a.json"));
-            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Enabled);
-            Assert.Equal(ApprovalState.Enabled, store.Resolve(Id, "h", SignatureStatus.Unsigned));
-            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Disabled);
-            Assert.Equal(ApprovalState.Disabled, store.Resolve(Id, "h", SignatureStatus.Unsigned));
+            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Enabled, Folder);
+            Assert.Equal(ApprovalState.Enabled, store.Resolve(Id, "h", SignatureStatus.Unsigned, Folder));
+            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Disabled, Folder);
+            Assert.Equal(ApprovalState.Disabled, store.Resolve(Id, "h", SignatureStatus.Unsigned, Folder));
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
@@ -321,8 +373,8 @@ public class PluginTrustTests
         try
         {
             var store = new PluginApprovalStore(Path.Combine(tmp, "a.json"));
-            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Enabled);
-            Assert.Equal(ApprovalState.NeedsConsent, store.Resolve(Id, "other", SignatureStatus.Unsigned));
+            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Enabled, Folder);
+            Assert.Equal(ApprovalState.NeedsConsent, store.Resolve(Id, "other", SignatureStatus.Unsigned, Folder));
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
@@ -334,8 +386,8 @@ public class PluginTrustTests
         try
         {
             var store = new PluginApprovalStore(Path.Combine(tmp, "a.json"));
-            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Enabled);
-            Assert.Equal(ApprovalState.NeedsConsent, store.Resolve(Id, "h", SignatureStatus.Verified));
+            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Enabled, Folder);
+            Assert.Equal(ApprovalState.NeedsConsent, store.Resolve(Id, "h", SignatureStatus.Verified, Folder));
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
@@ -347,11 +399,11 @@ public class PluginTrustTests
         try
         {
             var path = Path.Combine(tmp, "sub", "a.json");
-            new PluginApprovalStore(path).Set(Id, "h", SignatureStatus.Verified, ApprovalState.Enabled);
+            new PluginApprovalStore(path).Set(Id, "h", SignatureStatus.Verified, ApprovalState.Enabled, Folder);
             var again = new PluginApprovalStore(path);
-            Assert.Equal(ApprovalState.Enabled, again.Resolve(Id, "h", SignatureStatus.Verified));
+            Assert.Equal(ApprovalState.Enabled, again.Resolve(Id, "h", SignatureStatus.Verified, Folder));
             again.Remove(Id);
-            Assert.Equal(ApprovalState.NeedsConsent, new PluginApprovalStore(path).Resolve(Id, "h", SignatureStatus.Verified));
+            Assert.Equal(ApprovalState.NeedsConsent, new PluginApprovalStore(path).Resolve(Id, "h", SignatureStatus.Verified, Folder));
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
@@ -365,7 +417,7 @@ public class PluginTrustTests
             Directory.CreateDirectory(tmp);
             var path = Path.Combine(tmp, "a.json");
             File.WriteAllText(path, "{ not json");
-            Assert.Equal(ApprovalState.NeedsConsent, new PluginApprovalStore(path).Resolve(Id, "h", SignatureStatus.Unsigned));
+            Assert.Equal(ApprovalState.NeedsConsent, new PluginApprovalStore(path).Resolve(Id, "h", SignatureStatus.Unsigned, Folder));
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
@@ -401,8 +453,40 @@ public class PluginTrustTests
         {
             var path = Path.Combine(tmp, "plugin-approvals.json");
             File.WriteAllText(path, "{ \"" + Id + "\": { \"ManifestHash\": \"abc\", \"SignatureStatus\": \"Unsigned\", " +
+                "\"State\": \"Enabled\", \"UpdatedAt\": \"2026-11-07T00:00:00+00:00\", " +
+                "\"Folder\": " + System.Text.Json.JsonSerializer.Serialize(Folder) + " } }");
+            Assert.Equal(ApprovalState.Enabled, new PluginApprovalStore(path).Resolve(Id, "abc", SignatureStatus.Unsigned, Folder));
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
+    [Fact]
+    public void ApprovalStore_RecordForAnotherFolder_NeedsConsent()
+    {
+        var tmp = NewTemp();
+        try
+        {
+            var store = new PluginApprovalStore(Path.Combine(tmp, "a.json"));
+            store.Set(Id, "h", SignatureStatus.Unsigned, ApprovalState.Enabled, Folder);
+
+            Assert.Equal(ApprovalState.Enabled, store.Resolve(Id, "h", SignatureStatus.Unsigned, Folder.ToUpperInvariant() + "\\"));
+            Assert.Equal(ApprovalState.NeedsConsent,
+                store.Resolve(Id, "h", SignatureStatus.Unsigned, @"D:\Elsewhere\plugins\com.example.a"));
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
+    [Fact]
+    public void ApprovalStore_RecordWithoutFolder_NeedsConsent()
+    {
+        var tmp = NewTemp();
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            var path = Path.Combine(tmp, "plugin-approvals.json");
+            File.WriteAllText(path, "{ \"" + Id + "\": { \"ManifestHash\": \"abc\", \"SignatureStatus\": \"Unsigned\", " +
                 "\"State\": \"Enabled\", \"UpdatedAt\": \"2026-11-07T00:00:00+00:00\" } }");
-            Assert.Equal(ApprovalState.Enabled, new PluginApprovalStore(path).Resolve(Id, "abc", SignatureStatus.Unsigned));
+            Assert.Equal(ApprovalState.NeedsConsent, new PluginApprovalStore(path).Resolve(Id, "abc", SignatureStatus.Unsigned, Folder));
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }

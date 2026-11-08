@@ -73,6 +73,15 @@ public static class PluginSignatureVerifier
             catch (FormatException) { return Invalid("signature is not valid base64."); }
             if (sig.Length != 64) return Invalid("signature must be exactly 64 bytes.");
 
+            // "Verified" must speak for the code that runs: the declared UI assembly and backend executable
+            // have to be covered by the signature, or a swapped binary would keep the Verified status.
+            foreach (var code in new[] { manifest.Ui?.Assembly, manifest.Backend?.Executable })
+            {
+                if (string.IsNullOrEmpty(code) || !File.Exists(Path.Combine(folder, code))) continue;
+                if (!files.Keys.Any(k => string.Equals(k, code, StringComparison.OrdinalIgnoreCase)))
+                    return Invalid($"\"{code}\" is declared by the manifest but not listed in signature.json files.");
+            }
+
             var fingerprint = Convert.ToHexString(SHA256.HashData(pub)).ToLowerInvariant()[..16];
 
             // Recompute every listed file's hash before consulting the primitive.

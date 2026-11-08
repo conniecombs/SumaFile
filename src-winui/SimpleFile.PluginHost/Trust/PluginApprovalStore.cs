@@ -9,7 +9,8 @@ public sealed record ApprovalRecord(
     string ManifestHash,
     SignatureStatus SignatureStatus,
     ApprovalState State,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string? Folder = null);
 
 /// <summary>Remembers which plugins the user enabled; re-prompts when a plugin's manifest or signature status changes.</summary>
 public sealed class PluginApprovalStore
@@ -34,22 +35,28 @@ public sealed class PluginApprovalStore
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "SumaFile", "plugin-approvals.json");
 
-    public ApprovalState Resolve(string pluginId, string manifestHash, SignatureStatus signature)
+    /// <summary>
+    /// The stored decision for this plugin, or NeedsConsent when its manifest, signature status or folder
+    /// changed since. The folder check stops a copy elsewhere (say, in another plugin root) from inheriting
+    /// the approval of the one the user consented to.
+    /// </summary>
+    public ApprovalState Resolve(string pluginId, string manifestHash, SignatureStatus signature, string folder)
     {
         lock (_gate)
         {
             if (!Load().TryGetValue(pluginId, out var rec)) return ApprovalState.NeedsConsent;
             if (rec.ManifestHash != manifestHash || rec.SignatureStatus != signature) return ApprovalState.NeedsConsent;
+            if (!SameFolder(rec.Folder, folder)) return ApprovalState.NeedsConsent;
             return rec.State;
         }
     }
 
-    public void Set(string pluginId, string manifestHash, SignatureStatus signature, ApprovalState state)
+    public void Set(string pluginId, string manifestHash, SignatureStatus signature, ApprovalState state, string folder)
     {
         lock (_gate)
         {
             var all = Load();
-            all[pluginId] = new ApprovalRecord(manifestHash, signature, state, DateTimeOffset.UtcNow);
+            all[pluginId] = new ApprovalRecord(manifestHash, signature, state, DateTimeOffset.UtcNow, NormalizeFolder(folder));
             Save(all);
         }
     }
@@ -62,6 +69,13 @@ public sealed class PluginApprovalStore
             if (all.Remove(pluginId)) Save(all);
         }
     }
+
+    private static bool SameFolder(string? stored, string folder) =>
+        !string.IsNullOrWhiteSpace(stored)
+        && string.Equals(NormalizeFolder(stored), NormalizeFolder(folder), StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeFolder(string folder) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
 
     private Dictionary<string, ApprovalRecord> Load()
     {

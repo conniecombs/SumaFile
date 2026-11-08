@@ -20,6 +20,9 @@ public sealed class PluginManagerOptions
     public required Func<string, IPluginDialogs> DialogsFor { get; init; }
     public required IPluginWorkspace Workspace { get; init; }
     public required Action<string, string> Log { get; init; }
+
+    /// <summary>Registers plugin archive engines with the file service; null skips registration (tests, tools).</summary>
+    public IArchiveEngineRegistrar? ArchiveEngines { get; init; }
 }
 
 /// <summary>
@@ -27,7 +30,7 @@ public sealed class PluginManagerOptions
 /// starts its backend lazily or at startup, and tracks faults. <see cref="Changed"/> is raised on the
 /// thread that caused the change.
 /// </summary>
-public sealed class PluginManager : IAsyncDisposable
+public sealed partial class PluginManager : IAsyncDisposable
 {
     private const string HostCommandPrefix = "plugin:";
 
@@ -92,7 +95,9 @@ public sealed class PluginManager : IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            var fresh = PluginDiscovery.Scan(_options.Roots).Select(Evaluate).ToList();
+            // Off the UI thread: Evaluate hashes the manifest and every file signature.json lists.
+            var fresh = await Task.Run(() => PluginDiscovery.Scan(_options.Roots).Select(Evaluate).ToList(), ct)
+                .ConfigureAwait(false);
 
             List<PluginRecord> dropped;
             lock (_gate)
@@ -171,7 +176,7 @@ public sealed class PluginManager : IAsyncDisposable
         }
 
         var signature = PluginSignatureVerifier.Verify(plugin.Folder, plugin.Manifest!);
-        var state = _approvals.Resolve(plugin.Id, hash, signature.Status) switch
+        var state = _approvals.Resolve(plugin.Id, hash, signature.Status, plugin.Folder) switch
         {
             ApprovalState.Enabled => PluginState.Enabled,
             ApprovalState.Disabled => PluginState.Disabled,
@@ -189,7 +194,7 @@ public sealed class PluginManager : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             record = Approvable(id);
-            _approvals.Set(id, record.ManifestHash!, record.Signature.Status, ApprovalState.Enabled);
+            _approvals.Set(id, record.ManifestHash!, record.Signature.Status, ApprovalState.Enabled, record.Discovered.Folder);
             lock (_gate)
             {
                 // LoadFailed and Faulted are already approved; they stay as they are until the next rescan.
@@ -228,7 +233,7 @@ public sealed class PluginManager : IAsyncDisposable
             }
 
             await TeardownAsync(record).ConfigureAwait(false);
-            _approvals.Set(id, record.ManifestHash!, record.Signature.Status, ApprovalState.Disabled);
+            _approvals.Set(id, record.ManifestHash!, record.Signature.Status, ApprovalState.Disabled, record.Discovered.Folder);
         }
         finally
         {
@@ -246,6 +251,7 @@ public sealed class PluginManager : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             PluginBackendConnection? previous;
+            bool unregisterEngines;
             lock (_gate)
             {
                 var record = Live(id) ?? throw new InvalidOperationException($"Plugin '{id}' is not installed.");
@@ -263,11 +269,13 @@ public sealed class PluginManager : IAsyncDisposable
                 previous = runtime.Connection;
                 runtime.Connection = null;
                 runtime.NewGeneration();
+                unregisterEngines = TakeArchiveRegistrationLocked(runtime);
                 record.BackendRunning = false;
                 record.State = PluginState.Enabled;
                 record.Error = null;
             }
 
+            if (unregisterEngines) await UnregisterArchiveEnginesAsync(id).ConfigureAwait(false);
             if (previous is not null) await previous.DisposeAsync().ConfigureAwait(false);
         }
         finally
@@ -345,15 +353,17 @@ public sealed class PluginManager : IAsyncDisposable
     private async Task MarkLoadFailedAsync(PluginRecord record, PluginRuntime runtime, Exception ex)
     {
         PluginBackendConnection? connection = null;
+        bool unregisterEngines;
         lock (_gate)
         {
             if (!ReferenceEquals(record.Runtime, runtime)) return;
             record.State = PluginState.LoadFailed;
             record.Error = ex.Message;
-            connection = StopBackendLocked(record);
+            connection = StopBackendLocked(record, out unregisterEngines);
         }
 
         _options.Log(record.Id, $"[error] {ex.Message}");
+        if (unregisterEngines) await UnregisterArchiveEnginesAsync(record.Id).ConfigureAwait(false);
         if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
         RaiseChanged();
     }
@@ -392,191 +402,6 @@ public sealed class PluginManager : IAsyncDisposable
         {
             _ops.Release();
         }
-    }
-
-    // ---- backend lifecycle ----
-
-    /// <summary>
-    /// Kicks off an <c>activateOn: startup</c> backend without waiting. The start is the services
-    /// generation's cached start, so a later <c>InvokeBackendAsync</c> awaits the same one; its outcome
-    /// lands on the record (<see cref="PluginRecord.BackendRunning"/> or <see cref="PluginRecord.Error"/>).
-    /// </summary>
-    private void StartInBackground(PluginRecord record)
-    {
-        PluginRuntime runtime;
-        lock (_gate)
-        {
-            if (_disposed || record.State != PluginState.Enabled) return;
-            runtime = RuntimeFor(record);
-        }
-
-        _ = Observe(runtime.EnsureBackendAsync(CancellationToken.None));
-
-        static async Task Observe(Task task)
-        {
-            try { await task.ConfigureAwait(false); } catch { }
-        }
-    }
-
-    /// <summary>Remembers an in-flight start until it settles so <see cref="DisposeAsync"/> can wait for it.</summary>
-    private Task<PluginBackendConnection> TrackStart(Task<PluginBackendConnection> start)
-    {
-        // Called by PluginHostServices under its own lock, so this uses a leaf lock, never _gate.
-        lock (_inflightStarts)
-        {
-            _inflightStarts.Add(start);
-        }
-
-        start.ContinueWith(
-            t => { lock (_inflightStarts) _inflightStarts.Remove(t); },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-        return start;
-    }
-
-    /// <summary>The backend factory of one services generation; see <see cref="PluginRuntime"/>.</summary>
-    private async Task<PluginBackendConnection> StartBackendAsync(
-        PluginRecord record,
-        PluginRuntime runtime,
-        PluginHostServices services,
-        Action<PluginBackendConnection> configure,
-        CancellationToken ct)
-    {
-        // PluginHostServices runs this factory under its own lock. Leave it before touching any
-        // manager or runtime state, so the lock order is always manager -> runtime -> services.
-        await Task.Yield();
-
-        lock (_gate)
-        {
-            if (!IsLiveGeneration(record, runtime, services))
-            {
-                throw new PluginBackendException($"The backend of plugin '{record.Id}' is not available.");
-            }
-        }
-
-        var lostDuringStart = false;
-        PluginBackendConnection connection;
-        try
-        {
-            connection = await _backendHost.StartAsync(record.Discovered, ct, c =>
-            {
-                PluginHostMethods.Register(c, record.Id, _options.Settings, _options.Progress, _options.Notifier, _options.Log);
-                c.Lost += (_, ex) =>
-                {
-                    lock (_gate)
-                    {
-                        if (!ReferenceEquals(runtime.Connection, c))
-                        {
-                            lostDuringStart = true;
-                            return;
-                        }
-                    }
-
-                    OnBackendLost(record, runtime, c, ex);
-                };
-                configure(c);
-            }).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            OnBackendStartFailed(record, runtime, services, ex);
-            throw;
-        }
-
-        bool accepted;
-        lock (_gate)
-        {
-            accepted = !lostDuringStart && IsLiveGeneration(record, runtime, services);
-            if (accepted)
-            {
-                runtime.Connection = connection;
-                record.BackendRunning = true;
-                record.Error = record.Signature.Error;
-            }
-        }
-
-        if (!accepted)
-        {
-            await connection.DisposeAsync().ConfigureAwait(false);
-            var error = new PluginBackendException(lostDuringStart
-                ? $"Backend of plugin '{record.Id}' exited during startup."
-                : $"The backend of plugin '{record.Id}' was stopped while starting.");
-            if (lostDuringStart) OnBackendStartFailed(record, runtime, services, error);
-            throw error;
-        }
-
-        RaiseChanged();
-        return connection;
-    }
-
-    private void OnBackendStartFailed(PluginRecord record, PluginRuntime runtime, PluginHostServices services, Exception ex)
-    {
-        lock (_gate)
-        {
-            if (!ReferenceEquals(record.Runtime, runtime) || !runtime.IsCurrent(services)) return;
-
-            // Fresh services so the next call retries instead of replaying the cached failure.
-            runtime.NewGeneration();
-            record.Error = ex.Message;
-            if (runtime.RecordFailure() && record.State == PluginState.Enabled)
-            {
-                record.State = PluginState.Faulted;
-            }
-        }
-
-        _options.Log(record.Id, $"[error] Backend start failed: {ex.Message}");
-        RaiseChanged();
-    }
-
-    private void OnBackendLost(PluginRecord record, PluginRuntime runtime, PluginBackendConnection connection, Exception? ex)
-    {
-        lock (_gate)
-        {
-            if (!ReferenceEquals(runtime.Connection, connection)) return;
-            runtime.Connection = null;
-            runtime.NewGeneration();
-            record.BackendRunning = false;
-            if (record.State == PluginState.Enabled) record.State = PluginState.Faulted;
-            record.Error = ex is null
-                ? "The plugin backend stopped unexpectedly."
-                : $"The plugin backend stopped unexpectedly: {ex.Message}";
-        }
-
-        _options.Log(record.Id, $"[error] {record.Error}");
-        // Off this thread: Lost may be raised from the connection's own read loop.
-        _ = Task.Run(async () =>
-        {
-            try { await connection.DisposeAsync().ConfigureAwait(false); } catch { }
-        });
-        RaiseChanged();
-    }
-
-    /// <summary>Stops the backend, retires the runtime and deactivates the instance; the record keeps its state.</summary>
-    private async Task TeardownAsync(PluginRecord record)
-    {
-        PluginRuntime? runtime;
-        PluginBackendConnection? connection;
-        lock (_gate)
-        {
-            runtime = record.Runtime;
-            connection = StopBackendLocked(record);
-            record.Runtime = null;
-        }
-
-        if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
-        if (runtime is not null) await runtime.RetireAsync().ConfigureAwait(false);
-    }
-
-    private PluginBackendConnection? StopBackendLocked(PluginRecord record)
-    {
-        record.BackendRunning = false;
-        if (record.Runtime is not { } runtime) return null;
-
-        var connection = runtime.Connection;
-        runtime.Connection = null;
-        runtime.NewGeneration();
-        return connection;
     }
 
     // ---- helpers (call under _gate unless noted) ----
@@ -626,8 +451,13 @@ public sealed class PluginManager : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// <c>activateOn: startup</c>, and every plugin that declares <c>archiveFormats</c> whatever its
+    /// <c>activateOn</c>: the file service can only reach an archive engine whose backend is already running.
+    /// </summary>
     private static bool StartsAtStartup(PluginRecord record) =>
-        string.Equals(record.Discovered.Manifest?.Backend?.ActivateOn, "startup", StringComparison.Ordinal);
+        string.Equals(record.Discovered.Manifest?.Backend?.ActivateOn, "startup", StringComparison.Ordinal)
+        || DeclaresArchiveFormats(record);
 
     private void RaiseChanged()
     {

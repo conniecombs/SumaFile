@@ -98,7 +98,7 @@ public sealed class PluginBackendHost
 
             // Built before the handshake so host.* handlers registered by `configure` are in place
             // before the backend can send its first request.
-            var connection = new PluginBackendConnection(client, process);
+            var connection = new PluginBackendConnection(client, process) { PipeName = pipeName };
             configure?.Invoke(connection);
 
             PluginHandshakeResult handshake;

@@ -42,7 +42,7 @@ public sealed class ProcessLauncher : IPluginProcessLauncher
         }
 
         // Created first: a backend that cannot be tied to a job must not start.
-        var job = JobObject.Create();
+        var job = CreateJob();
         Process? process = null;
         try
         {
@@ -75,6 +75,12 @@ public sealed class ProcessLauncher : IPluginProcessLauncher
             throw;
         }
     }
+
+    /// <summary>
+    /// Kill-on-close only. Unlike the service's job, no breakaway: a backend's children stay in the job and
+    /// die with it, even when SumaFile crashes and never runs <see cref="IPluginProcess.Dispose"/>.
+    /// </summary>
+    internal static JobObject CreateJob() => JobObject.CreateKillOnCloseOnly();
 
     private sealed class SystemPluginProcess : IPluginProcess
     {

@@ -48,9 +48,12 @@ public class PluginManagerTests : IAsyncLifetime
         try { Directory.Delete(_temp, true); } catch { }
     }
 
-    private PluginManager Manager(IPluginProcessLauncher? launcher = null)
+    private string _pipe = "";
+
+    private PluginManager Manager(IPluginProcessLauncher? launcher = null, IArchiveEngineRegistrar? archiveEngines = null)
     {
         var pipe = "SumaFile.Plugin.Test." + Guid.NewGuid().ToString("N");
+        _pipe = pipe;
         var manager = new PluginManager(new PluginManagerOptions
         {
             Roots = [Root],
@@ -64,6 +67,7 @@ public class PluginManagerTests : IAsyncLifetime
             DialogsFor = _ => null!,
             Workspace = null!,
             Log = (_, _) => { },
+            ArchiveEngines = archiveEngines,
         });
         _managers.Add(manager);
         return manager;
@@ -102,7 +106,28 @@ public class PluginManagerTests : IAsyncLifetime
     }
 
     private void Approve(string id, string folder, ApprovalState state = ApprovalState.Enabled) =>
-        new PluginApprovalStore(StorePath).Set(id, PluginPackageHash.ComputeManifestHash(folder), SignatureStatus.Unsigned, state);
+        new PluginApprovalStore(StorePath).Set(id, PluginPackageHash.ComputeManifestHash(folder), SignatureStatus.Unsigned, state, folder);
+
+    /// <summary>A backend plugin with one archive format; first-call on purpose, since archive engines always start at startup.</summary>
+    private string WriteArchivePlugin()
+    {
+        var folder = Path.Combine(Root, BackendId);
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "plugin.json"), $$"""
+            {
+              "id": "{{BackendId}}",
+              "name": "Backend",
+              "version": "1.0.0",
+              "publisher": { "name": "P" },
+              "sdkVersion": "1.0.0",
+              "backend": { "executable": "backend.exe", "args": [], "activateOn": "first-call", "acceptsMultipleClients": true },
+              "contributions": {
+                "archiveFormats": [ { "extension": ".bk", "canList": true, "canExtract": true, "canCreate": false, "canModify": false, "engineName": "bk" } ]
+              }
+            }
+            """);
+        return folder;
+    }
 
     private static PluginRecord Record(PluginManager manager, string id) => manager.Plugins.Single(p => p.Id == id);
 
@@ -149,7 +174,7 @@ public class PluginManagerTests : IAsyncLifetime
         Assert.Equal([HelloFixture.Id], manager.EnabledPlugins.Select(p => p.Id));
         Assert.True(changed > 0);
         var stored = new PluginApprovalStore(StorePath)
-            .Resolve(HelloFixture.Id, PluginPackageHash.ComputeManifestHash(folder), SignatureStatus.Unsigned);
+            .Resolve(HelloFixture.Id, PluginPackageHash.ComputeManifestHash(folder), SignatureStatus.Unsigned, folder);
         Assert.Equal(ApprovalState.Enabled, stored);
     }
 
@@ -307,7 +332,7 @@ public class PluginManagerTests : IAsyncLifetime
         Assert.False(record.BackendRunning);
         Assert.Empty(manager.EnabledPlugins);
         var stored = new PluginApprovalStore(StorePath)
-            .Resolve(BackendId, PluginPackageHash.ComputeManifestHash(folder), SignatureStatus.Unsigned);
+            .Resolve(BackendId, PluginPackageHash.ComputeManifestHash(folder), SignatureStatus.Unsigned, folder);
         Assert.Equal(ApprovalState.Disabled, stored);
 
         var fresh = Manager();
@@ -422,6 +447,121 @@ public class PluginManagerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Disable_PluginWhoseDeactivateNeverCompletes_FaultsAndFinishes()
+    {
+        var folder = HelloFixture.CopyTo(Root);
+        Approve(HelloFixture.Id, folder);
+        var manager = Manager();
+        await manager.DiscoverAsync(CancellationToken.None);
+        var plugin = new HangingDeactivatePlugin();
+        manager.InstanceFactory = _ => plugin;
+        await manager.RunCommandAsync(
+            PluginManager.HostCommandId(HelloFixture.Id, "greet"), Context("greet"), CancellationToken.None);
+
+        await manager.DisableAsync(HelloFixture.Id, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(plugin.DeactivateEntered);
+        var record = Record(manager, HelloFixture.Id);
+        Assert.Equal(PluginState.Faulted, record.State);
+        Assert.Equal("plugin did not deactivate in time", record.Error);
+        // The manager is not wedged: later operations still run.
+        await manager.RescanAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ArchivePlugin_RegistersAfterHandshake_AtStartupEvenWhenFirstCall()
+    {
+        var folder = WriteArchivePlugin();
+        Approve(BackendId, folder);
+        var launcher = HandshakingLauncher();
+        var registrar = new RecordingRegistrar();
+        var manager = Manager(launcher, registrar);
+
+        await manager.DiscoverAsync(CancellationToken.None);
+
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning);
+        var registration = Assert.Single(registrar.Registered);
+        Assert.Equal(BackendId, registration.PluginId);
+        Assert.Equal(_pipe, registration.PipeName);
+        var format = Assert.Single(registration.Formats);
+        Assert.Equal((".bk", true, true, false, false, "bk"),
+            (format.Extension, format.CanList, format.CanExtract, format.CanCreate, format.CanModify, format.EngineName));
+        Assert.Empty(registrar.Unregistered);
+        Assert.Equal(PluginState.Enabled, Record(manager, BackendId).State);
+    }
+
+    [Fact]
+    public async Task ArchivePlugin_Lost_Unregisters()
+    {
+        var folder = WriteArchivePlugin();
+        Approve(BackendId, folder);
+        var launcher = HandshakingLauncher();
+        var registrar = new RecordingRegistrar();
+        var manager = Manager(launcher, registrar);
+        await manager.DiscoverAsync(CancellationToken.None);
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning);
+
+        launcher.Process!.SimulateExit();
+
+        await WaitUntil(() => registrar.Unregistered.Contains(BackendId));
+        Assert.Equal(PluginState.Faulted, Record(manager, BackendId).State);
+        Assert.Single(registrar.Unregistered);
+    }
+
+    [Fact]
+    public async Task ArchivePlugin_Disable_Unregisters()
+    {
+        var folder = WriteArchivePlugin();
+        Approve(BackendId, folder);
+        var launcher = HandshakingLauncher();
+        var registrar = new RecordingRegistrar();
+        var manager = Manager(launcher, registrar);
+        await manager.DiscoverAsync(CancellationToken.None);
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning);
+
+        await manager.DisableAsync(BackendId, CancellationToken.None);
+
+        Assert.Equal([BackendId], registrar.Unregistered);
+        Assert.True(launcher.Process!.Killed);
+    }
+
+    [Fact]
+    public async Task ArchivePlugin_Dispose_Unregisters()
+    {
+        var folder = WriteArchivePlugin();
+        Approve(BackendId, folder);
+        var launcher = HandshakingLauncher();
+        var registrar = new RecordingRegistrar();
+        var manager = Manager(launcher, registrar);
+        await manager.DiscoverAsync(CancellationToken.None);
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning);
+
+        await manager.DisposeAsync();
+
+        Assert.Equal([BackendId], registrar.Unregistered);
+        Assert.True(launcher.Process!.Killed);
+    }
+
+    [Fact]
+    public async Task ArchivePlugin_RegistrationFails_SetsFaultedAndStopsBackend()
+    {
+        var folder = WriteArchivePlugin();
+        Approve(BackendId, folder);
+        var launcher = HandshakingLauncher();
+        var registrar = new RecordingRegistrar { Failure = new InvalidOperationException("service refused") };
+        var manager = Manager(launcher, registrar);
+
+        await manager.DiscoverAsync(CancellationToken.None);
+
+        await WaitUntil(() => Record(manager, BackendId).State == PluginState.Faulted);
+        var record = Record(manager, BackendId);
+        Assert.Contains("service refused", record.Error);
+        Assert.False(record.BackendRunning);
+        await WaitUntil(() => launcher.Process!.Killed);
+        Assert.Empty(registrar.Unregistered);
+    }
+
+    [Fact]
     public void HostCommandId_RoundTrips()
     {
         var id = PluginManager.HostCommandId("com.example.a", "do-thing");
@@ -467,6 +607,59 @@ public class PluginManagerTests : IAsyncLifetime
             Interlocked.Increment(ref _executions);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class RecordingRegistrar : IArchiveEngineRegistrar
+    {
+        private readonly object _lock = new();
+        private readonly List<(string PluginId, string PipeName, IReadOnlyList<SimpleFile.PluginHost.Manifest.PluginArchiveFormatSpec> Formats)> _registered = [];
+        private readonly List<string> _unregistered = [];
+
+        public Exception? Failure { get; init; }
+
+        public IReadOnlyList<(string PluginId, string PipeName, IReadOnlyList<SimpleFile.PluginHost.Manifest.PluginArchiveFormatSpec> Formats)> Registered
+        {
+            get { lock (_lock) return _registered.ToList(); }
+        }
+
+        public IReadOnlyList<string> Unregistered
+        {
+            get { lock (_lock) return _unregistered.ToList(); }
+        }
+
+        public Task RegisterAsync(
+            string pluginId,
+            string pipeName,
+            IReadOnlyList<SimpleFile.PluginHost.Manifest.PluginArchiveFormatSpec> formats,
+            CancellationToken ct)
+        {
+            if (Failure is not null) return Task.FromException(Failure);
+            lock (_lock) _registered.Add((pluginId, pipeName, formats));
+            return Task.CompletedTask;
+        }
+
+        public Task UnregisterAsync(string pluginId, CancellationToken ct)
+        {
+            lock (_lock) _unregistered.Add(pluginId);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HangingDeactivatePlugin : IPlugin, ICommandHandler
+    {
+        private volatile bool _deactivateEntered;
+
+        public bool DeactivateEntered => _deactivateEntered;
+
+        public Task ActivateAsync(IPluginHost host, CancellationToken ct) => Task.CompletedTask;
+
+        public Task DeactivateAsync()
+        {
+            _deactivateEntered = true;
+            return new TaskCompletionSource().Task;
+        }
+
+        public Task ExecuteAsync(PluginCommandContext context, CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class SubscribingPlugin : IPlugin, ICommandHandler

@@ -56,6 +56,9 @@ public sealed partial class MainWindow
                 () => PickFolderAsync(null)),
             Workspace = _pluginWorkspace,
             Log = AppendPluginLog,
+            // The current client, so a reconnected service is used; engines registered before a service
+            // restart are not replayed (the backend has to be restarted).
+            ArchiveEngines = new ArchiveEngineRegistrar(() => _backend?.Client),
         });
         _plugins = manager;
         manager.Changed += OnPluginsChanged;

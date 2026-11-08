@@ -20,6 +20,9 @@ public sealed class PluginBackendConnection : IAsyncDisposable
     /// <summary>Set by the host once the handshake completes; null-forgiving until then (callers only see started connections).</summary>
     public PluginHandshakeResult Handshake { get; internal set; } = null!;
 
+    /// <summary>The bare pipe name the backend serves on; the file service connects to it for archive engines.</summary>
+    public string PipeName { get; internal set; } = "";
+
     public event EventHandler<Exception?>? Lost;
 
     public Task<T> InvokeAsync<T>(string method, object? args, CancellationToken ct) =>

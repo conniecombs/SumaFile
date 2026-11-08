@@ -62,6 +62,14 @@ internal sealed class PluginRuntime : IPluginHost
 
     public bool IsActivated => Volatile.Read(ref _instance) is not null;
 
+    /// <summary>True once the file service has this runtime's archive engines; guarded by the manager's lock.</summary>
+    public bool ArchiveEnginesRegistered { get; set; }
+
+    /// <summary>How long <see cref="RetireAsync"/> waits for a running activation, and then for DeactivateAsync.</summary>
+    private static readonly TimeSpan RetireTimeout = TimeSpan.FromSeconds(5);
+
+    public const string DeactivateTimeoutMessage = "plugin did not deactivate in time";
+
     private PluginHostServices Current
     {
         get { lock (_gate) return _services; }
@@ -159,23 +167,42 @@ internal sealed class PluginRuntime : IPluginHost
     }
 
     /// <summary>Retires the runtime for good and deactivates the instance if one was activated.</summary>
-    public async Task RetireAsync()
+    /// <returns>
+    /// False when a running ActivateAsync or the DeactivateAsync call did not finish within
+    /// <see cref="RetireTimeout"/>. The instance is then abandoned, so plugin code can never wedge the
+    /// manager operation (disable, rescan, dispose) that retires it.
+    /// </returns>
+    public async Task<bool> RetireAsync()
     {
-        await _activation.WaitAsync().ConfigureAwait(false);
+        // Set first: an activation that finishes late sees it and its command is refused.
+        Volatile.Write(ref _retired, true);
+        if (!await _activation.WaitAsync(RetireTimeout).ConfigureAwait(false))
+        {
+            _log(PluginId, $"[error] ActivateAsync did not finish within {RetireTimeout.TotalSeconds:0} s; abandoning the instance.");
+            Interlocked.Exchange(ref _instance, null);
+            return false;
+        }
+
         try
         {
-            Volatile.Write(ref _retired, true);
             var instance = Interlocked.Exchange(ref _instance, null);
-            if (instance is null) return;
+            if (instance is null) return true;
 
             try
             {
-                await instance.DeactivateAsync().ConfigureAwait(false);
+                await instance.DeactivateAsync().WaitAsync(RetireTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                _log(PluginId, $"[error] DeactivateAsync did not finish within {RetireTimeout.TotalSeconds:0} s; abandoning the instance.");
+                return false;
             }
             catch (Exception ex)
             {
                 _log(PluginId, $"[error] DeactivateAsync failed: {ex}");
             }
+
+            return true;
         }
         finally
         {

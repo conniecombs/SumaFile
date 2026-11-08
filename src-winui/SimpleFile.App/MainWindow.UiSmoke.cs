@@ -245,7 +245,44 @@ public sealed partial class MainWindow
             await SmokeWaitAsync(
                 () => File.Exists(commandsLog) && File.ReadAllLines(commandsLog).Contains(greetCommand),
                 "plugin command marker");
-            results.Add(new { scenario = "plugins", mode, plugins = manager.Plugins.Count, command = greetCommand, passed = true });
+
+            // The fixture declares .hello, so its backend starts at startup and is registered as an archive engine.
+            var running = Stopwatch.StartNew();
+            while (!(manager.Plugins.FirstOrDefault(record => record.Id == helloId) is { BackendRunning: true }))
+            {
+                var current = manager.Plugins.FirstOrDefault(record => record.Id == helloId);
+                SmokeAssert(running.Elapsed < TimeSpan.FromSeconds(15),
+                    $"Plugin {helloId} backend did not start within 15 s ({current?.State}: {current?.Error})");
+                await Task.Delay(50);
+            }
+
+            var fileOps = _workspace?.FileOps ?? throw new InvalidOperationException("File operations are not available");
+            var capabilities = await fileOps.GetArchiveCapabilitiesAsync();
+            var helloFormat = capabilities.Formats.FirstOrDefault(format =>
+                string.Equals(format.Extension, ".hello", StringComparison.OrdinalIgnoreCase));
+            SmokeAssert(helloFormat is not null, "Archive capabilities do not list .hello: "
+                + string.Join(", ", capabilities.Formats.Select(format => format.Extension)));
+
+            // Host to real Rust backend: the fixture logs ping:<greeting> once the backend answered.
+            const string pingCommand = "plugin:" + helloId + ":backend-ping";
+            await RunAppCommandAsync(pingCommand);
+            string? pingLine = null;
+            await SmokeWaitAsync(
+                () => File.Exists(commandsLog)
+                    && (pingLine = File.ReadAllLines(commandsLog).FirstOrDefault(line => line.StartsWith("ping:", StringComparison.Ordinal))) is not null,
+                "plugin backend-ping marker");
+            SmokeAssert(pingLine!.Length > "ping:".Length, $"backend-ping returned no greeting: {pingLine}");
+            results.Add(new
+            {
+                scenario = "plugins",
+                mode,
+                plugins = manager.Plugins.Count,
+                command = greetCommand,
+                archiveFormat = helloFormat!.Extension,
+                archiveEngine = helloFormat.Engine,
+                backendPing = pingLine,
+                passed = true,
+            });
         }
         else if (mode == "none")
         {
