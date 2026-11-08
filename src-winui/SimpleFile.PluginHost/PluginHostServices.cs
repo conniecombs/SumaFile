@@ -47,6 +47,9 @@ public sealed class PluginHostServices : IPluginHost
         }
     }
 
+    /// <summary>Starts the backend without calling a method; used by the manager for <c>activateOn: startup</c> and restarts.</summary>
+    internal Task EnsureBackendAsync(CancellationToken ct) => GetBackend().WaitAsync(ct);
+
     public async Task<T> InvokeBackendAsync<T>(string method, object? args, CancellationToken ct)
     {
         var connection = await GetBackend().WaitAsync(ct).ConfigureAwait(false);

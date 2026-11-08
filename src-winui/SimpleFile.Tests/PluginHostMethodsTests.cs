@@ -304,62 +304,62 @@ public class PluginHostMethodsTests : IAsyncLifetime
     private PluginHostServices NewServices(
         Func<Action<PluginBackendConnection>, CancellationToken, Task<PluginBackendConnection>> backend) =>
         new(PluginId, backend, _settings, _sink, null!, null!, (_, _) => { });
+}
 
-    private sealed class FakeSettings : ISettingsBackend
+internal sealed class FakeSettings : ISettingsBackend
+{
+    public Dictionary<string, string?> Values { get; } = [];
+    public Dictionary<string, string> Written { get; } = [];
+    public List<string> Requested { get; } = [];
+
+    public Task<string?> GetSettingAsync(string key, CancellationToken ct = default) =>
+        Task.FromResult(Values.GetValueOrDefault(key));
+
+    public Task<IReadOnlyDictionary<string, string?>> GetSettingsAsync(
+        IReadOnlyList<string> keys, CancellationToken ct = default)
     {
-        public Dictionary<string, string?> Values { get; } = [];
-        public Dictionary<string, string> Written { get; } = [];
-        public List<string> Requested { get; } = [];
-
-        public Task<string?> GetSettingAsync(string key, CancellationToken ct = default) =>
-            Task.FromResult(Values.GetValueOrDefault(key));
-
-        public Task<IReadOnlyDictionary<string, string?>> GetSettingsAsync(
-            IReadOnlyList<string> keys, CancellationToken ct = default)
-        {
-            Requested.AddRange(keys);
-            IReadOnlyDictionary<string, string?> result = keys
-                .Where(Values.ContainsKey)
-                .ToDictionary(k => k, k => Values[k]);
-            return Task.FromResult(result);
-        }
-
-        public Task SetSettingAsync(string key, string value, CancellationToken ct = default)
-        {
-            Written[key] = value;
-            return Task.CompletedTask;
-        }
+        Requested.AddRange(keys);
+        IReadOnlyDictionary<string, string?> result = keys
+            .Where(Values.ContainsKey)
+            .ToDictionary(k => k, k => Values[k]);
+        return Task.FromResult(result);
     }
 
-    private sealed class RecordingSink : IPluginProgressSink
+    public Task SetSettingAsync(string key, string value, CancellationToken ct = default)
     {
-        private Action? _cancel;
-        private int _next;
+        Written[key] = value;
+        return Task.CompletedTask;
+    }
+}
 
-        public List<string> Events { get; } = [];
+internal sealed class RecordingSink : IPluginProgressSink
+{
+    private Action? _cancel;
+    private int _next;
 
-        public string Begin(string pluginId, string title, Action cancel)
-        {
-            _cancel = cancel;
-            Events.Add($"begin:{pluginId}:{title}");
-            return $"op-{++_next}";
-        }
+    public List<string> Events { get; } = [];
 
-        public void Report(string operationId, long current, long total, string? detail) =>
-            Events.Add($"report:{operationId}:{current}:{total}:{detail}");
-
-        public void Complete(string operationId) => Events.Add($"complete:{operationId}");
-
-        public void Fail(string operationId, string message) => Events.Add($"fail:{operationId}:{message}");
-
-        public void CancelLast() => _cancel!();
+    public string Begin(string pluginId, string title, Action cancel)
+    {
+        _cancel = cancel;
+        Events.Add($"begin:{pluginId}:{title}");
+        return $"op-{++_next}";
     }
 
-    private sealed class RecordingNotifier : IPluginNotifier
-    {
-        public List<string> Events { get; } = [];
+    public void Report(string operationId, long current, long total, string? detail) =>
+        Events.Add($"report:{operationId}:{current}:{total}:{detail}");
 
-        public void Notify(string pluginId, string message, bool isError) =>
-            Events.Add($"{pluginId}:{message}:{isError}");
-    }
+    public void Complete(string operationId) => Events.Add($"complete:{operationId}");
+
+    public void Fail(string operationId, string message) => Events.Add($"fail:{operationId}:{message}");
+
+    public void CancelLast() => _cancel!();
+}
+
+internal sealed class RecordingNotifier : IPluginNotifier
+{
+    public List<string> Events { get; } = [];
+
+    public void Notify(string pluginId, string message, bool isError) =>
+        Events.Add($"{pluginId}:{message}:{isError}");
 }

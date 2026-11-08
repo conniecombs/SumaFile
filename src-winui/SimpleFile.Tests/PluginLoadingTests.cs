@@ -12,6 +12,7 @@ using Xunit;
 
 namespace SimpleFile.Tests;
 
+[Collection(HelloFixture.Collection)]
 public class PluginLoadingTests
 {
     private const string HelloId = "com.sumafile.hello";
@@ -92,20 +93,10 @@ public class PluginLoadingTests
     [Fact]
     public async Task Fixture_ExecuteGreet_RecordsCommand()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "sumafile-tests", Guid.NewGuid().ToString("N"));
-        var previous = Environment.GetEnvironmentVariable("SUMAFILE_HELLO_MARKER_DIR");
-        Environment.SetEnvironmentVariable("SUMAFILE_HELLO_MARKER_DIR", dir);
-        try
-        {
-            var instance = PluginActivator.CreateInstance(Hello());
-            var handler = Assert.IsAssignableFrom<ICommandHandler>(instance);
-            await handler.ExecuteAsync(new PluginCommandContext("greet", null, []), CancellationToken.None);
-            Assert.Contains("greet", File.ReadAllLines(Path.Combine(dir, "commands.log")));
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("SUMAFILE_HELLO_MARKER_DIR", previous);
-            try { Directory.Delete(dir, true); } catch (IOException) { }
-        }
+        using var markers = new HelloFixture.MarkerScope();
+        var instance = PluginActivator.CreateInstance(Hello());
+        var handler = Assert.IsAssignableFrom<ICommandHandler>(instance);
+        await handler.ExecuteAsync(new PluginCommandContext("greet", null, []), CancellationToken.None);
+        Assert.Contains("greet", File.ReadAllLines(markers.CommandsLog));
     }
 }
