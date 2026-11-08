@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
+using SimpleFile.PluginHost;
 
 namespace SimpleFile.App;
 
@@ -30,6 +31,7 @@ internal sealed partial class FileOperationDialogService
     private readonly Action _applyCommandSurfaceLayout;
     private readonly Func<CancellationToken, Task> _clearRecentHistoryAsync;
     private readonly Action<Action> _dispatchToUi;
+    private readonly Func<PluginManager?> _plugins;
 
     public FileOperationDialogService(
         Func<ExplorerWorkspace?> workspace,
@@ -53,7 +55,8 @@ internal sealed partial class FileOperationDialogService
         Action applyKeyboardShortcuts,
         Action applyCommandSurfaceLayout,
         Func<CancellationToken, Task> clearRecentHistoryAsync,
-        Action<Action> dispatchToUi)
+        Action<Action> dispatchToUi,
+        Func<PluginManager?> plugins)
     {
         _workspace = workspace;
         _xamlRoot = xamlRoot;
@@ -77,6 +80,7 @@ internal sealed partial class FileOperationDialogService
         _applyCommandSurfaceLayout = applyCommandSurfaceLayout;
         _clearRecentHistoryAsync = clearRecentHistoryAsync;
         _dispatchToUi = dispatchToUi;
+        _plugins = plugins;
     }
 
     public Task PromptAndCreateFileAsync(PaneId pane)
@@ -608,7 +612,7 @@ internal sealed partial class FileOperationDialogService
         {
             try
             {
-                await settingsWindow.LoadSettingsAsync(fileOps, workspace.Settings, utilityCts.Token);
+                await settingsWindow.LoadSettingsAsync(fileOps, workspace.Settings, _plugins(), utilityCts.Token);
             }
             catch (OperationCanceledException)
             {

@@ -177,6 +177,7 @@ public sealed partial class SettingsWindow : Window
             case "Shortcuts": ShortcutsPanel.Visibility = Visibility.Visible; break;
             case "Toolbar": ToolbarPanel.Visibility = Visibility.Visible; break;
             case "Tools": ToolsPanel.Visibility = Visibility.Visible; break;
+            case "Plugins": PluginsPanel.Visibility = Visibility.Visible; break;
             case "Updates": UpdatesPanel.Visibility = Visibility.Visible; break;
             case "About": AboutPanel.Visibility = Visibility.Visible; break;
         }
@@ -193,6 +194,7 @@ public sealed partial class SettingsWindow : Window
         yield return ("Shortcuts", ShortcutsPanel);
         yield return ("Toolbar", ToolbarPanel);
         yield return ("Tools", ToolsPanel);
+        yield return ("Plugins", PluginsPanel);
         yield return ("Updates", UpdatesPanel);
         yield return ("About", AboutPanel);
     }
@@ -364,6 +366,7 @@ public sealed partial class SettingsWindow : Window
                 new[] { combo.Header?.ToString() ?? "" }.Concat(
                     combo.Items.OfType<ComboBoxItem>().Select(item => item.Content?.ToString() ?? ""))),
             TextBox textBox => $"{textBox.Header}\n{textBox.PlaceholderText}",
+            NumberBox numberBox => numberBox.Header?.ToString() ?? "",
             TextBlock textBlock => textBlock.Text ?? "",
             ContentControl { Content: string text } => text,
             _ => "",
@@ -379,6 +382,7 @@ public sealed partial class SettingsWindow : Window
         ShortcutsPanel.Visibility = Visibility.Collapsed;
         ToolbarPanel.Visibility = Visibility.Collapsed;
         ToolsPanel.Visibility = Visibility.Collapsed;
+        PluginsPanel.Visibility = Visibility.Collapsed;
         UpdatesPanel.Visibility = Visibility.Collapsed;
         AboutPanel.Visibility = Visibility.Collapsed;
     }
@@ -880,6 +884,8 @@ public sealed partial class SettingsWindow : Window
     private void OnClosed(object sender, WindowEventArgs args)
     {
         IsClosed = true;
+        DetachPlugins();
+        _pluginsCts.Cancel();
         _resultSource.TrySetResult(_result);
     }
 }

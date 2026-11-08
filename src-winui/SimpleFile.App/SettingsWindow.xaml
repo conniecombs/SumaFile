@@ -51,6 +51,7 @@
                 <NavigationViewItem Content="Shortcuts" Tag="Shortcuts" />
                 <NavigationViewItem Content="Toolbar" Tag="Toolbar" />
                 <NavigationViewItem Content="Tools" Tag="Tools" />
+                <NavigationViewItem Content="Plugins" Tag="Plugins" />
                 <NavigationViewItem Content="Updates" Tag="Updates" />
                 <NavigationViewItem Content="About" Tag="About" />
             </NavigationView.MenuItems>
@@ -563,6 +564,18 @@
                     </StackPanel>
                 </StackPanel>
                 
+                <StackPanel x:Name="PluginsPanel" Spacing="16" Visibility="Collapsed">
+                    <TextBlock Text="Plugins" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="Plugins add commands, menus and settings. Plugin settings save as soon as you change them." TextWrapping="Wrap" Foreground="{ThemeResource SfTextMutedBrush}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="InstallPluginButton" Content="Install from file…" Click="OnInstallPluginClicked" />
+                        <Button x:Name="RescanPluginsButton" Content="Rescan" Click="OnRescanPluginsClicked" />
+                        <Button Content="Open plugins folder" Click="OnOpenPluginsFolderClicked" />
+                    </StackPanel>
+                    <TextBlock x:Name="PluginsStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
+                    <StackPanel x:Name="PluginsList" Spacing="12" />
+                </StackPanel>
+
                 <StackPanel x:Name="UpdatesPanel" Spacing="16" Visibility="Collapsed">
                     <TextBlock Text="Updates" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock x:Name="CurrentVersionText" Text="Version" />

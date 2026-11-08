@@ -164,7 +164,8 @@ public sealed partial class MainWindow : Window
             ApplyKeyboardShortcuts,
             ApplyCommandSurfaceLayout,
             ClearRecentHistoryAsync,
-            action => DispatcherQueue.TryEnqueue(() => action()));
+            action => DispatcherQueue.TryEnqueue(() => action()),
+            () => _plugins);
 
         RootGrid.ActualThemeChanged += OnRootActualThemeChanged;
         Title = "SumaFile";

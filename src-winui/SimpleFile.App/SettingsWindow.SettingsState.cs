@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using System.Text.Json;
 using SimpleFile.Core;
+using SimpleFile.PluginHost;
 using Windows.Storage.Pickers;
 
 namespace SimpleFile.App;
@@ -63,9 +64,11 @@ public sealed partial class SettingsWindow
     public async Task LoadSettingsAsync(
         FileOperationService fileOps,
         UiSettings settings,
+        PluginManager? plugins,
         CancellationToken cancellationToken = default)
     {
         _fileOps = fileOps;
+        AttachPlugins(plugins);
         ApplySettingsSnapshot(settings);
         _loadedSettingsJson = JsonSerializer.Serialize(settings);
         _loadedStateJson = CurrentStateJson();
