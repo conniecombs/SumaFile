@@ -336,6 +336,65 @@ public class PluginManagerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RunCommand_RacingDisable_DoesNotReactivate()
+    {
+        var folder = HelloFixture.CopyTo(Root);
+        Approve(HelloFixture.Id, folder);
+        var manager = Manager();
+        await manager.DiscoverAsync(CancellationToken.None);
+        var plugin = new GatedPlugin();
+        manager.InstanceFactory = _ => plugin;
+        var id = PluginManager.HostCommandId(HelloFixture.Id, "greet");
+
+        var first = manager.RunCommandAsync(id, Context("greet"), CancellationToken.None);
+        await plugin.ActivationEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = manager.RunCommandAsync(id, Context("greet"), CancellationToken.None);
+        var disable = manager.DisableAsync(HelloFixture.Id, CancellationToken.None);
+        Assert.False(disable.IsCompleted);
+
+        plugin.ReleaseActivation.SetResult();
+        await disable.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => second.WaitAsync(TimeSpan.FromSeconds(5)));
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => first.WaitAsync(TimeSpan.FromSeconds(5)));
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
+            manager.RunCommandAsync(id, Context("greet"), CancellationToken.None));
+        Assert.Equal(1, plugin.Activations);
+        Assert.Equal(1, plugin.Deactivations);
+        Assert.Equal(0, plugin.Executions);
+        Assert.Equal(PluginState.Disabled, Record(manager, HelloFixture.Id).State);
+    }
+
+    [Fact]
+    public async Task Backend_SubscribeWhileStartupLaunchBlocked_DoesNotDeadlock()
+    {
+        // Formerly: the blocked launch held the services lock, the subscribing plugin held the runtime
+        // lock and waited for it, and the launch failure then needed the runtime lock.
+        var folder = HelloFixture.CopyTo(Root);
+        var manifest = Path.Combine(folder, "plugin.json");
+        File.WriteAllText(manifest, File.ReadAllText(manifest).Replace("\"first-call\"", "\"startup\""));
+        Approve(HelloFixture.Id, folder);
+        using var launcher = new BlockingThrowingLauncher();
+        var manager = Manager(launcher);
+        var plugin = new SubscribingPlugin();
+        manager.InstanceFactory = _ => plugin;
+
+        // DiscoverAsync waits for startup backends, so it completes only after the launch is released.
+        var discover = Task.Run(() => manager.DiscoverAsync(CancellationToken.None));
+        Assert.True(launcher.Entered.Wait(TimeSpan.FromSeconds(5)), "startup launch never began");
+
+        await Task.Run(() => manager.RunCommandAsync(
+                PluginManager.HostCommandId(HelloFixture.Id, "greet"), Context("greet"), CancellationToken.None))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(plugin.Subscribed);
+
+        launcher.Release.Set();
+        await discover.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(Record(manager, HelloFixture.Id).Error);
+        Assert.Equal(PluginState.Enabled, Record(manager, HelloFixture.Id).State);
+    }
+
+    [Fact]
     public void HostCommandId_RoundTrips()
     {
         var id = PluginManager.HostCommandId("com.example.a", "do-thing");
@@ -349,6 +408,75 @@ public class PluginManagerTests : IAsyncLifetime
         Assert.False(PluginManager.TryParseHostCommandId("plugin:com.example.a", out _, out _));
         Assert.False(PluginManager.TryParseHostCommandId("plugin::cmd", out _, out _));
         Assert.False(PluginManager.TryParseHostCommandId("plugin:com.example.a:", out _, out _));
+    }
+
+    private sealed class GatedPlugin : IPlugin, ICommandHandler
+    {
+        private int _activations;
+        private int _deactivations;
+        private int _executions;
+
+        public TaskCompletionSource ActivationEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseActivation { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Activations => Volatile.Read(ref _activations);
+        public int Deactivations => Volatile.Read(ref _deactivations);
+        public int Executions => Volatile.Read(ref _executions);
+
+        public async Task ActivateAsync(IPluginHost host, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _activations);
+            ActivationEntered.TrySetResult();
+            await ReleaseActivation.Task;
+        }
+
+        public Task DeactivateAsync()
+        {
+            Interlocked.Increment(ref _deactivations);
+            return Task.CompletedTask;
+        }
+
+        public Task ExecuteAsync(PluginCommandContext context, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _executions);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class SubscribingPlugin : IPlugin, ICommandHandler
+    {
+        public bool Subscribed { get; private set; }
+
+        public Task ActivateAsync(IPluginHost host, CancellationToken ct)
+        {
+            host.OnBackendEvent<string>("tick", _ => { });
+            Subscribed = true;
+            return Task.CompletedTask;
+        }
+
+        public Task DeactivateAsync() => Task.CompletedTask;
+
+        public Task ExecuteAsync(PluginCommandContext context, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    /// <summary>Blocks inside Launch until released, then fails the start.</summary>
+    private sealed class BlockingThrowingLauncher : IPluginProcessLauncher, IDisposable
+    {
+        public ManualResetEventSlim Entered { get; } = new();
+        public ManualResetEventSlim Release { get; } = new();
+
+        public IPluginProcess Launch(
+            string executable, IReadOnlyList<string> args, string workingDirectory, Action<string> onStderrLine)
+        {
+            Entered.Set();
+            Release.Wait(TimeSpan.FromSeconds(10));
+            throw new IOException("backend executable not found");
+        }
+
+        public void Dispose()
+        {
+            Release.Set();
+            Entered.Dispose();
+        }
     }
 
     private sealed class ThrowingLauncher : IPluginProcessLauncher

@@ -49,6 +49,9 @@ public sealed class PluginManager : IAsyncDisposable
 
     public event EventHandler? Changed;
 
+    /// <summary>Creates a plugin's entry instance; a seam so tests can gate activation.</summary>
+    internal Func<DiscoveredPlugin, IPlugin> InstanceFactory { get; set; } = PluginActivator.CreateInstance;
+
     public IReadOnlyList<PluginRecord> Plugins
     {
         get { lock (_gate) return _records.ToList(); }
@@ -128,10 +131,7 @@ public sealed class PluginManager : IAsyncDisposable
         }
 
         RaiseChanged();
-        foreach (var record in toStart)
-        {
-            StartInBackground(record);
-        }
+        await Task.WhenAll(toStart.Select(StartQuietlyAsync)).ConfigureAwait(false);
     }
 
     private static bool CanKeep(PluginRecord previous, PluginRecord candidate) =>
@@ -202,7 +202,7 @@ public sealed class PluginManager : IAsyncDisposable
         if (changed)
         {
             RaiseChanged();
-            if (StartsAtStartup(record)) StartInBackground(record);
+            if (StartsAtStartup(record)) await StartQuietlyAsync(record).ConfigureAwait(false);
         }
     }
 
@@ -213,13 +213,15 @@ public sealed class PluginManager : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             var record = Approvable(id);
-            await TeardownAsync(record).ConfigureAwait(false);
-            _approvals.Set(id, record.ManifestHash!, record.Signature.Status, ApprovalState.Disabled);
             lock (_gate)
             {
+                // First, so no command can attach a new runtime while the old one is torn down.
                 record.State = PluginState.Disabled;
                 record.Error = record.Signature.Error;
             }
+
+            await TeardownAsync(record).ConfigureAwait(false);
+            _approvals.Set(id, record.ManifestHash!, record.Signature.Status, ApprovalState.Disabled);
         }
         finally
         {
@@ -231,11 +233,11 @@ public sealed class PluginManager : IAsyncDisposable
 
     public async Task RestartBackendAsync(string id, CancellationToken ct)
     {
+        PluginRuntime runtime;
         await _ops.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            PluginRuntime runtime;
             PluginBackendConnection? previous;
             lock (_gate)
             {
@@ -260,13 +262,15 @@ public sealed class PluginManager : IAsyncDisposable
             }
 
             if (previous is not null) await previous.DisposeAsync().ConfigureAwait(false);
-            RaiseChanged();
-            await runtime.EnsureBackendAsync(ct).ConfigureAwait(false);
         }
         finally
         {
             _ops.Release();
         }
+
+        // Outside _ops so Changed handlers (raised here and by the start) never run under it.
+        RaiseChanged();
+        await runtime.EnsureBackendAsync(ct).ConfigureAwait(false);
     }
 
     public async Task RunCommandAsync(string hostCommandId, PluginCommandContext context, CancellationToken ct)
@@ -296,11 +300,16 @@ public sealed class PluginManager : IAsyncDisposable
         try
         {
             instance = await runtime
-                .EnsureActivatedAsync(() => PluginActivator.CreateInstance(record.Discovered), ct)
+                .EnsureActivatedAsync(() => InstanceFactory(record.Discovered), ct)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            throw;
+        }
+        catch (PluginRetiredException)
+        {
+            // Disabled, rescanned away or disposed while this command waited; not a load failure.
             throw;
         }
         catch (Exception ex)
@@ -308,6 +317,14 @@ public sealed class PluginManager : IAsyncDisposable
             await MarkLoadFailedAsync(record, runtime, ex).ConfigureAwait(false);
             if (ex is PluginLoadException) throw;
             throw new PluginLoadException($"Plugin '{pluginId}' failed to activate: {ex.Message}", ex);
+        }
+
+        lock (_gate)
+        {
+            if (!ReferenceEquals(record.Runtime, runtime) || record.State != PluginState.Enabled)
+            {
+                throw new PluginRetiredException(pluginId);
+            }
         }
 
         if (instance is not ICommandHandler handler)
@@ -360,7 +377,11 @@ public sealed class PluginManager : IAsyncDisposable
 
     // ---- backend lifecycle ----
 
-    private void StartInBackground(PluginRecord record)
+    /// <summary>
+    /// Starts an <c>activateOn: startup</c> backend and waits for the outcome, which lands on the record
+    /// (<see cref="PluginRecord.BackendRunning"/> or <see cref="PluginRecord.Error"/>); never throws.
+    /// </summary>
+    private async Task StartQuietlyAsync(PluginRecord record)
     {
         PluginRuntime runtime;
         lock (_gate)
@@ -369,13 +390,8 @@ public sealed class PluginManager : IAsyncDisposable
             runtime = RuntimeFor(record);
         }
 
-        // Failures are recorded on the record by StartBackendAsync; nobody awaits a startup launch.
-        _ = Observe(runtime.EnsureBackendAsync(CancellationToken.None));
-
-        static async Task Observe(Task task)
-        {
-            try { await task.ConfigureAwait(false); } catch { }
-        }
+        try { await runtime.EnsureBackendAsync(CancellationToken.None).ConfigureAwait(false); }
+        catch { }
     }
 
     /// <summary>The backend factory of one services generation; see <see cref="PluginRuntime"/>.</summary>
@@ -386,6 +402,10 @@ public sealed class PluginManager : IAsyncDisposable
         Action<PluginBackendConnection> configure,
         CancellationToken ct)
     {
+        // PluginHostServices runs this factory under its own lock. Leave it before touching any
+        // manager or runtime state, so the lock order is always manager -> runtime -> services.
+        await Task.Yield();
+
         lock (_gate)
         {
             if (!IsLiveGeneration(record, runtime, services))
@@ -491,7 +511,7 @@ public sealed class PluginManager : IAsyncDisposable
         RaiseChanged();
     }
 
-    /// <summary>Stops the backend and deactivates the instance; the record keeps its state.</summary>
+    /// <summary>Stops the backend, retires the runtime and deactivates the instance; the record keeps its state.</summary>
     private async Task TeardownAsync(PluginRecord record)
     {
         PluginRuntime? runtime;
@@ -504,7 +524,7 @@ public sealed class PluginManager : IAsyncDisposable
         }
 
         if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
-        if (runtime is not null) await runtime.DeactivateAsync().ConfigureAwait(false);
+        if (runtime is not null) await runtime.RetireAsync().ConfigureAwait(false);
     }
 
     private PluginBackendConnection? StopBackendLocked(PluginRecord record)

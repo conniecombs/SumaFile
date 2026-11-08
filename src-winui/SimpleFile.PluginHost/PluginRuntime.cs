@@ -32,6 +32,7 @@ internal sealed class PluginRuntime : IPluginHost
     private readonly Action<string, string> _log;
     private PluginHostServices _services;
     private IPlugin? _instance;
+    private bool _retired;
 
     public PluginRuntime(
         string pluginId,
@@ -78,15 +79,20 @@ internal sealed class PluginRuntime : IPluginHost
     }
 
     /// <summary>Ends the current backend generation so the next call starts the backend afresh.</summary>
+    /// <remarks>Never calls into <see cref="PluginHostServices"/> while holding <c>_gate</c>.</remarks>
     public void NewGeneration()
     {
+        var fresh = CreateServices();
+        Subscription[] subscriptions;
         lock (_gate)
         {
-            _services = CreateServices();
-            foreach (var subscription in _subscriptions)
-            {
-                subscription.AttachTo(_services);
-            }
+            _services = fresh;
+            subscriptions = _subscriptions.ToArray();
+        }
+
+        foreach (var subscription in subscriptions)
+        {
+            subscription.AttachTo(fresh);
         }
     }
 
@@ -118,23 +124,27 @@ internal sealed class PluginRuntime : IPluginHost
     public IDisposable OnBackendEvent<T>(string eventName, Action<T> handler)
     {
         var subscription = new Subscription(this, services => services.OnBackendEvent(eventName, handler));
+        PluginHostServices current;
         lock (_gate)
         {
             _subscriptions.Add(subscription);
-            subscription.AttachTo(_services);
+            current = _services;
         }
 
+        subscription.AttachTo(current);
         return subscription;
     }
 
     /// <summary>Creates and activates the plugin on first use; later calls return the same instance.</summary>
+    /// <exception cref="PluginRetiredException">The manager detached this runtime (disable, rescan or dispose).</exception>
     public async Task<IPlugin> EnsureActivatedAsync(Func<IPlugin> create, CancellationToken ct)
     {
-        if (Volatile.Read(ref _instance) is { } existing) return existing;
+        if (!Volatile.Read(ref _retired) && Volatile.Read(ref _instance) is { } existing) return existing;
 
         await _activation.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            if (_retired) throw new PluginRetiredException(PluginId);
             if (_instance is { } raced) return raced;
 
             var instance = create();
@@ -148,11 +158,13 @@ internal sealed class PluginRuntime : IPluginHost
         }
     }
 
-    public async Task DeactivateAsync()
+    /// <summary>Retires the runtime for good and deactivates the instance if one was activated.</summary>
+    public async Task RetireAsync()
     {
         await _activation.WaitAsync().ConfigureAwait(false);
         try
         {
+            Volatile.Write(ref _retired, true);
             var instance = Interlocked.Exchange(ref _instance, null);
             if (instance is null) return;
 
@@ -193,29 +205,64 @@ internal sealed class PluginRuntime : IPluginHost
         return services;
     }
 
+    /// <summary>
+    /// One backend event subscription, re-attached to each services generation. Attaching happens with no
+    /// runtime lock held; a racing attach to a generation that is no longer current is discarded.
+    /// </summary>
     private sealed class Subscription(PluginRuntime owner, Func<PluginHostServices, IDisposable> attach) : IDisposable
     {
+        private readonly object _lock = new();
+        private PluginHostServices? _attachedTo;
         private IDisposable? _inner;
         private bool _disposed;
 
-        // Called under owner._gate.
         public void AttachTo(PluginHostServices services)
         {
-            if (_disposed) return;
-            _inner?.Dispose();
-            _inner = attach(services);
+            lock (_lock)
+            {
+                if (_disposed || ReferenceEquals(_attachedTo, services)) return;
+            }
+
+            var inner = attach(services);
+            IDisposable? discard;
+            lock (_lock)
+            {
+                if (_disposed || ReferenceEquals(_attachedTo, services) || !owner.IsCurrent(services))
+                {
+                    discard = inner;
+                }
+                else
+                {
+                    discard = _inner;
+                    _inner = inner;
+                    _attachedTo = services;
+                }
+            }
+
+            discard?.Dispose();
         }
 
         public void Dispose()
         {
-            lock (owner._gate)
+            IDisposable? inner;
+            lock (_lock)
             {
                 if (_disposed) return;
                 _disposed = true;
-                owner._subscriptions.Remove(this);
-                _inner?.Dispose();
+                inner = _inner;
                 _inner = null;
             }
+
+            lock (owner._gate)
+            {
+                owner._subscriptions.Remove(this);
+            }
+
+            inner?.Dispose();
         }
     }
 }
+
+/// <summary>Thrown when a command reaches a plugin runtime the manager has already detached.</summary>
+internal sealed class PluginRetiredException(string pluginId)
+    : InvalidOperationException($"Plugin '{pluginId}' is no longer enabled.");
