@@ -49,6 +49,19 @@ public class PluginLoadingTests
     }
 
     [Fact]
+    public void CreateInstance_SameFolderTwice_ReusesLoadContextAndType()
+    {
+        var hello = Hello();
+        var a = PluginActivator.CreateInstance(hello);
+        var b = PluginActivator.CreateInstance(hello);
+        Assert.NotSame(a, b);
+        Assert.True(ReferenceEquals(a.GetType(), b.GetType()));
+        Assert.Same(
+            System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(a.GetType().Assembly),
+            System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(b.GetType().Assembly));
+    }
+
+    [Fact]
     public void CreateInstance_MissingAssembly_ThrowsPluginLoadException()
     {
         var p = WithUi(Hello(), new PluginUiSpec("Nope.dll", EntryType));

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using SimpleFile.PluginHost.Discovery;
 using SimpleFile.PluginSdk;
 
@@ -11,6 +12,8 @@ public sealed class PluginLoadException : Exception
 
 public static class PluginActivator
 {
+    private static readonly ConcurrentDictionary<string, PluginLoadContext> Contexts = new(StringComparer.OrdinalIgnoreCase);
+
     public static IPlugin CreateInstance(DiscoveredPlugin plugin)
     {
         var ui = plugin.Manifest?.Ui
@@ -24,7 +27,7 @@ public static class PluginActivator
 
         try
         {
-            var context = new PluginLoadContext(plugin.Folder, assemblyPath);
+            var context = Contexts.GetOrAdd(Path.GetFullPath(plugin.Folder), _ => new PluginLoadContext(plugin.Folder, assemblyPath));
             var assembly = context.LoadFromAssemblyPath(assemblyPath);
             var type = assembly.GetType(ui.EntryType, throwOnError: false)
                 ?? throw new PluginLoadException($"Plugin '{plugin.Id}' entry type '{ui.EntryType}' not found in {ui.Assembly}.");

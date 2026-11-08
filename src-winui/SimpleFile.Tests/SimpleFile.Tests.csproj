@@ -32,8 +32,12 @@
     <None Include="Fixtures\PluginSdkSurface.v1.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="CopyHelloFixture" AfterTargets="Build">
+    <MSBuild Projects="Fixtures\HelloPlugin\SimpleFile.Tests.Fixtures.HelloPlugin.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_HelloPluginTargetPath" />
+    </MSBuild>
+    <Error Condition="!Exists('@(_HelloPluginTargetPath)')" Text="Hello fixture plugin output not found at @(_HelloPluginTargetPath)." />
     <PropertyGroup>
-      <HelloOut>$(MSBuildThisFileDirectory)Fixtures\HelloPlugin\bin\$(Configuration)\$(TargetFramework)\</HelloOut>
+      <HelloOut>%(_HelloPluginTargetPath.RootDir)%(_HelloPluginTargetPath.Directory)</HelloOut>
       <HelloDest>$(OutDir)Fixtures\plugins\com.sumafile.hello\</HelloDest>
     </PropertyGroup>
     <ItemGroup>
