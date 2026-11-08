@@ -208,6 +208,43 @@ public class PluginBackendHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Connection_Closed_RaisedOnceAfterLostAndOnceOnDispose()
+    {
+        var launcher = Launcher(async (s, ct) =>
+        {
+            await AnswerHandshake(s, ct);
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        var host = Host(launcher);
+        var connection = await host.StartAsync(Plugin(), CancellationToken.None);
+        var events = new List<string>();
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.Lost += (_, _) => { lock (events) events.Add("lost"); };
+        connection.Closed += (_, _) =>
+        {
+            lock (events) events.Add("closed");
+            closed.TrySetResult();
+        };
+
+        launcher.Process!.SimulateExit();
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await connection.DisposeAsync();
+
+        lock (events) Assert.Equal(["lost", "closed"], events);
+
+        // An intentional stop raises Closed but not Lost.
+        var second = await Host(launcher).StartAsync(Plugin(), CancellationToken.None);
+        var lost = 0;
+        var closedCount = 0;
+        second.Lost += (_, _) => Interlocked.Increment(ref lost);
+        second.Closed += (_, _) => Interlocked.Increment(ref closedCount);
+        await second.DisposeAsync();
+        await second.DisposeAsync();
+        Assert.Equal(0, lost);
+        Assert.Equal(1, closedCount);
+    }
+
+    [Fact]
     public async Task Connection_HostRequestFromBackend_IsAnswered()
     {
         var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -263,8 +300,8 @@ internal sealed class FakePluginProcessLauncher : IPluginProcessLauncher, IAsync
     private readonly Func<FakeIpcServer, CancellationToken, Task>? _serve;
     private readonly bool _createServer;
     private readonly CancellationTokenSource _cts = new();
-    private FakeIpcServer? _server;
-    private Task _serveTask = Task.CompletedTask;
+    // Every launch gets its own server; a restart launches again, so all of them are disposed at the end.
+    private readonly List<(FakeIpcServer Server, Task Serve)> _servers = [];
 
     public FakePluginProcessLauncher(Func<FakeIpcServer, CancellationToken, Task>? serve, bool createServer)
     {
@@ -293,13 +330,13 @@ internal sealed class FakePluginProcessLauncher : IPluginProcessLauncher, IAsync
         Launched.TrySetResult(executable);
         if (_createServer && _serve is not null)
         {
-            _server = FakeIpcServer.Create(PipeName);
-            var server = _server;
-            _serveTask = Task.Run(async () =>
+            var server = FakeIpcServer.Create(PipeName);
+            var serve = Task.Run(async () =>
             {
                 try { await _serve(server, _cts.Token); }
                 catch (Exception) { }
             });
+            lock (_servers) _servers.Add((server, serve));
         }
 
         return Process;
@@ -308,12 +345,13 @@ internal sealed class FakePluginProcessLauncher : IPluginProcessLauncher, IAsync
     public async ValueTask DisposeAsync()
     {
         await _cts.CancelAsync();
-        if (_server is not null)
+        (FakeIpcServer Server, Task Serve)[] servers;
+        lock (_servers) servers = _servers.ToArray();
+        foreach (var (server, serve) in servers)
         {
-            await _server.DisposeAsync();
+            await server.DisposeAsync();
+            try { await serve.WaitAsync(TimeSpan.FromSeconds(2)); } catch { }
         }
-
-        try { await _serveTask.WaitAsync(TimeSpan.FromSeconds(2)); } catch { }
         _cts.Dispose();
     }
 }

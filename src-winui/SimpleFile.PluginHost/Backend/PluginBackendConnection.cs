@@ -8,6 +8,7 @@ public sealed class PluginBackendConnection : IAsyncDisposable
     private readonly IPluginProcess _process;
     private int _lost;
     private int _disposed;
+    private int _closed;
 
     internal PluginBackendConnection(NamedPipeJsonClient client, IPluginProcess process)
     {
@@ -23,7 +24,14 @@ public sealed class PluginBackendConnection : IAsyncDisposable
     /// <summary>The bare pipe name the backend serves on; the file service connects to it for archive engines.</summary>
     public string PipeName { get; internal set; } = "";
 
+    /// <summary>Raised once when the backend dies or disconnects on its own; never for <see cref="DisposeAsync"/>.</summary>
     public event EventHandler<Exception?>? Lost;
+
+    /// <summary>
+    /// Raised exactly once when the connection ends for any reason: after <see cref="Lost"/> on an unexpected
+    /// loss, or from <see cref="DisposeAsync"/> on an intentional stop (disable, restart, teardown).
+    /// </summary>
+    public event EventHandler? Closed;
 
     public Task<T> InvokeAsync<T>(string method, object? args, CancellationToken ct) =>
         _client.InvokeAsync<T>(method, args, ct);
@@ -41,6 +49,17 @@ public sealed class PluginBackendConnection : IAsyncDisposable
         }
 
         try { Lost?.Invoke(this, ex); } catch { }
+        RaiseClosed();
+    }
+
+    private void RaiseClosed()
+    {
+        if (Interlocked.Exchange(ref _closed, 1) == 1)
+        {
+            return;
+        }
+
+        try { Closed?.Invoke(this, EventArgs.Empty); } catch { }
     }
 
     public async ValueTask DisposeAsync()
@@ -53,5 +72,6 @@ public sealed class PluginBackendConnection : IAsyncDisposable
         _process.Kill();
         try { await _client.DisposeAsync().ConfigureAwait(false); } catch { }
         _process.Dispose();
+        RaiseClosed();
     }
 }

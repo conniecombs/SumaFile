@@ -50,7 +50,11 @@ public class PluginManagerTests : IAsyncLifetime
 
     private string _pipe = "";
 
-    private PluginManager Manager(IPluginProcessLauncher? launcher = null, IArchiveEngineRegistrar? archiveEngines = null)
+    private PluginManager Manager(
+        IPluginProcessLauncher? launcher = null,
+        IArchiveEngineRegistrar? archiveEngines = null,
+        Action<string, string>? log = null,
+        bool pipePerStart = false)
     {
         var pipe = "SumaFile.Plugin.Test." + Guid.NewGuid().ToString("N");
         _pipe = pipe;
@@ -60,13 +64,14 @@ public class PluginManagerTests : IAsyncLifetime
             ApprovalStorePath = StorePath,
             DataRoot = Path.Combine(_temp, "data"),
             Launcher = launcher ?? new ThrowingLauncher(),
-            PipeNameFor = _ => pipe,
+            // Per start when a test restarts a backend: the fake server of the old generation may still hold its pipe.
+            PipeNameFor = _ => pipePerStart ? "SumaFile.Plugin.Test." + Guid.NewGuid().ToString("N") : pipe,
             Settings = new FakeSettings(),
             Progress = new RecordingSink(),
             Notifier = new RecordingNotifier(),
             DialogsFor = _ => null!,
             Workspace = null!,
-            Log = (_, _) => { },
+            Log = log ?? ((_, _) => { }),
             ArchiveEngines = archiveEngines,
         });
         _managers.Add(manager);
@@ -469,6 +474,39 @@ public class PluginManagerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Disable_PluginWhoseDeactivateBlocksSynchronously_FaultsWithinBound()
+    {
+        var folder = HelloFixture.CopyTo(Root);
+        Approve(HelloFixture.Id, folder);
+        var manager = Manager();
+        await manager.DiscoverAsync(CancellationToken.None);
+        using var release = new ManualResetEventSlim(false);
+        var plugin = new BlockingDeactivatePlugin(release);
+        manager.InstanceFactory = _ => plugin;
+        await manager.RunCommandAsync(
+            PluginManager.HostCommandId(HelloFixture.Id, "greet"), Context("greet"), CancellationToken.None);
+
+        try
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            // Task.Run: if deactivation blocked the caller, DisableAsync would not even return a task to bound.
+            await Task.Run(() => manager.DisableAsync(HelloFixture.Id, CancellationToken.None))
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            sw.Stop();
+
+            Assert.True(sw.Elapsed < TimeSpan.FromSeconds(6.5), $"took {sw.Elapsed}");
+            Assert.True(plugin.DeactivateEntered);
+            var record = Record(manager, HelloFixture.Id);
+            Assert.Equal(PluginState.Faulted, record.State);
+            Assert.Equal("plugin did not deactivate in time", record.Error);
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    [Fact]
     public async Task ArchivePlugin_RegistersAfterHandshake_AtStartupEvenWhenFirstCall()
     {
         var folder = WriteArchivePlugin();
@@ -540,6 +578,44 @@ public class PluginManagerTests : IAsyncLifetime
 
         Assert.Equal([BackendId], registrar.Unregistered);
         Assert.True(launcher.Process!.Killed);
+    }
+
+    [Fact]
+    public async Task ArchivePlugin_StaleLostCleanupAfterRestart_KeepsReplacementRegistered()
+    {
+        var folder = WriteArchivePlugin();
+        Approve(BackendId, folder);
+        var launcher = HandshakingLauncher();
+        var registrar = new RecordingRegistrar();
+        var logs = new List<string>();
+        var manager = Manager(launcher, registrar, (_, m) => { lock (logs) logs.Add(m); }, pipePerStart: true);
+        await manager.DiscoverAsync(CancellationToken.None);
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning);
+        var first = launcher.Process!;
+        var holdCleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        manager.BeforeLostCleanup = () => holdCleanup.Task;
+
+        // Generation 1 crashes; its cleanup is queued but held.
+        first.SimulateExit();
+        await WaitUntil(() => Record(manager, BackendId).State == PluginState.Faulted);
+
+        // Generation 2 registers before generation 1's cleanup gets to run.
+        await manager.RestartBackendAsync(BackendId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning);
+        Assert.Equal(2, registrar.Registered.Count);
+        Assert.NotSame(first, launcher.Process);
+
+        holdCleanup.SetResult();
+        // The cleanup disposes generation 1's connection last, which kills its process.
+        await WaitUntil(() => first.Killed);
+
+        Assert.Empty(registrar.Unregistered);
+        Assert.True(Record(manager, BackendId).BackendRunning);
+        lock (logs) Assert.Contains(logs, m => m.Contains("newer generation", StringComparison.Ordinal));
+
+        await manager.DisableAsync(BackendId, CancellationToken.None);
+
+        Assert.Equal([BackendId], registrar.Unregistered);
     }
 
     [Fact]
@@ -657,6 +733,25 @@ public class PluginManagerTests : IAsyncLifetime
         {
             _deactivateEntered = true;
             return new TaskCompletionSource().Task;
+        }
+
+        public Task ExecuteAsync(PluginCommandContext context, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    /// <summary>Blocks the calling thread inside DeactivateAsync, before returning any task.</summary>
+    private sealed class BlockingDeactivatePlugin(ManualResetEventSlim release) : IPlugin, ICommandHandler
+    {
+        private volatile bool _deactivateEntered;
+
+        public bool DeactivateEntered => _deactivateEntered;
+
+        public Task ActivateAsync(IPluginHost host, CancellationToken ct) => Task.CompletedTask;
+
+        public Task DeactivateAsync()
+        {
+            _deactivateEntered = true;
+            release.Wait();
+            return Task.CompletedTask;
         }
 
         public Task ExecuteAsync(PluginCommandContext context, CancellationToken ct) => Task.CompletedTask;

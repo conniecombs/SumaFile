@@ -6,6 +6,12 @@ public sealed partial class PluginManager
 {
     // ---- backend lifecycle ----
 
+    /// <summary>Test seam: awaited before the queued cleanup of a lost backend runs.</summary>
+    internal Func<Task> BeforeLostCleanup { get; set; } = () => Task.CompletedTask;
+
+    /// <summary>Numbers every backend start across all plugins, so later generations compare greater.</summary>
+    private long _backendGenerations;
+
     /// <summary>
     /// Kicks off an <c>activateOn: startup</c> backend without waiting. The start is the services
     /// generation's cached start, so a later <c>InvokeBackendAsync</c> awaits the same one; its outcome
@@ -67,6 +73,7 @@ public sealed partial class PluginManager
             }
         }
 
+        var generation = Interlocked.Increment(ref _backendGenerations);
         var lostDuringStart = false;
         PluginBackendConnection connection;
         try
@@ -120,7 +127,7 @@ public sealed partial class PluginManager
             throw error;
         }
 
-        if (registerEngines) await RegisterArchiveEnginesAsync(record, runtime, connection, ct).ConfigureAwait(false);
+        if (registerEngines) await RegisterArchiveEnginesAsync(record, runtime, connection, generation, ct).ConfigureAwait(false);
 
         RaiseChanged();
         return connection;
@@ -147,13 +154,13 @@ public sealed partial class PluginManager
 
     private void OnBackendLost(PluginRecord record, PluginRuntime runtime, PluginBackendConnection connection, Exception? ex)
     {
-        bool unregisterEngines;
+        long unregisterGeneration;
         lock (_gate)
         {
             if (!ReferenceEquals(runtime.Connection, connection)) return;
             runtime.Connection = null;
             runtime.NewGeneration();
-            unregisterEngines = TakeArchiveRegistrationLocked(runtime);
+            unregisterGeneration = TakeArchiveRegistrationLocked(runtime);
             record.BackendRunning = false;
             if (record.State == PluginState.Enabled) record.State = PluginState.Faulted;
             record.Error = ex is null
@@ -162,10 +169,12 @@ public sealed partial class PluginManager
         }
 
         _options.Log(record.Id, $"[error] {record.Error}");
-        // Off this thread: Lost may be raised from the connection's own read loop.
+        // Off this thread: Lost may be raised from the connection's own read loop. This runs independently of a
+        // restart, so it passes its generation and is skipped if the replacement has registered meanwhile.
         _ = Task.Run(async () =>
         {
-            if (unregisterEngines) await UnregisterArchiveEnginesAsync(record.Id).ConfigureAwait(false);
+            try { await BeforeLostCleanup().ConfigureAwait(false); } catch { }
+            if (unregisterGeneration != 0) await UnregisterArchiveEnginesAsync(record, unregisterGeneration).ConfigureAwait(false);
             try { await connection.DisposeAsync().ConfigureAwait(false); } catch { }
         });
         RaiseChanged();
@@ -176,16 +185,17 @@ public sealed partial class PluginManager
     {
         PluginRuntime? runtime;
         PluginBackendConnection? connection;
-        bool unregisterEngines;
+        long unregisterGeneration;
         lock (_gate)
         {
             runtime = record.Runtime;
-            connection = StopBackendLocked(record, out unregisterEngines);
+            connection = StopBackendLocked(record, out unregisterGeneration);
             record.Runtime = null;
         }
 
-        // Before the backend dies, so the service stops routing archives to its pipe first.
-        if (unregisterEngines) await UnregisterArchiveEnginesAsync(record.Id).ConfigureAwait(false);
+        // Before the backend dies, so the service stops routing archives to its pipe first. Teardown (disable,
+        // rescan, dispose) ends the plugin, so it always unregisters: no generation check.
+        if (unregisterGeneration != 0) await UnregisterArchiveEnginesAsync(record, generation: null).ConfigureAwait(false);
         if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
         if (runtime is not null && !await runtime.RetireAsync().ConfigureAwait(false))
         {
@@ -197,16 +207,17 @@ public sealed partial class PluginManager
         }
     }
 
-    private PluginBackendConnection? StopBackendLocked(PluginRecord record, out bool unregisterEngines)
+    /// <param name="unregisterGeneration">The generation whose engines need unregistering, or 0.</param>
+    private PluginBackendConnection? StopBackendLocked(PluginRecord record, out long unregisterGeneration)
     {
         record.BackendRunning = false;
-        unregisterEngines = false;
+        unregisterGeneration = 0;
         if (record.Runtime is not { } runtime) return null;
 
         var connection = runtime.Connection;
         runtime.Connection = null;
         runtime.NewGeneration();
-        unregisterEngines = TakeArchiveRegistrationLocked(runtime);
+        unregisterGeneration = TakeArchiveRegistrationLocked(runtime);
         return connection;
     }
 }

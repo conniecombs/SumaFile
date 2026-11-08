@@ -251,10 +251,11 @@ public sealed partial class PluginManager : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             PluginBackendConnection? previous;
-            bool unregisterEngines;
+            PluginRecord record;
+            long unregisterGeneration;
             lock (_gate)
             {
-                var record = Live(id) ?? throw new InvalidOperationException($"Plugin '{id}' is not installed.");
+                record = Live(id) ?? throw new InvalidOperationException($"Plugin '{id}' is not installed.");
                 if (record.Discovered.Manifest?.Backend is null)
                 {
                     throw new InvalidOperationException($"Plugin '{id}' declares no backend.");
@@ -269,13 +270,13 @@ public sealed partial class PluginManager : IAsyncDisposable
                 previous = runtime.Connection;
                 runtime.Connection = null;
                 runtime.NewGeneration();
-                unregisterEngines = TakeArchiveRegistrationLocked(runtime);
+                unregisterGeneration = TakeArchiveRegistrationLocked(runtime);
                 record.BackendRunning = false;
                 record.State = PluginState.Enabled;
                 record.Error = null;
             }
 
-            if (unregisterEngines) await UnregisterArchiveEnginesAsync(id).ConfigureAwait(false);
+            if (unregisterGeneration != 0) await UnregisterArchiveEnginesAsync(record, unregisterGeneration).ConfigureAwait(false);
             if (previous is not null) await previous.DisposeAsync().ConfigureAwait(false);
         }
         finally
@@ -353,17 +354,17 @@ public sealed partial class PluginManager : IAsyncDisposable
     private async Task MarkLoadFailedAsync(PluginRecord record, PluginRuntime runtime, Exception ex)
     {
         PluginBackendConnection? connection = null;
-        bool unregisterEngines;
+        long unregisterGeneration;
         lock (_gate)
         {
             if (!ReferenceEquals(record.Runtime, runtime)) return;
             record.State = PluginState.LoadFailed;
             record.Error = ex.Message;
-            connection = StopBackendLocked(record, out unregisterEngines);
+            connection = StopBackendLocked(record, out unregisterGeneration);
         }
 
         _options.Log(record.Id, $"[error] {ex.Message}");
-        if (unregisterEngines) await UnregisterArchiveEnginesAsync(record.Id).ConfigureAwait(false);
+        if (unregisterGeneration != 0) await UnregisterArchiveEnginesAsync(record, unregisterGeneration).ConfigureAwait(false);
         if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
         RaiseChanged();
     }

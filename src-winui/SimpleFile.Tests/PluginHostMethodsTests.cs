@@ -289,6 +289,31 @@ public class PluginHostMethodsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Progress_ConnectionDisposedIntentionally_FailsOpenOperations()
+    {
+        var began = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var host = Host(async (s, ct) =>
+        {
+            await Handshake(s, ct);
+            await s.SendRequestAsync(1, PluginHostMethods.ProgressBegin, new { title = "T" }, ct);
+            await s.ReadResponseAsync(ct);
+            began.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        var connection = await host.StartAsync(
+            Plugin(),
+            CancellationToken.None,
+            c => PluginHostMethods.Register(c, PluginId, _settings, _sink, _notifier, (_, _) => { }));
+        await began.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // A disable or restart stops the backend on purpose: Lost stays quiet, but the row must still end.
+        await connection.DisposeAsync();
+
+        Assert.Contains("fail:op-1:Plugin backend stopped.", _sink.Events);
+        Assert.Single(_sink.Events, e => e.StartsWith("fail:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Services_ProgressOperation_CancelFromSinkCancelsToken()
     {
         var services = NewServices((_, _) => throw new InvalidOperationException());

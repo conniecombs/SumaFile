@@ -34,4 +34,11 @@ public sealed class PluginRecord
 
     /// <summary>Activated instance, services and backend; null for records that can never run.</summary>
     internal PluginRuntime? Runtime { get; set; }
+
+    /// <summary>
+    /// The backend generation that last registered this plugin's archive engines with the file service (0: never);
+    /// guarded by the manager's lock. The service keys registrations by plugin id only, so a stale generation's
+    /// unregister must not remove a newer generation's registration.
+    /// </summary>
+    internal long ArchiveRegistrationGeneration { get; set; }
 }

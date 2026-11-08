@@ -62,8 +62,11 @@ internal sealed class PluginRuntime : IPluginHost
 
     public bool IsActivated => Volatile.Read(ref _instance) is not null;
 
-    /// <summary>True once the file service has this runtime's archive engines; guarded by the manager's lock.</summary>
-    public bool ArchiveEnginesRegistered { get; set; }
+    /// <summary>
+    /// The backend generation whose archive engines the file service has for this runtime, or 0 when none
+    /// still needs unregistering; guarded by the manager's lock.
+    /// </summary>
+    public long ArchiveEnginesGeneration { get; set; }
 
     /// <summary>How long <see cref="RetireAsync"/> waits for a running activation, and then for DeactivateAsync.</summary>
     private static readonly TimeSpan RetireTimeout = TimeSpan.FromSeconds(5);
@@ -190,7 +193,10 @@ internal sealed class PluginRuntime : IPluginHost
 
             try
             {
-                await instance.DeactivateAsync().WaitAsync(RetireTimeout).ConfigureAwait(false);
+                // On the thread pool: WaitAsync bounds only the returned task, so a plugin that blocks before
+                // returning would otherwise hold _ops (and, for a UI-only plugin, the UI thread) indefinitely. On
+                // timeout the thread stuck in plugin code is abandoned; nothing here can reclaim it.
+                await Task.Run(() => instance.DeactivateAsync()).WaitAsync(RetireTimeout).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {

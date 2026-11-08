@@ -37,8 +37,9 @@ public static partial class PluginHostMethods
         // Operations this backend started; ids from elsewhere are rejected.
         var operations = new ConcurrentDictionary<string, byte>();
 
-        // A dead backend can never finish its operations; fail them so the UI does not show them forever.
-        connection.Lost += (_, _) =>
+        // A stopped backend can never finish its operations; fail them so the UI does not show them forever.
+        // Closed, not Lost: an intentional stop (disable, restart) suppresses Lost but must end the rows too.
+        connection.Closed += (_, _) =>
         {
             foreach (var openId in operations.Keys.ToList())
             {
