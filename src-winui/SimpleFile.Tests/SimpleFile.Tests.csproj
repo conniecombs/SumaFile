@@ -44,5 +44,6 @@
       <HelloFile Include="$(HelloOut)SimpleFile.Tests.Fixtures.HelloPlugin.dll;$(HelloOut)SimpleFile.Tests.Fixtures.HelloPlugin.deps.json;$(HelloOut)plugin.json" />
     </ItemGroup>
     <Copy SourceFiles="@(HelloFile)" DestinationFolder="$(HelloDest)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\target\debug\hello-plugin-backend.exe" DestinationFolder="$(HelloDest)" SkipUnchangedFiles="true" Condition="Exists('$(MSBuildThisFileDirectory)..\..\target\debug\hello-plugin-backend.exe')" />
   </Target>
 </Project>

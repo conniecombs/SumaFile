@@ -5,4 +5,5 @@ members = [
   "crates/simplefile-ipc",
   "crates/simplefile-service",
   "crates/sumafile-plugin",
+  "crates/hello-plugin-backend",
 ]
