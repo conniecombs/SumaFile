@@ -1,0 +1,27 @@
+{
+  "protocolVersion": 1,
+  "jsonrpc": "2.0",
+  "framing": "same as v1",
+  "sdkVersion": "1.0.0",
+  "handshake": {
+    "method": "plugin.handshake",
+    "params": ["pluginId", "hostVersion", "sdkVersion", "client?"],
+    "result": ["pluginId", "pluginVersion", "sdkVersion"],
+    "notes": "The Rust service sends client \"simplefile-service\"; the WinUI host omits client."
+  },
+  "hostMethods": [
+    "host.get_settings",
+    "host.set_setting",
+    "host.progress_begin",
+    "host.progress_report",
+    "host.progress_complete",
+    "host.progress_fail",
+    "host.log",
+    "host.notify"
+  ],
+  "archiveEngineMethods": ["archive.list", "archive.extract", "archive.create"],
+  "cancel": {
+    "method": "cancel",
+    "params": ["operationId"]
+  }
+}

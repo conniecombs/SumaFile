@@ -6,11 +6,21 @@ public static class PluginDiscovery
 {
     private const string ManifestFileName = "plugin.json";
 
-    public static IReadOnlyList<string> DefaultRoots() =>
-    [
-        Path.Combine(AppContext.BaseDirectory, "plugins"),
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile", "plugins"),
-    ];
+    /// <summary>Semicolon-separated roots that replace the defaults when set (the UI smoke uses it).</summary>
+    public const string RootsVariable = "SUMAFILE_PLUGIN_ROOTS";
+
+    public static IReadOnlyList<string> DefaultRoots()
+    {
+        var overrideRoots = (Environment.GetEnvironmentVariable(RootsVariable) ?? string.Empty)
+            .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (overrideRoots.Length > 0) return overrideRoots;
+
+        return [Path.Combine(AppContext.BaseDirectory, "plugins"), UserRoot()];
+    }
+
+    /// <summary>The per-user root the installer writes to; not affected by <see cref="RootsVariable"/>.</summary>
+    public static string UserRoot() =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile", "plugins");
 
     public static IReadOnlyList<DiscoveredPlugin> Scan(IReadOnlyList<string> roots)
     {

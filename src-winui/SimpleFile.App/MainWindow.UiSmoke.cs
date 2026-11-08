@@ -59,6 +59,8 @@ public sealed partial class MainWindow
             workspace.ApplyUiSettings(settings);
             ApplyPreviewVisibility();
             SyncFromWorkspace();
+            await CheckpointAsync("plugins");
+            await SmokePluginsAsync(results);
             var empty = Path.Combine(root, "empty");
             var folders = Directory.GetDirectories(Path.Combine(root, "fixtures"))
                 .OrderBy(path => int.Parse(Path.GetFileName(path))).ToArray();
@@ -217,6 +219,43 @@ public sealed partial class MainWindow
             Close();
         }
         return true;
+    }
+
+    /// <summary>
+    /// SUMAFILE_SMOKE_PLUGINS=with: the Hello fixture is discovered, pre-approved, on the palette, and its command
+    /// runs through the normal command path. =none: no plugin is discovered. Unset: nothing is checked.
+    /// </summary>
+    private async Task SmokePluginsAsync(List<object> results)
+    {
+        const string helloId = "com.sumafile.hello";
+        const string greetCommand = "plugin:" + helloId + ":greet";
+        var mode = Environment.GetEnvironmentVariable("SUMAFILE_SMOKE_PLUGINS");
+        if (mode == "with")
+        {
+            var manager = _plugins ?? throw new InvalidOperationException("Plugin manager was not created");
+            var hello = manager.Plugins.FirstOrDefault(record => record.Id == helloId);
+            SmokeAssert(hello is not null, $"Plugin {helloId} was not discovered");
+            SmokeAssert(hello!.State == SimpleFile.PluginHost.PluginState.Enabled,
+                $"Plugin {helloId} is {hello.State}, expected Enabled: {hello.Error}");
+            SmokeAssert(AppCommandCatalog.All.Any(command => command.Id == greetCommand), $"Palette is missing {greetCommand}");
+            var markerDirectory = Environment.GetEnvironmentVariable("SUMAFILE_HELLO_MARKER_DIR");
+            SmokeAssert(!string.IsNullOrWhiteSpace(markerDirectory), "SUMAFILE_HELLO_MARKER_DIR is not set");
+            var commandsLog = Path.Combine(markerDirectory!, "commands.log");
+            await RunAppCommandAsync(greetCommand);
+            await SmokeWaitAsync(
+                () => File.Exists(commandsLog) && File.ReadAllLines(commandsLog).Contains(greetCommand),
+                "plugin command marker");
+            results.Add(new { scenario = "plugins", mode, plugins = manager.Plugins.Count, command = greetCommand, passed = true });
+        }
+        else if (mode == "none")
+        {
+            var pluginCommands = AppCommandCatalog.All.Where(command => command.Id.StartsWith("plugin:", StringComparison.Ordinal))
+                .Select(command => command.Id).ToArray();
+            SmokeAssert(pluginCommands.Length == 0, "Unexpected plugin commands: " + string.Join(", ", pluginCommands));
+            var discovered = _plugins?.Plugins.Select(record => record.Id).ToArray() ?? [];
+            SmokeAssert(discovered.Length == 0, "Unexpected plugins: " + string.Join(", ", discovered));
+            results.Add(new { scenario = "plugins", mode, plugins = 0, passed = true });
+        }
     }
 
     private static async Task SmokeWaitAsync(Func<bool> condition, string stage)

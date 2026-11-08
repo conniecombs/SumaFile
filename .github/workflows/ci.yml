@@ -171,6 +171,9 @@ jobs:
       - name: Build Rust IPC service
         run: cargo build -p simplefile-service --locked --release
 
+      - name: Build the Hello fixture plugin
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-fixture-plugin.ps1
+
       - name: Run WinUI tests
         run: npm run check:winui
 
@@ -180,8 +183,11 @@ jobs:
       - name: Verify release artifact hashing
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-winui-release-hash.ps1
 
-      - name: Smoke WinUI rendering, layout, and cancellation
-        run: npm run smoke:winui-ui -- -Counts 10000
+      - name: Smoke WinUI rendering, layout, cancellation, and the Hello plugin
+        run: npm run smoke:winui-ui -- -Counts 10000 -PluginsDir target\fixture-plugins\com.sumafile.hello
+
+      - name: Smoke WinUI rendering, layout, and cancellation without plugins
+        run: npm run smoke:winui-ui -- -Counts 10000 -SkipBuild -NoPlugins
 
       - name: Upload WinUI runtime reports
         if: always()

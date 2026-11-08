@@ -152,4 +152,44 @@ public class PluginDiscoveryTests
         Assert.Equal(Path.Combine(AppContext.BaseDirectory, "plugins"), roots[0]);
         Assert.Equal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile", "plugins"), roots[1]);
     }
+
+    // DefaultRoots reads a process-wide variable; every test touching it lives in this class so xUnit runs them one at a time.
+    [Fact]
+    public void DefaultRoots_EnvOverride_ReplacesDefaultsAndSkipsEmpties()
+    {
+        var previous = Environment.GetEnvironmentVariable(PluginDiscovery.RootsVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, @" C:\one ;;  ; C:\two");
+            Assert.Equal([@"C:\one", @"C:\two"], PluginDiscovery.DefaultRoots());
+
+            // Only separators and blanks: no usable entry, so the defaults stay.
+            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, " ; ");
+            Assert.Equal(2, PluginDiscovery.DefaultRoots().Count);
+            Assert.Equal(Path.Combine(AppContext.BaseDirectory, "plugins"), PluginDiscovery.DefaultRoots()[0]);
+
+            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, null);
+            Assert.Equal(Path.Combine(AppContext.BaseDirectory, "plugins"), PluginDiscovery.DefaultRoots()[0]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, previous);
+        }
+    }
+
+    [Fact]
+    public void UserRoot_IsLocalAppData_EvenWithEnvOverride()
+    {
+        var expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile", "plugins");
+        var previous = Environment.GetEnvironmentVariable(PluginDiscovery.RootsVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, @"C:\only");
+            Assert.Equal(expected, PluginDiscovery.UserRoot());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, previous);
+        }
+    }
 }

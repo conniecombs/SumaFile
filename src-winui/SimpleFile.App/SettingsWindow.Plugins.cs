@@ -14,7 +14,7 @@ public sealed partial class SettingsWindow
     private PluginManager? _pluginManager;
     private readonly CancellationTokenSource _pluginsCts = new();
 
-    private static string UserPluginRoot => PluginDiscovery.DefaultRoots()[1];
+    private static string UserPluginRoot => PluginDiscovery.UserRoot();
 
     /// <summary>Remembers the manager and re-renders the panel whenever it reports a change, until the window closes.</summary>
     private void AttachPlugins(PluginManager? plugins)

@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
-**Contract:** [`inventory.md`](inventory.md) (97 commands / emitted events / Svelte workflows)
+**Contract:** [`inventory.md`](inventory.md) (99 commands / emitted events / Svelte workflows)
 **Hosts:** WinUI 3 + `simplefile-service` is the shipping app. Svelte/Tauri UI and packaging glue have been retired.
 
 This is the **retirement lock**. Required `OPEN` rows are none. `MANUAL` rows stay as human smoke coverage. Retired `src-tauri/` domain now lives solely in `crates/simplefile-core`.
@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 97-command schema vs Rust/C#
+npm run check:ipc-schema      # 99-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (97)
+## 2. IPC commands (99)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -139,6 +139,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `get_archive_capabilities` | Creatable/extractable archive formats | Create archive dialog | IPC + source-shape guard | Tools tab / create dialog | `PASS` |
 | `extract_archive` | Extract here / folder / to | Context extract + dialog | IPC | Extract zip / 7z / rar | `MANUAL` |
 | `create_archive` | zip/7z/tar/tar.gz | Create archive dialog | IPC; RAR create rejected | Compress selection | `MANUAL` |
+| `register_archive_engine` `unregister_archive_engine` | Plugin archive engines (extensions served by a plugin backend) | Service handler (no WinUI caller in plugin phase 1) | `crates/simplefile-service/tests/plugin_archive.rs` + dispatch tests | — | `PASS` |
 
 ### 2.5 Git, terminals, tags, settings, updater
 
@@ -375,6 +376,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-copy-path` | Copy full path | Builder + handler | Context menu tests | Paste path in Notepad | `PASS` |
 | `ctx-bookmark` | Bookmark selected folder | Builder + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-copy-to-pane` `ctx-move-to-pane` | Other pane | Builder | Same | Dual pane | `PASS` |
+| `ctx-plugin-menu` | Plugin context menu groups (`ctx-plugin-menu:<pluginId>`) | Builder | `ContextMenuBuilderTests` | Right-click with the Hello fixture enabled | `PASS` |
 | `ctx-close-dual-pane` | Close right pane | Builder + handler | `DesktopPolishTests` | F6 or pane menu | `PASS` |
 | `ctx-close-left-pane` | Close left pane | Builder + handler | `DesktopPolishTests` | Dual pane | `PASS` |
 | `ctx-pack` `ctx-unpack` | Pack/unpack | Builder | Same | — | `PASS` |
@@ -435,7 +437,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 97 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 99 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |

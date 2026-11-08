@@ -353,3 +353,49 @@ if (!process.exitCode) {
     `Checked IPC v1 schema: ${schemaMethods.size} domain methods, ${requiredEmitted.length} emitted events, ${requiredGoldens.length} goldens.`,
   );
 }
+
+// Plugin protocol (ipc/schema/plugin/v1): the host methods and SDK version must match both sides.
+const pluginProtocolPath = join(repoRoot, 'ipc', 'schema', 'plugin', 'v1', 'protocol.json');
+const pluginProtocol = existsSync(pluginProtocolPath)
+  ? JSON.parse(readFileSync(pluginProtocolPath, 'utf8'))
+  : null;
+if (!pluginProtocol) {
+  fail('missing ipc/schema/plugin/v1/protocol.json');
+} else {
+  const hostMethods = Array.isArray(pluginProtocol.hostMethods) ? pluginProtocol.hostMethods : [];
+  if (hostMethods.length === 0) {
+    fail('plugin protocol hostMethods must be a non-empty array');
+  }
+  const hostMethodSources = [
+    'src-winui/SimpleFile.PluginHost/Backend/PluginHostMethods.cs',
+    'crates/sumafile-plugin/src/host.rs',
+  ];
+  for (const sourcePath of hostMethodSources) {
+    const source = readRepo(sourcePath);
+    for (const method of hostMethods) {
+      // The exact quoted name: "host.progress_begin returned ..." does not count.
+      if (!source.includes(`"${method}"`)) {
+        fail(`plugin host method ${method} is not a string literal in ${sourcePath}`);
+      }
+    }
+  }
+  const sdkVersion = readRepo('src-winui/SimpleFile.PluginSdk/PluginSdk.cs').match(
+    /public const string Version\s*=\s*"([^"]+)"/,
+  )?.[1];
+  if (!sdkVersion) {
+    fail('could not find PluginSdk.Version in src-winui/SimpleFile.PluginSdk/PluginSdk.cs');
+  } else if (pluginProtocol.sdkVersion !== sdkVersion) {
+    fail(`plugin protocol sdkVersion ${pluginProtocol.sdkVersion} does not match PluginSdk.Version ${sdkVersion}`);
+  }
+  if (pluginProtocol.handshake?.method !== 'plugin.handshake') {
+    fail('plugin protocol handshake.method must be plugin.handshake');
+  }
+  if (pluginProtocol.cancel?.method !== 'cancel') {
+    fail('plugin protocol cancel.method must be cancel');
+  }
+  if (!process.exitCode) {
+    console.log(
+      `Checked plugin protocol v1: ${hostMethods.length} host methods, SDK ${pluginProtocol.sdkVersion}.`,
+    );
+  }
+}

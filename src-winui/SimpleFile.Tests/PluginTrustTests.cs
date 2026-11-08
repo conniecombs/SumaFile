@@ -369,4 +369,41 @@ public class PluginTrustTests
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
+
+    [Fact]
+    public void ApprovalStore_DefaultPath_HonorsEnvOverrideOnlyWhenSet()
+    {
+        var localDefault = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "SumaFile", "plugin-approvals.json");
+        var previous = Environment.GetEnvironmentVariable(PluginApprovalStore.PathVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(PluginApprovalStore.PathVariable, null);
+            Assert.Equal(localDefault, PluginApprovalStore.DefaultPath());
+            Environment.SetEnvironmentVariable(PluginApprovalStore.PathVariable, "  ");
+            Assert.Equal(localDefault, PluginApprovalStore.DefaultPath());
+            Environment.SetEnvironmentVariable(PluginApprovalStore.PathVariable, @" C:\smoke\approvals.json ");
+            Assert.Equal(@"C:\smoke\approvals.json", PluginApprovalStore.DefaultPath());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(PluginApprovalStore.PathVariable, previous);
+        }
+    }
+
+    [Fact]
+    public void ApprovalStore_ReadsTheShapeTheUiSmokeWrites()
+    {
+        // scripts/smoke-winui-ui.ps1 -PluginsDir writes this by hand; keep the two in step.
+        var tmp = Path.Combine(Path.GetTempPath(), "sumafile-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            var path = Path.Combine(tmp, "plugin-approvals.json");
+            File.WriteAllText(path, "{ \"" + Id + "\": { \"ManifestHash\": \"abc\", \"SignatureStatus\": \"Unsigned\", " +
+                "\"State\": \"Enabled\", \"UpdatedAt\": \"2026-11-07T00:00:00+00:00\" } }");
+            Assert.Equal(ApprovalState.Enabled, new PluginApprovalStore(path).Resolve(Id, "abc", SignatureStatus.Unsigned));
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
 }
