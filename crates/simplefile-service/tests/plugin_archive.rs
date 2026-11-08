@@ -3,13 +3,15 @@
 #![cfg(windows)]
 
 use serde_json::{json, Value};
+use simplefile_core::archive::ArchiveEngine;
 use simplefile_ipc::frame::{decode_length, encode_frame};
 use simplefile_ipc::rpc::JsonRpcRequest;
 use simplefile_ipc::{HANDSHAKE_METHOD, PROTOCOL_VERSION};
+use simplefile_service::plugin_archive::{PipeArchiveEngine, PluginConnection, PluginTimeouts};
 use simplefile_service::{serve_connection, SessionState};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{duplex, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 
@@ -45,13 +47,15 @@ async fn write_message<W: AsyncWrite + Unpin>(writer: &mut W, message: &Value) {
 #[derive(Default)]
 struct FakeLog {
     handshakes: AtomicUsize,
+    disconnects: AtomicUsize,
     calls: Mutex<Vec<(String, Value)>>,
 }
 
 /// Act as a plugin backend on `pipe_name`: answer the handshake and the
 /// archive methods. An `archive.list` for a path containing `drop-me`
-/// closes the connection without replying, to simulate a crash; the server
-/// keeps accepting new connections.
+/// closes the connection without replying, to simulate a crash; one for a
+/// path containing `hang-me` is never answered while the connection stays
+/// open. The server keeps accepting new connections.
 fn spawn_fake_plugin(pipe_name: &str) -> Arc<FakeLog> {
     let path = format!(r"\\.\pipe\{pipe_name}");
     let log = Arc::new(FakeLog::default());
@@ -95,7 +99,14 @@ async fn serve_fake_client(mut pipe: NamedPipeServer, log: Arc<FakeLog>) {
                     .unwrap_or_default()
                     .contains("drop-me")
                 {
-                    return;
+                    break;
+                }
+                if params["archivePath"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("hang-me")
+                {
+                    continue;
                 }
                 json!({
                     "entries": [
@@ -132,6 +143,7 @@ async fn serve_fake_client(mut pipe: NamedPipeServer, log: Arc<FakeLog>) {
         )
         .await;
     }
+    log.disconnects.fetch_add(1, Ordering::SeqCst);
 }
 
 struct Service {
@@ -380,4 +392,172 @@ async fn plugin_engine_reconnects_once_after_a_transport_error() {
 
     service.stop().await;
     let _ = std::fs::remove_dir_all(root);
+}
+
+fn short_timeouts(list: Duration, lock: Duration) -> PluginTimeouts {
+    PluginTimeouts {
+        handshake: Duration::from_secs(2),
+        list,
+        transfer: Duration::from_secs(2),
+        lock,
+    }
+}
+
+async fn wait_until(what: &str, condition: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !condition() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plugin_call_that_never_answers_times_out_and_the_next_call_reconnects() {
+    let pipe_name = format!("simplefile-test-plugin-hang-{}", nonce());
+    let log = spawn_fake_plugin(&pipe_name);
+    let root = temp_dir("hang");
+    let hanging = root.join("hang-me.hello");
+    let fine = root.join("fine.hello");
+
+    let task_log = log.clone();
+    let task_pipe = pipe_name.clone();
+    let (elapsed, error, entries) = tokio::task::spawn_blocking(move || {
+        let connection = PluginConnection::connect_with_timeouts(
+            "com.test.hang",
+            &task_pipe,
+            short_timeouts(Duration::from_millis(400), Duration::from_secs(2)),
+        )
+        .expect("connect to fake plugin");
+        let engine = PipeArchiveEngine::new("Hang Engine", connection);
+        let started = Instant::now();
+        let error = engine
+            .list_entries(&hanging)
+            .expect_err("an unanswered call fails");
+        let elapsed = started.elapsed();
+        assert_eq!(task_log.handshakes.load(Ordering::SeqCst), 1);
+        let entries = engine.list_entries(&fine).expect("next call reconnects");
+        (elapsed, error, entries)
+    })
+    .await
+    .unwrap();
+
+    assert!(error.contains("archive.list"), "{error}");
+    assert!(error.contains("400ms"), "{error}");
+    assert!(elapsed >= Duration::from_millis(400), "{elapsed:?}");
+    assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(log.handshakes.load(Ordering::SeqCst), 2);
+    // The stuck connection was really closed, not leaked.
+    wait_until("the timed-out connection to close", || {
+        log.disconnects.load(Ordering::SeqCst) >= 1
+    })
+    .await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn second_caller_on_a_busy_plugin_gets_a_busy_error_within_its_bound() {
+    let pipe_name = format!("simplefile-test-plugin-busy-{}", nonce());
+    let log = spawn_fake_plugin(&pipe_name);
+    let root = temp_dir("busy");
+    let hanging = root.join("hang-me.hello");
+    let fine = root.join("fine.hello");
+
+    let task_pipe = pipe_name.clone();
+    let task_log = log.clone();
+    tokio::task::spawn_blocking(move || {
+        let connection = PluginConnection::connect_with_timeouts(
+            "com.test.busy",
+            &task_pipe,
+            short_timeouts(Duration::from_millis(1500), Duration::from_millis(300)),
+        )
+        .expect("connect to fake plugin");
+        let first = PipeArchiveEngine::new("Busy Engine", connection.clone());
+        let second = PipeArchiveEngine::new("Busy Engine", connection);
+
+        let holder = std::thread::spawn(move || first.list_entries(&hanging));
+        // Wait until the first call is in flight and holds the connection.
+        let in_flight = Instant::now() + Duration::from_secs(5);
+        while !task_log
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(method, _)| method == "archive.list")
+        {
+            assert!(
+                Instant::now() < in_flight,
+                "first call never reached the plugin"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let started = Instant::now();
+        let busy = second
+            .list_entries(&fine)
+            .expect_err("a queued caller gives up");
+        let waited = started.elapsed();
+        assert_eq!(busy, "plugin com.test.busy is busy");
+        assert!(waited >= Duration::from_millis(300), "{waited:?}");
+        assert!(waited < Duration::from_millis(1200), "{waited:?}");
+
+        let first_error = holder
+            .join()
+            .unwrap()
+            .expect_err("the hanging call times out");
+        assert!(first_error.contains("archive.list"), "{first_error}");
+        assert_eq!(second.list_entries(&fine).expect("free again").len(), 2);
+    })
+    .await
+    .unwrap();
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reregistering_with_only_built_in_formats_keeps_the_existing_registration() {
+    let _lock = REGISTRY_LOCK.lock().await;
+    let pipe_name = format!("simplefile-test-plugin-rereg-{}", nonce());
+    let log = spawn_fake_plugin(&pipe_name);
+    let plugin_id = "com.test.rereg";
+    let _unregister = Unregister(plugin_id.to_string());
+    let mut service = Service::start().await;
+    let registered = service
+        .call(
+            "register_archive_engine",
+            json!({ "pluginId": plugin_id, "pipeName": pipe_name, "formats": hello_format() }),
+        )
+        .await;
+    assert!(registered.get("error").is_none(), "{registered}");
+
+    let zip_only = service
+        .call(
+            "register_archive_engine",
+            json!({
+                "pluginId": plugin_id,
+                "pipeName": pipe_name,
+                "formats": [{
+                    "extension": ".zip",
+                    "canList": true,
+                    "canExtract": true,
+                    "canCreate": true,
+                    "canModify": true,
+                    "engineName": "Zip Thief"
+                }]
+            }),
+        )
+        .await;
+    let message = zip_only["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("no registrable formats"), "{zip_only}");
+    // Rejected before connecting: only the first registration handshook.
+    assert_eq!(log.handshakes.load(Ordering::SeqCst), 1);
+
+    let capabilities = service.call("get_archive_capabilities", json!({})).await;
+    let formats = capabilities["result"]["formats"].as_array().unwrap();
+    assert!(formats.iter().any(|format| format["extension"] == ".hello"
+        && format["engine"] == format!("plugin:{plugin_id}")));
+    assert!(!formats
+        .iter()
+        .any(|format| format["extension"] == ".zip" && format["engine"] != "built-in"));
+
+    service.stop().await;
 }

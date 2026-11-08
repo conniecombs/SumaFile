@@ -61,18 +61,29 @@ fn is_built_in_extension(extension: &str) -> bool {
     super::path::archive_format_for_path(Path::new(&format!("archive{extension}"))).is_some()
 }
 
-/// Add `formats` served by `engine` on behalf of `owner`. An owner may
-/// register several engines; `unregister_engine` removes all of them.
-/// Formats with an empty or built-in extension are dropped.
-pub fn register_engine(owner: &str, formats: Vec<EngineFormat>, engine: Arc<dyn ArchiveEngine>) {
-    let formats: Vec<EngineFormat> = formats
+/// True when `extension` (with or without its dot, any case) could be
+/// served by an engine: it is not empty and no built-in format claims it.
+pub fn is_registrable_extension(extension: &str) -> bool {
+    let normalized = normalize_extension(extension);
+    normalized.len() > 1 && !is_built_in_extension(&normalized)
+}
+
+fn registrable(formats: Vec<EngineFormat>) -> Vec<EngineFormat> {
+    formats
         .into_iter()
         .map(|format| EngineFormat {
             extension: normalize_extension(&format.extension),
             ..format
         })
-        .filter(|format| format.extension.len() > 1 && !is_built_in_extension(&format.extension))
-        .collect();
+        .filter(|format| is_registrable_extension(&format.extension))
+        .collect()
+}
+
+/// Add `formats` served by `engine` on behalf of `owner`. An owner may
+/// register several engines; `unregister_engine` removes all of them.
+/// Formats with an empty or built-in extension are dropped.
+pub fn register_engine(owner: &str, formats: Vec<EngineFormat>, engine: Arc<dyn ArchiveEngine>) {
+    let formats = registrable(formats);
     if formats.is_empty() {
         return;
     }
@@ -84,6 +95,34 @@ pub fn register_engine(owner: &str, formats: Vec<EngineFormat>, engine: Arc<dyn 
         formats,
         engine,
     });
+}
+
+/// Replace everything `owner` registered with `engines` in one step, so
+/// lookups never see the owner half-registered. Formats are filtered as in
+/// `register_engine`; returns false and changes nothing when no
+/// registrable format remains.
+pub fn replace_engines(
+    owner: &str,
+    engines: Vec<(Vec<EngineFormat>, Arc<dyn ArchiveEngine>)>,
+) -> bool {
+    let replacements: Vec<Registration> = engines
+        .into_iter()
+        .map(|(formats, engine)| Registration {
+            owner: owner.to_string(),
+            formats: registrable(formats),
+            engine,
+        })
+        .filter(|registration| !registration.formats.is_empty())
+        .collect();
+    if replacements.is_empty() {
+        return false;
+    }
+    let mut registrations = registry()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    registrations.retain(|registration| registration.owner != owner);
+    registrations.extend(replacements);
+    true
 }
 
 /// Remove every engine `owner` registered. Unknown owners are a no-op.

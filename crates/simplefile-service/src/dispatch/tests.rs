@@ -7,7 +7,8 @@ use simplefile_core::models::{DirectoryListing, FileEntry};
 use simplefile_core::remote::RemoteProfile;
 use simplefile_ipc::rpc::JsonRpcRequest;
 use simplefile_ipc::{
-    ERR_HOST_OWNED, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, HANDSHAKE_METHOD, PREFIX_HOST_OWNED,
+    ERR_HOST_OWNED, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND,
+    HANDSHAKE_METHOD, PREFIX_HOST_OWNED,
 };
 use std::ffi::OsString;
 use std::fs;
@@ -267,6 +268,73 @@ fn unknown_method_is_not_found() {
     let outcome = dispatch(&mut state, &request("not_a_real_method", 4, json!({})));
     let response = reply(outcome);
     assert_eq!(response.error.unwrap().code, ERR_METHOD_NOT_FOUND);
+}
+
+fn register_archive_engine_request(id: u64, pipe_name: &str, extension: &str) -> JsonRpcRequest {
+    request(
+        "register_archive_engine",
+        id,
+        json!({
+            "pluginId": "com.test.validation",
+            "pipeName": pipe_name,
+            "formats": [{
+                "extension": extension,
+                "canList": true,
+                "canExtract": true,
+                "canCreate": false,
+                "canModify": false,
+                "engineName": "Validation"
+            }]
+        }),
+    )
+}
+
+#[test]
+fn register_archive_engine_rejects_unsafe_pipe_names_before_connecting() {
+    let mut state = SessionState {
+        handshake_done: true,
+        ..SessionState::default()
+    };
+    let too_long = "a".repeat(300);
+    for (id, pipe_name) in [
+        (6u64, r"..\evil"),
+        (7, too_long.as_str()),
+        (8, r"\\.\pipe\other"),
+        (9, ""),
+    ] {
+        // A direct reply (not a deferred job) proves no pipe was opened.
+        let outcome = dispatch(
+            &mut state,
+            &register_archive_engine_request(id, pipe_name, ".validation"),
+        );
+        let Dispatch::Reply(response) = outcome else {
+            panic!("{pipe_name:?} must be rejected without touching the pipe");
+        };
+        let error = response.error.expect("invalid pipe name is an error");
+        assert_eq!(
+            error.code, ERR_INVALID_PARAMS,
+            "{pipe_name:?}: {}",
+            error.message
+        );
+    }
+}
+
+#[test]
+fn register_archive_engine_with_only_built_in_formats_is_an_error() {
+    let mut state = SessionState {
+        handshake_done: true,
+        ..SessionState::default()
+    };
+    let response = reply(dispatch(
+        &mut state,
+        &register_archive_engine_request(10, "simplefile-test-unused-pipe", ".zip"),
+    ));
+    let error = response.error.expect("only built-in formats is an error");
+    assert!(
+        error.message.contains("no registrable formats"),
+        "{}",
+        error.message
+    );
 }
 
 #[test]

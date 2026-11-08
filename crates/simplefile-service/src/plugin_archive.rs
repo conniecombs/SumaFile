@@ -2,8 +2,9 @@
 //!
 //! The plugin creates the pipe server; the service connects as a client and
 //! speaks the same length-prefixed JSON-RPC framing as the host connection.
-//! Calls are synchronous (they run on blocking lanes) and serialized behind
-//! one connection per plugin.
+//! Calls run on blocking lanes, are serialized behind one connection per
+//! plugin, and every exchange is bounded: a plugin that stops answering
+//! costs a lane worker for at most one deadline, never indefinitely.
 
 use serde_json::{json, Value};
 use simplefile_core::archive::{self, ArchiveEngine, EngineEntry, EngineFormat};
@@ -12,18 +13,65 @@ use simplefile_ipc::rpc::JsonRpcRequest;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::time::{Duration, Instant};
 
 pub const PLUGIN_HANDSHAKE_METHOD: &str = "plugin.handshake";
 pub const PLUGIN_SDK_VERSION: &str = "1.0.0";
 const CLIENT_NAME: &str = "simplefile-service";
+const MAX_PIPE_NAME_LEN: usize = 200;
 
 /// Windows reports a pipe whose every instance is in use as busy; the
 /// plugin opens a fresh instance right away, so retry briefly.
 const ERROR_PIPE_BUSY: i32 = 231;
 const BUSY_RETRIES: u32 = 20;
 const BUSY_RETRY_DELAY: Duration = Duration::from_millis(50);
+const LOCK_POLL: Duration = Duration::from_millis(10);
+
+/// How long each kind of exchange with a plugin may take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PluginTimeouts {
+    pub handshake: Duration,
+    pub list: Duration,
+    /// `archive.extract` and `archive.create`.
+    pub transfer: Duration,
+    /// How long a caller waits for another call on the same plugin.
+    pub lock: Duration,
+}
+
+impl Default for PluginTimeouts {
+    fn default() -> Self {
+        Self {
+            handshake: Duration::from_secs(5),
+            list: Duration::from_secs(30),
+            transfer: Duration::from_secs(600),
+            lock: Duration::from_secs(30),
+        }
+    }
+}
+
+impl PluginTimeouts {
+    fn for_method(&self, method: &str) -> Duration {
+        match method {
+            PLUGIN_HANDSHAKE_METHOD => self.handshake,
+            "archive.list" => self.list,
+            _ => self.transfer,
+        }
+    }
+}
+
+/// Plugin pipe names are bare names: `[A-Za-z0-9._-]{1,200}`. Anything
+/// else (separators, a `\\.\pipe\` prefix, a drive path) is refused so the
+/// service never opens a path a plugin chose.
+pub fn is_valid_pipe_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_PIPE_NAME_LEN
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
 
 /// One format of a registration request, as the host sends it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,8 +84,9 @@ pub struct PluginArchiveFormat {
     pub engine_name: String,
 }
 
-/// A failure talking to the plugin. Transport errors mean the connection
-/// can no longer be trusted; remote errors are the plugin's own answer.
+/// A failure talking to the plugin. Transport errors (including timeouts)
+/// mean the connection can no longer be trusted; remote errors are the
+/// plugin's own answer.
 #[derive(Debug)]
 enum CallError {
     Transport(String),
@@ -52,15 +101,52 @@ impl CallError {
     }
 }
 
+enum IoJob {
+    Write(Vec<u8>),
+    Read,
+}
+
+/// `Some` for a decoded frame, `None` for a completed write.
+type IoResult = Result<Option<Value>, String>;
+
+/// One pipe connection. All pipe I/O happens on a dedicated thread that
+/// performs one job at a time, so the caller can stop waiting at a
+/// deadline and cancel the stuck operation. Reads are only issued when a
+/// reply is expected, so a write never queues behind a pending read on the
+/// synchronous handle.
 struct Connection {
-    pipe: File,
+    pipe: Arc<File>,
+    jobs: Option<Sender<IoJob>>,
+    results: Receiver<IoResult>,
+    io_exited: Arc<AtomicBool>,
     next_id: u64,
+    plugin_id: String,
 }
 
 impl Connection {
-    fn open(pipe_path: &str, plugin_id: &str) -> Result<Self, String> {
-        let pipe = open_pipe(pipe_path)?;
-        let mut connection = Self { pipe, next_id: 0 };
+    fn open(pipe_path: &str, plugin_id: &str, timeouts: &PluginTimeouts) -> Result<Self, String> {
+        let pipe = Arc::new(open_pipe(pipe_path)?);
+        let (jobs, job_receiver) = mpsc::channel::<IoJob>();
+        let (result_sender, results) = mpsc::channel::<IoResult>();
+        let io_exited = Arc::new(AtomicBool::new(false));
+        let thread_pipe = Arc::clone(&pipe);
+        let thread_exited = Arc::clone(&io_exited);
+        std::thread::Builder::new()
+            .name(format!("plugin-pipe-{plugin_id}"))
+            .spawn(move || {
+                io_loop(&thread_pipe, &job_receiver, &result_sender);
+                thread_exited.store(true, Ordering::SeqCst);
+            })
+            .map_err(|e| format!("Could not start plugin pipe thread: {e}"))?;
+
+        let mut connection = Self {
+            pipe,
+            jobs: Some(jobs),
+            results,
+            io_exited,
+            next_id: 0,
+            plugin_id: plugin_id.to_string(),
+        };
         connection
             .call(
                 PLUGIN_HANDSHAKE_METHOD,
@@ -70,6 +156,7 @@ impl Connection {
                     "sdkVersion": PLUGIN_SDK_VERSION,
                     "client": CLIENT_NAME,
                 }),
+                timeouts.handshake,
             )
             .map_err(|error| {
                 format!(
@@ -80,7 +167,8 @@ impl Connection {
         Ok(connection)
     }
 
-    fn call(&mut self, method: &str, params: Value) -> Result<Value, CallError> {
+    fn call(&mut self, method: &str, params: Value, timeout: Duration) -> Result<Value, CallError> {
+        let deadline = Instant::now() + timeout;
         self.next_id += 1;
         let id = json!(self.next_id);
         let request = JsonRpcRequest {
@@ -92,13 +180,12 @@ impl Connection {
         let payload =
             serde_json::to_vec(&request).map_err(|e| CallError::Transport(e.to_string()))?;
         let frame = encode_frame(&payload).map_err(|e| CallError::Transport(e.to_string()))?;
-        self.pipe
-            .write_all(&frame)
-            .and_then(|()| self.pipe.flush())
-            .map_err(|e| CallError::Transport(format!("Plugin pipe write failed: {e}")))?;
+        self.run(IoJob::Write(frame), method, timeout, deadline)?;
 
         loop {
-            let message = self.read_message()?;
+            let message = self
+                .run(IoJob::Read, method, timeout, deadline)?
+                .ok_or_else(|| CallError::Transport("Plugin pipe read returned nothing".into()))?;
             // Notifications and stale replies are not ours to answer.
             if message.get("id") != Some(&id) {
                 continue;
@@ -120,18 +207,111 @@ impl Connection {
         }
     }
 
-    fn read_message(&mut self) -> Result<Value, CallError> {
-        let mut header = [0u8; 4];
-        self.pipe
-            .read_exact(&mut header)
-            .map_err(|e| CallError::Transport(format!("Plugin pipe read failed: {e}")))?;
-        let length = decode_length(header).map_err(|e| CallError::Transport(e.to_string()))?;
-        let mut payload = vec![0u8; length as usize];
-        self.pipe
-            .read_exact(&mut payload)
-            .map_err(|e| CallError::Transport(format!("Plugin pipe read failed: {e}")))?;
-        serde_json::from_slice(&payload)
-            .map_err(|e| CallError::Transport(format!("Plugin sent malformed JSON: {e}")))
+    fn run(
+        &mut self,
+        job: IoJob,
+        method: &str,
+        timeout: Duration,
+        deadline: Instant,
+    ) -> Result<Option<Value>, CallError> {
+        let sent = self
+            .jobs
+            .as_ref()
+            .is_some_and(|jobs| jobs.send(job).is_ok());
+        if !sent {
+            return Err(CallError::Transport("Plugin pipe is closed".into()));
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match self.results.recv_timeout(remaining) {
+            Ok(result) => result.map_err(CallError::Transport),
+            Err(RecvTimeoutError::Timeout) => {
+                self.close();
+                Err(CallError::Transport(format!(
+                    "Plugin {} did not answer {method} within {}",
+                    self.plugin_id,
+                    describe(timeout)
+                )))
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                Err(CallError::Transport("Plugin pipe thread stopped".into()))
+            }
+        }
+    }
+
+    /// Stop the I/O thread: no more jobs, and cancel the operation it is
+    /// blocked in so it lets go of the pipe. The cancel is repeated briefly
+    /// in case the thread had not yet entered the blocking call.
+    fn close(&mut self) {
+        self.jobs = None;
+        for _ in 0..50 {
+            if self.io_exited.load(Ordering::SeqCst) {
+                return;
+            }
+            cancel_pipe_io(&self.pipe);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        // An idle thread exits once the job channel closes; one stuck in a
+        // read is cancelled.
+        self.jobs = None;
+        if !self.io_exited.load(Ordering::SeqCst) {
+            cancel_pipe_io(&self.pipe);
+        }
+    }
+}
+
+fn io_loop(pipe: &File, jobs: &Receiver<IoJob>, results: &Sender<IoResult>) {
+    let mut pipe = pipe;
+    while let Ok(job) = jobs.recv() {
+        let result = match job {
+            IoJob::Write(frame) => pipe
+                .write_all(&frame)
+                .and_then(|()| pipe.flush())
+                .map(|()| None)
+                .map_err(|e| format!("Plugin pipe write failed: {e}")),
+            IoJob::Read => read_frame(&mut pipe).map(Some),
+        };
+        let failed = result.is_err();
+        if results.send(result).is_err() || failed {
+            return;
+        }
+    }
+}
+
+fn read_frame(pipe: &mut &File) -> Result<Value, String> {
+    let mut header = [0u8; 4];
+    pipe.read_exact(&mut header)
+        .map_err(|e| format!("Plugin pipe read failed: {e}"))?;
+    let length = decode_length(header).map_err(|e| e.to_string())?;
+    let mut payload = vec![0u8; length as usize];
+    pipe.read_exact(&mut payload)
+        .map_err(|e| format!("Plugin pipe read failed: {e}"))?;
+    serde_json::from_slice(&payload).map_err(|e| format!("Plugin sent malformed JSON: {e}"))
+}
+
+#[cfg(windows)]
+fn cancel_pipe_io(pipe: &File) {
+    use std::os::windows::io::AsRawHandle;
+    // SAFETY: the handle stays open while `pipe` is borrowed; a null
+    // OVERLAPPED cancels every pending operation on it, including the
+    // synchronous read the I/O thread is blocked in.
+    unsafe {
+        windows_sys::Win32::System::IO::CancelIoEx(pipe.as_raw_handle() as _, std::ptr::null());
+    }
+}
+
+#[cfg(not(windows))]
+fn cancel_pipe_io(_pipe: &File) {}
+
+fn describe(duration: Duration) -> String {
+    if duration.subsec_millis() == 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        format!("{}ms", duration.as_millis())
     }
 }
 
@@ -159,11 +339,12 @@ fn open_pipe(pipe_path: &str) -> Result<File, String> {
     }
 }
 
-/// The connection a plugin's engines share. `None` after a transport
-/// error; the next call reconnects (and handshakes again) once.
+/// The connection a plugin's engines share. `None` after a transport error
+/// or timeout; the next call reconnects (and handshakes again) once.
 pub struct PluginConnection {
     plugin_id: String,
     pipe_path: String,
+    timeouts: PluginTimeouts,
     connection: Mutex<Option<Connection>>,
 }
 
@@ -171,30 +352,61 @@ impl PluginConnection {
     /// Connect and handshake now, so a plugin that is not serving fails
     /// registration instead of the first archive operation.
     pub fn connect(plugin_id: &str, pipe_name: &str) -> Result<Arc<Self>, String> {
+        Self::connect_with_timeouts(plugin_id, pipe_name, PluginTimeouts::default())
+    }
+
+    pub fn connect_with_timeouts(
+        plugin_id: &str,
+        pipe_name: &str,
+        timeouts: PluginTimeouts,
+    ) -> Result<Arc<Self>, String> {
+        if !is_valid_pipe_name(pipe_name) {
+            return Err(format!("Invalid plugin pipe name: {pipe_name}"));
+        }
         let pipe_path = crate::pipe_path(pipe_name);
-        let connection = Connection::open(&pipe_path, plugin_id)?;
+        let connection = Connection::open(&pipe_path, plugin_id, &timeouts)?;
         Ok(Arc::new(Self {
             plugin_id: plugin_id.to_string(),
             pipe_path,
+            timeouts,
             connection: Mutex::new(Some(connection)),
         }))
     }
 
     pub fn call(&self, method: &str, params: Value) -> Result<Value, String> {
-        let mut guard = self
-            .connection
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self.lock()?;
         if guard.is_none() {
-            *guard = Some(Connection::open(&self.pipe_path, &self.plugin_id)?);
+            *guard = Some(Connection::open(
+                &self.pipe_path,
+                &self.plugin_id,
+                &self.timeouts,
+            )?);
         }
         let connection = guard.as_mut().expect("connection was just opened");
-        match connection.call(method, params) {
+        match connection.call(method, params, self.timeouts.for_method(method)) {
             Ok(result) => Ok(result),
             Err(CallError::Remote(message)) => Err(message),
             Err(CallError::Transport(message)) => {
                 *guard = None;
                 Err(message)
+            }
+        }
+    }
+
+    /// Wait at most `timeouts.lock` for the call in progress, so queued
+    /// callers give their lane permit back instead of waiting forever.
+    fn lock(&self) -> Result<MutexGuard<'_, Option<Connection>>, String> {
+        let deadline = Instant::now() + self.timeouts.lock;
+        loop {
+            match self.connection.try_lock() {
+                Ok(guard) => return Ok(guard),
+                Err(TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
+                Err(TryLockError::WouldBlock) => {
+                    if Instant::now() >= deadline {
+                        return Err(format!("plugin {} is busy", self.plugin_id));
+                    }
+                    std::thread::sleep(LOCK_POLL);
+                }
             }
         }
     }
@@ -279,10 +491,11 @@ impl ArchiveEngine for PipeArchiveEngine {
     }
 }
 
-/// Connect to `pipe_name`, handshake, then register `formats` for
-/// `plugin_id`, replacing whatever that plugin registered before. Formats
-/// that share an engine name share one engine; all share one connection.
-/// On any failure nothing new is registered.
+/// Connect to `pipe_name`, handshake, then replace whatever `plugin_id`
+/// registered before with `formats`. Formats that share an engine name
+/// share one engine; all share one connection. Formats no engine may serve
+/// (empty or built-in extensions) are dropped first; if none remain, or on
+/// any failure, the existing registration is left untouched.
 pub fn register_plugin_engine(
     plugin_id: &str,
     pipe_name: &str,
@@ -291,11 +504,17 @@ pub fn register_plugin_engine(
     if plugin_id.trim().is_empty() {
         return Err("pluginId must not be empty".to_string());
     }
-    if pipe_name.trim().is_empty() {
-        return Err("pipeName must not be empty".to_string());
+    if !is_valid_pipe_name(pipe_name) {
+        return Err(format!("Invalid plugin pipe name: {pipe_name}"));
     }
+    let formats: Vec<PluginArchiveFormat> = formats
+        .into_iter()
+        .filter(|format| archive::is_registrable_extension(&format.extension))
+        .collect();
     if formats.is_empty() {
-        return Err(format!("Plugin {plugin_id} registered no archive formats"));
+        return Err(format!(
+            "Plugin {plugin_id} has no registrable formats (empty or built-in extensions only)"
+        ));
     }
 
     let connection = PluginConnection::connect(plugin_id, pipe_name)?;
@@ -320,10 +539,16 @@ pub fn register_plugin_engine(
         }
     }
 
-    archive::unregister_engine(plugin_id);
-    for (engine_name, group) in groups {
-        let engine = PipeArchiveEngine::new(engine_name, Arc::clone(&connection));
-        archive::register_engine(plugin_id, group, Arc::new(engine));
+    let engines: Vec<(Vec<EngineFormat>, Arc<dyn ArchiveEngine>)> = groups
+        .into_iter()
+        .map(|(engine_name, group)| {
+            let engine: Arc<dyn ArchiveEngine> =
+                Arc::new(PipeArchiveEngine::new(engine_name, Arc::clone(&connection)));
+            (group, engine)
+        })
+        .collect();
+    if !archive::replace_engines(plugin_id, engines) {
+        return Err(format!("Plugin {plugin_id} has no registrable formats"));
     }
     Ok(())
 }

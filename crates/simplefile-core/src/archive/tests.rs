@@ -1323,3 +1323,31 @@ fn engine_is_archive_path_true_for_registered_extension() {
     assert!(is_archive_path(&archive_string));
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn engine_replace_with_no_registrable_formats_keeps_existing() {
+    let _registration = register_mock(
+        "com.test.replace",
+        &[".engreplace"],
+        std::sync::Arc::new(MockEngine::default()),
+    );
+    let thief: std::sync::Arc<dyn ArchiveEngine> = std::sync::Arc::new(MockEngine::default());
+
+    assert!(!replace_engines(
+        "com.test.replace",
+        vec![(
+            vec![engine_format(".zip"), engine_format("")],
+            thief.clone()
+        )],
+    ));
+    assert!(engine_for_path(Path::new("a.engreplace")).is_some());
+    assert!(!is_registrable_extension(".TGZ"));
+    assert!(is_registrable_extension("engreplace2"));
+
+    assert!(replace_engines(
+        "com.test.replace",
+        vec![(vec![engine_format(".engreplace2")], thief)],
+    ));
+    assert!(engine_for_path(Path::new("a.engreplace")).is_none());
+    assert!(engine_for_path(Path::new("a.engreplace2")).is_some());
+}

@@ -748,6 +748,13 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         },
         METHOD_REGISTER_ARCHIVE_ENGINE => {
             match parse_params::<RegisterArchiveEngineParams>(request) {
+                Ok(p) if !crate::plugin_archive::is_valid_pipe_name(&p.pipe_name) => {
+                    Dispatch::Reply(JsonRpcResponse::error(
+                        request.id.clone(),
+                        ERR_INVALID_PARAMS,
+                        "invalid params: pipeName must match [A-Za-z0-9._-]{1,200}",
+                    ))
+                }
                 Ok(p) => reply_blocking(request, BlockingLane::General, move || {
                     let formats = p
                         .formats

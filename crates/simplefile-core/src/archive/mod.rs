@@ -13,8 +13,8 @@ mod tests;
 pub use capabilities::get_archive_capabilities;
 pub use create::create_archive;
 pub use engine::{
-    engine_for_path, register_engine, registered_formats, unregister_engine, ArchiveEngine,
-    EngineEntry, EngineFormat,
+    engine_for_path, is_registrable_extension, register_engine, registered_formats,
+    replace_engines, unregister_engine, ArchiveEngine, EngineEntry, EngineFormat,
 };
 pub use extract::extract_archive;
 pub use list::{list_archive, list_archive_directory};
