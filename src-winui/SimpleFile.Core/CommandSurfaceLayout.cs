@@ -62,6 +62,30 @@ public sealed class CommandSurfaceLayout
 
     public static CommandSurfaceLayout CreateDefault() => new();
 
+    /// <summary>Adds a command to the primary toolbar before Settings when it is not already there.</summary>
+    public bool EnsurePrimaryItem(string commandId)
+    {
+        if (string.IsNullOrWhiteSpace(commandId)
+            || PrimaryToolbar.Any(item => item.IsCommand && string.Equals(item.Id, commandId, StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        var settingsIndex = PrimaryToolbar.FindIndex(item =>
+            item.IsCommand && string.Equals(item.Id, ToolbarOverflowPlanner.Settings, StringComparison.Ordinal));
+        var entry = CommandSurfaceItem.Command(commandId);
+        if (settingsIndex >= 0)
+        {
+            PrimaryToolbar.Insert(settingsIndex, entry);
+        }
+        else
+        {
+            PrimaryToolbar.Add(entry);
+        }
+
+        return true;
+    }
+
     public static List<CommandSurfaceItem> DefaultPrimaryToolbarItems() =>
     [
         CommandSurfaceItem.Command(ToolbarOverflowPlanner.New),
@@ -232,12 +256,46 @@ public static class ToolbarActionCatalog
         new(ToolbarOverflowPlanner.Settings, "Settings", "App", ContextMenuIconCatalog.Settings, ToolbarOverflowPlanner.Settings, "Ctrl+,", usesBuiltInControl: true),
     ];
 
-    public static IReadOnlyList<ToolbarAction> All { get; } = BuildAll();
-    private static IReadOnlyDictionary<string, ToolbarAction> ById { get; } =
-        All.ToDictionary(action => action.Id, StringComparer.Ordinal);
+    private static volatile CatalogSnapshot _snapshot = CatalogSnapshot.Create([]);
+
+    public static IReadOnlyList<ToolbarAction> All => _snapshot.Actions;
+
+    public static event EventHandler? Changed;
+
+    /// <summary>Replaces the plugin-contributed toolbar actions; an empty list restores the built-in set.</summary>
+    public static void SetPluginActions(IReadOnlyList<ToolbarAction> actions)
+    {
+        ArgumentNullException.ThrowIfNull(actions);
+        _snapshot = CatalogSnapshot.Create(actions);
+        Changed?.Invoke(null, EventArgs.Empty);
+    }
 
     public static ToolbarAction? Find(string id) =>
-        ById.TryGetValue(id, out var action) ? action : null;
+        _snapshot.ById.TryGetValue(id, out var action) ? action : null;
+
+    private sealed class CatalogSnapshot
+    {
+        public required IReadOnlyList<ToolbarAction> Actions { get; init; }
+        public required IReadOnlyDictionary<string, ToolbarAction> ById { get; init; }
+
+        public static CatalogSnapshot Create(IReadOnlyList<ToolbarAction> pluginActions)
+        {
+            var actions = BuildAll();
+            if (pluginActions.Count > 0)
+            {
+                var merged = new List<ToolbarAction>(actions);
+                var seen = new HashSet<string>(merged.Select(action => action.Id), StringComparer.Ordinal);
+                merged.AddRange(pluginActions.Where(action => seen.Add(action.Id)));
+                actions = merged;
+            }
+
+            return new CatalogSnapshot
+            {
+                Actions = actions,
+                ById = actions.ToDictionary(action => action.Id, StringComparer.Ordinal),
+            };
+        }
+    }
 
     public static bool IsActionId(string id) => Find(id) is not null;
 
@@ -269,7 +327,7 @@ public static class ToolbarActionCatalog
     {
         var actions = new List<ToolbarAction>(BuiltInActions);
         var existing = new HashSet<string>(actions.Select(action => action.Id), StringComparer.Ordinal);
-        foreach (var command in AppCommandCatalog.All)
+        foreach (var command in AppCommandCatalog.BuiltIn)
         {
             // "search" and "filter" focus the omnibar; they are not toolbar buttons.
             if (existing.Contains(command.Id)

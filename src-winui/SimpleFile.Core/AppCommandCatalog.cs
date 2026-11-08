@@ -21,7 +21,7 @@ public sealed class AppCommand
 /// </summary>
 public static class AppCommandCatalog
 {
-    public static readonly IReadOnlyList<AppCommand> All =
+    public static readonly IReadOnlyList<AppCommand> BuiltIn =
     [
         new("go-home", "Go home", "Navigation", "Alt+Home"),
         new("go-recycle-bin", "Go to Recycle Bin", "Navigation"),
@@ -108,6 +108,21 @@ public static class AppCommandCatalog
         new("git-discard-selected", "Git: discard selected changes", "Git"),
         new("git-diff-selected", "Git: show selected diff", "Git"),
     ];
+
+    private static volatile IReadOnlyList<AppCommand> _all = BuiltIn;
+
+    /// <summary>Built-in commands followed by the commands enabled plugins contribute.</summary>
+    public static IReadOnlyList<AppCommand> All => _all;
+
+    public static event EventHandler? Changed;
+
+    /// <summary>Replaces the plugin-contributed commands; an empty list restores the built-in set.</summary>
+    public static void SetPluginCommands(IReadOnlyList<AppCommand> commands)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        _all = commands.Count == 0 ? BuiltIn : [.. BuiltIn, .. commands];
+        Changed?.Invoke(null, EventArgs.Empty);
+    }
 
     /// <summary>
     /// Returns the commands with their displayed shortcut taken from the effective keyboard map

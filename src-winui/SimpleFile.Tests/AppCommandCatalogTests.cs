@@ -10,6 +10,7 @@ using DriveInfo = SimpleFile.Ipc.DriveInfo;
 
 namespace SimpleFile.Tests;
 
+[Collection("Plugin catalogs")]
 public class AppCommandCatalogTests
 {
     [Fact]
@@ -102,5 +103,45 @@ public class AppCommandCatalogTests
     public void CommandAliases_NormalizeSharedRouterIds(string id, string expected)
     {
         Assert.Equal(expected, CommandAliasCatalog.Normalize(id));
+    }
+
+    [Fact]
+    public void SetPluginCommands_AppendsAndRaisesChanged()
+    {
+        var raised = 0;
+        void Handler(object? sender, EventArgs e) => raised++;
+        AppCommandCatalog.Changed += Handler;
+        try
+        {
+            AppCommandCatalog.SetPluginCommands([new AppCommand("plugin:com.a:greet", "Greet", "Hello")]);
+
+            Assert.Equal(1, raised);
+            Assert.Equal("plugin:com.a:greet", AppCommandCatalog.All[^1].Id);
+            Assert.Equal(AppCommandCatalog.BuiltIn.Count + 1, AppCommandCatalog.All.Count);
+            Assert.NotNull(AppCommandCatalog.Find("plugin:com.a:greet"));
+            Assert.Contains(AppCommandCatalog.Filter("greet"), command => command.Id == "plugin:com.a:greet");
+        }
+        finally
+        {
+            AppCommandCatalog.Changed -= Handler;
+            AppCommandCatalog.SetPluginCommands([]);
+        }
+    }
+
+    [Fact]
+    public void SetPluginCommands_Empty_RestoresBuiltIn()
+    {
+        try
+        {
+            AppCommandCatalog.SetPluginCommands([new AppCommand("plugin:com.a:greet", "Greet", "Hello")]);
+            AppCommandCatalog.SetPluginCommands([]);
+
+            Assert.Equal(AppCommandCatalog.BuiltIn, AppCommandCatalog.All);
+            Assert.Null(AppCommandCatalog.Find("plugin:com.a:greet"));
+        }
+        finally
+        {
+            AppCommandCatalog.SetPluginCommands([]);
+        }
     }
 }

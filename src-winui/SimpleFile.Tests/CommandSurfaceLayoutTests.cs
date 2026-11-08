@@ -3,6 +3,7 @@ using Xunit;
 
 namespace SimpleFile.Tests;
 
+[Collection("Plugin catalogs")]
 public class CommandSurfaceLayoutTests
 {
     [Fact]
@@ -126,5 +127,46 @@ public class CommandSurfaceLayoutTests
         previous.PrimaryToolbar.Reverse();
         var custom = CommandSurfaceLayout.FromJson(previous.ToJson());
         Assert.Equal(previous.VisiblePrimaryActionIds(), custom.VisiblePrimaryActionIds());
+    }
+
+    [Fact]
+    public void EnsurePrimaryItem_InsertsBeforeSettingsOnce()
+    {
+        var layout = CommandSurfaceLayout.CreateDefault();
+
+        Assert.True(layout.EnsurePrimaryItem("plugin:com.a:run"));
+        Assert.False(layout.EnsurePrimaryItem("plugin:com.a:run"));
+
+        var ids = layout.PrimaryToolbar.Select(item => item.Id).ToList();
+        Assert.Single(ids, "plugin:com.a:run");
+        Assert.Equal(ToolbarOverflowPlanner.Settings, ids[^1]);
+        Assert.Equal("plugin:com.a:run", ids[^2]);
+
+        var noSettings = new CommandSurfaceLayout { PrimaryToolbar = [CommandSurfaceItem.Command("copy")] };
+        Assert.True(noSettings.EnsurePrimaryItem("x"));
+        Assert.Equal("x", noSettings.PrimaryToolbar[^1].Id);
+    }
+
+    [Fact]
+    public void ToolbarActionCatalog_SetPluginActions_AddsAndRestores()
+    {
+        var raised = 0;
+        void Handler(object? sender, EventArgs e) => raised++;
+        ToolbarActionCatalog.Changed += Handler;
+        try
+        {
+            ToolbarActionCatalog.SetPluginActions([new ToolbarAction("plugin:com.a:run", "Run", "Hello", "\uE768", "plugin:com.a:run")]);
+            Assert.Equal(1, raised);
+            Assert.NotNull(ToolbarActionCatalog.Find("plugin:com.a:run"));
+            Assert.Contains(ToolbarActionCatalog.All, action => action.Id == "plugin:com.a:run");
+
+            ToolbarActionCatalog.SetPluginActions([]);
+            Assert.Null(ToolbarActionCatalog.Find("plugin:com.a:run"));
+        }
+        finally
+        {
+            ToolbarActionCatalog.Changed -= Handler;
+            ToolbarActionCatalog.SetPluginActions([]);
+        }
     }
 }

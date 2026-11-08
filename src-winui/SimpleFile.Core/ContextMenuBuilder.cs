@@ -19,6 +19,10 @@ public sealed class ContextMenuEntry
     public IReadOnlyList<ContextMenuEntry> Children { get; init; } = [];
 }
 
+public sealed record PluginContextMenuGroup(string PluginId, string Label, IReadOnlyList<PluginContextMenuItem> Items);
+
+public sealed record PluginContextMenuItem(string HostCommandId, string Label, string When);
+
 public sealed class ContextMenuRequest
 {
     public int SelectionCount { get; init; }
@@ -43,6 +47,13 @@ public sealed class ContextMenuRequest
     public bool GitEnabled { get; init; }
     public bool InGitRepository { get; init; }
     public bool SelectionHasGitStatus { get; init; }
+    public IReadOnlyList<PluginContextMenuGroup> PluginMenus { get; init; } = [];
+
+    /// <summary>Flags set on the current folder, formatted <c>pluginId:flag</c>.</summary>
+    public IReadOnlySet<string> FolderFlags { get; init; } = new HashSet<string>();
+
+    /// <summary>Ids of plugins that decorate the current selection.</summary>
+    public IReadOnlySet<string> SelectionDecorationPlugins { get; init; } = new HashSet<string>();
 }
 
 /// <summary>
@@ -81,8 +92,8 @@ public static class ContextMenuBuilder
             return BuildBackgroundMenu(request, canCompare, canCompareFolders);
         }
 
-        var entries = new List<ContextMenuEntry>
-        {
+        List<ContextMenuEntry> entries =
+        [
             Item("ctx-open", "Open", request.SelectionCount != 1, "Enter"),
             OpenWithMenu(request),
             Item("ctx-open-tab", "Open in new tab", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+Enter"),
@@ -110,9 +121,10 @@ public static class ContextMenuBuilder
             ToolsMenu(request, canCompare, canCompareFolders),
             ArchiveMenu(request, canUnpack, extractFolder),
             GitMenu(request),
+            .. PluginMenus(request),
             Divider(),
             Item("ctx-info", "Properties", request.SelectionCount != 1, "Alt+Enter"),
-        };
+        ];
 
         return VisibleEntries(entries);
     }
@@ -137,6 +149,7 @@ public static class ContextMenuBuilder
             Divider(),
             ToolsMenu(request, canCompare, canCompareFolders),
             GitMenu(request),
+            .. PluginMenus(request),
             Divider(),
             Item("ctx-folder-info", "Properties"),
         ]);
@@ -407,6 +420,27 @@ public static class ContextMenuBuilder
             IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-open-with"),
             Children = children,
         };
+    }
+
+    private static IEnumerable<ContextMenuEntry> PluginMenus(ContextMenuRequest request)
+    {
+        foreach (var group in request.PluginMenus)
+        {
+            var children = group.Items
+                .Select(item => Item(
+                    item.HostCommandId,
+                    item.Label,
+                    hidden: !PluginMenuWhen.Evaluate(item.When, group.PluginId, request),
+                    showIcon: false))
+                .ToList();
+            yield return new ContextMenuEntry
+            {
+                Id = $"ctx-plugin-menu:{group.PluginId}",
+                Label = group.Label,
+                Hidden = children.All(child => child.Hidden),
+                Children = children,
+            };
+        }
     }
 
     private static ContextMenuEntry GitMenu(ContextMenuRequest request)

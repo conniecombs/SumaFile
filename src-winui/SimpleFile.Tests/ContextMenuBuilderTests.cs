@@ -10,6 +10,7 @@ using DriveInfo = SimpleFile.Ipc.DriveInfo;
 
 namespace SimpleFile.Tests;
 
+[Collection("Plugin catalogs")]
 public class ContextMenuBuilderTests
 {
     [Fact]
@@ -667,5 +668,56 @@ public class ContextMenuBuilderTests
         }
 
         return result;
+    }
+
+    private static ContextMenuRequest PluginRequest(string when, int selectionCount = 1) => new()
+    {
+        SelectionCount = selectionCount,
+        GitEnabled = true,
+        InGitRepository = true,
+        PluginMenus =
+        [
+            new PluginContextMenuGroup("com.a", "Alpha", [new PluginContextMenuItem("plugin:com.a:run", "Run", when)]),
+        ],
+    };
+
+    [Fact]
+    public void Build_AppendsPluginGroupsAfterGit()
+    {
+        foreach (var count in new[] { 1, 0 })
+        {
+            var menu = ContextMenuBuilder.Build(PluginRequest("", count)).ToList();
+            var git = menu.FindIndex(entry => entry.Id == "ctx-git-menu");
+            var plugin = menu.FindIndex(entry => entry.Id == "ctx-plugin-menu:com.a");
+            Assert.True(git >= 0 && plugin == git + 1);
+            var group = menu[plugin];
+            Assert.Equal("Alpha", group.Label);
+            Assert.Equal("plugin:com.a:run", Assert.Single(group.Children).Id);
+        }
+    }
+
+    [Fact]
+    public void Build_HidesPluginItemWhenFalse_AndGroupWhenEmpty()
+    {
+        var hidden = ContextMenuBuilder.Build(PluginRequest("selectionCount > 3"));
+        Assert.DoesNotContain(Flatten(hidden), entry => entry.Id == "ctx-plugin-menu:com.a" || entry.Id == "plugin:com.a:run");
+
+        var mixed = ContextMenuBuilder.Build(new ContextMenuRequest
+        {
+            SelectionCount = 1,
+            PluginMenus =
+            [
+                new PluginContextMenuGroup("com.a", "Alpha",
+                [
+                    new PluginContextMenuItem("plugin:com.a:one", "One", "selectionCount > 3"),
+                    new PluginContextMenuItem("plugin:com.a:two", "Two", ""),
+                ]),
+            ],
+        });
+        var group = Assert.Single(mixed, entry => entry.Id == "ctx-plugin-menu:com.a");
+        Assert.Equal("plugin:com.a:two", Assert.Single(group.Children).Id);
+
+        Assert.DoesNotContain(ContextMenuBuilder.Build(new ContextMenuRequest { SelectionCount = 1 }),
+            entry => entry.Id.StartsWith("ctx-plugin-menu:", StringComparison.Ordinal));
     }
 }
