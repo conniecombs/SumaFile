@@ -104,7 +104,7 @@
                                                Foreground="{ThemeResource SfTextMutedBrush}" />
                                     <Button Grid.Column="1" Content="Options" Click="OnTaskOptionsClicked" Tag="{Binding}"
                                             AutomationProperties.Name="Transfer options for this task"
-                                            IsEnabled="{Binding CanCancel}" Style="{StaticResource SfGhostButtonStyle}" />
+                                            IsEnabled="{Binding CanChangeOptions}" Style="{StaticResource SfGhostButtonStyle}" />
                                 </Grid>
                                 <ScrollViewer MaxHeight="180" HorizontalScrollBarVisibility="Disabled">
                                     <ItemsControl ItemsSource="{Binding ActiveFiles}">

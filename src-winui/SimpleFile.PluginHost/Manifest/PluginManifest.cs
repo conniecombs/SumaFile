@@ -28,7 +28,25 @@ public sealed record PluginContributions(
     IReadOnlyList<PluginCommandSpec> Commands,
     IReadOnlyList<PluginContextMenuSpec> ContextMenu,
     IReadOnlyList<PluginToolbarSpec> Toolbar,
-    IReadOnlyList<PluginArchiveFormatSpec> ArchiveFormats);
+    IReadOnlyList<PluginArchiveFormatSpec> ArchiveFormats)
+{
+    /// <summary><c>contributions.sidebar</c>, in manifest order.</summary>
+    public IReadOnlyList<PluginSidebarSpec> Sidebar { get; init; } = [];
+
+    /// <summary><c>contributions.settingsPage</c>, or null when the plugin declares none.</summary>
+    public PluginSettingsPageSpec? SettingsPage { get; init; }
+}
+
+/// <summary>One <c>contributions.sidebar</c> entry.</summary>
+/// <param name="Id">The section id; follows the settings key grammar and is unique within the plugin.</param>
+/// <param name="Title">The header text the host draws.</param>
+/// <param name="Provider">Passed to <c>ISidebarSectionProvider.CreateSidebarSection</c>.</param>
+/// <param name="Command">A declared command the header button runs, or null for no button.</param>
+public sealed record PluginSidebarSpec(string Id, string Title, string Provider, string? Command);
+
+/// <summary><c>contributions.settingsPage</c>.</summary>
+/// <param name="Provider">Passed to <c>ISettingsPageProvider.CreateSettingsPage</c>.</param>
+public sealed record PluginSettingsPageSpec(string Provider);
 
 public sealed record PluginCommandSpec(string Id, string Label, string Group, string? Shortcut);
 

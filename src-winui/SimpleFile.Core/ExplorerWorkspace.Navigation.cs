@@ -52,6 +52,15 @@ public sealed partial class ExplorerWorkspace
         CancellationToken cancellationToken = default) =>
         _navigation.RefreshAffectedPanesAsync(this, affectedPaths, cancellationToken);
 
+    /// <summary>
+    /// Re-lists the visible panes whose path is, or is inside, a file ending with one of the extensions: called
+    /// when plugin archive engines for those extensions were registered or unregistered.
+    /// </summary>
+    public Task RefreshArchivePanesAsync(
+        IReadOnlyCollection<string> extensions,
+        CancellationToken cancellationToken = default) =>
+        _navigation.RefreshArchivePanesAsync(this, extensions, cancellationToken);
+
     public IReadOnlyList<PaneId> AffectedVisiblePanes(IEnumerable<string?> affectedPaths) =>
         _navigation.AffectedVisiblePanes(this, affectedPaths);
 

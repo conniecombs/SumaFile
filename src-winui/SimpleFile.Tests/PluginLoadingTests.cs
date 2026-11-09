@@ -1,7 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using SimpleFile.PluginHost.Discovery;
@@ -77,6 +79,96 @@ public class PluginLoadingTests
         Assert.Throws<PluginLoadException>(() => PluginActivator.CreateInstance(p));
     }
 
+    private const string HelloAssembly = "SimpleFile.Tests.Fixtures.HelloPlugin.dll";
+    private const string NativeProbe = "sumafile_native_probe";
+
+    /// <summary>
+    /// A plugin folder holding a copy of the Hello assembly whose deps.json lists the native asset
+    /// <c>sumafile_native_probe.dll</c>, a copy of the system's version.dll, in the folder root.
+    /// </summary>
+    private static string NativePluginFolder(string tmp)
+    {
+        var folder = Path.Combine(tmp, "plugin");
+        Directory.CreateDirectory(folder);
+        File.Copy(Path.Combine(HelloFixture.Folder, HelloAssembly), Path.Combine(folder, HelloAssembly));
+
+        const string depsName = "SimpleFile.Tests.Fixtures.HelloPlugin.deps.json";
+        var deps = JsonNode.Parse(File.ReadAllText(Path.Combine(HelloFixture.Folder, depsName)))!;
+        var target = deps["targets"]!.AsObject().Single().Value!.AsObject();
+        var main = target
+            .Single(library => library.Key.StartsWith("SimpleFile.Tests.Fixtures.HelloPlugin/", StringComparison.Ordinal))
+            .Value!.AsObject();
+        main["native"] = new JsonObject { [NativeProbe + ".dll"] = new JsonObject() };
+        File.WriteAllText(Path.Combine(folder, depsName), deps.ToJsonString());
+
+        File.Copy(Path.Combine(Environment.SystemDirectory, "version.dll"), Path.Combine(folder, NativeProbe + ".dll"));
+        return folder;
+    }
+
+    private static string NewTemp() =>
+        Path.Combine(Path.GetTempPath(), "sumafile-tests", Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public void LoadContext_LoadsANativeDllListedInThePluginDepsJson()
+    {
+        var tmp = NewTemp();
+        try
+        {
+            var folder = NativePluginFolder(tmp);
+            var host = Path.Combine(tmp, "host");
+            Directory.CreateDirectory(host);
+            var context = new PluginLoadContext(folder, Path.Combine(folder, HelloAssembly), host);
+
+            var resolved = context.ResolveUnmanagedPath(NativeProbe);
+
+            Assert.NotNull(resolved);
+            Assert.Equal(
+                Path.GetFullPath(Path.Combine(folder, NativeProbe + ".dll")),
+                Path.GetFullPath(resolved),
+                StringComparer.OrdinalIgnoreCase);
+            var handle = context.LoadUnmanagedForTest(NativeProbe);
+            Assert.NotEqual(IntPtr.Zero, handle);
+            NativeLibrary.Free(handle);
+        }
+        finally
+        {
+            try { Directory.Delete(tmp, true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    [Fact]
+    public void LoadContext_LeavesANativeDllTheHostShipsToTheHost()
+    {
+        var tmp = NewTemp();
+        try
+        {
+            var folder = NativePluginFolder(tmp);
+            var host = Path.Combine(tmp, "host");
+            Directory.CreateDirectory(host);
+            File.Copy(Path.Combine(folder, NativeProbe + ".dll"), Path.Combine(host, NativeProbe + ".dll"));
+            var context = new PluginLoadContext(folder, Path.Combine(folder, HelloAssembly), host);
+
+            Assert.Null(context.ResolveUnmanagedPath(NativeProbe));
+            Assert.Null(context.ResolveUnmanagedPath(NativeProbe + ".dll"));
+            Assert.Equal(IntPtr.Zero, context.LoadUnmanagedForTest(NativeProbe));
+        }
+        finally
+        {
+            try { Directory.Delete(tmp, true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    [Theory]
+    [InlineData("Microsoft.WinUI", true)]
+    [InlineData("Microsoft.InteractiveExperiences.Projection", true)]
+    [InlineData("Microsoft.Web.WebView2.Core", true)]
+    [InlineData("Microsoft.Windows.SDK.NET", true)]
+    [InlineData("WinRT.Runtime", true)]
+    [InlineData("SumaFile.Remote.Model", false)]
+    [InlineData("Newtonsoft.Json", false)]
+    public void LoadContext_SharesWinUiAndWindowsAppSdkProjections(string name, bool shared) =>
+        Assert.Equal(shared, PluginLoadContext.IsHostShared(name));
+
     private sealed class FakePluginHost : IPluginHost
     {
         public string PluginId => HelloId;
@@ -88,6 +180,37 @@ public class PluginLoadingTests
         public IPluginDialogs Dialogs => null!;
         public IPluginWorkspace Workspace => null!;
         public IPluginLogger Logger => null!;
+        public IPluginWindows Windows => null!;
+    }
+
+    [Fact]
+    public void HelloEntry_ImplementsTheSidebarProviderAndLoadsWithoutWinUi()
+    {
+        // The test host has no WinUI: the entry type must load and construct without touching it. Its WinUI code
+        // lives in HelloUi, which only the provider methods reach.
+        var instance = PluginActivator.CreateInstance(Hello());
+        Assert.IsAssignableFrom<ISidebarSectionProvider>(instance);
+        Assert.IsAssignableFrom<ISettingsPageProvider>(instance);
+        var entry = instance.GetType();
+        Assert.Equal(typeof(object), entry.BaseType);
+        const System.Reflection.BindingFlags all = System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.Static
+            | System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.NonPublic;
+        var memberTypes = entry.GetFields(all).Select(field => field.FieldType)
+            .Concat(entry.GetProperties(all).Select(property => property.PropertyType));
+        Assert.DoesNotContain(memberTypes, type => type.Namespace?.StartsWith("Microsoft.UI", StringComparison.Ordinal) == true);
+        Assert.DoesNotContain(AppDomain.CurrentDomain.GetAssemblies(), assembly => assembly.GetName().Name == "Microsoft.WinUI");
+    }
+
+    [Fact]
+    public void HelloManifest_DeclaresTheSettingsPageAndTheWindowAndDialogCommands()
+    {
+        var manifest = Hello().Manifest!;
+        Assert.Equal("hello-page", manifest.Contributions.SettingsPage?.Provider);
+        var commands = manifest.Contributions.Commands.ToDictionary(command => command.Id, command => command.Label);
+        Assert.Equal("Hello: open window", commands["open-window"]);
+        Assert.Equal("Hello: show dialog", commands["show-dialog"]);
     }
 
     [Fact]

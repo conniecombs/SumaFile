@@ -587,7 +587,7 @@ public sealed class FileOperationService : ISettingsBackend
 
     public async Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
     {
-        await _ipc.ExtractArchiveAsync(archivePath, destination, ct).ConfigureAwait(false);
+        await _ipc.ExtractArchiveAsync(archivePath, destination, operationId: null, ct).ConfigureAwait(false);
     }
 
     public async Task CreateArchiveAsync(
@@ -596,7 +596,85 @@ public sealed class FileOperationService : ISettingsBackend
         string format,
         CancellationToken ct = default)
     {
-        await _ipc.CreateArchiveAsync(paths, archivePath, format, ct).ConfigureAwait(false);
+        await _ipc.CreateArchiveAsync(paths, archivePath, format, operationId: null, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>The protocol's <c>cancel.cancelledMessage</c>: the exact reply text of a cancelled archive operation.</summary>
+    internal const string ArchiveCancelledMessage = "Archive operation cancelled";
+
+    /// <summary>
+    /// Extracts with an <c>archive-</c> operation id, so the service reports <c>operation-progress</c> for it and
+    /// <c>cancel_operation</c> can stop it. Cancelling <paramref name="ct"/> sends one cancel and keeps awaiting the
+    /// reply, so the call ends only once the service has stopped; it then throws <see cref="OperationCanceledException"/>.
+    /// </summary>
+    public Task ExtractArchiveTrackedAsync(
+        string archivePath,
+        string destination,
+        IProgress<ProgressUpdate> progress,
+        Action<string>? operationStarted,
+        CancellationToken ct)
+        => RunTrackedArchiveOperationAsync(
+            (ipc, operationId) => ipc.ExtractArchiveAsync(archivePath, destination, operationId, CancellationToken.None),
+            progress,
+            operationStarted,
+            ct);
+
+    /// <summary>Creates an archive as a tracked operation; see <see cref="ExtractArchiveTrackedAsync"/>.</summary>
+    public Task CreateArchiveTrackedAsync(
+        string[] paths,
+        string archivePath,
+        string format,
+        IProgress<ProgressUpdate> progress,
+        Action<string>? operationStarted,
+        CancellationToken ct)
+        => RunTrackedArchiveOperationAsync(
+            (ipc, operationId) => ipc.CreateArchiveAsync(paths, archivePath, format, operationId, CancellationToken.None),
+            progress,
+            operationStarted,
+            ct);
+
+    private async Task RunTrackedArchiveOperationAsync(
+        Func<ISimpleFileIpc, string, Task> invoke,
+        IProgress<ProgressUpdate> progress,
+        Action<string>? operationStarted,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(progress);
+        var ipc = _ipc;
+        var operationId = $"archive-{Guid.NewGuid():N}";
+        ct.ThrowIfCancellationRequested();
+        operationStarted?.Invoke(operationId);
+        using var subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
+        {
+            if (string.Equals(update.OperationId, operationId, StringComparison.Ordinal))
+            {
+                progress.Report(update);
+            }
+        });
+
+        // Send first and register the cancel after, so the service always sees the operation before its cancel.
+        // The request itself is never cancelled: the reply is awaited until the service has stopped the engine.
+        var request = invoke(ipc, operationId);
+        var cancelSent = 0;
+        using var registration = ct.Register(() =>
+        {
+            if (Interlocked.Exchange(ref cancelSent, 1) == 0)
+            {
+                _ = CancelOperationBestEffortAsync(ipc, operationId);
+            }
+        });
+        try
+        {
+            await request.ConfigureAwait(false);
+        }
+        catch (IpcException exception) when (
+            ct.IsCancellationRequested
+            || string.Equals(exception.Message, ArchiveCancelledMessage, StringComparison.Ordinal))
+        {
+            throw new OperationCanceledException(ArchiveCancelledMessage, exception, ct);
+        }
+
+        ct.ThrowIfCancellationRequested();
     }
 
     public Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default)

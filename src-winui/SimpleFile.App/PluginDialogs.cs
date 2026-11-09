@@ -54,6 +54,31 @@ internal sealed class PluginDialogs : IPluginDialogs
             return await _pickFolder();
         });
 
+    /// <summary>
+    /// Shows a dialog the plugin built through the same gate as SumaFile's own dialogs. A dialog without a
+    /// <c>XamlRoot</c> opens on the main window; a plugin window sets its own.
+    /// </summary>
+    public Task<PluginDialogResult> ShowDialogAsync(object contentDialog, CancellationToken ct)
+    {
+        if (contentDialog is not ContentDialog dialog)
+        {
+            throw new ArgumentException("contentDialog must be a Microsoft.UI.Xaml.Controls.ContentDialog.", nameof(contentDialog));
+        }
+
+        return PluginUiDispatch.RunAsync(_dispatcher, async () =>
+        {
+            dialog.XamlRoot ??= _xamlRoot() ?? throw new InvalidOperationException("SumaFile's window is not ready for dialogs.");
+            return ToPluginResult(await ShowAsync(dialog, ct));
+        });
+    }
+
+    internal static PluginDialogResult ToPluginResult(ContentDialogResult result) => result switch
+    {
+        ContentDialogResult.Primary => PluginDialogResult.Primary,
+        ContentDialogResult.Secondary => PluginDialogResult.Secondary,
+        _ => PluginDialogResult.None,
+    };
+
     private ContentDialog CreateDialog(string title, string message, string closeLabel)
     {
         var root = _xamlRoot() ?? throw new InvalidOperationException("SumaFile's window is not ready for dialogs.");

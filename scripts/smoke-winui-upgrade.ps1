@@ -9,6 +9,9 @@ $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $bundleDir = Join-Path $root "dist\winui"
+
+# Assert-BundledPlugins: the bundled plugin folders and bundled.json in the upgraded install directory.
+. (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
 $expectedTitle = "SumaFile"
 $timeoutSeconds = 25
 $process = $null
@@ -271,6 +274,14 @@ try {
     Invoke-Installer -Path $newInstallerPath -Label "Upgrading SumaFile"
     $upgraded = Assert-Installed -ExpectedVersion $expectedVersion
     Write-Host "Upgraded SumaFile $($upgraded.Registry.DisplayVersion) installed at $($upgraded.ExePath)."
+
+    # 1.0.4 shipped tools\7zip; the upgrade must remove it and install the bundled plugin.
+    $upgradedDir = Split-Path -Parent $upgraded.ExePath
+    Assert-BundledPlugins -Root (Join-Path $upgradedDir "plugins")
+    if (Test-Path -LiteralPath (Join-Path $upgradedDir "tools\7zip")) {
+        throw "The upgrade left tools\7zip in $upgradedDir; 7-Zip ships as the bundled plugin."
+    }
+    Write-Host "Upgraded SumaFile carries the bundled plugins and no tools\7zip."
 
     if (-not (Test-Path -LiteralPath $sentinelPath)) {
         throw "Upgrade removed persisted app data sentinel at $sentinelPath."

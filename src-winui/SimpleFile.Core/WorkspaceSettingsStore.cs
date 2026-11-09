@@ -14,6 +14,7 @@ internal static class WorkspaceSettingsStore
 {
     private const string BookmarksSettingsKey = "places.bookmarks";
     private const string RecentPathsSettingsKey = "places.recents";
+    private const string PluginSectionsCollapsedSettingsKey = "sidebar.pluginSectionsCollapsed";
     private static readonly string[] LoadSettingKeys =
     [
         "theme",
@@ -54,6 +55,7 @@ internal static class WorkspaceSettingsStore
         "sidebar.quickAccessCollapsed",
         "sidebar.myPcCollapsed",
         "sidebar.tagsCollapsed",
+        PluginSectionsCollapsedSettingsKey,
         "thumbnailCacheMaxMb",
         "thumbnailCachePath",
         BookmarksSettingsKey,
@@ -118,6 +120,7 @@ internal static class WorkspaceSettingsStore
         settings.QuickAccessCollapsed = ReadBoolSetting(values, "sidebar.quickAccessCollapsed", false);
         settings.MyPcCollapsed = ReadBoolSetting(values, "sidebar.myPcCollapsed", false);
         settings.TagsCollapsed = ReadBoolSetting(values, "sidebar.tagsCollapsed", false);
+        settings.CollapsedPluginSidebarSections = ReadStringList(values, PluginSectionsCollapsedSettingsKey);
         settings.ThumbnailCacheMaxMb = ReadUIntSetting(values, "thumbnailCacheMaxMb", 500);
         settings.ThumbnailCachePath = ReadSetting(values, "thumbnailCachePath") ?? "";
         var bookmarks = ReadBookmarks(values);
@@ -210,6 +213,11 @@ internal static class WorkspaceSettingsStore
         await fileOps.SetSettingAsync("sidebar.quickAccessCollapsed", settings.QuickAccessCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.myPcCollapsed", settings.MyPcCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("sidebar.tagsCollapsed", settings.TagsCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
+        settings.CollapsedPluginSidebarSections = UiSettings.NormalizePluginSectionKeys(settings.CollapsedPluginSidebarSections);
+        await fileOps.SetSettingAsync(
+            PluginSectionsCollapsedSettingsKey,
+            JsonSerializer.Serialize(settings.CollapsedPluginSidebarSections),
+            cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("thumbnailCacheMaxMb", settings.ThumbnailCacheMaxMb.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("thumbnailCachePath", settings.ThumbnailCachePath, cancellationToken).ConfigureAwait(false);
         await fileOps.SetSettingAsync("lastPath", settings.LastPath, cancellationToken).ConfigureAwait(false);
@@ -356,6 +364,25 @@ internal static class WorkspaceSettingsStore
             return result;
         }
         catch
+        {
+            return [];
+        }
+    }
+
+    /// <summary>A JSON array of strings, normalized; empty when missing or malformed.</summary>
+    private static List<string> ReadStringList(IReadOnlyDictionary<string, string?> values, string key)
+    {
+        var raw = ReadSetting(values, key);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return [];
+        }
+
+        try
+        {
+            return UiSettings.NormalizePluginSectionKeys(JsonSerializer.Deserialize<List<string?>>(raw));
+        }
+        catch (JsonException)
         {
             return [];
         }

@@ -581,6 +581,9 @@
                                 </ListView.ItemTemplate>
                             </ListView>
                         </StackPanel>
+
+                        <!-- Plugin sections render below the built-in ones (spec 7), built in code by MainWindow.PluginSidebar. -->
+                        <StackPanel x:Name="PluginSectionsHost" Spacing="10" />
                     </StackPanel>
                 </ScrollViewer>
             </Grid>

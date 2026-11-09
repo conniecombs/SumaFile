@@ -146,11 +146,11 @@ public sealed partial class NamedPipeJsonClient
     public Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)
         => InvokeAsync<ArchiveCapabilities>(Protocol.GetArchiveCapabilitiesMethod, new { }, ct);
 
-    public Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.ExtractArchiveMethod, new { archivePath, destination }, ct);
+    public Task ExtractArchiveAsync(string archivePath, string destination, string? operationId = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.ExtractArchiveMethod, new { archivePath, destination, operationId }, ct);
 
-    public Task CreateArchiveAsync(string[] paths, string archivePath, string format, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.CreateArchiveMethod, new { paths, archivePath, format }, ct);
+    public Task CreateArchiveAsync(string[] paths, string archivePath, string format, string? operationId = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CreateArchiveMethod, new { paths, archivePath, format, operationId }, ct);
 
     public Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default)
         => InvokeAsync<FilePreview>(Protocol.ReadFilePreviewMethod, new { path, maxSize }, ct);

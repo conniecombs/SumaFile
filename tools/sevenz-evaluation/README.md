@@ -11,6 +11,15 @@ archive implementation. Its lockfile pins its own dependencies; it does not
 alter the shipping workspace's dependencies. The baseline uses the current
 SumaFile archive source with the evaluator's dependency lockfile.
 
+The reference engine is the SumaFile 7-Zip plugin with the bundled 26.03
+`7za.exe`. The core no longer handles `.7z` itself, so the tool links the
+plugin's library (`plugins/sevenzip/backend`), resolves the binary the way the
+plugin does (no override, so the bundled `7za.exe`, which plugin staging copies
+from `third_party/7zip/win-x64`), and registers it with the core as the `.7z`
+engine for `com.sumafile.sevenzip` (`src/plugin_engine.rs`). Every baseline
+listing and extraction therefore still runs through core validation and
+staging. `SIMPLEFILE_7Z` is not used.
+
 ## Reproduce
 
 From the repository root on Windows:
@@ -26,8 +35,9 @@ cargo run --release --locked --manifest-path tools/sevenz-evaluation/Cargo.toml 
 ```
 
 The tool generates fixtures in a new `test-results/sevenz-evaluation/run-*`
-directory. It uses the bundled 26.03 `7za.exe` as the reference, without changing
-an installed copy of SumaFile or touching user archives. It writes `results.json`
+directory. It uses the SumaFile 7-Zip plugin with the bundled 26.03 `7za.exe`
+as the reference, without changing an installed copy of SumaFile or touching
+user archives. It writes `results.json`
 and returns **exit code 2 when compatibility fails**. Cargo reports this expected
 gate failure as a failed command. A setup or unexpected runtime failure exits 1.
 An exit code of 0 only means these compatibility checks passed; performance

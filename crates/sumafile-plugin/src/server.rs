@@ -6,6 +6,16 @@
 //! one of this backend's `host.*` requests, and a frame with `method` but no
 //! `id` is a notification. Handler calls run on spawned tasks so a slow
 //! handler never stops the loop from reading the replies it waits for.
+//!
+//! Cancel flags are backend-wide and owned here. Before a request's handler
+//! is spawned, its string `params.operationId` is recorded as in flight; the
+//! id and its flag are dropped when the handler returns, before the reply is
+//! sent. (`HostClient::progress_begin` holds the ids it returns in flight
+//! the same way, until `progress_complete`, `progress_fail` or the close of
+//! its connection.) A `cancel` from any connection sets the flag of an
+//! in-flight id; any other cancel is kept among the `EARLY_CANCEL_LIMIT` most
+//! recent early cancels, and an id among them starts cancelled when it goes
+//! in flight.
 
 use std::sync::Arc;
 
@@ -20,6 +30,7 @@ use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::mpsc;
 
 use crate::handshake::{handshake_result, is_service_client, HANDSHAKE_METHOD};
+use crate::host::BackendState;
 use crate::{Args, HostClient, PluginHandler, PluginInfo};
 
 const CANCEL_METHOD: &str = "cancel";
@@ -37,6 +48,7 @@ pub async fn serve(
 ) -> Result<(), String> {
     let path = format!(r"\\.\pipe\{}", args.pipe_name);
     let info = Arc::new(info);
+    let state = Arc::new(BackendState::default());
 
     if !accepts_multiple_clients {
         let server = ServerOptions::new()
@@ -48,7 +60,7 @@ pub async fn serve(
             .connect()
             .await
             .map_err(|e| format!("Pipe {path} accept failed: {e}"))?;
-        run_connection(server, info, handler).await;
+        run_connection(server, info, handler, state).await;
         return Ok(());
     }
 
@@ -81,8 +93,9 @@ pub async fn serve(
                 let done = done_sender.clone();
                 let info = info.clone();
                 let handler = handler.clone();
+                let state = state.clone();
                 tokio::spawn(async move {
-                    run_connection(server, info, handler).await;
+                    run_connection(server, info, handler, state).await;
                     let _ = done.send(());
                 });
             }
@@ -112,13 +125,43 @@ struct Connection {
     info: Arc<PluginInfo>,
     handler: Arc<dyn PluginHandler>,
     host: HostClient,
+    state: Arc<BackendState>,
     handshaken: bool,
+}
+
+/// Drops a request's operation id from the in-flight set when the request's
+/// task ends, however it ends.
+struct InFlightGuard {
+    state: Arc<BackendState>,
+    operation_id: Option<String>,
+}
+
+impl InFlightGuard {
+    fn begin(state: &Arc<BackendState>, params: &Value) -> InFlightGuard {
+        let operation_id = operation_id(params).map(str::to_string);
+        if let Some(operation_id) = &operation_id {
+            state.begin(operation_id);
+        }
+        InFlightGuard {
+            state: state.clone(),
+            operation_id,
+        }
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Some(operation_id) = self.operation_id.take() {
+            self.state.finish(&operation_id);
+        }
+    }
 }
 
 async fn run_connection(
     server: NamedPipeServer,
     info: Arc<PluginInfo>,
     handler: Arc<dyn PluginHandler>,
+    state: Arc<BackendState>,
 ) {
     let (mut reader, mut writer) = tokio::io::split(server);
     let (outbound, mut frames) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -133,7 +176,8 @@ async fn run_connection(
     let mut connection = Connection {
         info,
         handler,
-        host: HostClient::pipe(outbound),
+        host: HostClient::pipe(outbound, state.clone()),
+        state,
         handshaken: false,
     };
     while let Some(incoming) = read_incoming(&mut reader).await {
@@ -205,6 +249,8 @@ impl Connection {
             self.handshaken = true;
             if is_service_client(&params) {
                 self.host.set_service_mode();
+            } else {
+                self.host.set_host_connection();
             }
             self.reply(JsonRpcResponse::result(
                 Some(id),
@@ -223,7 +269,7 @@ impl Connection {
         if method == CANCEL_METHOD {
             let response = match operation_id(&params) {
                 Some(operation_id) => {
-                    self.host.mark_cancelled(operation_id);
+                    self.state.cancel(operation_id);
                     JsonRpcResponse::result(Some(id), Value::Null)
                 }
                 None => JsonRpcResponse::error(
@@ -239,6 +285,9 @@ impl Connection {
         let handler = self.handler.clone();
         let host = self.host.clone();
         let method = method.to_string();
+        // Recorded before the spawn, so a cancel read after this request
+        // finds it in flight.
+        let in_flight = InFlightGuard::begin(&self.state, &params);
         tokio::spawn(async move {
             // The handler runs on its own task so a panic surfaces as a
             // `JoinError` here and the request still gets an answer.
@@ -251,6 +300,7 @@ impl Connection {
                 Ok(Err(error)) => JsonRpcResponse::error(Some(id), error.code(), error.message()),
                 Err(_) => JsonRpcResponse::error(Some(id), ERR_INTERNAL, "plugin handler panicked"),
             };
+            drop(in_flight);
             host.send_message(&response);
         });
     }
@@ -258,7 +308,7 @@ impl Connection {
     fn notification(&mut self, method: &str, params: &Value) {
         if self.handshaken && method == CANCEL_METHOD {
             if let Some(operation_id) = operation_id(params) {
-                self.host.mark_cancelled(operation_id);
+                self.state.cancel(operation_id);
             }
         }
     }

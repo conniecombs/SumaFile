@@ -384,4 +384,34 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal(410, state.Settings.SecondaryColumnWidths["name"]);
     }
 
+    [Fact]
+    public async Task PluginSectionCollapse_RoundTripsThroughWorkspaceSettings()
+    {
+        var ipc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(ipc);
+        var settings = UiSettings.CreateDefault();
+        Assert.Empty(settings.CollapsedPluginSidebarSections);
+        settings.CollapsedPluginSidebarSections = ["com.a.b:s", "", "com.a.b:s", "com.c.d:t"];
+
+        await WorkspaceSettingsStore.SaveAsync(
+            fileOps,
+            settings,
+            new ColumnLayout(),
+            new ColumnLayout(),
+            showHidden: false,
+            bookmarks: [],
+            recentPaths: [],
+            CancellationToken.None);
+        var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+
+        Assert.Equal(["com.a.b:s", "com.c.d:t"], state.Settings.CollapsedPluginSidebarSections);
+        Assert.Equal(["com.a.b:s", "com.c.d:t"], JsonSerializer.Deserialize<string[]>(ipc.Settings["sidebar.pluginSectionsCollapsed"])!);
+        Assert.Contains("sidebar.pluginSectionsCollapsed", ipc.LastGetDbSettingsKeys);
+
+        // A missing or malformed value restores an empty list.
+        ipc.Settings["sidebar.pluginSectionsCollapsed"] = "{not json";
+        Assert.Empty((await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None)).Settings.CollapsedPluginSidebarSections);
+        ipc.Settings.Remove("sidebar.pluginSectionsCollapsed");
+        Assert.Empty((await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None)).Settings.CollapsedPluginSidebarSections);
+    }
 }

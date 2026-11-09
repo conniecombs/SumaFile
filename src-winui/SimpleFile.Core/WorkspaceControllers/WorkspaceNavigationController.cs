@@ -267,6 +267,62 @@ internal sealed class WorkspaceNavigationController
         }
     }
 
+    /// <summary>
+    /// Re-lists the visible panes whose path is, or is inside, a file ending with one of
+    /// <paramref name="extensions"/>: the archives whose engine was just registered or unregistered.
+    /// </summary>
+    public async Task RefreshArchivePanesAsync(
+        ExplorerWorkspace workspace,
+        IReadOnlyCollection<string> extensions,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(extensions);
+        var normalized = extensions
+            .Where(extension => !string.IsNullOrWhiteSpace(extension))
+            .Select(extension => extension.Trim())
+            .Select(extension => extension.StartsWith('.') ? extension : "." + extension)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalized.Length == 0)
+        {
+            return;
+        }
+
+        List<PaneId> panes = [];
+        if (PaneIsInsideArchive(workspace.Primary.Path, normalized))
+        {
+            panes.Add(PaneId.Primary);
+        }
+
+        if (workspace.DualPaneEnabled && PaneIsInsideArchive(workspace.Secondary.Path, normalized))
+        {
+            panes.Add(PaneId.Secondary);
+        }
+
+        foreach (var pane in panes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await RefreshAsync(workspace, pane, engineChanged: true, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // True when one of the path's segments (the archive file itself, or an ancestor of the pane's folder inside
+    // it) ends with one of the extensions.
+    private static bool PaneIsInsideArchive(string? panePath, IReadOnlyList<string> extensions)
+    {
+        if (string.IsNullOrWhiteSpace(panePath))
+        {
+            return false;
+        }
+
+        return panePath
+            .Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries)
+            .Any(segment => extensions.Any(extension =>
+                segment.Length > extension.Length
+                && segment.EndsWith(extension, StringComparison.OrdinalIgnoreCase)));
+    }
+
     public IReadOnlyList<PaneId> AffectedVisiblePanes(
         ExplorerWorkspace workspace,
         IEnumerable<string?> affectedPaths)
@@ -407,10 +463,22 @@ internal sealed class WorkspaceNavigationController
             : NavigatePaneAsync(workspace, pane, parent, HistoryMode.Push, activate: workspace.DualPaneEnabled, cancellationToken);
     }
 
-    public async Task RefreshAsync(
+    public Task RefreshAsync(
         ExplorerWorkspace workspace,
         PaneId pane,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        RefreshAsync(workspace, pane, engineChanged: false, cancellationToken);
+
+    /// <param name="engineChanged">
+    /// The pane is inside an archive whose plugin engine came or went. The re-list then stands in for navigating
+    /// to the folder again: a failure drops the rows the gone engine had listed, and a success clears the error
+    /// (the plugin note) an earlier listing of the folder left.
+    /// </param>
+    private async Task RefreshAsync(
+        ExplorerWorkspace workspace,
+        PaneId pane,
+        bool engineChanged,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         var target = workspace.Normalize(pane);
@@ -467,6 +535,10 @@ internal sealed class WorkspaceNavigationController
                     && state.Entries.Any(entry => PathRules.PathsEqual(entry.Path, selected))
                         ? selected
                         : null;
+                if (engineChanged)
+                {
+                    workspace.SetErrorMessageCore(null);
+                }
             }
 
             workspace.NotifyChanged();
@@ -478,6 +550,12 @@ internal sealed class WorkspaceNavigationController
                 if (PathRules.PathsEqual(state.Path, path))
                 {
                     workspace.SetErrorMessageCore(exception.Message);
+                    if (engineChanged && token == state.NavigationToken)
+                    {
+                        state.Entries = [];
+                        state.SelectedPath = null;
+                        state.SyncActiveTab();
+                    }
                 }
             }
 
@@ -638,14 +716,5 @@ internal sealed class WorkspaceNavigationController
             .ConfigureAwait(false);
     }
 
-    public static bool IsSupportedArchivePath(string path)
-    {
-        var name = PathRules.Basename(path).ToLowerInvariant();
-        return name.EndsWith(".tar.gz", StringComparison.Ordinal)
-            || name.EndsWith(".tgz", StringComparison.Ordinal)
-            || name.EndsWith(".7z", StringComparison.Ordinal)
-            || name.EndsWith(".zip", StringComparison.Ordinal)
-            || name.EndsWith(".tar", StringComparison.Ordinal)
-            || name.EndsWith(".rar", StringComparison.Ordinal);
-    }
+    public static bool IsSupportedArchivePath(string path) => ArchivePaths.IsBrowsableArchive(path);
 }

@@ -170,12 +170,17 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task ExtractArchiveAsync(
+        string archivePath,
+        string destination,
+        string? operationId = null,
+        CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task CreateArchiveAsync(
         string[] paths,
         string archivePath,
         string format,
+        string? operationId = null,
         CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default) => throw NotConfigured();

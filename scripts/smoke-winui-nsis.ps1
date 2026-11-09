@@ -6,6 +6,9 @@ $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $bundleDir = Join-Path $root "dist\winui"
+
+# Assert-BundledPlugins: the bundled plugin folders and bundled.json in the install directory.
+. (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
 $installer = Get-ChildItem -Path $bundleDir -Filter "SumaFile_*_x64-winui-setup.exe" -File |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
@@ -111,6 +114,13 @@ try {
     }
 
     Write-Host "Installed SumaFile $($installed.DisplayVersion) at $exePath."
+
+    $installDir = Split-Path -Parent $exePath
+    Assert-BundledPlugins -Root (Join-Path $installDir "plugins")
+    if (Test-Path -LiteralPath (Join-Path $installDir "tools\7zip")) {
+        throw "The NSIS install must not contain tools\7zip; 7-Zip ships as the bundled plugin."
+    }
+    Write-Host "Installed SumaFile carries the bundled plugins."
 
     $process = Start-Process -FilePath $exePath -WorkingDirectory (Split-Path -Parent $exePath) -PassThru
     $windowProcess = $null

@@ -244,7 +244,6 @@ public class ExplorerWorkspaceTests
 
     [Theory]
     [InlineData("pack.zip", "zip")]
-    [InlineData("pack.7z", "7z")]
     public async Task OpenArchiveFile_NavigatesIntoArchive(string archiveName, string extension)
     {
         var backend = FakeExplorerBackend.Typical();

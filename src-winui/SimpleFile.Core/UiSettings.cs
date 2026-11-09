@@ -49,6 +49,12 @@ public sealed class UiSettings
     public bool QuickAccessCollapsed { get; set; }
     public bool MyPcCollapsed { get; set; }
     public bool TagsCollapsed { get; set; }
+    /// <summary>
+    /// The collapsed plugin sidebar sections, by <c>&lt;pluginId&gt;:&lt;sectionId&gt;</c>
+    /// (<see cref="PluginSidebarLayout.CollapseKey"/>). Saved as a JSON array under <c>sidebar.pluginSectionsCollapsed</c>,
+    /// in the host's settings rather than the plugin's, so a plugin cannot change it.
+    /// </summary>
+    public List<string> CollapsedPluginSidebarSections { get; set; } = [];
     public int PhotoFolderImageThreshold { get; set; } = 70;
     /// <summary>Primary pane column preset. Settings dialog edits this and mirrors to secondary.</summary>
     public string ColumnPreset { get; set; } = "default";
@@ -104,6 +110,16 @@ public sealed class UiSettings
 
         return "system";
     }
+
+    /// <summary>The plugin section collapse keys without empty or duplicate entries, in their first order.</summary>
+    public static List<string> NormalizePluginSectionKeys(IEnumerable<string?>? keys) =>
+        keys is null
+            ? []
+            : keys
+                .Select(key => key?.Trim() ?? "")
+                .Where(key => key.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
 
     public static string NormalizeStartLocation(string? startLocation)
     {

@@ -1026,7 +1026,7 @@ public class Sprint2WindowTests
                 $"{name} sizes its window in physical pixels.");
         }
 
-        foreach (var window in new[] { "SettingsWindow.xaml.cs", "RemoteManagerWindow.xaml.cs", "GitWorkbenchWindow.xaml.cs", "AdvancedRenameDialog.xaml.cs", "DuplicateCheckerDialog.xaml.cs", "TransferProgressWindow.xaml.cs" })
+        foreach (var window in new[] { "SettingsWindow.xaml.cs", "RemoteManagerWindow.xaml.cs", "GitWorkbenchWindow.xaml.cs", "AdvancedRenameDialog.xaml.cs", "DuplicateCheckerDialog.xaml.cs", "TransferProgressWindow.xaml.cs", "PluginWindowHost.cs" })
         {
             Assert.Contains("SecondaryWindowChrome.Apply(", File.ReadAllText(Path.Combine(appRoot, window)));
         }

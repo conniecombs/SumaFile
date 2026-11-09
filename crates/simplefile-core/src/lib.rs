@@ -20,7 +20,7 @@ pub mod models;
 pub mod native_accel;
 pub mod open_with;
 mod open_with_policy_generated;
-pub mod path_conflict;
+pub use sumafile_transfer::path_conflict;
 pub mod preview;
 pub mod recycle_bin;
 pub mod remote;

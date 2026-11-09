@@ -29,6 +29,7 @@ internal sealed class PluginRuntime : IPluginHost
     private readonly IPluginProgressSink _progress;
     private readonly IPluginDialogs _dialogs;
     private readonly IPluginWorkspace _workspace;
+    private readonly IPluginWindowHost _windows;
     private readonly Action<string, string> _log;
     private PluginHostServices _services;
     private IPlugin? _instance;
@@ -42,6 +43,7 @@ internal sealed class PluginRuntime : IPluginHost
         IPluginProgressSink progress,
         IPluginDialogs dialogs,
         IPluginWorkspace workspace,
+        IPluginWindowHost windows,
         Action<string, string> log)
     {
         PluginId = pluginId;
@@ -51,6 +53,7 @@ internal sealed class PluginRuntime : IPluginHost
         _progress = progress;
         _dialogs = dialogs;
         _workspace = workspace;
+        _windows = windows;
         _log = log;
         _services = CreateServices();
     }
@@ -83,6 +86,12 @@ internal sealed class PluginRuntime : IPluginHost
     public IPluginDialogs Dialogs => Current.Dialogs;
     public IPluginWorkspace Workspace => Current.Workspace;
     public IPluginLogger Logger => Current.Logger;
+
+    /// <summary>The one window host of this runtime, the same across backend generations.</summary>
+    public IPluginWindows Windows => _windows;
+
+    /// <summary>The manager's side of <see cref="Windows"/>: it closes the runtime's windows during teardown.</summary>
+    public IPluginWindowHost WindowHost => _windows;
 
     public bool IsCurrent(PluginHostServices services)
     {
@@ -147,19 +156,23 @@ internal sealed class PluginRuntime : IPluginHost
     }
 
     /// <summary>Creates and activates the plugin on first use; later calls return the same instance.</summary>
+    /// <remarks>
+    /// The manager calls it through its <see cref="IPluginUiThread"/>. Its awaits keep the caller's context, so
+    /// <c>create</c> and <c>ActivateAsync</c> run on the UI thread even after waiting for a racing activation.
+    /// </remarks>
     /// <exception cref="PluginRetiredException">The manager detached this runtime (disable, rescan or dispose).</exception>
     public async Task<IPlugin> EnsureActivatedAsync(Func<IPlugin> create, CancellationToken ct)
     {
         if (!Volatile.Read(ref _retired) && Volatile.Read(ref _instance) is { } existing) return existing;
 
-        await _activation.WaitAsync(ct).ConfigureAwait(false);
+        await _activation.WaitAsync(ct);
         try
         {
             if (_retired) throw new PluginRetiredException(PluginId);
             if (_instance is { } raced) return raced;
 
             var instance = create();
-            await instance.ActivateAsync(this, ct).ConfigureAwait(false);
+            await instance.ActivateAsync(this, ct);
             Volatile.Write(ref _instance, instance);
             return instance;
         }
@@ -234,6 +247,7 @@ internal sealed class PluginRuntime : IPluginHost
             _progress,
             _dialogs,
             _workspace,
+            _windows,
             _log);
         return services;
     }

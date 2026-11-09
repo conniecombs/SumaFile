@@ -4,6 +4,9 @@ namespace SimpleFile.PluginHost.Backend;
 
 public sealed class PluginBackendConnection : IAsyncDisposable
 {
+    /// <summary>How long <see cref="DisposeAsync"/> waits for the killed backend to exit.</summary>
+    private static readonly TimeSpan ExitWait = TimeSpan.FromSeconds(2);
+
     private readonly NamedPipeJsonClient _client;
     private readonly IPluginProcess _process;
     private int _lost;
@@ -69,7 +72,24 @@ public sealed class PluginBackendConnection : IAsyncDisposable
             return;
         }
 
-        _process.Kill();
+        // Wait (bounded) for the backend to exit, so a restart's new backend never races the old process for
+        // its pipe (first_pipe_instance). Subscribed before Kill, which may raise Exited synchronously.
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler onExited = (_, _) => exited.TrySetResult();
+        _process.Exited += onExited;
+        try
+        {
+            _process.Kill();
+            if (!_process.HasExited)
+            {
+                try { await exited.Task.WaitAsync(ExitWait).ConfigureAwait(false); } catch (TimeoutException) { }
+            }
+        }
+        finally
+        {
+            _process.Exited -= onExited;
+        }
+
         try { await _client.DisposeAsync().ConfigureAwait(false); } catch { }
         _process.Dispose();
         RaiseClosed();

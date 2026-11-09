@@ -52,10 +52,21 @@ Function .onInit
   nsExec::ExecToLog 'taskkill /F /IM SimpleFile.App.exe'
   nsExec::ExecToLog 'taskkill /F /IM simplefile-service.exe'
   nsExec::ExecToLog 'taskkill /F /IM simplefile.exe'
+  ; The bundled 7-Zip plugin's backend. Never kill 7za.exe: it could be the user's own job.
+  nsExec::ExecToLog 'taskkill /F /IM sumafile-sevenzip-backend.exe'
+  ; The bundled FTP/SFTP plugin's backend. Its profiles and saved passwords live outside $INSTDIR.
+  nsExec::ExecToLog 'taskkill /F /IM sumafile-remote-backend.exe'
   Pop $0
 FunctionEnd
 
 Section "Install"
+  ; 1.0.4 shipped 7-Zip in tools\7zip; it now ships as the bundled plugin. Replace each bundled plugin folder
+  ; whole so no file from an older plugin stays behind. The user plugin root under %LOCALAPPDATA% is never touched.
+  RMDir /r "$INSTDIR\tools\7zip"
+  RMDir "$INSTDIR\tools"
+  RMDir /r "$INSTDIR\plugins\com.sumafile.sevenzip"
+  RMDir /r "$INSTDIR\plugins\com.sumafile.remote"
+
   SetOutPath "$INSTDIR"
   File /r "${PAYLOAD}\*.*"
 
@@ -86,6 +97,8 @@ Section "Uninstall"
   nsExec::ExecToLog 'taskkill /F /IM SumaFile.exe'
   nsExec::ExecToLog 'taskkill /F /IM SimpleFile.exe'
   nsExec::ExecToLog 'taskkill /F /IM simplefile-service.exe'
+  nsExec::ExecToLog 'taskkill /F /IM sumafile-sevenzip-backend.exe'
+  nsExec::ExecToLog 'taskkill /F /IM sumafile-remote-backend.exe'
   Pop $0
 
   Delete "$SMPROGRAMS\SumaFile.lnk"

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- WinUI-free, so SimpleFile.Tests can reference it; the 19041 UI assembly SumaFile.Remote builds on it. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>SumaFile.Remote.Model</RootNamespace>
+    <AssemblyName>SumaFile.Remote.Model</AssemblyName>
+    <Description>FTP/SFTP plugin model: backend DTOs, the backend client and the manager view model</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Compile-only (spec §12): the SDK comes from the host at run time. -->
+    <ProjectReference Include="..\..\..\..\src-winui\SimpleFile.PluginSdk\SimpleFile.PluginSdk.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Compile-only: CommunityToolkit.Mvvm is a shared prefix in PluginLoadContext, so the host's copy loads. -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

@@ -393,9 +393,175 @@ if (!pluginProtocol) {
   if (pluginProtocol.cancel?.method !== 'cancel') {
     fail('plugin protocol cancel.method must be cancel');
   }
+
+  // Archive engine methods: an object keyed by method name. The service sends every one and
+  // the Hello fixture backend serves every one.
+  const engineMethodTable = pluginProtocol.archiveEngineMethods;
+  const engineMethods =
+    engineMethodTable && typeof engineMethodTable === 'object' && !Array.isArray(engineMethodTable)
+      ? Object.keys(engineMethodTable)
+      : [];
+  if (engineMethods.length === 0) {
+    fail('plugin protocol archiveEngineMethods must be a non-empty object keyed by method name');
+  }
+  const deadlines = pluginProtocol.deadlines ?? {};
+  for (const method of engineMethods) {
+    const entry = engineMethodTable[method];
+    if (!entry?.params || typeof entry.params !== 'object') {
+      fail(`plugin archive engine method ${method} needs a params object`);
+    }
+    if (!('result' in (entry ?? {}))) {
+      fail(`plugin archive engine method ${method} needs a result`);
+    }
+    if (!entry?.deadline || !(entry.deadline in deadlines)) {
+      fail(`plugin archive engine method ${method} names an unknown deadline ${entry?.deadline}`);
+    }
+  }
+  const engineMethodSources = [
+    'crates/simplefile-service/src/plugin_archive/mod.rs',
+    'crates/hello-plugin-backend/src/main.rs',
+    'plugins/sevenzip/backend/src/handler.rs',
+  ];
+  for (const sourcePath of engineMethodSources) {
+    const source = readRepo(sourcePath);
+    for (const method of engineMethods) {
+      if (!source.includes(`"${method}"`)) {
+        fail(`plugin archive engine method ${method} is not a string literal in ${sourcePath}`);
+      }
+    }
+  }
+
+  // Notifications: archive.progress is produced by the helper crate and consumed by the service.
+  const progressNotification = 'archive.progress';
+  if (!pluginProtocol.notifications?.[progressNotification]) {
+    fail(`plugin protocol notifications must document ${progressNotification}`);
+  }
+  for (const sourcePath of [
+    'crates/sumafile-plugin/src/host.rs',
+    'crates/simplefile-service/src/plugin_archive/connection.rs',
+  ]) {
+    if (!readRepo(sourcePath).includes(`"${progressNotification}"`)) {
+      fail(`plugin notification ${progressNotification} is not a string literal in ${sourcePath}`);
+    }
+  }
+
+  // The cancelled message is matched by exact text on every side.
+  const cancelledMessage = pluginProtocol.cancel?.cancelledMessage;
+  if (typeof cancelledMessage !== 'string' || cancelledMessage.length === 0) {
+    fail('plugin protocol cancel.cancelledMessage must be a non-empty string');
+  } else {
+    const cancelledMessageSources = [
+      'crates/simplefile-core/src/archive/engine.rs',
+      'crates/sumafile-plugin/src/lib.rs',
+      'src-winui/SimpleFile.Core/FileOperationService.cs',
+    ];
+    for (const sourcePath of cancelledMessageSources) {
+      if (!readRepo(sourcePath).includes(`"${cancelledMessage}"`)) {
+        fail(`plugin cancel.cancelledMessage "${cancelledMessage}" is not a string literal in ${sourcePath}`);
+      }
+    }
+  }
+
+  // SDK version constants on both Rust sides.
+  const rustSdkVersions = [
+    ['crates/sumafile-plugin/src/lib.rs', /pub const SDK_VERSION: &str = "([^"]+)"/, 'SDK_VERSION'],
+    [
+      'crates/simplefile-service/src/plugin_archive/mod.rs',
+      /pub const PLUGIN_SDK_VERSION: &str = "([^"]+)"/,
+      'PLUGIN_SDK_VERSION',
+    ],
+  ];
+  for (const [sourcePath, pattern, name] of rustSdkVersions) {
+    const version = readRepo(sourcePath).match(pattern)?.[1];
+    if (!version) {
+      fail(`could not find ${name} in ${sourcePath}`);
+    } else if (version !== pluginProtocol.sdkVersion) {
+      fail(`${name} ${version} in ${sourcePath} does not match plugin protocol sdkVersion ${pluginProtocol.sdkVersion}`);
+    }
+  }
+
   if (!process.exitCode) {
     console.log(
-      `Checked plugin protocol v1: ${hostMethods.length} host methods, SDK ${pluginProtocol.sdkVersion}.`,
+      `Checked plugin protocol v1: ${hostMethods.length} host methods, ${engineMethods.length} archive engine methods, SDK ${pluginProtocol.sdkVersion}.`,
     );
   }
+}
+
+// Remote plugin protocol (plugins/remote/protocol.json): the plugin-owned methods and events must be
+// string literals in the backend's handler (Task 10 adds the C# client), and each documented error text
+// must start a string literal in every source that produces it.
+const remoteProtocolPath = join(repoRoot, 'plugins', 'remote', 'protocol.json');
+const remoteProtocol = existsSync(remoteProtocolPath)
+  ? JSON.parse(readFileSync(remoteProtocolPath, 'utf8'))
+  : null;
+if (!remoteProtocol) {
+  fail('missing plugins/remote/protocol.json');
+} else {
+  const exitCodeBefore = process.exitCode;
+  process.exitCode = undefined;
+  const objectKeys = (value) =>
+    value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : [];
+  if (remoteProtocol.plugin !== 'com.sumafile.remote') {
+    fail('plugins/remote/protocol.json plugin must be com.sumafile.remote');
+  }
+  const remoteMethods = objectKeys(remoteProtocol.methods);
+  const remoteEvents = objectKeys(remoteProtocol.events);
+  const remoteErrors = objectKeys(remoteProtocol.errors);
+  if (remoteMethods.length === 0) {
+    fail('plugins/remote/protocol.json methods must be a non-empty object keyed by method name');
+  }
+  if (remoteEvents.length === 0) {
+    fail('plugins/remote/protocol.json events must be a non-empty object keyed by event name');
+  }
+  for (const method of remoteMethods) {
+    const entry = remoteProtocol.methods[method];
+    if (!entry || !('params' in entry) || !('result' in entry)) {
+      fail(`remote plugin method ${method} needs params and result`);
+    }
+    for (const event of [entry?.emits, entry?.progressEvent].filter(Boolean)) {
+      if (!remoteEvents.includes(event)) {
+        fail(`remote plugin method ${method} names an undocumented event ${event}`);
+      }
+    }
+  }
+  // The backend serves each method and event; the C# client (Task 10) calls and subscribes to each.
+  const remoteLiteralSources = [
+    'plugins/remote/backend/src/handler.rs',
+    'plugins/remote/ui/SumaFile.Remote.Model/RemoteProtocol.cs',
+  ];
+  for (const sourcePath of remoteLiteralSources) {
+    const source = readRepo(sourcePath);
+    for (const name of [...remoteMethods, ...remoteEvents]) {
+      if (!source.includes(`"${name}"`)) {
+        fail(`remote plugin method or event ${name} is not a string literal in ${sourcePath}`);
+      }
+    }
+  }
+  for (const key of remoteErrors) {
+    const entry = remoteProtocol.errors[key];
+    const text = typeof entry?.text === 'string' ? entry.text : '';
+    const sources = Array.isArray(entry?.sources) ? entry.sources : [];
+    if (text.length === 0 || sources.length === 0) {
+      fail(`remote plugin error ${key} needs a text and at least one source`);
+      continue;
+    }
+    // The backend builds these texts with format!, so the literal starts with the text before
+    // its first <placeholder>: "remote session not found: {session_id}" matches
+    // "remote session not found: <id>".
+    const placeholder = text.indexOf('<');
+    const prefix = placeholder === -1 ? text : text.slice(0, placeholder);
+    for (const sourcePath of sources) {
+      if (!existsSync(join(repoRoot, sourcePath))) {
+        fail(`remote plugin error ${key} names a missing source ${sourcePath}`);
+      } else if (!readRepo(sourcePath).includes(`"${prefix}`)) {
+        fail(`remote plugin error ${key} text "${prefix}" does not start a string literal in ${sourcePath}`);
+      }
+    }
+  }
+  if (!process.exitCode) {
+    console.log(
+      `Checked remote plugin protocol: ${remoteMethods.length} methods, ${remoteEvents.length} events, ${remoteErrors.length} error texts.`,
+    );
+  }
+  process.exitCode = process.exitCode || exitCodeBefore;
 }

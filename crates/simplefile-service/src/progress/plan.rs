@@ -3,9 +3,7 @@
 use super::parallel::ConflictAction;
 use super::reporting::check_cancelled;
 use crate::transfer_staging::conflict_for_existing_destination;
-use simplefile_core::path_conflict::{
-    path_collision_key, path_exists_no_follow, paths_refer_to_same_entry,
-};
+use simplefile_core::path_conflict::{path_collision_key, paths_refer_to_same_entry};
 use simplefile_core::utils::{
     is_network_path, validate_existing_path_no_resolve, validate_path_no_follow,
 };
@@ -95,37 +93,7 @@ fn ensure_dir_not_inside_itself(source_path: &Path, final_dest: &Path) -> Result
     Ok(())
 }
 
-pub(crate) fn unique_destination_path(
-    dest_dir: &Path,
-    file_name: &std::ffi::OsStr,
-    planned_destinations: &HashSet<String>,
-) -> Result<PathBuf, String> {
-    let original = Path::new(file_name);
-    let stem = original.file_stem().map_or_else(
-        || original.to_string_lossy().to_string(),
-        |stem| stem.to_string_lossy().to_string(),
-    );
-    let ext = original
-        .extension()
-        .map(|extension| extension.to_string_lossy().to_string());
-
-    for index in 1..10_000u32 {
-        let candidate_name = match &ext {
-            Some(ext) if !ext.is_empty() => format!("{stem} ({index}).{ext}"),
-            _ => format!("{stem} ({index})"),
-        };
-        let candidate = dest_dir.join(candidate_name);
-        let candidate_key = path_collision_key(&candidate);
-        if !path_exists_no_follow(&candidate) && !planned_destinations.contains(&candidate_key) {
-            return Ok(candidate);
-        }
-    }
-
-    Err(format!(
-        "Could not choose a unique destination for {}",
-        original.to_string_lossy()
-    ))
-}
+pub(crate) use sumafile_transfer::paths::unique_destination_path;
 
 /// Decide where a top-level item goes. Directories merge into an existing
 /// destination directory and carry the action down to their children; files

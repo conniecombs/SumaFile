@@ -173,6 +173,10 @@ public sealed class WorkspaceChromeLayout
     [JsonPropertyName("tagsCollapsed")]
     public bool TagsCollapsed { get; set; }
 
+    /// <summary>The collapsed plugin sidebar sections (<see cref="UiSettings.CollapsedPluginSidebarSections"/>).</summary>
+    [JsonPropertyName("pluginSectionsCollapsed")]
+    public List<string> CollapsedPluginSidebarSections { get; set; } = [];
+
     [JsonPropertyName("columnPreset")]
     public string ColumnPreset { get; set; } = "default";
 
@@ -212,6 +216,7 @@ public sealed class WorkspaceChromeLayout
             QuickAccessCollapsed = settings.QuickAccessCollapsed,
             MyPcCollapsed = settings.MyPcCollapsed,
             TagsCollapsed = settings.TagsCollapsed,
+            CollapsedPluginSidebarSections = UiSettings.NormalizePluginSectionKeys(settings.CollapsedPluginSidebarSections),
             ColumnPreset = UiSettings.NormalizeColumnPreset(settings.ColumnPreset),
             VisibleColumnIds = primaryColumns.SnapshotVisibleIds(),
             ColumnWidths = primaryColumns.SnapshotWidths(),
@@ -236,6 +241,7 @@ public sealed class WorkspaceChromeLayout
         settings.QuickAccessCollapsed = QuickAccessCollapsed;
         settings.MyPcCollapsed = MyPcCollapsed;
         settings.TagsCollapsed = TagsCollapsed;
+        settings.CollapsedPluginSidebarSections = [.. CollapsedPluginSidebarSections];
 
         settings.ColumnPreset = ColumnPreset;
         settings.ColumnWidths = new Dictionary<string, double>(ColumnWidths, StringComparer.Ordinal);
@@ -277,6 +283,7 @@ public sealed class WorkspaceChromeLayout
             ? null
             : NormalizeVisibleIds(SecondaryVisibleColumnIds, knownColumns);
         ColumnWidths = NormalizeWidths(ColumnWidths);
+        CollapsedPluginSidebarSections = UiSettings.NormalizePluginSectionKeys(CollapsedPluginSidebarSections);
         SecondaryColumnWidths = SecondaryColumnWidths is null
             ? null
             : NormalizeWidths(SecondaryColumnWidths);

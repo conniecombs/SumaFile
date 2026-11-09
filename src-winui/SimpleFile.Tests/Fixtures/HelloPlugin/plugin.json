@@ -10,11 +10,15 @@
   "contributions": {
     "commands": [
       { "id": "greet", "label": "Hello: greet", "group": "Hello" },
-      { "id": "backend-ping", "label": "Hello: ping backend", "group": "Hello" }
+      { "id": "backend-ping", "label": "Hello: ping backend", "group": "Hello" },
+      { "id": "open-window", "label": "Hello: open window", "group": "Hello" },
+      { "id": "show-dialog", "label": "Hello: show dialog", "group": "Hello" }
     ],
     "contextMenu": [ { "group": "Hello", "items": [ { "command": "greet", "label": "Say hello", "when": "selectionCount >= 1" } ] } ],
     "toolbar": [ { "command": "greet", "label": "Hello", "glyph": "", "placement": "overflow" } ],
-    "archiveFormats": [ { "extension": ".hello", "canList": true, "canExtract": true, "canCreate": true, "canModify": false, "engineName": "hello" } ]
+    "archiveFormats": [ { "extension": ".hello", "canList": true, "canExtract": true, "canCreate": true, "canModify": true, "engineName": "hello" } ],
+    "sidebar": [ { "id": "hello", "title": "Hello section", "provider": "hello-section", "command": "greet" } ],
+    "settingsPage": { "provider": "hello-page" }
   },
   "settings": [
     { "key": "greeting", "type": "string", "label": "Greeting", "default": "Hello", "group": "General" },

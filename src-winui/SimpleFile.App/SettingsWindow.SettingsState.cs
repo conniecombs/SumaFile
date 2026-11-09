@@ -73,6 +73,7 @@ public sealed partial class SettingsWindow
         _loadedSettingsJson = JsonSerializer.Serialize(settings);
         _loadedStateJson = CurrentStateJson();
         await LoadVersionAsync(fileOps, cancellationToken).ConfigureAwait(true);
+        await LoadArchiveSupportAsync(fileOps, cancellationToken).ConfigureAwait(true);
     }
 
     private string? _loadedSettingsJson;

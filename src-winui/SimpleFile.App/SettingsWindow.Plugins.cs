@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SimpleFile.Core;
 using SimpleFile.PluginHost;
 using SimpleFile.PluginHost.Discovery;
 using SimpleFile.PluginHost.Install;
@@ -13,6 +14,14 @@ public sealed partial class SettingsWindow
 {
     private PluginManager? _pluginManager;
     private readonly CancellationTokenSource _pluginsCts = new();
+
+    // Custom settings pages (spec 8.2): one page per plugin and Settings window, reused while the record's Epoch holds.
+    private readonly PluginPageCache<FrameworkElement> _pluginPages = new();
+    private readonly HashSet<string> _pluginPageIds = new(StringComparer.Ordinal);
+    // The slot each plugin's page shows in now, with the epoch of the render that made it.
+    private readonly Dictionary<string, (int Epoch, ContentPresenter Slot)> _pluginPageSlots = new(StringComparer.Ordinal);
+    private readonly HashSet<(string PluginId, int Epoch)> _pluginPagesLoading = [];
+    private bool _pluginPageSearchQueued;
 
     private static string UserPluginRoot => PluginDiscovery.UserRoot();
 
@@ -55,6 +64,13 @@ public sealed partial class SettingsWindow
 
     private void RenderPluginsPanel()
     {
+        // Every card is rebuilt: detach the pages from the old slots first, so a cached page can join its new slot.
+        foreach (var (_, slot) in _pluginPageSlots.Values)
+        {
+            slot.Content = null;
+        }
+
+        _pluginPageSlots.Clear();
         PluginsList.Children.Clear();
         var available = _pluginManager is not null && _fileOps is not null;
         InstallPluginButton.IsEnabled = available;
@@ -87,13 +103,112 @@ public sealed partial class SettingsWindow
             ReviewAsync = record => ReviewPluginAsync(manager, record, token),
             RemoveAsync = record => RemovePluginAsync(manager, record, token),
             PickFolderAsync = PickPluginFolderAsync,
+            AttachSettingsPage = (record, slot) => AttachSettingsPage(manager, record, slot, token),
         };
+        ForgetSettingsPagesOfPluginsNotEnabled(plugins);
         foreach (var record in plugins)
         {
             PluginsList.Children.Add(builder.Build(
                 record,
                 key => fileOps.GetSettingAsync(key, token),
                 (key, value) => fileOps.SetSettingAsync(key, value, token)));
+        }
+    }
+
+    /// <summary>A page is kept only for an Enabled plugin: any other state retired the runtime that made it.</summary>
+    private void ForgetSettingsPagesOfPluginsNotEnabled(IReadOnlyList<PluginRecord> plugins)
+    {
+        var enabled = plugins.Where(record => record.State == PluginState.Enabled).Select(record => record.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var id in _pluginPageIds.Where(id => !enabled.Contains(id)).ToList())
+        {
+            _pluginPages.Remove(id);
+            _pluginPageIds.Remove(id);
+        }
+    }
+
+    /// <summary>
+    /// Puts the plugin's settings page in <paramref name="slot"/>: the cached page while the record's Epoch is unchanged,
+    /// otherwise a new one from <see cref="PluginManager.CreateSettingsPageAsync"/> (asked at most once at a time).
+    /// </summary>
+    private void AttachSettingsPage(PluginManager manager, PluginRecord record, ContentPresenter slot, CancellationToken token)
+    {
+        _pluginPageSlots[record.Id] = (record.Epoch, slot);
+        if (_pluginPages.TryGet(record.Id, record.Epoch, out var page) && page is not null)
+        {
+            InsertSettingsPage(slot, page);
+            return;
+        }
+
+        if (_pluginPagesLoading.Add((record.Id, record.Epoch)))
+        {
+            _ = LoadSettingsPageAsync(manager, record.Id, record.Epoch, token);
+        }
+    }
+
+    private async Task LoadSettingsPageAsync(PluginManager manager, string pluginId, int epoch, CancellationToken token)
+    {
+        try
+        {
+            var created = await manager.CreateSettingsPageAsync(pluginId, token);
+            if (IsClosed || !ReferenceEquals(_pluginManager, manager))
+            {
+                return;
+            }
+
+            var page = created as FrameworkElement
+                ?? throw new InvalidOperationException($"returned {created.GetType().FullName}, not a Microsoft.UI.Xaml.FrameworkElement");
+            _pluginPages.Store(pluginId, epoch, page);
+            _pluginPageIds.Add(pluginId);
+            if (_pluginPageSlots.TryGetValue(pluginId, out var current) && current.Epoch == epoch)
+            {
+                InsertSettingsPage(current.Slot, page);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            // A provider failure also marks the plugin LoadFailed, whose re-render drops the slot; until then, say why.
+            if (!IsClosed && _pluginPageSlots.TryGetValue(pluginId, out var current) && current.Epoch == epoch)
+            {
+                current.Slot.Content = PluginSettingsPanelBuilder.Muted($"This settings page could not be loaded: {exception.Message}");
+            }
+        }
+        finally
+        {
+            _pluginPagesLoading.Remove((pluginId, epoch));
+        }
+    }
+
+    private void InsertSettingsPage(ContentPresenter slot, FrameworkElement page)
+    {
+        // A cached page may still sit in an earlier slot of this window: detach it before it is re-added.
+        foreach (var (_, other) in _pluginPageSlots.Values)
+        {
+            if (!ReferenceEquals(other, slot) && ReferenceEquals(other.Content, page))
+            {
+                other.Content = null;
+            }
+        }
+
+        if (!ReferenceEquals(slot.Content, page))
+        {
+            slot.Content = page;
+        }
+
+        // Search indexes the page once it exists: run the current query again so its controls can match. Queued, since
+        // a cached page is inserted while its card is still being built, before the card joins the list.
+        if (!_pluginPageSearchQueued)
+        {
+            _pluginPageSearchQueued = DispatcherQueue.TryEnqueue(() =>
+            {
+                _pluginPageSearchQueued = false;
+                if (!IsClosed)
+                {
+                    RerunSettingsSearch();
+                }
+            });
         }
     }
 
@@ -239,4 +354,15 @@ public sealed partial class SettingsWindow
         PluginsStatusText.Text = message;
         PluginsStatusText.Visibility = Visibility.Visible;
     }
+
+#if DEBUG
+    // For the UI smoke (MainWindow.UiSmoke).
+    internal Panel SmokePluginsPanel => PluginsPanel;
+
+    internal Panel SmokePluginsList => PluginsList;
+
+    internal FrameworkElement? SmokeFirstSearchMatch => _firstSearchMatch;
+
+    internal void SmokeSearch(string query) => SearchBox.Text = query;
+#endif
 }

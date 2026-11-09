@@ -1,32 +1,94 @@
 use std::path::Path;
-use std::process::Stdio;
 
+use super::engine::{engine_entries, ArchiveEngine, EngineContext, EngineFormat, EngineLimits};
 use super::path::{
-    archive_entry_relative_path, archive_entry_relative_path_from_name, archive_format_for_path,
-    copy_entry_data, copy_entry_data_limited, create_dir_all, create_file,
-    ensure_extract_path_within_destination, output_path_for_entry, path_is_within_prefix,
-    top_level_remap, unique_file_path_if_needed, zip_entry_relative_path, ArchiveFormat,
+    archive_entry_relative_path, archive_format_for_path, archive_kind_for_path, copy_entry_data,
+    copy_entry_data_limited, create_dir_all, create_file, ensure_extract_path_within_destination,
+    output_path_for_entry, path_is_within_prefix, top_level_remap, unique_file_path_if_needed,
+    zip_entry_relative_path, ArchiveFormat, ArchiveKind,
 };
 use std::path::PathBuf;
 
 pub fn extract_archive(archive_path: String, destination: String) -> Result<(), String> {
+    extract_archive_with(archive_path, destination, &EngineContext::untracked())
+}
+
+/// Extract every entry of `archive_path` into `destination`. Built-in
+/// formats only honour a cancel that is already set; an engine gets the
+/// context itself.
+pub fn extract_archive_with(
+    archive_path: String,
+    destination: String,
+    ctx: &EngineContext<'_>,
+) -> Result<(), String> {
+    ctx.check_cancelled()?;
     let archive = Path::new(&archive_path);
     let dest = Path::new(&destination);
-    if archive_format_for_path(archive).is_none() {
-        if let Some((engine, format)) = super::engine::engine_for_path(archive) {
-            if !format.can_extract {
-                return Err(format!(
-                    "{} cannot extract {} archives",
-                    engine.name(),
-                    format.extension
-                ));
-            }
-            create_dir_all(dest)?;
-            return engine.extract(archive, dest, None);
+    match archive_kind_for_path(archive) {
+        Some(ArchiveKind::Engine { engine, format }) => {
+            return extract_engine_archive(engine.as_ref(), &format, archive, dest, ctx);
         }
+        Some(ArchiveKind::BuiltIn(_)) => {}
+        // Refuse before the destination is created.
+        None => return Err(super::list::unsupported_archive_error(archive)),
     }
     create_dir_all(dest)?;
     extract_archive_to_directory(archive, dest)
+}
+
+/// List and validate first, so an unsafe name fails before the engine
+/// writes anything. The engine then extracts into private staging, and
+/// only the listed entries are moved out, under the same containment and
+/// collision rules as the built-in formats.
+fn extract_engine_archive(
+    engine: &dyn ArchiveEngine,
+    format: &EngineFormat,
+    archive: &Path,
+    dest: &Path,
+    ctx: &EngineContext<'_>,
+) -> Result<(), String> {
+    if !format.can_extract {
+        return Err(format!(
+            "{} cannot extract {} archives",
+            engine.name(),
+            format.extension
+        ));
+    }
+    let planned = engine_entries(engine, archive)?;
+    create_dir_all(dest)?;
+    let dest_canonical = dest
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve destination: {e}"))?;
+    let relative_paths: Vec<PathBuf> = planned
+        .iter()
+        .map(|(_, relative)| relative.clone())
+        .collect();
+    let root_remap = top_level_remap(&dest_canonical, &relative_paths);
+
+    let staging = ArchiveStaging::create(&dest_canonical)?.produced_by(engine.name());
+    engine.extract(archive, staging.path(), ctx)?;
+    ctx.check_cancelled()?;
+    // Check every entry before moving any, so a refusal leaves the
+    // destination as it was.
+    for (entry, relative) in &planned {
+        staging.check_entry(relative, entry.is_dir)?;
+    }
+
+    for (entry, relative) in planned {
+        let outpath = output_path_for_entry(&dest_canonical, &relative, root_remap.as_ref());
+        ensure_extract_path_within_destination(&dest_canonical, &outpath)?;
+        if entry.is_dir {
+            create_dir_all(&outpath)?;
+            continue;
+        }
+        if let Some(parent) = outpath.parent() {
+            create_dir_all(parent)?;
+        }
+        let final_outpath = unique_file_path_if_needed(&outpath);
+        ensure_extract_path_within_destination(&dest_canonical, &final_outpath)?;
+        staging.move_entry(&relative, &final_outpath)?;
+    }
+    Ok(())
 }
 
 pub(super) fn extract_archive_to_directory(archive: &Path, dest: &Path) -> Result<(), String> {
@@ -36,11 +98,7 @@ pub(super) fn extract_archive_to_directory(archive: &Path, dest: &Path) -> Resul
         Some(ArchiveFormat::Tar) => extract_tar(&archive_path, dest, None),
         Some(ArchiveFormat::TarGz) => extract_tar(&archive_path, dest, Some("gz")),
         Some(ArchiveFormat::Rar) => extract_rar(&archive_path, dest),
-        Some(ArchiveFormat::SevenZip) => extract_seven_zip(&archive_path, dest),
-        None => Err(format!(
-            "Unsupported archive format: {}",
-            archive.extension().and_then(|e| e.to_str()).unwrap_or("")
-        )),
+        None => Err(super::list::unsupported_archive_error(archive)),
     }
 }
 
@@ -180,127 +238,107 @@ pub(super) fn extract_tar(
     Ok(())
 }
 
-fn extract_seven_zip(path: &str, dest: &Path) -> Result<(), String> {
-    let binary = super::seven_zip::require_seven_zip_binary()?;
-    let entries = super::seven_zip::list_seven_zip_entries_with_binary(&binary, path)?;
-    let dest_canonical = dest
-        .canonicalize()
-        .map_err(|e| format!("Failed to resolve destination: {e}"))?;
-
-    let mut planned = Vec::with_capacity(entries.len());
-    let mut relative_paths = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let relative_path = archive_entry_relative_path_from_name(&entry.path, "7-Zip")?;
-        relative_paths.push(relative_path.clone());
-        planned.push((entry, relative_path));
-    }
-
-    let root_remap = top_level_remap(&dest_canonical, &relative_paths);
-    // One 7-Zip process extracts the whole archive into a private staging
-    // folder; entries are then moved into place one by one so every name
-    // still passes the same validation and collision handling. Spawning a
-    // process per entry re-decompressed a solid archive's block every time.
-    let staging = SevenZipStaging::create(&dest_canonical)?;
-    run_seven_zip_extract(&binary, path, staging.path(), None)?;
-    for (entry, relative_path) in planned {
-        let outpath = output_path_for_entry(&dest_canonical, &relative_path, root_remap.as_ref());
-        ensure_extract_path_within_destination(&dest_canonical, &outpath)?;
-        if entry.is_dir {
-            create_dir_all(&outpath)?;
-            continue;
-        }
-        if let Some(parent) = outpath.parent() {
-            create_dir_all(parent)?;
-        }
-        let final_outpath = unique_file_path_if_needed(&outpath);
-        ensure_extract_path_within_destination(&dest_canonical, &final_outpath)?;
-        staging.move_entry(&entry.path, &final_outpath)?;
-    }
-
-    Ok(())
-}
-
-/// A private folder beside the destination that a single 7-Zip run extracts
-/// into. Removed on drop, so a failed extraction leaves nothing behind.
-struct SevenZipStaging {
+/// A private folder inside the destination that one engine run extracts
+/// into. Removed on drop, so a failed extraction
+/// leaves nothing behind. Its dot-prefixed name keeps it out of sight
+/// while it briefly exists.
+pub(super) struct ArchiveStaging {
     path: PathBuf,
+    producer: String,
 }
 
-impl SevenZipStaging {
-    fn create(dest: &Path) -> Result<Self, String> {
+impl ArchiveStaging {
+    pub(super) fn create(dest: &Path) -> Result<Self, String> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0);
-        let path = dest.join(format!(".sumafile-7z-{}-{nanos}", std::process::id()));
+        let path = dest.join(format!(".sumafile-extract-{}-{nanos}", std::process::id()));
         std::fs::create_dir(&path)
-            .map_err(|e| format!("Failed to create 7-Zip staging folder: {e}"))?;
-        Ok(Self { path })
+            .map_err(|e| format!("Failed to create archive staging folder: {e}"))?;
+        Ok(Self {
+            path,
+            producer: "The archive engine".to_string(),
+        })
     }
 
-    fn path(&self) -> &Path {
+    /// Name what writes into this staging, for the error about a listed
+    /// entry it did not write.
+    pub(super) fn produced_by(mut self, producer: &str) -> Self {
+        self.producer = producer.to_string();
+        self
+    }
+
+    pub(super) fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Names of the entries one selective run should extract, one per line.
-    fn write_listfile<'a>(&self, names: impl Iterator<Item = &'a str>) -> Result<PathBuf, String> {
-        let listfile = self.path.join(".sumafile-7z-include.txt");
-        let mut content = String::new();
-        for name in names {
-            content.push_str(name);
-            content.push('\n');
+    /// Refuse a staged entry that is, or sits under, a symlink or junction,
+    /// and a listed file that was not written. `relative` is a validated
+    /// entry path.
+    pub(super) fn check_entry(&self, relative: &Path, is_dir: bool) -> Result<(), String> {
+        let mut staged = self.path.clone();
+        let mut shown = Vec::new();
+        for component in relative.components() {
+            staged.push(component);
+            shown.push(component.as_os_str().to_string_lossy().into_owned());
+            match std::fs::symlink_metadata(&staged) {
+                Ok(meta) if is_link(&meta) => {
+                    return Err(format!("Archive entry is a link: {}", shown.join("/")));
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
         }
-        std::fs::write(&listfile, content)
-            .map_err(|e| format!("Failed to write 7-Zip include list: {e}"))?;
-        Ok(listfile)
+        if !is_dir && !staged.is_file() {
+            return Err(format!(
+                "{} did not extract {}",
+                self.producer,
+                entry_display(relative)
+            ));
+        }
+        Ok(())
     }
 
-    /// Move one extracted entry out of staging. 7-Zip writes each entry at its
-    /// archive path relative to the output folder.
-    fn move_entry(&self, entry_path: &str, destination: &Path) -> Result<(), String> {
-        let staged = self.path.join(entry_path);
-        if std::fs::rename(&staged, destination).is_ok() {
+    /// Move one extracted file out of staging. Every entry is written at
+    /// its archive path relative to the staging folder.
+    pub(super) fn move_entry(&self, relative: &Path, to: &Path) -> Result<(), String> {
+        self.check_entry(relative, false)?;
+        let staged = self.path.join(relative);
+        if std::fs::rename(&staged, to).is_ok() {
             return Ok(());
         }
-        std::fs::copy(&staged, destination)
-            .map(|_| ())
-            .map_err(|e| format!("Failed to place extracted entry {entry_path}: {e}"))
+        std::fs::copy(&staged, to).map(|_| ()).map_err(|e| {
+            format!(
+                "Failed to place extracted entry {}: {e}",
+                entry_display(relative)
+            )
+        })
     }
 }
 
-impl Drop for SevenZipStaging {
+impl Drop for ArchiveStaging {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
 
-fn run_seven_zip_extract(
-    binary: &str,
-    archive_path: &str,
-    staging: &Path,
-    include_listfile: Option<&Path>,
-) -> Result<(), String> {
-    let mut command = super::seven_zip::seven_zip_command(binary);
-    command
-        .arg("x")
-        .arg(format!("-o{}", staging.display()))
-        .arg("-bd")
-        .arg("-bb0")
-        .arg("-sccUTF-8")
-        .arg("-scsUTF-8")
-        .arg("-y")
-        .arg("-spd")
-        .arg("-aoa");
-    if let Some(listfile) = include_listfile {
-        command.arg(format!("-i@{}", listfile.display()));
-    }
-    let output = command
-        .arg("--")
-        .arg(archive_path)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("Failed to run 7-Zip extract command: {e}"))?;
-    super::seven_zip::ensure_seven_zip_success(&output, "7-Zip extraction")
+/// A relative entry path as the archive shows it, `/`-separated.
+fn entry_display(relative: &Path) -> String {
+    relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// A symlink or a junction. On Windows `is_symlink` is true for every
+/// reparse point whose tag is a name surrogate, junctions included. Other
+/// reparse points, such as cloud-file placeholders (OneDrive Files
+/// On-Demand) and deduplicated or WOF-compressed files, are ordinary files
+/// and folders.
+fn is_link(meta: &std::fs::Metadata) -> bool {
+    meta.file_type().is_symlink()
 }
 
 fn extract_rar(path: &str, dest: &Path) -> Result<(), String> {
@@ -361,22 +399,23 @@ pub(super) fn extract_archive_entry_to_directory(
     limits: ExtractLimits,
 ) -> Result<(), String> {
     let archive_path = archive.to_string_lossy();
-    match archive_format_for_path(archive) {
-        Some(ArchiveFormat::Zip) => extract_zip_entry(&archive_path, dest, inner_path, limits),
-        Some(ArchiveFormat::Tar) => {
+    match archive_kind_for_path(archive) {
+        Some(ArchiveKind::BuiltIn(ArchiveFormat::Zip)) => {
+            extract_zip_entry(&archive_path, dest, inner_path, limits)
+        }
+        Some(ArchiveKind::BuiltIn(ArchiveFormat::Tar)) => {
             extract_tar_entry(&archive_path, dest, inner_path, None, limits)
         }
-        Some(ArchiveFormat::TarGz) => {
+        Some(ArchiveKind::BuiltIn(ArchiveFormat::TarGz)) => {
             extract_tar_entry(&archive_path, dest, inner_path, Some("gz"), limits)
         }
-        Some(ArchiveFormat::Rar) => extract_rar_entry(&archive_path, dest, inner_path, limits),
-        Some(ArchiveFormat::SevenZip) => {
-            extract_seven_zip_entry_matching(&archive_path, dest, inner_path, limits)
+        Some(ArchiveKind::BuiltIn(ArchiveFormat::Rar)) => {
+            extract_rar_entry(&archive_path, dest, inner_path, limits)
         }
-        None => Err(format!(
-            "Unsupported archive format: {}",
-            archive.extension().and_then(|e| e.to_str()).unwrap_or("")
-        )),
+        Some(ArchiveKind::Engine { engine, format }) => {
+            read_engine_entry(engine.as_ref(), &format, archive, dest, inner_path, limits)
+        }
+        None => Err(super::list::unsupported_archive_error(archive)),
     }
 }
 
@@ -553,50 +592,81 @@ fn extract_tar_entry(
     Ok(())
 }
 
-fn extract_seven_zip_entry_matching(
-    path: &str,
+/// One selection of an engine archive: the entries at or under
+/// `inner_path` by path segment. The budget is checked by declared sizes
+/// before the engine runs and by written sizes before anything leaves
+/// staging.
+fn read_engine_entry(
+    engine: &dyn ArchiveEngine,
+    format: &EngineFormat,
+    archive: &Path,
     dest: &Path,
     inner_path: &Path,
     limits: ExtractLimits,
 ) -> Result<(), String> {
-    let binary = super::seven_zip::require_seven_zip_binary()?;
-    let entries = super::seven_zip::list_seven_zip_entries_with_binary(&binary, path)?;
+    if !format.can_extract {
+        return Err(format!(
+            "{} cannot extract {} archives",
+            engine.name(),
+            format.extension
+        ));
+    }
     let dest_canonical = dest
         .canonicalize()
         .map_err(|e| format!("Failed to resolve destination: {e}"))?;
 
     let mut selected = Vec::new();
     let mut declared_total = 0u64;
-    for entry in entries {
-        let relative_path = archive_entry_relative_path_from_name(&entry.path, "7-Zip")?;
-        if !path_is_within_prefix(&relative_path, inner_path) {
+    for (entry, relative) in engine_entries(engine, archive)? {
+        if !path_is_within_prefix(&relative, inner_path) {
             continue;
         }
-        declared_total = declared_total
-            .checked_add(entry.size)
-            .ok_or_else(|| "Archive extract size overflow".to_string())?;
-        selected.push((entry, relative_path));
+        if !entry.is_dir {
+            declared_total = declared_total
+                .checked_add(entry.size)
+                .ok_or_else(|| "Archive extract size overflow".to_string())?;
+        }
+        selected.push((entry, relative));
     }
-
     if selected.is_empty() {
         return Err(format!("Archive entry not found: {}", inner_path.display()));
     }
-    reject_if_over_budget(declared_total, selected.len() as u32, limits)?;
+    let entry_count = u32::try_from(selected.len()).unwrap_or(u32::MAX);
+    reject_if_over_budget(declared_total, entry_count, limits)?;
 
-    // One 7-Zip run for the selected entries (named through an include list,
-    // which also sidesteps command-line length limits), then move them out.
-    let staging = SevenZipStaging::create(&dest_canonical)?;
-    let listfile = staging.write_listfile(
-        selected
-            .iter()
-            .filter(|(entry, _)| !entry.is_dir)
-            .map(|(entry, _)| entry.path.as_str()),
+    let staging = ArchiveStaging::create(&dest_canonical)?.produced_by(engine.name());
+    engine.read_entry(
+        archive,
+        &entry_display(inner_path),
+        staging.path(),
+        EngineLimits {
+            max_bytes: limits.max_uncompressed_bytes,
+            max_entries: limits.max_entries,
+        },
     )?;
-    run_seven_zip_extract(&binary, path, staging.path(), Some(&listfile))?;
 
     let mut written_total = 0u64;
-    for (entry, relative_path) in selected {
-        let outpath = dest_canonical.join(&relative_path);
+    for (entry, relative) in &selected {
+        staging.check_entry(relative, entry.is_dir)?;
+        if entry.is_dir {
+            continue;
+        }
+        let written = std::fs::metadata(staging.path().join(relative))
+            .map(|meta| meta.len())
+            .map_err(|e| format!("Failed to read extracted entry: {e}"))?;
+        written_total = written_total
+            .checked_add(written)
+            .ok_or_else(|| "Archive extract size overflow".to_string())?;
+        if written_total > limits.max_uncompressed_bytes {
+            return Err(format!(
+                "Archive extract exceeds size limit of {} bytes",
+                limits.max_uncompressed_bytes
+            ));
+        }
+    }
+
+    for (entry, relative) in selected {
+        let outpath = dest_canonical.join(&relative);
         ensure_extract_path_within_destination(&dest_canonical, &outpath)?;
         if entry.is_dir {
             create_dir_all(&outpath)?;
@@ -605,18 +675,7 @@ fn extract_seven_zip_entry_matching(
         if let Some(parent) = outpath.parent() {
             create_dir_all(parent)?;
         }
-        staging.move_entry(&entry.path, &outpath)?;
-        let written = std::fs::metadata(&outpath).map(|m| m.len()).unwrap_or(0);
-        written_total = written_total
-            .checked_add(written)
-            .ok_or_else(|| "Archive extract size overflow".to_string())?;
-        if written_total > limits.max_uncompressed_bytes {
-            let _ = std::fs::remove_file(&outpath);
-            return Err(format!(
-                "Archive extract exceeds size limit of {} bytes",
-                limits.max_uncompressed_bytes
-            ));
-        }
+        staging.move_entry(&relative, &outpath)?;
     }
     Ok(())
 }

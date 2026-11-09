@@ -689,3 +689,110 @@ async fn oversized_frame_before_handshake_closes_the_session() {
     let error = outcome.expect_err("oversized pre-handshake frame is an error");
     assert!(error.contains("too large"), "{error}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn extract_archive_with_operation_id_emits_running_then_completed_for_zip() {
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("zip_progress");
+    std::fs::write(dir.join("a.txt"), b"alpha").unwrap();
+    let archive = dir.join("pack.zip");
+    simplefile_core::archive::create_archive(
+        vec![dir.join("a.txt").to_string_lossy().into_owned()],
+        archive.to_string_lossy().into_owned(),
+        "zip".to_string(),
+    )
+    .unwrap();
+    let destination = dir.join("out");
+
+    send_request(
+        &mut client,
+        "extract_archive",
+        2,
+        json!({
+            "archivePath": archive.to_string_lossy(),
+            "destination": destination.to_string_lossy(),
+            "operationId": "zip-op"
+        }),
+    )
+    .await;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut events = Vec::new();
+    let response = loop {
+        let payload = tokio::time::timeout_at(deadline, read_frame(&mut client))
+            .await
+            .expect("extract_archive never replied")
+            .unwrap();
+        let message: Value = serde_json::from_slice(&payload).unwrap();
+        if message["method"] == "operation-progress" {
+            events.push(message["params"].clone());
+        } else if message.get("id") == Some(&json!(2)) {
+            break message;
+        }
+    };
+    let extracted = std::fs::read(destination.join("a.txt"));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(response["result"], Value::Null, "{response}");
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(extracted.unwrap(), b"alpha");
+    assert!(events.len() >= 2, "{events:?}");
+    assert!(events
+        .iter()
+        .all(|event| event["operation_id"] == "zip-op"
+            && event["operation_type"] == "extract-archive"));
+    assert_eq!(events[0]["status"], "running");
+    assert_eq!(events[0]["current"], 0);
+    assert_eq!(events[0]["total"], 0);
+    assert_eq!(events.last().unwrap()["status"], "completed");
+}
+
+/// No service lib test registers `.7z`, so nothing serves it here: a pane
+/// listing of the file or of a folder inside it reports the plugin note,
+/// with the options `PaneNavigator` sends and without any.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_directory_on_an_unserved_7z_reports_the_plugin_note() {
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("unserved_7z");
+    let archive = dir.join("x.7z");
+    std::fs::write(&archive, b"not read without an engine").unwrap();
+    let archive_path = archive.to_string_lossy().into_owned();
+    let pane_options = json!({
+        "mode": "light",
+        "finalEntries": false,
+        "sortBy": "name",
+        "sortAscending": true,
+        "includeHidden": true
+    });
+
+    let mut id = 1;
+    let mut errors = Vec::new();
+    for path in [archive_path.clone(), format!("{archive_path}\\docs")] {
+        for with_options in [true, false] {
+            id += 1;
+            let mut params = if with_options {
+                pane_options.clone()
+            } else {
+                json!({})
+            };
+            params["path"] = json!(path);
+            send_request(&mut client, "list_directory", id, params).await;
+            let response =
+                read_response_with_id(&mut client, id, std::time::Duration::from_secs(10))
+                    .await
+                    .unwrap_or_else(|| panic!("list_directory {path} never replied"));
+            errors.push((
+                format!("{path} with options {with_options}"),
+                response["error"]["message"].clone(),
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+
+    for (described, message) in errors {
+        assert_eq!(
+            message,
+            json!("7-Zip support requires the SumaFile 7-Zip plugin."),
+            "{described}"
+        );
+    }
+}

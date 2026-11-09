@@ -16,6 +16,9 @@ internal sealed class PluginProgressSink : IPluginProgressSink
     private readonly Func<string, string> _pluginName;
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
 
+    /// <summary>How long a cancelled row waits for the plugin to stop before it reads Cancelled anyway.</summary>
+    private static readonly TimeSpan CancelGrace = TimeSpan.FromSeconds(30);
+
     /// <param name="transfers">Read when the row is created, since the transfer manager exists only after workspace start.</param>
     public PluginProgressSink(
         DispatcherQueue dispatcher,
@@ -83,12 +86,12 @@ internal sealed class PluginProgressSink : IPluginProgressSink
             return;
         }
 
-        // Runs until the plugin completes or fails the operation; Cancel cancels the token and asks the plugin to stop.
+        // Runs until the plugin completes or fails the operation. Cancel cancels the token and asks the plugin to
+        // stop; the row then stays Cancelling until the plugin has stopped (or CancelGrace passes), then reads Cancelled.
         var operation = transfers.EnqueueExternal(title, detail, async (_, cancellationToken) =>
         {
             using var registration = cancellationToken.Register(entry.RequestCancel);
-            await entry.Finished.Task.WaitAsync(cancellationToken);
-            return TransferOperationStatus.Completed;
+            return await PluginOperationWait.WaitAsync(entry.Finished.Task, cancellationToken, CancelGrace);
         });
         operation.SetOperationId(id);
         entry.Operation = operation;

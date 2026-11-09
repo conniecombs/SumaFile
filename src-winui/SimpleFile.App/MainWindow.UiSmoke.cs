@@ -2,9 +2,14 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SimpleFile.Core;
+using SimpleFile.Ipc;
+using SimpleFile.PluginHost;
+using SimpleFile.PluginHost.Discovery;
+using SimpleFile.PluginHost.Trust;
 using Windows.Foundation;
 using Windows.Graphics;
 
@@ -60,7 +65,7 @@ public sealed partial class MainWindow
             ApplyPreviewVisibility();
             SyncFromWorkspace();
             await CheckpointAsync("plugins");
-            await SmokePluginsAsync(results);
+            await SmokePluginsAsync(results, CheckpointAsync);
             var empty = Path.Combine(root, "empty");
             var folders = Directory.GetDirectories(Path.Combine(root, "fixtures"))
                 .OrderBy(path => int.Parse(Path.GetFileName(path))).ToArray();
@@ -204,6 +209,12 @@ public sealed partial class MainWindow
             results.Add(new { scenario = "transfer-cancellation", status = operation.Status.ToString(), passed = true });
             await SmokeAdaptiveTransfersAsync(root, source, results, CheckpointAsync);
             CloseTransferProgressWindow();
+            if (Environment.GetEnvironmentVariable("SUMAFILE_SMOKE_PLUGINS") == "with")
+            {
+                // Last, just before the report: the reconnect resets the Transfers rows and swaps the IPC client.
+                await CheckpointAsync("service-reconnect");
+                await SmokeServiceReconnectAsync(results);
+            }
         }
         catch (Exception exception) { failure = exception.ToString(); }
         finally
@@ -225,17 +236,24 @@ public sealed partial class MainWindow
     /// SUMAFILE_SMOKE_PLUGINS=with: the Hello fixture is discovered, pre-approved, on the palette, and its command
     /// runs through the normal command path. =none: no plugin is discovered. Unset: nothing is checked.
     /// </summary>
-    private async Task SmokePluginsAsync(List<object> results)
+    private async Task SmokePluginsAsync(List<object> results, Func<string, Task> checkpoint)
     {
         const string helloId = "com.sumafile.hello";
         const string greetCommand = "plugin:" + helloId + ":greet";
         var mode = Environment.GetEnvironmentVariable("SUMAFILE_SMOKE_PLUGINS");
+        // Every mode: plugin backends write under the smoke's disposable data root, never the user's.
+        var dataRootOverride = Environment.GetEnvironmentVariable(PluginDiscovery.DataRootVariable);
+        SmokeAssert(!string.IsNullOrWhiteSpace(dataRootOverride), $"{PluginDiscovery.DataRootVariable} is not set");
+        var dataRoot = PluginDiscovery.DataRoot();
+        SmokeAssert(string.Equals(dataRoot, dataRootOverride!.Trim(), StringComparison.OrdinalIgnoreCase),
+            $"Plugin data root is {dataRoot}, expected {dataRootOverride}");
+        SmokeAssert(SmokeIsUnder(dataRoot, UiSmokeRoot()!), $"Plugin data root {dataRoot} is outside the smoke root");
         if (mode == "with")
         {
             var manager = _plugins ?? throw new InvalidOperationException("Plugin manager was not created");
             var hello = manager.Plugins.FirstOrDefault(record => record.Id == helloId);
             SmokeAssert(hello is not null, $"Plugin {helloId} was not discovered");
-            SmokeAssert(hello!.State == SimpleFile.PluginHost.PluginState.Enabled,
+            SmokeAssert(hello!.State == PluginState.Enabled,
                 $"Plugin {helloId} is {hello.State}, expected Enabled: {hello.Error}");
             SmokeAssert(AppCommandCatalog.All.Any(command => command.Id == greetCommand), $"Palette is missing {greetCommand}");
             var markerDirectory = Environment.GetEnvironmentVariable("SUMAFILE_HELLO_MARKER_DIR");
@@ -272,11 +290,27 @@ public sealed partial class MainWindow
                     && (pingLine = File.ReadAllLines(commandsLog).FirstOrDefault(line => line.StartsWith("ping:", StringComparison.Ordinal))) is not null,
                 "plugin backend-ping marker");
             SmokeAssert(pingLine!.Length > "ping:".Length, $"backend-ping returned no greeting: {pingLine}");
+            await checkpoint("plugin-sidebar");
+            var sidebarSection = await SmokePluginSidebarSectionAsync(markerDirectory!, commandsLog);
+            await checkpoint("plugin-window");
+            var pluginWindow = await SmokePluginWindowAsync(markerDirectory!);
+            // Read now: the disable check below closes the window.
+            var pluginWindowTitle = pluginWindow.Title;
+            await checkpoint("plugin-dialog");
+            await SmokePluginDialogAsync(markerDirectory!);
+            await checkpoint("plugin-settings-page");
+            var settingsPage = await SmokePluginSettingsPageAsync(markerDirectory!);
+            await checkpoint("plugin-disable-closes-windows");
+            await SmokePluginDisableClosesWindowsAsync(manager, pluginWindow);
             results.Add(new
             {
                 scenario = "plugins",
                 mode,
                 plugins = manager.Plugins.Count,
+                sidebarSection,
+                pluginWindow = pluginWindowTitle,
+                settingsPage,
+                dataRoot,
                 command = greetCommand,
                 archiveFormat = helloFormat!.Extension,
                 archiveEngine = helloFormat.Engine,
@@ -291,9 +325,764 @@ public sealed partial class MainWindow
             SmokeAssert(pluginCommands.Length == 0, "Unexpected plugin commands: " + string.Join(", ", pluginCommands));
             var discovered = _plugins?.Plugins.Select(record => record.Id).ToArray() ?? [];
             SmokeAssert(discovered.Length == 0, "Unexpected plugins: " + string.Join(", ", discovered));
-            results.Add(new { scenario = "plugins", mode, plugins = 0, passed = true });
+            SmokeAssert(PluginSectionsHost.Children.Count == 0,
+                $"Unexpected plugin sidebar sections: {PluginSectionsHost.Children.Count}");
+            results.Add(new { scenario = "plugins", mode, plugins = 0, dataRoot, passed = true });
+        }
+
+        if (mode is "with" or "none")
+        {
+            await checkpoint("sevenzip");
+            await SmokeSevenZipAsync(results, mode);
+            if (mode == "with")
+            {
+                await checkpoint("sevenzip-backend-loss");
+                await SmokeSevenZipBackendLossAsync(results);
+                // The first real-host load of the remote plugin; Task 15 grows it to the full scenario and the none mode.
+                await checkpoint("remote");
+                await SmokeRemoteAsync(results, mode);
+            }
         }
     }
+
+    /// <summary>
+    /// Hello's sidebar section: the manifest header renders, the body loads once the sidebar is shown, the header
+    /// command runs the plugin command, and collapse then expand keeps the body. Leaves the sidebar as it found it.
+    /// </summary>
+    private async Task<string> SmokePluginSidebarSectionAsync(string markerDirectory, string commandsLog)
+    {
+        const string helloId = "com.sumafile.hello";
+        const string sectionId = "hello";
+        const string automationId = "PluginSection." + helloId + "." + sectionId;
+        const string greetCommand = "plugin:" + helloId + ":greet";
+        const string collapseKey = helloId + ":" + sectionId;
+        var workspace = _workspace ?? throw new InvalidOperationException("Workspace is not available");
+        var view = _pluginSectionViews.Values.SingleOrDefault(item => item.Section.PluginId == helloId && item.Section.SectionId == sectionId);
+        SmokeAssert(view is not null, $"The sidebar has no section {automationId}");
+        SmokeAssert(PluginSectionsHost.Children.Contains(view!.Root), $"{automationId} is not in the sidebar's plugin sections");
+        SmokeAssert(AutomationProperties.GetAutomationId(view.Root) == automationId,
+            $"Section automation id is {AutomationProperties.GetAutomationId(view.Root)}");
+        var header = SmokeLogicalDescendants<TextBlock>(view.Root)
+            .FirstOrDefault(text => AutomationProperties.GetAutomationId(text) == automationId + ".Header");
+        SmokeAssert(header?.Text == "Hello section", $"Section header reads '{header?.Text}', expected 'Hello section'");
+
+        // The smoke hides the sidebar; showing it is one of the moments the body loads.
+        var sidebarWasVisible = workspace.Settings.SidebarVisible;
+        workspace.Settings.SidebarVisible = true;
+        ApplySidebarLayout();
+        try
+        {
+            var sidebarMarker = Path.Combine(markerDirectory, "sidebar.txt");
+            var loading = Stopwatch.StartNew();
+            while (!(view.Body.Content is FrameworkElement body && AutomationProperties.GetAutomationId(body) == "Hello.SidebarSection"))
+            {
+                SmokeAssert(loading.Elapsed < TimeSpan.FromSeconds(10),
+                    $"{automationId} did not load its body within 10 s: "
+                    + ((view.Body.Content as TextBlock)?.Text ?? view.Body.Content?.GetType().FullName ?? "empty"));
+                await Task.Delay(25);
+            }
+
+            var element = (TextBlock)view.Body.Content;
+            SmokeAssert(element.Text == "Hello from the fixture", $"Section body reads '{element.Text}'");
+            SmokeAssert(File.Exists(sidebarMarker) && File.ReadAllText(sidebarMarker) == sectionId,
+                $"sidebar.txt does not read '{sectionId}'");
+
+            // The header command button runs the plugin command through the normal command path.
+            var command = SmokeLogicalDescendants<Button>(view.Root)
+                .FirstOrDefault(button => AutomationProperties.GetAutomationId(button) == automationId + ".Command");
+            SmokeAssert(command is not null, $"{automationId}.Command is missing");
+            SmokeAssert(AutomationProperties.GetName(command!) == "Hello: greet",
+                $"Command button is named '{AutomationProperties.GetName(command!)}'");
+            var greetsBefore = File.Exists(commandsLog) ? File.ReadAllLines(commandsLog).Count(line => line == greetCommand) : 0;
+            SmokeInvoke(command!);
+            await SmokeWaitAsync(
+                () => File.Exists(commandsLog) && File.ReadAllLines(commandsLog).Count(line => line == greetCommand) > greetsBefore,
+                "sidebar section command marker");
+
+            // Collapse, then expand: the body is hidden, then shown again, and stays the same element.
+            var collapse = SmokeLogicalDescendants<Button>(view.Root)
+                .FirstOrDefault(button => AutomationProperties.GetAutomationId(button) == automationId + ".Collapse");
+            SmokeAssert(collapse is not null, $"{automationId}.Collapse is missing");
+            SmokeInvoke(collapse!);
+            SmokeAssert(view.Body.Visibility == Visibility.Collapsed, "Collapse did not hide the section body");
+            SmokeAssert(workspace.Settings.CollapsedPluginSidebarSections.Contains(collapseKey), "Collapse was not recorded in the settings");
+            SmokeInvoke(collapse!);
+            SmokeAssert(view.Body.Visibility == Visibility.Visible, "Expand did not show the section body");
+            SmokeAssert(!workspace.Settings.CollapsedPluginSidebarSections.Contains(collapseKey), "Expand was not recorded in the settings");
+            SmokeAssert(ReferenceEquals(view.Body.Content, element), "Collapse and expand replaced the section body");
+            return automationId;
+        }
+        finally
+        {
+            workspace.Settings.SidebarVisible = sidebarWasVisible;
+            ApplySidebarLayout();
+        }
+    }
+
+    private const string SmokeHelloId = "com.sumafile.hello";
+
+    /// <summary>
+    /// Hello's open-window command: the window is the plugin's own code-built <c>HelloWindow</c> from its load context,
+    /// tracked by Hello's <see cref="PluginWindowHost"/>, themed like the main window, with a XamlReader fragment that
+    /// resolves the theme's brush; its button shows a dialog on the window's own XamlRoot through the host's gate.
+    /// Leaves the window open for the disable check.
+    /// </summary>
+    private async Task<Window> SmokePluginWindowAsync(string markerDirectory)
+    {
+        const string openWindow = "plugin:" + SmokeHelloId + ":open-window";
+        var dialogLog = Path.Combine(markerDirectory, "dialog.txt");
+        await RunAppCommandAsync(openWindow);
+        Window? window;
+        var opening = Stopwatch.StartNew();
+        while ((window = PluginWindowHostFor(SmokeHelloId)?.OpenWindows.SingleOrDefault()) is null)
+        {
+            SmokeAssert(opening.Elapsed < TimeSpan.FromSeconds(10),
+                $"Hello's window host holds {PluginWindowHostFor(SmokeHelloId)?.OpenWindows.Count ?? -1} windows 10 s after {openWindow}");
+            await Task.Delay(25);
+        }
+
+        SmokeAssert(window.Title == "Hello window", $"The plugin window is titled '{window.Title}'");
+        var type = window.GetType();
+        SmokeAssert(type.FullName == "SimpleFile.Tests.Fixtures.HelloPlugin.HelloWindow", $"The plugin window is a {type.FullName}");
+        var context = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(type.Assembly);
+        SmokeAssert(context is not null && !ReferenceEquals(context, System.Runtime.Loader.AssemblyLoadContext.Default),
+            $"HelloWindow was loaded into the {context?.Name ?? "unknown"} load context, not the plugin's");
+        SmokeAssert(File.Exists(Path.Combine(markerDirectory, "window.txt")), "window.txt was not written");
+
+        var root = window.Content as FrameworkElement;
+        SmokeAssert(root is not null, "The plugin window has no FrameworkElement content");
+        var mainTheme = (Content as FrameworkElement)?.RequestedTheme;
+        SmokeAssert(root!.RequestedTheme == mainTheme, $"The plugin window's theme is {root.RequestedTheme}, the main window's {mainTheme}");
+        var body = SmokeLogicalDescendants<TextBlock>(root).FirstOrDefault(text => AutomationProperties.GetAutomationId(text) == "Hello.WindowBody");
+        SmokeAssert(body?.Text == "Hello window body", $"Hello.WindowBody reads '{body?.Text}'");
+        await SmokeWaitAsync(() => body!.IsLoaded, "plugin window body loaded");
+        var themeKey = body!.ActualTheme == ElementTheme.Light ? "Light" : "Dark";
+        var expected = Application.Current.Resources.ThemeDictionaries.TryGetValue(themeKey, out var dictionary)
+            && dictionary is ResourceDictionary themed && themed.TryGetValue("SfTextPrimaryBrush", out var brush)
+                ? (brush as SolidColorBrush)?.Color
+                : null;
+        SmokeAssert(expected is not null, $"The {themeKey} theme has no SfTextPrimaryBrush");
+        SmokeAssert((body.Foreground as SolidColorBrush)?.Color == expected,
+            $"Hello.WindowBody's foreground is {(body.Foreground as SolidColorBrush)?.Color}, expected the {themeKey} SfTextPrimaryBrush {expected}");
+
+        // The window's button shows a dialog on the window's own XamlRoot, never the main window's.
+        var button = SmokeLogicalDescendants<Button>(root).FirstOrDefault(item => AutomationProperties.GetAutomationId(item) == "Hello.WindowDialog");
+        SmokeAssert(button is not null, "Hello.WindowDialog is missing");
+        await SmokeWaitAsync(() => button!.IsLoaded && root.XamlRoot is not null, "plugin window button loaded");
+        SmokeInvoke(button!);
+        var dialog = await SmokeOpenDialogAsync(root.XamlRoot!, "Hello window dialog");
+        SmokeAssert(Content?.XamlRoot is not { } mainRoot
+            || !VisualTreeHelper.GetOpenPopupsForXamlRoot(mainRoot).Any(popup => ReferenceEquals(popup.Child, dialog)),
+            "The plugin window's dialog opened on the main window");
+        SmokeCloseDialog(dialog);
+        await SmokeWaitAsync(() => SmokeLastLine(dialogLog) == "window:None", "plugin window dialog result");
+        return window;
+    }
+
+    /// <summary>Hello's show-dialog command: a plugin-built dialog with no XamlRoot opens on the main window through the gate.</summary>
+    private async Task SmokePluginDialogAsync(string markerDirectory)
+    {
+        const string showDialog = "plugin:" + SmokeHelloId + ":show-dialog";
+        var dialogLog = Path.Combine(markerDirectory, "dialog.txt");
+        // The command awaits the dialog, so it runs while the smoke closes it.
+        var command = RunAppCommandAsync(showDialog);
+        var dialog = await SmokeOpenDialogAsync(Content.XamlRoot, "Hello dialog");
+        SmokeAssert(DialogHost.IsDialogOpen, "The plugin dialog did not go through DialogHost");
+        SmokeCloseDialog(dialog);
+        await command.WaitAsync(TimeSpan.FromSeconds(10));
+        await SmokeWaitAsync(() => SmokeLastLine(dialogLog) == "None", "plugin dialog result");
+    }
+
+    /// <summary>
+    /// Settings > Plugins: the Hello card holds the custom page slot with Hello's page, and settings search finds the
+    /// page's switch once the page is inserted. Closes the Settings window again.
+    /// </summary>
+    private async Task<string> SmokePluginSettingsPageAsync(string markerDirectory)
+    {
+        var slotId = PluginSettingsPanelBuilder.SettingsPageAutomationId(SmokeHelloId);
+        var pageMarker = Path.Combine(markerDirectory, "settings-page.txt");
+        var showing = _fileOperationDialogs.ShowSettingsAsync("Plugins");
+        try
+        {
+            SettingsWindow? settings = null;
+            // Shown, not only loaded: the window renders its cards before ShowAsync activates it.
+            await SmokeWaitAsync(() => (settings = _fileOperationDialogs.OpenSettingsWindow) is not null
+                && settings.Content is FrameworkElement { IsLoaded: true }
+                && settings.SmokePluginsList.Children.Count > 0, "Settings window with plugin cards");
+            ContentPresenter? slot = null;
+            var loading = Stopwatch.StartNew();
+            while (true)
+            {
+                // The panel re-renders on plugin changes, so look the card and its slot up again each time.
+                var card = settings!.SmokePluginsList.Children.OfType<FrameworkElement>().FirstOrDefault(item =>
+                    SmokeLogicalDescendants<TextBlock>(item).Any(text => text.Text == "Hello fixture"));
+                slot = card is null ? null : SmokeLogicalDescendants<ContentPresenter>(card)
+                    .FirstOrDefault(item => AutomationProperties.GetAutomationId(item) == slotId);
+                if (slot is { Content: FrameworkElement page }
+                    && SmokeLogicalDescendants<TextBlock>(page).Any(text => AutomationProperties.GetAutomationId(text) == "Hello.SettingsPage"))
+                {
+                    break;
+                }
+
+                SmokeAssert(loading.Elapsed < TimeSpan.FromSeconds(10),
+                    $"{slotId} did not show Hello.SettingsPage within 10 s: "
+                    + ((slot?.Content as TextBlock)?.Text ?? slot?.Content?.GetType().FullName ?? (slot is null ? "no slot" : "empty")));
+                await Task.Delay(25);
+            }
+
+            SmokeAssert(File.Exists(pageMarker) && File.ReadAllText(pageMarker) == "hello-page", "settings-page.txt does not read 'hello-page'");
+
+            settings!.SmokeSearch("Hello page switch");
+            var searching = Stopwatch.StartNew();
+            while (!(settings.SmokePluginsPanel.Visibility == Visibility.Visible
+                && settings.SmokeFirstSearchMatch is ToggleSwitch { Header: "Hello page switch" }))
+            {
+                SmokeAssert(searching.Elapsed < TimeSpan.FromSeconds(10),
+                    $"Settings search for 'Hello page switch' shows the Plugins panel {settings.SmokePluginsPanel.Visibility} "
+                    + $"with first match {settings.SmokeFirstSearchMatch?.GetType().Name ?? "none"} "
+                    + $"'{(settings.SmokeFirstSearchMatch as ToggleSwitch)?.Header ?? (settings.SmokeFirstSearchMatch as TextBlock)?.Text}'");
+                await Task.Delay(25);
+            }
+            return slotId;
+        }
+        finally
+        {
+            _fileOperationDialogs.CloseSettingsWindow();
+            await showing.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    /// <summary>Disabling Hello closes its window and withdraws its sidebar section; enabling brings the section back.</summary>
+    private async Task SmokePluginDisableClosesWindowsAsync(PluginManager manager, Window window)
+    {
+        const string sectionId = "PluginSection." + SmokeHelloId + ".hello";
+        var host = PluginWindowHostFor(SmokeHelloId);
+        SmokeAssert(host is not null && host.OpenWindows.Contains(window), "The Hello window is not tracked before the disable");
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+        bool HasSection() => PluginSectionsHost.Children.OfType<FrameworkElement>()
+            .Any(item => AutomationProperties.GetAutomationId(item) == sectionId);
+        SmokeAssert(HasSection(), $"{sectionId} is missing before the disable");
+
+        await manager.DisableAsync(SmokeHelloId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        var stopping = Stopwatch.StartNew();
+        while (!(closed && host!.OpenWindows.Count == 0 && !HasSection()))
+        {
+            SmokeAssert(stopping.Elapsed < TimeSpan.FromSeconds(10),
+                $"10 s after the disable: window closed {closed}, tracked {host!.OpenWindows.Count}, section shown {HasSection()}");
+            await Task.Delay(25);
+        }
+
+        SmokeAssert(host!.IsSealed, "The disabled runtime's window host is not sealed");
+        await manager.EnableAsync(SmokeHelloId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        await SmokeWaitAsync(HasSection, "Hello sidebar section after re-enable");
+        var record = manager.Plugins.FirstOrDefault(item => item.Id == SmokeHelloId);
+        SmokeAssert(record?.State == PluginState.Enabled, $"Hello is {record?.State} after re-enable: {record?.Error}");
+    }
+
+    private static async Task<ContentDialog> SmokeOpenDialogAsync(XamlRoot root, string title)
+    {
+        ContentDialog? dialog;
+        var opening = Stopwatch.StartNew();
+        while ((dialog = VisualTreeHelper.GetOpenPopupsForXamlRoot(root).Select(popup => popup.Child).OfType<ContentDialog>()
+            .FirstOrDefault(item => Equals(item.Title, title) && item.IsLoaded
+                && SmokeDescendants<Button>(item).Any(button => button.Name == "CloseButton"))) is null)
+        {
+            SmokeAssert(opening.Elapsed < TimeSpan.FromSeconds(10), $"The dialog '{title}' did not open within 10 s");
+            await Task.Delay(25);
+        }
+
+        return dialog;
+    }
+
+    /// <summary>Closes a dialog through its Close button's automation peer, as a user would.</summary>
+    private static void SmokeCloseDialog(ContentDialog dialog) =>
+        SmokeInvoke(SmokeDescendants<Button>(dialog).First(button => button.Name == "CloseButton"));
+
+    private static string? SmokeLastLine(string path) =>
+        File.Exists(path) ? File.ReadAllLines(path).LastOrDefault(line => line.Length > 0) : null;
+
+    /// <summary>The panels and content of a code-built tree, without waiting for layout to realize it.</summary>
+    private static IEnumerable<T> SmokeLogicalDescendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        IEnumerable<DependencyObject> children = root switch
+        {
+            Panel panel => panel.Children,
+            Border { Child: { } child } => [child],
+            ContentPresenter { Content: DependencyObject content } => [content],
+            ContentControl { Content: DependencyObject content } => [content],
+            _ => [],
+        };
+        foreach (var child in children)
+        {
+            if (child is T match) yield return match;
+            foreach (var descendant in SmokeLogicalDescendants<T>(child)) yield return descendant;
+        }
+    }
+
+    private const string SevenZipPluginId = "com.sumafile.sevenzip";
+    private const string SevenZipEngine = "plugin:" + SevenZipPluginId;
+    private const string SevenZipNote = "7-Zip support requires the SumaFile 7-Zip plugin.";
+    private const string SevenZipOverrideKey = "plugin." + SevenZipPluginId + ".binaryOverride";
+    private const string SevenZipUnicodeFolder = "café 資料";
+    private const string SevenZipLiteralFile = "literal [brackets] & spaces.txt";
+
+    // The files scripts/smoke-winui-ui.ps1 packs into sample.7z, relative to <archives>\fixture, '/'-separated.
+    private static readonly string[] SevenZipFixtureFiles = ["docs/a.txt", SevenZipUnicodeFolder + "/hello.txt", SevenZipLiteralFile];
+
+    /// <summary>
+    /// The 7-Zip plugin end to end. "with": the bundled com.sumafile.sevenzip is trusted through bundled.json and
+    /// serves .7z listing, browsing, mutation, Transfers-row create and extract, Cancel, and its binaryOverride
+    /// setting. "none": .7z is unavailable everywhere with the plugin note.
+    /// </summary>
+    private async Task SmokeSevenZipAsync(List<object> results, string mode)
+    {
+        var workspace = _workspace ?? throw new InvalidOperationException("The workspace is not available");
+        var fileOps = workspace.FileOps ?? throw new InvalidOperationException("File operations are not available");
+        var archives = SmokeArchivesRoot();
+        var sample = Path.Combine(archives, "sample.7z");
+        var fixture = Path.Combine(archives, "fixture");
+        if (mode == "none")
+        {
+            await SmokeSevenZipUnavailableAsync(results, workspace, fileOps, sample);
+            return;
+        }
+
+        // 1. Discovered from the install root, Enabled through bundled.json alone, backend running.
+        var manager = _plugins ?? throw new InvalidOperationException("Plugin manager was not created");
+        var installRoot = PluginDiscovery.InstallRoot();
+        PluginRecord? record = null;
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult((record = manager.Plugins.FirstOrDefault(item => item.Id == SevenZipPluginId)) is { BackendRunning: true }),
+            TimeSpan.FromSeconds(15),
+            () => record is null
+                ? $"{SevenZipPluginId} was not discovered under {installRoot}"
+                : $"{SevenZipPluginId} backend is not running ({record.State}: {record.Error})");
+        SmokeAssert(record!.State == PluginState.Enabled, $"{SevenZipPluginId} is {record.State}, expected Enabled: {record.Error}");
+        SmokeAssert(SmokeSameFolder(record.Discovered.Root, installRoot),
+            $"{SevenZipPluginId} was discovered in {record.Discovered.Root}, expected the install root {installRoot}");
+        var approvalsPath = PluginApprovalStore.DefaultPath();
+        var approvals = File.Exists(approvalsPath) ? await File.ReadAllTextAsync(approvalsPath) : "";
+        SmokeAssert(!approvals.Contains(SevenZipPluginId, StringComparison.OrdinalIgnoreCase),
+            $"{approvalsPath} holds a record for {SevenZipPluginId}; bundled trust must not write one");
+
+        // 2. The service serves .7z through the plugin, and the UI recognizes it.
+        ArchiveFormatCapability? row = null;
+        await SmokeWaitWithinAsync(
+            async () => (row = await SmokeSevenZipRowAsync(fileOps)) is { Engine: SevenZipEngine } && ArchivePaths.IsArchiveFile("x.7z"),
+            TimeSpan.FromSeconds(15),
+            () => $".7z is not served by {SevenZipEngine}: {SmokeDescribe(row)}, IsArchiveFile={ArchivePaths.IsArchiveFile("x.7z")}");
+        SmokeAssert(row!.CanList && row.CanExtract && row.CanCreate && row.CanModify && row.Note is null,
+            $"Unexpected .7z capabilities: {SmokeDescribe(row)}");
+
+        // 3. The listing names every fixture file exactly.
+        var listed = SmokeArchiveFiles(await fileOps.ListArchiveAsync(sample));
+        SmokeAssertNames(listed, SmokeExpectedFiles(""), "sample.7z listing");
+
+        // 4. Browse into the archive, into folders inside it, and open it from its parent folder.
+        SmokeAssertNames(await SmokePaneNamesAsync(sample), ["docs", SevenZipUnicodeFolder, SevenZipLiteralFile], "pane listing of sample.7z");
+        SmokeAssertNames(await SmokePaneNamesAsync(Path.Combine(sample, "docs")), ["a.txt"], "pane listing of sample.7z\\docs");
+        SmokeAssertNames(await SmokePaneNamesAsync(Path.Combine(sample, SevenZipUnicodeFolder)), ["hello.txt"],
+            $"pane listing of sample.7z\\{SevenZipUnicodeFolder}");
+        await SmokePaneNamesAsync(archives);
+        var archiveEntry = workspace.Primary.Entries.ToArray()
+            .FirstOrDefault(entry => string.Equals(entry.Name, "sample.7z", StringComparison.OrdinalIgnoreCase));
+        SmokeAssert(archiveEntry is not null, $"sample.7z is not listed in {archives}");
+        await workspace.OpenEntryAsync(archiveEntry!, PaneId.Primary);
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult(PathRules.PathsEqual(workspace.Primary.Path, sample) && !workspace.Primary.ListingInProgress
+                && workspace.Primary.Entries.Count == 3),
+            TimeSpan.FromSeconds(15),
+            () => $"Opening sample.7z left the pane at {workspace.Primary.Path} ({workspace.Primary.Entries.Count} entries, error '{workspace.ErrorMessage}')");
+
+        // 5. Mutate inside the archive.
+        await fileOps.CreateFolderAsync(sample, "smoke-folder");
+        var afterFolder = await fileOps.ListArchiveAsync(sample);
+        SmokeAssert(afterFolder.Entries.Any(entry => entry.IsDir && SmokeEntryPath(entry) == "smoke-folder"),
+            "The listing after creating smoke-folder does not show it: " + string.Join(", ", afterFolder.Entries.Select(SmokeEntryPath)));
+        await workspace.RefreshAsync(PaneId.Primary);
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult(!workspace.Primary.ListingInProgress && workspace.Primary.Entries.Any(entry => entry.Name == "smoke-folder")),
+            TimeSpan.FromSeconds(15),
+            () => "The pane re-list of sample.7z does not show smoke-folder");
+
+        // 6. Create as a Transfers row.
+        var created = Path.Combine(archives, "created.7z");
+        var createRow = SmokeEnqueueArchiveTransfer("Creating created.7z", created,
+            (progress, started, token) => fileOps.CreateArchiveTrackedAsync([fixture], created, "7z", progress, started, token), archives);
+        await SmokeAwaitRowAsync(createRow, TimeSpan.FromSeconds(120), "create created.7z");
+        SmokeAssert(createRow.Status == TransferOperationStatus.Completed && createRow.ProgressPercent >= 100,
+            $"create created.7z ended {createRow.Status} at {createRow.ProgressPercent}%: {createRow.ErrorMessage}");
+        var createdFiles = SmokeArchiveFiles(await fileOps.ListArchiveAsync(created));
+        SmokeAssertNames(createdFiles, SmokeExpectedFiles("fixture/"), "created.7z listing");
+
+        // 7. Extract as a Transfers row; the bytes match the fixture.
+        var extracted = Path.Combine(archives, "extracted");
+        var extractRow = SmokeEnqueueArchiveTransfer("Extracting sample.7z", extracted,
+            (progress, started, token) => fileOps.ExtractArchiveTrackedAsync(sample, extracted, progress, started, token), extracted);
+        await SmokeAwaitRowAsync(extractRow, TimeSpan.FromSeconds(120), "extract sample.7z");
+        SmokeAssert(extractRow.Status == TransferOperationStatus.Completed,
+            $"extract sample.7z ended {extractRow.Status}: {extractRow.ErrorMessage}");
+        foreach (var file in SevenZipFixtureFiles)
+        {
+            var expected = await File.ReadAllBytesAsync(Path.Combine(fixture, file));
+            var actualPath = Path.Combine(extracted, file);
+            SmokeAssert(File.Exists(actualPath), $"Extract did not write {actualPath}");
+            var actual = await File.ReadAllBytesAsync(actualPath);
+            SmokeAssert(expected.AsSpan().SequenceEqual(actual), $"Extracted bytes differ: {actualPath}");
+        }
+
+        // 8. Cancel a long create from its Transfers row.
+        var bigFolder = Path.Combine(archives, "big");
+        Directory.CreateDirectory(bigFolder);
+        var bigFile = Path.Combine(bigFolder, "random.bin");
+        await Task.Run(() =>
+        {
+            using var stream = File.Create(bigFile);
+            var buffer = new byte[1 << 20];
+            for (var index = 0; index < 256; index++)
+            {
+                Random.Shared.NextBytes(buffer);
+                stream.Write(buffer);
+            }
+        });
+        var big = Path.Combine(archives, "big.7z");
+        var cancelRow = SmokeEnqueueArchiveTransfer("Creating big.7z", big,
+            (progress, started, token) => fileOps.CreateArchiveTrackedAsync([bigFolder], big, "7z", progress, started, token), archives);
+        // The service hands the row its id with a 0/0 "running" update before the engine runs, so a Cancel
+        // sent then can stop the create in the service before the plugin sees it. Cancel only once 7za itself
+        // reports progress: a non-zero percent needs a plugin update with a known total, and the plugin sends
+        // those only while it runs the create, after 7za has started.
+        int[] runningSevenZa = [];
+        await SmokeWaitWithinAsync(
+            () =>
+            {
+                if (cancelRow.IsTerminal) return Task.FromResult(true);
+                if (cancelRow.OperationId is null || cancelRow.ProgressPercent <= 0) return Task.FromResult(false);
+                runningSevenZa = SmokeProcessIdsUnder("7za", installRoot);
+                return Task.FromResult(runningSevenZa.Length > 0);
+            },
+            TimeSpan.FromSeconds(60),
+            () => $"create big.7z before Cancel: {cancelRow.Status}, id {cancelRow.OperationId ?? "none"}, "
+                + $"{cancelRow.ProgressPercent}%, 7za under {installRoot}: {SmokeProcessIdsUnder("7za", installRoot).Length}");
+        SmokeAssert(!cancelRow.IsTerminal, $"create big.7z ended {cancelRow.Status} before Cancel: {cancelRow.ErrorMessage}");
+        var cancelledAtPercent = cancelRow.ProgressPercent;
+        _transfer!.Cancel(cancelRow);
+        await SmokeAwaitRowAsync(cancelRow, TimeSpan.FromSeconds(30), "cancel big.7z");
+        SmokeAssert(cancelRow.Status == TransferOperationStatus.Cancelled, $"create big.7z ended {cancelRow.Status}: {cancelRow.ErrorMessage}");
+        // The backend kills and waits for 7za before it answers the cancelled create.
+        var survivors = SmokeProcessIdsUnder("7za", installRoot).Intersect(runningSevenZa).ToArray();
+        SmokeAssert(survivors.Length == 0, $"Cancel left 7za running: {string.Join(", ", survivors)}");
+        SmokeAssert(!File.Exists(big), "Cancel left big.7z behind");
+        var leftovers = Directory.EnumerateFileSystemEntries(archives, "*", SearchOption.AllDirectories)
+            .Where(path => Path.GetFileName(path).Contains(".simplefile-new-", StringComparison.Ordinal)).ToArray();
+        SmokeAssert(leftovers.Length == 0, "Cancel left staging files: " + string.Join(", ", leftovers));
+        File.Delete(bigFile);
+
+        // 9. binaryOverride, which the backend reads through the host on every operation.
+        var where = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "where.exe");
+        SmokeAssert(File.Exists(where), $"{where} is missing");
+        string overrideOutcome;
+        await fileOps.SetSettingAsync(SevenZipOverrideKey, where);
+        try
+        {
+            try
+            {
+                var overridden = await fileOps.ListArchiveAsync(sample);
+                SmokeAssert(overridden.Entries.Count == 0,
+                    $"binaryOverride {where} was ignored: the listing returned {overridden.Entries.Count} entries");
+                overrideOutcome = "zero entries";
+            }
+            catch (IpcException exception)
+            {
+                overrideOutcome = "failed: " + exception.Message;
+            }
+        }
+        finally
+        {
+            await fileOps.SetSettingAsync(SevenZipOverrideKey, "");
+        }
+
+        SmokeAssertNames(SmokeArchiveFiles(await fileOps.ListArchiveAsync(sample)), SmokeExpectedFiles(""),
+            "sample.7z listing after clearing binaryOverride");
+
+        _transfer.ClearCompleted();
+        CloseTransferProgressWindow();
+        results.Add(new
+        {
+            scenario = "sevenzip",
+            mode,
+            engine = row.Engine,
+            discoveredFrom = record.Discovered.Root,
+            files = listed.Length,
+            createdFiles = createdFiles.Length,
+            cancelled = cancelRow.Status.ToString(),
+            cancelledAtPercent,
+            cancelled7zaPids = runningSevenZa,
+            binaryOverride = overrideOutcome,
+            passed = true,
+        });
+    }
+
+    private async Task SmokeSevenZipUnavailableAsync(List<object> results, ExplorerWorkspace workspace, FileOperationService fileOps, string sample)
+    {
+        var capabilities = await fileOps.GetArchiveCapabilitiesAsync();
+        var row = await SmokeSevenZipRowAsync(fileOps);
+        SmokeAssert(row is { Engine: "unavailable", CanList: false, CanExtract: false, CanCreate: false, CanModify: false, Note: SevenZipNote },
+            $"Unexpected .7z row without the plugin: {SmokeDescribe(row)}");
+        SmokeAssert(!ArchivePaths.IsArchiveFile("x.7z"), "ArchivePaths recognizes .7z without the plugin");
+        SmokeAssert(!WorkspaceNavigationController.IsSupportedArchivePath("x.7z"), "Navigation browses .7z without the plugin");
+        string? listError = null;
+        try
+        {
+            await fileOps.ListArchiveAsync(sample);
+        }
+        catch (IpcException exception)
+        {
+            listError = exception.Message;
+        }
+
+        SmokeAssert(listError == SevenZipNote, $"Listing sample.7z without the plugin gave '{listError}', expected the plugin note");
+        await workspace.NavigatePaneAsync(PaneId.Primary, sample);
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult(!workspace.Primary.ListingInProgress
+                && (workspace.ErrorMessage ?? "").Contains(SevenZipNote, StringComparison.Ordinal)),
+            TimeSpan.FromSeconds(15),
+            () => $"The pane at sample.7z shows '{workspace.ErrorMessage}', expected the plugin note");
+        var creatable = capabilities.Formats.Where(format => format.CanCreate).ToArray();
+        SmokeAssert(!creatable.Any(format => string.Equals(format.Format, "7z", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(format.Extension, ".7z", StringComparison.OrdinalIgnoreCase)),
+            "Create formats include 7z without the plugin: " + string.Join(", ", creatable.Select(format => format.Format)));
+        results.Add(new { scenario = "sevenzip", mode = "none", engine = row!.Engine, note = row.Note, passed = true });
+    }
+
+    /// <summary>
+    /// The 7-Zip backend dies while a pane is inside a .7z: the plugin faults, .7z becomes unavailable and the
+    /// pane shows the note, all with no user action. A restart brings the pane's listing back, also unprompted.
+    /// </summary>
+    private async Task SmokeSevenZipBackendLossAsync(List<object> results)
+    {
+        var workspace = _workspace ?? throw new InvalidOperationException("The workspace is not available");
+        var fileOps = workspace.FileOps ?? throw new InvalidOperationException("File operations are not available");
+        var manager = _plugins ?? throw new InvalidOperationException("Plugin manager was not created");
+        var docs = Path.Combine(SmokeArchivesRoot(), "sample.7z", "docs");
+        SmokeAssertNames(await SmokePaneNamesAsync(docs), ["a.txt"], "pane listing of sample.7z\\docs before the kill");
+
+        var installRoot = PluginDiscovery.InstallRoot();
+        var killed = new List<int>();
+        foreach (var pid in SmokeProcessIdsUnder("sumafile-sevenzip-backend", installRoot))
+        {
+            using var process = Process.GetProcessById(pid);
+            process.Kill();
+            process.WaitForExit(5000);
+            killed.Add(pid);
+        }
+
+        SmokeAssert(killed.Count == 1, $"Expected one 7-Zip backend under {installRoot}, killed {killed.Count}");
+        PluginRecord? record = null;
+        ArchiveFormatCapability? row = null;
+        await SmokeWaitWithinAsync(
+            async () =>
+            {
+                record = manager.Plugins.FirstOrDefault(item => item.Id == SevenZipPluginId);
+                row = await SmokeSevenZipRowAsync(fileOps);
+                return record is { State: PluginState.Faulted }
+                    && row is { Engine: "unavailable", Note: SevenZipNote }
+                    && PathRules.PathsEqual(workspace.Primary.Path, docs)
+                    && !workspace.Primary.ListingInProgress
+                    && workspace.Primary.Entries.Count == 0
+                    && (workspace.ErrorMessage ?? "").Contains(SevenZipNote, StringComparison.Ordinal);
+            },
+            TimeSpan.FromSeconds(15),
+            () => $"After the kill: plugin {record?.State}, .7z {SmokeDescribe(row)}, pane {workspace.Primary.Path} "
+                + $"with {workspace.Primary.Entries.Count} entries, error '{workspace.ErrorMessage}'");
+        var faulted = record!.State.ToString();
+
+        await manager.RestartBackendAsync(SevenZipPluginId, _pluginCts?.Token ?? CancellationToken.None);
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult(manager.Plugins.FirstOrDefault(item => item.Id == SevenZipPluginId) is { BackendRunning: true }
+                && PathRules.PathsEqual(workspace.Primary.Path, docs)
+                && !workspace.Primary.ListingInProgress
+                && workspace.Primary.Entries.Any(entry => entry.Name == "a.txt")
+                && !(workspace.ErrorMessage ?? "").Contains(SevenZipNote, StringComparison.Ordinal)),
+            TimeSpan.FromSeconds(15),
+            () => $"After the restart: backend running {manager.Plugins.FirstOrDefault(item => item.Id == SevenZipPluginId)?.BackendRunning}, "
+                + $"pane {workspace.Primary.Path} with {workspace.Primary.Entries.Count} entries, error '{workspace.ErrorMessage}'");
+        results.Add(new { scenario = "sevenzip-backend-loss", mode = "with", killedPid = killed[0], faulted, passed = true });
+    }
+
+    /// <summary>The service dies; after the reconnect the new service serves .7z through the plugin again.</summary>
+    private async Task SmokeServiceReconnectAsync(List<object> results)
+    {
+        var backend = _backend ?? throw new InvalidOperationException("The backend session is not available");
+        var sample = Path.Combine(SmokeArchivesRoot(), "sample.7z");
+        var before = backend.ReconnectCount;
+        var pid = backend.ServiceProcessId ?? throw new InvalidOperationException("The service process id is unknown");
+        using (var service = Process.GetProcessById(pid))
+        {
+            service.Kill();
+            service.WaitForExit(5000);
+        }
+
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult(backend.ReconnectCount > before),
+            TimeSpan.FromSeconds(30),
+            () => $"ReconnectCount stayed {backend.ReconnectCount} after the service was killed");
+        ArchiveFormatCapability? row = null;
+        string[] files = [];
+        await SmokeWaitWithinAsync(
+            async () =>
+            {
+                if (_workspace?.FileOps is not { } fileOps) return false;
+                row = await SmokeSevenZipRowAsync(fileOps);
+                if (row is not { Engine: SevenZipEngine }) return false;
+                files = SmokeArchiveFiles(await fileOps.ListArchiveAsync(sample));
+                return true;
+            },
+            TimeSpan.FromSeconds(30),
+            () => $"After the reconnect: .7z {SmokeDescribe(row)}");
+        SmokeAssertNames(files, SmokeExpectedFiles(""), "sample.7z listing after the reconnect");
+        results.Add(new
+        {
+            scenario = "service-reconnect",
+            mode = "with",
+            killedPid = pid,
+            servicePid = backend.ServiceProcessId,
+            reconnectCount = backend.ReconnectCount,
+            files = files.Length,
+            passed = true,
+        });
+    }
+
+    private static string SmokeArchivesRoot()
+    {
+        var archives = Environment.GetEnvironmentVariable("SUMAFILE_SMOKE_ARCHIVES");
+        SmokeAssert(!string.IsNullOrWhiteSpace(archives) && File.Exists(Path.Combine(archives, "sample.7z")),
+            $"SUMAFILE_SMOKE_ARCHIVES does not hold sample.7z: '{archives}'");
+        return Path.GetFullPath(archives!);
+    }
+
+    private static async Task<ArchiveFormatCapability?> SmokeSevenZipRowAsync(FileOperationService fileOps)
+    {
+        var rows = (await fileOps.GetArchiveCapabilitiesAsync()).Formats
+            .Where(format => string.Equals(format.Extension, ".7z", StringComparison.OrdinalIgnoreCase)).ToArray();
+        SmokeAssert(rows.Length <= 1, $"The capabilities hold {rows.Length} .7z rows");
+        return rows.FirstOrDefault();
+    }
+
+    private static string SmokeDescribe(ArchiveFormatCapability? row) => row is null
+        ? "no .7z row"
+        : $"engine {row.Engine}, list {row.CanList}, extract {row.CanExtract}, create {row.CanCreate}, modify {row.CanModify}, note '{row.Note}'";
+
+    private static string SmokeEntryPath(ArchiveEntry entry) => entry.Path.Replace('\\', '/').Trim('/');
+
+    private static string[] SmokeArchiveFiles(ArchiveInfo info) =>
+        [.. info.Entries.Where(entry => !entry.IsDir).Select(SmokeEntryPath)];
+
+    private static string[] SmokeExpectedFiles(string prefix) => [.. SevenZipFixtureFiles.Select(file => prefix + file)];
+
+    private static void SmokeAssertNames(IEnumerable<string> actual, IEnumerable<string> expected, string what)
+    {
+        var actualSorted = actual.Order(StringComparer.Ordinal).ToArray();
+        var expectedSorted = expected.Order(StringComparer.Ordinal).ToArray();
+        SmokeAssert(actualSorted.SequenceEqual(expectedSorted, StringComparer.Ordinal),
+            $"{what}: got [{string.Join(" | ", actualSorted)}], expected [{string.Join(" | ", expectedSorted)}]");
+    }
+
+    private async Task<string[]> SmokePaneNamesAsync(string path)
+    {
+        var workspace = _workspace ?? throw new InvalidOperationException("The workspace is not available");
+        await workspace.NavigatePaneAsync(PaneId.Primary, path);
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult(PathRules.PathsEqual(workspace.Primary.Path, path) && !workspace.Primary.ListingInProgress),
+            TimeSpan.FromSeconds(30),
+            () => $"Listing {path}: the pane is at {workspace.Primary.Path}, error '{workspace.ErrorMessage}'");
+        return [.. workspace.Primary.Entries.ToArray().Select(entry => entry.Name)];
+    }
+
+    private TransferOperationViewModel SmokeEnqueueArchiveTransfer(
+        string title,
+        string detail,
+        Func<IProgress<ProgressUpdate>, Action<string>, CancellationToken, Task> run,
+        string refreshPath)
+    {
+        var row = EnqueueArchiveTransfer(new ArchiveTransferRequest(title, detail, run, [refreshPath]));
+        SmokeAssert(row is not null, $"{title}: no Transfers row was created");
+        return row!;
+    }
+
+    private static async Task SmokeAwaitRowAsync(TransferOperationViewModel row, TimeSpan timeout, string what)
+    {
+        try
+        {
+            await row.CompletionTask.WaitAsync(timeout);
+        }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException($"UI smoke timed out after {timeout.TotalSeconds:0} s: {what} is {row.Status} at {row.ProgressPercent}%");
+        }
+    }
+
+    private static async Task SmokeWaitWithinAsync(Func<Task<bool>> condition, TimeSpan timeout, Func<string> describe)
+    {
+        var timer = Stopwatch.StartNew();
+        string? lastError = null;
+        while (true)
+        {
+            bool met;
+            try
+            {
+                met = await condition();
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                met = false;
+                lastError = exception.Message;
+            }
+
+            if (met) return;
+            if (timer.Elapsed > timeout)
+            {
+                throw new TimeoutException($"UI smoke timed out after {timeout.TotalSeconds:0} s: {describe()}"
+                    + (lastError is null ? "" : $" (last error: {lastError})"));
+            }
+
+            await Task.Delay(50);
+        }
+    }
+
+    /// <summary>The ids of the running <paramref name="name"/> processes whose image lies under <paramref name="folder"/>.</summary>
+    private static int[] SmokeProcessIdsUnder(string name, string folder)
+    {
+        var ids = new List<int>();
+        foreach (var process in Process.GetProcessesByName(name))
+        {
+            using (process)
+            {
+                string? file;
+                try
+                {
+                    file = process.MainModule?.FileName;
+                }
+                catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
+                {
+                    continue;
+                }
+
+                if (file is not null && SmokeIsUnder(file, folder)) ids.Add(process.Id);
+            }
+        }
+
+        return [.. ids];
+    }
+
+    private static string SmokeFolderKey(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    private static bool SmokeSameFolder(string left, string right) =>
+        string.Equals(SmokeFolderKey(left), SmokeFolderKey(right), StringComparison.OrdinalIgnoreCase);
+
+    private static bool SmokeIsUnder(string path, string folder) =>
+        SmokeFolderKey(path).StartsWith(SmokeFolderKey(folder) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
     private static async Task SmokeWaitAsync(Func<bool> condition, string stage)
     {

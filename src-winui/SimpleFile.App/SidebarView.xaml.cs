@@ -43,6 +43,7 @@ public sealed partial class SidebarView : UserControl
     public Button TagsCollapse => TagsCollapseButton;
     public TextBlock TagsEmpty => TagsEmptyText;
     public ListView Tags => TagsList;
+    public StackPanel PluginSections => PluginSectionsHost;
 
     public event RoutedEventHandler? SidebarLeft;
     public event RoutedEventHandler? SidebarRight;

@@ -10,13 +10,16 @@ pub mod search;
 pub mod session;
 pub mod session_cache;
 pub mod shell;
-mod transfer_journal;
-mod transfer_manifest;
-mod transfer_reliability;
-mod transfer_staging;
-#[cfg(test)]
-mod transfer_test_io;
 pub mod watcher;
+
+// The local-file transfer primitives live in the leaf crate `sumafile-transfer`
+// so plugin backends can share them; these aliases keep `crate::transfer_*` paths.
+#[cfg(test)]
+use sumafile_transfer::test_io as transfer_test_io;
+use sumafile_transfer::{
+    journal as transfer_journal, manifest as transfer_manifest,
+    reliability as transfer_reliability, staging as transfer_staging,
+};
 
 pub use dispatch::SessionState;
 pub use session::serve_connection;

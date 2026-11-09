@@ -1,11 +1,24 @@
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+
+use super::engine::EngineContext;
 
 pub fn create_archive(
     paths: Vec<String>,
     archive_path: String,
     format: String,
 ) -> Result<(), String> {
+    create_archive_with(paths, archive_path, format, &EngineContext::untracked())
+}
+
+/// Create `archive_path` from `paths`. Built-in formats only honour a
+/// cancel that is already set; an engine gets the context itself.
+pub fn create_archive_with(
+    paths: Vec<String>,
+    archive_path: String,
+    format: String,
+    ctx: &EngineContext<'_>,
+) -> Result<(), String> {
+    ctx.check_cancelled()?;
     validate_archive_create_request(&paths, &archive_path)?;
 
     let normalized_format = format.trim().trim_start_matches('.').to_ascii_lowercase();
@@ -14,15 +27,18 @@ pub fn create_archive(
         "tar" => create_tar_archive(&paths, &archive_path, None),
         "tar.gz" | "tgz" => create_tar_archive(&paths, &archive_path, Some("gz")),
         "rar" => Err(
-            "RAR creation is not supported by SumaFile. Use ZIP, 7z, TAR, or TAR.GZ instead."
+            "RAR creation is not supported by SumaFile. Use ZIP, TAR or TAR.GZ, or an archive format a plugin adds."
                 .to_string(),
         ),
-        "7z" => {
-            let binary = super::seven_zip::require_seven_zip_binary()?;
-            create_seven_zip_archive(&paths, &archive_path, &binary)
-        }
-        _ => create_engine_archive(&paths, &archive_path, &normalized_format)
-            .unwrap_or_else(|| Err(format!("Unsupported format: {format}"))),
+        _ => create_engine_archive(&paths, &archive_path, &normalized_format, ctx)
+            .unwrap_or_else(|| {
+                Err(
+                    match super::placeholders::unavailable_note_for_label(&normalized_format) {
+                        Some(note) => note.to_string(),
+                        None => format!("Unsupported format: {format}"),
+                    },
+                )
+            }),
     }
 }
 
@@ -33,6 +49,7 @@ fn create_engine_archive(
     paths: &[String],
     archive_path: &str,
     normalized_format: &str,
+    ctx: &EngineContext<'_>,
 ) -> Option<Result<(), String>> {
     let archive = Path::new(archive_path);
     let (engine, format) = super::engine::engine_for_path(archive)?;
@@ -47,7 +64,47 @@ fn create_engine_archive(
         )));
     }
     let sources: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    Some(engine.create(archive, &sources))
+    Some(create_engine_archive_via_temp(
+        engine.as_ref(),
+        &format.extension,
+        archive,
+        &sources,
+        ctx,
+    ))
+}
+
+/// The engine writes a temp file beside the target, which is renamed into
+/// place only once the engine succeeds, so a failed or cancelled create
+/// never leaves a partial archive under the requested name. The rename
+/// never replaces a file that appeared meanwhile.
+fn create_engine_archive_via_temp(
+    engine: &dyn super::engine::ArchiveEngine,
+    extension: &str,
+    archive: &Path,
+    sources: &[PathBuf],
+    ctx: &EngineContext<'_>,
+) -> Result<(), String> {
+    let temp = super::path::unique_engine_temp_path(archive, extension)?;
+    let result = engine.create(&temp, sources, ctx).and_then(|()| {
+        if !temp.is_file() {
+            return Err(format!(
+                "{} did not create {}",
+                engine.name(),
+                archive.display()
+            ));
+        }
+        crate::path_conflict::rename_exclusive(&temp, archive).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("Archive already exists: {}", archive.to_string_lossy())
+            } else {
+                format!("Failed to move the new archive into place: {e}")
+            }
+        })
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 fn validate_archive_create_request(paths: &[String], archive_path: &str) -> Result<(), String> {
@@ -173,34 +230,6 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
         // Symlinks are intentionally skipped to avoid loops.
     }
     Ok(())
-}
-
-pub(super) fn create_seven_zip_archive(
-    paths: &[String],
-    archive_path: &str,
-    seven_zip_binary: &str,
-) -> Result<(), String> {
-    if paths.is_empty() {
-        return Err("No files specified".to_string());
-    }
-
-    let output = super::seven_zip::seven_zip_command(seven_zip_binary)
-        .arg("a")
-        .arg("-t7z")
-        .arg("-bd")
-        .arg("-bb0")
-        .arg("-sccUTF-8")
-        .arg("-y")
-        .arg("-sse")
-        .arg("-spd")
-        .arg("--")
-        .arg(archive_path)
-        .args(paths)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("Failed to run 7-Zip command: {e}"))?;
-
-    super::seven_zip::ensure_seven_zip_success(&output, "7-Zip archive creation")
 }
 
 pub(super) fn create_tar_archive(

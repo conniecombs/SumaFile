@@ -125,7 +125,8 @@ Requirements:
 
 - Windows 10 version 2004 or newer, or Windows 11
 - x64 Windows
-- Bundled 7-Zip console tooling for `.7z` workflows
+- The SumaFile 7-Zip plugin (`com.sumafile.sevenzip`), installed with SumaFile, for `.7z` workflows
+- The SumaFile FTP/SFTP plugin (`com.sumafile.remote`), installed with SumaFile, for FTP, FTPS and SFTP connections
 - Built-in RAR listing and extraction; RAR creation is not supported
 
 After installing, open Settings -> Updates to check published releases. Builds
@@ -240,7 +241,7 @@ Inspection tools include:
 | TAR | `.tar` | Built in |
 | TAR.GZ | `.tar.gz`, `.tgz` | Built in |
 | RAR | `.rar` | Built-in list/extract only |
-| 7-Zip | `.7z` | Bundled 7-Zip console tool |
+| 7-Zip | `.7z` | SumaFile 7-Zip plugin (`com.sumafile.sevenzip`), installed with SumaFile |
 
 Archive commands can list contents, view archives, extract here, extract to a
 folder, extract to a chosen destination, create archives, pack selections into a
@@ -434,7 +435,7 @@ Press `F1` or `Ctrl+/` in SumaFile for the live shortcut list.
 | Windows SDK | 10.0.19041+ | WinUI target platform |
 | NSIS | Optional | NSIS setup executable |
 | WiX v3 | Optional | MSI package |
-| Bundled 7-Zip files | In repo | `.7z` archive operations and packaged payload checks |
+| Bundled 7-Zip files | In repo (`third_party/7zip/win-x64`) | Staged into the 7-Zip plugin folder for `.7z` archive operations and packaged payload checks |
 
 ### Run Locally
 
@@ -459,9 +460,12 @@ Useful local-only overrides:
 | `SIMPLEFILE_SERVICE_PATH` | Use a specific `simplefile-service.exe` |
 | `SIMPLEFILE_APP_DATA_DIR` | Redirect app data for fixtures or tests |
 | `SIMPLEFILE_METADATA_DB` | Point settings/tags to a specific metadata database |
-| `SIMPLEFILE_7Z` | Development override for a specific 7-Zip executable |
+| Settings > Plugins > 7-Zip archives > 7-Zip executable override | Use a specific 7-Zip executable (a file, or a folder holding `7zz.exe`, `7z.exe` or `7za.exe`) instead of the plugin's bundled `7za.exe` |
 | `SIMPLEFILE_UPDATE_MANIFEST_PATH` | Test updater metadata from a local file |
 | `SIMPLEFILE_UPDATE_MANIFEST_JSON` | Test updater metadata from inline JSON |
+
+`SIMPLEFILE_7Z` is no longer read. While it is set and the override is empty,
+the 7-Zip plugin's backend logs a one-time warning that names the setting.
 
 ### Common Commands
 
@@ -705,3 +709,5 @@ Copyright (c) 2024-2026 conniecombs.
 Third-party libraries remain governed by their own license terms. Bundled 7-Zip
 console files are distributed with their upstream license in
 [`third_party/7zip/win-x64/License.txt`](third_party/7zip/win-x64/License.txt).
+An installed SumaFile ships that `License.txt` beside the 7-Zip files in
+`plugins\com.sumafile.sevenzip`.

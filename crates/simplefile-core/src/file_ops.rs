@@ -243,16 +243,19 @@ pub fn move_to_trash(paths: &[String]) -> Result<Vec<String>, String> {
     let mut failures = Vec::new();
     let mut trash_unavailable = false;
 
+    // Archive entries are deleted together, so an engine archive changes
+    // once for the whole selection instead of once per entry.
+    let (archive_paths, local_paths): (Vec<String>, Vec<String>) = paths
+        .iter()
+        .cloned()
+        .partition(|path| crate::archive::is_archive_virtual_path(path));
+    if !archive_paths.is_empty() {
+        failures.extend(crate::archive::delete_archive_entries(&archive_paths));
+    }
+
     // Keep going past a failed item so one locked or missing file does not
     // abandon the rest of the selection; report every failure at the end.
-    for path in paths {
-        if crate::archive::is_archive_virtual_path(path) {
-            if let Err(error) = crate::archive::delete_archive_entry(path) {
-                failures.push(error);
-            }
-            continue;
-        }
-
+    for path in &local_paths {
         let validated = match validate_path_no_follow(path) {
             Ok(validated) => validated,
             Err(error) => {

@@ -26,7 +26,8 @@ public sealed partial class PluginManager
             runtime = RuntimeFor(record);
         }
 
-        _ = Observe(runtime.EnsureBackendAsync(CancellationToken.None));
+        // The dispose token, so DisposeAsync ends the wait; the start's archive registration attempts observe it too.
+        _ = Observe(runtime.EnsureBackendAsync(_disposeCts.Token));
 
         static async Task Observe(Task task)
         {
@@ -127,7 +128,7 @@ public sealed partial class PluginManager
             throw error;
         }
 
-        if (registerEngines) await RegisterArchiveEnginesAsync(record, runtime, connection, generation, ct).ConfigureAwait(false);
+        if (registerEngines) await RegisterArchiveEnginesAsync(record, runtime, connection, generation, reregister: false, ct).ConfigureAwait(false);
 
         RaiseChanged();
         return connection;
@@ -174,13 +175,23 @@ public sealed partial class PluginManager
         _ = Task.Run(async () =>
         {
             try { await BeforeLostCleanup().ConfigureAwait(false); } catch { }
-            if (unregisterGeneration != 0) await UnregisterArchiveEnginesAsync(record, unregisterGeneration).ConfigureAwait(false);
+            if (unregisterGeneration != 0)
+            {
+                await UnregisterArchiveEnginesAsync(record, unregisterGeneration).ConfigureAwait(false);
+                // Again, now that the service's engine set has changed: the Changed below ran before the
+                // unregister, so a capability refresh on it may still have seen these engines.
+                RaiseChanged();
+            }
+
             try { await connection.DisposeAsync().ConfigureAwait(false); } catch { }
         });
         RaiseChanged();
     }
 
-    /// <summary>Stops the backend, retires the runtime and deactivates the instance; the record keeps its state.</summary>
+    /// <summary>
+    /// Closes the plugin's windows, stops the backend, then retires the runtime and deactivates the instance, and bumps
+    /// <see cref="PluginRecord.Epoch"/>; the record keeps its state.
+    /// </summary>
     private async Task TeardownAsync(PluginRecord record)
     {
         PluginRuntime? runtime;
@@ -191,19 +202,63 @@ public sealed partial class PluginManager
             runtime = record.Runtime;
             connection = StopBackendLocked(record, out unregisterGeneration);
             record.Runtime = null;
+            record.Epoch = NextEpoch();
         }
 
-        // Before the backend dies, so the service stops routing archives to its pipe first. Teardown (disable,
-        // rescan, dispose) ends the plugin, so it always unregisters: no generation check.
-        if (unregisterGeneration != 0) await UnregisterArchiveEnginesAsync(record, generation: null).ConfigureAwait(false);
-        if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
-        if (runtime is not null && !await runtime.RetireAsync().ConfigureAwait(false))
+        // Teardown (disable, rescan, dispose) ends the plugin, so it always unregisters: no generation check.
+        if (!await StopRuntimeAsync(record, runtime, connection, unregisterGeneration, anyGeneration: true).ConfigureAwait(false))
         {
             lock (_gate)
             {
                 record.State = PluginState.Faulted;
                 record.Error = PluginRuntime.DeactivateTimeoutMessage;
             }
+        }
+    }
+
+    /// <summary>
+    /// Ends a runtime the caller has already detached from its record, in teardown order: its windows close (bounded
+    /// by <see cref="WindowCloseTimeout"/>), then the backend stops, then the instance is deactivated.
+    /// </summary>
+    /// <param name="unregisterGeneration">The generation whose archive engines need unregistering, or 0.</param>
+    /// <param name="anyGeneration">Unregister whatever generation the service holds (the plugin is ending for good).</param>
+    /// <returns>False when the runtime did not deactivate within its retire timeout.</returns>
+    private async Task<bool> StopRuntimeAsync(
+        PluginRecord record,
+        PluginRuntime? runtime,
+        PluginBackendConnection? connection,
+        long unregisterGeneration,
+        bool anyGeneration = false)
+    {
+        if (runtime is not null) await CloseWindowsAsync(record.Id, runtime.WindowHost).ConfigureAwait(false);
+
+        // Before the backend dies, so the service stops routing archives to its pipe first.
+        if (unregisterGeneration != 0)
+        {
+            await UnregisterArchiveEnginesAsync(record, anyGeneration ? null : unregisterGeneration).ConfigureAwait(false);
+        }
+
+        if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
+        return runtime is null || await runtime.RetireAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Waits for the plugin's windows to close, at most <see cref="WindowCloseTimeout"/>. A dispatcher that is shutting
+    /// down may never run the close, so a timeout or a failure is logged and the plugin is stopped anyway.
+    /// </summary>
+    private async Task CloseWindowsAsync(string pluginId, IPluginWindowHost windows)
+    {
+        try
+        {
+            await windows.CloseAllAsync().WaitAsync(WindowCloseTimeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _options.Log(pluginId, $"[warn] Plugin windows did not close within {WindowCloseTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} s; stopping the plugin anyway.");
+        }
+        catch (Exception ex)
+        {
+            _options.Log(pluginId, $"[warn] Plugin windows failed to close ({ex.GetType().Name}: {ex.Message}); stopping the plugin anyway.");
         }
     }
 

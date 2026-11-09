@@ -18,9 +18,12 @@
     <ProjectReference Include="..\SimpleFile.Core\SimpleFile.Core.csproj" />
     <ProjectReference Include="..\SimpleFile.PluginSdk\SimpleFile.PluginSdk.csproj" />
     <ProjectReference Include="..\SimpleFile.PluginHost\SimpleFile.PluginHost.csproj" />
+    <!-- The remote plugin's WinUI-free model (net10.0-windows): its view model and backend client tests. -->
+    <ProjectReference Include="..\..\plugins\remote\ui\SumaFile.Remote.Model\SumaFile.Remote.Model.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="Fixtures\HelloPlugin\SimpleFile.Tests.Fixtures.HelloPlugin.csproj" ReferenceOutputAssembly="false" />
+    <!-- Hello targets 19041 (it builds WinUI code); the test project only needs it built, never referenced. -->
+    <ProjectReference Include="Fixtures\HelloPlugin\SimpleFile.Tests.Fixtures.HelloPlugin.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" />
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="Fixtures\HelloPlugin\**" />

@@ -1,4 +1,6 @@
+using System.Text;
 using SimpleFile.PluginHost.Manifest;
+using SimpleFile.PluginHost.Trust;
 
 namespace SimpleFile.PluginHost.Discovery;
 
@@ -9,14 +11,70 @@ public static class PluginDiscovery
     /// <summary>Semicolon-separated roots that replace the defaults when set (the UI smoke uses it).</summary>
     public const string RootsVariable = "SUMAFILE_PLUGIN_ROOTS";
 
+    /// <summary>
+    /// A folder that replaces the plugin data root when set (every UI smoke mode uses it), so a smoke's plugin
+    /// backends never write to the user's real plugin data.
+    /// </summary>
+    public const string DataRootVariable = "SUMAFILE_PLUGIN_DATA_ROOT";
+
     public static IReadOnlyList<string> DefaultRoots()
     {
-        var overrideRoots = (Environment.GetEnvironmentVariable(RootsVariable) ?? string.Empty)
-            .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var overrideRoots = OverrideRoots();
         if (overrideRoots.Length > 0) return overrideRoots;
 
-        return [Path.Combine(AppContext.BaseDirectory, "plugins"), UserRoot()];
+        return [InstallRoot(), UserRoot()];
     }
+
+    /// <summary>
+    /// The <c>plugins</c> folder next to the app, where the release ships first-party plugins and
+    /// <c>bundled.json</c>; not affected by <see cref="RootsVariable"/>.
+    /// </summary>
+    public static string InstallRoot() => Path.Combine(AppContext.BaseDirectory, "plugins");
+
+    /// <summary>
+    /// The folder that holds each plugin backend's data folder, <c>&lt;root&gt;\&lt;id&gt;\</c>: the
+    /// <see cref="DataRootVariable"/> override when set, else <c>%LOCALAPPDATA%\SumaFile\plugins-data</c>.
+    /// </summary>
+    public static string DataRoot() =>
+        OverrideDataRoot()
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile", "plugins-data");
+
+    private static string? OverrideDataRoot() =>
+        Environment.GetEnvironmentVariable(DataRootVariable) is { } value && !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
+
+    /// <summary>
+    /// One <c>[warn]</c> line for each plugin environment override in effect (<see cref="RootsVariable"/>,
+    /// <see cref="PluginApprovalStore.PathVariable"/> and <see cref="DataRootVariable"/>), for <c>plugins.log</c>;
+    /// empty when none is set.
+    /// </summary>
+    public static IReadOnlyList<string> DescribeOverrides()
+    {
+        var lines = new List<string>();
+        var overrideRoots = OverrideRoots();
+        if (overrideRoots.Length > 0)
+        {
+            lines.Add($"[warn] {RootsVariable} replaces the plugin roots: {string.Join(';', overrideRoots)}");
+        }
+
+        if (Environment.GetEnvironmentVariable(PluginApprovalStore.PathVariable) is { } approvals
+            && !string.IsNullOrWhiteSpace(approvals))
+        {
+            lines.Add($"[warn] {PluginApprovalStore.PathVariable} replaces the plugin approvals file: {approvals.Trim()}");
+        }
+
+        if (OverrideDataRoot() is { } dataRoot)
+        {
+            lines.Add($"[warn] {DataRootVariable} replaces the plugin data folder: {dataRoot}");
+        }
+
+        return lines;
+    }
+
+    private static string[] OverrideRoots() =>
+        (Environment.GetEnvironmentVariable(RootsVariable) ?? string.Empty)
+            .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
     /// <summary>The per-user root the installer writes to; not affected by <see cref="RootsVariable"/>.</summary>
     public static string UserRoot() =>
@@ -43,21 +101,24 @@ public static class PluginDiscovery
                 if (!File.Exists(manifestPath)) continue;
 
                 var id = Path.GetFileName(folder);
-                string json;
-                try { json = File.ReadAllText(manifestPath); }
+                // Read once: the same bytes are parsed and hashed, so the hash the trust decision uses is the hash
+                // of the manifest that was read.
+                byte[] bytes;
+                try { bytes = File.ReadAllBytes(manifestPath); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     all.Add(new DiscoveredPlugin(id, folder, root, DiscoveryState.InvalidManifest, null, [ex.Message], null));
                     continue;
                 }
 
-                var read = PluginManifestReader.Read(json, id);
+                var hash = PluginPackageHash.ComputeHash(bytes);
+                var read = PluginManifestReader.Read(DecodeManifest(bytes), id);
                 var state = read.IsValid
                     ? DiscoveryState.Valid
                     : read.Errors.Any(e => e.Contains("sdkVersion", StringComparison.Ordinal))
                         ? DiscoveryState.IncompatibleSdk
                         : DiscoveryState.InvalidManifest;
-                all.Add(new DiscoveredPlugin(id, folder, root, state, read.Manifest, read.Errors, null));
+                all.Add(new DiscoveredPlugin(id, folder, root, state, read.Manifest, read.Errors, null, hash));
             }
         }
 
@@ -72,5 +133,12 @@ public static class PluginDiscovery
             .OrderBy(p => p.Id, StringComparer.Ordinal)
             .ThenBy(p => p.State == DiscoveryState.Shadowed ? 0 : 1)
             .ToList();
+    }
+
+    /// <summary>The manifest bytes as UTF-8 text, without a leading byte order mark.</summary>
+    private static string DecodeManifest(byte[] bytes)
+    {
+        var bom = Encoding.UTF8.Preamble;
+        return bytes.AsSpan().StartsWith(bom) ? Encoding.UTF8.GetString(bytes.AsSpan(bom.Length)) : Encoding.UTF8.GetString(bytes);
     }
 }

@@ -359,6 +359,7 @@ public sealed partial class MainWindow
         DriveList.Visibility = _myPcCollapsed ? Visibility.Collapsed : Visibility.Visible;
         TagsEmptyText.Visibility = _tagsCollapsed || _workspace.AllTags.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
         TagsList.Visibility = _tagsCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        ApplyPluginSectionCollapse();
     }
 
     private void ApplySidebarLayout()
@@ -390,6 +391,8 @@ public sealed partial class MainWindow
         }
 
         UpdateSidebarToggleButton(PrimarySidebarToggleButton, settings.SidebarVisible);
+        // Showing the sidebar is one of the moments a plugin section's body may load.
+        ActivateVisiblePluginSections();
     }
 
     private static void UpdateSidebarToggleButton(Button button, bool sidebarVisible)

@@ -28,6 +28,15 @@ internal sealed class PluginSettingsPanelBuilder
 
     public required Func<Task<string?>> PickFolderAsync { get; init; }
 
+    /// <summary>
+    /// Fills the custom settings page slot of an Enabled plugin that declares <c>contributions.settingsPage</c>: the
+    /// Settings window's per-window page cache, or else <c>PluginManager.CreateSettingsPageAsync</c>. Null leaves the slot out.
+    /// </summary>
+    public Action<PluginRecord, ContentPresenter>? AttachSettingsPage { get; init; }
+
+    /// <summary>The automation id of a plugin's custom settings page slot.</summary>
+    public static string SettingsPageAutomationId(string pluginId) => $"PluginSettingsPage.{pluginId}";
+
     public FrameworkElement Build(PluginRecord record, Func<string, Task<string?>> read, Func<string, string, Task> write)
     {
         ArgumentNullException.ThrowIfNull(record);
@@ -121,6 +130,16 @@ internal sealed class PluginSettingsPanelBuilder
                     card.Children.Add(SettingControl(record.Id, spec, read, write, status));
                 }
             }
+        }
+
+        // The custom settings page, below the declarative settings and above the status line. Records that are not
+        // Enabled never load plugin code, so they get no slot.
+        if (record.State == PluginState.Enabled && manifest?.Contributions.SettingsPage is not null && AttachSettingsPage is { } attachPage)
+        {
+            var slot = new ContentPresenter { HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(slot, SettingsPageAutomationId(record.Id));
+            card.Children.Add(slot);
+            attachPage(record, slot);
         }
 
         card.Children.Add(status);
@@ -371,7 +390,7 @@ internal sealed class PluginSettingsPanelBuilder
         _ => record.State.ToString(),
     };
 
-    private static TextBlock Muted(string text) => new()
+    internal static TextBlock Muted(string text) => new()
     {
         Text = text,
         FontSize = 12,

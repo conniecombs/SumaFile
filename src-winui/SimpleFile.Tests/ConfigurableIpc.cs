@@ -40,8 +40,8 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<string, string, CancellationToken, Task<FileComparison>>? CompareFilesHandler { get; set; }
     public Func<string, CancellationToken, Task<ArchiveInfo>>? ListArchiveHandler { get; set; }
     public Func<CancellationToken, Task<ArchiveCapabilities>>? GetArchiveCapabilitiesHandler { get; set; }
-    public Func<string, string, CancellationToken, Task>? ExtractArchiveHandler { get; set; }
-    public Func<string[], string, string, CancellationToken, Task>? CreateArchiveHandler { get; set; }
+    public Func<string, string, string?, CancellationToken, Task>? ExtractArchiveHandler { get; set; }
+    public Func<string[], string, string, string?, CancellationToken, Task>? CreateArchiveHandler { get; set; }
     public Func<string, ulong?, string?, CancellationToken, Task<CleanupResult>>? DiskCleanupHandler { get; set; }
     public Func<string?, CancellationToken, Task>? CancelDiskCleanupHandler { get; set; }
     public Func<string, DuplicateScanOptions?, string?, CancellationToken, Task<DuplicateCheckResult>>? DuplicateCheckHandler { get; set; }
@@ -287,15 +287,20 @@ internal sealed class ConfigurableIpc : NullIpc
     public override Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)
         => GetArchiveCapabilitiesHandler?.Invoke(ct) ?? throw NotConfigured();
 
-    public override Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
-        => ExtractArchiveHandler?.Invoke(archivePath, destination, ct) ?? throw NotConfigured();
+    public override Task ExtractArchiveAsync(
+        string archivePath,
+        string destination,
+        string? operationId = null,
+        CancellationToken ct = default)
+        => ExtractArchiveHandler?.Invoke(archivePath, destination, operationId, ct) ?? throw NotConfigured();
 
     public override Task CreateArchiveAsync(
         string[] paths,
         string archivePath,
         string format,
+        string? operationId = null,
         CancellationToken ct = default)
-        => CreateArchiveHandler?.Invoke(paths, archivePath, format, ct) ?? throw NotConfigured();
+        => CreateArchiveHandler?.Invoke(paths, archivePath, format, operationId, ct) ?? throw NotConfigured();
 
     public override Task<CleanupResult> DiskCleanupAsync(
         string directory,

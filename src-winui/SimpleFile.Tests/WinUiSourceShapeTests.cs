@@ -592,6 +592,143 @@ public class WinUiSourceShapeTests
         Assert.Contains("SetArchiveFormats", dialogCode);
         Assert.Contains("capabilities.Where(format => format.CanCreate)", dialogCode);
         Assert.Contains("GetArchiveCapabilitiesAsync", dialogService);
+        // 7z is offered only when the service reports a plugin engine that can create it.
+        Assert.DoesNotContain("Format = \"7z\"", dialogCode);
+    }
+
+    [Fact]
+    public void SettingsArchiveSupport_IsBuiltFromCapabilities()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml"));
+        var tools = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.Tools.cs"));
+
+        Assert.DoesNotContain("7z, and RAR extraction are handled by SumaFile", settingsXaml);
+        Assert.Contains("ZIP, TAR and TAR.GZ are built in. RAR archives can be listed and extracted but not created.", settingsXaml);
+        Assert.Contains("x:Name=\"ArchivePluginFormatsText\"", settingsXaml);
+        Assert.Contains("GetArchiveCapabilitiesAsync", tools);
+        Assert.Contains("ArchivePluginFormatsText.Text", tools);
+        Assert.Contains("archives: {", tools);
+        Assert.Contains("\"unavailable\"", tools);
+    }
+
+    [Fact]
+    public void MainWindow_RefreshesArchiveCapabilitiesOnPluginChangesAndReconnect()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var plugins = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Plugins.cs"));
+        var transfers = File.ReadAllText(Path.Combine(appRoot, "MainWindow.ArchiveTransfers.cs"));
+        var mainWindow = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+
+        var changedStart = plugins.IndexOf("private void OnPluginsChanged(", StringComparison.Ordinal);
+        Assert.True(changedStart >= 0, "OnPluginsChanged not found");
+        var changedEnd = plugins.IndexOf("\n    private ", changedStart + 1, StringComparison.Ordinal);
+        var changedBody = changedEnd < 0 ? plugins[changedStart..] : plugins[changedStart..changedEnd];
+        Assert.Contains("RefreshArchiveCapabilitiesAsync()", changedBody);
+
+        Assert.Contains("private async Task RefreshArchiveCapabilitiesAsync()", transfers);
+        Assert.Contains("GetArchiveCapabilitiesAsync(", transfers);
+        Assert.Contains("ArchivePaths.SetEngineFormats(", transfers);
+        Assert.Contains("RefreshArchivePanesAsync(", transfers);
+        Assert.Contains("AppendPluginLog(", transfers);
+
+        // At startup, once the workspace has loaded.
+        var connectStart = mainWindow.IndexOf("private async Task ConnectAsync(", StringComparison.Ordinal);
+        Assert.True(connectStart >= 0, "ConnectAsync not found");
+        var connectEnd = mainWindow.IndexOf("\n    private ", connectStart + 1, StringComparison.Ordinal);
+        var connect = connectEnd < 0 ? mainWindow[connectStart..] : mainWindow[connectStart..connectEnd];
+        var initialized = connect.IndexOf("OnPluginWorkspaceInitialized();", StringComparison.Ordinal);
+        Assert.True(initialized >= 0, "OnPluginWorkspaceInitialized call not found");
+        Assert.True(
+            connect.IndexOf("RefreshArchiveCapabilitiesAsync()", initialized, StringComparison.Ordinal) > initialized,
+            "the startup refresh must follow OnPluginWorkspaceInitialized");
+
+        // On reconnect, right after the IPC swap and before the pane refresh.
+        var start = mainWindow.IndexOf("private async Task ReconnectBackendAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ReconnectBackendAsync not found");
+        var end = mainWindow.IndexOf("\n    private ", start + 1, StringComparison.Ordinal);
+        var body = end < 0 ? mainWindow[start..] : mainWindow[start..end];
+        var replaceIpc = body.IndexOf("ReplaceIpc(", StringComparison.Ordinal);
+        var refresh = body.IndexOf("RefreshArchiveCapabilitiesAsync()", StringComparison.Ordinal);
+        var panes = body.IndexOf("RefreshAffectedPanesAsync(", StringComparison.Ordinal);
+        Assert.True(replaceIpc >= 0 && replaceIpc < refresh, "the capability refresh must follow ReplaceIpc");
+        Assert.True(refresh < panes, "the capability refresh must precede RefreshAffectedPanesAsync");
+    }
+
+    [Fact]
+    public void PluginFormatArchiveOperations_UseTransfersRows()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var dialogs = File.ReadAllText(Path.Combine(appRoot, "FileOperationDialogService.cs"));
+        var transfer = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Transfer.cs"));
+        var archiveTransfers = File.ReadAllText(Path.Combine(appRoot, "MainWindow.ArchiveTransfers.cs"));
+        var mainWindow = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+
+        static string Body(string source, string signature)
+        {
+            var start = source.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(start >= 0, $"{signature} not found");
+            var end = source.IndexOf("\n    private ", start + 1, StringComparison.Ordinal);
+            var publicEnd = source.IndexOf("\n    public ", start + 1, StringComparison.Ordinal);
+            if (publicEnd >= 0 && (end < 0 || publicEnd < end))
+            {
+                end = publicEnd;
+            }
+
+            return end < 0 ? source[start..] : source[start..end];
+        }
+
+        static void AssertEngineRouteBeforeModal(string body, string trackedCall, string modalCall, string where)
+        {
+            var engineCheck = body.IndexOf("ArchivePaths.IsEngineArchive(", StringComparison.Ordinal);
+            var enqueue = body.IndexOf("nqueueArchiveTransfer(", StringComparison.Ordinal);
+            var tracked = body.IndexOf(trackedCall, StringComparison.Ordinal);
+            var modal = body.IndexOf(modalCall, StringComparison.Ordinal);
+            Assert.True(engineCheck >= 0, $"{where} does not check ArchivePaths.IsEngineArchive");
+            Assert.True(enqueue > engineCheck, $"{where} does not enqueue a Transfers row for engine formats");
+            Assert.True(tracked > engineCheck, $"{where} does not use {trackedCall}");
+            Assert.True(modal >= 0, $"{where} lost the modal path for built-in formats");
+        }
+
+        // The dialog service takes the delegate and routes engine formats through it.
+        Assert.Contains("Func<ArchiveTransferRequest, TransferOperationViewModel?> enqueueArchiveTransfer", dialogs);
+        AssertEngineRouteBeforeModal(
+            Body(dialogs, "public async Task CreateArchiveAsync("),
+            "CreateArchiveTrackedAsync(",
+            "fileOps.CreateArchiveAsync(",
+            "CreateArchiveAsync");
+        AssertEngineRouteBeforeModal(
+            Body(dialogs, "private async Task ShowExtractDialogAsync("),
+            "ExtractArchiveTrackedAsync(",
+            "fileOps.ExtractArchiveAsync(",
+            "ShowExtractDialogAsync");
+        Assert.Contains("$\"Creating {", dialogs);
+        Assert.Contains("$\"Extracting {", dialogs);
+
+        // The context-menu extract does the same.
+        AssertEngineRouteBeforeModal(
+            Body(transfer, "private async Task ExtractSelectedArchiveAsync("),
+            "ExtractArchiveTrackedAsync(",
+            "fileOps.ExtractArchiveAsync(",
+            "ExtractSelectedArchiveAsync");
+
+        // The row: an external Transfers row with byte progress, the operation id and a pane refresh on success.
+        Assert.Contains("internal sealed record ArchiveTransferRequest(", archiveTransfers);
+        var enqueueBody = Body(archiveTransfers, "internal TransferOperationViewModel? EnqueueArchiveTransfer(");
+        Assert.Contains(".EnqueueExternal(", enqueueBody);
+        Assert.Contains("new Progress<ProgressUpdate>(", enqueueBody);
+        Assert.Contains(".ApplyProgress", enqueueBody);
+        Assert.Contains(".SetOperationId(", enqueueBody);
+        Assert.Contains("RefreshAffectedPanesAsync(", enqueueBody);
+
+        // MainWindow passes the delegate to the dialog service.
+        var ctor = mainWindow.IndexOf("new FileOperationDialogService(", StringComparison.Ordinal);
+        Assert.True(ctor >= 0, "FileOperationDialogService construction not found");
+        var ctorEnd = mainWindow.IndexOf(");", ctor, StringComparison.Ordinal);
+        Assert.Contains("EnqueueArchiveTransfer", mainWindow[ctor..ctorEnd]);
     }
 
     [Fact]
@@ -886,6 +1023,92 @@ public class WinUiSourceShapeTests
     }
 
 
+    [Fact]
+    public void TaskOptionsButton_IsBoundToCanChangeOptions()
+    {
+        var root = FindRepoRoot();
+        var xaml = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "TransferProgressWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "TransferProgressWindow.xaml.cs"));
+
+        var button = Regex.Match(xaml, "<Button[^>]*Click=\"OnTaskOptionsClicked\"[^>]*/>", RegexOptions.Singleline);
+        Assert.True(button.Success, "The per-task Options button is missing.");
+        Assert.Contains("IsEnabled=\"{Binding CanChangeOptions}\"", button.Value);
+        Assert.DoesNotContain("IsEnabled=\"{Binding CanCancel}\"", button.Value);
+
+        // A plugin or archive-engine row has no per-task overrides, so the click does nothing for it.
+        var handler = MethodBody(code, "void OnTaskOptionsClicked(");
+        Assert.Contains("IsExternal", handler);
+        Assert.True(
+            handler.IndexOf("IsExternal", StringComparison.Ordinal) < handler.IndexOf("TransferOptionsDialog.ShowAsync(", StringComparison.Ordinal),
+            "OnTaskOptionsClicked must return for an external row before it opens the dialog.");
+    }
+
+    [Fact]
+    public void OnClosed_ClosesPluginWindowsBeforeTheSessionCleanup()
+    {
+        var root = FindRepoRoot();
+        var mainWindow = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var onClosed = MethodBody(mainWindow, "async void OnClosed(object sender, WindowEventArgs args)");
+
+        var close = onClosed.IndexOf("ClosePluginWindows();", StringComparison.Ordinal);
+        var cleanup = onClosed.IndexOf("await CleanupSessionAsync(", StringComparison.Ordinal);
+        Assert.True(close >= 0, "OnClosed does not close the plugin windows.");
+        Assert.True(cleanup >= 0, "OnClosed does not clean up the session.");
+        Assert.True(close < cleanup, "Plugin windows must close before the session cleanup awaits.");
+
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        Assert.Contains(".CloseAllNow()", MethodBody(plugins, "void ClosePluginWindows()"));
+        // WindowsFor hands the manager a new host for every runtime, never a sealed one.
+        Assert.Contains("new PluginWindowHost(", MethodBody(plugins, "IPluginWindowHost WindowsFor(string pluginId)"));
+    }
+
+    [Fact]
+    public void PluginWindowHost_AttachAfterTheSeal_ClosesTheWindow()
+    {
+        var root = FindRepoRoot();
+        var host = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginWindowHost.cs"));
+        Assert.Contains("PluginWindowSet<Window>", host);
+        Assert.Contains("\"A plugin window must be a Microsoft.UI.Xaml.Window.\"", host);
+
+        // Attach: a refused window (the host is sealed) closes at once, before any chrome, and is not tracked.
+        var attach = MethodBody(host, "public void Attach(object window, PluginWindowOptions options)");
+        var track = attach.IndexOf(".TryTrack(", StringComparison.Ordinal);
+        var chrome = attach.IndexOf("SecondaryWindowChrome.Apply(", StringComparison.Ordinal);
+        Assert.True(track >= 0 && chrome > track, "Attach must ask TryTrack before it applies the chrome.");
+        var refused = attach[track..chrome];
+        Assert.Contains("Close", refused);
+        Assert.Contains("return;", refused);
+
+        // CloseAllAsync and CloseAllNow seal first, on the calling thread, before anything is enqueued or closed.
+        var closeAll = MethodBody(host, "public Task CloseAllAsync()");
+        var seal = closeAll.IndexOf(".Seal()", StringComparison.Ordinal);
+        Assert.True(seal >= 0, "CloseAllAsync does not seal the host.");
+        Assert.True(seal < closeAll.IndexOf("TryEnqueue(", StringComparison.Ordinal), "CloseAllAsync must seal before TryEnqueue.");
+        Assert.True(closeAll.IndexOf("Close", seal, StringComparison.Ordinal) > seal);
+        Assert.DoesNotContain("Close", closeAll[..seal]);
+
+        var closeNow = MethodBody(host, "internal void CloseAllNow()");
+        var sealNow = closeNow.IndexOf(".Seal()", StringComparison.Ordinal);
+        Assert.True(sealNow >= 0, "CloseAllNow does not seal the host.");
+        Assert.DoesNotContain("Close", closeNow[..sealNow]);
+    }
+
+    /// <summary>The body of the first method whose declaration contains <paramref name="signature"/>, braces included.</summary>
+    private static string MethodBody(string source, string signature)
+    {
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"'{signature}' was not found.");
+        var open = source.IndexOf('{', start);
+        var depth = 0;
+        for (var index = open; index < source.Length; index++)
+        {
+            if (source[index] == '{') depth++;
+            else if (source[index] == '}' && --depth == 0) return source[open..(index + 1)];
+        }
+
+        throw new InvalidOperationException($"'{signature}' has no closing brace.");
+    }
+
     private static string ReadExplorerWorkspaceSource(string coreRoot)
     {
         return string.Join(
@@ -910,6 +1133,28 @@ public class WinUiSourceShapeTests
         }
 
         throw new DirectoryNotFoundException("Could not locate src-winui source root.");
+    }
+
+    [Fact]
+    public void MainWindow_ReconnectDoesNotAwaitArchiveReregistration()
+    {
+        var root = FindRepoRoot();
+        var source = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var start = source.IndexOf("private async Task ReconnectBackendAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ReconnectBackendAsync not found");
+        var end = source.IndexOf("\n    private ", start + 1, StringComparison.Ordinal);
+        var body = end < 0 ? source[start..] : source[start..end];
+
+        Assert.Contains("ReregisterArchiveEnginesAsync(", body);
+        Assert.Matches(@"_\s*=\s*ObserveAsync\(\s*_plugins\.ReregisterArchiveEnginesAsync\(", body);
+        Assert.DoesNotMatch(@"\bawait\b[^;]*ReregisterArchiveEnginesAsync\(", body);
+
+        // Started right after the IPC swap, before the drive and pane refreshes (which never wait for it).
+        var replaceIpc = body.IndexOf("ReplaceIpc(", StringComparison.Ordinal);
+        var reregister = body.IndexOf("ReregisterArchiveEnginesAsync(", StringComparison.Ordinal);
+        var refreshDrives = body.IndexOf("RefreshDrivesAsync(", StringComparison.Ordinal);
+        Assert.True(replaceIpc >= 0 && replaceIpc < reregister, "re-registration must start after ReplaceIpc");
+        Assert.True(reregister < refreshDrives, "re-registration must start before the drive refresh");
     }
 
     private static string ReadMainWindowSource(string appRoot)

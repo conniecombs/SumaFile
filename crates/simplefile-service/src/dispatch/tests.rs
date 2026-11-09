@@ -1632,3 +1632,94 @@ fn repeated_bad_tokens_close_the_session() {
         "fifth failure closes: {last:?}"
     );
 }
+
+#[test]
+fn register_archive_engine_rejects_invalid_plugin_ids() {
+    let mut state = SessionState {
+        handshake_done: true,
+        ..SessionState::default()
+    };
+    for (id, plugin_id) in [(30u64, "Bad.Id"), (31, "a"), (32, "x/y")] {
+        let outcome = dispatch(
+            &mut state,
+            &request(
+                "register_archive_engine",
+                id,
+                json!({
+                    "pluginId": plugin_id,
+                    "pipeName": "simplefile-test-unused-pipe",
+                    "formats": [{
+                        "extension": ".validation",
+                        "canList": true,
+                        "canExtract": true,
+                        "canCreate": false,
+                        "canModify": false,
+                        "engineName": "Validation"
+                    }]
+                }),
+            ),
+        );
+        let Dispatch::Reply(response) = outcome else {
+            panic!("{plugin_id:?} must be rejected without touching the pipe");
+        };
+        let error = response.error.expect("invalid plugin id is an error");
+        assert_eq!(error.code, ERR_INVALID_PARAMS, "{plugin_id:?}");
+        assert_eq!(
+            error.message,
+            "invalid params: pluginId must match ^[a-z0-9][a-z0-9.-]{1,63}$"
+        );
+    }
+}
+
+#[test]
+fn archive_entry_shell_calls_and_mutations_run_on_the_general_lane() {
+    let mut state = SessionState {
+        handshake_done: true,
+        ..SessionState::default()
+    };
+    let root = std::env::temp_dir().join(format!(
+        "simplefile-service-dispatch-lanes-{}",
+        simplefile_core::utils::generate_operation_id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let archive = root.join("x.zip");
+    fs::write(&archive, b"not opened").unwrap();
+    let entry = format!(r"{}\docs\a.txt", archive.display());
+    let folder = format!(r"{}\docs", archive.display());
+
+    let cases = [
+        ("open_file", json!({ "path": entry })),
+        ("reveal_in_folder", json!({ "path": entry })),
+        (
+            "open_file_with",
+            json!({ "path": entry, "application": "notepad.exe" }),
+        ),
+        ("create_directory", json!({ "path": folder, "name": "new" })),
+        ("create_file", json!({ "path": folder, "name": "n.txt" })),
+        ("rename_entry", json!({ "path": entry, "newName": "b.txt" })),
+    ];
+    for (index, (method, params)) in cases.into_iter().enumerate() {
+        // The job is dropped unrun, so nothing is launched or changed.
+        match dispatch(&mut state, &request(method, 40 + index as u64, params)) {
+            Dispatch::Blocking { job, .. } => {
+                assert_eq!(job.lane(), BlockingLane::General, "{method}");
+            }
+            other => panic!("{method} on an archive entry must leave the session loop: {other:?}"),
+        }
+    }
+
+    let missing = root.join("missing.txt");
+    let outcome = dispatch(
+        &mut state,
+        &request(
+            "open_file",
+            50,
+            json!({ "path": missing.to_string_lossy() }),
+        ),
+    );
+    assert!(
+        matches!(outcome, Dispatch::Reply(_)),
+        "a local path stays inline: {outcome:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}

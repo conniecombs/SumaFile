@@ -122,4 +122,33 @@ public class UiImprovementTests
         Assert.True(settings.KeepFoldersOnTop);
         Assert.True(settings.EnableGitIntegration);
     }
+
+    [Fact]
+    public void PluginSectionCollapse_RoundTripsThroughASavedLayout()
+    {
+        var settings = new UiSettings { CollapsedPluginSidebarSections = ["com.a.b:s"] };
+        var columns = new ColumnLayout();
+        var saved = WorkspaceChromeLayout.Capture(settings, columns, columns);
+        var json = System.Text.Json.JsonSerializer.Serialize(saved);
+        Assert.Contains("\"pluginSectionsCollapsed\":[\"com.a.b:s\"]", json, StringComparison.Ordinal);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<WorkspaceChromeLayout>(json)!;
+        var applied = new UiSettings();
+        restored.Apply(applied, new ColumnLayout(), new ColumnLayout());
+        Assert.Equal(["com.a.b:s"], applied.CollapsedPluginSidebarSections);
+
+        // The capture is a copy: collapsing another section later does not change the saved layout.
+        settings.CollapsedPluginSidebarSections.Add("com.c.d:t");
+        Assert.Equal(["com.a.b:s"], saved.CollapsedPluginSidebarSections);
+
+        // A layout saved before the field existed restores an empty list.
+        var legacy = System.Text.Json.JsonSerializer.Deserialize<WorkspaceChromeLayout>("""{ "tagsCollapsed": true }""")!;
+        var legacyApplied = new UiSettings { CollapsedPluginSidebarSections = ["com.a.b:s"] };
+        legacy.Apply(legacyApplied, new ColumnLayout(), new ColumnLayout());
+        Assert.Empty(legacyApplied.CollapsedPluginSidebarSections);
+
+        // Normalize drops empty and duplicate keys.
+        var messy = new WorkspaceChromeLayout { CollapsedPluginSidebarSections = ["com.a.b:s", "", "  ", "com.a.b:s", "com.c.d:t"] };
+        messy.Normalize();
+        Assert.Equal(["com.a.b:s", "com.c.d:t"], messy.CollapsedPluginSidebarSections);
+    }
 }

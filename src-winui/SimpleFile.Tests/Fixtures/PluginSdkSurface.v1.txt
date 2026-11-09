@@ -5,6 +5,7 @@ SimpleFile.PluginSdk.IPlugin: System.Threading.Tasks.Task ActivateAsync(SimpleFi
 SimpleFile.PluginSdk.IPlugin: System.Threading.Tasks.Task DeactivateAsync()
 SimpleFile.PluginSdk.IPluginDialogs: <type>
 SimpleFile.PluginSdk.IPluginDialogs: System.Threading.Tasks.Task ShowMessageAsync(System.String, System.String, System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPluginDialogs: System.Threading.Tasks.Task`1[SimpleFile.PluginSdk.PluginDialogResult] ShowDialogAsync(System.Object, System.Threading.CancellationToken)
 SimpleFile.PluginSdk.IPluginDialogs: System.Threading.Tasks.Task`1[System.Boolean] ConfirmAsync(System.String, System.String, System.String, System.Threading.CancellationToken)
 SimpleFile.PluginSdk.IPluginDialogs: System.Threading.Tasks.Task`1[System.String] PickFolderAsync(System.Threading.CancellationToken)
 SimpleFile.PluginSdk.IPluginHost: <type>
@@ -16,6 +17,8 @@ SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginProgress Progress
 SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginProgress get_Progress()
 SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginSettings Settings
 SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginSettings get_Settings()
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginWindows Windows
+SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginWindows get_Windows()
 SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginWorkspace Workspace
 SimpleFile.PluginSdk.IPluginHost: SimpleFile.PluginSdk.IPluginWorkspace get_Workspace()
 SimpleFile.PluginSdk.IPluginHost: System.IDisposable OnBackendEvent[T](System.String, System.Action`1[T])
@@ -37,6 +40,8 @@ SimpleFile.PluginSdk.IPluginProgress: SimpleFile.PluginSdk.IPluginOperation Begi
 SimpleFile.PluginSdk.IPluginSettings: <type>
 SimpleFile.PluginSdk.IPluginSettings: System.Threading.Tasks.Task SetAsync(System.String, System.String, System.Threading.CancellationToken)
 SimpleFile.PluginSdk.IPluginSettings: System.Threading.Tasks.Task`1[System.String] GetAsync(System.String, System.Threading.CancellationToken)
+SimpleFile.PluginSdk.IPluginWindows: <type>
+SimpleFile.PluginSdk.IPluginWindows: Void Attach(System.Object, SimpleFile.PluginSdk.PluginWindowOptions)
 SimpleFile.PluginSdk.IPluginWorkspace: <type>
 SimpleFile.PluginSdk.IPluginWorkspace: System.Collections.Generic.IReadOnlyList`1[System.String] SelectedPaths
 SimpleFile.PluginSdk.IPluginWorkspace: System.Collections.Generic.IReadOnlyList`1[System.String] get_SelectedPaths()
@@ -46,6 +51,10 @@ SimpleFile.PluginSdk.IPluginWorkspace: System.String get_ActivePath()
 SimpleFile.PluginSdk.IPluginWorkspace: System.Threading.Tasks.Task NavigateAsync(System.String, System.Threading.CancellationToken)
 SimpleFile.PluginSdk.IPluginWorkspace: Void add_Changed(System.EventHandler)
 SimpleFile.PluginSdk.IPluginWorkspace: Void remove_Changed(System.EventHandler)
+SimpleFile.PluginSdk.ISettingsPageProvider: <type>
+SimpleFile.PluginSdk.ISettingsPageProvider: System.Object CreateSettingsPage(SimpleFile.PluginSdk.PluginSettingsPageRequest)
+SimpleFile.PluginSdk.ISidebarSectionProvider: <type>
+SimpleFile.PluginSdk.ISidebarSectionProvider: System.Object CreateSidebarSection(SimpleFile.PluginSdk.PluginSidebarSectionRequest)
 SimpleFile.PluginSdk.PluginCommandContext: <type>
 SimpleFile.PluginSdk.PluginCommandContext: Boolean Equals(SimpleFile.PluginSdk.PluginCommandContext)
 SimpleFile.PluginSdk.PluginCommandContext: Boolean Equals(System.Object)
@@ -65,6 +74,59 @@ SimpleFile.PluginSdk.PluginCommandContext: Void Deconstruct(System.String ByRef,
 SimpleFile.PluginSdk.PluginCommandContext: Void set_ActivePath(System.String)
 SimpleFile.PluginSdk.PluginCommandContext: Void set_CommandId(System.String)
 SimpleFile.PluginSdk.PluginCommandContext: Void set_SelectedPaths(System.Collections.Generic.IReadOnlyList`1[System.String])
+SimpleFile.PluginSdk.PluginDialogResult: <type>
+SimpleFile.PluginSdk.PluginDialogResult: Int32 value__
+SimpleFile.PluginSdk.PluginDialogResult: SimpleFile.PluginSdk.PluginDialogResult None
+SimpleFile.PluginSdk.PluginDialogResult: SimpleFile.PluginSdk.PluginDialogResult Primary
+SimpleFile.PluginSdk.PluginDialogResult: SimpleFile.PluginSdk.PluginDialogResult Secondary
 SimpleFile.PluginSdk.PluginSdk: <type>
 SimpleFile.PluginSdk.PluginSdk: Int32 Major
 SimpleFile.PluginSdk.PluginSdk: System.String Version
+SimpleFile.PluginSdk.PluginSettingsPageRequest: <type>
+SimpleFile.PluginSdk.PluginSettingsPageRequest: Boolean Equals(SimpleFile.PluginSdk.PluginSettingsPageRequest)
+SimpleFile.PluginSdk.PluginSettingsPageRequest: Boolean Equals(System.Object)
+SimpleFile.PluginSdk.PluginSettingsPageRequest: Boolean op_Equality(SimpleFile.PluginSdk.PluginSettingsPageRequest, SimpleFile.PluginSdk.PluginSettingsPageRequest)
+SimpleFile.PluginSdk.PluginSettingsPageRequest: Boolean op_Inequality(SimpleFile.PluginSdk.PluginSettingsPageRequest, SimpleFile.PluginSdk.PluginSettingsPageRequest)
+SimpleFile.PluginSdk.PluginSettingsPageRequest: Int32 GetHashCode()
+SimpleFile.PluginSdk.PluginSettingsPageRequest: SimpleFile.PluginSdk.PluginSettingsPageRequest <Clone>$()
+SimpleFile.PluginSdk.PluginSettingsPageRequest: System.String Provider
+SimpleFile.PluginSdk.PluginSettingsPageRequest: System.String ToString()
+SimpleFile.PluginSdk.PluginSettingsPageRequest: System.String get_Provider()
+SimpleFile.PluginSdk.PluginSettingsPageRequest: Void .ctor(System.String)
+SimpleFile.PluginSdk.PluginSettingsPageRequest: Void Deconstruct(System.String ByRef)
+SimpleFile.PluginSdk.PluginSettingsPageRequest: Void set_Provider(System.String)
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: <type>
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: Boolean Equals(SimpleFile.PluginSdk.PluginSidebarSectionRequest)
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: Boolean Equals(System.Object)
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: Boolean op_Equality(SimpleFile.PluginSdk.PluginSidebarSectionRequest, SimpleFile.PluginSdk.PluginSidebarSectionRequest)
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: Boolean op_Inequality(SimpleFile.PluginSdk.PluginSidebarSectionRequest, SimpleFile.PluginSdk.PluginSidebarSectionRequest)
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: Int32 GetHashCode()
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: SimpleFile.PluginSdk.PluginSidebarSectionRequest <Clone>$()
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: System.String Provider
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: System.String SectionId
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: System.String ToString()
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: System.String get_Provider()
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: System.String get_SectionId()
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: Void .ctor(System.String, System.String)
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: Void Deconstruct(System.String ByRef, System.String ByRef)
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: Void set_Provider(System.String)
+SimpleFile.PluginSdk.PluginSidebarSectionRequest: Void set_SectionId(System.String)
+SimpleFile.PluginSdk.PluginWindowOptions: <type>
+SimpleFile.PluginSdk.PluginWindowOptions: Boolean Equals(SimpleFile.PluginSdk.PluginWindowOptions)
+SimpleFile.PluginSdk.PluginWindowOptions: Boolean Equals(System.Object)
+SimpleFile.PluginSdk.PluginWindowOptions: Boolean op_Equality(SimpleFile.PluginSdk.PluginWindowOptions, SimpleFile.PluginSdk.PluginWindowOptions)
+SimpleFile.PluginSdk.PluginWindowOptions: Boolean op_Inequality(SimpleFile.PluginSdk.PluginWindowOptions, SimpleFile.PluginSdk.PluginWindowOptions)
+SimpleFile.PluginSdk.PluginWindowOptions: Int32 GetHashCode()
+SimpleFile.PluginSdk.PluginWindowOptions: Int32 Height
+SimpleFile.PluginSdk.PluginWindowOptions: Int32 Width
+SimpleFile.PluginSdk.PluginWindowOptions: Int32 get_Height()
+SimpleFile.PluginSdk.PluginWindowOptions: Int32 get_Width()
+SimpleFile.PluginSdk.PluginWindowOptions: SimpleFile.PluginSdk.PluginWindowOptions <Clone>$()
+SimpleFile.PluginSdk.PluginWindowOptions: System.String Title
+SimpleFile.PluginSdk.PluginWindowOptions: System.String ToString()
+SimpleFile.PluginSdk.PluginWindowOptions: System.String get_Title()
+SimpleFile.PluginSdk.PluginWindowOptions: Void .ctor(System.String, Int32, Int32)
+SimpleFile.PluginSdk.PluginWindowOptions: Void Deconstruct(System.String ByRef, Int32 ByRef, Int32 ByRef)
+SimpleFile.PluginSdk.PluginWindowOptions: Void set_Height(Int32)
+SimpleFile.PluginSdk.PluginWindowOptions: Void set_Title(System.String)
+SimpleFile.PluginSdk.PluginWindowOptions: Void set_Width(Int32)

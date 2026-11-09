@@ -1,5 +1,7 @@
 //! Reproducible release-mode compatibility and performance gate. Uses only
 //! generated fixtures in a fresh output directory; never modifies user archives.
+mod plugin_engine;
+
 use std::{
     collections::BTreeMap,
     fs::{self, File},
@@ -486,9 +488,26 @@ fn main() -> Result<()> {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()?;
-    let binary = repo.join("third_party/7zip/win-x64/7za.exe");
-    // The existing SumaFile adapter discovers this executable for baseline tests.
-    std::env::set_var("SIMPLEFILE_7Z", &binary);
+    // The reference is the SumaFile 7-Zip plugin with its bundled 7za: the
+    // binary resolves the way the plugin resolves it (no override, then the
+    // bundled copy, which staging takes from third_party), and the plugin's
+    // library is registered with the core as the `.7z` engine, so the
+    // baseline still goes through core listing, validation and staging.
+    let binary = sumafile_sevenzip_backend::binary::resolve_binary(
+        None,
+        &repo.join("third_party/7zip/win-x64"),
+    )?;
+    simplefile_core::archive::register_engine(
+        sumafile_sevenzip_backend::PLUGIN_ID,
+        vec![simplefile_core::archive::EngineFormat {
+            extension: ".7z".to_string(),
+            can_list: true,
+            can_extract: true,
+            can_create: true,
+            can_modify: true,
+        }],
+        std::sync::Arc::new(plugin_engine::PluginEngine::new(binary.clone())),
+    );
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let root = repo.join(format!("test-results/sevenz-evaluation/run-{nonce}"));
     fs::create_dir_all(&root)?;

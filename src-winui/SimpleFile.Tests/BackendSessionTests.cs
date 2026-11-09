@@ -111,6 +111,32 @@ public class BackendSessionTests
     }
 
     [Fact]
+    public async Task ServiceProcessId_NamesTheRunningServiceAndChangesOnReconnect()
+    {
+        await using var unstarted = new BackendSession();
+        Assert.Null(unstarted.ServiceProcessId);
+        if (ServiceLocator.FindServiceExecutable() is null)
+        {
+            return;
+        }
+
+        await using var session = new BackendSession();
+        await session.StartAsync();
+        var first = session.ServiceProcessId;
+        Assert.NotNull(first);
+        using (var process = System.Diagnostics.Process.GetProcessById(first.Value))
+        {
+            Assert.False(process.HasExited);
+        }
+
+        session.KillServiceForTests();
+        await WaitUntilAsync(() => session.Client is not { IsConnected: true }, TimeSpan.FromSeconds(5));
+        await session.ReconnectAsync();
+        Assert.NotNull(session.ServiceProcessId);
+        Assert.NotEqual(first, session.ServiceProcessId);
+    }
+
+    [Fact]
     public async Task UseClient_ReconnectsOnDemandAfterCrash()
     {
         if (ServiceLocator.FindServiceExecutable() is null)

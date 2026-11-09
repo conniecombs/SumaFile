@@ -1,5 +1,6 @@
 namespace SimpleFile.PluginSdk;
 
+/// <summary>The host services a plugin receives in <see cref="IPlugin.ActivateAsync"/> and keeps for its lifetime.</summary>
 public interface IPluginHost
 {
     string PluginId { get; }
@@ -10,4 +11,7 @@ public interface IPluginHost
     IPluginDialogs Dialogs { get; }
     IPluginWorkspace Workspace { get; }
     IPluginLogger Logger { get; }
+
+    /// <summary>Hands plugin-created windows to the host, which closes them before it stops the plugin.</summary>
+    IPluginWindows Windows { get; }
 }

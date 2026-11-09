@@ -47,6 +47,17 @@ const requiredFiles = [
   'third_party/7zip/win-x64/7za.dll',
   'third_party/7zip/win-x64/7zxa.dll',
   'third_party/7zip/win-x64/License.txt',
+  'scripts/build-plugins.ps1',
+  'scripts/lib/plugin-staging.ps1',
+  'scripts/test-plugin-staging.ps1',
+  'plugins/sevenzip/plugin.json',
+  'plugins/sevenzip/backend/Cargo.toml',
+  'plugins/remote/plugin.json',
+  'plugins/remote/protocol.json',
+  'plugins/remote/backend/Cargo.toml',
+  'plugins/remote/test-server/Cargo.toml',
+  'plugins/remote/ui/SumaFile.Remote/SumaFile.Remote.csproj',
+  'plugins/remote/ui/SumaFile.Remote.Model/SumaFile.Remote.Model.csproj',
 ];
 
 for (const relativePath of requiredFiles) {
@@ -64,6 +75,7 @@ const ciYml = readText('.github/workflows/ci.yml');
 const releaseBuildYml = readText('.github/workflows/release-build.yml');
 const installerSmokeYml = readText('.github/workflows/installer-smoke.yml');
 const appCsproj = readText('src-winui/SimpleFile.App/SimpleFile.App.csproj');
+const pluginStaging = readText('scripts/lib/plugin-staging.ps1');
 
 let packageScripts = {};
 try {
@@ -79,6 +91,11 @@ const nsisSnippets = [
   'InstallDir "$LOCALAPPDATA\\Programs\\SumaFile-WinUI"',
   'RequestExecutionLevel user',
   'QuietUninstallString',
+  'taskkill /F /IM sumafile-sevenzip-backend.exe',
+  'RMDir /r "$INSTDIR\\tools\\7zip"',
+  '$INSTDIR\\plugins\\com.sumafile.sevenzip',
+  'taskkill /F /IM sumafile-remote-backend.exe',
+  '$INSTDIR\\plugins\\com.sumafile.remote',
 ];
 
 for (const snippet of nsisSnippets) {
@@ -106,9 +123,13 @@ const buildSnippets = [
   'latest-winui.json',
   'resources.pri',
   'MainWindow.xbf',
-  'third_party\\7zip\\win-x64',
+  // The absence check for 1.0.4's tools\7zip; stagingSnippets police the plugin folder's file list.
   'tools\\7zip',
-  '7za.exe',
+  'sumafile-sevenzip-backend',
+  'sumafile-remote-backend',
+  'SumaFile.Remote.csproj',
+  'Install-BundledPlugins',
+  'Assert-BundledPlugins',
   '-sice:ICE03',
   '-sice:ICE38',
   '-sice:ICE64',
@@ -128,6 +149,7 @@ const npmSnippets = [
   '"smoke:winui-upgrade"',
   '"release:build"',
   '"dev:winui"',
+  '"build:plugins"',
 ];
 
 for (const snippet of npmSnippets) {
@@ -160,11 +182,38 @@ requireSnippet(appCsproj, 'SimpleFile.App.csproj', '<ApplicationIcon>..\\..\\pac
 requireSnippet(appCsproj, 'SimpleFile.App.csproj', '<AssemblyName>SumaFile</AssemblyName>');
 requireSnippet(appCsproj, 'SimpleFile.App.csproj', 'SumaFile.png');
 requireSnippet(appCsproj, 'SimpleFile.App.csproj', 'SumaFile.ico');
+requireSnippet(appCsproj, 'SimpleFile.App.csproj', 'CopyBundledPlugins');
+
+// The staging library is what polices the bundled plugin folder's contents.
+const stagingSnippets = [
+  'third_party\\7zip\\win-x64',
+  '7za.exe',
+  '7za.dll',
+  '7zxa.dll',
+  'License.txt',
+  'SUMAFILE_BUNDLE.md',
+  'bundled.json',
+  'com.sumafile.sevenzip',
+  'sumafile-sevenzip-backend.exe',
+  'com.sumafile.remote',
+  'sumafile-remote-backend.exe',
+  'SumaFile.Remote.dll',
+  'SumaFile.Remote.Model.dll',
+  'SumaFile.Remote.deps.json',
+  'Assert-BundledPluginsFresh',
+];
+
+for (const snippet of stagingSnippets) {
+  requireSnippet(pluginStaging, 'scripts/lib/plugin-staging.ps1', snippet);
+}
 
 const workflowSnippets = [
   ['ci.yml', ciYml, 'setup-dotnet'],
   ['ci.yml', ciYml, 'check:winui'],
   ['ci.yml', ciYml, 'simplefile-service'],
+  ['ci.yml', ciYml, 'build-plugins.ps1'],
+  ['ci.yml', ciYml, 'test-plugin-staging.ps1'],
+  ['ci.yml', ciYml, 'check:winui-startup-budget'],
   ['release.yml', releaseYml, 'build-winui-release.ps1'],
   ['release.yml', releaseYml, 'latest-winui.json'],
   ['release.yml', releaseYml, 'SumaFile_*_x64-winui-portable.zip'],
@@ -186,6 +235,22 @@ const workflowSnippets = [
 
 for (const [file, source, snippet] of workflowSnippets) {
   requireSnippet(source, file, snippet);
+}
+
+// Spec §12: plugin crates and the shared leaf crate they use never depend on the
+// host crates. Later plugin crates join this list.
+const pluginCrateManifests = [
+  'crates/sumafile-transfer/Cargo.toml',
+  'plugins/sevenzip/backend/Cargo.toml',
+  'plugins/remote/backend/Cargo.toml',
+  'plugins/remote/test-server/Cargo.toml',
+];
+
+for (const manifest of pluginCrateManifests) {
+  const source = readText(manifest);
+  if (source.includes('simplefile-core') || source.includes('simplefile-service')) {
+    fail(`${manifest} must not depend on simplefile-core or simplefile-service (spec §12)`);
+  }
 }
 
 if (packageJson.includes('build:tauri') || packageJson.includes('smoke:release')) {

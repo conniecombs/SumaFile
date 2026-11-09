@@ -3,6 +3,7 @@
   "jsonrpc": "2.0",
   "framing": "same as v1",
   "sdkVersion": "1.0.0",
+  "commandLine": ["--pipe-name <name>", "--data-dir <dir>"],
   "handshake": {
     "method": "plugin.handshake",
     "params": ["pluginId", "hostVersion", "sdkVersion", "client?"],
@@ -19,9 +20,33 @@
     "host.log",
     "host.notify"
   ],
-  "archiveEngineMethods": ["archive.list", "archive.extract", "archive.create"],
+  "archiveEngineMethods": {
+    "archive.list": { "params": { "archivePath": "string" }, "result": { "entries": "[{path,isDir,size,compressedSize}]" }, "deadline": "list" },
+    "archive.extract": { "params": { "archivePath": "string", "destination": "string", "operationId": "string?" }, "result": "null", "deadline": "transfer" },
+    "archive.read_entry": { "params": { "archivePath": "string", "innerPath": "string", "destination": "string", "maxBytes": "number", "maxEntries": "number", "operationId": "string?" }, "result": "null", "deadline": "read" },
+    "archive.create": { "params": { "archivePath": "string", "paths": "string[]", "operationId": "string?" }, "result": "null", "deadline": "transfer" },
+    "archive.rename": { "params": { "archivePath": "string", "innerPath": "string", "newPath": "string", "operationId": "string?" }, "result": "null", "deadline": "transfer" },
+    "archive.delete": { "params": { "archivePath": "string", "innerPaths": "string[]", "operationId": "string?" }, "result": "null", "deadline": "transfer" },
+    "archive.add": { "params": { "archivePath": "string", "baseDir": "string", "paths": "string[]", "operationId": "string?" }, "result": "null", "deadline": "transfer" }
+  },
+  "notifications": {
+    "archive.progress": {
+      "direction": "backend to service",
+      "params": { "operationId": "string", "current": "number", "total": "number", "currentItem": "string?" }
+    }
+  },
+  "deadlines": { "handshake": "5 s", "list": "30 s", "read": "120 s idle", "transfer": "600 s idle", "cancel": "5 s" },
+  "errors": {
+    "-32600": "request before plugin.handshake",
+    "-32601": "method not found",
+    "-32602": "invalid params",
+    "-32603": "handler panicked",
+    "-32000": "application error (\"Archive operation cancelled\" after a cancel)"
+  },
   "cancel": {
     "method": "cancel",
-    "params": ["operationId"]
+    "params": ["operationId"],
+    "cancelledMessage": "Archive operation cancelled",
+    "notes": "Sent by a client (host or service) as a request or a notification on any of its connections; visible to every connection of the backend while its id is in flight: while a request carrying that operationId runs, or, for an id returned by host.progress_begin, until the backend calls host.progress_complete or host.progress_fail for it or that connection closes. A cancel for an id not in flight is kept among the 64 most recent early cancels and makes the id start cancelled when it goes in flight; in-flight flags are never evicted. Plugin-owned methods may report a cancel in their result instead; see the plugin's own protocol.json."
   }
 }

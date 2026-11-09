@@ -135,11 +135,11 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `list_archive` | Archive viewer | `ArchiveViewerDialog` | `ArchivePaths` tests | Open a zip / 7z / rar | `MANUAL` |
-| `get_archive_capabilities` | Creatable/extractable archive formats | Create archive dialog | IPC + source-shape guard | Tools tab / create dialog | `PASS` |
-| `extract_archive` | Extract here / folder / to | Context extract + dialog | IPC | Extract zip / 7z / rar | `MANUAL` |
-| `create_archive` | zip/7z/tar/tar.gz | Create archive dialog | IPC; RAR create rejected | Compress selection | `MANUAL` |
-| `register_archive_engine` `unregister_archive_engine` | Plugin archive engines (extensions served by a plugin backend) | Service handler (no WinUI caller in plugin phase 1) | `crates/simplefile-service/tests/plugin_archive.rs` + dispatch tests | — | `PASS` |
+| `list_archive` | Archive viewer; `.7z` through the SumaFile 7-Zip plugin, and the plugin note without it | `ArchiveViewerDialog` | `ArchivePaths` tests; `sevenzip_plugin.rs` | Open a zip / 7z / rar | `MANUAL` |
+| `get_archive_capabilities` | Creatable/extractable archive formats; `.7z` is `plugin:com.sumafile.sevenzip` once registered, otherwise an `unavailable` row with the plugin note | Create archive dialog | IPC + source-shape guard; core capability tests; `sevenzip_plugin.rs` | Tools tab / create dialog | `PASS` |
+| `extract_archive` | Extract here / folder / to; with `operationId` it reports `operation-progress` and `cancel_operation` stops it | Context extract + dialog; plugin formats as a Transfers row with progress and Cancel (`ExtractArchiveTrackedAsync`) | IPC; session, `hello_plugin.rs` and `sevenzip_plugin.rs` progress and cancel tests; `FileOperationServiceTests` tracked tests | Extract zip / 7z / rar | `MANUAL` |
+| `create_archive` | zip/tar/tar.gz, and 7z through the SumaFile 7-Zip plugin; with `operationId` it reports `operation-progress` and `cancel_operation` stops it | Create archive dialog; plugin formats as a Transfers row with progress and Cancel (`CreateArchiveTrackedAsync`) | IPC; RAR create rejected; `sevenzip_plugin.rs` create, progress and cancel tests; `FileOperationServiceTests` tracked tests | Compress selection | `MANUAL` |
+| `register_archive_engine` `unregister_archive_engine` | Plugin archive engines (extensions served by a plugin backend) | `ArchiveEngineRegistrar` | `crates/simplefile-service/tests/plugin_archive.rs`, `hello_plugin.rs` + dispatch tests | — | `PASS` |
 
 ### 2.5 Git, terminals, tags, settings, updater
 
@@ -226,7 +226,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `nav.history` | Back/forward per pane | History stack | `ExplorerWorkspaceTests` | Alt+Left/Right | `PASS` |
 | `nav.up` | Parent; no-op on root | `GoUpAsync` | `GoUp` test | Alt+Up at `C:\` | `PASS` |
 | `nav.open-folder` | Double-click / Enter folder | `OpenEntryAsync` | Workspace tests | Open folder | `PASS` |
-| `nav.open-archive-folder` | Zip as folder | `IsSupportedArchivePath` | `OpenArchiveFile_NavigatesIntoArchive` | Open zip | `PASS` |
+| `nav.open-archive-folder` | Zip as folder; a plugin format (7z) only while its engine is registered | `IsSupportedArchivePath` (`ArchivePaths.IsBrowsableArchive`) | `OpenArchiveFile_NavigatesIntoArchive`; `ArchiveEngineNavigationTests` | Open zip | `PASS` |
 | `nav.dual-pane` | F6; first enable copies path | `ToggleDualPaneAsync` | `DualPaneAndTabsTests` | F6 twice | `PASS` |
 | `nav.pane-activate` | Click / Alt+1/2 / Ctrl+Shift+Left/Right | `ActivatePane` | Dual-pane tests | Switch panes | `PASS` |
 | `nav.pane-tab` | Tab switches panes when not in text | `OnRootPreviewKeyDown` | — | Tab in dual | `MANUAL` |

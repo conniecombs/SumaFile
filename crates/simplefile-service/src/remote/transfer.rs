@@ -1225,7 +1225,7 @@ pub(crate) fn transfer_entries_with_tuning(
     tuning: &dyn Fn(TuningUpdate),
 ) -> Result<RemoteTransferOutcome, String> {
     transfer_entries_with_policy(provider, request, cancel, emit, tuning, &|| {
-        Policy::for_operation(&request.operation_id)
+        crate::progress::policy_for_operation(&request.operation_id)
     })
 }
 
@@ -1363,10 +1363,10 @@ pub fn transfer_single(
         current: source.into(),
         last: Instant::now(),
         tuning: &|_| {},
-        policy: Policy::load(),
-        limiter: RateLimit::new(Policy::load().bandwidth_mib),
+        policy: crate::progress::load_policy(),
+        limiter: RateLimit::new(crate::progress::load_policy().bandwidth_mib),
         policy_checked: Instant::now(),
-        read_policy: &Policy::load,
+        read_policy: &crate::progress::load_policy,
         file_start: 0,
         total_bytes: 0,
         total_files: 0,

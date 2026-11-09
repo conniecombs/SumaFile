@@ -27,6 +27,25 @@ $serviceErrorFile = Join-Path $smokeRoot "service-stderr.txt"
 $pipe = $null
 $service = $null
 
+# The payload's bundled 7-Zip plugin, driven through the payload service.
+$sevenZipPluginId = "com.sumafile.sevenzip"
+$sevenZipPluginDir = Join-Path $payloadDir "plugins\$sevenZipPluginId"
+$sevenZipBackendPath = Join-Path $sevenZipPluginDir "sumafile-sevenzip-backend.exe"
+$sevenZipNote = "7-Zip support requires the SumaFile 7-Zip plugin."
+$sevenZipPipeName = "sumafile-7z-smoke-" + [System.Guid]::NewGuid().ToString("N")
+$sevenZipDataDir = Join-Path $smokeRoot "plugin-data"
+$sevenZipBackend = $null
+$sevenZipKeepAlive = $null
+
+# The payload's bundled remote plugin, driven directly over its pipe with the service's handshake.
+$remotePluginId = "com.sumafile.remote"
+$remotePluginDir = Join-Path $payloadDir "plugins\$remotePluginId"
+$remoteBackendPath = Join-Path $remotePluginDir "sumafile-remote-backend.exe"
+$remotePipeName = "sumafile-remote-smoke-" + [System.Guid]::NewGuid().ToString("N")
+$remoteDataDir = Join-Path $smokeRoot "remote-data"
+$remoteBackend = $null
+$remotePipe = $null
+
 function Test-JsonProperty {
     param(
         [Parameter(Mandatory = $true)]$Value,
@@ -157,6 +176,265 @@ function Assert-ProgressCompleted {
     Assert-Smoke (($matching | Where-Object { $_.status -eq "completed" } | Select-Object -First 1) -ne $null) "No completed progress event was emitted for $OperationId."
 }
 
+function Get-SevenZipCapability {
+    $capabilities = Invoke-Rpc "get_archive_capabilities"
+    $rows = @($capabilities.formats | Where-Object { $_.extension -eq ".7z" })
+    Assert-Smoke ($rows.Count -eq 1) "get_archive_capabilities returned $($rows.Count) .7z rows; expected exactly one."
+    return $rows[0]
+}
+
+function Get-SmokeTree {
+    # Every file under $Root by "/"-separated relative path, with its UTF-8 text.
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
+    $files = [ordered]@{}
+    foreach ($file in ([System.IO.Directory]::GetFiles($rootFull, "*", [System.IO.SearchOption]::AllDirectories) | Sort-Object)) {
+        $relative = $file.Substring($rootFull.Length).Replace('\', '/')
+        $files[$relative] = [System.IO.File]::ReadAllText($file, [System.Text.Encoding]::UTF8)
+    }
+    return $files
+}
+
+function Invoke-SevenZipPluginSmoke {
+    Assert-Smoke (Test-Path -LiteralPath $sevenZipBackendPath -PathType Leaf) "WinUI payload is missing the bundled 7-Zip plugin backend at $sevenZipBackendPath."
+    $manifest = [System.IO.File]::ReadAllText((Join-Path $sevenZipPluginDir "plugin.json"), [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    $row = @($manifest.contributions.archiveFormats | Where-Object { $_.extension -eq ".7z" })
+    Assert-Smoke ($row.Count -eq 1) "The payload's 7-Zip plugin.json must declare exactly one .7z archive format."
+    $row = $row[0]
+
+    New-Item -ItemType Directory -Force -Path $sevenZipDataDir | Out-Null
+    $script:sevenZipBackend = Start-Process `
+        -FilePath $sevenZipBackendPath `
+        -ArgumentList @("--pipe-name", $sevenZipPipeName, "--data-dir", "`"$sevenZipDataDir`"") `
+        -WorkingDirectory $sevenZipPluginDir `
+        -WindowStyle Hidden `
+        -PassThru
+
+    # The backend serves until its last client leaves, so hold one unhandshaken client for the whole smoke, as the
+    # host does. Connecting also waits for the pipe to appear.
+    $script:sevenZipKeepAlive = [System.IO.Pipes.NamedPipeClientStream]::new(".", $sevenZipPipeName, [System.IO.Pipes.PipeDirection]::InOut)
+    $script:sevenZipKeepAlive.Connect($TimeoutSeconds * 1000)
+
+    Invoke-Rpc "register_archive_engine" @{
+        pluginId = $sevenZipPluginId
+        pipeName = $sevenZipPipeName
+        formats = @(@{
+            extension = [string]$row.extension
+            canList = [bool]$row.canList
+            canExtract = [bool]$row.canExtract
+            canCreate = [bool]$row.canCreate
+            canModify = [bool]$row.canModify
+            engineName = [string]$row.engineName
+        })
+    } | Out-Null
+
+    $registered = Get-SevenZipCapability
+    Assert-Smoke ($registered.engine -eq "plugin:$sevenZipPluginId") "The .7z capability row has engine '$($registered.engine)'; expected plugin:$sevenZipPluginId."
+    Assert-Smoke ($registered.can_list -and $registered.can_extract -and $registered.can_create -and $registered.can_modify) "The registered .7z capability row must allow list, extract, create and modify."
+
+    # Unicode, spaces, brackets and '&' must survive create, list, browse and extract. Non-ASCII names are built
+    # from code points because Windows PowerShell reads this BOM-less script as ANSI.
+    $unicodeFolder = "caf" + [char]0x00E9 + " " + [char]0x8CC7 + [char]0x6599
+    $punctuatedFile = "literal [brackets] & spaces.txt"
+    $sevenZipSource = Join-Path $smokeRoot "sevenzip-source"
+    New-SmokeFile -Path (Join-Path $sevenZipSource "docs\a.txt") -Content "alpha from the 7-Zip plugin"
+    New-SmokeFile -Path (Join-Path (Join-Path $sevenZipSource $unicodeFolder) "hello.txt") -Content "hello from the 7-Zip plugin"
+    New-SmokeFile -Path (Join-Path $sevenZipSource $punctuatedFile) -Content "brackets & spaces"
+    $archivePath = Join-Path $smokeRoot "payload-smoke.7z"
+    $sourcePaths = @([System.IO.Directory]::GetFileSystemEntries($sevenZipSource) | Sort-Object)
+
+    Invoke-Rpc "create_archive" @{
+        paths = $sourcePaths
+        archivePath = $archivePath
+        format = "7z"
+        operationId = "smoke-7z-create"
+    } | Out-Null
+    Assert-Smoke ([System.IO.File]::Exists($archivePath)) "create_archive did not write $archivePath."
+    Assert-ProgressCompleted "smoke-7z-create"
+
+    $expectedFiles = @("docs/a.txt", "$unicodeFolder/hello.txt", $punctuatedFile)
+    $listing = Invoke-Rpc "list_archive" @{ path = $archivePath }
+    $listedFiles = @($listing.entries | Where-Object { -not $_.is_dir } | ForEach-Object { ([string]$_.path).Replace('\', '/') } | Sort-Object)
+    Assert-Smoke ((@($expectedFiles | Sort-Object) -join "|") -ceq ($listedFiles -join "|")) "list_archive returned files [$($listedFiles -join ', ')]; expected [$($expectedFiles -join ', ')]."
+
+    $browse = Invoke-Rpc "list_directory" @{ path = $archivePath; finalEntries = $true }
+    $browsed = @($browse.entries | ForEach-Object { [string]$_.name } | Sort-Object)
+    $expectedRoot = @("docs", $unicodeFolder, $punctuatedFile) | Sort-Object
+    Assert-Smoke ((@($expectedRoot) -join "|") -ceq ($browsed -join "|")) "list_directory on the archive returned [$($browsed -join ', ')]; expected [$($expectedRoot -join ', ')]."
+
+    $extracted = Join-Path $smokeRoot "sevenzip-extracted"
+    Invoke-Rpc "extract_archive" @{
+        archivePath = $archivePath
+        destination = $extracted
+        operationId = "smoke-7z-extract"
+    } | Out-Null
+    Assert-ProgressCompleted "smoke-7z-extract"
+    $sourceTree = Get-SmokeTree -Root $sevenZipSource
+    $extractedTree = Get-SmokeTree -Root $extracted
+    Assert-Smoke ((@($sourceTree.Keys) -join "|") -ceq (@($extractedTree.Keys) -join "|")) "extract_archive wrote [$(@($extractedTree.Keys) -join ', ')]; expected [$(@($sourceTree.Keys) -join ', ')]."
+    foreach ($name in $sourceTree.Keys) {
+        Assert-Smoke ($sourceTree[$name] -ceq $extractedTree[$name]) "extract_archive wrote different content for $name."
+    }
+
+    Invoke-Rpc "unregister_archive_engine" @{ pluginId = $sevenZipPluginId } | Out-Null
+    $unregistered = Get-SevenZipCapability
+    Assert-Smoke ($unregistered.engine -eq "unavailable") "After unregister the .7z capability row has engine '$($unregistered.engine)'; expected unavailable."
+    $note = if (Test-JsonProperty -Value $unregistered -Name "note") { [string]$unregistered.note } else { "" }
+    Assert-Smoke ($note -ceq $sevenZipNote) "After unregister the .7z capability note is '$note'; expected '$sevenZipNote'."
+    Assert-Smoke (-not ($unregistered.can_list -or $unregistered.can_extract -or $unregistered.can_create -or $unregistered.can_modify)) "After unregister the .7z capability row must allow nothing."
+
+    Write-Host "Payload 7-Zip plugin smoke passed."
+}
+
+function Stop-SevenZipBackend {
+    if ($script:sevenZipKeepAlive) {
+        $script:sevenZipKeepAlive.Dispose()
+        $script:sevenZipKeepAlive = $null
+    }
+
+    if ($script:sevenZipBackend) {
+        $script:sevenZipBackend.Refresh()
+        if (-not $script:sevenZipBackend.HasExited) {
+            try {
+                $script:sevenZipBackend.Kill()
+                $script:sevenZipBackend.WaitForExit(5000) | Out-Null
+            }
+            catch {
+                Write-Warning "Could not stop sumafile-sevenzip-backend.exe: $($_.Exception.Message)"
+            }
+        }
+
+        $script:sevenZipBackend.Dispose()
+        $script:sevenZipBackend = $null
+    }
+}
+
+function Invoke-PluginRpc {
+    # One request to a plugin backend on $Stream, as the service would send it. With the service's handshake the
+    # backend never sends host.* requests or events; any request that arrives anyway is refused so it cannot hang.
+    param(
+        [Parameter(Mandatory = $true)][System.IO.Stream]$Stream,
+        [Parameter(Mandatory = $true)][string]$Method,
+        $Params = $null
+    )
+
+    $script:nextId += 1
+    $id = $script:nextId
+    $request = [ordered]@{ jsonrpc = "2.0"; id = $id; method = $Method }
+    if ($null -ne $Params) {
+        $request.params = $Params
+    }
+    Write-Frame -Stream $Stream -Payload $request
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $message = Read-Frame -Stream $Stream
+        $isRequest = (Test-JsonProperty -Value $message -Name "method")
+        if ($isRequest) {
+            if (Test-JsonProperty -Value $message -Name "id") {
+                Write-Frame -Stream $Stream -Payload ([ordered]@{
+                    jsonrpc = "2.0"
+                    id = $message.id
+                    error = [ordered]@{ code = -32601; message = "The payload smoke does not serve $($message.method)." }
+                })
+            }
+            continue
+        }
+
+        if ((Test-JsonProperty -Value $message -Name "id") -and [int]$message.id -eq $id) {
+            if ((Test-JsonProperty -Value $message -Name "error") -and $null -ne $message.error) {
+                throw "Plugin method $Method failed: $($message.error.message)"
+            }
+
+            return $message.result
+        }
+    }
+
+    throw "Timed out waiting for the plugin's reply to $Method."
+}
+
+function Invoke-RemotePluginSmoke {
+    Assert-Smoke (Test-Path -LiteralPath $remoteBackendPath -PathType Leaf) "WinUI payload is missing the bundled remote plugin backend at $remoteBackendPath."
+    New-Item -ItemType Directory -Force -Path $remoteDataDir | Out-Null
+
+    # The legacy import reads a disposable database that does not exist, never the user's metadata.db.
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $remoteBackendPath
+    $start.Arguments = "--pipe-name $remotePipeName --data-dir `"$remoteDataDir`""
+    $start.WorkingDirectory = $remotePluginDir
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.EnvironmentVariables["SIMPLEFILE_METADATA_DB"] = Join-Path $smokeRoot "none.db"
+    $script:remoteBackend = [System.Diagnostics.Process]::Start($start)
+
+    $script:remotePipe = [System.IO.Pipes.NamedPipeClientStream]::new(".", $remotePipeName, [System.IO.Pipes.PipeDirection]::InOut)
+    $script:remotePipe.Connect($TimeoutSeconds * 1000)
+
+    # The service's client name: every host.* call but log fails fast, so nothing waits on this smoke.
+    $handshake = Invoke-PluginRpc -Stream $script:remotePipe -Method "plugin.handshake" -Params ([ordered]@{
+        pluginId = $remotePluginId
+        hostVersion = "1.0.4"
+        sdkVersion = "1.0.0"
+        client = "simplefile-service"
+    })
+    Assert-Smoke ($handshake.pluginId -eq $remotePluginId) "The remote backend's handshake names '$($handshake.pluginId)'; expected $remotePluginId."
+
+    $profiles = @(Invoke-PluginRpc -Stream $script:remotePipe -Method "profiles.list")
+    Assert-Smoke ($profiles.Count -eq 0) "profiles.list returned $($profiles.Count) profiles before any save; expected none."
+
+    $saved = Invoke-PluginRpc -Stream $script:remotePipe -Method "profiles.save" -Params ([ordered]@{
+        profile = [ordered]@{
+            name = "Payload smoke SFTP"
+            protocol = "sftp"
+            host = "127.0.0.1"
+            port = 22
+            username = "smoke"
+            root_path = "/"
+            auth_kind = "password"
+            insecure_plain_ftp = $false
+            passive_mode = $false
+        }
+    })
+    $profileId = [string]$saved.id
+    Assert-Smoke (-not [string]::IsNullOrWhiteSpace($profileId)) "profiles.save returned no profile id."
+    $expectedTarget = "SumaFile.Remote.$profileId"
+    Assert-Smoke ([string]$saved.credential_target -ceq $expectedTarget) "profiles.save returned credential_target '$($saved.credential_target)'; expected $expectedTarget."
+
+    $profiles = @(Invoke-PluginRpc -Stream $script:remotePipe -Method "profiles.list")
+    Assert-Smoke ($profiles.Count -eq 1 -and [string]$profiles[0].id -ceq $profileId) "profiles.list after the save returned [$(@($profiles | ForEach-Object { $_.id }) -join ', ')]; expected [$profileId]."
+
+    # No secret was saved, so the delete removes no credential this smoke did not write.
+    Invoke-PluginRpc -Stream $script:remotePipe -Method "profiles.delete" -Params ([ordered]@{ profileId = $profileId }) | Out-Null
+    $profiles = @(Invoke-PluginRpc -Stream $script:remotePipe -Method "profiles.list")
+    Assert-Smoke ($profiles.Count -eq 0) "profiles.list after the delete returned $($profiles.Count) profiles; expected none."
+
+    Write-Host "Payload remote plugin smoke passed."
+}
+
+function Stop-RemoteBackend {
+    if ($script:remotePipe) {
+        $script:remotePipe.Dispose()
+        $script:remotePipe = $null
+    }
+
+    if ($script:remoteBackend) {
+        $script:remoteBackend.Refresh()
+        if (-not $script:remoteBackend.HasExited) {
+            try {
+                $script:remoteBackend.Kill()
+                $script:remoteBackend.WaitForExit(5000) | Out-Null
+            }
+            catch {
+                Write-Warning "Could not stop sumafile-remote-backend.exe: $($_.Exception.Message)"
+            }
+        }
+
+        $script:remoteBackend.Dispose()
+        $script:remoteBackend = $null
+    }
+}
+
 function Remove-SmokeRoot {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -262,8 +540,14 @@ try {
     }
 
     Write-Host "WinUI packaged file-operation smoke passed: copy, cut/paste move, drop target, conflicts, and progress."
+
+    Invoke-SevenZipPluginSmoke
+    Invoke-RemotePluginSmoke
 }
 finally {
+    Stop-SevenZipBackend
+    Stop-RemoteBackend
+
     if ($pipe) {
         try {
             if ($pipe.IsConnected) {

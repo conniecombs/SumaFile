@@ -262,6 +262,19 @@ public class UxShellTests
         Assert.Contains("\"Select a file\"", Read("PreviewPresenter.cs"));
     }
 
+    // Plugin phase 2 verification: a ContentDialog's popup is listed as open before its first layout
+    // pass applies the template and adds the content, so the smoke must wait for the loaded dialog and
+    // the controls it drives, not only for the popup ("Sequence contains no matching element" otherwise).
+    [Fact]
+    public void UiSmoke_WaitsForTheTransferOptionsControlsBeforeDrivingThem()
+    {
+        var wait = Slice(Read("MainWindow.UiSmoke.Transfers.cs"),
+            "var optionsTask = TransferOptionsDialog.ShowAsync(", "\"transfer options dialog controls\");");
+        Assert.Contains("dialog is { IsLoaded: true }", wait);
+        Assert.Contains("SmokeDescendants<ComboBox>(dialog).Any(c => Equals(c.Header, \"Mode\"))", wait);
+        Assert.Contains("SmokeDescendants<Button>(dialog).Any(b => b.Name == \"PrimaryButton\")", wait);
+    }
+
     // Final review I5: the backend is "SumaFile's file service" in user-facing copy.
     [Fact]
     public void ServiceMessages_NameSumaFilesFileService()

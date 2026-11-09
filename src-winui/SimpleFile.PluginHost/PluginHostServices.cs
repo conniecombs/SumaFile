@@ -20,6 +20,7 @@ public sealed class PluginHostServices : IPluginHost
         IPluginProgressSink progress,
         IPluginDialogs dialogs,
         IPluginWorkspace workspace,
+        IPluginWindows windows,
         Action<string, string> log)
     {
         PluginId = pluginId;
@@ -28,6 +29,7 @@ public sealed class PluginHostServices : IPluginHost
         Progress = new ProgressFacade(pluginId, progress);
         Dialogs = dialogs;
         Workspace = workspace;
+        Windows = windows;
         Logger = new LoggerFacade(pluginId, log);
     }
 
@@ -37,6 +39,7 @@ public sealed class PluginHostServices : IPluginHost
     public IPluginDialogs Dialogs { get; }
     public IPluginWorkspace Workspace { get; }
     public IPluginLogger Logger { get; }
+    public IPluginWindows Windows { get; }
 
     private Task<PluginBackendConnection> GetBackend()
     {

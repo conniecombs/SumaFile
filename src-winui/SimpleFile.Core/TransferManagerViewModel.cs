@@ -257,6 +257,12 @@ public sealed class TransferOperationViewModel : ObservableObject
 
     public bool CanCancel => Status is TransferOperationStatus.Queued or TransferOperationStatus.Running;
 
+    /// <summary>
+    /// The per-task Options button. Only the service's local engine reads <c>transfer.overrides.v1</c>, so an external
+    /// row (a plugin or archive-engine row) never offers it; a remote transfer's settings live in its plugin.
+    /// </summary>
+    public bool CanChangeOptions => CanCancel && !IsExternal;
+
     public bool IsTerminal => Status is
         TransferOperationStatus.Completed or
         TransferOperationStatus.Cancelled or
@@ -456,6 +462,7 @@ public sealed class TransferOperationViewModel : ObservableObject
         OnPropertyChanged(nameof(StatusLabel));
         OnPropertyChanged(nameof(StatusDetailText));
         OnPropertyChanged(nameof(CanCancel));
+        OnPropertyChanged(nameof(CanChangeOptions));
         OnPropertyChanged(nameof(IsTerminal));
     }
 

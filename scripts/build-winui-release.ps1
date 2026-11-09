@@ -18,7 +18,9 @@ $distRoot = Join-Path $root "dist\winui"
 $payloadDir = Join-Path $distRoot "payload"
 $iconPath = Join-Path $root "packaging\winui\icon.ico"
 $appProject = Join-Path $root "src-winui\SimpleFile.App\SimpleFile.App.csproj"
-$sevenZipBundleDir = Join-Path $root "third_party\7zip\win-x64"
+
+# Install-BundledPlugins and Assert-BundledPlugins stage and check payload\plugins and its bundled.json.
+. (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
 
 function Write-Step {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -157,24 +159,13 @@ function Assert-Payload {
         }
     }
 
-    foreach ($required in @("7za.exe", "7za.dll", "7zxa.dll", "License.txt")) {
-        $path = Join-Path (Join-Path $Directory "tools\7zip") $required
-        if (-not (Test-Path -LiteralPath $path)) {
-            throw "WinUI payload is missing bundled 7-Zip file $required under $Directory\tools\7zip."
-        }
-    }
-}
-
-function Copy-BundledArchiveTools {
-    param([Parameter(Mandatory = $true)][string]$Destination)
-
-    if (-not (Test-Path -LiteralPath $sevenZipBundleDir)) {
-        throw "Bundled 7-Zip directory is missing: $sevenZipBundleDir"
+    # 7-Zip ships as the bundled plugin; the payload must not bring back 1.0.4's tools\7zip.
+    $legacySevenZip = Join-Path $Directory "tools\7zip"
+    if (Test-Path -LiteralPath $legacySevenZip) {
+        throw "WinUI payload must not contain $legacySevenZip; 7-Zip ships as the bundled plugin in plugins\com.sumafile.sevenzip."
     }
 
-    $destinationDir = Join-Path $Destination "tools\7zip"
-    New-Item -ItemType Directory -Force -Path $destinationDir | Out-Null
-    Copy-Item -Path (Join-Path $sevenZipBundleDir "*") -Destination $destinationDir -Recurse -Force
+    Assert-BundledPlugins -Root (Join-Path $Directory "plugins")
 }
 
 function Get-Sha256Hash {
@@ -238,7 +229,7 @@ function Get-LikelyWinUILockHolder {
     }
 
     $forward = $resolved.Replace('\', '/')
-    $processNames = @("SumaFile.exe", "SimpleFile.App.exe", "SimpleFile.exe", "simplefile-service.exe")
+    $processNames = @("SumaFile.exe", "SimpleFile.App.exe", "SimpleFile.exe", "simplefile-service.exe", "sumafile-sevenzip-backend.exe", "sumafile-remote-backend.exe")
     $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
     if (-not $processes) {
         return @()
@@ -325,7 +316,7 @@ function New-WinUIPayload {
     }
 
     Copy-Item -LiteralPath $ServiceExe -Destination (Join-Path $Destination "simplefile-service.exe") -Force
-    Copy-BundledArchiveTools -Destination $Destination
+    Install-BundledPlugins -Root (Join-Path $Destination "plugins") -Configuration Release
     Assert-Payload $Destination
 }
 
@@ -357,6 +348,8 @@ if (-not $SkipChecks) {
 
 Write-Step "Build simplefile-service"
 Invoke-Native cargo @("build", "-p", "simplefile-service", "--locked", "--release")
+Invoke-Native cargo @("build", "-p", "sumafile-sevenzip-backend", "--locked", "--release")
+Invoke-Native cargo @("build", "-p", "sumafile-remote-backend", "--locked", "--release")
 
 $serviceExe = Find-ServiceExecutable
 if (-not $serviceExe) {
@@ -376,6 +369,14 @@ $publishDir = Find-PublishDirectory
 if (-not $publishDir) {
     throw "dotnet publish did not produce SumaFile.exe under src-winui\\SimpleFile.App\\bin\\**\\publish."
 }
+
+# The App publish does not build plugin projects; Install-BundledPlugins stages the remote UI from bin\Release.
+Write-Step "Build the remote plugin UI"
+Invoke-Native dotnet @(
+    "build", (Join-Path $root "plugins\remote\ui\SumaFile.Remote\SumaFile.Remote.csproj"),
+    "-c", "Release",
+    "--nologo"
+)
 
 New-WinUIPayload -PublishDir $publishDir -ServiceExe $serviceExe -Destination $payloadDir
 

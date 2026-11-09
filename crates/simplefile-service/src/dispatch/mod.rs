@@ -158,6 +158,21 @@ impl std::fmt::Debug for BlockingJob {
     }
 }
 
+/// A tracked archive extract or create: it reports `operation-progress` and
+/// `cancel_operation` stops it.
+#[derive(Debug)]
+pub(crate) enum ArchiveOperation {
+    Extract {
+        archive_path: String,
+        destination: String,
+    },
+    Create {
+        paths: Vec<String>,
+        archive_path: String,
+        format: String,
+    },
+}
+
 #[derive(Debug)]
 pub(crate) enum Dispatch {
     Reply(JsonRpcResponse),
@@ -187,6 +202,12 @@ pub(crate) enum Dispatch {
     CancelOperation {
         id: Option<Value>,
         operation_id: String,
+    },
+    /// `extract_archive` or `create_archive` with an `operationId`.
+    ArchiveOperation {
+        id: Option<Value>,
+        operation_id: String,
+        operation: ArchiveOperation,
     },
     SearchFiles {
         id: Option<Value>,

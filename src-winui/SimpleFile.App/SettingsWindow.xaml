@@ -560,7 +560,8 @@
                     </StackPanel>
                     <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
                         <TextBlock Text="Archive support" FontWeight="SemiBold" />
-                        <TextBlock Text="ZIP, TAR, TAR.GZ, 7z, and RAR extraction are handled by SumaFile. RAR creation is not supported." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
+                        <TextBlock Text="ZIP, TAR and TAR.GZ are built in. RAR archives can be listed and extracted but not created." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="ArchivePluginFormatsText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
                     </StackPanel>
                 </StackPanel>
                 

@@ -245,6 +245,39 @@ public class PluginBackendHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DisposeAsync_WaitsUpToTwoSecondsForTheBackendToExit()
+    {
+        var launcher = Launcher(async (s, ct) =>
+        {
+            await AnswerHandshake(s, ct);
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+
+        // A backend that takes 300 ms to die after Kill: dispose returns only once it has exited.
+        var slow = await Host(launcher).StartAsync(Plugin(), CancellationToken.None);
+        var slowProcess = launcher.Process!;
+        slowProcess.ExitDelay = TimeSpan.FromMilliseconds(300);
+        var sw = Stopwatch.StartNew();
+        await slow.DisposeAsync();
+        sw.Stop();
+        Assert.True(slowProcess.Killed);
+        Assert.True(slowProcess.HasExited, "dispose returned before the backend exited");
+        Assert.True(sw.Elapsed >= TimeSpan.FromMilliseconds(250), $"took {sw.Elapsed}");
+
+        // A backend that never exits: dispose gives up after about 2 s.
+        var stuck = await Host(launcher).StartAsync(Plugin(), CancellationToken.None);
+        var stuckProcess = launcher.Process!;
+        stuckProcess.ExitDelay = null;
+        sw.Restart();
+        await stuck.DisposeAsync();
+        sw.Stop();
+        Assert.True(stuckProcess.Killed);
+        Assert.False(stuckProcess.HasExited);
+        Assert.True(sw.Elapsed >= TimeSpan.FromSeconds(1.5), $"took {sw.Elapsed}");
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2.5), $"took {sw.Elapsed}");
+    }
+
+    [Fact]
     public async Task Connection_HostRequestFromBackend_IsAnswered()
     {
         var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -278,10 +311,27 @@ internal sealed class FakePluginProcess : IPluginProcess
     public bool HasExited => Volatile.Read(ref _exited) != 0;
     public event EventHandler? Exited;
 
+    /// <summary>How long the process takes to exit after <see cref="Kill"/>; null means it never exits.</summary>
+    public TimeSpan? ExitDelay { get; set; } = TimeSpan.Zero;
+
+    /// <summary>Called on every <see cref="Kill"/>, so a test can record when the backend was stopped.</summary>
+    public Action? OnKill { get; set; }
+
     public void Kill()
     {
         Killed = true;
-        SimulateExit();
+        OnKill?.Invoke();
+        switch (ExitDelay)
+        {
+            case null:
+                break;
+            case { } delay when delay <= TimeSpan.Zero:
+                SimulateExit();
+                break;
+            case { } delay:
+                _ = Task.Delay(delay).ContinueWith(_ => SimulateExit(), TaskScheduler.Default);
+                break;
+        }
     }
 
     public void SimulateExit()

@@ -1,0 +1,44 @@
+[package]
+name = "sumafile-remote-backend"
+version = "1.0.0"
+description = "Backend of the first-party SumaFile FTP/SFTP plugin: profiles, credentials, sessions and transfers"
+authors = ["SumaFile Team"]
+license = "MIT"
+repository = "https://github.com/conniecombs/SumaFile"
+edition = "2021"
+publish = false
+
+[lib]
+name = "sumafile_remote_backend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sumafile-remote-backend"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = "0.1"
+chrono = "0.4"
+getrandom = "0.4"
+log = "0.4"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+russh = { version = "0.63.3", default-features = false, features = ["flate2", "ring"] }
+russh-sftp = "3.0.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+sumafile-plugin = { path = "../../../crates/sumafile-plugin" }
+sumafile-transfer = { path = "../../../crates/sumafile-transfer" }
+suppaftp = { version = "12.0.1", features = ["native-tls"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+
+[dev-dependencies]
+simplefile-ipc = { path = "../../../crates/simplefile-ipc" }
+sumafile-plugin = { path = "../../../crates/sumafile-plugin", features = ["test-support"] }
+sumafile-remote-test-server = { path = "../test-server" }
+sumafile-transfer = { path = "../../../crates/sumafile-transfer", features = ["test-support"] }
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }

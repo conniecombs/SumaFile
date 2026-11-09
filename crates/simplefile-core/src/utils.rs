@@ -295,16 +295,10 @@ fn is_remote_like_file_system(file_system: &str) -> bool {
     crate::drives::file_system_is_remote_like(file_system)
 }
 
+/// Forwards to the one process-wide counter in `sumafile_transfer::ids`, so
+/// transfer ids and every other operation id never collide.
 pub fn generate_operation_id() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    format!("op_{secs}_{count}")
+    sumafile_transfer::ids::generate_transfer_operation_id()
 }
 
 /// Validate a path that must exist while preserving the exact path supplied.
@@ -558,6 +552,16 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn core_and_transfer_operation_ids_share_one_counter() {
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..500 {
+            assert!(ids.insert(super::generate_operation_id()));
+            assert!(ids.insert(sumafile_transfer::ids::generate_transfer_operation_id()));
+        }
+        assert_eq!(ids.len(), 1000);
     }
 
     fn remove_temp_dir(path: &Path) {

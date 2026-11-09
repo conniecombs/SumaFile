@@ -1,7 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text;
 using SimpleFile.PluginHost.Discovery;
+using SimpleFile.PluginHost.Trust;
 using Xunit;
 
 namespace SimpleFile.Tests;
@@ -145,51 +147,43 @@ public class PluginDiscoveryTests
     }
 
     [Fact]
-    public void DefaultRoots_InstallThenLocalAppData()
+    public void Scan_RecordsTheManifestHashFromItsOnlyRead()
     {
-        var roots = PluginDiscovery.DefaultRoots();
-        Assert.Equal(2, roots.Count);
-        Assert.Equal(Path.Combine(AppContext.BaseDirectory, "plugins"), roots[0]);
-        Assert.Equal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile", "plugins"), roots[1]);
-    }
-
-    // DefaultRoots reads a process-wide variable; every test touching it lives in this class so xUnit runs them one at a time.
-    [Fact]
-    public void DefaultRoots_EnvOverride_ReplacesDefaultsAndSkipsEmpties()
-    {
-        var previous = Environment.GetEnvironmentVariable(PluginDiscovery.RootsVariable);
+        var tmp = NewTemp();
         try
         {
-            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, @" C:\one ;;  ; C:\two");
-            Assert.Equal([@"C:\one", @"C:\two"], PluginDiscovery.DefaultRoots());
-
-            // Only separators and blanks: no usable entry, so the defaults stay.
-            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, " ; ");
-            Assert.Equal(2, PluginDiscovery.DefaultRoots().Count);
-            Assert.Equal(Path.Combine(AppContext.BaseDirectory, "plugins"), PluginDiscovery.DefaultRoots()[0]);
-
-            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, null);
-            Assert.Equal(Path.Combine(AppContext.BaseDirectory, "plugins"), PluginDiscovery.DefaultRoots()[0]);
+            var folder = Plugin(tmp, "com.example.a");
+            var p = Assert.Single(PluginDiscovery.Scan([tmp]));
+            Assert.Equal(DiscoveryState.Valid, p.State);
+            Assert.Equal(PluginPackageHash.ComputeManifestHash(folder), p.ManifestHash);
         }
-        finally
-        {
-            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, previous);
-        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
 
     [Fact]
-    public void UserRoot_IsLocalAppData_EvenWithEnvOverride()
+    public void Scan_ManifestWithUtf8Bom_IsValid()
     {
-        var expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile", "plugins");
-        var previous = Environment.GetEnvironmentVariable(PluginDiscovery.RootsVariable);
+        var tmp = NewTemp();
         try
         {
-            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, @"C:\only");
-            Assert.Equal(expected, PluginDiscovery.UserRoot());
+            var folder = Path.Combine(tmp, "com.example.a");
+            Directory.CreateDirectory(folder);
+            var path = Path.Combine(folder, "plugin.json");
+            File.WriteAllText(path, Manifest("com.example.a"), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+            Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, File.ReadAllBytes(path)[..3]);
+
+            var p = Assert.Single(PluginDiscovery.Scan([tmp]));
+
+            Assert.Equal(DiscoveryState.Valid, p.State);
+            Assert.Empty(p.Errors);
+            Assert.Equal("com.example.a", p.Manifest!.Id);
+            // The hash covers the bytes on disk, BOM included, as the approvals and bundled.json record it.
+            Assert.Equal(PluginPackageHash.ComputeManifestHash(folder), p.ManifestHash);
         }
-        finally
-        {
-            Environment.SetEnvironmentVariable(PluginDiscovery.RootsVariable, previous);
-        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
+
+    [Fact]
+    public void InstallRoot_IsThePluginsFolderNextToTheApp() =>
+        Assert.Equal(Path.Combine(AppContext.BaseDirectory, "plugins"), PluginDiscovery.InstallRoot());
 }

@@ -324,6 +324,9 @@ pub(super) struct ExtractArchiveParams {
     #[serde(rename = "archivePath")]
     pub(super) archive_path: String,
     pub(super) destination: String,
+    /// Present for a tracked extract: progress, cancel and a Transfers row.
+    #[serde(rename = "operationId", default)]
+    pub(super) operation_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -357,6 +360,9 @@ pub(super) struct CreateArchiveParams {
     #[serde(rename = "archivePath")]
     pub(super) archive_path: String,
     pub(super) format: String,
+    /// Present for a tracked create: progress, cancel and a Transfers row.
+    #[serde(rename = "operationId", default)]
+    pub(super) operation_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

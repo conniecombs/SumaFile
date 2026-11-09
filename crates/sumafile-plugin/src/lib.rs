@@ -2,8 +2,9 @@
 //!
 //! A backend executable calls [`Args::parse`] on its command line, then
 //! [`serve`] with a [`PluginHandler`]. The crate owns the named pipe server,
-//! the `plugin.handshake`, routing of requests to the handler, `cancel`
-//! flags and the [`HostClient`] used for `host.*` calls back to the host.
+//! the `plugin.handshake`, routing of requests to the handler, backend-wide
+//! `cancel` flags, `archive.progress` notifications and the [`HostClient`]
+//! used for `host.*` calls back to the host.
 
 use std::path::PathBuf;
 
@@ -15,11 +16,18 @@ mod host;
 mod server;
 
 pub use async_trait::async_trait;
-pub use host::{HostClient, DEFAULT_CALL_TIMEOUT, SERVICE_CONNECTION_ERROR};
+pub use host::{
+    HostClient, ARCHIVE_PROGRESS_NOTIFICATION, DEFAULT_CALL_TIMEOUT, EARLY_CANCEL_LIMIT,
+    SERVICE_CONNECTION_ERROR,
+};
 pub use server::serve;
 
 /// Version of the plugin SDK protocol this crate speaks.
 pub const SDK_VERSION: &str = "1.0.0";
+
+/// Error message an archive operation fails with after its `cancel`. The
+/// service and the host recognise a cancelled operation by this exact text.
+pub const CANCELLED_MESSAGE: &str = "Archive operation cancelled";
 
 /// Identity reported in the handshake reply.
 #[derive(Debug, Clone, PartialEq, Eq)]

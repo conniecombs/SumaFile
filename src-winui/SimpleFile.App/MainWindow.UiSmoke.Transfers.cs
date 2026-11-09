@@ -35,11 +35,15 @@ public sealed partial class MainWindow
         var view = (FrameworkElement)_transferProgressWindow!.Content;
         var optionsTask = TransferOptionsDialog.ShowAsync(view.XamlRoot, backend);
         ContentDialog? dialog = null;
+        // The popup is listed as open before the dialog's first layout pass applies its template and adds
+        // its content, so wait for the loaded dialog and the controls driven below, not only for the popup.
         await SmokeWaitAsync(() =>
         {
             dialog = VisualTreeHelper.GetOpenPopupsForXamlRoot(view.XamlRoot).Select(p => p.Child).OfType<ContentDialog>().FirstOrDefault();
-            return dialog is not null;
-        }, "transfer options dialog");
+            return dialog is { IsLoaded: true }
+                && SmokeDescendants<ComboBox>(dialog).Any(c => Equals(c.Header, "Mode"))
+                && SmokeDescendants<Button>(dialog).Any(b => b.Name == "PrimaryButton");
+        }, "transfer options dialog controls");
         var mode = SmokeDescendants<ComboBox>(dialog!).Single(c => Equals(c.Header, "Mode"));
         var numbers = SmokeDescendants<NumberBox>(dialog!).ToArray();
         mode.SelectedIndex = 3;

@@ -971,12 +971,13 @@ public class NamedPipeJsonClientTests
         });
         Assert.False((await capabilities).Formats[0].CanCreate);
 
-        var extract = client.ExtractArchiveAsync(@"C:\pack.zip", @"C:\out");
+        var extract = client.ExtractArchiveAsync(@"C:\pack.zip", @"C:\out", operationId: "archive-1");
         var extractRequest = await server.ReadRequestAsync();
         Assert.Equal(Protocol.ExtractArchiveMethod, extractRequest.Method);
         var extractParams = Assert.IsType<JsonElement>(extractRequest.Params);
         Assert.Equal(@"C:\pack.zip", extractParams.GetProperty("archivePath").GetString());
         Assert.Equal(@"C:\out", extractParams.GetProperty("destination").GetString());
+        Assert.Equal("archive-1", extractParams.GetProperty("operationId").GetString());
         await server.SendResultAsync(extractRequest.Id, null);
         await extract;
 

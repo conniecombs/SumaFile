@@ -136,10 +136,15 @@
     "open_external_url": { "params": { "url": "string" }, "result": "null" },
     "list_archive": { "params": { "path": "string" }, "result": "ArchiveInfo" },
     "get_archive_capabilities": { "params": null, "result": "ArchiveCapabilities" },
-    "extract_archive": { "params": { "archivePath": "string", "destination": "string" }, "result": "null" },
+    "extract_archive": {
+      "params": { "archivePath": "string", "destination": "string", "operationId": "string?" },
+      "result": "null",
+      "progressEvent": "operation-progress"
+    },
     "create_archive": {
-      "params": { "paths": "string[]", "archivePath": "string", "format": "ArchiveFormat" },
-      "result": "null"
+      "params": { "paths": "string[]", "archivePath": "string", "format": "ArchiveFormat", "operationId": "string?" },
+      "result": "null",
+      "progressEvent": "operation-progress"
     },
     "register_archive_engine": {
       "params": { "pluginId": "string", "pipeName": "string", "formats": "ArchiveEngineFormat[]" },

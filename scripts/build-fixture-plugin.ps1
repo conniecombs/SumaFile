@@ -18,6 +18,10 @@ try {
     & cargo @cargoArgs
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE." }
 
+    # The loopback SFTP test server the remote plugin's tests and smokes run against. Built, never staged.
+    & cargo build --locked -p sumafile-remote-test-server
+    if ($LASTEXITCODE -ne 0) { throw "cargo build of sumafile-remote-test-server failed with exit code $LASTEXITCODE." }
+
     & dotnet build $fixtureProject -c $Configuration --nologo
     if ($LASTEXITCODE -ne 0) { throw "dotnet build failed with exit code $LASTEXITCODE." }
 }

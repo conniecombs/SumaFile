@@ -165,7 +165,8 @@ public sealed partial class MainWindow : Window
             ApplyCommandSurfaceLayout,
             ClearRecentHistoryAsync,
             action => DispatcherQueue.TryEnqueue(() => action()),
-            () => _plugins);
+            () => _plugins,
+            EnqueueArchiveTransfer);
 
         RootGrid.ActualThemeChanged += OnRootActualThemeChanged;
         Title = "SumaFile";
@@ -205,6 +206,9 @@ public sealed partial class MainWindow : Window
     {
         var timer = new StartupTimer("MainWindow.Connect");
         timer.Mark("begin");
+        // On the thread pool while the file service starts: reads every manifest, bundled.json and the approvals
+        // file, so the plugins-discovered span below holds only evaluation (spec §5.2's 50 ms budget).
+        var pluginScan = PreparePluginScan();
         try
         {
             SetStatusText("Starting SumaFile's file service...");
@@ -221,7 +225,7 @@ public sealed partial class MainWindow : Window
                 journal = new OperationJournal(System.IO.Path.Combine(smokeRoot, "operations.jsonl"));
 #endif
             var fileOps = new FileOperationService(client, journal);
-            await InitializePluginsAsync(fileOps, timer);
+            await InitializePluginsAsync(fileOps, timer, pluginScan);
             _workspace = new ExplorerWorkspace(_backend, fileOps);
             AppServices.Configure(_workspace);
             _search = AppServices.GetRequired<SearchViewModel>();
@@ -235,6 +239,9 @@ public sealed partial class MainWindow : Window
             await _workspace.InitializeAsync(deferInitialNavigation: true);
             timer.Mark("workspace-initialized");
             OnPluginWorkspaceInitialized();
+            // Not awaited: startup must not wait on the service for this. Engines that register later raise
+            // Changed, which refreshes again.
+            _ = RefreshArchiveCapabilitiesAsync();
             ApplyKeyboardShortcuts();
             await LoadOpenWithPreferencesAsync(fileOps, CancellationToken.None);
             timer.Mark("open-with-preferences");
@@ -247,6 +254,9 @@ public sealed partial class MainWindow : Window
             SyncFromWorkspace();
             timer.Mark("first-sync");
             timer.Mark("ready");
+            // Startup is ready: plugin sidebar sections may now load their bodies, at low priority (like the
+            // consent prompts). Before the smoke check, so the UI smoke runs with the same rule.
+            QueuePluginSectionActivation();
 #if DEBUG
             if (await RunUiSmokeIfRequestedAsync()) return;
 #endif
@@ -403,6 +413,20 @@ public sealed partial class MainWindow : Window
             if (backend.Client is not null)
             {
                 _workspace.FileOps?.ReplaceIpc(backend.Client);
+                // The restarted service has no plugin engines yet: drop them from ArchivePaths now, so the panes
+                // inside those archives show the note, and the Changed raised when re-registration ends sees
+                // the engines come back and re-lists them. Without this, ArchivePaths would keep the engines
+                // from before the restart and that later refresh would see no change. Not awaited; refreshes
+                // run one at a time, so a re-registration that wins the race only makes this one a no-op.
+                _ = RefreshArchiveCapabilitiesAsync();
+                // The restarted service knows no plugin archive engines. Not awaited: against a stuck service the
+                // attempts take about 50 s, and the refreshes and the message below must not wait for them. The
+                // Changed it raises when done refreshes the archive capabilities.
+                if (_plugins is not null)
+                {
+                    _ = ObserveAsync(_plugins.ReregisterArchiveEnginesAsync(_pluginCts?.Token ?? CancellationToken.None));
+                }
+
                 _fileChangeSubscription = backend.Client.On<FileChangeEvent>(Protocol.FileChangeEvent, OnFileChange);
             }
 
@@ -1335,6 +1359,8 @@ public sealed partial class MainWindow : Window
         _transfer?.Reset();
         CloseTransferProgressWindow();
         CloseRemoteManagerWindow();
+        // Plugin windows close with the main window, before the awaits below (the plugin teardown then finds none).
+        ClosePluginWindows();
         _search?.ClearState(notifyHost: false);
         _paneSizeColumnRefreshTimer?.Stop();
         _paneSizeColumnRefreshTimer = null;

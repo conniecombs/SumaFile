@@ -157,6 +157,28 @@ where
                         },
                     );
                 }
+                Dispatch::ArchiveOperation {
+                    id,
+                    operation_id,
+                    operation,
+                } => {
+                    // Registered before spawning, so a cancel_operation that
+                    // follows the start request finds the token.
+                    let cancel = operations.register(&operation_id).await;
+                    jobs::spawn_archive_operation(
+                        writer.clone(),
+                        operations.clone(),
+                        scheduler.clone(),
+                        events.clone(),
+                        cache.clone(),
+                        jobs::ArchiveOperationJob {
+                            id,
+                            operation_id,
+                            operation,
+                            cancel,
+                        },
+                    );
+                }
                 Dispatch::CancelOperation { id, operation_id } => {
                     let cancelled = operations.cancel(&operation_id).await;
                     write_json(&writer, &JsonRpcResponse::result(id, json!(cancelled))).await?;

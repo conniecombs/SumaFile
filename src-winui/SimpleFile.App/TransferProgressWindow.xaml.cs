@@ -38,7 +38,8 @@ public sealed partial class TransferProgressWindow : Window
 
     private async void OnTaskOptionsClicked(object sender, RoutedEventArgs e)
     {
-        if (_settings is not null && sender is Button { Tag: TransferOperationViewModel operation })
+        // A plugin or archive-engine row never reads transfer.overrides.v1: its settings live in its plugin.
+        if (_settings is not null && sender is Button { Tag: TransferOperationViewModel { IsExternal: false } operation })
             await TransferOptionsDialog.ShowAsync(Root.XamlRoot, _settings, operation);
     }
 

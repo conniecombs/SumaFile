@@ -2,46 +2,16 @@
 //! service connects as a client once the host registers it.
 #![cfg(windows)]
 
+mod support;
+
 use serde_json::{json, Value};
-use simplefile_core::archive::ArchiveEngine;
-use simplefile_ipc::frame::{decode_length, encode_frame};
-use simplefile_ipc::rpc::JsonRpcRequest;
-use simplefile_ipc::{HANDSHAKE_METHOD, PROTOCOL_VERSION};
+use simplefile_core::archive::{ArchiveEngine, EngineContext, EngineLimits};
 use simplefile_service::plugin_archive::{PipeArchiveEngine, PluginConnection, PluginTimeouts};
-use simplefile_service::{serve_connection, SessionState};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::io::{duplex, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream};
+use std::time::{Duration, Instant};
+use support::{nonce, read_message, temp_dir, write_message, Service, Unregister, REGISTRY_LOCK};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-
-/// The engine registry is process-wide and these tests share `.hello`, so
-/// they take turns.
-static REGISTRY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-fn nonce() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos()
-}
-
-async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Option<Value> {
-    let mut header = [0u8; 4];
-    reader.read_exact(&mut header).await.ok()?;
-    let length = decode_length(header).ok()? as usize;
-    let mut payload = vec![0u8; length];
-    reader.read_exact(&mut payload).await.ok()?;
-    serde_json::from_slice(&payload).ok()
-}
-
-async fn write_message<W: AsyncWrite + Unpin>(writer: &mut W, message: &Value) {
-    let payload = serde_json::to_vec(message).unwrap();
-    writer
-        .write_all(&encode_frame(&payload).unwrap())
-        .await
-        .unwrap();
-}
 
 /// What the fake plugin saw, for assertions.
 #[derive(Default)]
@@ -52,10 +22,19 @@ struct FakeLog {
 }
 
 /// Act as a plugin backend on `pipe_name`: answer the handshake and the
-/// archive methods. An `archive.list` for a path containing `drop-me`
-/// closes the connection without replying, to simulate a crash; one for a
-/// path containing `hang-me` is never answered while the connection stays
-/// open. The server keeps accepting new connections.
+/// archive methods. The server keeps accepting new connections.
+///
+/// - The handshake reply echoes the requested `pluginId`, or answers as
+///   `com.test.someone-else` on a pipe whose name contains `wrong-id`. On a
+///   pipe whose name contains `slow-handshake` it answers after 1 s.
+/// - An `archive.list` for a path containing `drop-me` closes the connection
+///   without replying, to simulate a crash; one for a path containing
+///   `hang-me` is never answered while the connection stays open.
+/// - An `archive.read_entry` for a path containing `slow-read` answers after
+///   1.5 s and sends no progress.
+/// - An `archive.extract` for a path containing `progress-script` sends
+///   `archive.progress` for the call's `operationId` every 100 ms for 1.5 s,
+///   then extracts.
 fn spawn_fake_plugin(pipe_name: &str) -> Arc<FakeLog> {
     let path = format!(r"\\.\pipe\{pipe_name}");
     let log = Arc::new(FakeLog::default());
@@ -64,6 +43,7 @@ fn spawn_fake_plugin(pipe_name: &str) -> Arc<FakeLog> {
         .create(&path)
         .expect("create fake plugin pipe");
     let task_log = log.clone();
+    let pipe_name = pipe_name.to_string();
     tokio::spawn(async move {
         loop {
             if server.connect().await.is_err() {
@@ -74,13 +54,17 @@ fn spawn_fake_plugin(pipe_name: &str) -> Arc<FakeLog> {
                 Ok(next) => next,
                 Err(_) => return,
             };
-            tokio::spawn(serve_fake_client(connected, task_log.clone()));
+            tokio::spawn(serve_fake_client(
+                connected,
+                task_log.clone(),
+                pipe_name.clone(),
+            ));
         }
     });
     log
 }
 
-async fn serve_fake_client(mut pipe: NamedPipeServer, log: Arc<FakeLog>) {
+async fn serve_fake_client(mut pipe: NamedPipeServer, log: Arc<FakeLog>, pipe_name: String) {
     while let Some(request) = read_message(&mut pipe).await {
         let method = request["method"].as_str().unwrap_or_default().to_string();
         let params = request["params"].clone();
@@ -91,7 +75,15 @@ async fn serve_fake_client(mut pipe: NamedPipeServer, log: Arc<FakeLog>) {
         let result = match method.as_str() {
             "plugin.handshake" => {
                 log.handshakes.fetch_add(1, Ordering::SeqCst);
-                json!({ "sdkVersion": "1.0.0" })
+                if pipe_name.contains("slow-handshake") {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                let plugin_id = if pipe_name.contains("wrong-id") {
+                    json!("com.test.someone-else")
+                } else {
+                    params["pluginId"].clone()
+                };
+                json!({ "pluginId": plugin_id, "pluginVersion": "0.0.1", "sdkVersion": "1.0.0" })
             }
             "archive.list" => {
                 if params["archivePath"]
@@ -115,13 +107,47 @@ async fn serve_fake_client(mut pipe: NamedPipeServer, log: Arc<FakeLog>) {
                     ]
                 })
             }
+            "archive.read_entry" => {
+                if params["archivePath"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("slow-read")
+                {
+                    tokio::time::sleep(Duration::from_millis(1500)).await;
+                }
+                Value::Null
+            }
             "archive.extract" => {
-                let destination = params["destination"].as_str().unwrap_or_default();
-                std::fs::write(
-                    std::path::Path::new(destination).join("extracted.txt"),
-                    b"from the fake plugin",
-                )
-                .unwrap();
+                if params["archivePath"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("progress-script")
+                {
+                    for step in 1..=15u64 {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        write_message(
+                            &mut pipe,
+                            &json!({
+                                "jsonrpc": "2.0",
+                                "method": "archive.progress",
+                                "params": {
+                                    "operationId": params["operationId"],
+                                    "current": step,
+                                    "total": 15
+                                }
+                            }),
+                        )
+                        .await;
+                    }
+                }
+                // The listed `hello/world.txt` (11 bytes), plus a file the
+                // listing never mentioned, which core must not move out.
+                let destination =
+                    std::path::Path::new(params["destination"].as_str().unwrap_or_default());
+                std::fs::create_dir_all(destination.join("hello")).unwrap();
+                std::fs::write(destination.join("hello").join("world.txt"), b"hello world")
+                    .unwrap();
+                std::fs::write(destination.join("stray.txt"), b"not listed").unwrap();
                 Value::Null
             }
             other => {
@@ -146,79 +172,6 @@ async fn serve_fake_client(mut pipe: NamedPipeServer, log: Arc<FakeLog>) {
     log.disconnects.fetch_add(1, Ordering::SeqCst);
 }
 
-struct Service {
-    client: DuplexStream,
-    next_id: u64,
-    server: tokio::task::JoinHandle<Result<(), String>>,
-}
-
-impl Service {
-    async fn start() -> Self {
-        let (client, server) = duplex(64 * 1024);
-        let (server_read, server_write) = tokio::io::split(server);
-        let server = tokio::spawn(serve_connection(
-            server_read,
-            server_write,
-            SessionState {
-                expected_token: Some("dev".to_string()),
-                ..SessionState::default()
-            },
-        ));
-        let mut service = Self {
-            client,
-            next_id: 0,
-            server,
-        };
-        let handshake = service
-            .call(
-                HANDSHAKE_METHOD,
-                json!({
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "clientName": "plugin-archive-test",
-                    "authToken": "dev"
-                }),
-            )
-            .await;
-        assert_eq!(handshake["result"]["protocolVersion"], PROTOCOL_VERSION);
-        service
-    }
-
-    async fn call(&mut self, method: &str, params: Value) -> Value {
-        self.next_id += 1;
-        let request = JsonRpcRequest {
-            jsonrpc: "2.0".into(),
-            id: Some(json!(self.next_id)),
-            method: method.into(),
-            params: Some(params),
-        };
-        let payload = serde_json::to_vec(&request).unwrap();
-        self.client
-            .write_all(&encode_frame(&payload).unwrap())
-            .await
-            .unwrap();
-        loop {
-            let message = read_message(&mut self.client).await.expect("service reply");
-            if message["id"] == json!(self.next_id) {
-                return message;
-            }
-        }
-    }
-
-    async fn stop(mut self) {
-        let _ = self.call("ipc.shutdown", json!({})).await;
-        let _ = self.server.await;
-    }
-}
-
-/// Unregisters the plugin's formats even when an assertion fails.
-struct Unregister(String);
-
-impl Drop for Unregister {
-    fn drop(&mut self) {
-        simplefile_core::archive::unregister_engine(&self.0);
-    }
-}
-
 fn hello_format() -> Value {
     json!([{
         "extension": ".hello",
@@ -230,12 +183,6 @@ fn hello_format() -> Value {
     }])
 }
 
-fn temp_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("simplefile-plugin-archive-{name}-{}", nonce()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn registered_plugin_engine_lists_and_extracts_hello_archives() {
     let _lock = REGISTRY_LOCK.lock().await;
@@ -243,7 +190,7 @@ async fn registered_plugin_engine_lists_and_extracts_hello_archives() {
     let log = spawn_fake_plugin(&pipe_name);
     let plugin_id = "com.test.hello";
     let _unregister = Unregister(plugin_id.to_string());
-    let mut service = Service::start().await;
+    let service = Service::start().await;
 
     let registered = service
         .call(
@@ -293,9 +240,31 @@ async fn registered_plugin_engine_lists_and_extracts_hello_archives() {
         .await;
     assert!(extracted.get("error").is_none(), "{extracted}");
     assert_eq!(
-        std::fs::read(destination.join("extracted.txt")).unwrap(),
-        b"from the fake plugin"
+        std::fs::read(destination.join("hello").join("world.txt")).unwrap(),
+        b"hello world"
     );
+    assert!(!destination.join("stray.txt").exists());
+    let extract_params = log
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(method, _)| method == "archive.extract")
+        .map(|(_, params)| params.clone())
+        .expect("archive.extract reached the plugin");
+    assert!(
+        extract_params.get("innerPath").is_none(),
+        "{extract_params}"
+    );
+    // The plugin wrote into core's private staging folder, not the
+    // destination itself, and that folder is gone again.
+    let staging = std::path::PathBuf::from(extract_params["destination"].as_str().unwrap());
+    assert!(staging
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with(".sumafile-extract-"));
+    assert!(!staging.exists());
 
     let capabilities = service.call("get_archive_capabilities", json!({})).await;
     let hello = capabilities["result"]["formats"]
@@ -329,7 +298,7 @@ async fn register_archive_engine_with_unserved_pipe_registers_nothing() {
     let _lock = REGISTRY_LOCK.lock().await;
     let plugin_id = "com.test.nobody";
     let _unregister = Unregister(plugin_id.to_string());
-    let mut service = Service::start().await;
+    let service = Service::start().await;
 
     let registered = service
         .call(
@@ -361,7 +330,7 @@ async fn plugin_engine_reconnects_once_after_a_transport_error() {
     let log = spawn_fake_plugin(&pipe_name);
     let plugin_id = "com.test.reconnect";
     let _unregister = Unregister(plugin_id.to_string());
-    let mut service = Service::start().await;
+    let service = Service::start().await;
     let registered = service
         .call(
             "register_archive_engine",
@@ -398,8 +367,11 @@ fn short_timeouts(list: Duration, lock: Duration) -> PluginTimeouts {
     PluginTimeouts {
         handshake: Duration::from_secs(2),
         list,
+        read: Duration::from_secs(2),
         transfer: Duration::from_secs(2),
+        cancel: Duration::from_secs(2),
         lock,
+        max_connections: 1,
     }
 }
 
@@ -413,6 +385,7 @@ async fn wait_until(what: &str, condition: impl Fn() -> bool) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn plugin_call_that_never_answers_times_out_and_the_next_call_reconnects() {
+    let _lock = REGISTRY_LOCK.lock().await;
     let pipe_name = format!("simplefile-test-plugin-hang-{}", nonce());
     let log = spawn_fake_plugin(&pipe_name);
     let root = temp_dir("hang");
@@ -457,6 +430,7 @@ async fn plugin_call_that_never_answers_times_out_and_the_next_call_reconnects()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn second_caller_on_a_busy_plugin_gets_a_busy_error_within_its_bound() {
+    let _lock = REGISTRY_LOCK.lock().await;
     let pipe_name = format!("simplefile-test-plugin-busy-{}", nonce());
     let log = spawn_fake_plugin(&pipe_name);
     let root = temp_dir("busy");
@@ -520,7 +494,7 @@ async fn reregistering_with_only_built_in_formats_keeps_the_existing_registratio
     let log = spawn_fake_plugin(&pipe_name);
     let plugin_id = "com.test.rereg";
     let _unregister = Unregister(plugin_id.to_string());
-    let mut service = Service::start().await;
+    let service = Service::start().await;
     let registered = service
         .call(
             "register_archive_engine",
@@ -560,4 +534,253 @@ async fn reregistering_with_only_built_in_formats_keeps_the_existing_registratio
         .any(|format| format["extension"] == ".zip" && format["engine"] != "built-in"));
 
     service.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handshake_reply_with_another_plugin_id_is_refused() {
+    let _lock = REGISTRY_LOCK.lock().await;
+    let pipe_name = format!("simplefile-test-plugin-wrong-id-{}", nonce());
+    let log = spawn_fake_plugin(&pipe_name);
+    let task_pipe = pipe_name.clone();
+    let error = tokio::task::spawn_blocking(move || {
+        PluginConnection::connect("com.test.right", &task_pipe)
+            .err()
+            .expect("a mismatched plugin id is refused")
+    })
+    .await
+    .unwrap();
+    assert!(
+        error.contains(&format!(
+            "Plugin pipe {pipe_name} answered as com.test.someone-else, expected com.test.right"
+        )),
+        "{error}"
+    );
+    assert_eq!(log.handshakes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_entry_without_progress_times_out_at_the_read_deadline() {
+    let _lock = REGISTRY_LOCK.lock().await;
+    let pipe_name = format!("simplefile-test-plugin-read-{}", nonce());
+    spawn_fake_plugin(&pipe_name);
+    let root = temp_dir("read-deadline");
+    let archive = root.join("slow-read.hello");
+    let destination = root.join("dest");
+    std::fs::create_dir_all(&destination).unwrap();
+
+    let error = tokio::task::spawn_blocking(move || {
+        let connection = PluginConnection::connect_with_timeouts(
+            "com.test.read",
+            &pipe_name,
+            PluginTimeouts {
+                read: Duration::from_millis(500),
+                ..PluginTimeouts::default()
+            },
+        )
+        .expect("connect to fake plugin");
+        PipeArchiveEngine::new("Read Engine", connection)
+            .read_entry(
+                &archive,
+                "hello",
+                &destination,
+                EngineLimits {
+                    max_bytes: 1024,
+                    max_entries: 4,
+                },
+            )
+            .expect_err("a silent read fails at its idle deadline")
+    })
+    .await
+    .unwrap();
+    assert!(
+        error.contains("did not answer archive.read_entry within 500ms"),
+        "{error}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn register_that_completes_after_a_later_unregister_registers_nothing() {
+    let _lock = REGISTRY_LOCK.lock().await;
+    let pipe_name = format!("simplefile-test-plugin-slow-handshake-{}", nonce());
+    let log = spawn_fake_plugin(&pipe_name);
+    let plugin_id = "com.test.superseded";
+    let _unregister = Unregister(plugin_id.to_string());
+    let service = Service::start().await;
+
+    let register = service
+        .send(
+            "register_archive_engine",
+            json!({ "pluginId": plugin_id, "pipeName": pipe_name, "formats": hello_format() }),
+        )
+        .await;
+    let unregistered = service
+        .call(
+            "unregister_archive_engine",
+            json!({ "pluginId": plugin_id }),
+        )
+        .await;
+    assert_eq!(unregistered["result"], Value::Null, "{unregistered}");
+
+    let registered = service.reply(register).await;
+    assert_eq!(
+        registered["error"]["message"],
+        format!("Registration of plugin {plugin_id} was superseded by a later registration change"),
+        "{registered}"
+    );
+    assert_eq!(log.handshakes.load(Ordering::SeqCst), 1);
+    let capabilities = service.call("get_archive_capabilities", json!({})).await;
+    assert!(!capabilities["result"]["formats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|format| format["extension"] == ".hello"));
+
+    service.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn second_caller_gets_its_own_connection_when_the_pool_allows() {
+    let _lock = REGISTRY_LOCK.lock().await;
+    let pipe_name = format!("simplefile-test-plugin-pool-{}", nonce());
+    let log = spawn_fake_plugin(&pipe_name);
+    let root = temp_dir("pool");
+    let hanging = root.join("hang-me.hello");
+    let fine = root.join("fine.hello");
+
+    let task_log = log.clone();
+    tokio::task::spawn_blocking(move || {
+        let connection = PluginConnection::connect_with_timeouts(
+            "com.test.pool",
+            &pipe_name,
+            PluginTimeouts {
+                max_connections: 2,
+                ..short_timeouts(Duration::from_millis(1500), Duration::from_millis(300))
+            },
+        )
+        .expect("connect to fake plugin");
+        let first = PipeArchiveEngine::new("Pool Engine", connection.clone());
+        let second = PipeArchiveEngine::new("Pool Engine", connection.clone());
+        let holder = std::thread::spawn(move || first.list_entries(&hanging));
+        let in_flight = Instant::now() + Duration::from_secs(5);
+        while !task_log
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(method, _)| method == "archive.list")
+        {
+            assert!(
+                Instant::now() < in_flight,
+                "first call never reached the plugin"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let started = Instant::now();
+        let entries = second
+            .list_entries(&fine)
+            .expect("a second connection answers");
+        assert!(started.elapsed() < Duration::from_millis(1000));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(connection.open_connections(), 2);
+        assert_eq!(task_log.handshakes.load(Ordering::SeqCst), 2);
+        holder
+            .join()
+            .unwrap()
+            .expect_err("the hanging call times out");
+    })
+    .await
+    .unwrap();
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn progress_notifications_extend_the_transfer_deadline() {
+    let _lock = REGISTRY_LOCK.lock().await;
+    let pipe_name = format!("simplefile-test-plugin-progress-{}", nonce());
+    spawn_fake_plugin(&pipe_name);
+    let root = temp_dir("progress");
+    let archive = root.join("progress-script.hello");
+    let destination = root.join("dest");
+    std::fs::create_dir_all(&destination).unwrap();
+
+    let task_destination = destination.clone();
+    let (elapsed, result) = tokio::task::spawn_blocking(move || {
+        let connection = PluginConnection::connect_with_timeouts(
+            "com.test.progress",
+            &pipe_name,
+            PluginTimeouts {
+                transfer: Duration::from_millis(500),
+                ..PluginTimeouts::default()
+            },
+        )
+        .expect("connect to fake plugin");
+        let engine = PipeArchiveEngine::new("Progress Engine", connection);
+        let started = Instant::now();
+        let result = engine.extract(&archive, &task_destination, &EngineContext::untracked());
+        (started.elapsed(), result)
+    })
+    .await
+    .unwrap();
+    result.expect("progress keeps the transfer alive past its idle deadline");
+    assert!(elapsed >= Duration::from_millis(1400), "{elapsed:?}");
+    assert!(destination.join("hello").join("world.txt").is_file());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn untracked_transfer_calls_carry_a_service_operation_id() {
+    let _lock = REGISTRY_LOCK.lock().await;
+    let pipe_name = format!("simplefile-test-plugin-opid-{}", nonce());
+    let log = spawn_fake_plugin(&pipe_name);
+    let root = temp_dir("opid");
+    let archive = root.join("fine.hello");
+    let destination = root.join("dest");
+    std::fs::create_dir_all(&destination).unwrap();
+
+    tokio::task::spawn_blocking(move || {
+        let connection =
+            PluginConnection::connect("com.test.opid", &pipe_name).expect("connect to fake plugin");
+        let engine = PipeArchiveEngine::new("Opid Engine", connection);
+        engine
+            .extract(&archive, &destination, &EngineContext::untracked())
+            .expect("extract");
+        engine
+            .read_entry(
+                &archive,
+                "hello",
+                &destination.join("read"),
+                EngineLimits {
+                    max_bytes: 1024,
+                    max_entries: 4,
+                },
+            )
+            .expect("read_entry");
+        engine.list_entries(&archive).expect("list");
+    })
+    .await
+    .unwrap();
+
+    let calls = log.calls.lock().unwrap().clone();
+    let operation_id = |method: &str| {
+        calls
+            .iter()
+            .find(|(called, _)| called == method)
+            .map(|(_, params)| params["operationId"].clone())
+            .unwrap_or_else(|| panic!("{method} reached the plugin"))
+    };
+    let extract_id = operation_id("archive.extract");
+    let read_id = operation_id("archive.read_entry");
+    assert!(
+        extract_id.as_str().is_some_and(|id| id.starts_with("svc-")),
+        "{extract_id}"
+    );
+    assert!(
+        read_id.as_str().is_some_and(|id| id.starts_with("svc-")),
+        "{read_id}"
+    );
+    assert_ne!(extract_id, read_id);
+    assert_eq!(operation_id("archive.list"), Value::Null);
+    let _ = std::fs::remove_dir_all(root);
 }

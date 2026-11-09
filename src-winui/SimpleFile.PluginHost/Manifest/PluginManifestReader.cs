@@ -3,19 +3,31 @@ using System.Text.RegularExpressions;
 
 namespace SimpleFile.PluginHost.Manifest;
 
-public static class PluginManifestReader
+public static partial class PluginManifestReader
 {
-    private static readonly Regex IdPattern = new(@"^[a-z0-9][a-z0-9.-]{1,63}\z",RegexOptions.CultureInvariant);
-    private static readonly Regex SemVerPattern = new(@"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", RegexOptions.CultureInvariant);
+    // Source-generated: no pattern parsing or Regex construction on the startup path (spec §5.2 budget).
+    [GeneratedRegex(@"^[a-z0-9][a-z0-9.-]{1,63}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex IdPattern();
+
+    [GeneratedRegex(@"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", RegexOptions.CultureInvariant)]
+    private static partial Regex SemVerPattern();
 
     private static readonly string[] ActivateOnValues = ["first-call", "startup"];
     private const int MaxWhenLength = 512;
     private static readonly string[] PlacementValues = ["primary", "overflow"];
     private static readonly string[] SettingTypes = ["boolean", "string", "integer", "enum", "path"];
 
+    // Every contribution kind this host reads. panels and rowDecorations are accepted and ignored until phase 4;
+    // any other key is rejected, so a typo (or a kind a newer host added) never loads as a silently missing slot.
+    private static readonly string[] ContributionKinds =
+        ["commands", "contextMenu", "toolbar", "archiveFormats", "sidebar", "settingsPage", "panels", "rowDecorations"];
+
+    /// <summary>The plugin id grammar <c>^[a-z0-9][a-z0-9.-]{1,63}$</c>.</summary>
+    internal static bool IsValidId(string id) => IdPattern().IsMatch(id);
+
     public static bool IsSdkCompatible(string sdkVersion)
     {
-        var m = SemVerPattern.Match(sdkVersion ?? string.Empty);
+        var m = SemVerPattern().Match(sdkVersion ?? string.Empty);
         return m.Success
             && int.TryParse(m.Groups[1].Value, out var major)
             && major == SimpleFile.PluginSdk.PluginSdk.Major;
@@ -43,7 +55,7 @@ public static class PluginManifestReader
             var id = RequiredString(root, "id", "id", errors);
             if (id is not null)
             {
-                if (!IdPattern.IsMatch(id))
+                if (!IdPattern().IsMatch(id))
                     errors.Add($"The id '{id}' is invalid: use 2 to 64 lowercase letters, digits, dots or hyphens, starting with a letter or digit.");
                 else if (!string.Equals(id, folderName, StringComparison.Ordinal))
                     errors.Add($"The id '{id}' does not match the plugin folder name '{folderName}'; the folder must be named exactly after the id.");
@@ -54,7 +66,7 @@ public static class PluginManifestReader
             var sdkVersion = RequiredString(root, "sdkVersion", "sdkVersion", errors);
             if (sdkVersion is not null)
             {
-                if (!SemVerPattern.IsMatch(sdkVersion))
+                if (!SemVerPattern().IsMatch(sdkVersion))
                     errors.Add($"The sdkVersion '{sdkVersion}' is not a valid semantic version (major.minor.patch).");
                 else if (!IsSdkCompatible(sdkVersion))
                     errors.Add($"The sdkVersion '{sdkVersion}' is not compatible with this host (supports major version {SimpleFile.PluginSdk.PluginSdk.Major}).");
@@ -63,7 +75,8 @@ public static class PluginManifestReader
             var publisher = ReadPublisher(root, errors);
             var ui = ReadUi(root, errors);
             var backend = ReadBackend(root, errors);
-            var contributions = ReadContributions(root, errors);
+            var declaresUi = root.TryGetProperty("ui", out var uiElement) && uiElement.ValueKind != JsonValueKind.Null;
+            var contributions = ReadContributions(root, declaresUi, errors);
             var settings = ReadSettings(root, errors);
             var permissions = OptionalStringList(root, "permissions", "permissions", errors) ?? [];
 
@@ -124,16 +137,24 @@ public static class PluginManifestReader
         return exe is null ? null : new PluginBackendSpec(exe, args, activateOn, multi);
     }
 
-    private static PluginContributions ReadContributions(JsonElement root, List<string> errors)
+    private static PluginContributions ReadContributions(JsonElement root, bool declaresUi, List<string> errors)
     {
         var commands = new List<PluginCommandSpec>();
         var menus = new List<PluginContextMenuSpec>();
         var toolbar = new List<PluginToolbarSpec>();
         var formats = new List<PluginArchiveFormatSpec>();
+        var sidebar = new List<PluginSidebarSpec>();
+        PluginSettingsPageSpec? settingsPage = null;
 
         var el = OptionalObject(root, "contributions", "contributions", errors);
         if (el is not null)
         {
+            foreach (var kind in el.Value.EnumerateObject())
+            {
+                if (!ContributionKinds.Contains(kind.Name, StringComparer.Ordinal))
+                    errors.Add($"The contributions.{kind.Name} kind is not supported by this host.");
+            }
+
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var (item, path) in Items(el.Value, "commands", "contributions.commands", errors))
             {
@@ -200,9 +221,56 @@ public static class PluginManifestReader
                 if (ext is not null && engine is not null)
                     formats.Add(new PluginArchiveFormatSpec(ext, canList, canExtract, canCreate, canModify, engine));
             }
+
+            ReadSidebar(el.Value, seen, sidebar, errors, out var declaresSidebar);
+            if (declaresSidebar && !declaresUi)
+                errors.Add("contributions.sidebar needs a ui assembly.");
+
+            var page = OptionalObject(el.Value, "settingsPage", "contributions.settingsPage", errors);
+            if (page is not null)
+            {
+                var provider = RequiredString(page.Value, "provider", "contributions.settingsPage.provider", errors);
+                if (!declaresUi)
+                    errors.Add("contributions.settingsPage needs a ui assembly.");
+                if (provider is not null)
+                    settingsPage = new PluginSettingsPageSpec(provider);
+            }
         }
 
-        return new PluginContributions(commands, menus, toolbar, formats);
+        return new PluginContributions(commands, menus, toolbar, formats) { Sidebar = sidebar, SettingsPage = settingsPage };
+    }
+
+    /// <summary>
+    /// <c>contributions.sidebar</c>: each id follows the settings key grammar (the host keys collapse state by it) and is
+    /// unique; title and provider are required; an optional command must name a declared command.
+    /// </summary>
+    private static void ReadSidebar(
+        JsonElement contributions, HashSet<string> commandIds, List<PluginSidebarSpec> sidebar, List<string> errors, out bool declared)
+    {
+        declared = false;
+        var seenIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (item, path) in Items(contributions, "sidebar", "contributions.sidebar", errors))
+        {
+            declared = true;
+            var id = RequiredString(item, "id", path + ".id", errors);
+            var title = RequiredString(item, "title", path + ".title", errors);
+            var provider = RequiredString(item, "provider", path + ".provider", errors);
+            var command = OptionalString(item, "command", path + ".command", errors);
+            if (id is not null && !Backend.PluginHostMethods.IsValidSettingKey(id))
+            {
+                errors.Add($"The {path}.id value '{id}' is invalid: use 1 to 64 letters, digits, '_' or '-', starting with a lowercase letter or digit.");
+                id = null;
+            }
+            if (id is not null && !seenIds.Add(id))
+                errors.Add($"The sidebar id '{id}' is declared more than once in contributions.sidebar.");
+            if (command is not null && !commandIds.Contains(command))
+            {
+                errors.Add($"The {path}.command value '{command}' does not name a command declared in contributions.commands.");
+                command = null;
+            }
+            if (id is not null && title is not null && provider is not null)
+                sidebar.Add(new PluginSidebarSpec(id, title, provider, command));
+        }
     }
 
     private static List<PluginSettingSpec> ReadSettings(JsonElement root, List<string> errors)

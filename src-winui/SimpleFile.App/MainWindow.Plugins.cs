@@ -24,15 +24,51 @@ public sealed partial class MainWindow
     // throwaway defaults (and a save would overwrite the user's real layout).
     private bool _pluginLayoutReady;
     private bool _pluginConsentQueued;
+    private DispatcherQueue? _pluginWindowQueue;
+    // The window host of each plugin's current runtime (WindowsFor replaces it for every new runtime). Written from
+    // whichever thread the manager creates a runtime on, so guarded.
+    private readonly Dictionary<string, PluginWindowHost> _pluginWindowHosts = new(StringComparer.Ordinal);
+    private readonly object _pluginWindowHostsGate = new();
+
+    /// <summary>The plugin roots, approvals file and bundled root startup uses, and the scan prepared from them.</summary>
+    private sealed record PendingPluginScan(
+        IReadOnlyList<string> Roots, string ApprovalStorePath, string BundledRoot, Task<PreparedScan?> Scan);
+
+    /// <summary>
+    /// Starts reading every plugin manifest, <c>bundled.json</c> and the approvals file on the thread pool, so
+    /// the reads (and their cold-start cost) overlap the file service's start. A failure only means discovery
+    /// reads for itself.
+    /// </summary>
+    private static PendingPluginScan PreparePluginScan()
+    {
+        var roots = PluginDiscovery.DefaultRoots();
+        var approvals = PluginApprovalStore.DefaultPath();
+        var bundledRoot = PluginDiscovery.InstallRoot();
+        var scan = Task.Run<PreparedScan?>(() =>
+        {
+            try
+            {
+                return PluginManager.PrepareScan(roots, bundledRoot, approvals);
+            }
+            catch (Exception exception)
+            {
+                AppendPluginLog("host", $"[warn] Preparing the plugin scan failed; discovery reads again: {exception.Message}");
+                return null;
+            }
+        });
+        return new PendingPluginScan(roots, approvals, bundledRoot, scan);
+    }
 
     /// <summary>
     /// Builds the plugin manager and discovers plugins. Runs before the workspace loads its settings, because
     /// loading the toolbar layout drops ids it does not know, so plugin toolbar actions must be registered first.
     /// </summary>
-    private async Task InitializePluginsAsync(FileOperationService fileOps, StartupTimer timer)
+    private async Task InitializePluginsAsync(FileOperationService fileOps, StartupTimer timer, PendingPluginScan pending)
     {
         var cts = new CancellationTokenSource();
         _pluginCts = cts;
+        // Read here, on the UI thread: WindowsFor may run on any thread.
+        _pluginWindowQueue = DispatcherQueue;
         _pluginWorkspace = new PluginWorkspaceView(
             DispatcherQueue,
             () => _workspace,
@@ -40,9 +76,11 @@ public sealed partial class MainWindow
             line => AppendPluginLog("host", line));
         var manager = new PluginManager(new PluginManagerOptions
         {
-            Roots = PluginDiscovery.DefaultRoots(),
-            ApprovalStorePath = PluginApprovalStore.DefaultPath(),
-            DataRoot = Path.Combine(LocalSumaFileDirectory(), "plugins-data"),
+            // The prepared scan's own inputs: DiscoverAsync uses it only when they match.
+            Roots = pending.Roots,
+            ApprovalStorePath = pending.ApprovalStorePath,
+            // %LOCALAPPDATA%\SumaFile\plugins-data, or the smokes' disposable SUMAFILE_PLUGIN_DATA_ROOT.
+            DataRoot = PluginDiscovery.DataRoot(),
             Launcher = new ProcessLauncher(),
             PipeNameFor = PluginPipeName,
             Settings = fileOps,
@@ -56,16 +94,25 @@ public sealed partial class MainWindow
                 () => PickFolderAsync(null)),
             Workspace = _pluginWorkspace,
             Log = AppendPluginLog,
-            // The current client, so a reconnected service is used; engines registered before a service
-            // restart are not replayed (the backend has to be restarted).
+            // The current client, so a reconnected service is used; ReconnectBackendAsync then registers the
+            // live engines with it again (ReregisterArchiveEnginesAsync).
             ArchiveEngines = new ArchiveEngineRegistrar(() => _backend?.Client),
+            // First-party plugins listed in <install root>\bundled.json are trusted without a consent dialog.
+            BundledRoot = pending.BundledRoot,
+            // Plugin code (activation, commands, sidebar and settings-page providers) runs on this window's thread.
+            UiThread = new PluginUiThread(DispatcherQueue),
+            // A new, unsealed host for every plugin runtime; teardown seals and closes the old one.
+            WindowsFor = WindowsFor,
+            ValidateUiElement = element => element is FrameworkElement
+                ? null
+                : $"returned {element.GetType().FullName}, not a Microsoft.UI.Xaml.FrameworkElement",
         });
         _plugins = manager;
         manager.Changed += OnPluginsChanged;
 
         try
         {
-            await manager.DiscoverAsync(cts.Token);
+            await manager.DiscoverAsync(await pending.Scan, cts.Token);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -73,7 +120,21 @@ public sealed partial class MainWindow
             AppendPluginLog("host", $"[error] Plugin discovery failed: {exception}");
         }
 
-        timer.Mark("plugins-discovered", $"count={manager.Plugins.Count}");
+        var discovered = manager.Plugins;
+        timer.Mark("plugins-discovered", $"count={discovered.Count}");
+        // After the mark, so log writes stay out of the discovery budget. The smokes point both overrides at
+        // disposable locations; say so, so a stray override on a user machine is visible.
+        foreach (var line in PluginDiscovery.DescribeOverrides())
+        {
+            AppendPluginLog("host", line);
+        }
+
+        // One line per plugin: the startup smoke reads it as its proof of bundled trust.
+        foreach (var record in discovered)
+        {
+            AppendPluginLog(record.Id, $"[info] Discovered: {record.State}");
+        }
+
         ApplyPluginContributions();
     }
 
@@ -107,6 +168,8 @@ public sealed partial class MainWindow
 
             ApplyPluginContributions();
             RefreshStatusCenter();
+            // Changed follows every engine-set change, so this never reads the capabilities from before it.
+            _ = RefreshArchiveCapabilitiesAsync();
         });
     }
 
@@ -116,6 +179,7 @@ public sealed partial class MainWindow
         AppCommandCatalog.SetPluginCommands(PluginContributionAdapter.Commands(enabled));
         ToolbarActionCatalog.SetPluginActions(PluginContributionAdapter.ToolbarActions(enabled));
         _pluginMenus = PluginContributionAdapter.ContextMenus(enabled);
+        SyncPluginSidebarSections(enabled);
         if (ApplyPluginToolbarPlacements(enabled))
         {
             ApplyCommandSurfaceLayout();
@@ -146,6 +210,55 @@ public sealed partial class MainWindow
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// The manager asks for a host whenever it creates a plugin runtime, possibly off the UI thread and under its lock,
+    /// so this only creates and records one. A closed host stays sealed, so it is never handed out again.
+    /// </summary>
+    private IPluginWindowHost WindowsFor(string pluginId)
+    {
+        var host = new PluginWindowHost(pluginId, _pluginWindowQueue ?? throw new InvalidOperationException("Plugins are not available."));
+        lock (_pluginWindowHostsGate)
+        {
+            _pluginWindowHosts[pluginId] = host;
+        }
+
+        return host;
+    }
+
+    /// <summary>The window host of a plugin's current (or last) runtime; the UI smoke reads its open windows.</summary>
+    internal PluginWindowHost? PluginWindowHostFor(string pluginId)
+    {
+        lock (_pluginWindowHostsGate)
+        {
+            return _pluginWindowHosts.GetValueOrDefault(pluginId);
+        }
+    }
+
+    /// <summary>
+    /// Seals every plugin's window host and closes its windows now, on the UI thread. <c>OnClosed</c> calls it, so plugin
+    /// windows close as soon as the main window does; the plugin teardown that follows finds nothing to close.
+    /// </summary>
+    private void ClosePluginWindows()
+    {
+        PluginWindowHost[] hosts;
+        lock (_pluginWindowHostsGate)
+        {
+            hosts = [.. _pluginWindowHosts.Values];
+        }
+
+        foreach (var host in hosts)
+        {
+            try
+            {
+                host.CloseAllNow();
+            }
+            catch (Exception exception)
+            {
+                AppendPluginLog(host.PluginId, $"[warn] Closing the plugin's windows failed: {exception.Message}");
+            }
+        }
     }
 
     private Task RunPluginCommandAsync(string hostCommandId) =>
@@ -255,6 +368,7 @@ public sealed partial class MainWindow
         _pluginMenus = [];
         AppCommandCatalog.SetPluginCommands([]);
         ToolbarActionCatalog.SetPluginActions([]);
+        ClearPluginSidebarSections();
         try
         {
             await manager.DisposeAsync();
@@ -262,6 +376,12 @@ public sealed partial class MainWindow
         catch (Exception exception)
         {
             AppendPluginLog("host", $"[error] Stopping plugins failed: {exception}");
+        }
+
+        // Every runtime is retired, so every host is sealed: forget them.
+        lock (_pluginWindowHostsGate)
+        {
+            _pluginWindowHosts.Clear();
         }
     }
 
@@ -276,6 +396,22 @@ public sealed partial class MainWindow
 
     private static string LocalSumaFileDirectory() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile");
+
+    /// <summary>Awaits background plugin work that nothing else awaits and logs a failure to plugins.log.</summary>
+    private static async Task ObserveAsync(Task task)
+    {
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            AppendPluginLog("host", $"[error] Background plugin work failed: {exception}");
+        }
+    }
 
     /// <summary>Appends to %LOCALAPPDATA%\SumaFile\plugins.log, rotating at 1 MB like service.log.</summary>
     private static void AppendPluginLog(string pluginId, string line)

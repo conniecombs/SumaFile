@@ -204,7 +204,18 @@ public sealed partial class SettingsWindow : Window
     /// text and combo box choices). A match shows its category, selects it and brings the first
     /// matching control into view; Enter moves focus to it. Categories without a match hide.
     /// </summary>
-    private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs e) => ApplySettingsSearch();
+
+    /// <summary>Runs the current query again when it is not empty: a plugin settings page was inserted after it ran.</summary>
+    private void RerunSettingsSearch()
+    {
+        if (SearchBox.Text.Trim().Length > 0)
+        {
+            ApplySettingsSearch();
+        }
+    }
+
+    private void ApplySettingsSearch()
     {
         var query = SearchBox.Text.Trim();
         _firstSearchMatch = null;
@@ -337,6 +348,21 @@ public sealed partial class SettingsWindow : Window
                 yield break;
             case Border { Child: { } borderChild }:
                 foreach (var element in SearchableElements(borderChild))
+                {
+                    yield return element;
+                }
+
+                yield break;
+            // A plugin's custom settings page sits in a ContentPresenter, and may be a UserControl.
+            case ContentPresenter { Content: DependencyObject presented } presenter when presenter.Visibility == Visibility.Visible:
+                foreach (var element in SearchableElements(presented))
+                {
+                    yield return element;
+                }
+
+                yield break;
+            case UserControl { Content: { } userContent } userControl when userControl.Visibility == Visibility.Visible:
+                foreach (var element in SearchableElements(userContent))
                 {
                     yield return element;
                 }

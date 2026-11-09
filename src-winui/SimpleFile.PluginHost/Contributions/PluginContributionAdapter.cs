@@ -33,6 +33,32 @@ public static class PluginContributionAdapter
             .Where(spec => string.Equals(spec.Placement, PrimaryPlacement, StringComparison.OrdinalIgnoreCase))
             .Select(spec => PluginManager.HostCommandId(m.Id, spec.Command)))];
 
+    /// <summary>
+    /// Every sidebar section of the enabled plugins, plugin by plugin and in manifest order within each, with the
+    /// header command as a host command id and the record's epoch.
+    /// </summary>
+    public static IReadOnlyList<PluginSidebarSection> SidebarSections(IEnumerable<PluginRecord> enabled) =>
+        [.. enabled
+            .Where(record => record.Discovered.Manifest is not null)
+            .SelectMany(record =>
+            {
+                var manifest = record.Discovered.Manifest!;
+                var epoch = record.Epoch;
+                return manifest.Contributions.Sidebar.Select(spec =>
+                {
+                    var command = spec.Command is { } id
+                        ? manifest.Contributions.Commands.FirstOrDefault(c => c.Id == id)
+                        : null;
+                    return new PluginSidebarSection(
+                        manifest.Id,
+                        spec.Id,
+                        spec.Title,
+                        command is null ? null : PluginManager.HostCommandId(manifest.Id, command.Id),
+                        command?.Label,
+                        epoch);
+                });
+            })];
+
     private static IEnumerable<PluginManifest> Manifests(IEnumerable<PluginRecord> enabled) =>
         enabled.Select(record => record.Discovered.Manifest).OfType<PluginManifest>();
 }

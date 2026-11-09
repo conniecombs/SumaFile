@@ -29,6 +29,12 @@ public sealed class PluginRecord
 
     public bool BackendRunning { get; internal set; }
 
+    /// <summary>
+    /// Changes whenever the manager retires this record's runtime (teardown, load failure), so UI the plugin supplied
+    /// for an earlier epoch is known to be stale. Unique across the manager's records, and only ever increases.
+    /// </summary>
+    public int Epoch { get; internal set; }
+
     /// <summary>Hash of plugin.json at discovery; null when the manifest could not be read.</summary>
     internal string? ManifestHash { get; set; }
 

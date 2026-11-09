@@ -11,7 +11,9 @@ use super::params::{
     SettingKeyParams, SettingKeysParams, SettingValueParams, ShortcutParams, SmartFolderIdParams,
     SmartFolderParams, TagCreateParams, TagForPathParams, TagIdParams, TagUpdateParams,
 };
-use super::{async_ops, BlockingJob, BlockingLane, Dispatch, SessionState, APP_VERSION};
+use super::{
+    async_ops, ArchiveOperation, BlockingJob, BlockingLane, Dispatch, SessionState, APP_VERSION,
+};
 use crate::remote::secrets::RemoteSecret;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -388,6 +390,16 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
         }
         // File operations
         METHOD_CREATE_DIRECTORY => match parse_params::<NameParams>(request) {
+            // Inside an archive this can reach an engine, which may call
+            // back into this connection: never run it on the session loop.
+            Ok(p) if simplefile_core::archive::is_archive_path(&p.path) => {
+                let cache = state.cache.clone();
+                reply_blocking(request, BlockingLane::General, move || {
+                    let created = simplefile_core::file_ops::create_directory(&p.path, &p.name)?;
+                    cache.invalidate_paths([p.path.as_str(), created.as_str()]);
+                    Ok::<_, String>(created)
+                })
+            }
             Ok(p) => match simplefile_core::file_ops::create_directory(&p.path, &p.name) {
                 Ok(r) => {
                     state.cache.invalidate_paths([p.path.as_str(), r.as_str()]);
@@ -400,6 +412,16 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_CREATE_FILE => match parse_params::<NameParams>(request) {
+            // Inside an archive this can reach an engine, which may call
+            // back into this connection: never run it on the session loop.
+            Ok(p) if simplefile_core::archive::is_archive_path(&p.path) => {
+                let cache = state.cache.clone();
+                reply_blocking(request, BlockingLane::General, move || {
+                    let created = simplefile_core::file_ops::create_file(&p.path, &p.name)?;
+                    cache.invalidate_paths([p.path.as_str(), created.as_str()]);
+                    Ok::<_, String>(created)
+                })
+            }
             Ok(p) => match simplefile_core::file_ops::create_file(&p.path, &p.name) {
                 Ok(r) => {
                     state.cache.invalidate_paths([p.path.as_str(), r.as_str()]);
@@ -466,6 +488,14 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             simplefile_core::recycle_bin::empty_recycle_bin().map(|()| Value::Null)
         }),
         METHOD_RENAME_ENTRY => match parse_params::<RenameParams>(request) {
+            Ok(p) if simplefile_core::archive::is_archive_path(&p.path) => {
+                let cache = state.cache.clone();
+                reply_blocking(request, BlockingLane::General, move || {
+                    let renamed = simplefile_core::file_ops::rename_entry(&p.path, &p.new_name)?;
+                    cache.invalidate_paths([p.path.as_str(), renamed.as_str()]);
+                    Ok::<_, String>(renamed)
+                })
+            }
             Ok(p) => match simplefile_core::file_ops::rename_entry(&p.path, &p.new_name) {
                 Ok(r) => {
                     state.cache.invalidate_paths([p.path.as_str(), r.as_str()]);
@@ -585,6 +615,12 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_OPEN_FILE => match parse_params::<PathParams>(request) {
+            // An archive entry is materialized through the engine first.
+            Ok(p) if simplefile_core::archive::is_archive_virtual_path(&p.path) => {
+                reply_blocking(request, BlockingLane::General, move || {
+                    crate::shell::open_file(&p.path).map(|()| Value::Null)
+                })
+            }
             Ok(p) => match crate::shell::open_file(&p.path) {
                 Ok(()) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null)),
                 Err(m) => {
@@ -594,6 +630,11 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_REVEAL_IN_FOLDER => match parse_params::<PathParams>(request) {
+            Ok(p) if simplefile_core::archive::is_archive_virtual_path(&p.path) => {
+                reply_blocking(request, BlockingLane::General, move || {
+                    crate::shell::reveal_in_folder(&p.path).map(|()| Value::Null)
+                })
+            }
             Ok(p) => match crate::shell::reveal_in_folder(&p.path) {
                 Ok(()) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null)),
                 Err(m) => {
@@ -718,6 +759,18 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             simplefile_core::archive::get_archive_capabilities(),
         ),
         METHOD_EXTRACT_ARCHIVE => match parse_params::<ExtractArchiveParams>(request) {
+            Ok(ExtractArchiveParams {
+                archive_path,
+                destination,
+                operation_id: Some(operation_id),
+            }) => Dispatch::ArchiveOperation {
+                id: request.id.clone(),
+                operation_id,
+                operation: ArchiveOperation::Extract {
+                    archive_path,
+                    destination,
+                },
+            },
             Ok(p) => {
                 let cache = state.cache.clone();
                 reply_blocking(request, BlockingLane::Transfer, move || {
@@ -732,6 +785,20 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_CREATE_ARCHIVE => match parse_params::<CreateArchiveParams>(request) {
+            Ok(CreateArchiveParams {
+                paths,
+                archive_path,
+                format,
+                operation_id: Some(operation_id),
+            }) => Dispatch::ArchiveOperation {
+                id: request.id.clone(),
+                operation_id,
+                operation: ArchiveOperation::Create {
+                    paths,
+                    archive_path,
+                    format,
+                },
+            },
             Ok(p) => {
                 let cache = state.cache.clone();
                 reply_blocking(request, BlockingLane::Transfer, move || {
@@ -755,26 +822,35 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                         "invalid params: pipeName must match [A-Za-z0-9._-]{1,200}",
                     ))
                 }
-                Ok(p) => reply_blocking(request, BlockingLane::General, move || {
-                    let formats = p
-                        .formats
-                        .into_iter()
-                        .map(|format| crate::plugin_archive::PluginArchiveFormat {
-                            extension: format.extension,
-                            can_list: format.can_list,
-                            can_extract: format.can_extract,
-                            can_create: format.can_create,
-                            can_modify: format.can_modify,
-                            engine_name: format.engine_name,
-                        })
-                        .collect();
-                    crate::plugin_archive::register_plugin_engine(
-                        &p.plugin_id,
-                        &p.pipe_name,
-                        formats,
-                    )
-                    .map(|()| Value::Null)
-                }),
+                Ok(p) if !crate::plugin_archive::is_valid_plugin_id(&p.plugin_id) => {
+                    Dispatch::Reply(JsonRpcResponse::error(
+                        request.id.clone(),
+                        ERR_INVALID_PARAMS,
+                        "invalid params: pluginId must match ^[a-z0-9][a-z0-9.-]{1,63}$",
+                    ))
+                }
+                Ok(p) => {
+                    // Taken here, on the session loop, so tickets follow
+                    // the order the host sent its register and unregister
+                    // calls, whenever the deferred connect finishes.
+                    let ticket = crate::plugin_archive::registration_ticket(&p.plugin_id);
+                    reply_blocking(request, BlockingLane::General, move || {
+                        let formats = p
+                            .formats
+                            .into_iter()
+                            .map(|format| crate::plugin_archive::PluginArchiveFormat {
+                                extension: format.extension,
+                                can_list: format.can_list,
+                                can_extract: format.can_extract,
+                                can_create: format.can_create,
+                                can_modify: format.can_modify,
+                                engine_name: format.engine_name,
+                            })
+                            .collect();
+                        crate::plugin_archive::register_plugin_engine(ticket, &p.pipe_name, formats)
+                            .map(|()| Value::Null)
+                    })
+                }
                 Err(r) => Dispatch::Reply(r),
             }
         }
@@ -828,6 +904,12 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_OPEN_FILE_WITH => match parse_params::<OpenWithParams>(request) {
+            Ok(p) if simplefile_core::archive::is_archive_virtual_path(&p.path) => {
+                reply_blocking(request, BlockingLane::General, move || {
+                    simplefile_core::open_with::open_file_with(p.path, p.application)
+                        .map(|()| Value::Null)
+                })
+            }
             Ok(p) => match simplefile_core::open_with::open_file_with(p.path, p.application) {
                 Ok(()) => Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null)),
                 Err(m) => {

@@ -36,6 +36,12 @@ checkMaximum(session, 'MainWindow.Connect.ready', budgets.readyMs, violations);
 checkMaximumDelta(session, 'MainWindow.Connect.plugins-discovered', budgets.pluginsDiscoveredDeltaMs, violations);
 checkDeferredDriveRefresh(session, budgets.driveRefreshMinMs, violations);
 
+// The baseline later plugin work is measured against; printed whether or not the budget holds.
+const discovered = session.findLast(event => event.stage === 'MainWindow.Connect.plugins-discovered');
+if (discovered) {
+  console.log(`plugins-discovered delta ${discovered.deltaMs.toFixed(1)} ms (budget ${budgets.pluginsDiscoveredDeltaMs} ms, ${discovered.detail || 'no detail'}).`);
+}
+
 if (violations.length) {
   console.error(`WinUI startup budget failed for ${logPath}`);
   for (const violation of violations) {

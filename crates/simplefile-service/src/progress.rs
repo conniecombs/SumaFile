@@ -6,8 +6,10 @@ mod parallel;
 mod plan;
 mod registry;
 mod reporting;
-mod resources;
 mod tuning;
+
+// Moved to the leaf crate `sumafile-transfer`; re-exported under the old names.
+use sumafile_transfer::resources;
 
 pub(crate) use parallel::{ActiveFile, ConflictAction, TuningUpdate};
 pub use registry::OperationRegistry;
@@ -16,7 +18,7 @@ pub(crate) use resources::PooledBuffer;
 pub(crate) use resources::RateLimit;
 #[cfg(test)]
 pub(crate) use tuning::Mode;
-pub(crate) use tuning::{CheckMode, OrderBy, Policy};
+pub(crate) use tuning::{load_policy, policy_for_operation, CheckMode, OrderBy, Policy};
 
 #[cfg(test)]
 pub(crate) use plan::prepare_transfer_inputs;
@@ -36,7 +38,6 @@ use plan::{
 use serde::Serialize;
 use simplefile_core::models::ProgressUpdate;
 use simplefile_core::path_conflict::{is_already_exists_error, rename_exclusive};
-use simplefile_core::utils::generate_operation_id;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -121,9 +122,7 @@ pub struct TransferItem {
     pub action: String,
 }
 
-pub fn generate_transfer_operation_id() -> String {
-    generate_operation_id()
-}
+pub use sumafile_transfer::ids::generate_transfer_operation_id;
 
 /// Compatibility RPCs share the transfer engine instead of bypassing recovery.
 pub(crate) fn transfer_single_compat(
@@ -209,7 +208,7 @@ pub(crate) fn transfer_with_tuning_blocking(
         cancel,
         emit,
         emit_tuning,
-        &|| tuning::Policy::for_operation(&policy_id),
+        &|| policy_for_operation(&policy_id),
     )
 }
 
@@ -233,7 +232,7 @@ pub(crate) fn transfer_items_with_tuning_blocking(
         cancel,
         emit,
         emit_tuning,
-        &|| tuning::Policy::for_operation(&policy_id),
+        &|| policy_for_operation(&policy_id),
     )
 }
 
