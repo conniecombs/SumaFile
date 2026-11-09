@@ -23,10 +23,11 @@ public static class HelloMarkers
     }
 }
 
-public sealed class HelloPlugin : IPlugin, ICommandHandler, ISidebarSectionProvider, ISettingsPageProvider
+public sealed class HelloPlugin : IPlugin, ICommandHandler, ISidebarSectionProvider, ISettingsPageProvider, IPanelProvider
 {
     private const string OpenWindowCommand = "plugin:com.sumafile.hello:open-window";
     private const string ShowDialogCommand = "plugin:com.sumafile.hello:show-dialog";
+    private const string ShowBottomCommand = "plugin:com.sumafile.hello:show-bottom";
 
     private IPluginHost? _host;
 
@@ -64,6 +65,21 @@ public sealed class HelloPlugin : IPlugin, ICommandHandler, ISidebarSectionProvi
             var result = await HelloUi.ShowDialogAsync(dialogHost, ct);
             HelloMarkers.Append("dialog.txt", result.ToString());
         }
+        else if (context.CommandId == ShowBottomCommand && _host is { } panelHost)
+        {
+            // Through IPluginHost.Panels, which the host queues to its UI thread; completes once the panel is shown.
+            await panelHost.Panels.ShowAsync("hello-bottom", ct);
+        }
+    }
+
+    /// <summary>
+    /// Hello's two panels (<c>hello-panel</c>, right and detachable; <c>hello-bottom</c>): a code-built body per
+    /// presentation. Appends <c>&lt;panelId&gt;:&lt;detached&gt;</c> to <c>panel.txt</c>.
+    /// </summary>
+    public object CreatePanel(PluginPanelRequest request)
+    {
+        HelloMarkers.Append("panel.txt", request.PanelId + ":" + request.Detached);
+        return HelloPanels.Create(_host ?? throw new InvalidOperationException("Hello is not activated."), request);
     }
 
     /// <summary>Hello's one section, <c>hello</c>: a code-built TextBlock. Writes <c>sidebar.txt</c> with the section id.</summary>

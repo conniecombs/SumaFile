@@ -75,7 +75,9 @@ public sealed partial class MainWindow
             _ = PluginContributionAdapter.ToolbarActions(none);
             _ = PluginContributionAdapter.PrimaryToolbarCommandIds(none);
             _ = PluginContributionAdapter.SidebarSections(none);
-            _ = CreatePluginSectionView(new PluginSidebarSection("warm-up", "warm-up", "Warm-up", "warm-up", null, 0));        }
+            _ = PluginContributionAdapter.Panels(none);
+            _ = CreatePluginSectionView(new PluginSidebarSection("warm-up", "warm-up", "Warm-up", "warm-up", null, 0));
+        }
         catch (Exception exception)
         {
             // Only a warm-up: the real render builds the same controls and reports its own failures.
@@ -139,6 +141,8 @@ public sealed partial class MainWindow
             UiThread = new PluginUiThread(DispatcherQueue),
             // A new, unsealed host for every plugin runtime; teardown seals and closes the old one.
             WindowsFor = WindowsFor,
+            // IPluginHost.Panels: shows and hides the plugin's own panels, always queued to this window's thread.
+            PanelsFor = CreatePluginPanels,
             ValidateUiElement = element => element is FrameworkElement
                 ? null
                 : $"returned {element.GetType().FullName}, not a Microsoft.UI.Xaml.FrameworkElement",
@@ -228,6 +232,7 @@ public sealed partial class MainWindow
         ToolbarActionCatalog.SetPluginActions(PluginContributionAdapter.ToolbarActions(enabled));
         _pluginMenus = PluginContributionAdapter.ContextMenus(enabled);
         SyncPluginSidebarSections(enabled);
+        SyncPluginPanels(enabled);
         if (ApplyPluginToolbarPlacements(enabled))
         {
             ApplyCommandSurfaceLayout();
@@ -307,12 +312,33 @@ public sealed partial class MainWindow
                 AppendPluginLog(host.PluginId, $"[warn] Closing the plugin's windows failed: {exception.Message}");
             }
         }
+
+        // A detached panel's window that no host tracks yet (its plugin's first activation had not finished) closes too.
+        if (_pluginPanelWindow is not null)
+        {
+            try
+            {
+                HidePluginPanel();
+            }
+            catch (Exception exception)
+            {
+                AppendPluginLog("host", $"[warn] Closing the plugin panel's window failed: {exception.Message}");
+            }
+        }
     }
 
     private Task RunPluginCommandAsync(string hostCommandId) =>
         RunUiActionAsync("Plugin", async () =>
         {
             var plugins = _plugins ?? throw new InvalidOperationException("Plugins are not available.");
+            // A panel's command (palette, menus, RunAppCommandAsync) shows its panel; the plugin's ICommandHandler never
+            // receives it. Its toolbar button toggles the panel instead (OnGeneratedToolbarCommandClick).
+            if (PluginPanelLayout.ForCommand(_pluginPanels, hostCommandId) is { } panel)
+            {
+                await ShowPluginPanelAsync(panel.PluginId, panel.PanelId);
+                return;
+            }
+
             var activePath = _workspace?.Active.Path;
             var context = new PluginCommandContext(
                 hostCommandId,
@@ -417,6 +443,8 @@ public sealed partial class MainWindow
         AppCommandCatalog.SetPluginCommands([]);
         ToolbarActionCatalog.SetPluginActions([]);
         ClearPluginSidebarSections();
+        // Before the manager stops: closes a detached panel's window and drops every panel body.
+        ClearPluginPanels();
         try
         {
             await manager.DisposeAsync();

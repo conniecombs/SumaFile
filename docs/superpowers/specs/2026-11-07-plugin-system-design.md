@@ -788,6 +788,61 @@ SDK. Backends in other languages implement the framing directly; the spec in
   that throws, returns null or returns something `ValidateUiElement` rejects,
   marks the plugin LoadFailed and withdraws its contributions, with
   `Plugin '<id>' panel '<panelId>' …` messages as for sidebar sections.
+  The App side, as built (phase 4 Task 10):
+  - **Naming.** `PluginPanelHost` is not a class. It is two regions of
+    `MainWindow.xaml`, driven by `MainWindow.PluginPanels.cs`:
+    `PluginPanelBottomRegion`, in a fourth (`Auto`) row of `FilePaneShell`
+    below the panes, and `PluginPanelRightRegion`, the third column of
+    `PanesAndPanelGrid` (`*`, `0`, `0`), which wraps `PanesGrid`.
+  - **Host chrome.** Built in code from the manifest, so no plugin code runs
+    until the body is needed: a `Border` with AutomationId
+    `PluginPanel.<pluginId>.<panelId>` whose header holds the title, a detach
+    button (`.Detach`, named `Detach <title>`, only when `detachable`) and a
+    close button (`.Close`, named `Close <title>`), above a `ContentPresenter`
+    (`.Body`).
+  - **One visible panel.** Showing a panel hides any other, docked or
+    detached. Spec §7's sizes apply: the bottom region's `RowResizeGrip`
+    (north-south cursor, `PluginPanel.BottomGrip`) and the right region's
+    `PaneResizeGrip` (`PluginPanel.RightGrip`) clamp through
+    `PluginPanelLayout`, write `UiSettings`, and save on release. A
+    double-tap resets the default. `ResizePluginPanelBy(delta)` is the one
+    resize path, for the drag and the UI smoke.
+  - **Detach and dock.** Detach drops the docked body and opens a host-owned
+    `PluginPanelWindow` (code-built, `SecondaryWindowChrome`, 1180 x 740,
+    AutomationId `PluginPanelWindow.<pluginId>.<panelId>`, header buttons
+    `Dock <title>` and `Close <title>`). The plugin is then asked again with
+    `Detached` true. Dock closes the window and asks again with `Detached`
+    false. Closing the window any other way hides the panel, so a panel shown
+    again opens docked.
+  - **Toggle semantics.** A panel's `command` run from the palette, a menu or
+    `RunAppCommandAsync` shows the panel. Its generated toolbar button
+    toggles it and is drawn as a toggle (`Hide <title>` / `Show <title>`).
+    The plugin's `ICommandHandler` never receives a panel command.
+  - **Body.** Every body load goes through the `PluginBodyLoadQueue` under
+    `panel:<key>` at low priority, never inline, so a panel's first
+    activation never nests inside a host pass (#82). A failure shows
+    `This panel could not be loaded: <message>` in the body. A hidden panel
+    keeps no element: hiding, detaching and docking drop the body, and a
+    body that arrives after its presentation ended is dropped.
+  - **Contribution changes.** The contribution render only records the
+    wanted panels (`SyncPluginPanels`, which builds no element and so adds
+    nothing to the startup span) and hides the shown panel when
+    `PluginPanelLayout.StillWanted` drops it: its plugin was disabled or
+    failed, or its runtime was retired (a new epoch).
+  - **Teardown.** The panel window is tracked by the plugin's window host
+    (`PluginWindowHost.TrackHostWindow`: the same window set and seal as
+    `Attach`, without chrome), so Disable, rescan, load failure and the main
+    window's close close it first, and a dialog open on it is hidden and
+    releases the gate. A window opened before the plugin's first activation
+    created its runtime is tracked once the body load created it.
+  - **`IPluginHost.Panels`** (`PluginPanelsService`, one per runtime through
+    `PanelsFor`) is callable from any thread. `ShowAsync` is always queued
+    with `PluginUiDispatch.EnqueueAsync`, never inline, and completes once
+    the panel is shown; it fails with `Plugin '<id>' has no panel '<panelId>'.`
+    for a panel that is not declared or not enabled. `Hide` is queued with
+    `TryEnqueue` and does nothing when another panel is shown. `IsVisible`
+    reads a volatile snapshot that the UI thread updates whenever a panel is
+    shown or hidden.
 - `FileRowView` reads `Row.DecorationText` and `Row.DecorationBrushKey`
   instead of `Row.GitText`. `ExplorerWorkspace` asks every registered
   `IRowDecorationProvider` for decorations once per folder sync, off the UI
@@ -1585,7 +1640,11 @@ widens "reference only the SDK package and the helper crate" for C#, and phase 4
   major is bumped or the test is updated deliberately.
 - A fixture plugin under `src-winui/SimpleFile.Tests/Fixtures/HelloPlugin`
   exercises every contribution kind, both declarative settings and a custom
-  page, a backend with `host.*` calls, and an archive engine for a fake
+  page, both panel placements (phase 4: `hello-panel`, right and detachable,
+  toggled by `toggle-panel`; `hello-bottom`, shown through
+  `IPluginHost.Panels` by `show-bottom`; the UI smoke step `plugin-panels`
+  covers show, resize, one visible panel, detach, dock, a dialog on the
+  panel window, Disable and Close), a backend with `host.*` calls, and an archive engine for a fake
   `.hello` extension.
 - Loader tests cover shadowing, incompatible SDK major, invalid manifest,
   consent state transitions and signature verification.

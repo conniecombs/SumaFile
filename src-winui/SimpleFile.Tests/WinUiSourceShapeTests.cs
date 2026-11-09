@@ -1352,6 +1352,158 @@ public class WinUiSourceShapeTests
         }
     }
 
+    [Fact]
+    public void SyncPluginPanels_BuildsNoElement()
+    {
+        // Spec §5.2: the contribution render inside the plugins-* span only records the wanted panels. A panel's chrome
+        // and body are built when it is shown, never by the sync.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        var body = MethodBody(panels, "private void SyncPluginPanels(IReadOnlyList<PluginRecord> enabled)");
+
+        Assert.DoesNotContain("new ", body);
+        Assert.DoesNotContain("CreatePanelAsync", body);
+        Assert.DoesNotContain("PluginPanelWindow", body);
+        Assert.Contains("PluginPanelLayout.StillWanted(", body);
+
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        Assert.Contains("SyncPluginPanels(enabled);", MethodBody(plugins, "private void ApplyPluginContributions("));
+        Assert.Contains("ClearPluginPanels();", MethodBody(plugins, "private async Task DisposePluginsAsync("));
+        Assert.Contains("PanelsFor = ", MethodBody(plugins, "private async Task InitializePluginsAsync("));
+    }
+
+    [Fact]
+    public void PluginPanelRegions_AreDeclaredInMainWindowXaml()
+    {
+        // Spec §7: the panel host is two regions of MainWindow.xaml, below and to the right of the panes.
+        var root = FindRepoRoot();
+        var xaml = System.Xml.Linq.XDocument.Load(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml"));
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        System.Xml.Linq.XElement Named(string name) =>
+            xaml.Descendants().SingleOrDefault(element => (string?)element.Attribute(x + "Name") == name)
+            ?? throw new Xunit.Sdk.XunitException($"MainWindow.xaml has no element named {name}.");
+
+        var shell = Named("FilePaneShell");
+        var shellRows = shell.Elements().Single(element => element.Name.LocalName == "Grid.RowDefinitions").Elements().ToList();
+        Assert.Equal(4, shellRows.Count);
+        Assert.Equal("Auto", (string?)shellRows[3].Attribute("Height"));
+
+        var bottom = Named("PluginPanelBottomRegion");
+        Assert.Same(shell, bottom.Parent);
+        Assert.Equal("3", (string?)bottom.Attribute("Grid.Row"));
+        Assert.Equal("Collapsed", (string?)bottom.Attribute("Visibility"));
+        var bottomGrip = bottom.Descendants().Single(element => element.Name.LocalName == "RowResizeGrip");
+        Assert.Equal("PluginPanel.BottomGrip", (string?)bottomGrip.Attribute("AutomationProperties.AutomationId"));
+
+        var wrapper = Named("PanesAndPanelGrid");
+        Assert.Same(shell, wrapper.Parent);
+        var columns = wrapper.Elements().Single(element => element.Name.LocalName == "Grid.ColumnDefinitions").Elements()
+            .Select(column => (string?)column.Attribute("Width")).ToList();
+        Assert.Equal(["*", "0", "0"], columns);
+        Assert.Same(wrapper, Named("PanesGrid").Parent);
+        var rightGrip = Named("PluginPanelRightGrip");
+        Assert.Equal("PaneResizeGrip", rightGrip.Name.LocalName);
+        Assert.Equal("PluginPanel.RightGrip", (string?)rightGrip.Attribute("AutomationProperties.AutomationId"));
+        Assert.Equal("1", (string?)rightGrip.Attribute("Grid.Column"));
+        var right = Named("PluginPanelRightRegion");
+        Assert.Same(wrapper, right.Parent);
+        Assert.Equal("2", (string?)right.Attribute("Grid.Column"));
+    }
+
+    [Fact]
+    public void PanelCommands_ShowFromCommandsAndToggleFromTheToolbar()
+    {
+        // A panel's command shows it from the palette, a menu or RunAppCommandAsync, and its toolbar button toggles it.
+        // The plugin's ICommandHandler never receives a panel command.
+        var root = FindRepoRoot();
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        var run = MethodBody(plugins, "private Task RunPluginCommandAsync(string hostCommandId)");
+        var forCommand = run.IndexOf("PluginPanelLayout.ForCommand(", StringComparison.Ordinal);
+        var show = run.IndexOf("ShowPluginPanelAsync(", StringComparison.Ordinal);
+        var command = run.IndexOf("RunCommandAsync(", StringComparison.Ordinal);
+        Assert.True(forCommand >= 0, "RunPluginCommandAsync does not consult PluginPanelLayout.ForCommand.");
+        Assert.True(show > forCommand, "RunPluginCommandAsync does not show the panel its command names.");
+        Assert.True(command > show, "RunPluginCommandAsync must consult the panels before it runs the plugin's command.");
+        Assert.Contains("return;", run[show..command]);
+
+        var surface = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.CommandSurface.cs"));
+        var click = MethodBody(surface, "private async void OnGeneratedToolbarCommandClick(");
+        Assert.Contains("PluginPanelLayout.ForCommand(", click);
+        Assert.Contains("TogglePluginPanelAsync(", click);
+        Assert.Contains("RefreshPluginPanelToggleButtons();", MethodBody(surface, "private void ApplyPrimaryToolbarCommandVisibility("));
+
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        Assert.Contains("SetToggleChromeState(", MethodBody(panels, "private void RefreshPluginPanelToggleButtons("));
+    }
+
+    [Fact]
+    public void PluginPanelWindow_IsTrackedByThePluginsWindowHost()
+    {
+        // Teardown (Disable, rescan, load failure) and the main window's OnClosed close a detached panel's window first,
+        // through the same window set and seal as plugin windows.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        Assert.Contains("PluginWindowHostFor(", panels);
+        Assert.Contains(".TrackHostWindow(", MethodBody(panels, "private Task DetachPluginPanelAsync("));
+
+        var host = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginWindowHost.cs"));
+        var track = MethodBody(host, "internal void TrackHostWindow(Window window)");
+        Assert.Contains("_windows.TryTrack(window)", track);
+        Assert.Contains("TryClose(window)", track);
+        Assert.Contains("DialogHost.HideDialogsOn(XamlRootOf(window))", track);
+        Assert.Contains("_windows.Remove(window)", track);
+        Assert.DoesNotContain("SecondaryWindowChrome", track);
+
+        var window = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginPanelWindow.cs"));
+        Assert.Contains("sealed class PluginPanelWindow : Window", window);
+        Assert.Contains("SecondaryWindowChrome.Apply(this, ", window);
+        Assert.Contains("PluginPanelLayout.WindowWidth, PluginPanelLayout.WindowHeight", window);
+    }
+
+    [Fact]
+    public void PanelBodies_LoadThroughTheQueueWithThePanelSlotKey()
+    {
+        // Carry-over #82: a panel's first activation never nests inside a host pass, so its body load is queued.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        var show = MethodBody(panels, "internal Task ShowPluginPanelAsync(string pluginId, string panelId)");
+
+        Assert.Contains("_pluginBodyLoads.Request(PluginPanelLayout.BodyLoadKey(", show);
+        Assert.DoesNotContain("CreatePanelAsync(", show);
+        Assert.Equal(1, CountOccurrences(show, "LoadPluginPanelBodyAsync("));
+        Assert.Equal(1, CountOccurrences(show, "() => LoadPluginPanelBodyAsync("));
+
+        foreach (var signature in new[] { "private Task DetachPluginPanelAsync(", "private Task DockPluginPanelAsync(" })
+        {
+            var body = MethodBody(panels, signature);
+            Assert.Contains("_pluginBodyLoads.Request(PluginPanelLayout.BodyLoadKey(", body);
+            Assert.DoesNotContain("CreatePanelAsync(", body);
+        }
+
+        // The one place the body is created; a failure shows in the body.
+        var load = MethodBody(panels, "private async Task LoadPluginPanelBodyAsync(");
+        Assert.Contains(".CreatePanelAsync(", load);
+        Assert.Contains("This panel could not be loaded: ", load);
+        Assert.Equal(1, CountOccurrences(panels, ".CreatePanelAsync("));
+    }
+
+    [Fact]
+    public void PluginPanelsService_QueuesShowAndHide()
+    {
+        // IPluginPanels is callable from any thread and never runs inline on the UI thread.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        Assert.Contains("class PluginPanelsService", panels);
+        Assert.Contains(": IPluginPanels", panels);
+
+        var show = MethodBody(panels, "public Task ShowAsync(string panelId, CancellationToken ct)");
+        Assert.Contains("PluginUiDispatch.EnqueueAsync", show);
+        Assert.DoesNotContain("RunAsync(", show);
+
+        var hide = MethodBody(panels, "public void Hide(string panelId)");
+        Assert.Contains("TryEnqueue(", hide);
+    }
+
     private static string MethodBody(string source, string signature)
     {
         var start = source.IndexOf(signature, StringComparison.Ordinal);

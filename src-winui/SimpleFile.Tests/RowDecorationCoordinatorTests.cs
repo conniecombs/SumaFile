@@ -6,14 +6,18 @@ namespace SimpleFile.Tests;
 
 public class RowDecorationCoordinatorTests
 {
-    private static readonly TimeSpan Budget = TimeSpan.FromMilliseconds(50);
-    private static readonly TimeSpan Watchdog = TimeSpan.FromSeconds(2);
+    // Tests that need the budget to pass first use ShortBudget with a source that is still pending. Tests whose sources
+    // answer at once use AmpleBudget: each source call starts through Task.Run, and on a loaded CI runner the thread pool
+    // can take longer than 50 ms to start it, which made an instant answer look late (CI run 42713361860).
+    private static readonly TimeSpan ShortBudget = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan AmpleBudget = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan Watchdog = TimeSpan.FromSeconds(10);
 
     [Fact]
     public async Task DecorateAsync_BeforeStartupReady_CallsNoSource()
     {
         var source = new FakeRowDecorationSource("com.a");
-        var coordinator = new RowDecorationCoordinator(Budget);
+        var coordinator = new RowDecorationCoordinator(ShortBudget);
         coordinator.SetSource(source);
 
         var result = await coordinator.DecorateAsync(@"R:\repo", false, [@"R:\repo\a.txt"], _ => { }, CancellationToken.None);
@@ -55,7 +59,7 @@ public class RowDecorationCoordinatorTests
         source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(@"R:\repo\a.txt", "M")]);
         var slow = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
         source.Handler = (pluginId, _, _, _) => pluginId == "com.slow" ? slow.Task : null;
-        var coordinator = Ready(source);
+        var coordinator = Ready(source, ShortBudget);
         var lates = new ConcurrentQueue<PaneDecorations>();
 
         var result = await coordinator.DecorateAsync(
@@ -89,7 +93,7 @@ public class RowDecorationCoordinatorTests
         source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(@"R:\repo\a.txt", "M")], "com.a:inRepository");
         var slow = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
         source.Handler = (pluginId, _, _, _) => pluginId == "com.slow" ? slow.Task : null;
-        var coordinator = Ready(source);
+        var coordinator = Ready(source, ShortBudget);
         var lates = new ConcurrentQueue<PaneDecorations>();
 
         var result = await coordinator.DecorateAsync(
@@ -127,7 +131,7 @@ public class RowDecorationCoordinatorTests
         var source = new FakeRowDecorationSource("com.a", "com.slow");
         var slow = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
         source.Handler = (pluginId, _, _, _) => pluginId == "com.slow" ? slow.Task : null;
-        var coordinator = Ready(source);
+        var coordinator = Ready(source, ShortBudget);
         var lates = new ConcurrentQueue<PaneDecorations>();
 
         await coordinator.DecorateAsync(@"R:\repo", false, [@"R:\repo\a.txt"], lates.Enqueue, cancel.Token)
@@ -256,7 +260,7 @@ public class RowDecorationCoordinatorTests
     [Fact]
     public void SetSource_ReportsWhetherThePluginSetChanged()
     {
-        var coordinator = new RowDecorationCoordinator(Budget);
+        var coordinator = new RowDecorationCoordinator(ShortBudget);
         Assert.False(coordinator.HasProviders);
 
         Assert.True(coordinator.SetSource(new FakeRowDecorationSource("com.a")));
@@ -272,7 +276,7 @@ public class RowDecorationCoordinatorTests
     [Fact]
     public void MarkStartupReady_AndAChangedSourceSet_BumpTheGeneration()
     {
-        var coordinator = new RowDecorationCoordinator(Budget);
+        var coordinator = new RowDecorationCoordinator(ShortBudget);
         var start = coordinator.Generation;
 
         coordinator.MarkStartupReady();
@@ -303,7 +307,7 @@ public class RowDecorationCoordinatorTests
                 return Task.FromResult<FolderDecorationBatch?>(null);
             },
         };
-        var coordinator = Ready(source);
+        var coordinator = Ready(source, ShortBudget);
 
         try
         {
@@ -367,7 +371,7 @@ public class RowDecorationCoordinatorTests
 
     private static RowDecorationCoordinator Ready(IRowDecorationSource source, TimeSpan? budget = null)
     {
-        var coordinator = new RowDecorationCoordinator(budget ?? Budget);
+        var coordinator = new RowDecorationCoordinator(budget ?? AmpleBudget);
         coordinator.SetSource(source);
         coordinator.MarkStartupReady();
         return coordinator;

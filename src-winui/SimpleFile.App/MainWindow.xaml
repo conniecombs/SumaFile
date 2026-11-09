@@ -86,16 +86,25 @@
                         <ColumnDefinition x:Name="PreviewColumn" Width="296" MinWidth="200" MaxWidth="720" />
                     </Grid.ColumnDefinitions>
 
-                    <Grid x:Name="FilePaneShell" Grid.Column="0">
+                    <Grid x:Name="FilePaneShell" Grid.Column="0" SizeChanged="OnPluginPanelHostSizeChanged">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <local:PrimaryToolbarView x:Name="PrimaryToolbarPanel" Grid.Row="0" />
 
-                        <Grid x:Name="PanesGrid" Grid.Row="1" SizeChanged="OnPanesGridSizeChanged">
+                        <!-- Spec §7's PluginPanelHost: the right region and its grip beside the panes (MainWindow.PluginPanels.cs). -->
+                        <Grid x:Name="PanesAndPanelGrid" Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition x:Name="PluginPanelRightGripColumn" Width="0" />
+                            <ColumnDefinition x:Name="PluginPanelRightColumn" Width="0" />
+                        </Grid.ColumnDefinitions>
+
+                        <Grid x:Name="PanesGrid" Grid.Column="0" SizeChanged="OnPanesGridSizeChanged">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition x:Name="PrimaryColumn" Width="*" />
                             <ColumnDefinition x:Name="DividerColumn" Width="0" />
@@ -122,6 +131,29 @@
                         <local:PaneView x:Name="SecondaryPane" Pane="Secondary" Grid.Column="2" />
                     </Grid>
 
+                        <local:PaneResizeGrip
+                            x:Name="PluginPanelRightGrip"
+                            Grid.Column="1"
+                            AutomationProperties.AutomationId="PluginPanel.RightGrip"
+                            AutomationProperties.Name="Resize plugin panel"
+                            DoubleTapped="OnPluginPanelGripDoubleTapped"
+                            PointerMoved="OnPluginPanelGripMoved"
+                            PointerPressed="OnPluginPanelGripPressed"
+                            PointerReleased="OnPluginPanelGripReleased"
+                            Visibility="Collapsed">
+                            <Rectangle
+                                Width="1"
+                                HorizontalAlignment="Center"
+                                Fill="{ThemeResource SfBorderBrush}" />
+                        </local:PaneResizeGrip>
+
+                        <Border
+                            x:Name="PluginPanelRightRegion"
+                            Grid.Column="2"
+                            Background="{ThemeResource SfBgSecondaryBrush}"
+                            Visibility="Collapsed" />
+                        </Grid>
+
                         <Border
                             x:Name="GitPanel"
                             Grid.Row="2"
@@ -133,6 +165,35 @@
                             Visibility="Collapsed">
                             <local:GitWorkbenchView x:Name="GitWorkbench" />
                         </Border>
+
+                        <!-- Spec §7's PluginPanelHost: the bottom region and its grip (MainWindow.PluginPanels.cs). -->
+                        <Grid
+                            x:Name="PluginPanelBottomRegion"
+                            Grid.Row="3"
+                            Background="{ThemeResource SfBgSecondaryBrush}"
+                            Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <local:RowResizeGrip
+                                x:Name="PluginPanelBottomGrip"
+                                Grid.Row="0"
+                                AutomationProperties.AutomationId="PluginPanel.BottomGrip"
+                                AutomationProperties.Name="Resize plugin panel"
+                                DoubleTapped="OnPluginPanelGripDoubleTapped"
+                                PointerMoved="OnPluginPanelGripMoved"
+                                PointerPressed="OnPluginPanelGripPressed"
+                                PointerReleased="OnPluginPanelGripReleased">
+                                <Rectangle
+                                    Height="1"
+                                    VerticalAlignment="Center"
+                                    Fill="{ThemeResource SfBorderBrush}" />
+                            </local:RowResizeGrip>
+
+                            <Border x:Name="PluginPanelBottomHost" Grid.Row="1" />
+                        </Grid>
                     </Grid>
 
                     <local:PaneResizeGrip

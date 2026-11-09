@@ -60,6 +60,30 @@ internal sealed class PluginWindowHost : IPluginWindowHost
     }
 
     /// <summary>
+    /// Tracks a window the host itself built for this plugin, such as a detached panel's <see cref="PluginPanelWindow"/>,
+    /// in the same set and under the same seal as <see cref="Attach"/>, without applying chrome (the window applied its
+    /// own). Teardown and the main window's close therefore close it with the plugin's windows. A sealed host closes the
+    /// window at once. Runs on the UI thread.
+    /// </summary>
+    internal void TrackHostWindow(Window window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        if (!_windows.TryTrack(window))
+        {
+            // Sealed: the plugin is stopping, so its panel window never outlives the runtime.
+            TryClose(window);
+            return;
+        }
+
+        window.Closed += (_, _) =>
+        {
+            // As in Attach: a dialog the plugin opened on the panel window's XamlRoot holds the app-wide gate.
+            DialogHost.HideDialogsOn(XamlRootOf(window));
+            _windows.Remove(window);
+        };
+    }
+
+    /// <summary>
     /// Seals the host on the calling thread (so the seal holds even when the dispatcher is gone), then closes the
     /// windows still open on the UI thread. Completes at once when none is open, or when the dispatcher is shutting
     /// down and the windows go with it. The manager's <c>WindowCloseTimeout</c> bounds the rest.

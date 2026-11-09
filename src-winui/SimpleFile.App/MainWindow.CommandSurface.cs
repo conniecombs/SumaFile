@@ -298,6 +298,13 @@ public sealed partial class MainWindow
                 return;
             }
 
+            // A plugin panel's button toggles the panel; its command from the palette or a menu only shows it.
+            if (PluginPanelLayout.ForCommand(_pluginPanels, commandId) is not null)
+            {
+                await RunUiActionAsync("Toolbar", () => TogglePluginPanelAsync(commandId));
+                return;
+            }
+
             await RunUiActionAsync("Toolbar", () => RunAppCommandAsync(commandId));
         }
     }
@@ -312,6 +319,7 @@ public sealed partial class MainWindow
         }
 
         RefreshToolbarSeparatorVisibility();
+        RefreshPluginPanelToggleButtons();
     }
 
     private void RefreshToolbarSeparatorVisibility()

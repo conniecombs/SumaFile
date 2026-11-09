@@ -307,6 +307,9 @@ public sealed partial class MainWindow
             await SmokePluginDisableClosesWindowsAsync(manager, pluginWindow);
             await checkpoint("plugin-window-self-close");
             await SmokePluginWindowSelfCloseReleasesGateAsync();
+            // After the window checks: this step disables and re-enables Hello, which would close their window.
+            await checkpoint("plugin-panels");
+            var pluginPanels = await SmokePluginPanelsAsync(manager, markerDirectory!);
             results.Add(new
             {
                 scenario = "plugins",
@@ -315,6 +318,7 @@ public sealed partial class MainWindow
                 sidebarSection,
                 pluginWindow = pluginWindowTitle,
                 settingsPage,
+                pluginPanels,
                 dataRoot,
                 command = greetCommand,
                 archiveFormat = helloFormat!.Extension,
@@ -692,6 +696,185 @@ public sealed partial class MainWindow
         });
         SmokeCloseDialog(await SmokeOpenDialogAsync(Content.XamlRoot, "Smoke gate check after self-close"));
         await gateCheck.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    /// <summary>
+    /// Hello's panels in the panel slot (phase 4 Task 10), every wait bounded at 10 s:
+    /// <list type="number">
+    /// <item>Its toggle command shows <c>hello-panel</c> docked on the right, with Hello's body, and never reaches Hello's
+    /// command handler.</item>
+    /// <item><see cref="ResizePluginPanelBy"/> grows the saved width by 40, clamped, and the region follows.</item>
+    /// <item><c>show-bottom</c>, through <c>IPluginHost.Panels</c>, shows <c>hello-bottom</c> and hides the right panel.</item>
+    /// <item>Detach opens one <see cref="PluginPanelWindow"/>, tracked by Hello's window host, with a new body whose
+    /// <c>HelloGrip</c> is a <see cref="Grid"/> subclass from Hello's load context.</item>
+    /// <item>The window's Dock closes it and docks a new body.</item>
+    /// <item>A dialog on the detached window's XamlRoot, then Disable: the window closes, the gate is free and no panel
+    /// is shown. Then Enable.</item>
+    /// <item>The panel opens docked again, and Close hides it: <c>IsVisible</c> is false.</item>
+    /// </list>
+    /// </summary>
+    private async Task<string> SmokePluginPanelsAsync(PluginManager manager, string markerDirectory)
+    {
+        const string panelId = "hello-panel";
+        const string bottomId = "hello-bottom";
+        const string toggleCommand = "plugin:" + SmokeHelloId + ":toggle-panel";
+        const string showBottomCommand = "plugin:" + SmokeHelloId + ":show-bottom";
+        const string rightId = "PluginPanel." + SmokeHelloId + "." + panelId;
+        const string bottomChromeId = "PluginPanel." + SmokeHelloId + "." + bottomId;
+        const string windowId = "PluginPanelWindow." + SmokeHelloId + "." + panelId;
+        var panelLog = Path.Combine(markerDirectory, "panel.txt");
+        var dialogLog = Path.Combine(markerDirectory, "dialog.txt");
+        var commandsLog = Path.Combine(markerDirectory, "commands.log");
+        var workspace = _workspace ?? throw new InvalidOperationException("Workspace is not available");
+        var panels = CreatePluginPanels(SmokeHelloId);
+
+        static Task WaitAsync(Func<bool> condition, Func<string> describe) =>
+            SmokeWaitWithinAsync(() => Task.FromResult(condition()), TimeSpan.FromSeconds(10), describe);
+        static string IdOf(object? element) => element is DependencyObject item ? AutomationProperties.GetAutomationId(item) : "";
+        static FrameworkElement? BodyOf(FrameworkElement? chrome) => chrome is null
+            ? null
+            : SmokeLogicalDescendants<ContentPresenter>(chrome)
+                .FirstOrDefault(item => IdOf(item) == IdOf(chrome) + ".Body")?.Content as FrameworkElement;
+        static bool IsHelloBody(FrameworkElement? body) => body is not null
+            && SmokeLogicalDescendants<TextBlock>(body).Any(text => IdOf(text) == "Hello.PanelBody");
+        static T? Find<T>(FrameworkElement root, string automationId) where T : FrameworkElement =>
+            SmokeLogicalDescendants<T>(root).FirstOrDefault(item => IdOf(item) == automationId);
+        FrameworkElement? RightBody() => BodyOf(PluginPanelRightRegion.Child as FrameworkElement);
+        string Describe() =>
+            $"shown {(_shownPluginPanel is { } shown ? PluginPanelLayout.Key(shown) : "none")}, window {(_pluginPanelWindow is null ? "none" : "open")}, "
+            + $"right {PluginPanelRightRegion.Visibility}/{IdOf(PluginPanelRightRegion.Child)}, "
+            + $"bottom {PluginPanelBottomRegion.Visibility}/{IdOf(PluginPanelBottomHost.Child)}, "
+            + $"panel.txt '{SmokeLastLine(panelLog)}'";
+        bool NothingShown() => _shownPluginPanel is null && _pluginPanelWindow is null
+            && PluginPanelRightRegion.Visibility == Visibility.Collapsed && PluginPanelRightRegion.Child is null
+            && PluginPanelBottomRegion.Visibility == Visibility.Collapsed && PluginPanelBottomHost.Child is null;
+
+        SmokeAssert(NothingShown(), "A plugin panel is shown before the panel check: " + Describe());
+
+        // 1. The toggle command from RunAppCommandAsync shows the right panel, and only the host handles it.
+        await RunAppCommandAsync(toggleCommand);
+        await WaitAsync(() => PluginPanelRightRegion.Visibility == Visibility.Visible
+            && IdOf(PluginPanelRightRegion.Child) == rightId && IsHelloBody(RightBody())
+            && SmokeLastLine(panelLog) == panelId + ":False", () => "hello-panel docked: " + Describe());
+        SmokeAssert(PluginPanelBottomRegion.Visibility == Visibility.Collapsed, "The bottom region is shown with the right panel");
+        SmokeAssert(panels.IsVisible(panelId) && !panels.IsVisible(bottomId), "IsVisible does not report hello-panel alone");
+        SmokeAssert(!File.Exists(commandsLog) || !File.ReadAllLines(commandsLog).Contains(toggleCommand),
+            "Hello's command handler received the panel command");
+
+        // 2. The resize path the grips use: the saved width grows by 40, clamped, and the region follows.
+        var widthBefore = CurrentPluginPanelRightWidth();
+        var expectedWidth = UiSettings.NormalizePluginPanelRightWidth(
+            PluginPanelLayout.ClampRightWidth(widthBefore + 40, PanesAndPanelGrid.ActualWidth));
+        ResizePluginPanelBy(40);
+        SmokeAssert(Math.Abs(workspace.Settings.PluginPanelRightWidth - expectedWidth) < 0.01,
+            $"PluginPanelRightWidth is {workspace.Settings.PluginPanelRightWidth} after +40 from {widthBefore}, expected {expectedWidth}");
+        SmokeAssert(Math.Abs(PluginPanelRightColumn.Width.Value - expectedWidth) < 0.01,
+            $"The right panel column is {PluginPanelRightColumn.Width.Value}, expected {expectedWidth}");
+        await WaitAsync(() => Math.Abs(PluginPanelRightRegion.ActualWidth - expectedWidth) < 1,
+            () => $"right region width {PluginPanelRightRegion.ActualWidth}, expected {expectedWidth}");
+
+        // 3. show-bottom goes through IPluginHost.Panels: the bottom panel shows and the right one hides.
+        await RunAppCommandAsync(showBottomCommand);
+        await WaitAsync(() => PluginPanelBottomRegion.Visibility == Visibility.Visible
+            && IdOf(PluginPanelBottomHost.Child) == bottomChromeId
+            && IsHelloBody(BodyOf(PluginPanelBottomHost.Child as FrameworkElement))
+            && SmokeLastLine(panelLog) == bottomId + ":False", () => "hello-bottom docked: " + Describe());
+        SmokeAssert(PluginPanelRightRegion.Visibility == Visibility.Collapsed && PluginPanelRightRegion.Child is null,
+            "The right region still shows a panel next to the bottom one");
+        SmokeAssert(panels.IsVisible(bottomId) && !panels.IsVisible(panelId), "IsVisible does not report hello-bottom alone");
+        SmokeAssert(Math.Abs(PluginPanelBottomRegion.Height - CurrentPluginPanelBottomHeight()) < 0.01,
+            $"The bottom region is {PluginPanelBottomRegion.Height} high, expected {CurrentPluginPanelBottomHeight()}");
+        var bottomChrome = (FrameworkElement)PluginPanelBottomHost.Child!;
+        SmokeAssert(Find<Button>(bottomChrome, bottomChromeId + ".Detach") is null, "The non-detachable bottom panel offers Detach");
+
+        // 4. Show hello-panel again and detach it: one tracked window with a new body; the right region is empty.
+        await RunAppCommandAsync(toggleCommand);
+        await WaitAsync(() => IdOf(PluginPanelRightRegion.Child) == rightId && IsHelloBody(RightBody())
+            && PluginPanelBottomRegion.Visibility == Visibility.Collapsed, () => "hello-panel docked again: " + Describe());
+        var dockedChrome = (FrameworkElement)PluginPanelRightRegion.Child!;
+        var detach = Find<Button>(dockedChrome, rightId + ".Detach");
+        SmokeAssert(detach is not null && AutomationProperties.GetName(detach) == "Detach Hello panel",
+            $"{rightId}.Detach is missing or named '{(detach is null ? "" : AutomationProperties.GetName(detach))}'");
+        await WaitAsync(() => detach!.IsLoaded, () => "Detach button loaded");
+        SmokeInvoke(detach!);
+        PluginPanelWindow? window = null;
+        await WaitAsync(() => (window = _pluginPanelWindow) is { IsClosed: false } && IsHelloBody(BodyOf(window.Chrome.Root))
+            && SmokeLastLine(panelLog) == panelId + ":True", () => "hello-panel window: " + Describe());
+        var host = PluginWindowHostFor(SmokeHelloId) ?? throw new InvalidOperationException("Hello has no window host");
+        SmokeAssert(host.OpenWindows.Count == 1 && ReferenceEquals(host.OpenWindows[0], window),
+            $"Hello's window host tracks {host.OpenWindows.Count} windows, expected the panel window alone");
+        SmokeAssert(window!.Title == "Hello panel", $"The panel window is titled '{window.Title}'");
+        SmokeAssert(IdOf(window.Content) == windowId, $"The panel window's content is {IdOf(window.Content)}");
+        SmokeAssert(PluginPanelRightRegion.Child is null && PluginPanelRightRegion.Visibility == Visibility.Collapsed,
+            "The right region still holds the detached panel");
+        SmokeAssert(panels.IsVisible(panelId), "IsVisible is false for the detached panel");
+        var windowBody = BodyOf(window.Chrome.Root)!;
+        var grip = Find<Grid>(windowBody, "Hello.PanelGrip");
+        SmokeAssert(grip is not null, "Hello.PanelGrip is missing from the detached body");
+        var gripType = grip!.GetType();
+        var gripContext = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(gripType.Assembly);
+        SmokeAssert(gripType.IsSubclassOf(typeof(Grid)) && gripType.FullName == "SimpleFile.Tests.Fixtures.HelloPlugin.HelloGrip",
+            $"Hello.PanelGrip is a {gripType.FullName}, not Hello's Grid subclass");
+        SmokeAssert(gripContext is not null && !ReferenceEquals(gripContext, System.Runtime.Loader.AssemblyLoadContext.Default),
+            $"HelloGrip was loaded into the {gripContext?.Name ?? "unknown"} load context, not the plugin's");
+
+        // 5. The window's Dock closes it and docks a new body.
+        var dock = Find<Button>(window.Chrome.Root, windowId + ".Detach");
+        SmokeAssert(dock is not null && AutomationProperties.GetName(dock) == "Dock Hello panel",
+            $"{windowId}.Detach is missing or named '{(dock is null ? "" : AutomationProperties.GetName(dock))}'");
+        await WaitAsync(() => dock!.IsLoaded, () => "Dock button loaded");
+        var detachedWindow = window;
+        SmokeInvoke(dock!);
+        await WaitAsync(() => detachedWindow.IsClosed && _pluginPanelWindow is null && host.OpenWindows.Count == 0
+            && IdOf(PluginPanelRightRegion.Child) == rightId && IsHelloBody(RightBody())
+            && SmokeLastLine(panelLog) == panelId + ":False", () => "hello-panel docked after Dock: " + Describe());
+        SmokeAssert(!ReferenceEquals(RightBody(), windowBody), "Dock reused the window's body element");
+
+        // 6. Detach again, open a dialog on the window's XamlRoot, then Disable: the window closes and the gate is free.
+        detach = Find<Button>((FrameworkElement)PluginPanelRightRegion.Child!, rightId + ".Detach");
+        await WaitAsync(() => detach!.IsLoaded, () => "Detach button loaded again");
+        SmokeInvoke(detach!);
+        PluginPanelWindow? again = null;
+        await WaitAsync(() => (again = _pluginPanelWindow) is { IsClosed: false } && IsHelloBody(BodyOf(again.Chrome.Root))
+            && host.OpenWindows.Count == 1, () => "hello-panel window again: " + Describe());
+        var detachedAgain = again!;
+        var dialogButton = Find<Button>(BodyOf(detachedAgain.Chrome.Root)!, "Hello.PanelDialog");
+        SmokeAssert(dialogButton is not null, "Hello.PanelDialog is missing");
+        await WaitAsync(() => dialogButton!.IsLoaded && dialogButton.XamlRoot is not null, () => "Hello.PanelDialog loaded");
+        SmokeInvoke(dialogButton!);
+        await SmokeOpenDialogAsync(dialogButton!.XamlRoot!, "Hello panel dialog");
+        SmokeAssert(DialogHost.IsDialogOpen, "The panel dialog does not hold the dialog gate");
+        SmokeAssert(Content?.XamlRoot is not { } mainRoot
+            || !VisualTreeHelper.GetOpenPopupsForXamlRoot(mainRoot).Select(popup => popup.Child).OfType<ContentDialog>()
+                .Any(item => Equals(item.Title, "Hello panel dialog")),
+            "The detached panel's dialog opened on the main window");
+
+        await manager.DisableAsync(SmokeHelloId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitAsync(() => detachedAgain.IsClosed && host.OpenWindows.Count == 0 && !DialogHost.IsDialogOpen && NothingShown(),
+            () => $"after the disable: window closed {detachedAgain.IsClosed}, tracked {host.OpenWindows.Count}, "
+                + $"dialog gate held {DialogHost.IsDialogOpen}, " + Describe());
+        SmokeAssert(!panels.IsVisible(panelId), "IsVisible is true after the disable");
+        await WaitAsync(() => SmokeLastLine(dialogLog) == "panel:None", () => $"dialog.txt ends '{SmokeLastLine(dialogLog)}'");
+        await manager.EnableAsync(SmokeHelloId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitAsync(() => _pluginPanels.Any(panel => panel.PluginId == SmokeHelloId && panel.PanelId == panelId),
+            () => "Hello's panels after the re-enable: " + string.Join(", ", _pluginPanels.Select(PluginPanelLayout.Key)));
+        var record = manager.Plugins.FirstOrDefault(item => item.Id == SmokeHelloId);
+        SmokeAssert(record?.State == PluginState.Enabled, $"Hello is {record?.State} after re-enable: {record?.Error}");
+
+        // 7. Shown again it opens docked, not in a window; Close hides it.
+        await RunAppCommandAsync(toggleCommand);
+        await WaitAsync(() => IdOf(PluginPanelRightRegion.Child) == rightId && IsHelloBody(RightBody())
+            && _pluginPanelWindow is null, () => "hello-panel docked after the re-enable: " + Describe());
+        SmokeAssert((PluginWindowHostFor(SmokeHelloId)?.OpenWindows.Count ?? 0) == 0, "A panel window is open after the re-enable");
+        SmokeAssert(panels.IsVisible(panelId), "IsVisible is false for the shown panel");
+        var close = Find<Button>((FrameworkElement)PluginPanelRightRegion.Child!, rightId + ".Close");
+        SmokeAssert(close is not null && AutomationProperties.GetName(close) == "Close Hello panel",
+            $"{rightId}.Close is missing or named '{(close is null ? "" : AutomationProperties.GetName(close))}'");
+        await WaitAsync(() => close!.IsLoaded, () => "Close button loaded");
+        SmokeInvoke(close!);
+        await WaitAsync(NothingShown, () => "after Close: " + Describe());
+        SmokeAssert(!panels.IsVisible(panelId), "IsVisible is true after Close");
+        return panelId + "," + bottomId;
     }
 
     private static async Task<ContentDialog> SmokeOpenDialogAsync(XamlRoot root, string title)
