@@ -40,7 +40,7 @@ internal static class TransferOptionsDialog
         await ShowAsync(root, backend);
     }
 
-    public static async Task ShowAsync(XamlRoot root, ISettingsBackend backend, TransferOperationViewModel? operation = null, bool remote = false)
+    public static async Task ShowAsync(XamlRoot root, ISettingsBackend backend, TransferOperationViewModel? operation = null)
     {
         try
         {
@@ -153,24 +153,11 @@ internal static class TransferOptionsDialog
             compareBy.SelectionChanged += (_, _) =>
                 verify.IsChecked = compareBy.SelectedIndex == Array.IndexOf(checkModes, ChecksumMode);
 
-            if (remote)
-            {
-                foreach (var control in new Control[] { mode, filesAtOnce, maxConcurrency, checkers, maxBacklog, bufferSize, memory, multiThreadCutoff, multiThreadStreams })
-                    control.IsEnabled = false;
-                inplace.Content = "Write downloads directly to the destination instead of a temporary file";
-                inplaceNote.Text = "Downloads appear under their final names while they run, and replaced files are overwritten in place. A cancelled or failed download leaves a partial file behind.";
-                preallocate.Content = "Pre-allocate local download space";
-                flushOnClose.Content = "Flush local downloads to disk before finishing each file";
-                highLevelRetries.Header = "Retry rounds per failed file";
-            }
-
             var status = new TextBlock
             {
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = 12,
-                Text = remote
-                    ? "Remote sessions copy one file at a time, and checksum verification downloads each file again."
-                    : "Automatic adjusts to measured speed, Conservative copies up to 4 files at once, Maximum copies more, and Custom uses your own limit.",
+                Text = "Automatic adjusts to measured speed, Conservative copies up to 4 files at once, Maximum copies more, and Custom uses your own limit.",
             };
 
             var advanced = new StackPanel { Spacing = 12 };

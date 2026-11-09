@@ -30,6 +30,8 @@ internal sealed class PluginRuntime : IPluginHost
     private readonly IPluginDialogs _dialogs;
     private readonly IPluginWorkspace _workspace;
     private readonly IPluginWindowHost _windows;
+    private readonly IPluginPanels _panels;
+    private readonly IPluginDecorations _decorations;
     private readonly Action<string, string> _log;
     private PluginHostServices _services;
     private IPlugin? _instance;
@@ -44,6 +46,8 @@ internal sealed class PluginRuntime : IPluginHost
         IPluginDialogs dialogs,
         IPluginWorkspace workspace,
         IPluginWindowHost windows,
+        IPluginPanels panels,
+        IPluginDecorations decorations,
         Action<string, string> log)
     {
         PluginId = pluginId;
@@ -54,6 +58,8 @@ internal sealed class PluginRuntime : IPluginHost
         _dialogs = dialogs;
         _workspace = workspace;
         _windows = windows;
+        _panels = panels;
+        _decorations = decorations;
         _log = log;
         _services = CreateServices();
     }
@@ -74,6 +80,9 @@ internal sealed class PluginRuntime : IPluginHost
     /// <summary>How long <see cref="RetireAsync"/> waits for a running activation, and then for DeactivateAsync.</summary>
     private static readonly TimeSpan RetireTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>The longest <see cref="RetireAsync"/> waits: once for a running activation, once for DeactivateAsync.</summary>
+    internal static TimeSpan RetireTimeouts => RetireTimeout + RetireTimeout;
+
     public const string DeactivateTimeoutMessage = "plugin did not deactivate in time";
 
     private PluginHostServices Current
@@ -92,6 +101,12 @@ internal sealed class PluginRuntime : IPluginHost
 
     /// <summary>The manager's side of <see cref="Windows"/>: it closes the runtime's windows during teardown.</summary>
     public IPluginWindowHost WindowHost => _windows;
+
+    /// <summary>The one panel service of this runtime, the same across backend generations.</summary>
+    public IPluginPanels Panels => _panels;
+
+    /// <summary>The one decoration service of this runtime, the same across backend generations.</summary>
+    public IPluginDecorations Decorations => _decorations;
 
     public bool IsCurrent(PluginHostServices services)
     {
@@ -248,6 +263,8 @@ internal sealed class PluginRuntime : IPluginHost
             _dialogs,
             _workspace,
             _windows,
+            _panels,
+            _decorations,
             _log);
         return services;
     }

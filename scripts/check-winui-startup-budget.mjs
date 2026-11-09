@@ -11,7 +11,8 @@ const budgets = {
   firstSyncMs: 7000,
   readyMs: 8000,
   driveRefreshMinMs: 4500,
-  pluginsDiscoveredDeltaMs: 50,
+  // Spec section 5.2, over the whole plugin discovery span (pluginDiscoverySpan), however the App splits it.
+  pluginsDiscoveredSpanMs: 50,
 };
 
 if (!fs.existsSync(logPath)) {
@@ -33,13 +34,17 @@ checkMaximum(session, 'BackendSession.Start.ready', budgets.backendReadyMs, viol
 checkMaximum(session, 'MainWindow.Connect.workspace-initialized', budgets.workspaceInitializedMs, violations);
 checkMaximum(session, 'MainWindow.Connect.first-sync', budgets.firstSyncMs, violations);
 checkMaximum(session, 'MainWindow.Connect.ready', budgets.readyMs, violations);
-checkMaximumDelta(session, 'MainWindow.Connect.plugins-discovered', budgets.pluginsDiscoveredDeltaMs, violations);
 checkDeferredDriveRefresh(session, budgets.driveRefreshMinMs, violations);
 
-// The baseline later plugin work is measured against; printed whether or not the budget holds.
-const discovered = session.findLast(event => event.stage === 'MainWindow.Connect.plugins-discovered');
-if (discovered) {
-  console.log(`plugins-discovered delta ${discovered.deltaMs.toFixed(1)} ms (budget ${budgets.pluginsDiscoveredDeltaMs} ms, ${discovered.detail || 'no detail'}).`);
+// Printed whether or not the budget holds, stage by stage, so a CI log shows which part of discovery dominates.
+const pluginSpan = pluginDiscoverySpan(session);
+if (pluginSpan) {
+  const stages = pluginSpan.stages.map(stage => `${stage.marker} ${stage.deltaMs.toFixed(1)} ms`).join(', ');
+  console.log(`plugins-discovered span ${pluginSpan.totalMs.toFixed(1)} ms (budget ${budgets.pluginsDiscoveredSpanMs} ms, ${pluginSpan.detail || 'no detail'}): ${stages}.`);
+  if (pluginSpan.totalMs > budgets.pluginsDiscoveredSpanMs) {
+    const count = pluginSpan.stages.length === 1 ? '1 stage' : `${pluginSpan.stages.length} stages`;
+    violations.push(`MainWindow.Connect.plugins-discovered took ${pluginSpan.totalMs.toFixed(1)} ms over ${count}; budget is ${budgets.pluginsDiscoveredSpanMs} ms`);
+  }
 }
 
 if (violations.length) {
@@ -105,12 +110,37 @@ function checkMaximum(session, stage, maxMs, violations) {
   }
 }
 
-// Optional stage: only its own step is budgeted, and its absence is not a violation.
-function checkMaximumDelta(session, stage, maxDeltaMs, violations) {
-  const event = session.findLast(item => item.stage === stage);
-  if (event && event.deltaMs > maxDeltaMs) {
-    violations.push(`${stage} took ${event.deltaMs.toFixed(1)} ms; budget is ${maxDeltaMs} ms`);
+// The plugin discovery span: MainWindow.Connect.plugins-discovered and the MainWindow.Connect.plugins-* sub-stages
+// written just before it. Each delta runs from the previous MainWindow.Connect stage, so the span runs from the stage
+// before the first of them (backend-started) to plugins-discovered, and a log from before the split budgets
+// plugins-discovered alone. Lines of other scopes are skipped. Optional: null without a plugins-discovered stage.
+function pluginDiscoverySpan(sessionEvents) {
+  const scope = 'MainWindow.Connect.';
+  const end = sessionEvents.findLastIndex(event => event.stage === `${scope}plugins-discovered`);
+  if (end < 0) {
+    return null;
   }
+
+  const stages = [];
+  for (let index = end; index >= 0; index -= 1) {
+    const event = sessionEvents[index];
+    if (!event.stage.startsWith(scope)) {
+      continue;
+    }
+
+    const marker = event.stage.slice(scope.length);
+    if (!marker.startsWith('plugins-')) {
+      break;
+    }
+
+    stages.unshift({ marker, deltaMs: event.deltaMs });
+  }
+
+  return {
+    totalMs: stages.reduce((sum, stage) => sum + stage.deltaMs, 0),
+    stages,
+    detail: sessionEvents[end].detail,
+  };
 }
 
 function checkDeferredDriveRefresh(session, minMs, violations) {

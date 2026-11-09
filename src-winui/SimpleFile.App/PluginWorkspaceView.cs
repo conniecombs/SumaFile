@@ -41,10 +41,25 @@ internal sealed class PluginWorkspaceView : IPluginWorkspace
     public Task NavigateAsync(string path, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        return PluginUiDispatch.RunAsync(_dispatcher, async () =>
+        // Always queued, even on the UI thread: a plugin that navigates from ActivateAsync or a provider must never
+        // re-enter a workspace sync that is still running (carry-over #82).
+        return PluginUiDispatch.EnqueueAsync(_dispatcher, async () =>
         {
             var workspace = _workspace() ?? throw new InvalidOperationException("SumaFile's workspace is not ready.");
             await workspace.NavigateToAsync(path, cancellationToken: ct);
+            return true;
+        });
+    }
+
+    public Task RefreshAsync(CancellationToken ct)
+    {
+        // Always queued, like NavigateAsync: a plugin that refreshes from a command, a provider or a decoration request
+        // must never re-enter a workspace sync that is still running (carry-over #82).
+        return PluginUiDispatch.EnqueueAsync(_dispatcher, async () =>
+        {
+            ct.ThrowIfCancellationRequested();
+            var workspace = _workspace() ?? throw new InvalidOperationException("SumaFile's workspace is not ready.");
+            await workspace.RefreshAsync(ct);
             return true;
         });
     }

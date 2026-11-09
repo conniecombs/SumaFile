@@ -34,11 +34,14 @@ public sealed class PluginApprovalStore
     /// <summary>Replaces the default store path when set (the UI smoke points it at its own disposable file).</summary>
     public const string PathVariable = "SUMAFILE_PLUGIN_APPROVALS_PATH";
 
+    /// <summary>
+    /// The <see cref="PathVariable"/> override when set, else <c>plugin-approvals.json</c> next to the app: like every
+    /// plugin file, the approvals stay in the installation folder.
+    /// </summary>
     public static string DefaultPath() =>
         Environment.GetEnvironmentVariable(PathVariable) is { } overridePath && !string.IsNullOrWhiteSpace(overridePath)
             ? overridePath.Trim()
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "SumaFile", "plugin-approvals.json");
+            : Path.Combine(AppContext.BaseDirectory, "plugin-approvals.json");
 
     /// <summary>
     /// The stored decision for this plugin, or NeedsConsent when its manifest, signature status or folder

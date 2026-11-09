@@ -18,6 +18,15 @@ public class PluginSidebarLayoutTests
     }
 
     [Fact]
+    public void BodyLoadKey_CarriesTheSidebarSlot()
+    {
+        var section = Section("com.a.b", "s", 7);
+
+        Assert.Equal("sidebar:" + PluginSidebarLayout.Key(section), PluginSidebarLayout.BodyLoadKey(section));
+        Assert.Equal("sidebar:com.a.b:s:7", PluginSidebarLayout.BodyLoadKey(section));
+    }
+
+    [Fact]
     public void Diff_AddsNewSectionsAndRemovesWithdrawnOnes()
     {
         var kept = Section("com.a.b", "kept", 1);

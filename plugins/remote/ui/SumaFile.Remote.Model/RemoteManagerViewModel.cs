@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace SumaFile.Remote.Model;
@@ -16,6 +17,12 @@ public sealed class RemoteManagerViewModel : ObservableObject
     /// <summary>The status after a call found the session gone.</summary>
     public const string ConnectionLostText = "The connection was lost. Connect again.";
 
+    /// <summary>The backend's error for a disconnect while a transfer still holds the session.</summary>
+    public const string SessionBusyText = "Remote session is busy; wait for or cancel its transfer";
+
+    /// <summary>How often <see cref="CloseSessionAsync"/> asks a busy session to disconnect again.</summary>
+    private static readonly TimeSpan CloseRetryInterval = TimeSpan.FromMilliseconds(200);
+
     private readonly IRemoteBackend _backend;
     private readonly ILocalFolderSource _localFolders;
     private RemoteProfile? _selectedProfile;
@@ -27,6 +34,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
     private string? _localParentPath;
     private string _remotePath = "/";
     private CancellationTokenSource? _transferCancellation;
+    private TaskCompletionSource? _transferFinished;
     private string[] _retrySources = [];
     private string _retryDirection = "";
     private string _retryDestination = "";
@@ -591,6 +599,74 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Ends the session when the manager closes. It cancels a running transfer and waits up to
+    /// <paramref name="transferWait"/> for it to finish, then disconnects; a session the backend still reports as
+    /// busy is asked again every 200 ms until the same deadline. Returns true once the session is gone (or none was
+    /// open), false when the deadline passed first; the session then ends with the backend.
+    /// </summary>
+    public async Task<bool> CloseSessionAsync(TimeSpan transferWait, CancellationToken ct = default)
+    {
+        var deadline = Stopwatch.GetTimestamp() + (long)(Math.Max(0, transferWait.TotalSeconds) * Stopwatch.Frequency);
+        var transfer = _transferFinished;
+        if (transfer is not null)
+        {
+            CancelTransfer();
+            try
+            {
+                await transfer.Task.WaitAsync(Remaining(deadline), ct);
+            }
+            catch (TimeoutException)
+            {
+                // Try the disconnect anyway: the backend may have released the session already.
+            }
+        }
+
+        while (true)
+        {
+            var session = CurrentSession;
+            if (session is null)
+            {
+                return true;
+            }
+
+            try
+            {
+                await _backend.DisconnectAsync(session.SessionId, ct);
+                if (ReferenceEquals(CurrentSession, session))
+                {
+                    CurrentSession = null;
+                    RemoteEntries.Clear();
+                    RemotePath = "/";
+                    StatusText = FormatProfileCount(Profiles.Count);
+                }
+
+                return true;
+            }
+            catch (Exception exception) when (IsSessionLost(exception))
+            {
+                DropLostSession();
+                return true;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException
+                && exception.Message.Contains(SessionBusyText, StringComparison.Ordinal))
+            {
+                if (Remaining(deadline) < CloseRetryInterval)
+                {
+                    return false;
+                }
+            }
+
+            await Task.Delay(CloseRetryInterval, ct);
+        }
+    }
+
+    private static TimeSpan Remaining(long deadline)
+    {
+        var remaining = deadline - Stopwatch.GetTimestamp();
+        return remaining <= 0 ? TimeSpan.Zero : TimeSpan.FromSeconds((double)remaining / Stopwatch.Frequency);
+    }
+
     public async Task CreateRemoteDirectoryAsync(string name, CancellationToken ct = default)
     {
         var trimmedName = string.IsNullOrWhiteSpace(name) ? "" : name.Trim();
@@ -786,7 +862,9 @@ public sealed class RemoteManagerViewModel : ObservableObject
         if (sources.Length == 0) { StatusText = "Select files or folders to transfer"; return; }
         if (string.IsNullOrWhiteSpace(destination)) { StatusText = "Choose a destination folder"; return; }
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _transferCancellation = cancellation;
+        _transferFinished = finished;
         _retryProfileId = CurrentSession.ProfileId;
         _retrySources = sources;
         _retryDirection = direction;
@@ -854,9 +932,15 @@ public sealed class RemoteManagerViewModel : ObservableObject
         finally
         {
             _transferCancellation = null;
+            if (ReferenceEquals(_transferFinished, finished))
+            {
+                _transferFinished = null;
+            }
+
             IsBusy = false;
             OnPropertyChanged(nameof(CanCancelTransfer));
             OnPropertyChanged(nameof(CanRetryTransfers));
+            finished.TrySetResult();
         }
     }
 
@@ -886,8 +970,10 @@ public sealed class RemoteManagerViewModel : ObservableObject
 
     private void ReplaceRemoteEntries(IEnumerable<RemoteFileEntry> entries)
     {
+        // Materialize first: callers pass queries over RemoteEntries itself, which Clear would empty.
+        var ordered = entries.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase).ToArray();
         RemoteEntries.Clear();
-        foreach (var entry in entries.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase))
+        foreach (var entry in ordered)
         {
             RemoteEntries.Add(entry);
         }
@@ -895,8 +981,10 @@ public sealed class RemoteManagerViewModel : ObservableObject
 
     private void ReplaceLocalEntries(IEnumerable<RemoteFileEntry> entries)
     {
+        // Materialize the order first: Clear raises a collection change before the new entries are added. Sorted by name only, as 1.0.4 did.
+        var ordered = entries.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase).ToArray();
         LocalEntries.Clear();
-        foreach (var entry in entries.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase))
+        foreach (var entry in ordered)
         {
             LocalEntries.Add(entry);
         }

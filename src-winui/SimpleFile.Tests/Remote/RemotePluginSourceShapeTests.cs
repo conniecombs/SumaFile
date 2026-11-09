@@ -346,6 +346,47 @@ public class RemotePluginSourceShapeTests
             ui.Descendants("PackageReference").Select(p => (string?)p.Attribute("Include") ?? "").OrderBy(p => p, StringComparer.Ordinal));
     }
 
+    [Fact]
+    public void ManagerWindow_ProgressDialogHide_IsGuarded()
+    {
+        // Carry-over (d): the window may close before the work ends, and Hide on a dialog whose XamlRoot is gone throws
+        // inside a dispatcher callback, where nothing would catch it.
+        var window = File.ReadAllText(Path.Combine(ViewsRoot(), "RemoteManagerWindow.cs"));
+        var signature = "private async Task<T> RunWithProgressAsync<T>(";
+        var start = window.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"'{signature}' was not found.");
+        var open = window.IndexOf('{', start);
+        var depth = 0;
+        var end = open;
+        for (; end < window.Length; end++)
+        {
+            if (window[end] == '{') depth++;
+            else if (window[end] == '}' && --depth == 0) break;
+        }
+
+        var body = window[open..(end + 1)];
+        WinUiSourceShapeTests.AssertEveryHideIsGuarded(body, "RemoteManagerWindow.RunWithProgressAsync", "dialog.Hide()", expected: 2);
+        Assert.Equal(2, Regex.Matches(body, @"dialog\.XamlRoot is null").Count);
+    }
+
+    [Fact]
+    public void ManagerWindow_OnClosed_ClosesTheSessionAfterItsTransfer()
+    {
+        // Carry-over (b): a plain disconnect from OnClosed failed busy while a transfer ran, and the session stayed
+        // open until the backend stopped. The window hands the close to the view model, fire-and-forget.
+        var window = File.ReadAllText(Path.Combine(ViewsRoot(), "RemoteManagerWindow.cs"));
+        var start = window.IndexOf("private void OnClosed(", StringComparison.Ordinal);
+        var end = window.IndexOf("private void OnViewModelPropertyChanged(", StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start, "OnClosed and the method after it were not found.");
+        var closing = window[start..end];
+
+        Assert.Contains("_ = CloseSessionQuietlyAsync();", closing);
+        Assert.Contains("await _viewModel.CloseSessionAsync(TimeSpan.FromSeconds(10))", closing);
+        Assert.Contains("_host.Logger.Info(", closing);
+        Assert.DoesNotContain("DisconnectAsync(", closing);
+        Assert.DoesNotContain("CancelTransfer()", closing);
+    }
+
     /// <summary>An attribute or child element value, the two ways MSBuild items carry metadata.</summary>
     private static string? ValueOf(XElement item, string name) =>
         (string?)item.Attribute(name) ?? item.Element(name)?.Value;

@@ -14,6 +14,7 @@ using SimpleFile.Ipc;
 using Windows.Graphics;
 using Windows.System;
 using Windows.UI;
+using DispatcherQueuePriority = Microsoft.UI.Dispatching.DispatcherQueuePriority;
 
 namespace SimpleFile.App;
 
@@ -48,7 +49,6 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _transferPromptGate = new(1, 1);
     private int _watchRequestToken;
     private TransferProgressWindow? _transferProgressWindow;
-    private RemoteManagerWindow? _remoteManagerWindow;
     private CancellationTokenSource? _archiveCts;
     private readonly UtilityOperationRegistry _utilityOperations = new();
     private bool _applyingWorkspace;
@@ -88,7 +88,6 @@ public sealed partial class MainWindow : Window
     public ObservableCollection<FileRow> SecondaryFiles { get; } = [];
     public ObservableCollection<DriveRow> Drives { get; } = [];
     public ObservableCollection<QuickAccessRow> QuickAccess { get; } = [];
-    public ObservableCollection<RemoteProfileSidebarRow> RemoteProfiles { get; } = [];
 
     public MainWindow()
     {
@@ -191,7 +190,6 @@ public sealed partial class MainWindow : Window
         AttachPaneActivationHandlers();
         DriveList.ItemsSource = Drives;
         QuickAccessList.ItemsSource = QuickAccess;
-        RemoteProfileList.ItemsSource = RemoteProfiles;
         Closed += OnClosed;
         Activated += OnActivated;
     }
@@ -206,9 +204,14 @@ public sealed partial class MainWindow : Window
     {
         var timer = new StartupTimer("MainWindow.Connect");
         timer.Mark("begin");
-        // On the thread pool while the file service starts: reads every manifest, bundled.json and the approvals
-        // file, so the plugins-discovered span below holds only evaluation (spec §5.2's 50 ms budget).
+        // On the thread pool while the file service starts: reads and judges every plugin (manifests, bundled.json, the
+        // approvals file, signatures), so the plugins-* span below (spec §5.2's 50 ms budget) reads and hashes nothing.
         var pluginScan = PreparePluginScan();
+        // Carry-over (h): while the file service starts, the UI thread is idle; warm the first-use JIT of the
+        // contribution render so the plugins-* span below does not pay it. Normal priority, queued before the first
+        // await, so it runs before the backend-started continuation: at Low priority it only ran after ready (measured
+        // in the phase 4 Task 4 report), when it can no longer help.
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Normal, () => WarmPluginRendering());
         try
         {
             SetStatusText("Starting SumaFile's file service...");
@@ -247,8 +250,6 @@ public sealed partial class MainWindow : Window
             timer.Mark("open-with-preferences");
             ApplyTheme(_workspace.Settings.Theme);
             SyncSidebarCollapseStateFromSettings();
-            await RefreshRemoteProfilesForSidebarAsync(CancellationToken.None);
-            timer.Mark("remote-profiles");
             ApplyPreviewVisibility();
             ApplyColumnWidths();
             SyncFromWorkspace();
@@ -1358,7 +1359,6 @@ public sealed partial class MainWindow : Window
         CancelArchiveOperation();
         _transfer?.Reset();
         CloseTransferProgressWindow();
-        CloseRemoteManagerWindow();
         // Plugin windows close with the main window, before the awaits below (the plugin teardown then finds none).
         ClosePluginWindows();
         _search?.ClearState(notifyHost: false);

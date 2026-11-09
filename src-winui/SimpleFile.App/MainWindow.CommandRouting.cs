@@ -64,7 +64,6 @@ public sealed partial class MainWindow
             ["shortcut-for-selected"] = PromptAndCreateShortcutForSelection,
             ["create-archive"] = CreateArchiveAsync,
             ["terminal"] = OpenTerminalInActivePathAsync,
-            ["ftp-sftp-manager"] = () => RunSyncCommand(() => ShowRemoteManagerWindow()),
             ["powershell-admin"] = OpenPowershellAdminAsync,
             ["preview"] = () => RunSyncCommand(() => OnTogglePreview(this, new RoutedEventArgs())),
             ["toggle-hidden"] = ToggleHiddenFilesAsync,

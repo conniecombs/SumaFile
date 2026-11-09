@@ -52,7 +52,6 @@ public static class AppCommandCatalog
         new("shortcut-for-selected", "Create shortcut to selection", "File"),
         new("create-archive", "Create archive", "Archive"),
         new("terminal", "Open terminal", "Tools", "Ctrl+`"),
-        new("ftp-sftp-manager", "FTP/SFTP manager", "Tools"),
         new("preview", "Show or hide preview pane", "View"),
         new("toggle-hidden", "Show or hide hidden files", "View", "Ctrl+H"),
         new("toggle-side-menu", "Show or hide sidebar", "View"),

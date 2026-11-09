@@ -108,11 +108,11 @@ const schemaMethods = new Set(
   Object.keys(commands.methods || {}).filter((name) => !name.startsWith('ipc.')),
 );
 
-if (handlers.size !== 99) {
-  fail(`expected 99 domain handlers, found ${handlers.size}`);
+if (handlers.size !== 86) {
+  fail(`expected 86 domain handlers, found ${handlers.size}`);
 }
-if (commands.domainMethodCount !== 99) {
-  fail(`commands.json domainMethodCount must be 99, found ${commands.domainMethodCount}`);
+if (commands.domainMethodCount !== 86) {
+  fail(`commands.json domainMethodCount must be 86, found ${commands.domainMethodCount}`);
 }
 if (protocol.protocolVersion !== 1 || commands.protocolVersion !== 1) {
   fail('schema protocolVersion must be 1');

@@ -17,6 +17,12 @@ public sealed class UiSettings
     public const int IconSizeMax = 256;
     public const int IconSizeStep = 8;
 
+    /// <summary>
+    /// The largest plugin panel size a setting keeps. The real upper bound depends on the window
+    /// (<see cref="PluginPanelLayout.ClampBottomHeight"/>); this one only rejects nonsense.
+    /// </summary>
+    public const double PluginPanelMaxStoredSize = 10000;
+
     public string Theme { get; set; } = "system";
     public string DefaultView { get; set; } = "details";
     public int DefaultIconSize { get; set; } = 16;
@@ -55,6 +61,10 @@ public sealed class UiSettings
     /// in the host's settings rather than the plugin's, so a plugin cannot change it.
     /// </summary>
     public List<string> CollapsedPluginSidebarSections { get; set; } = [];
+    /// <summary>The docked bottom plugin panel's height, saved as <c>pluginPanel.bottomHeight</c>.</summary>
+    public double PluginPanelBottomHeight { get; set; } = PluginPanelLayout.BottomDefaultHeight;
+    /// <summary>The docked right plugin panel's width, saved as <c>pluginPanel.rightWidth</c>.</summary>
+    public double PluginPanelRightWidth { get; set; } = PluginPanelLayout.RightDefaultWidth;
     public int PhotoFolderImageThreshold { get; set; } = 70;
     /// <summary>Primary pane column preset. Settings dialog edits this and mirrors to secondary.</summary>
     public string ColumnPreset { get; set; } = "default";
@@ -204,6 +214,20 @@ public sealed class UiSettings
             ? NormalizePreviewWidth(parsed)
             : PreviewDefaultWidth;
     }
+
+    /// <summary>
+    /// A stored bottom panel height: the default when it is not a number, otherwise at least
+    /// <see cref="PluginPanelLayout.BottomMinHeight"/> and at most <see cref="PluginPanelMaxStoredSize"/>.
+    /// </summary>
+    public static double NormalizePluginPanelBottomHeight(double height) =>
+        NormalizePluginPanelSize(height, PluginPanelLayout.BottomMinHeight, PluginPanelLayout.BottomDefaultHeight);
+
+    /// <summary>A stored right panel width, by the same rule with <see cref="PluginPanelLayout.RightMinWidth"/>.</summary>
+    public static double NormalizePluginPanelRightWidth(double width) =>
+        NormalizePluginPanelSize(width, PluginPanelLayout.RightMinWidth, PluginPanelLayout.RightDefaultWidth);
+
+    private static double NormalizePluginPanelSize(double size, double min, double fallback) =>
+        double.IsFinite(size) ? Math.Clamp(size, min, PluginPanelMaxStoredSize) : fallback;
 
     public static double NormalizeDualPanePrimaryPercent(double percent)
     {

@@ -23,7 +23,11 @@ public sealed partial class SettingsWindow
     private readonly HashSet<(string PluginId, int Epoch)> _pluginPagesLoading = [];
     private bool _pluginPageSearchQueued;
 
-    private static string UserPluginRoot => PluginDiscovery.UserRoot();
+    /// <summary>
+    /// SumaFile's one plugins folder, <c>&lt;install&gt;\plugins</c>: Install from file unzips into it, Remove deletes
+    /// from it and Open plugins folder shows it (user requirement 2026-11-09: no plugin file outside the install folder).
+    /// </summary>
+    private static string PluginsRoot => PluginDiscovery.InstallRoot();
 
     /// <summary>Remembers the manager and re-renders the panel whenever it reports a change, until the window closes.</summary>
     private void AttachPlugins(PluginManager? plugins)
@@ -96,7 +100,7 @@ public sealed partial class SettingsWindow
         var builder = new PluginSettingsPanelBuilder
         {
             XamlRoot = () => Content?.XamlRoot,
-            CanRemove = IsUserInstalled,
+            CanRemove = IsRemovable,
             SetEnabledAsync = (record, enabled) => enabled
                 ? manager.EnableAsync(record.Id, token)
                 : manager.DisableAsync(record.Id, token),
@@ -212,11 +216,8 @@ public sealed partial class SettingsWindow
         }
     }
 
-    private static bool IsUserInstalled(PluginRecord record) =>
-        string.Equals(
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(record.Discovered.Root)),
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(UserPluginRoot)),
-            StringComparison.OrdinalIgnoreCase);
+    /// <summary>A plugin the user installed into the plugins folder; bundled plugins are disabled, never removed.</summary>
+    private static bool IsRemovable(PluginRecord record) => PluginPackageInstaller.IsRemovable(record, PluginsRoot);
 
     private async Task ReviewPluginAsync(PluginManager manager, PluginRecord record, CancellationToken token)
     {
@@ -234,9 +235,11 @@ public sealed partial class SettingsWindow
 
     private static async Task RemovePluginAsync(PluginManager manager, PluginRecord record, CancellationToken token)
     {
-        if (!IsUserInstalled(record))
+        if (!IsRemovable(record))
         {
-            throw new InvalidOperationException("Only plugins installed in your user plugins folder can be removed.");
+            throw new InvalidOperationException(record.IsBundledId
+                ? $"{record.Discovered.Manifest?.Name ?? record.Id} ships with SumaFile and cannot be removed. Disable it instead."
+                : "Only plugins in SumaFile's plugins folder can be removed.");
         }
 
         if (record.State is PluginState.Enabled or PluginState.Faulted or PluginState.LoadFailed)
@@ -246,7 +249,8 @@ public sealed partial class SettingsWindow
         }
 
         var folder = record.Discovered.Folder;
-        await Task.Run(() => PluginPackageInstaller.Remove(folder, UserPluginRoot), token);
+        // Only the folder goes: the plugin's settings and its plugins-data folder are kept.
+        await Task.Run(() => PluginPackageInstaller.Remove(folder, PluginsRoot), token);
         await manager.RescanAsync(token);
     }
 
@@ -287,8 +291,8 @@ public sealed partial class SettingsWindow
             }
 
             var token = _pluginsCts.Token;
-            var userRoot = UserPluginRoot;
-            var folder = await Task.Run(() => PluginPackageInstaller.Install(file.Path, userRoot), token);
+            var pluginsRoot = PluginsRoot;
+            var folder = await Task.Run(() => PluginPackageInstaller.Install(file.Path, pluginsRoot), token);
             await manager.RescanAsync(token);
             var id = Path.GetFileName(folder);
             var installed = manager.Plugins.FirstOrDefault(record => record.Id == id);
@@ -339,9 +343,9 @@ public sealed partial class SettingsWindow
     {
         try
         {
-            var userRoot = UserPluginRoot;
-            Directory.CreateDirectory(userRoot);
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{userRoot}\"") { UseShellExecute = true });
+            var pluginsRoot = PluginsRoot;
+            Directory.CreateDirectory(pluginsRoot);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{pluginsRoot}\"") { UseShellExecute = true });
         }
         catch (Exception exception)
         {

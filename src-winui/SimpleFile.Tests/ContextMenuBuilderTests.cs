@@ -163,12 +163,11 @@ public class ContextMenuBuilderTests
         var tools = Assert.Single(more, entry => entry.Id == "overflow-tools-menu");
         Assert.Equal("Tools", tools.Label);
         Assert.Equal(
-            new[] { "overflow-ftp-sftp-manager", "overflow-operation-history", "ctx-cleanup", "ctx-terminal" },
+            new[] { "overflow-operation-history", "ctx-cleanup", "ctx-terminal" },
             tools.Children.Select(child => child.Id).ToArray());
-        Assert.Equal("FTP/SFTP manager...", tools.Children[0].Label);
-        Assert.Equal("Operation history...", tools.Children[1].Label);
-        Assert.Equal("Large files and duplicates here...", tools.Children[2].Label);
-        Assert.Equal("Ctrl+`", tools.Children[3].Shortcut);
+        Assert.Equal("Operation history...", tools.Children[0].Label);
+        Assert.Equal("Large files and duplicates here...", tools.Children[1].Label);
+        Assert.Equal("Ctrl+`", tools.Children[2].Shortcut);
         Assert.Contains(more, entry => entry.Id == "overflow-profiles" && entry.Label == "Manage workspace profiles...");
     }
 

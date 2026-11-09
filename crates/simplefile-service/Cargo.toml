@@ -24,13 +24,9 @@ notify = { version = "8", features = ["serde"] }
 opener = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.11"
 simplefile-core = { path = "../simplefile-core" }
 simplefile-ipc = { path = "../simplefile-ipc" }
 sumafile-transfer = { path = "../sumafile-transfer" }
-russh = { version = "0.63.3", default-features = false, features = ["flate2", "ring"] }
-russh-sftp = "3.0.0"
-suppaftp = { version = "12.0.1", features = ["native-tls"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
@@ -38,4 +34,4 @@ sumafile-transfer = { path = "../sumafile-transfer", features = ["test-support"]
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_Threading"] }

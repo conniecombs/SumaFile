@@ -59,10 +59,18 @@ public sealed class PluginBackendHost
 
         var pipeName = _pipeNameFor(plugin.Id);
         var dataDir = Path.Combine(_dataRoot, plugin.Id);
-        Directory.CreateDirectory(dataDir);
+        var tempDir = CreateDataFolders(plugin.Id, dataDir);
 
         var args = new List<string> { "--pipe-name", pipeName, "--data-dir", dataDir };
         args.AddRange(backend.Args);
+
+        // The backend's own temporary files, and those of every process it starts (7za, git and its helpers), stay in
+        // its data folder, inside the installation folder. The backend owns the folder's contents: it is never emptied.
+        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["TMP"] = tempDir,
+            ["TEMP"] = tempDir,
+        };
 
         IPluginProcess process;
         try
@@ -71,6 +79,7 @@ public sealed class PluginBackendHost
                 Path.Combine(plugin.Folder, backend.Executable),
                 args,
                 plugin.Folder,
+                environment,
                 line => _log(plugin.Id, line));
         }
         catch (Exception ex)
@@ -157,6 +166,28 @@ public sealed class PluginBackendHost
             process.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Creates <paramref name="dataDir"/> and its <c>tmp</c> folder and returns the latter. An unwritable data root
+    /// (an install folder the user cannot write to) fails the start before anything is launched; nothing falls back
+    /// to another folder.
+    /// </summary>
+    private static string CreateDataFolders(string pluginId, string dataDir)
+    {
+        var tempDir = Path.Combine(dataDir, "tmp");
+        try
+        {
+            Directory.CreateDirectory(dataDir);
+            Directory.CreateDirectory(tempDir);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            throw new PluginBackendException(
+                $"SumaFile cannot create the data folder of plugin '{pluginId}' at {dataDir}: {ex.Message}", ex);
+        }
+
+        return tempDir;
     }
 
     private static bool SameMajor(string? a, string? b) =>

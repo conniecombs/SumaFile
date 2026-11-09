@@ -40,9 +40,6 @@ public class UiAuditSprint3Tests
 
         var transfer = Read("MainWindow.Transfer.cs");
         Assert.Contains("RunWithProgressAsync(", Slice(transfer, "private async Task ExtractSelectedArchiveAsync(string mode)", "private async Task<string?> PickFolderAsync("));
-
-        var remote = Read("RemoteManagerWindow.xaml.cs");
-        Assert.Contains("RunWithProgressAsync(", Slice(remote, "private async void OnConnectClicked(", "private async void OnDisconnectClicked("));
     }
 
     // P3: git buttons stayed enabled while a command ran and cancellation was silent.

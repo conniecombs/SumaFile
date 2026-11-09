@@ -133,7 +133,7 @@ public class PluginManifestReaderTests
     [Fact]
     public void Read_IgnoresUnknownTopLevelProperties()
     {
-        var r = PluginManifestReader.Read(Minimal(extra: ", \"panels\": []"), "com.example.a");
+        var r = PluginManifestReader.Read(Minimal(extra: ", \"futureField\": []"), "com.example.a");
         Assert.True(r.IsValid, string.Join("; ", r.Errors));
     }
 
@@ -387,14 +387,196 @@ public class PluginManifestReaderTests
     }
 
     [Fact]
-    public void Read_PanelsAndRowDecorations_AreAcceptedForLaterPhases()
+    public void Read_ValidPanelAndRowDecorations_AreRead()
     {
-        var r = PluginManifestReader.Read(Minimal(extra: Contributions("""
-            "panels": [ { "id": "p", "title": "P", "provider": "p", "placement": "right", "detachable": true } ],
-            "rowDecorations": { "provider": "d" }
+        var r = PluginManifestReader.Read(Minimal(extra: Contributions(GreetCommand + """
+            , "panels": [
+                { "id": "workbench", "title": "Workbench", "provider": "wb", "placement": "right", "detachable": true, "command": "greet" },
+                { "id": "second_one", "title": "Second", "provider": "second", "placement": "bottom", "detachable": false }
+              ],
+              "rowDecorations": { "provider": "status" }
             """)), "com.example.a");
 
         Assert.True(r.IsValid, string.Join("; ", r.Errors));
+        var contributions = r.Manifest!.Contributions;
+        Assert.Equal(
+            [
+                new PluginPanelSpec("workbench", "Workbench", "wb", "right", true, "greet"),
+                new PluginPanelSpec("second_one", "Second", "second", "bottom", false, null),
+            ],
+            contributions.Panels);
+        Assert.Equal(new PluginRowDecorationSpec("status"), contributions.RowDecorations);
+
+        var minimal = PluginManifestReader.Read(Minimal(), "com.example.a").Manifest!;
+        Assert.Empty(minimal.Contributions.Panels);
+        Assert.Null(minimal.Contributions.RowDecorations);
+    }
+
+    [Fact]
+    public void Read_Panel_DefaultsToBottomAndNotDetachable()
+    {
+        var r = PluginManifestReader.Read(Minimal(extra: Contributions(
+            "\"panels\": [ { \"id\": \"p\", \"title\": \"P\", \"provider\": \"prov\" } ]")), "com.example.a");
+
+        Assert.True(r.IsValid, string.Join("; ", r.Errors));
+        Assert.Equal(new PluginPanelSpec("p", "P", "prov", "bottom", false, null), Assert.Single(r.Manifest!.Contributions.Panels));
+    }
+
+    public static TheoryData<string, bool, string> PanelErrors => new()
+    {
+        {
+            "\"panels\": [ { \"id\": \"p\", \"title\": \"P\", \"provider\": \"prov\" } ]",
+            false,
+            "contributions.panels needs a ui assembly."
+        },
+        {
+            "\"panels\": [ { \"id\": \"Bad.Id\", \"title\": \"P\", \"provider\": \"prov\" } ]",
+            true,
+            "The contributions.panels[0].id value 'Bad.Id' is invalid: use 1 to 64 letters, digits, '_' or '-', starting with a lowercase letter or digit."
+        },
+        {
+            "\"panels\": [ { \"id\": \"p\", \"title\": \"One\", \"provider\": \"a\" }, { \"id\": \"p\", \"title\": \"Two\", \"provider\": \"b\" } ]",
+            true,
+            "The panel id 'p' is declared more than once in contributions.panels."
+        },
+        {
+            "\"panels\": [ { \"id\": \"p\", \"provider\": \"prov\" } ]",
+            true,
+            "The contributions.panels[0].title field is required."
+        },
+        {
+            "\"panels\": [ { \"id\": \"p\", \"title\": \"P\" } ]",
+            true,
+            "The contributions.panels[0].provider field is required."
+        },
+        {
+            "\"panels\": [ { \"id\": \"p\", \"title\": \"P\", \"provider\": \"prov\", \"placement\": \"left\" } ]",
+            true,
+            "The contributions.panels[0].placement value 'left' is not recognised; use 'right' or 'bottom'."
+        },
+        {
+            "\"panels\": [ { \"id\": \"p\", \"title\": \"P\", \"provider\": \"prov\", \"detachable\": \"yes\" } ]",
+            true,
+            "The contributions.panels[0].detachable field must be true or false."
+        },
+        {
+            GreetCommand + ", \"panels\": [ { \"id\": \"p\", \"title\": \"P\", \"provider\": \"prov\", \"command\": \"wave\" } ]",
+            true,
+            "The contributions.panels[0].command value 'wave' does not name a command declared in contributions.commands."
+        },
+        {
+            GreetCommand + ", \"panels\": [ { \"id\": \"p\", \"title\": \"P\", \"provider\": \"a\", \"command\": \"greet\" }, " +
+                "{ \"id\": \"q\", \"title\": \"Q\", \"provider\": \"b\", \"command\": \"greet\" } ]",
+            true,
+            "The contributions.panels[1].command value 'greet' already toggles another panel."
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(PanelErrors))]
+    public void Read_Panels_AreValidated(string body, bool ui, string expected)
+    {
+        var r = PluginManifestReader.Read(Minimal(extra: Contributions(body, ui)), "com.example.a");
+
+        Assert.False(r.IsValid);
+        Assert.Contains(expected, r.Errors);
+    }
+
+    [Fact]
+    public void Read_RowDecorations_NeedAUiAssembly()
+    {
+        var withoutUi = PluginManifestReader.Read(Minimal(extra: Contributions(
+            "\"rowDecorations\": { \"provider\": \"status\" }", ui: false)), "com.example.a");
+        Assert.False(withoutUi.IsValid);
+        Assert.Equal(["contributions.rowDecorations needs a ui assembly."], withoutUi.Errors);
+
+        var noProvider = PluginManifestReader.Read(Minimal(extra: Contributions("\"rowDecorations\": { }")), "com.example.a");
+        Assert.False(noProvider.IsValid);
+        Assert.Equal(["The contributions.rowDecorations.provider field is required."], noProvider.Errors);
+
+        var notAnObject = PluginManifestReader.Read(Minimal(extra: Contributions(
+            "\"rowDecorations\": [ { \"provider\": \"status\" } ]")), "com.example.a");
+        Assert.False(notAnObject.IsValid);
+        Assert.Equal(["The contributions.rowDecorations field must be an object."], notAnObject.Errors);
+    }
+
+    [Fact]
+    public void Read_ToolbarWhen_IsValidated()
+    {
+        static string ToolbarWhen(string whenJson) =>
+            "\"toolbar\": [ { \"command\": \"c\", \"label\": \"L\", \"glyph\": \"g\", \"placement\": \"primary\"" + whenJson + " } ]";
+
+        var valid = PluginManifestReader.Read(
+            Minimal(extra: Contributions(ToolbarWhen(", \"when\": \"folderFlag(inRepository)\""))), "com.example.a");
+        Assert.True(valid.IsValid, string.Join("; ", valid.Errors));
+        Assert.Equal("folderFlag(inRepository)", Assert.Single(valid.Manifest!.Contributions.Toolbar).When);
+
+        var omitted = PluginManifestReader.Read(Minimal(extra: Contributions(ToolbarWhen(""))), "com.example.a");
+        Assert.True(omitted.IsValid, string.Join("; ", omitted.Errors));
+        Assert.Equal("", Assert.Single(omitted.Manifest!.Contributions.Toolbar).When);
+
+        var overlong = PluginManifestReader.Read(
+            Minimal(extra: Contributions(ToolbarWhen(", \"when\": \"" + new string('a', 513) + "\""))), "com.example.a");
+        Assert.False(overlong.IsValid);
+        Assert.Equal(["The contributions.toolbar[0].when expression is longer than 512 characters."], overlong.Errors);
+
+        var invalid = PluginManifestReader.Read(
+            Minimal(extra: Contributions(ToolbarWhen(", \"when\": \"selectionCount >\""))), "com.example.a");
+        Assert.False(invalid.IsValid);
+        var error = Assert.Single(invalid.Errors);
+        Assert.StartsWith("The contributions.toolbar[0].when expression is invalid: ", error);
+        Assert.Contains("Expected a number", error);
+
+        var wrongType = PluginManifestReader.Read(
+            Minimal(extra: Contributions(ToolbarWhen(", \"when\": 5"))), "com.example.a");
+        Assert.False(wrongType.IsValid);
+        Assert.Equal(["The contributions.toolbar[0].when field must be a string."], wrongType.Errors);
+    }
+
+    [Theory]
+    [InlineData("enableGitIntegration", null)]
+    [InlineData("ui.theme_mode-2", null)]
+    [InlineData("1abc", "The settings[0].migrateFrom value '1abc' is not a valid settings key.")]
+    [InlineData("has space", "The settings[0].migrateFrom value 'has space' is not a valid settings key.")]
+    [InlineData("", "The settings[0].migrateFrom value '' is not a valid settings key.")]
+    [InlineData("plugin.com.example.b.key", "The settings[0].migrateFrom value 'plugin.com.example.b.key' must not name a plugin setting.")]
+    [InlineData("Plugin.other", "The settings[0].migrateFrom value 'Plugin.other' must not name a plugin setting.")]
+    public void Read_SettingMigrateFrom_IsValidated(string migrateFrom, string? expected)
+    {
+        var extra = ", \"settings\": [ { \"key\": \"enabled\", \"type\": \"boolean\", \"label\": \"Enabled\", \"migrateFrom\": "
+            + System.Text.Json.JsonSerializer.Serialize(migrateFrom) + " } ]";
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+
+        if (expected is null)
+        {
+            Assert.True(r.IsValid, string.Join("; ", r.Errors));
+            Assert.Equal(migrateFrom, Assert.Single(r.Manifest!.Settings).MigrateFrom);
+        }
+        else
+        {
+            Assert.False(r.IsValid);
+            Assert.Equal([expected], r.Errors);
+        }
+    }
+
+    [Fact]
+    public void Read_SettingMigrateFrom_IsOptionalAndBoundedInLength()
+    {
+        var omitted = PluginManifestReader.Read(
+            Minimal(extra: ", \"settings\": [ { \"key\": \"enabled\", \"type\": \"boolean\", \"label\": \"Enabled\" } ]"), "com.example.a");
+        Assert.True(omitted.IsValid, string.Join("; ", omitted.Errors));
+        Assert.Null(Assert.Single(omitted.Manifest!.Settings).MigrateFrom);
+
+        var longest = "a" + new string('b', 127);
+        var atLimit = PluginManifestReader.Read(Minimal(extra:
+            ", \"settings\": [ { \"key\": \"k\", \"type\": \"string\", \"label\": \"K\", \"migrateFrom\": \"" + longest + "\" } ]"), "com.example.a");
+        Assert.True(atLimit.IsValid, string.Join("; ", atLimit.Errors));
+
+        var tooLong = longest + "c";
+        var overLimit = PluginManifestReader.Read(Minimal(extra:
+            ", \"settings\": [ { \"key\": \"k\", \"type\": \"string\", \"label\": \"K\", \"migrateFrom\": \"" + tooLong + "\" } ]"), "com.example.a");
+        Assert.False(overLimit.IsValid);
+        Assert.Equal([$"The settings[0].migrateFrom value '{tooLong}' is not a valid settings key."], overLimit.Errors);
     }
 
     /// The first-party 7-Zip manifest must parse with the host's own reader,

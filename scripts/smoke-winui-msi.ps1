@@ -24,13 +24,14 @@ $process = $null
 $extractedExeDir = $null
 
 # The extracted app must never touch the user's data: it scans only the extracted plugins folder, keeps approvals,
-# plugin data, metadata.db and app data under $smokeRoot, so the bundled remote plugin imports no real profiles and
-# seeds nothing into the real settings.
+# plugin data, the plugin log, metadata.db and app data under $smokeRoot, so the bundled remote plugin imports no
+# real profiles and seeds nothing into the real settings.
 $smokeAppDataDir = Join-Path $smokeRoot "app-data"
 $smokeEnvironment = [ordered]@{
     SUMAFILE_PLUGIN_ROOTS = $null
     SUMAFILE_PLUGIN_APPROVALS_PATH = Join-Path $smokeRoot "plugin-approvals.json"
     SUMAFILE_PLUGIN_DATA_ROOT = Join-Path $smokeRoot "plugins-data"
+    SUMAFILE_PLUGIN_LOG_PATH = Join-Path $smokeRoot "plugins.log"
     SIMPLEFILE_METADATA_DB = Join-Path $smokeAppDataDir "metadata.db"
     SIMPLEFILE_APP_DATA_DIR = $smokeAppDataDir
 }

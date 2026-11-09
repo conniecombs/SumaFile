@@ -30,6 +30,12 @@ public sealed class PluginRecord
     public bool BackendRunning { get; internal set; }
 
     /// <summary>
+    /// The install root's <c>bundled.json</c> lists this id, whatever manifest hash it lists: the plugin ships with
+    /// SumaFile. Trust still needs the listed hash; this only stops Settings from offering to remove it.
+    /// </summary>
+    public bool IsBundledId { get; internal set; }
+
+    /// <summary>
     /// Changes whenever the manager retires this record's runtime (teardown, load failure), so UI the plugin supplied
     /// for an earlier epoch is known to be stale. Unique across the manager's records, and only ever increases.
     /// </summary>

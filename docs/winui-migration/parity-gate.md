@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
-**Contract:** [`inventory.md`](inventory.md) (99 commands / emitted events / Svelte workflows)
+**Contract:** the live service method count is in `ipc/schema/v1/commands.json`; [`inventory.md`](inventory.md) is the historical Tauri inventory (74 commands / emitted events / Svelte workflows)
 **Hosts:** WinUI 3 + `simplefile-service` is the shipping app. Svelte/Tauri UI and packaging glue have been retired.
 
 This is the **retirement lock**. Required `OPEN` rows are none. `MANUAL` rows stay as human smoke coverage. Retired `src-tauri/` domain now lives solely in `crates/simplefile-core`.
@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 99-command schema vs Rust/C#
+npm run check:ipc-schema      # 86-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (99)
+## 2. IPC commands (86)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -174,23 +174,18 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `check_for_update` | Check updates | Settings Updates | Rust signed-metadata tests + schema | Check for updates | `PASS` |
 | `install_update` | Install + restart handshake | Settings install | Rust verify path + FileOperationService progress tests | Signed build smoke | `PASS` |
 
-### 2.6 FTP/SFTP manager
+### 2.6 FTP/SFTP (plugin `com.sumafile.remote`)
+
+FTP, FTPS and SFTP left the core IPC surface in plugin system phase 3: the 13 `remote_*` methods are gone, and the bundled plugin `com.sumafile.remote` serves its own methods over the plugin pipe. Its method, event and error table is [`plugins/remote/protocol.json`](../../plugins/remote/protocol.json). The rows below track the feature by coverage level.
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `remote_list_profiles` | Saved remote profile list | `RemoteManagerViewModel.LoadProfilesAsync` | Remote manager tests + service dispatch tests | Open FTP/SFTP manager | `PASS` |
-| `remote_save_profile` | Save remote profile metadata without secret material | IPC/profile persistence | Rust profile tests + named-pipe client tests | Save a profile | `PASS` |
-| `remote_delete_profile` | Delete remote profile metadata | IPC/profile persistence | Rust profile tests + named-pipe client tests | Delete a profile | `PASS` |
-| `remote_test_profile` | Validate profile fields before connect | IPC validation result | Service dispatch tests | Test profile settings | `PASS` |
-| `remote_connect` | Create an opaque remote session | Remote manager connect path | Fake-provider service tests + named-pipe client tests | Connect to a configured FTP/SFTP profile | `MANUAL` |
-| `remote_disconnect` | Close an opaque remote session | Remote manager disconnect path | Fake-provider service tests + named-pipe client tests | Disconnect from a configured FTP/SFTP profile | `MANUAL` |
-| `remote_list_directory` | List a directory through an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Browse a configured FTP/SFTP profile | `MANUAL` |
-| `remote_create_directory` | Create a directory in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Create a remote folder | `MANUAL` |
-| `remote_rename_entry` | Rename a file or directory in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Rename a remote item | `MANUAL` |
-| `remote_delete_entries` | Delete files or directories in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Delete selected remote items | `MANUAL` |
-| `remote_download_file` | Download a remote file into a chosen local folder | Remote manager download action | Fake-provider service tests + named-pipe client tests | Download selected remote files | `MANUAL` |
-| `remote_transfer_entries` | Stream files and folders with conflict policy, cancellation, and per-item results | Remote manager transfer controls | Remote transfer tests | Transfer files and folders | `MANUAL` |
-| `remote_upload_file` | Upload local files into the active remote directory | Remote manager upload action | Fake-provider service tests + named-pipe client tests | Upload local files | `MANUAL` |
+| `remote.sftp-password` | Profiles, connect, browse, create, rename, delete, upload, download and cancel over SFTP with password auth | Plugin manager window, Connections sidebar section and Transfers rows | Remote backend handler and process tests (`plugins/remote/backend/tests/handler.rs`, `transfers.rs`, `process.rs`); `RemotePluginBackendTests` (real host, real backend, SFTP test server); the `remote` UI smoke | — | `PASS` |
+| `remote.legacy-import` | 1.0.4 profiles and saved passwords after the upgrade | Connections section lists the imported profiles; Connect needs no password | `plugins/remote/backend/tests/legacy_import.rs`; `backend_process_imports_a_1_0_4_profile_and_connects_with_its_saved_password`; `UpgradedProfile_IsImportedAndConnectsThroughTheRealHost`; UI smoke step 2 | — | `PASS` |
+| `remote.ftp` | Plain FTP after the unencrypted-connection consent, and anonymous login | Plugin manager window | Only the ported `ftp.rs` tests: retry classification, list parsing, streaming against the scripted server | Connect, browse, create, rename, delete, upload and download against a real FTP server | `MANUAL` |
+| `remote.ftps` | FTPS (explicit TLS) | Plugin manager window | Only the shared `ftp.rs` tests | The same steps against a real FTPS server whose certificate the system trusts | `MANUAL` |
+| `remote.sftp-key` | SFTP private-key auth, with and without a saved passphrase | Plugin profile dialog | None; the test server accepts passwords only | Connect with a key file; with a saved passphrase, reconnect without retyping it | `MANUAL` |
+| `remote.sftp-agent` | SFTP agent auth | Plugin profile dialog | None | Connect through a running OpenSSH agent or Pageant | `MANUAL` |
 
 ---
 
@@ -348,7 +343,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `folder-metrics` | Metrics | Dialog | Catalog | — | `MANUAL` |
 | `disk-cleanup` | Cleanup | Dialog | Catalog | — | `MANUAL` |
 | `duplicate-checker` | Duplicates | Dialog | Catalog | — | `MANUAL` |
-| `ftp-sftp-manager` | FTP/SFTP manager | Manager command shell | Catalog + remote manager tests | Open manager | `MANUAL` |
+| `plugin:com.sumafile.remote:ftp-sftp-manager` | FTP/SFTP manager (plugin command; palette and toolbar overflow) | Plugin command routed through `PluginManager` | `RemotePluginBackendTests`; the `remote` UI smoke | Open manager | `MANUAL` |
 | `settings` | Settings | Dialog | Catalog | Ctrl+Shift+S | `MANUAL` |
 | `customize-toolbar` `toggle-toolbar-labels` | Toolbar customization | Pane More toolbar submenu + Settings Toolbar page | Catalog + context menu tests | More > Toolbar | `PASS` |
 | `command-palette` | Open command palette | Handler | Catalog test | Ctrl+Shift+P | `PASS` |
@@ -360,7 +355,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-preview` | Quick Look | Builder | Same | — | `PASS` |
 | `ctx-send-to-menu` `ctx-tools-menu` `ctx-archive-menu` | Grouped context menu sections | Builder | Context menu tests | Right-click file/folder | `PASS` |
 | `ctx-toolbar-menu` `ctx-toggle-toolbar-labels` `ctx-customize-toolbar` | Pane More toolbar shortcuts | Builder + handlers | Context menu tests | More > Toolbar | `PASS` |
-| `overflow-tools-menu` | Pane More Tools submenu (FTP/SFTP, history, cleanup, terminal) | Builder | Context menu tests | More > Tools | `PASS` |
+| `overflow-tools-menu` | Pane More Tools submenu (history, cleanup, terminal) | Builder | Context menu tests | More > Tools | `PASS` |
 | `ctx-compare` | Compare | Builder | Same | Two files | `PASS` |
 | `ctx-view-archive` | View archive contents | Builder + handler | `DesktopPolishTests` | Right-click archive | `PASS` |
 | `ctx-terminal` | Terminal | Builder | Same | — | `PASS` |
@@ -437,7 +432,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 99 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 86 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |
@@ -468,6 +463,7 @@ Use a clean folder with mixed files (txt, png, zip), a git repo, and a large fol
 14. F4 terminal; F1 help; Ctrl+Shift+P command palette.
 15. Watcher: create a file in Explorer; list refreshes.
 16. Close app; confirm `simplefile-service` exits.
+17. FTP/SFTP plugin (`com.sumafile.remote`), the four `MANUAL` rows of §2.6: `remote.ftp` (plain FTP after the consent, and anonymous login, against a real FTP server), `remote.ftps` (the same steps against a real FTPS server), `remote.sftp-key` (connect with a private key file; with a saved passphrase, reconnect without retyping it) and `remote.sftp-agent` (connect through a running OpenSSH agent or Pageant).
 
 ---
 

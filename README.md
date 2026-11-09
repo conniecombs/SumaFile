@@ -12,8 +12,8 @@
 SumaFile is a native Windows file manager for people who work across several
 folders at once and need more than a basic file list. It pairs a WinUI 3 desktop
 shell with a Rust filesystem service so browsing, transfers, search, previews,
-archives, checksums, Git status, remote FTP/SFTP profiles, and cleanup tools can
-stay responsive in one local-first app.
+archives, checksums, Git status, cleanup tools and, through the bundled FTP/SFTP
+plugin, remote FTP/SFTP profiles can stay responsive in one local-first app.
 
 **Repository topics:** `windows`, `file-manager`, `winui-3`, `rust`,
 `named-pipe-ipc`, `dual-pane`, `tabs`, `file-preview`, `advanced-rename`,
@@ -75,7 +75,7 @@ All visible files and paths belong to its generated test workspace.
 | UI | Unpackaged WinUI 3 desktop app |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
 | Release artifacts | NSIS setup, MSI, portable ZIP, updater manifest |
-| Storage scope | Local folders, local drives, removable media, mapped network shares, archives, FTP/FTPS/SFTP profile browser |
+| Storage scope | Local folders, local drives, removable media, mapped network shares, archives, and an FTP/FTPS/SFTP profile browser from the bundled FTP/SFTP plugin |
 | License | [MIT](LICENSE) |
 
 The active application is the WinUI host under `src-winui/` plus the Rust crates
@@ -106,7 +106,7 @@ v1.0.3, upgrade instructions and known limitations.
 | Organize messy folders | Tags, bookmarks, recents, smart folders, duplicate finder, cleanup, and Advanced Rename |
 | Work with archives | Create, list, view, extract, pack, and unpack supported archives |
 | Handle developer folders | Git status column, dockable Git workbench, terminal launch, and Open With preferences |
-| Reach remote servers | FTP, FTPS, and SFTP profile manager with test, browse, upload, download, rename, and delete actions |
+| Reach remote servers | FTP, FTPS, and SFTP profile manager from the bundled FTP/SFTP plugin, with test, browse, upload, download, rename, and delete actions |
 | Stay Windows-native | Drive labels, network-share status, shell icons, Windows installers, and Windows shortcuts |
 
 ## Install
@@ -148,9 +148,10 @@ the app. Builds without complete trusted metadata fall back to the release page.
    folder's Properties. Right-click an item for Create
    shortcut, which pre-fills the shortcut target. Unavailable commands stay
    visible but greyed out.
-7. Open More (⋯) -> Tools -> FTP/SFTP manager when you need a saved FTP, FTPS,
-   or SFTP connection. Saved connections are also listed under Connections in
-   the sidebar.
+7. Run FTP/SFTP manager from the command palette or the toolbar overflow when
+   you need a saved FTP, FTPS, or SFTP connection. The bundled FTP/SFTP plugin
+   provides it, and lists saved connections under Connections, below the
+   built-in sidebar sections.
 8. Save repeatable pane/tab/column setups from the Profiles button on the
    toolbar.
 
@@ -279,6 +280,12 @@ links and special entries that could escape the destination.
 
 ### FTP/SFTP Manager
 
+FTP, FTPS and SFTP come from the bundled plugin `com.sumafile.remote` ("FTP/SFTP
+connections"), which installs and is trusted with SumaFile. It contributes the
+FTP/SFTP manager window and command, the Connections sidebar section (below the
+built-in sections) and its own page under Settings -> Plugins. Without the
+plugin, SumaFile shows no FTP/SFTP UI.
+
 - Saved FTP, FTPS, and SFTP profiles
 - Password, anonymous, SSH agent, and private-key authentication modes
 - Optional Windows Credential Manager storage for passwords and passphrases
@@ -286,9 +293,10 @@ links and special entries that could escape the destination.
 - Remote folder browsing with create folder, upload, download, rename, delete,
   refresh, and disconnect actions
 - Recursive folder uploads and downloads, including empty folders
-- Streamed transfers with byte progress, cancellation, per-item outcomes, and
-  retry of incomplete selections; existing files are preserved until transfer
-  completion using temporary files and replacement backups
+- Streamed transfers with byte progress, per-item outcomes, and retry of
+  incomplete selections; existing files are preserved until transfer
+  completion using temporary files and replacement backups. Each transfer is
+  also a row in the Transfers window, with Cancel
 - File conflict choices: report, skip, replace, or keep both. Existing folders
   merge; the selected policy applies to files inside them. When retrying a
   partially completed folder, choose skip to keep files already transferred
@@ -297,15 +305,28 @@ links and special entries that could escape the destination.
 - Symbolic links are reported as unsupported during folder transfers
 - Plain FTP requires an explicit insecure-connection acknowledgement and is
   marked Insecure in the manager and under Connections in the sidebar
+- Remote transfer settings (bandwidth limit, up-to-date check, direct writes,
+  pre-allocation, flushing and retries) are the plugin's settings, under
+  Settings -> Plugins -> FTP/SFTP connections and in the manager's Transfer
+  options dialog
+
+The plugin's backend keeps profiles in
+`<install folder>\plugins-data\com.sumafile.remote\remote-profiles.db`: every
+plugin file, its data included, stays in SumaFile's installation folder.
+On first use after an upgrade from 1.0.4 it imports, read-only, the profiles the
+1.0.4 service saved in its `metadata.db`; saved passwords and passphrases stay
+in Windows Credential Manager under their `SumaFile.Remote.` targets and keep
+working without being entered again. Remote sessions end with the plugin's
+backend, not with the file service.
 
 ### Transfer speed and automatic retries
 
 Filesystem file/folder copies and moves (including mounted cloud drives, mapped
 shares, removable drives, and cross-volume moves) share the same transfer engine.
-Native FTP, FTPS, and SFTP uploads/downloads use the same user bandwidth limiter
-and retry policy, including single-file compatibility commands. Native remote
-sessions support one file stream; the selected file count is an upper limit.
-Same-volume moves can use a direct rename.
+FTP, FTPS, and SFTP uploads/downloads in the FTP/SFTP plugin use the same
+staging and retry code with the plugin's own settings (Settings -> Plugins).
+Remote sessions copy one file at a time. Same-volume moves can use a direct
+rename.
 
 - **Custom** keeps the selected concurrency, subject to the chosen buffer budget,
   shared process resource bounds and provider capabilities. Slow I/O and errors
@@ -325,14 +346,15 @@ Same-volume moves can use a direct rename.
   files continue within their configured limits. Permission, conflict, missing-file,
   invalid-data, authentication, and certificate/host-key errors fail promptly.
 - Empty and partially written operation-owned filesystem temporary files resume
-  correctly. Native remote retries reconnect and restart the incomplete staged
+  correctly. FTP/SFTP plugin retries reconnect and restart the incomplete staged
   file from byte zero. Completed files are retained; failed moves retain sources.
   The first error is preserved alongside any later failure. Buffered writes and
   durability checks still complete before a filesystem destination is promoted.
 - **Write directly to the destination** (Advanced transfer options) skips the
   hidden temporary files. New files and folders are created under their final
-  names, replaced files are overwritten in place, and remote downloads behave
-  the same. A cancelled or failed transfer then leaves partial files and
+  names, and replaced files are overwritten in place; the FTP/SFTP plugin's
+  own "Write downloads directly to the destination" setting does the same for
+  remote downloads. A cancelled or failed transfer then leaves partial files and
   folders behind instead of the untouched original.
 - SumaFile does not read or control pCloud Drive's cache occupancy. Its buffer
   budget is RAM, and temporary files are on the destination. A synchronous OS
@@ -351,7 +373,8 @@ Settings is organized into:
 | Storage & cache | Thumbnail cache enablement, cache size, and cache location |
 | Shortcuts | Searchable shortcut list with edit, reset, import, and export |
 | Toolbar | Button labels, command order, separators, removed commands, and reset |
-| Tools | FTP/SFTP connections (opens the FTP/SFTP manager) and archive support summary |
+| Tools | Archive support summary |
+| Plugins | Installed plugins, their settings and pages, such as the FTP/SFTP plugin's page (opens the FTP/SFTP manager) below its declared settings |
 | Updates | Version, update check, install action |
 | About | Product, version, repository, and build metadata |
 
@@ -505,12 +528,12 @@ SumaFile.exe
         | length-prefixed named-pipe JSON-RPC
         v
 simplefile-service.exe
-  dispatcher, watcher, search, progress, cancellation, remote providers
+  dispatcher, watcher, search, progress, cancellation, plugin archive engines
         |
         v
 simplefile-core
   file ops, archive, preview data, metadata, checksum, compare,
-  drives, tags, smart folders, Git, updater, remote profiles, shell helpers
+  drives, tags, smart folders, Git, updater, shell helpers
 ```
 
 Important contracts:
@@ -535,9 +558,9 @@ SumaFile/
 |   |-- SimpleFile.Ipc/       Named-pipe JSON-RPC client and generated bindings
 |   `-- SimpleFile.Tests/     xUnit tests for WinUI/core/IPC behavior
 |-- crates/
-|   |-- simplefile-core/      Filesystem, archive, preview, metadata, Git, remote profile logic
+|   |-- simplefile-core/      Filesystem, archive, preview, metadata, Git logic
 |   |-- simplefile-ipc/       Protocol constants, framing, schema tests
-|   `-- simplefile-service/   Rust named-pipe service process and remote providers
+|   `-- simplefile-service/   Rust named-pipe service process
 |-- ipc/schema/v1/            JSON-RPC command, type, event, and golden files
 |-- packaging/winui/          NSIS, WiX, and Windows assets
 |-- scripts/                  Checks, release scripts, smoke tests, codegen
@@ -674,8 +697,8 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 - RAR archives can be listed and extracted, but RAR creation and in-place RAR
   rewrites are not supported.
 - Account-backed storage integrations are intentionally out of scope for this
-  branch. FTP/FTPS/SFTP profiles are available in the separate Tools manager,
-  not mounted into the main panes.
+  branch. FTP/FTPS/SFTP profiles are available in the FTP/SFTP plugin's
+  separate manager window, not mounted into the main panes.
 - Rendered Markdown task-list checkboxes are read-only preview controls; editing
   task state requires editing the Markdown source.
 - Some Windows-reserved shortcuts may not be assignable; shortcut remapping,

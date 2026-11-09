@@ -27,3 +27,40 @@ public enum PluginDialogResult
     /// <summary>The secondary button.</summary>
     Secondary = 2,
 }
+
+/// <summary>What the host passes to <see cref="IPanelProvider.CreatePanel"/>.</summary>
+/// <param name="PanelId">The panel's <c>id</c> in <c>contributions.panels</c>.</param>
+/// <param name="Provider">The panel's <c>provider</c> in the manifest.</param>
+/// <param name="Detached">True when the element goes into the panel's own window, false when it is docked.</param>
+public sealed record PluginPanelRequest(string PanelId, string Provider, bool Detached);
+
+/// <summary>What the host passes to <see cref="IRowDecorationProvider.GetDecorationsAsync"/>.</summary>
+/// <param name="Provider">The <c>provider</c> of <c>contributions.rowDecorations</c>.</param>
+/// <param name="FolderPath">The listed folder.</param>
+/// <param name="Paths">The full paths of the folder's listed rows.</param>
+public sealed record PluginDecorationRequest(string Provider, string FolderPath, IReadOnlyList<string> Paths);
+
+/// <summary>One row's decoration.</summary>
+/// <param name="Text">The short text the row shows, such as a status letter.</param>
+/// <param name="BrushKey">
+/// A theme brush key the host resolves for the text, so it follows the light and dark themes; null, or a key the host
+/// does not offer to plugins, uses the muted text brush.
+/// </param>
+/// <param name="Tooltip">Optional longer text for the row's tooltip.</param>
+public sealed record RowDecoration(string Text, string? BrushKey = null, string? Tooltip = null);
+
+/// <summary>A provider's result for one folder.</summary>
+/// <param name="Rows">
+/// Decorations keyed by row path, as given in <see cref="PluginDecorationRequest.Paths"/>; keys are matched
+/// case-insensitively and whatever the separators, and a key that names no listed row is ignored.
+/// </param>
+/// <param name="FolderFlags">
+/// Flags for the folder as a whole, such as <c>inRepository</c>, which the plugin's own <c>when</c> expressions read
+/// with <c>folderFlag(name)</c>.
+/// </param>
+public sealed record PluginFolderDecorations(IReadOnlyDictionary<string, RowDecoration> Rows, IReadOnlyList<string> FolderFlags)
+{
+    /// <summary>No row decorations and no folder flags.</summary>
+    public static PluginFolderDecorations Empty { get; } =
+        new(System.Collections.ObjectModel.ReadOnlyDictionary<string, RowDecoration>.Empty, []);
+}

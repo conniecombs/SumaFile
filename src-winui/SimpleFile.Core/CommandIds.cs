@@ -34,7 +34,6 @@ public static class CommandIds
     public const string NewShortcut = "new-shortcut";
     public const string CreateArchive = "create-archive";
     public const string Terminal = "terminal";
-    public const string FtpSftpManager = "ftp-sftp-manager";
     public const string Preview = "preview";
     public const string ToggleHidden = "toggle-hidden";
     public const string ToggleSideMenu = "toggle-side-menu";

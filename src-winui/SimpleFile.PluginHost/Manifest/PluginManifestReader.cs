@@ -12,13 +12,18 @@ public static partial class PluginManifestReader
     [GeneratedRegex(@"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", RegexOptions.CultureInvariant)]
     private static partial Regex SemVerPattern();
 
+    // A SumaFile settings key a declarative setting may migrate from (settings[].migrateFrom).
+    [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9._-]{0,127}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex LegacySettingsKeyPattern();
+
     private static readonly string[] ActivateOnValues = ["first-call", "startup"];
     private const int MaxWhenLength = 512;
     private static readonly string[] PlacementValues = ["primary", "overflow"];
+    private static readonly string[] PanelPlacementValues = ["bottom", "right"];
     private static readonly string[] SettingTypes = ["boolean", "string", "integer", "enum", "path"];
 
-    // Every contribution kind this host reads. panels and rowDecorations are accepted and ignored until phase 4;
-    // any other key is rejected, so a typo (or a kind a newer host added) never loads as a silently missing slot.
+    // Every contribution kind this host reads. Any other key is rejected, so a typo (or a kind a newer host added)
+    // never loads as a silently missing slot.
     private static readonly string[] ContributionKinds =
         ["commands", "contextMenu", "toolbar", "archiveFormats", "sidebar", "settingsPage", "panels", "rowDecorations"];
 
@@ -144,7 +149,9 @@ public static partial class PluginManifestReader
         var toolbar = new List<PluginToolbarSpec>();
         var formats = new List<PluginArchiveFormatSpec>();
         var sidebar = new List<PluginSidebarSpec>();
+        var panels = new List<PluginPanelSpec>();
         PluginSettingsPageSpec? settingsPage = null;
+        PluginRowDecorationSpec? rowDecorations = null;
 
         var el = OptionalObject(root, "contributions", "contributions", errors);
         if (el is not null)
@@ -177,18 +184,7 @@ public static partial class PluginManifestReader
                 {
                     var cmd = RequiredString(sub, "command", subPath + ".command", errors);
                     var label = RequiredString(sub, "label", subPath + ".label", errors);
-                    var when = OptionalString(sub, "when", subPath + ".when", errors) ?? "";
-                    if (when.Length > MaxWhenLength)
-                    {
-                        errors.Add($"The {subPath}.when expression is longer than {MaxWhenLength} characters.");
-                        when = "";
-                    }
-                    else if (!SimpleFile.Core.PluginMenuWhen.IsValid(when, out var whenError))
-                    {
-                        errors.Add($"The {subPath}.when expression is invalid: {whenError}");
-                        when = "";
-                    }
-
+                    var when = ReadWhen(sub, subPath, errors);
                     if (cmd is not null && label is not null)
                         items.Add(new PluginContextMenuItemSpec(cmd, label, when));
                 }
@@ -206,8 +202,9 @@ public static partial class PluginManifestReader
                     placement = "overflow";
                 else if (placement is not null && !PlacementValues.Contains(placement, StringComparer.Ordinal))
                     errors.Add($"The {path}.placement value '{placement}' is not recognised; use 'primary' or 'overflow'.");
+                var when = ReadWhen(item, path, errors);
                 if (cmd is not null && label is not null && placement is not null && PlacementValues.Contains(placement, StringComparer.Ordinal))
-                    toolbar.Add(new PluginToolbarSpec(cmd, label, glyph, placement));
+                    toolbar.Add(new PluginToolbarSpec(cmd, label, glyph, placement) { When = when });
             }
 
             foreach (var (item, path) in Items(el.Value, "archiveFormats", "contributions.archiveFormats", errors))
@@ -235,9 +232,96 @@ public static partial class PluginManifestReader
                 if (provider is not null)
                     settingsPage = new PluginSettingsPageSpec(provider);
             }
+
+            ReadPanels(el.Value, seen, panels, errors, out var declaresPanels);
+            if (declaresPanels && !declaresUi)
+                errors.Add("contributions.panels needs a ui assembly.");
+
+            var decorations = OptionalObject(el.Value, "rowDecorations", "contributions.rowDecorations", errors);
+            if (decorations is not null)
+            {
+                var provider = RequiredString(decorations.Value, "provider", "contributions.rowDecorations.provider", errors);
+                if (!declaresUi)
+                    errors.Add("contributions.rowDecorations needs a ui assembly.");
+                if (provider is not null)
+                    rowDecorations = new PluginRowDecorationSpec(provider);
+            }
         }
 
-        return new PluginContributions(commands, menus, toolbar, formats) { Sidebar = sidebar, SettingsPage = settingsPage };
+        return new PluginContributions(commands, menus, toolbar, formats)
+        {
+            Sidebar = sidebar,
+            SettingsPage = settingsPage,
+            Panels = panels,
+            RowDecorations = rowDecorations,
+        };
+    }
+
+    /// <summary>
+    /// A contribution's optional <c>when</c> expression: at most 512 characters, in <see cref="SimpleFile.Core.PluginMenuWhen"/>'s
+    /// grammar. An invalid one is reported and read as empty.
+    /// </summary>
+    private static string ReadWhen(JsonElement item, string path, List<string> errors)
+    {
+        var when = OptionalString(item, "when", path + ".when", errors) ?? "";
+        if (when.Length > MaxWhenLength)
+        {
+            errors.Add($"The {path}.when expression is longer than {MaxWhenLength} characters.");
+            return "";
+        }
+
+        if (!SimpleFile.Core.PluginMenuWhen.IsValid(when, out var whenError))
+        {
+            errors.Add($"The {path}.when expression is invalid: {whenError}");
+            return "";
+        }
+
+        return when;
+    }
+
+    /// <summary>
+    /// <c>contributions.panels</c>: each id follows the settings key grammar (the host keys panel state by it) and is
+    /// unique; title and provider are required; placement is <c>bottom</c> (the default) or <c>right</c>; detachable
+    /// defaults to false; an optional command must name a declared command and toggles at most one panel.
+    /// </summary>
+    private static void ReadPanels(
+        JsonElement contributions, HashSet<string> commandIds, List<PluginPanelSpec> panels, List<string> errors, out bool declared)
+    {
+        declared = false;
+        var seenIds = new HashSet<string>(StringComparer.Ordinal);
+        var toggles = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (item, path) in Items(contributions, "panels", "contributions.panels", errors))
+        {
+            declared = true;
+            var id = RequiredString(item, "id", path + ".id", errors);
+            var title = RequiredString(item, "title", path + ".title", errors);
+            var provider = RequiredString(item, "provider", path + ".provider", errors);
+            var placement = OptionalString(item, "placement", path + ".placement", errors) ?? "bottom";
+            var detachable = OptionalBool(item, "detachable", path + ".detachable", errors);
+            var command = OptionalString(item, "command", path + ".command", errors);
+            if (id is not null && !Backend.PluginHostMethods.IsValidSettingKey(id))
+            {
+                errors.Add($"The {path}.id value '{id}' is invalid: use 1 to 64 letters, digits, '_' or '-', starting with a lowercase letter or digit.");
+                id = null;
+            }
+            if (id is not null && !seenIds.Add(id))
+                errors.Add($"The panel id '{id}' is declared more than once in contributions.panels.");
+            var placementKnown = PanelPlacementValues.Contains(placement, StringComparer.Ordinal);
+            if (!placementKnown)
+                errors.Add($"The {path}.placement value '{placement}' is not recognised; use 'right' or 'bottom'.");
+            if (command is not null && !commandIds.Contains(command))
+            {
+                errors.Add($"The {path}.command value '{command}' does not name a command declared in contributions.commands.");
+                command = null;
+            }
+            else if (command is not null && !toggles.Add(command))
+            {
+                errors.Add($"The {path}.command value '{command}' already toggles another panel.");
+                command = null;
+            }
+            if (id is not null && title is not null && provider is not null && placementKnown)
+                panels.Add(new PluginPanelSpec(id, title, provider, placement, detachable, command));
+        }
     }
 
     /// <summary>
@@ -285,6 +369,21 @@ public static partial class PluginManifestReader
             var description = OptionalString(item, "description", path + ".description", errors);
             var group = OptionalString(item, "group", path + ".group", errors);
             var options = OptionalStringList(item, "options", path + ".options", errors);
+            var migrateFrom = OptionalString(item, "migrateFrom", path + ".migrateFrom", errors);
+            if (migrateFrom is not null)
+            {
+                if (!LegacySettingsKeyPattern().IsMatch(migrateFrom))
+                {
+                    errors.Add($"The {path}.migrateFrom value '{migrateFrom}' is not a valid settings key.");
+                    migrateFrom = null;
+                }
+                // plugin.<id>.<key> rows belong to plugins: a migration must never read another plugin's settings.
+                else if (migrateFrom.StartsWith("plugin.", StringComparison.OrdinalIgnoreCase))
+                {
+                    errors.Add($"The {path}.migrateFrom value '{migrateFrom}' must not name a plugin setting.");
+                    migrateFrom = null;
+                }
+            }
             JsonElement? def = item.TryGetProperty("default", out var d) && d.ValueKind != JsonValueKind.Null
                 ? d.Clone()
                 : null;
@@ -304,7 +403,7 @@ public static partial class PluginManifestReader
             else if (type is not null && type != "enum" && options is not null)
                 errors.Add($"The {path}.options field is only allowed on enum settings.");
             if (key is not null && type is not null && label is not null)
-                result.Add(new PluginSettingSpec(key, type, label, description, def, group, options));
+                result.Add(new PluginSettingSpec(key, type, label, description, def, group, options) { MigrateFrom = migrateFrom });
         }
         return result;
     }

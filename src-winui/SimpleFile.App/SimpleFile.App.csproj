@@ -85,7 +85,10 @@
 
   <!-- Debug runs: copy the bundled plugins that scripts/build-plugins.ps1 staged in target\plugins, with their
        bundled.json, into the install root, so a Debug SumaFile.exe loads them like a release install does.
-       The release payload stages its own copy (scripts/build-winui-release.ps1). -->
+       The release payload stages its own copy (scripts/build-winui-release.ps1).
+       Each staged plugin folder replaces its copy whole, so a file a rebuild dropped does not linger. Only those
+       folders: plugins\ also holds the plugins a user installs, and the app-owned plugins-data, approvals file and
+       plugins.log sit beside it (scripts/test-plugin-copy-targets.ps1 runs this target against temp folders). -->
   <PropertyGroup>
     <BundledPluginsStagingDir>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\..\target\plugins'))</BundledPluginsStagingDir>
   </PropertyGroup>
@@ -93,8 +96,10 @@
           AfterTargets="Build"
           Condition="'$(Configuration)' == 'Debug' and Exists('$(BundledPluginsStagingDir)bundled.json')">
     <ItemGroup>
+      <_BundledPluginFolder Include="$([System.IO.Directory]::GetDirectories('$(BundledPluginsStagingDir)'))" />
       <_BundledPluginFile Include="$(BundledPluginsStagingDir)**\*" />
     </ItemGroup>
+    <RemoveDir Directories="@(_BundledPluginFolder->'$(OutDir)plugins\%(Filename)%(Extension)')" />
     <Copy SourceFiles="@(_BundledPluginFile)"
           DestinationFiles="@(_BundledPluginFile->'$(OutDir)plugins\%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />

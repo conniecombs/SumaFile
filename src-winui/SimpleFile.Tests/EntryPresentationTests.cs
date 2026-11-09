@@ -138,13 +138,13 @@ public class EntryPresentationTests
     }
 
     [Fact]
-    public void ContentSecondaryText_AvoidsRepeatingFullFilePathAndFormatsGitAndSymlink()
+    public void ContentSecondaryText_AvoidsRepeatingFullFilePathAndFormatsDecorationAndSymlink()
     {
         Assert.Equal(
-            "Git: modified  •  → D:\\Target\\notes.txt",
+            "modified  •  → D:\\Target\\notes.txt",
             EntryPresentation.ContentSecondaryText(
                 parentText: @"C:\Projects\App",
-                gitText: "modified",
+                decorationText: "modified",
                 symlinkText: @"D:\Target\notes.txt",
                 extensionText: ".txt"));
 
@@ -152,8 +152,27 @@ public class EntryPresentationTests
             @"C:\Projects\App",
             EntryPresentation.ContentSecondaryText(
                 parentText: @"C:\Projects\App",
-                gitText: "",
+                decorationText: "",
                 symlinkText: "",
                 extensionText: ".txt"));
+    }
+
+    [Fact]
+    public void ContentSecondaryText_ShowsTheDecorationTextAsIs()
+    {
+        // The host adds no "Git:" prefix: the plugin's text is the whole label.
+        Assert.Equal(
+            "M",
+            EntryPresentation.ContentSecondaryText(parentText: null, decorationText: "  M ", symlinkText: null));
+        Assert.Equal(
+            "Git: modified",
+            EntryPresentation.ContentSecondaryText(parentText: null, decorationText: "Git: modified", symlinkText: null));
+        Assert.Equal(
+            @"staged  •  C:\Projects",
+            EntryPresentation.ContentSecondaryText(
+                parentText: @"C:\Projects",
+                decorationText: "staged",
+                symlinkText: null,
+                includeParent: true));
     }
 }

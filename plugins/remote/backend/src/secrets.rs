@@ -217,4 +217,78 @@ mod tests {
 
         assert!(error.contains("unsupported remote secret kind"));
     }
+
+    /// The blob 1.0.4 wrote (`crates/simplefile-service/src/remote/secrets.rs` on `main`): the kind, a NUL, then
+    /// the value as UTF-8. Credentials saved by 1.0.4 must keep reading after the upgrade.
+    const GOLDEN_PASSWORD: &[u8] = b"password\0p\xc3\xa4ssw\xc3\xb6rd";
+    const GOLDEN_PASSPHRASE: &[u8] = b"private-key-passphrase\0k\xc3\xa9y";
+
+    #[test]
+    fn blob_matches_the_1_0_4_golden_bytes() {
+        assert_eq!(
+            encode_secret(&RemoteSecret::Password("pässwörd".into())),
+            GOLDEN_PASSWORD
+        );
+        assert_eq!(
+            encode_secret(&RemoteSecret::PrivateKeyPassphrase("kéy".into())),
+            GOLDEN_PASSPHRASE
+        );
+    }
+
+    #[test]
+    fn golden_1_0_4_blobs_decode() {
+        assert_eq!(
+            decode_secret(GOLDEN_PASSWORD).unwrap(),
+            RemoteSecret::Password("pässwörd".into())
+        );
+        assert_eq!(
+            decode_secret(GOLDEN_PASSPHRASE).unwrap(),
+            RemoteSecret::PrivateKeyPassphrase("kéy".into())
+        );
+    }
+
+    /// Deletes the test's Credential Manager target however the test ends.
+    #[cfg(windows)]
+    struct CredentialGuard(String);
+
+    #[cfg(windows)]
+    impl Drop for CredentialGuard {
+        fn drop(&mut self) {
+            let target_w = wide_null(&self.0);
+            unsafe {
+                CredDeleteW(target_w.as_ptr(), CRED_TYPE_GENERIC, 0);
+            }
+        }
+    }
+
+    /// Writes `blob` the way 1.0.4 did, with `CredWriteW` directly rather than through the store under test.
+    #[cfg(windows)]
+    fn write_as_1_0_4(target: &str, blob: &[u8]) {
+        let mut target_w = wide_null(target);
+        let mut blob = blob.to_vec();
+        let credential = CREDENTIALW {
+            Type: CRED_TYPE_GENERIC,
+            TargetName: target_w.as_mut_ptr(),
+            CredentialBlobSize: u32::try_from(blob.len()).unwrap(),
+            CredentialBlob: blob.as_mut_ptr(),
+            Persist: CRED_PERSIST_LOCAL_MACHINE,
+            ..CREDENTIALW::default()
+        };
+        let ok = unsafe { CredWriteW(&credential, 0) };
+        assert_ne!(ok, 0, "CredWriteW: {}", std::io::Error::last_os_error());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_store_reads_a_credential_written_as_1_0_4_wrote_it() {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).unwrap();
+        let hex: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let guard = CredentialGuard(format!("SumaFile.Remote.test-{hex}"));
+        write_as_1_0_4(&guard.0, GOLDEN_PASSWORD);
+
+        let secret = WindowsRemoteSecretStore.read_secret(&guard.0).unwrap();
+
+        assert_eq!(secret, Some(RemoteSecret::Password("pässwörd".into())));
+    }
 }

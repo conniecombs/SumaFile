@@ -327,7 +327,7 @@ internal sealed class PluginSettingsPanelBuilder
             Title = "Remove plugin?",
             Content = new TextBlock
             {
-                Text = $"{name} will be disabled and its folder deleted. Its saved settings are kept.",
+                Text = $"Remove {name}? Its folder in SumaFile's plugins folder is deleted. Its settings and data are kept.",
                 TextWrapping = TextWrapping.Wrap,
             },
             PrimaryButtonText = "Remove",

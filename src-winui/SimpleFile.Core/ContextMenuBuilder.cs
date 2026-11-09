@@ -172,7 +172,6 @@ public static class ContextMenuBuilder
             IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-tools-menu"),
             Children =
             [
-                Item("overflow-ftp-sftp-manager", "FTP/SFTP manager...", showIcon: false),
                 Item("overflow-operation-history", "Operation history...", showIcon: false),
                 Item("ctx-cleanup", "Large files and duplicates here...", showIcon: false),
                 Item("ctx-terminal", "Open terminal here", false, "Ctrl+`", showIcon: false),

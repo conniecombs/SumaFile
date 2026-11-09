@@ -11,14 +11,13 @@ mod tuning;
 // Moved to the leaf crate `sumafile-transfer`; re-exported under the old names.
 use sumafile_transfer::resources;
 
-pub(crate) use parallel::{ActiveFile, ConflictAction, TuningUpdate};
-pub use registry::OperationRegistry;
-pub(crate) use resources::Permit as TransferPermit;
-pub(crate) use resources::PooledBuffer;
-pub(crate) use resources::RateLimit;
+pub(crate) use parallel::ConflictAction;
 #[cfg(test)]
-pub(crate) use tuning::Mode;
-pub(crate) use tuning::{load_policy, policy_for_operation, CheckMode, OrderBy, Policy};
+pub(crate) use parallel::TuningUpdate;
+pub use registry::OperationRegistry;
+pub(crate) use tuning::policy_for_operation;
+#[cfg(test)]
+pub(crate) use tuning::Policy;
 
 #[cfg(test)]
 pub(crate) use plan::prepare_transfer_inputs;

@@ -1,12 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+<!--
+  The release identity. scripts/smoke-winui-msi-lifecycle.ps1 builds this same product with -dLifecycleSmoke=1, which
+  swaps in its own UpgradeCode, registry key, Start menu folder and component GUIDs and nothing else. A SumaFile MSI
+  already installed for the user (1.0.4 shares the release UpgradeCode and the Start menu component) is then never
+  upgraded away, retargeted or removed by the smoke, while the remembered folder and the purge below are the same XML.
+-->
+<?ifdef LifecycleSmoke?>
+<?define UpgradeCode = "187C13BB-A9BA-4FD5-A6BA-9EBC2F99B3EE"?>
+<?define ProductRegistryKey = "Software\SumaFile\WinUI-LifecycleSmoke"?>
+<?define StartMenuFolderName = "SumaFile Lifecycle Smoke"?>
+<?define ShortcutComponentGuid = "9CC78BB1-0DA6-4717-8926-14E131ACA2CD"?>
+<?define InstallDirMemoryGuid = "DC3A2594-BB18-4FA4-87D6-2E500438BA5A"?>
+<?else?>
+<?define UpgradeCode = "8F3C1B6A-4D2E-4E91-9C77-2A6B5E1D0C44"?>
+<?define ProductRegistryKey = "Software\SumaFile\WinUI"?>
+<?define StartMenuFolderName = "SumaFile"?>
+<?define ShortcutComponentGuid = "B7E2C914-6A11-4F08-9D55-0C1E8A44A901"?>
+<?define InstallDirMemoryGuid = "721B9E22-8302-4EFE-9BDD-F746571FEAE5"?>
+<?endif?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <Product
       Id="*"
       Name="SumaFile"
       Language="1033"
       Version="$(var.ProductVersion)"
       Manufacturer="SumaFile Team"
-      UpgradeCode="8F3C1B6A-4D2E-4E91-9C77-2A6B5E1D0C44">
+      UpgradeCode="$(var.UpgradeCode)">
     <Package
         InstallerVersion="200"
         Compressed="yes"
@@ -23,6 +42,38 @@
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPNOMODIFY" Value="1" />
 
+    <!--
+      The folder the last install used ([INSTALLDIR], with its trailing backslash, written by InstallDirMemory), so a
+      major upgrade installs into it: the user's plugins, plugin data, approvals and plugin log there stay beside
+      SumaFile.exe, where the app looks for them.
+    -->
+    <Property Id="INSTALLDIR" Secure="yes">
+      <RegistrySearch Id="RememberedInstallDir" Root="HKCU" Key="$(var.ProductRegistryKey)" Name="InstallDir" Type="raw" />
+    </Property>
+    <Property Id="SUMAFILE_PURGE_SOURCE" Secure="yes">
+      <RegistrySearch Id="PurgeSourceInstallDir" Root="HKCU" Key="$(var.ProductRegistryKey)" Name="InstallDir" Type="raw" />
+    </Property>
+
+    <!--
+      Uninstall alone purges the four app-owned items in the install folder: plugins\ (the user's plugins and the
+      installer's dot folders; the bundled folders go with the harvested files anyway), plugins-data\,
+      plugin-approvals.json* and plugins.log*. It never names the folder itself, which a custom install may share with
+      other files, so it is safe for any folder name; a RemoveFolder row removes the folder once it is empty.
+
+      Each of the three properties is first set, unconditionally, to a folder under [TempFolder]SumaFile-no-purge\ that
+      is never created, and only under the purge condition to the install folder's item. So outside an uninstall
+      (an install, a repair, or the old product's removal during a major upgrade, which runs with UPGRADINGPRODUCTCODE
+      set) the two RemoveFolderEx rows and the two RemoveFile rows name a folder that does not exist, and every
+      app-owned file is kept. WixRemoveFoldersEx (WiX 3.14) does not skip an unset property: it logs
+      "Missing folder property" and stops, so no property is ever left unset.
+    -->
+    <SetProperty Id="SUMAFILE_PURGE_PLUGINS" Action="SetSumaFilePurgePluginsDefault" Value="[TempFolder]SumaFile-no-purge\plugins\" Before="WixRemoveFoldersEx" Sequence="execute" />
+    <SetProperty Id="SUMAFILE_PURGE_PLUGINS" Action="SetSumaFilePurgePlugins" Value="[SUMAFILE_PURGE_SOURCE]plugins\" After="SetSumaFilePurgePluginsDefault" Sequence="execute"><![CDATA[REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE AND SUMAFILE_PURGE_SOURCE]]></SetProperty>
+    <SetProperty Id="SUMAFILE_PURGE_DATA" Action="SetSumaFilePurgeDataDefault" Value="[TempFolder]SumaFile-no-purge\plugins-data\" Before="WixRemoveFoldersEx" Sequence="execute" />
+    <SetProperty Id="SUMAFILE_PURGE_DATA" Action="SetSumaFilePurgeData" Value="[SUMAFILE_PURGE_SOURCE]plugins-data\" After="SetSumaFilePurgeDataDefault" Sequence="execute"><![CDATA[REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE AND SUMAFILE_PURGE_SOURCE]]></SetProperty>
+    <SetProperty Id="SUMAFILE_PURGE_FILES" Action="SetSumaFilePurgeFilesDefault" Value="[TempFolder]SumaFile-no-purge\" Before="WixRemoveFoldersEx" Sequence="execute" />
+    <SetProperty Id="SUMAFILE_PURGE_FILES" Action="SetSumaFilePurgeFiles" Value="[SUMAFILE_PURGE_SOURCE]" After="SetSumaFilePurgeFilesDefault" Sequence="execute"><![CDATA[REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE AND SUMAFILE_PURGE_SOURCE]]></SetProperty>
+
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
         <Directory Id="LocalProgramsFolder" Name="Programs">
@@ -30,12 +81,12 @@
         </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder">
-        <Directory Id="ApplicationProgramsFolder" Name="SumaFile" />
+        <Directory Id="ApplicationProgramsFolder" Name="$(var.StartMenuFolderName)" />
       </Directory>
     </Directory>
 
     <DirectoryRef Id="ApplicationProgramsFolder">
-      <Component Id="ApplicationShortcut" Guid="B7E2C914-6A11-4F08-9D55-0C1E8A44A901">
+      <Component Id="ApplicationShortcut" Guid="$(var.ShortcutComponentGuid)">
         <Shortcut
             Id="StartMenuShortcut"
             Name="SumaFile"
@@ -46,7 +97,7 @@
         <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall" />
         <RegistryValue
             Root="HKCU"
-            Key="Software\SumaFile\WinUI"
+            Key="$(var.ProductRegistryKey)"
             Name="StartMenuShortcut"
             Type="integer"
             Value="1"
@@ -54,9 +105,33 @@
       </Component>
     </DirectoryRef>
 
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="InstallDirMemory" Guid="$(var.InstallDirMemoryGuid)">
+        <RegistryValue
+            Root="HKCU"
+            Key="$(var.ProductRegistryKey)"
+            Name="InstallDir"
+            Type="string"
+            Value="[INSTALLDIR]"
+            KeyPath="yes" />
+        <util:RemoveFolderEx On="uninstall" Property="SUMAFILE_PURGE_PLUGINS" />
+        <util:RemoveFolderEx On="uninstall" Property="SUMAFILE_PURGE_DATA" />
+        <!-- The wildcards cover plugins.log.1 and the approval store's plugin-approvals.json.*.tmp files. -->
+        <RemoveFile Id="PurgePluginLog" Property="SUMAFILE_PURGE_FILES" Name="plugins.log*" On="uninstall" />
+        <RemoveFile Id="PurgePluginApprovals" Property="SUMAFILE_PURGE_FILES" Name="plugin-approvals.json*" On="uninstall" />
+        <!--
+          The install folder itself, only once it is empty: it still held plugins\ and plugins-data\ when its last
+          harvested file went, so Windows Installer would otherwise leave it behind. RemoveFolder never deletes a
+          folder with anything in it, so a custom folder holding the user's other files stays.
+        -->
+        <RemoveFolder Id="PurgeEmptyInstallDir" Property="SUMAFILE_PURGE_FILES" On="uninstall" />
+      </Component>
+    </DirectoryRef>
+
     <Feature Id="MainFeature" Title="SumaFile" Level="1">
       <ComponentGroupRef Id="SimpleFileWinUIFiles" />
       <ComponentRef Id="ApplicationShortcut" />
+      <ComponentRef Id="InstallDirMemory" />
     </Feature>
   </Product>
 </Wix>

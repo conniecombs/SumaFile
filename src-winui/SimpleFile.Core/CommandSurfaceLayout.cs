@@ -41,6 +41,13 @@ public sealed class CommandSurfaceLayout
     public string ToolbarDisplayMode { get; set; } = ToolbarActionCatalog.IconAndLabelDisplayMode;
     public List<CommandSurfaceItem> PrimaryToolbar { get; set; } = DefaultPrimaryToolbarItems();
 
+    /// <summary>
+    /// The plugin toolbar items <see cref="EnsurePrimaryItem"/> has offered, saved with the layout. An item is offered
+    /// once: after the user removes it, it is never added again. <see cref="Normalize"/> deduplicates the list and
+    /// never filters it by the catalog, so an offer outlives a disabled, failed or missing plugin.
+    /// </summary>
+    public List<string> OfferedPrimaryItems { get; set; } = [];
+
     private static readonly string[] LegacyDefaultPrimaryActionIds =
     [
         ToolbarOverflowPlanner.New,
@@ -62,15 +69,69 @@ public sealed class CommandSurfaceLayout
 
     public static CommandSurfaceLayout CreateDefault() => new();
 
-    /// <summary>Adds a command to the primary toolbar before Settings when it is not already there.</summary>
+    /// <summary>
+    /// Offers a plugin's primary toolbar item once. False, and nothing changes, when the item was offered before, so
+    /// the user's removal of an offered item is final, and an item that is merely hidden (its plugin is absent) comes
+    /// back by itself when the plugin does. Otherwise it adds the item before Settings when it is not there yet,
+    /// records it in <see cref="OfferedPrimaryItems"/> and returns true, so the caller saves the layout.
+    /// </summary>
     public bool EnsurePrimaryItem(string commandId)
     {
         if (string.IsNullOrWhiteSpace(commandId)
-            || PrimaryToolbar.Any(item => item.IsCommand && string.Equals(item.Id, commandId, StringComparison.Ordinal)))
+            || OfferedPrimaryItems.Contains(commandId, StringComparer.Ordinal))
         {
             return false;
         }
 
+        OfferedPrimaryItems.Add(commandId);
+        if (PrimaryToolbar.Any(item => item.IsCommand && string.Equals(item.Id, commandId, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        InsertBeforeSettings(commandId);
+        return true;
+    }
+
+    /// <summary>
+    /// Carries into this layout, which Settings edited from <paramref name="baseline"/>, the offers the
+    /// <paramref name="live"/> layout holds. An offer made while Settings was open (not in the baseline) also carries its
+    /// item: when the live toolbar has it and neither the baseline nor this layout does, it goes before Settings, as
+    /// <see cref="EnsurePrimaryItem"/> put it. Otherwise the edited rows win, so only the user's removal is final.
+    /// </summary>
+    public void MergeOffersFrom(CommandSurfaceLayout live, CommandSurfaceLayout baseline)
+    {
+        ArgumentNullException.ThrowIfNull(live);
+        ArgumentNullException.ThrowIfNull(baseline);
+        var baselineOffers = new HashSet<string>(baseline.OfferedPrimaryItems ?? [], StringComparer.Ordinal);
+        var baselineItems = CommandIds(baseline);
+        var liveItems = CommandIds(live);
+        var editedItems = CommandIds(this);
+        foreach (var id in live.OfferedPrimaryItems ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(id) || baselineOffers.Contains(id))
+            {
+                continue;
+            }
+
+            if (liveItems.Contains(id) && !baselineItems.Contains(id) && editedItems.Add(id))
+            {
+                InsertBeforeSettings(id);
+            }
+        }
+
+        OfferedPrimaryItems = [.. OfferedPrimaryItems ?? [], .. live.OfferedPrimaryItems ?? []];
+        Normalize();
+
+        static HashSet<string> CommandIds(CommandSurfaceLayout layout) =>
+            (layout.PrimaryToolbar ?? [])
+                .Where(item => item.IsCommand && !string.IsNullOrEmpty(item.Id))
+                .Select(item => item.Id)
+                .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private void InsertBeforeSettings(string commandId)
+    {
         var settingsIndex = PrimaryToolbar.FindIndex(item =>
             item.IsCommand && string.Equals(item.Id, ToolbarOverflowPlanner.Settings, StringComparison.Ordinal));
         var entry = CommandSurfaceItem.Command(commandId);
@@ -82,8 +143,53 @@ public sealed class CommandSurfaceLayout
         {
             PrimaryToolbar.Add(entry);
         }
+    }
+
+    /// <summary>
+    /// True for a well-formed plugin item id, <c>plugin:&lt;id&gt;:&lt;command&gt;</c>: the plugin id follows the plugin id
+    /// grammar (<c>^[a-z0-9][a-z0-9.-]{1,63}$</c>) and the command is 1-128 characters with no whitespace. Such an item
+    /// stays in a saved toolbar while its plugin is absent.
+    /// </summary>
+    public static bool IsPluginItemId(string? id)
+    {
+        const string prefix = "plugin:";
+        if (id is null || !id.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var separator = id.IndexOf(':', prefix.Length);
+        if (separator < 0)
+        {
+            return false;
+        }
+
+        var pluginId = id.AsSpan(prefix.Length, separator - prefix.Length);
+        var command = id.AsSpan(separator + 1);
+        if (pluginId.Length is < 2 or > 64 || command.Length is < 1 or > 128 || !IsPluginIdStart(pluginId[0]))
+        {
+            return false;
+        }
+
+        foreach (var c in pluginId[1..])
+        {
+            if (!IsPluginIdStart(c) && c is not ('.' or '-'))
+            {
+                return false;
+            }
+        }
+
+        foreach (var c in command)
+        {
+            if (char.IsWhiteSpace(c))
+            {
+                return false;
+            }
+        }
 
         return true;
+
+        static bool IsPluginIdStart(char c) => c is (>= 'a' and <= 'z') or (>= '0' and <= '9');
     }
 
     public static List<CommandSurfaceItem> DefaultPrimaryToolbarItems() =>
@@ -149,9 +255,10 @@ public sealed class CommandSurfaceLayout
             }
 
             var id = (item.Id ?? "").Trim();
+            // A plugin item stays while its plugin is absent (hidden by VisibleItems); an unknown core id is dropped.
             if (!item.IsCommand
                 || id.Length == 0
-                || !ToolbarActionCatalog.IsActionId(id)
+                || !(ToolbarActionCatalog.IsActionId(id) || IsPluginItemId(id))
                 || !seenCommands.Add(id))
             {
                 continue;
@@ -169,13 +276,20 @@ public sealed class CommandSurfaceLayout
         PrimaryToolbar = normalized.Count == 0
             ? DefaultPrimaryToolbarItems()
             : normalized;
+        OfferedPrimaryItems = (OfferedPrimaryItems ?? [])
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
     }
 
     private void UpgradeLegacyDefaultToolbar()
     {
-        var previousDefault = "new,dual-pane,copy-to-pane,move-to-pane,operation-history,ftp-sftp-manager,|,duplicate-checker,disk-cleanup,|,profiles,view-options,settings";
+        // The previous default named the core ftp-sftp-manager command. That command moved to the remote plugin, and
+        // Normalize drops core ids the catalog no longer knows, so a stored previous default always arrives here
+        // without it.
+        const string previousDefaultWithoutFtp = "new,dual-pane,copy-to-pane,move-to-pane,operation-history,|,duplicate-checker,disk-cleanup,|,profiles,view-options,settings";
         var storedOrder = string.Join(",", PrimaryToolbar.Select(item => item.IsSeparator ? "|" : item.Id));
-        if (storedOrder == previousDefault)
+        if (storedOrder == previousDefaultWithoutFtp)
         {
             PrimaryToolbar = DefaultPrimaryToolbarItems();
             return;
@@ -195,21 +309,53 @@ public sealed class CommandSurfaceLayout
         }
     }
 
-    public IReadOnlyList<string> VisiblePrimaryActionIds()
+    /// <summary>
+    /// The toolbar as drawn: only the items whose id the catalog knows now, with no leading, trailing or doubled
+    /// separators. A plugin's item stays in <see cref="PrimaryToolbar"/> while its plugin is absent, and is left out here.
+    /// </summary>
+    public IReadOnlyList<CommandSurfaceItem> VisibleItems()
     {
         Normalize();
-        return PrimaryToolbar
+        var visible = new List<CommandSurfaceItem>(PrimaryToolbar.Count);
+        var pendingSeparator = false;
+        foreach (var item in PrimaryToolbar)
+        {
+            if (item.IsSeparator)
+            {
+                pendingSeparator = visible.Count > 0;
+                continue;
+            }
+
+            if (!ToolbarActionCatalog.IsActionId(item.Id))
+            {
+                continue;
+            }
+
+            if (pendingSeparator)
+            {
+                visible.Add(CommandSurfaceItem.Separator());
+                pendingSeparator = false;
+            }
+
+            visible.Add(item);
+        }
+
+        return visible;
+    }
+
+    public IReadOnlyList<string> VisiblePrimaryActionIds() =>
+        VisibleItems()
             .Where(item => item.IsCommand)
             .Select(item => item.Id)
             .ToList();
-    }
 
+    /// <summary>The display mode and the drawn items, so a hidden plugin item coming back re-renders the toolbar.</summary>
     public string Signature()
     {
-        Normalize();
+        var visible = VisibleItems();
         return ToolbarDisplayMode + "|" + string.Join(
             ",",
-            PrimaryToolbar.Select(item => item.IsSeparator ? "|" : item.Id));
+            visible.Select(item => item.IsSeparator ? "|" : item.Id));
     }
 }
 
@@ -240,6 +386,15 @@ public sealed class ToolbarAction
     public string? CommandId { get; }
     public string? Shortcut { get; }
     public bool UsesBuiltInControl { get; }
+
+    /// <summary>
+    /// A plugin toolbar item's <c>when</c> expression (<see cref="PluginMenuWhen"/>'s grammar), which hides the button
+    /// while it is false; empty for built-in actions and for plugin items that are always shown.
+    /// </summary>
+    public string When { get; init; } = "";
+
+    /// <summary>The plugin that contributes this action, or null for a built-in action.</summary>
+    public string? PluginId { get; init; }
 }
 
 public static class ToolbarActionCatalog
@@ -376,7 +531,6 @@ public static class ToolbarActionCatalog
             "new-folder" => ContextMenuIconCatalog.NewFolder,
             "new-file" or "new-shortcut" => ContextMenuIconCatalog.Document,
             "create-archive" => ContextMenuIconCatalog.Package,
-            "ftp-sftp-manager" => ContextMenuIconCatalog.Switch,
             "terminal" => ContextMenuIconCatalog.CommandPrompt,
             "powershell-admin" => ContextMenuIconCatalog.Admin,
             "preview" or "quick-look" => ContextMenuIconCatalog.Preview,

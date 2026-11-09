@@ -95,6 +95,100 @@ public class PluginContributionAdapterTests
             sections);
     }
 
+    private static PluginRecord SlotRecord(
+        string id,
+        int epoch,
+        IReadOnlyList<PluginPanelSpec> panels,
+        PluginRowDecorationSpec? rowDecorations,
+        PluginState state = PluginState.Enabled)
+    {
+        var contributions = new PluginContributions(
+            [new PluginCommandSpec("toggle", "Toggle the panel", "G", null)], [], [], [])
+        {
+            Panels = panels,
+            RowDecorations = rowDecorations,
+        };
+        var manifest = new PluginManifest(
+            id, id, "1.0.0", new PluginPublisher("P", null, null), "1.0.0", new PluginUiSpec("A.dll", "A.Plugin"), null, contributions, [], []);
+        var discovered = new DiscoveredPlugin(id, "folder", "root", DiscoveryState.Valid, manifest, [], null);
+        return new PluginRecord(discovered, state, new SignatureState(SignatureStatus.Unsigned, null, null), null, null)
+        {
+            Epoch = epoch,
+        };
+    }
+
+    [Fact]
+    public void Panels_CarryTheEpochAndTheHostToggleCommand()
+    {
+        var b = SlotRecord(
+            "com.example.b",
+            7,
+            [
+                new PluginPanelSpec("workbench", "Workbench", "wb", "right", true, "toggle"),
+                new PluginPanelSpec("log", "Log", "log", "bottom", false, null),
+            ],
+            null);
+        var a = SlotRecord("com.example.a", 3, [new PluginPanelSpec("only", "Only", "only", "bottom", false, null)], null);
+
+        var panels = PluginContributionAdapter.Panels([b, a]);
+
+        Assert.Equal(
+            [
+                new PluginPanel("com.example.b", "workbench", "Workbench", "right", true, "plugin:com.example.b:toggle", 7),
+                new PluginPanel("com.example.b", "log", "Log", "bottom", false, null, 7),
+                new PluginPanel("com.example.a", "only", "Only", "bottom", false, null, 3),
+            ],
+            panels);
+    }
+
+    [Fact]
+    public void RowDecorationProviders_ListEnabledPluginsInIdOrder()
+    {
+        var zed = SlotRecord("com.example.zed", 4, [], new PluginRowDecorationSpec("z-status"));
+        var none = SlotRecord("com.example.none", 5, [], null);
+        var alpha = SlotRecord("com.example.alpha", 9, [], new PluginRowDecorationSpec("a-status"));
+        var upper = SlotRecord("com.example.Beta", 2, [], new PluginRowDecorationSpec("b-status"));
+
+        var providers = PluginContributionAdapter.RowDecorationProviders([zed, none, alpha, upper]);
+
+        Assert.Equal(
+            [
+                new PluginDecorationProvider("com.example.Beta", "b-status", 2),
+                new PluginDecorationProvider("com.example.alpha", "a-status", 9),
+                new PluginDecorationProvider("com.example.zed", "z-status", 4),
+            ],
+            providers);
+    }
+
+    [Fact]
+    public void ToolbarActions_CarryTheWhenExpressionAndThePluginId()
+    {
+        var contributions = new PluginContributions(
+            [new PluginCommandSpec("toggle", "Toggle", "Git", null)],
+            [],
+            [
+                new PluginToolbarSpec("toggle", "Git", "", "primary") { When = "folderFlag(inRepository)" },
+                new PluginToolbarSpec("toggle", "Always", "", "overflow"),
+            ],
+            []);
+        var manifest = new PluginManifest(
+            "com.example.git", "Git", "1.0.0", new PluginPublisher("P", null, null), "1.0.0", null, null, contributions, [], []);
+        var discovered = new DiscoveredPlugin("com.example.git", "folder", "root", DiscoveryState.Valid, manifest, [], null);
+        var record = new PluginRecord(discovered, PluginState.Enabled, new SignatureState(SignatureStatus.Unsigned, null, null), null, null);
+
+        var actions = PluginContributionAdapter.ToolbarActions([record]);
+
+        Assert.Equal(2, actions.Count);
+        Assert.Equal("folderFlag(inRepository)", actions[0].When);
+        Assert.Equal("com.example.git", actions[0].PluginId);
+        Assert.Equal("", actions[1].When);
+        Assert.Equal("com.example.git", actions[1].PluginId);
+
+        var builtIn = new ToolbarAction("refresh", "Refresh", "View", "", "refresh");
+        Assert.Equal("", builtIn.When);
+        Assert.Null(builtIn.PluginId);
+    }
+
     [Fact]
     public void PrimaryToolbarCommandIds_OnlyPrimaryPlacement()
     {

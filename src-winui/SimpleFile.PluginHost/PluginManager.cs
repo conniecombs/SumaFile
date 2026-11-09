@@ -1,3 +1,4 @@
+using System.Globalization;
 using SimpleFile.Core;
 using SimpleFile.PluginHost.Backend;
 using SimpleFile.PluginHost.Discovery;
@@ -52,12 +53,26 @@ public sealed class PluginManagerOptions
     /// Null accepts any non-null object.
     /// </summary>
     public Func<object, string?>? ValidateUiElement { get; init; }
+
+    /// <summary>
+    /// The panel service of a plugin, asked once per runtime (under the manager's lock, so it must not block); the plugin
+    /// sees it as <c>IPluginHost.Panels</c>. Null gives every plugin a service without panels: <c>IsVisible</c> is false,
+    /// <c>Hide</c> does nothing and <c>ShowAsync</c> throws.
+    /// </summary>
+    public Func<string, IPluginPanels>? PanelsFor { get; init; }
+
+    /// <summary>
+    /// Called with the plugin id when a plugin calls <c>IPluginHost.Decorations.Invalidate()</c>; it must only queue
+    /// work, never call a provider inline. Null ignores the call.
+    /// </summary>
+    public Action<string>? InvalidateDecorations { get; init; }
 }
 
 /// <summary>
-/// What one plugin scan read from disk (<see cref="PluginManager.PrepareScan"/>): the discovered plugins with their
-/// manifest hashes, the bundled list and one approvals snapshot. The App prepares it while the file service starts
-/// (startup budget fallback F2), so the <c>plugins-discovered</c> span holds only evaluation and rendering.
+/// One plugin scan, read and judged (<see cref="PluginManager.PrepareScan"/>): every plugin's state, decided from its
+/// manifest (parsed and hashed), its signature, the bundled list and one approvals snapshot. The App prepares it on the
+/// thread pool while the file service starts (startup budget fallback F2), so its <c>plugins-*</c> startup span holds
+/// no file read, no hashing and no hop to the pool, only the hand-over and the contribution rendering.
 /// </summary>
 public sealed class PreparedScan
 {
@@ -65,30 +80,40 @@ public sealed class PreparedScan
         IReadOnlyList<string> roots,
         string? bundledRoot,
         string approvalStorePath,
-        IReadOnlyList<DiscoveredPlugin> plugins,
-        IReadOnlyDictionary<string, string> bundled,
         PluginApprovalStore approvals,
-        ApprovalSnapshot approvalSnapshot)
+        IReadOnlyList<PluginEvaluation> evaluations)
     {
         Roots = roots;
         BundledRoot = bundledRoot;
         ApprovalStorePath = approvalStorePath;
-        Plugins = plugins;
-        Bundled = bundled;
         Approvals = approvals;
-        ApprovalSnapshot = approvalSnapshot;
+        Evaluations = evaluations;
     }
 
     internal IReadOnlyList<string> Roots { get; }
     internal string? BundledRoot { get; }
     internal string ApprovalStorePath { get; }
-    internal IReadOnlyList<DiscoveredPlugin> Plugins { get; }
-    internal IReadOnlyDictionary<string, string> Bundled { get; }
 
-    /// <summary>The store that read <see cref="ApprovalSnapshot"/>, so tests can read its <c>LoadCount</c>.</summary>
+    /// <summary>The store that read the approvals snapshot, so tests can read its <c>LoadCount</c>.</summary>
     internal PluginApprovalStore Approvals { get; }
 
-    internal ApprovalSnapshot ApprovalSnapshot { get; }
+    /// <summary>What the scan decided for each discovered plugin, in discovery order.</summary>
+    internal IReadOnlyList<PluginEvaluation> Evaluations { get; }
+}
+
+/// <summary>
+/// What a scan decided for one discovered plugin. Immutable, so a prepared scan can be handed over more than once; each
+/// discovery makes its own <see cref="PluginRecord"/> from it.
+/// </summary>
+internal sealed record PluginEvaluation(
+    DiscoveredPlugin Discovered,
+    PluginState State,
+    SignatureState Signature,
+    string? Error,
+    string? ManifestHash,
+    bool IsBundledId)
+{
+    public PluginRecord ToRecord() => new(Discovered, State, Signature, Error, ManifestHash) { IsBundledId = IsBundledId };
 }
 
 /// <summary>
@@ -112,6 +137,8 @@ public sealed partial class PluginManager : IAsyncDisposable
     private static readonly TimeSpan InflightStartGrace = TimeSpan.FromSeconds(2);
 
     private readonly HashSet<Task> _inflightStarts = [];
+    // The teardown a load failure started, by plugin id, under _gate; an entry removes itself when its task ends.
+    private readonly Dictionary<string, Task> _loadFailureTeardowns = new(StringComparer.Ordinal);
     private List<PluginRecord> _records = [];
     private bool _disposed;
     // Source of PluginRecord.Epoch values; Interlocked, so it needs no lock.
@@ -141,6 +168,28 @@ public sealed partial class PluginManager : IAsyncDisposable
     /// </summary>
     internal TimeSpan WindowCloseTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// How long a scan, enable, disable, restart or dispose waits for a plugin's load-failure teardown before it goes on
+    /// anyway: by default the bound <see cref="DisposeAsync"/> gives a teardown, <see cref="WindowCloseTimeout"/> plus the
+    /// runtime's retire timeouts. A seam so tests can shorten it.
+    /// </summary>
+    internal TimeSpan LoadFailureTeardownWait
+    {
+        get => _loadFailureTeardownWait ?? WindowCloseTimeout + PluginRuntime.RetireTimeouts;
+        set => _loadFailureTeardownWait = value;
+    }
+
+    private TimeSpan? _loadFailureTeardownWait;
+
+    /// <summary>
+    /// How long activation waits for the latest <see cref="MigrateLegacySettingsAsync"/>, counted from its start, before
+    /// it logs and activates anyway. A seam so tests can shorten it.
+    /// </summary>
+    internal TimeSpan LegacyMigrationWait { get; set; } = TimeSpan.FromSeconds(5);
+
+    // The latest migration bounded by LegacyMigrationWait; never faults. Volatile.
+    private Task _legacyMigration = Task.CompletedTask;
+
     private IPluginUiThread UiThread => _options.UiThread ?? InlinePluginUiThread.Instance;
 
     public IReadOnlyList<PluginRecord> Plugins
@@ -169,21 +218,32 @@ public sealed partial class PluginManager : IAsyncDisposable
         return true;
     }
 
-    public Task DiscoverAsync(CancellationToken ct) => ScanAsync(null, ct);
+    public Task DiscoverAsync(CancellationToken ct) => ScanAsync(null, startBackends: true, ct);
 
     /// <summary>
     /// Discovers from <paramref name="prepared"/> when it was made for this manager's roots, bundled root and
     /// approvals file, so nothing is read again; otherwise (or when it is null) scans as
     /// <see cref="DiscoverAsync(CancellationToken)"/> does.
     /// </summary>
-    public Task DiscoverAsync(PreparedScan? prepared, CancellationToken ct) => ScanAsync(prepared, ct);
-
-    public Task RescanAsync(CancellationToken ct) => ScanAsync(null, ct);
+    public Task DiscoverAsync(PreparedScan? prepared, CancellationToken ct) => ScanAsync(prepared, startBackends: true, ct);
 
     /// <summary>
-    /// Everything a scan reads from disk, read now: every manifest (parsed and hashed), <c>bundled.json</c> in
-    /// <paramref name="bundledRoot"/> and the approvals file. Thread-safe and free of UI work, so the App runs it on
-    /// the thread pool while the file service starts and hands the result to <see cref="DiscoverAsync(PreparedScan?, CancellationToken)"/>.
+    /// <see cref="DiscoverAsync(PreparedScan?, CancellationToken)"/>; with <paramref name="startBackends"/> false it
+    /// starts no backend, and <see cref="StartStartupBackends"/> starts the startup ones later. A matching prepared
+    /// scan leaves nothing to read, hash or wait for, so the returned task has completed (and <see cref="Changed"/>
+    /// has been raised) on the caller's thread by the time it returns, unless another scan, enable or disable holds
+    /// the manager.
+    /// </summary>
+    public Task DiscoverAsync(PreparedScan? prepared, bool startBackends, CancellationToken ct) =>
+        ScanAsync(prepared, startBackends, ct);
+
+    public Task RescanAsync(CancellationToken ct) => ScanAsync(null, startBackends: true, ct);
+
+    /// <summary>
+    /// Everything a scan reads and decides, done now: every manifest (parsed and hashed), <c>bundled.json</c> in
+    /// <paramref name="bundledRoot"/>, the approvals file, and each plugin's signature check and state. Thread-safe and
+    /// free of UI work, so the App runs it on the thread pool while the file service starts and hands the result to
+    /// <see cref="DiscoverAsync(PreparedScan?, bool, CancellationToken)"/>.
     /// </summary>
     public static PreparedScan PrepareScan(IReadOnlyList<string> roots, string? bundledRoot, string approvalStorePath) =>
         Prepare(roots.ToArray(), bundledRoot, approvalStorePath, new PluginApprovalStore(approvalStorePath));
@@ -197,7 +257,10 @@ public sealed partial class PluginManager : IAsyncDisposable
             ? BundledPluginList.Read(root)
             : new Dictionary<string, string>(StringComparer.Ordinal);
         var approvals = store.Snapshot();
-        return new PreparedScan(roots, bundledRoot, approvalStorePath, PluginDiscovery.Scan(roots), bundled, store, approvals);
+        var evaluations = PluginDiscovery.Scan(roots)
+            .Select(plugin => Evaluate(plugin, bundled, bundledRoot, store, approvals))
+            .ToList();
+        return new PreparedScan(roots, bundledRoot, approvalStorePath, store, evaluations);
     }
 
     private bool IsPreparedForThis(PreparedScan prepared) =>
@@ -205,12 +268,14 @@ public sealed partial class PluginManager : IAsyncDisposable
         && string.Equals(prepared.BundledRoot, _options.BundledRoot, StringComparison.OrdinalIgnoreCase)
         && string.Equals(prepared.ApprovalStorePath, _options.ApprovalStorePath, StringComparison.OrdinalIgnoreCase);
 
-    private async Task ScanAsync(PreparedScan? prepared, CancellationToken ct)
+    private async Task ScanAsync(PreparedScan? prepared, bool startBackends, CancellationToken ct)
     {
         List<PluginRecord> toStart;
         await _ops.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Completes at once when no load failure is tearing down, so discovery's startup path gains no yield.
+            await WaitForLoadFailureTeardownAsync(null).ConfigureAwait(false);
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (prepared is not null && !IsPreparedForThis(prepared))
             {
@@ -218,13 +283,15 @@ public sealed partial class PluginManager : IAsyncDisposable
                 prepared = null;
             }
 
-            // Off the UI thread: Evaluate hashes every file signature.json lists (and a fresh scan reads every manifest).
-            var fresh = await Task.Run(() =>
-                {
-                    var scan = prepared ?? Prepare(_options.Roots, _options.BundledRoot, _options.ApprovalStorePath, _approvals);
-                    return scan.Plugins.Select(plugin => Evaluate(plugin, scan.Bundled, scan.ApprovalSnapshot)).ToList();
-                }, ct)
-                .ConfigureAwait(false);
+            // A prepared scan was read and judged on the thread pool already, so it is used here with no hop: at startup
+            // discovery then runs on the UI thread from start to end. A fresh scan reads every manifest and hashes every
+            // file signature.json lists, so it runs off the UI thread.
+            var evaluations = prepared?.Evaluations
+                ?? await Task.Run(
+                        () => Prepare(_options.Roots, _options.BundledRoot, _options.ApprovalStorePath, _approvals).Evaluations,
+                        ct)
+                    .ConfigureAwait(false);
+            var fresh = evaluations.Select(evaluation => evaluation.ToRecord()).ToList();
 
             List<PluginRecord> dropped;
             lock (_gate)
@@ -241,6 +308,7 @@ public sealed partial class PluginManager : IAsyncDisposable
                         // Unchanged and still enabled: keep the activated instance and running backend.
                         previous.Discovered = candidate.Discovered;
                         previous.Signature = candidate.Signature;
+                        previous.IsBundledId = candidate.IsBundledId;
                         kept.Add(previous);
                         next.Add(previous);
                     }
@@ -267,7 +335,34 @@ public sealed partial class PluginManager : IAsyncDisposable
         }
 
         RaiseChanged();
+        if (!startBackends)
+        {
+            return;
+        }
+
         // Fire-and-forget: discovery never waits on a backend (spec: discovery stays under 50 ms at startup).
+        foreach (var record in toStart)
+        {
+            StartInBackground(record);
+        }
+    }
+
+    /// <summary>
+    /// Starts, without waiting, the backend of every enabled plugin that starts at startup (<see cref="StartsAtStartup"/>).
+    /// The App calls it after <see cref="DiscoverAsync(PreparedScan?, bool, CancellationToken)"/> with
+    /// <c>startBackends: false</c>, once it has rendered the plugins and subscribed to <see cref="Changed"/>: no launch
+    /// then competes with its startup span, and no <see cref="Changed"/> a start raises is missed. A backend that is
+    /// already running or starting is not started again.
+    /// </summary>
+    public void StartStartupBackends()
+    {
+        List<PluginRecord> toStart;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            toStart = _records.Where(record => record.State == PluginState.Enabled && StartsAtStartup(record)).ToList();
+        }
+
         foreach (var record in toStart)
         {
             StartInBackground(record);
@@ -280,18 +375,29 @@ public sealed partial class PluginManager : IAsyncDisposable
         && previous.ManifestHash == candidate.ManifestHash
         && previous.Signature.Status == candidate.Signature.Status;
 
-    private PluginRecord Evaluate(
-        DiscoveredPlugin plugin, IReadOnlyDictionary<string, string> bundled, ApprovalSnapshot approvals)
+    // Static, so PrepareScan can judge every plugin before any manager exists; the store's snapshot overloads read
+    // only the snapshot they are given.
+    private static PluginEvaluation Evaluate(
+        DiscoveredPlugin plugin,
+        IReadOnlyDictionary<string, string> bundled,
+        string? bundledRoot,
+        PluginApprovalStore store,
+        ApprovalSnapshot approvals)
     {
         var unsigned = new SignatureState(SignatureStatus.Unsigned, null, null);
+        // Listed by the install root's bundled.json, whatever the hash and whatever the discovery state.
+        var isBundledId = bundledRoot is not null && bundled.ContainsKey(plugin.Id);
         switch (plugin.State)
         {
             case DiscoveryState.Shadowed:
-                return new PluginRecord(plugin, PluginState.Shadowed, unsigned, $"Shadowed by {plugin.ShadowedByFolder}", null);
+                return new PluginEvaluation(
+                    plugin, PluginState.Shadowed, unsigned, $"Shadowed by {plugin.ShadowedByFolder}", null, isBundledId);
             case DiscoveryState.IncompatibleSdk:
-                return new PluginRecord(plugin, PluginState.IncompatibleSdk, unsigned, string.Join("; ", plugin.Errors), null);
+                return new PluginEvaluation(
+                    plugin, PluginState.IncompatibleSdk, unsigned, string.Join("; ", plugin.Errors), null, isBundledId);
             case DiscoveryState.InvalidManifest:
-                return new PluginRecord(plugin, PluginState.InvalidManifest, unsigned, string.Join("; ", plugin.Errors), null);
+                return new PluginEvaluation(
+                    plugin, PluginState.InvalidManifest, unsigned, string.Join("; ", plugin.Errors), null, isBundledId);
         }
 
         string hash;
@@ -302,18 +408,18 @@ public sealed partial class PluginManager : IAsyncDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return new PluginRecord(plugin, PluginState.InvalidManifest, unsigned, ex.Message, null);
+            return new PluginEvaluation(plugin, PluginState.InvalidManifest, unsigned, ex.Message, null, isBundledId);
         }
 
         var signature = PluginSignatureVerifier.Verify(plugin.Folder, plugin.Manifest!);
-        var approval = _approvals.Resolve(plugin.Id, hash, signature.Status, plugin.Folder, approvals);
-        if (approval == ApprovalState.NeedsConsent && IsBundled(plugin, hash, bundled))
+        var approval = store.Resolve(plugin.Id, hash, signature.Status, plugin.Folder, approvals);
+        if (approval == ApprovalState.NeedsConsent && IsBundled(plugin, hash, bundled, bundledRoot))
         {
             // Shipped with SumaFile: trusted without consent, and nothing is written to the store. Only a Disabled
             // the user stored for this folder holds, whatever manifest it was stored with, so it survives upgrades.
             // When the store cannot be read that Disabled cannot be seen, so the plugin stays NeedsConsent (as an
             // unbundled one would) rather than being turned on against the user's choice.
-            var stored = _approvals.StoredState(plugin.Id, plugin.Folder, approvals, out var unreadable);
+            var stored = store.StoredState(plugin.Id, plugin.Folder, approvals, out var unreadable);
             approval = unreadable ? ApprovalState.NeedsConsent
                 : stored == ApprovalState.Disabled ? ApprovalState.Disabled
                 : ApprovalState.Enabled;
@@ -325,15 +431,17 @@ public sealed partial class PluginManager : IAsyncDisposable
             ApprovalState.Disabled => PluginState.Disabled,
             _ => PluginState.NeedsConsent,
         };
-        return new PluginRecord(plugin, state, signature, signature.Error, hash);
+        return new PluginEvaluation(plugin, state, signature, signature.Error, hash, isBundledId);
     }
 
     /// <summary>
-    /// The plugin sits in <see cref="PluginManagerOptions.BundledRoot"/> and that root's <c>bundled.json</c> lists
-    /// its id with this manifest hash. A user-root copy, or a list in any other root, never qualifies.
+    /// The plugin sits in <paramref name="bundledRoot"/> (<see cref="PluginManagerOptions.BundledRoot"/>) and that
+    /// root's <c>bundled.json</c> lists its id with this manifest hash. A copy in another root (only
+    /// <c>SUMAFILE_PLUGIN_ROOTS</c> adds one), or a list in any other root, never qualifies.
     /// </summary>
-    private bool IsBundled(DiscoveredPlugin plugin, string hash, IReadOnlyDictionary<string, string> bundled) =>
-        _options.BundledRoot is { } bundledRoot
+    private static bool IsBundled(
+        DiscoveredPlugin plugin, string hash, IReadOnlyDictionary<string, string> bundled, string? bundledRoot) =>
+        bundledRoot is not null
         && bundled.TryGetValue(plugin.Id, out var listedHash)
         && string.Equals(listedHash, hash, StringComparison.Ordinal)
         && SameRoot(plugin.Root, bundledRoot);
@@ -359,6 +467,8 @@ public sealed partial class PluginManager : IAsyncDisposable
         await _ops.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Before a backend can start: the old one may still own the plugin's pipe.
+            await WaitForLoadFailureTeardownAsync(id).ConfigureAwait(false);
             ObjectDisposedException.ThrowIf(_disposed, this);
             record = Approvable(id);
             _approvals.Set(id, record.ManifestHash!, record.Signature.Status, ApprovalState.Enabled, record.Discovered.Folder);
@@ -390,6 +500,8 @@ public sealed partial class PluginManager : IAsyncDisposable
         await _ops.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // So Disable returns only once the plugin has really stopped.
+            await WaitForLoadFailureTeardownAsync(id).ConfigureAwait(false);
             ObjectDisposedException.ThrowIf(_disposed, this);
             var record = Approvable(id);
             lock (_gate)
@@ -417,6 +529,7 @@ public sealed partial class PluginManager : IAsyncDisposable
         await _ops.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            await WaitForLoadFailureTeardownAsync(id).ConfigureAwait(false);
             ObjectDisposedException.ThrowIf(_disposed, this);
             PluginBackendConnection? previous;
             PluginRecord record;
@@ -565,13 +678,264 @@ public sealed partial class PluginManager : IAsyncDisposable
     }
 
     /// <summary>
-    /// The one activation path of commands, sidebar sections and settings pages: the Enabled check, the
+    /// Activates the plugin if needed and asks its <see cref="IPanelProvider"/> for the body of panel
+    /// <paramref name="panelId"/>, on the UI thread. <paramref name="detached"/> says whether the body goes into the
+    /// host's panel window rather than a docked region; the provider is asked again for each presentation. The App's
+    /// <see cref="PluginManagerOptions.ValidateUiElement"/> has accepted the result.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The plugin is not Enabled or declares no such panel; nothing changes.</exception>
+    /// <exception cref="PluginLoadException">Activation or the provider failed; the plugin is now LoadFailed.</exception>
+    public async Task<object> CreatePanelAsync(string pluginId, string panelId, bool detached, CancellationToken ct)
+    {
+        PluginPanelSpec? spec = null;
+        var (record, runtime, instance) = await ActivateAsync(
+                pluginId,
+                manifest => spec = manifest.Contributions.Panels.FirstOrDefault(p => p.Id == panelId)
+                    ?? throw new InvalidOperationException($"Plugin '{pluginId}' has no panel '{panelId}'."),
+                ct)
+            .ConfigureAwait(false);
+
+        if (instance is not IPanelProvider provider)
+        {
+            throw await LoadFailedAsync(
+                    record,
+                    runtime,
+                    $"Plugin '{pluginId}' declares a panel but its entry type does not implement IPanelProvider.",
+                    null)
+                .ConfigureAwait(false);
+        }
+
+        var request = new PluginPanelRequest(spec!.Id, spec.Provider, detached);
+        return await CreateElementAsync(
+                record,
+                runtime,
+                () => provider.CreatePanel(request),
+                $"Plugin '{pluginId}' returned no element for panel '{panelId}'.",
+                $"Plugin '{pluginId}' failed to create panel '{panelId}': ",
+                $"Plugin '{pluginId}' panel '{panelId}' ")
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Activates the plugin if needed, on the UI thread through <see cref="IPluginUiThread.RunAsync{T}"/>, and runs its
+    /// <see cref="IRowDecorationProvider"/> on the thread pool. The one caller, the host's decoration coordinator, calls
+    /// from the thread pool, so the activation is queued to the UI thread and never runs inside a host pass. A provider
+    /// that throws or returns null is logged as <c>[warn] Row decorations failed: …</c> and gives null; the plugin
+    /// stays Enabled. A call the caller cancels gives null without a log line, since superseded navigations are
+    /// cancelled as a matter of course. For that reason the caller's token never reaches <c>IPlugin.ActivateAsync</c>:
+    /// a cancel during activation only stops this call's wait, and the activation runs to its end.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The plugin is not Enabled or declares no row decoration provider named <c>request.Provider</c>; nothing changes.
+    /// </exception>
+    /// <exception cref="PluginLoadException">Activation failed or the entry type lacks the interface; the plugin is now LoadFailed.</exception>
+    public async Task<PluginFolderDecorations?> GetRowDecorationsAsync(
+        string pluginId, PluginDecorationRequest request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        PluginRecord record;
+        PluginRuntime runtime;
+        IPlugin instance;
+        try
+        {
+            (record, runtime, instance) = await ActivateAsync(
+                    pluginId,
+                    manifest =>
+                    {
+                        if (manifest.Contributions.RowDecorations?.Provider != request.Provider)
+                        {
+                            throw new InvalidOperationException(
+                                $"Plugin '{pluginId}' has no row decoration provider '{request.Provider}'.");
+                        }
+                    },
+                    ct,
+                    detachActivation: true)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return null;
+        }
+
+        if (instance is not IRowDecorationProvider provider)
+        {
+            throw await LoadFailedAsync(
+                    record,
+                    runtime,
+                    $"Plugin '{pluginId}' declares row decorations but its entry type does not implement IRowDecorationProvider.",
+                    null)
+                .ConfigureAwait(false);
+        }
+
+        try
+        {
+            // The provider must not touch WinUI, and its first synchronous part must not hold up the caller either.
+            var decorations = await Task.Run(() => provider.GetDecorationsAsync(request, ct), ct).ConfigureAwait(false);
+            if (decorations is null)
+            {
+                _options.Log(pluginId, "[warn] Row decorations failed: the provider returned no result.");
+            }
+
+            return decorations;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _options.Log(pluginId, $"[warn] Row decorations failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Copies legacy SumaFile settings into the declared settings of bundled plugins (spec §8.1): for every record whose
+    /// id <c>bundled.json</c> lists and every setting that declares <c>migrateFrom</c>, it reads
+    /// <c>plugin.&lt;id&gt;.&lt;key&gt;</c> and the legacy key (all of them in one
+    /// <see cref="ISettingsBackend.GetSettingsAsync"/>). When the plugin's value is unset or blank and the legacy value
+    /// is valid for the setting, it writes that value once and logs <c>[info] Migrated setting &lt;key&gt; from
+    /// &lt;legacy&gt;</c>. It never writes or deletes the legacy key. Activation waits for the latest migration, at
+    /// most <see cref="LegacyMigrationWait"/>, so no plugin reads its setting before the copy.
+    /// </summary>
+    /// <returns>The number of settings copied. A failed migration is logged as well as thrown.</returns>
+    public Task<int> MigrateLegacySettingsAsync(CancellationToken ct)
+    {
+        List<(string PluginId, PluginSettingSpec Spec)> settings;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            settings = _records
+                .Where(r => r.IsBundledId && r.State != PluginState.Shadowed && r.Discovered.Manifest is not null)
+                .SelectMany(r => r.Discovered.Manifest!.Settings
+                    .Where(s => s.MigrateFrom is not null)
+                    .Select(s => (r.Id, s)))
+                .DistinctBy(pair => PluginHostMethods.SettingsKey(pair.Id, pair.s.Key), StringComparer.Ordinal)
+                .ToList();
+        }
+
+        var migration = settings.Count == 0 ? Task.FromResult(0) : MigrateAsync(settings, ct);
+        Volatile.Write(ref _legacyMigration, BoundMigrationAsync(migration, ct));
+        return migration;
+    }
+
+    private async Task<int> MigrateAsync(IReadOnlyList<(string PluginId, PluginSettingSpec Spec)> settings, CancellationToken ct)
+    {
+        var keys = settings
+            .SelectMany(pair => new[] { PluginHostMethods.SettingsKey(pair.PluginId, pair.Spec.Key), pair.Spec.MigrateFrom! })
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var values = await _options.Settings.GetSettingsAsync(keys, ct).ConfigureAwait(false);
+
+        var copied = 0;
+        foreach (var (pluginId, spec) in settings)
+        {
+            var storageKey = PluginHostMethods.SettingsKey(pluginId, spec.Key);
+            if (!string.IsNullOrWhiteSpace(values.GetValueOrDefault(storageKey))) continue;
+            if (values.GetValueOrDefault(spec.MigrateFrom!) is not { } legacy
+                || PluginSettingsSchema.ValidateValue(spec, legacy) is not null)
+            {
+                continue;
+            }
+
+            await _options.Settings.SetSettingAsync(storageKey, legacy, ct).ConfigureAwait(false);
+            copied++;
+            _options.Log(pluginId, $"[info] Migrated setting {spec.Key} from {spec.MigrateFrom}");
+        }
+
+        return copied;
+    }
+
+    /// <summary>
+    /// Completes when <paramref name="migration"/> ends or <see cref="LegacyMigrationWait"/> passes, whichever is
+    /// first, and never faults; the timeout and a failure are logged once here.
+    /// </summary>
+    private async Task BoundMigrationAsync(Task migration, CancellationToken ct)
+    {
+        try
+        {
+            await migration.WaitAsync(LegacyMigrationWait).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            var seconds = LegacyMigrationWait.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
+            _options.Log(
+                "host",
+                $"[warn] The legacy settings migration is still running after {seconds} s; activating plugins anyway.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _options.Log("host", $"[warn] The legacy settings migration failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Writes one declared setting of a plugin (Settings &gt; Plugins), then asks the host to decorate that plugin's
+    /// folders again, since a setting such as <c>enabled</c> can change its decorations. Loads no plugin code.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="storageKey"/> is not <c>plugin.&lt;pluginId&gt;.&lt;key&gt;</c> for a key the plugin's manifest
+    /// declares, or <paramref name="value"/> is not valid for that setting; nothing is written.
+    /// </exception>
+    public async Task WriteSettingAsync(string pluginId, string storageKey, string value, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(pluginId);
+        ArgumentNullException.ThrowIfNull(storageKey);
+        ArgumentNullException.ThrowIfNull(value);
+
+        PluginSettingSpec spec;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            spec = Live(pluginId)?.Discovered.Manifest?.Settings
+                    .FirstOrDefault(s => string.Equals(PluginHostMethods.SettingsKey(pluginId, s.Key), storageKey, StringComparison.Ordinal))
+                ?? throw new ArgumentException(
+                    $"'{storageKey}' is not a setting that plugin '{pluginId}' declares.", nameof(storageKey));
+        }
+
+        if (PluginSettingsSchema.ValidateValue(spec, value) is { } invalid)
+        {
+            throw new ArgumentException(invalid, nameof(value));
+        }
+
+        await _options.Settings.SetSettingAsync(storageKey, value, ct).ConfigureAwait(false);
+        try
+        {
+            _options.InvalidateDecorations?.Invoke(pluginId);
+        }
+        catch (Exception ex)
+        {
+            _options.Log(pluginId, $"[warn] Decorating again after a setting change failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The one activation path of commands, sidebar sections, settings pages, panels and row
+    /// decorations: the wait for the legacy settings migration, the Enabled check, the
     /// <paramref name="requireDeclared"/> check (which throws before any state changes), the runtime, activation on
     /// the UI thread, <see cref="MarkLoadFailedAsync"/> when activation fails, and the retired re-check.
     /// </summary>
+    /// <param name="detachActivation">
+    /// True for callers whose token is cancelled as a matter of course (row decorations: every superseded navigation).
+    /// The plugin's <c>ActivateAsync</c> then runs under <see cref="CancellationToken.None"/> and
+    /// <paramref name="ct"/> only stops this caller's wait. A cancel can therefore never abandon a half-activated
+    /// instance: the activation runs to its end, the runtime keeps the instance (so the next call reuses it and a
+    /// retire deactivates it), and a failure still marks the plugin LoadFailed.
+    /// </param>
     private async Task<(PluginRecord Record, PluginRuntime Runtime, IPlugin Instance)> ActivateAsync(
-        string pluginId, Action<PluginManifest> requireDeclared, CancellationToken ct)
+        string pluginId, Action<PluginManifest> requireDeclared, CancellationToken ct, bool detachActivation = false)
     {
+        // No plugin activates before the legacy settings it reads are migrated (bounded; see MigrateLegacySettingsAsync).
+        var migration = Volatile.Read(ref _legacyMigration);
+        if (!migration.IsCompleted)
+        {
+            await migration.WaitAsync(ct).ConfigureAwait(false);
+        }
+
         PluginRecord record;
         PluginRuntime runtime;
         lock (_gate)
@@ -585,9 +949,43 @@ public sealed partial class PluginManager : IAsyncDisposable
         }
 
         IPlugin instance;
+        if (detachActivation)
+        {
+            var activation = ActivateInstanceAsync(record, runtime, CancellationToken.None);
+            try
+            {
+                instance = await activation.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Nobody awaits the activation any more; its failure is recorded by ActivateInstanceAsync itself.
+                _ = activation.ContinueWith(
+                    static t => _ = t.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                throw;
+            }
+        }
+        else
+        {
+            instance = await ActivateInstanceAsync(record, runtime, ct).ConfigureAwait(false);
+        }
+
+        ThrowIfRetired(record, runtime);
+        return (record, runtime, instance);
+    }
+
+    /// <summary>
+    /// Creates and activates the instance on the UI thread under <paramref name="ct"/>; any failure except a cancel
+    /// of <paramref name="ct"/> or a retired runtime marks the plugin LoadFailed and surfaces as a
+    /// <see cref="PluginLoadException"/>.
+    /// </summary>
+    private async Task<IPlugin> ActivateInstanceAsync(PluginRecord record, PluginRuntime runtime, CancellationToken ct)
+    {
         try
         {
-            instance = await UiThread
+            return await UiThread
                 .RunAsync(() => runtime.EnsureActivatedAsync(() => InstanceFactory(record.Discovered), ct))
                 .ConfigureAwait(false);
         }
@@ -604,11 +1002,8 @@ public sealed partial class PluginManager : IAsyncDisposable
         {
             await MarkLoadFailedAsync(record, runtime, ex).ConfigureAwait(false);
             if (ex is PluginLoadException) throw;
-            throw new PluginLoadException($"Plugin '{pluginId}' failed to activate: {ex.Message}", ex);
+            throw new PluginLoadException($"Plugin '{record.Id}' failed to activate: {ex.Message}", ex);
         }
-
-        ThrowIfRetired(record, runtime);
-        return (record, runtime, instance);
     }
 
     /// <summary>
@@ -682,29 +1077,114 @@ public sealed partial class PluginManager : IAsyncDisposable
 
     /// <summary>
     /// Sets LoadFailed, which withdraws the plugin's contributions (it leaves <see cref="EnabledPlugins"/>), bumps
-    /// <see cref="PluginRecord.Epoch"/> and ends the runtime in teardown order: windows, then the backend, then
-    /// deactivation.
+    /// <see cref="PluginRecord.Epoch"/> and raises <see cref="Changed"/> at once. It then starts ending the runtime in
+    /// teardown order (windows, then the backend, then deactivation) as a tracked task and returns without awaiting
+    /// it, so the caller gets its <see cref="PluginLoadException"/> right away. Scans, enable, disable, restart and
+    /// dispose wait for that task (<see cref="WaitForLoadFailureTeardownAsync"/>).
     /// </summary>
-    private async Task MarkLoadFailedAsync(PluginRecord record, PluginRuntime runtime, Exception ex)
+    private Task MarkLoadFailedAsync(PluginRecord record, PluginRuntime runtime, Exception ex)
     {
-        PluginBackendConnection? connection;
-        long unregisterGeneration;
         lock (_gate)
         {
             // Only a live, enabled runtime can fail to load. A Disable that set the state before its teardown
             // detached the runtime keeps Disabled; the teardown it is about to run stops the backend.
-            if (!ReferenceEquals(record.Runtime, runtime) || record.State != PluginState.Enabled) return;
+            if (!ReferenceEquals(record.Runtime, runtime) || record.State != PluginState.Enabled) return Task.CompletedTask;
             record.State = PluginState.LoadFailed;
             record.Error = ex.Message;
-            connection = StopBackendLocked(record, out unregisterGeneration);
+            var connection = StopBackendLocked(record, out var unregisterGeneration);
             record.Runtime = null;
             record.Epoch = NextEpoch();
+            // A failed load keeps LoadFailed even when deactivation then times out; RetireAsync logs that.
+            TrackLoadFailureTeardownLocked(
+                record.Id,
+                () => StopRuntimeAsync(record, runtime, connection, unregisterGeneration));
         }
 
         _options.Log(record.Id, $"[error] {ex.Message}");
-        // A failed load keeps LoadFailed even when deactivation then times out; RetireAsync logs that.
-        await StopRuntimeAsync(record, runtime, connection, unregisterGeneration).ConfigureAwait(false);
         RaiseChanged();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="teardown"/> on the thread pool after any earlier load-failure teardown of the same plugin,
+    /// and tracks it in <see cref="_loadFailureTeardowns"/> until it ends. Call under <see cref="_gate"/>.
+    /// </summary>
+    private void TrackLoadFailureTeardownLocked(string pluginId, Func<Task> teardown)
+    {
+        _loadFailureTeardowns.TryGetValue(pluginId, out var previous);
+        var task = RunAfterAsync(previous, teardown);
+        _loadFailureTeardowns[pluginId] = task;
+        _ = task.ContinueWith(
+            ended =>
+            {
+                lock (_gate)
+                {
+                    if (_loadFailureTeardowns.TryGetValue(pluginId, out var current) && ReferenceEquals(current, ended))
+                    {
+                        _loadFailureTeardowns.Remove(pluginId);
+                    }
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default);
+
+        async Task RunAfterAsync(Task? before, Func<Task> run)
+        {
+            // Off the caller's thread (and out of _gate) before any teardown step runs.
+            await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+            if (before is not null)
+            {
+                try { await before.ConfigureAwait(false); } catch { }
+            }
+
+            try
+            {
+                await run().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _options.Log(pluginId, $"[warn] Plugin teardown after its load failure failed: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Waits, at most <see cref="LoadFailureTeardownWait"/>, for the load-failure teardown of <paramref name="pluginId"/>,
+    /// or of every plugin when it is null; past the bound it logs and returns. Returns a completed task when nothing is
+    /// tracked. The teardown never takes <c>_ops</c>, so callers may wait under it.
+    /// </summary>
+    private Task WaitForLoadFailureTeardownAsync(string? pluginId)
+    {
+        KeyValuePair<string, Task>[] pending;
+        lock (_gate)
+        {
+            pending = pluginId is null
+                ? [.. _loadFailureTeardowns]
+                : _loadFailureTeardowns.TryGetValue(pluginId, out var task) ? [new(pluginId, task)] : [];
+        }
+
+        return pending.Length == 0 ? Task.CompletedTask : WaitBoundedAsync(pending);
+
+        async Task WaitBoundedAsync(KeyValuePair<string, Task>[] teardowns)
+        {
+            try
+            {
+                await Task.WhenAll(teardowns.Select(teardown => teardown.Value))
+                    .WaitAsync(LoadFailureTeardownWait)
+                    .ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                foreach (var (id, task) in teardowns)
+                {
+                    if (!task.IsCompleted)
+                    {
+                        _options.Log(id, $"[warn] Plugin '{id}' is still tearing down after its load failure; continuing.");
+                    }
+                }
+            }
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -738,6 +1218,9 @@ public sealed partial class PluginManager : IAsyncDisposable
             {
                 await TeardownAsync(record).ConfigureAwait(false);
             }
+
+            // A load failure's teardown runs outside _ops; the manager is not done until it is.
+            await WaitForLoadFailureTeardownAsync(null).ConfigureAwait(false);
         }
         finally
         {
@@ -770,6 +1253,8 @@ public sealed partial class PluginManager : IAsyncDisposable
             _options.DialogsFor(record.Id),
             _options.Workspace,
             _options.WindowsFor?.Invoke(record.Id) ?? NullPluginWindowHost.Instance,
+            _options.PanelsFor?.Invoke(record.Id) ?? NoPluginPanels.Instance,
+            new PluginDecorationsFacade(record.Id, _options.InvalidateDecorations),
             _options.Log);
         record.Runtime = runtime;
         return runtime;

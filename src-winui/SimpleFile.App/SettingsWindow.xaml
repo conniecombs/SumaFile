@@ -549,16 +549,6 @@
                 <StackPanel x:Name="ToolsPanel" Spacing="16" Visibility="Collapsed">
                     <TextBlock Text="Tools" FontSize="18" FontWeight="SemiBold" />
                     <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
-                        <TextBlock Text="FTP/SFTP connections" FontWeight="SemiBold" />
-                        <TextBlock Text="Create saved FTP, FTPS, and SFTP profiles, manage credentials, and browse remote folders." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
-                        <Button
-                            x:Name="SettingsRemoteManagerButton"
-                            HorizontalAlignment="Left"
-                            Content="Open FTP/SFTP manager"
-                            Click="OnOpenRemoteManagerClicked" />
-                        <TextBlock x:Name="ToolsStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
                         <TextBlock Text="Archive support" FontWeight="SemiBold" />
                         <TextBlock Text="ZIP, TAR and TAR.GZ are built in. RAR archives can be listed and extracted but not created." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
                         <TextBlock x:Name="ArchivePluginFormatsText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" Visibility="Collapsed" />

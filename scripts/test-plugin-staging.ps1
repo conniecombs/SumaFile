@@ -1,7 +1,10 @@
 #requires -Version 5.1
 # Tests scripts/lib/plugin-staging.ps1's bundled.json writer and checker with two fake plugins in a temp root:
 # the list is valid JSON without a BOM for more than one plugin, and the checker reports a stale hash and a
-# missing id. Prints "Plugin staging tests passed." or throws.
+# missing id. Then the app-owned plugin items of an install folder (Case 8, which stages the real Debug bundled
+# plugins, so run scripts/build-plugins.ps1 first), the pre-release plugin locations (Case 9) and the installer smokes'
+# helpers (Case 10).
+# Prints "Plugin staging tests passed." or throws.
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
@@ -94,9 +97,168 @@ if ($releaseSources['sumafile-remote-backend.exe'] -ne (Join-Path $repo 'target\
     throw 'Case 7: the Release sources of com.sumafile.remote do not come from the Release outputs.'
 }
 $freshness = @(Get-BundledPluginFreshnessFiles -Id com.sumafile.remote)
-$expectedFreshness = @('sumafile-remote-backend.exe', 'SumaFile.Remote.dll', 'SumaFile.Remote.Model.dll', 'plugin.json')
+$expectedFreshness = @('sumafile-remote-backend.exe', 'SumaFile.Remote.dll', 'SumaFile.Remote.Model.dll', 'SumaFile.Remote.deps.json', 'plugin.json')
 if (($freshness -join '|') -cne ($expectedFreshness -join '|')) {
     throw "Case 7: com.sumafile.remote freshness files are [$($freshness -join ', ')]; expected [$($expectedFreshness -join ', ')]."
+}
+
+# 8. App-owned plugin items in an install folder: everything the app writes beside its bundled plugins. A clean
+# staged install folder has none; the user's plugins, the installer's dot folders, plugin data, the approvals file
+# and the plugin log are each listed once, sorted. The state check sees a changed and a deleted file.
+$install = Join-Path ([System.IO.Path]::GetTempPath()) ('sumafile-app-owned-test-' + [guid]::NewGuid().ToString('N'))
+try {
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $installPlugins = Join-Path $install 'plugins'
+    Install-BundledPlugins -Root $installPlugins -Configuration Debug
+    $clean = @(Get-AppOwnedPluginItems -InstallDir $install)
+    if ($clean.Count -ne 0) { throw "Case 8: a clean staged install folder lists app-owned items: [$($clean -join ', ')]." }
+
+    $userPlugin = Join-Path $installPlugins 'com.example.user'
+    New-Item -ItemType Directory -Force -Path $userPlugin | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $userPlugin 'plugin.json'), '{"id":"com.example.user"}', $utf8)
+    New-Item -ItemType Directory -Force -Path (Join-Path $installPlugins '.com.example.user.installing-x') | Out-Null
+    $dataFile = Join-Path (Join-Path (Join-Path $install 'plugins-data') 'x') 'a.txt'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dataFile) | Out-Null
+    [System.IO.File]::WriteAllText($dataFile, 'data', $utf8)
+    foreach ($name in @('plugin-approvals.json', 'plugins.log', 'plugins.log.1')) {
+        [System.IO.File]::WriteAllText((Join-Path $install $name), $name, $utf8)
+    }
+    $expectedItems = @('plugin-approvals.json', 'plugins-data', 'plugins.log', 'plugins.log.1',
+        'plugins\.com.example.user.installing-x', 'plugins\com.example.user')
+    $items = @(Get-AppOwnedPluginItems -InstallDir $install)
+    if (($items -join '|') -cne ($expectedItems -join '|')) {
+        throw "Case 8: app-owned items are [$($items -join ', ')]; expected [$($expectedItems -join ', ')]."
+    }
+    # The approval store's interrupted writes are app-owned too.
+    $approvalsTmp = Join-Path $install 'plugin-approvals.json.1234.0a1b.tmp'
+    [System.IO.File]::WriteAllText($approvalsTmp, 'tmp', $utf8)
+    $withTmp = @(Get-AppOwnedPluginItems -InstallDir $install)
+    if ($withTmp -cnotcontains 'plugin-approvals.json.1234.0a1b.tmp' -or $withTmp.Count -ne 7) {
+        throw "Case 8: with an approvals temp file the items are [$($withTmp -join ', ')]."
+    }
+    Remove-Item -LiteralPath $approvalsTmp -Force
+
+    $before = Get-AppOwnedPluginState -InstallDir $install
+    $again = Get-AppOwnedPluginState -InstallDir $install
+    if (@($before.Keys).Count -eq 0 -or (@($before.Keys) -join '|') -cne (@($again.Keys) -join '|')) {
+        throw "Case 8: the app-owned state is not stable: [$(@($before.Keys) -join ', ')] then [$(@($again.Keys) -join ', ')]."
+    }
+    Assert-AppOwnedPluginStateUnchanged -InstallDir $install -Before $before
+
+    [System.IO.File]::WriteAllText($dataFile, 'changed', $utf8)
+    Assert-Throws { Assert-AppOwnedPluginStateUnchanged -InstallDir $install -Before $before } 'plugins-data\x\a.txt' 'Case 8 (changed)'
+    Assert-Throws { Assert-AppOwnedPluginStateUnchanged -InstallDir $install -Before $before } "App-owned plugin files changed under $install" 'Case 8 (message)'
+
+    $before = Get-AppOwnedPluginState -InstallDir $install
+    Remove-Item -LiteralPath (Join-Path $install 'plugins.log') -Force
+    Assert-Throws { Assert-AppOwnedPluginStateUnchanged -InstallDir $install -Before $before } 'plugins.log' 'Case 8 (deleted)'
+} finally {
+    if (Test-Path -LiteralPath $install) { Remove-Item -LiteralPath $install -Recurse -Force }
+}
+
+# 9. The pre-release plugin locations under %LOCALAPPDATA%\SumaFile, here a temp stand-in. The paths are built from
+# segments, so no script holds a literal the packaging check forbids.
+$localAppData = Join-Path ([System.IO.Path]::GetTempPath()) ('sumafile-legacy-test-' + [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Force -Path $localAppData | Out-Null
+    $empty = Get-LegacyPluginLocationSnapshot -LocalAppData $localAppData
+    if (@($empty.Keys).Count -ne 0) { throw "Case 9: a snapshot without a SumaFile folder is [$(@($empty.Keys) -join ', ')]." }
+    Assert-LegacyPluginLocationsUnchanged -Before $empty -LocalAppData $localAppData
+
+    $sumaFile = Join-Path $localAppData 'SumaFile'
+    $legacyLog = Join-Path $sumaFile 'plugins.log'
+    $legacyData = Join-Path $sumaFile 'plugins-data'
+    New-Item -ItemType Directory -Force -Path (Join-Path $legacyData 'y') | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $sumaFile 'plugins') 'com.example.old') | Out-Null
+    [System.IO.File]::WriteAllText($legacyLog, "old line`r`n", $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $sumaFile 'plugin-approvals.json'), '{}', $utf8)
+    # The app's own files beside them are not plugin locations.
+    [System.IO.File]::WriteAllText((Join-Path $sumaFile 'startup-timing.log'), 'timing', $utf8)
+
+    $before = Get-LegacyPluginLocationSnapshot -LocalAppData $localAppData
+    $expectedLegacy = @('plugin-approvals.json', 'plugins', 'plugins-data', 'plugins-data\y', 'plugins.log', 'plugins\com.example.old')
+    $legacyKeys = @($before.Keys | Sort-Object)
+    if (($legacyKeys -join '|') -cne (@($expectedLegacy | Sort-Object) -join '|')) {
+        throw "Case 9: the legacy snapshot is [$($legacyKeys -join ', ')]; expected [$($expectedLegacy -join ', ')]."
+    }
+    Assert-LegacyPluginLocationsUnchanged -Before $before -LocalAppData $localAppData
+    [System.IO.File]::WriteAllText((Join-Path $sumaFile 'startup-timing.log'), 'timing, longer', $utf8)
+    Assert-LegacyPluginLocationsUnchanged -Before $before -LocalAppData $localAppData
+
+    [System.IO.File]::AppendAllText($legacyLog, "new line`r`n", $utf8)
+    Assert-Throws { Assert-LegacyPluginLocationsUnchanged -Before $before -LocalAppData $localAppData } 'plugins.log' 'Case 9 (log)'
+    Assert-Throws { Assert-LegacyPluginLocationsUnchanged -Before $before -LocalAppData $localAppData } `
+        'The app changed a pre-release plugin location under %LOCALAPPDATA%\SumaFile: ' 'Case 9 (message)'
+
+    $before = Get-LegacyPluginLocationSnapshot -LocalAppData $localAppData
+    New-Item -ItemType Directory -Force -Path (Join-Path $legacyData 'x') | Out-Null
+    Assert-Throws { Assert-LegacyPluginLocationsUnchanged -Before $before -LocalAppData $localAppData } 'plugins-data\x' 'Case 9 (folder)'
+} finally {
+    if (Test-Path -LiteralPath $localAppData) { Remove-Item -LiteralPath $localAppData -Recurse -Force }
+}
+
+# 10. The installer smokes' helpers: the user plugin seed, the folder-gone wait, the quick folder snapshot and the
+# launcher's refusal of an executable outside its smoke root. Nothing is installed or started.
+$smoke = Join-Path ([System.IO.Path]::GetTempPath()) ('sumafile-installer-helpers-test-' + [guid]::NewGuid().ToString('N'))
+try {
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $seedInstall = Join-Path $smoke 'install'
+    New-Item -ItemType Directory -Force -Path $seedInstall | Out-Null
+    New-UserPluginSeed -InstallDir $seedInstall
+    $seeded = Get-AppOwnedPluginState -InstallDir $seedInstall
+    $seededFiles = @($seeded.Keys | Where-Object { [string]$seeded[$_] -cne '<dir>' } | Sort-Object)
+    $expectedSeedFiles = @('plugin-approvals.json', 'plugins-data\com.example.smoke-user\data.txt',
+        'plugins\com.example.smoke-user\payload.txt', 'plugins\com.example.smoke-user\plugin.json') | Sort-Object
+    if (($seededFiles -join '|') -cne ($expectedSeedFiles -join '|')) {
+        throw "Case 10: the seeded app-owned files are [$($seededFiles -join ', ')]; expected [$($expectedSeedFiles -join ', ')]."
+    }
+    $approvalsText = [System.IO.File]::ReadAllText((Join-Path $seedInstall 'plugin-approvals.json'))
+    if ($approvalsText -cne '{}') { throw "Case 10: a seed without approvals writes '{}', got '$approvalsText'." }
+    # An approvals file the app already wrote is kept.
+    [System.IO.File]::WriteAllText((Join-Path $seedInstall 'plugin-approvals.json'), '{"kept":true}', $utf8)
+    New-UserPluginSeed -InstallDir $seedInstall
+    $approvalsText = [System.IO.File]::ReadAllText((Join-Path $seedInstall 'plugin-approvals.json'))
+    if ($approvalsText -cne '{"kept":true}') { throw "Case 10: the seed replaced an existing approvals file: '$approvalsText'." }
+
+    # Wait-FolderGone returns at once for a missing folder and throws within its timeout for one that stays.
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    Wait-FolderGone -Path (Join-Path $smoke 'never-created') -TimeoutSeconds 30
+    if ($watch.Elapsed.TotalSeconds -ge 2) { throw "Case 10: Wait-FolderGone took $($watch.Elapsed.TotalSeconds) s for a missing folder." }
+    $watch.Restart()
+    Assert-Throws { Wait-FolderGone -Path $seedInstall -TimeoutSeconds 1 } "$seedInstall still exists 1 s after uninstall: " 'Case 10 (stays)'
+    Assert-Throws { Wait-FolderGone -Path $seedInstall -TimeoutSeconds 1 } 'plugins\com.example.smoke-user' 'Case 10 (entries)'
+    if ($watch.Elapsed.TotalSeconds -ge 10) { throw "Case 10: Wait-FolderGone overran its 1 s timeout: $($watch.Elapsed.TotalSeconds) s." }
+
+    # Get-FolderSnapshot: empty for a missing folder; a length change, a time change and an added file are named.
+    $missing = Get-FolderSnapshot -Path (Join-Path $smoke 'never-created')
+    if (@($missing.Keys).Count -ne 0) { throw "Case 10: the snapshot of a missing folder is [$(@($missing.Keys) -join ', ')]." }
+    $snapDir = Join-Path $smoke 'snap'
+    New-Item -ItemType Directory -Force -Path (Join-Path $snapDir 'sub') | Out-Null
+    $snapFile = Join-Path (Join-Path $snapDir 'sub') 'a.txt'
+    [System.IO.File]::WriteAllText($snapFile, 'one', $utf8)
+    $snapBefore = Get-FolderSnapshot -Path $snapDir
+    if ((@($snapBefore.Keys) -join '|') -cne 'sub|sub\a.txt' -or [string]$snapBefore['sub'] -cne '<dir>') {
+        throw "Case 10: the folder snapshot is [$(@($snapBefore.Keys) -join ', ')]."
+    }
+    Assert-FolderSnapshotUnchanged -Path $snapDir -Before $snapBefore -Label 'Case 10 folder'
+    [System.IO.File]::WriteAllText($snapFile, 'longer', $utf8)
+    Assert-Throws { Assert-FolderSnapshotUnchanged -Path $snapDir -Before $snapBefore -Label 'Case 10 folder' } `
+        "Case 10 folder changed under ${snapDir}: sub\a.txt (changed)" 'Case 10 (length)'
+    $snapBefore = Get-FolderSnapshot -Path $snapDir
+    [System.IO.File]::SetLastWriteTimeUtc($snapFile, [datetime]::UtcNow.AddMinutes(-5))
+    Assert-Throws { Assert-FolderSnapshotUnchanged -Path $snapDir -Before $snapBefore -Label 'Case 10 folder' } 'sub\a.txt (changed)' 'Case 10 (time)'
+    $snapBefore = Get-FolderSnapshot -Path $snapDir
+    [System.IO.File]::WriteAllText((Join-Path $snapDir 'b.txt'), 'new', $utf8)
+    Assert-Throws { Assert-FolderSnapshotUnchanged -Path $snapDir -Before $snapBefore -Label 'Case 10 folder' } 'b.txt (added)' 'Case 10 (added)'
+
+    # Start-InstalledSumaFile launches only an app under its smoke root. The outside executable is a path that does
+    # not exist, so a broken refusal could start nothing either.
+    $outsideExe = Join-Path (Join-Path ([System.IO.Path]::GetTempPath()) ('sumafile-outside-' + [guid]::NewGuid().ToString('N'))) 'SumaFile.exe'
+    Assert-Throws { Start-InstalledSumaFile -Exe $outsideExe -SmokeRoot $smoke } 'outside the smoke root' 'Case 10 (outside)'
+    # A sibling folder whose name only starts with the smoke root's is outside it too.
+    Assert-Throws { Start-InstalledSumaFile -Exe ($smoke + '-other\SumaFile.exe') -SmokeRoot $smoke } 'outside the smoke root' 'Case 10 (prefix)'
+} finally {
+    if (Test-Path -LiteralPath $smoke) { Remove-Item -LiteralPath $smoke -Recurse -Force }
 }
 
 Write-Host 'Plugin staging tests passed.'

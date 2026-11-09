@@ -248,6 +248,7 @@ public sealed partial class MainWindow
         SmokeAssert(string.Equals(dataRoot, dataRootOverride!.Trim(), StringComparison.OrdinalIgnoreCase),
             $"Plugin data root is {dataRoot}, expected {dataRootOverride}");
         SmokeAssert(SmokeIsUnder(dataRoot, UiSmokeRoot()!), $"Plugin data root {dataRoot} is outside the smoke root");
+        SmokePluginLocations(dataRoot);
         if (mode == "with")
         {
             var manager = _plugins ?? throw new InvalidOperationException("Plugin manager was not created");
@@ -273,6 +274,8 @@ public sealed partial class MainWindow
                     $"Plugin {helloId} backend did not start within 15 s ({current?.State}: {current?.Error})");
                 await Task.Delay(50);
             }
+            SmokeAssert(SmokePluginBackendTempFolders(manager, dataRoot).Contains(helloId),
+                $"Plugin {helloId} backend runs but its temp folder was not checked");
 
             var fileOps = _workspace?.FileOps ?? throw new InvalidOperationException("File operations are not available");
             var capabilities = await fileOps.GetArchiveCapabilitiesAsync();
@@ -302,6 +305,8 @@ public sealed partial class MainWindow
             var settingsPage = await SmokePluginSettingsPageAsync(markerDirectory!);
             await checkpoint("plugin-disable-closes-windows");
             await SmokePluginDisableClosesWindowsAsync(manager, pluginWindow);
+            await checkpoint("plugin-window-self-close");
+            await SmokePluginWindowSelfCloseReleasesGateAsync();
             results.Add(new
             {
                 scenario = "plugins",
@@ -338,11 +343,53 @@ public sealed partial class MainWindow
             {
                 await checkpoint("sevenzip-backend-loss");
                 await SmokeSevenZipBackendLossAsync(results);
-                // The first real-host load of the remote plugin; Task 15 grows it to the full scenario and the none mode.
-                await checkpoint("remote");
-                await SmokeRemoteAsync(results, mode);
+            }
+
+            await checkpoint("remote");
+            await SmokeRemoteAsync(results, mode);
+            if (mode == "with")
+            {
+                await checkpoint("remote-backend-loss");
+                await SmokeRemoteBackendLossAsync(results);
             }
         }
+
+        // Every mode, plain included, once the plugin scenarios have started what they start.
+        if (_plugins is { } plugins) SmokePluginBackendTempFolders(plugins, dataRoot);
+    }
+
+    /// <summary>
+    /// Phase 4: every plugin file lives in the install folder, so the smoke points the plugin log, the approvals file
+    /// and the data root into its own root, and no plugin root may lie in the pre-release %LOCALAPPDATA% location.
+    /// </summary>
+    private static void SmokePluginLocations(string dataRoot)
+    {
+        var smokeRoot = UiSmokeRoot()!;
+        var logPath = PluginDiscovery.LogPath();
+        SmokeAssert(SmokeIsUnder(logPath, smokeRoot), $"Plugin log {logPath} is outside the smoke root");
+        var approvalsPath = PluginApprovalStore.DefaultPath();
+        SmokeAssert(SmokeIsUnder(approvalsPath, smokeRoot), $"Plugin approvals file {approvalsPath} is outside the smoke root");
+        SmokeAssert(SmokeIsUnder(dataRoot, smokeRoot), $"Plugin data root {dataRoot} is outside the smoke root");
+        var legacy = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile");
+        var legacyRoots = PluginDiscovery.DefaultRoots()
+            .Where(root => SmokeSameFolder(root, legacy) || SmokeIsUnder(root, legacy)).ToArray();
+        SmokeAssert(legacyRoots.Length == 0, "Plugin roots lie in a pre-release location: " + string.Join(", ", legacyRoots));
+    }
+
+    /// <summary>
+    /// Every plugin whose backend runs got its own temp folder, <c>&lt;data root&gt;\&lt;id&gt;\tmp</c> (Task 1 points
+    /// its TMP and TEMP there). Returns the ids it checked.
+    /// </summary>
+    private static string[] SmokePluginBackendTempFolders(PluginManager manager, string dataRoot)
+    {
+        var running = manager.Plugins.Where(record => record.BackendRunning).Select(record => record.Id).ToArray();
+        foreach (var id in running)
+        {
+            var temp = Path.Combine(dataRoot, id, "tmp");
+            SmokeAssert(Directory.Exists(temp), $"Plugin {id} backend runs but its temp folder {temp} does not exist");
+        }
+
+        return running;
     }
 
     /// <summary>
@@ -564,20 +611,87 @@ public sealed partial class MainWindow
             .Any(item => AutomationProperties.GetAutomationId(item) == sectionId);
         SmokeAssert(HasSection(), $"{sectionId} is missing before the disable");
 
+        // Carry-over (d): a dialog left open on the plugin window holds the app-wide dialog gate until the host hides it.
+        var root = window.Content as FrameworkElement;
+        SmokeAssert(root?.XamlRoot is not null, "The Hello window has no XamlRoot before the disable");
+        var dialogButton = SmokeLogicalDescendants<Button>(root!).FirstOrDefault(item => AutomationProperties.GetAutomationId(item) == "Hello.WindowDialog");
+        SmokeAssert(dialogButton is not null, "Hello.WindowDialog is missing before the disable");
+        SmokeInvoke(dialogButton!);
+        await SmokeOpenDialogAsync(root!.XamlRoot!, "Hello window dialog");
+        SmokeAssert(DialogHost.IsDialogOpen, "The Hello window dialog does not hold the dialog gate");
+
         await manager.DisableAsync(SmokeHelloId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
         var stopping = Stopwatch.StartNew();
-        while (!(closed && host!.OpenWindows.Count == 0 && !HasSection()))
+        while (!(closed && host!.OpenWindows.Count == 0 && !HasSection() && !DialogHost.IsDialogOpen))
         {
             SmokeAssert(stopping.Elapsed < TimeSpan.FromSeconds(10),
-                $"10 s after the disable: window closed {closed}, tracked {host!.OpenWindows.Count}, section shown {HasSection()}");
+                $"10 s after the disable: window closed {closed}, tracked {host!.OpenWindows.Count}, section shown {HasSection()}, "
+                + $"dialog gate held {DialogHost.IsDialogOpen}");
             await Task.Delay(25);
         }
+
+        // The gate is free again: a host dialog on the main window opens and closes.
+        var gateCheck = DialogHost.ShowAsync(new ContentDialog
+        {
+            Title = "Smoke gate check",
+            CloseButtonText = "Close",
+            XamlRoot = Content.XamlRoot,
+        });
+        SmokeCloseDialog(await SmokeOpenDialogAsync(Content.XamlRoot, "Smoke gate check"));
+        await gateCheck.WaitAsync(TimeSpan.FromSeconds(10));
 
         SmokeAssert(host!.IsSealed, "The disabled runtime's window host is not sealed");
         await manager.EnableAsync(SmokeHelloId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
         await SmokeWaitAsync(HasSection, "Hello sidebar section after re-enable");
         var record = manager.Plugins.FirstOrDefault(item => item.Id == SmokeHelloId);
         SmokeAssert(record?.State == PluginState.Enabled, $"Hello is {record?.State} after re-enable: {record?.Error}");
+    }
+
+    /// <summary>
+    /// Carry-over (d), user-initiated close: the re-enabled Hello opens its window again and shows its dialog, and the
+    /// window then closes on its own (<c>Window.Close()</c>, the path the title-bar X and Alt+F4 take), never through the
+    /// host's <c>CloseEach</c>. The host's <c>Closed</c> handler hides the dialog, so the app-wide gate is released.
+    /// </summary>
+    private async Task SmokePluginWindowSelfCloseReleasesGateAsync()
+    {
+        const string openWindow = "plugin:" + SmokeHelloId + ":open-window";
+        SmokeAssert(!DialogHost.IsDialogOpen, "The dialog gate is held before the self-close check");
+        await RunAppCommandAsync(openWindow);
+        PluginWindowHost? host = null;
+        Window? window = null;
+        await SmokeWaitAsync(
+            () => (host = PluginWindowHostFor(SmokeHelloId)) is { IsSealed: false }
+                && (window = host.OpenWindows.SingleOrDefault()) is { Content: FrameworkElement { XamlRoot: not null } },
+            "Hello window after re-enable");
+        var closed = false;
+        window!.Closed += (_, _) => closed = true;
+        var root = (FrameworkElement)window.Content;
+        var dialogButton = SmokeLogicalDescendants<Button>(root).FirstOrDefault(item => AutomationProperties.GetAutomationId(item) == "Hello.WindowDialog");
+        SmokeAssert(dialogButton is not null, "Hello.WindowDialog is missing before the self-close");
+        await SmokeWaitAsync(() => dialogButton!.IsLoaded, "Hello window button loaded before the self-close");
+        SmokeInvoke(dialogButton!);
+        await SmokeOpenDialogAsync(root.XamlRoot!, "Hello window dialog");
+        SmokeAssert(DialogHost.IsDialogOpen, "The Hello window dialog does not hold the dialog gate before the self-close");
+
+        window.Close();
+        var closing = Stopwatch.StartNew();
+        while (!(closed && host!.OpenWindows.Count == 0 && !DialogHost.IsDialogOpen))
+        {
+            SmokeAssert(closing.Elapsed < TimeSpan.FromSeconds(10),
+                $"10 s after the window closed itself: window closed {closed}, tracked {host!.OpenWindows.Count}, "
+                + $"dialog gate held {DialogHost.IsDialogOpen}");
+            await Task.Delay(25);
+        }
+
+        SmokeAssert(!host!.IsSealed, "A window closing on its own sealed its runtime's window host");
+        var gateCheck = DialogHost.ShowAsync(new ContentDialog
+        {
+            Title = "Smoke gate check after self-close",
+            CloseButtonText = "Close",
+            XamlRoot = Content.XamlRoot,
+        });
+        SmokeCloseDialog(await SmokeOpenDialogAsync(Content.XamlRoot, "Smoke gate check after self-close"));
+        await gateCheck.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     private static async Task<ContentDialog> SmokeOpenDialogAsync(XamlRoot root, string title)
@@ -918,6 +1032,10 @@ public sealed partial class MainWindow
         var sample = Path.Combine(SmokeArchivesRoot(), "sample.7z");
         var before = backend.ReconnectCount;
         var pid = backend.ServiceProcessId ?? throw new InvalidOperationException("The service process id is unknown");
+        // The remote backend is the App's own client, not the service's: a service restart must leave it alone.
+        var installRoot = PluginDiscovery.InstallRoot();
+        var remoteBackends = SmokeProcessIdsUnder(SmokeRemoteBackendName, installRoot);
+        SmokeAssert(remoteBackends.Length == 1, $"Expected one {SmokeRemoteBackendName} under {installRoot} before the service kill, found {remoteBackends.Length}");
         using (var service = Process.GetProcessById(pid))
         {
             service.Kill();
@@ -942,6 +1060,11 @@ public sealed partial class MainWindow
             TimeSpan.FromSeconds(30),
             () => $"After the reconnect: .7z {SmokeDescribe(row)}");
         SmokeAssertNames(files, SmokeExpectedFiles(""), "sample.7z listing after the reconnect");
+        var remoteAfter = SmokeProcessIdsUnder(SmokeRemoteBackendName, installRoot);
+        SmokeAssert(remoteAfter.SequenceEqual(remoteBackends),
+            $"The service restart changed {SmokeRemoteBackendName} from [{string.Join(", ", remoteBackends)}] to [{string.Join(", ", remoteAfter)}]");
+        var remote = _plugins?.Plugins.FirstOrDefault(item => item.Id == SmokeRemoteId);
+        SmokeAssert(remote?.State == PluginState.Enabled, $"{SmokeRemoteId} is {remote?.State} after the service restart: {remote?.Error}");
         results.Add(new
         {
             scenario = "service-reconnect",
@@ -949,6 +1072,7 @@ public sealed partial class MainWindow
             killedPid = pid,
             servicePid = backend.ServiceProcessId,
             reconnectCount = backend.ReconnectCount,
+            remoteBackendPid = remoteBackends[0],
             files = files.Length,
             passed = true,
         });

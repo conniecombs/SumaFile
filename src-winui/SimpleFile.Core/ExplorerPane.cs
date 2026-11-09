@@ -46,8 +46,26 @@ public sealed class ExplorerPane
         GitRepositoryRoot = null;
     }
 
+    /// <summary>
+    /// The plugin decorations of the folder shown, set under the workspace gate together with
+    /// <see cref="BumpContentVersion"/>. The navigation publish sets them with the listing; late results and
+    /// invalidations replace them later (<see cref="ExplorerWorkspace.ApplyLateDecorations"/>).
+    /// </summary>
+    public PaneDecorations Decorations { get; set; } = PaneDecorations.Empty;
+
+    /// <summary>The decoration request whose result <see cref="Decorations"/> holds (under the workspace gate).</summary>
+    internal long AppliedDecorationRequest { get; set; }
+
+    /// <summary>Whether that result was the request's late merge, which supersedes its own budget-cut result.</summary>
+    internal bool AppliedDecorationLate { get; set; }
+
+    /// <summary>The token of the newest decoration request; it is cancelled when a newer request starts.</summary>
+    internal CancellationToken DecorationCancellation => _decorationCancellation?.Token ?? CancellationToken.None;
+
     private int _navigationToken;
     private int _contentVersion;
+    private long _decorationRequest;
+    private CancellationTokenSource? _decorationCancellation;
 
     private IReadOnlyList<FileEntry>? _cachedVisibleEntries;
     private List<FileEntry>? _cachedEntriesRef;
@@ -66,6 +84,25 @@ public sealed class ExplorerPane
     public int ContentVersion => Volatile.Read(ref _contentVersion);
 
     public int BumpContentVersion() => Interlocked.Increment(ref _contentVersion);
+
+    /// <summary>
+    /// Takes the next decoration request number (under the workspace gate) and cancels the previous request, whose
+    /// result could only be dropped now. The callbacks of that cancellation run on the thread pool, never under the gate.
+    /// </summary>
+    internal long NextDecorationRequest()
+    {
+        var previous = _decorationCancellation;
+        _decorationCancellation = new CancellationTokenSource();
+        if (previous is not null)
+        {
+            _ = previous.CancelAsync();
+        }
+
+        return ++_decorationRequest;
+    }
+
+    /// <summary>The decoration text of <paramref name="path"/>, which the status column shows and sorts by.</summary>
+    internal string? DecorationTextFor(string path) => Decorations.For(path)?.Text;
 
     public bool CanGoBack => HistoryIndex > 0;
     public bool CanGoForward => HistoryIndex >= 0 && HistoryIndex < History.Count - 1;
@@ -105,7 +142,8 @@ public sealed class ExplorerPane
             showHidden,
             normalizedSortBy,
             sortAscending,
-            keepFoldersOnTop);
+            keepFoldersOnTop,
+            DecorationTextFor);
 
         _cachedEntriesRef = entries;
         _cachedEntriesCount = count;
@@ -145,7 +183,8 @@ public sealed class ExplorerPane
             sortAscending,
             keepFoldersOnTop,
             listingInProgress: true,
-            progressiveViewportLimit: progressiveViewportLimit);
+            progressiveViewportLimit: progressiveViewportLimit,
+            decorationText: DecorationTextFor);
     }
 
     public IReadOnlyList<FileEntry> VisibleViewportEntries(
@@ -317,6 +356,7 @@ public sealed class ExplorerPane
     {
         (Path, other.Path) = (other.Path, Path);
         (Entries, other.Entries) = (other.Entries, Entries);
+        (Decorations, other.Decorations) = (other.Decorations, Decorations);
         var history = History.ToList();
         var historyIndex = HistoryIndex;
         History.Clear();

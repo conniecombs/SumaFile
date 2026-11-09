@@ -27,6 +27,8 @@ internal sealed class FakePluginHost : IPluginHost
     public IPluginWorkspace Workspace => throw new NotSupportedException();
     public IPluginLogger Logger => Log;
     public IPluginWindows Windows => throw new NotSupportedException();
+    public IPluginPanels Panels => throw new NotSupportedException();
+    public IPluginDecorations Decorations => throw new NotSupportedException();
 
     public IReadOnlyList<BackendCall> Calls
     {

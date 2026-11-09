@@ -35,9 +35,9 @@ public sealed partial class MainWindow
         IReadOnlyList<string> Roots, string ApprovalStorePath, string BundledRoot, Task<PreparedScan?> Scan);
 
     /// <summary>
-    /// Starts reading every plugin manifest, <c>bundled.json</c> and the approvals file on the thread pool, so
-    /// the reads (and their cold-start cost) overlap the file service's start. A failure only means discovery
-    /// reads for itself.
+    /// Starts reading and judging every plugin (its manifest, <c>bundled.json</c>, the approvals file and its
+    /// signature) on the thread pool, so that work (and its cold-start cost) overlaps the file service's start. A
+    /// failure only means discovery reads for itself.
     /// </summary>
     private static PendingPluginScan PreparePluginScan()
     {
@@ -60,11 +60,43 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// Builds the plugin manager and discovers plugins. Runs before the workspace loads its settings, because
-    /// loading the toolbar layout drops ids it does not know, so plugin toolbar actions must be registered first.
+    /// Carry-over (h): runs, once, the code the first contribution render runs, so its first-use JIT happens while the
+    /// file service starts rather than inside the budgeted <c>plugins-*</c> span (spec §5.2). It runs the contribution
+    /// adapters on empty lists and builds one sidebar section header for a placeholder section, then drops it. It never
+    /// touches <c>PluginSectionsHost</c>, the catalogs or any plugin state, and loads no plugin code.
     /// </summary>
+    private void WarmPluginRendering()
+    {
+        try
+        {
+            PluginRecord[] none = [];
+            _ = PluginContributionAdapter.Commands(none);
+            _ = PluginContributionAdapter.ContextMenus(none);
+            _ = PluginContributionAdapter.ToolbarActions(none);
+            _ = PluginContributionAdapter.PrimaryToolbarCommandIds(none);
+            _ = PluginContributionAdapter.SidebarSections(none);
+            _ = CreatePluginSectionView(new PluginSidebarSection("warm-up", "warm-up", "Warm-up", "warm-up", null, 0));        }
+        catch (Exception exception)
+        {
+            // Only a warm-up: the real render builds the same controls and reports its own failures.
+            System.Diagnostics.Debug.WriteLine($"Plugin rendering warm-up failed: {exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Builds the plugin manager, discovers plugins and renders their contributions. Runs before the workspace loads its
+    /// settings, because loading the toolbar layout drops ids it does not know, so plugin toolbar actions must be
+    /// registered first.
+    /// </summary>
+    /// <remarks>
+    /// Spec §5.2 budgets the span from <c>backend-started</c> to <c>plugins-discovered</c>, which the startup budget
+    /// check adds up over the <c>plugins-*</c> laps below (laps are written with the mark, so they add no file write to
+    /// the span). It holds the manager, the hand-over of the prepared scan (no read, hash or hop) and one contribution
+    /// render; the backends of startup plugins start after it.
+    /// </remarks>
     private async Task InitializePluginsAsync(FileOperationService fileOps, StartupTimer timer, PendingPluginScan pending)
     {
+        timer.Lap("plugins-begin");
         var cts = new CancellationTokenSource();
         _pluginCts = cts;
         // Read here, on the UI thread: WindowsFor may run on any thread.
@@ -79,7 +111,7 @@ public sealed partial class MainWindow
             // The prepared scan's own inputs: DiscoverAsync uses it only when they match.
             Roots = pending.Roots,
             ApprovalStorePath = pending.ApprovalStorePath,
-            // %LOCALAPPDATA%\SumaFile\plugins-data, or the smokes' disposable SUMAFILE_PLUGIN_DATA_ROOT.
+            // <install>\plugins-data, or the smokes' disposable SUMAFILE_PLUGIN_DATA_ROOT; never %LOCALAPPDATA%.
             DataRoot = PluginDiscovery.DataRoot(),
             Launcher = new ProcessLauncher(),
             PipeNameFor = PluginPipeName,
@@ -91,7 +123,11 @@ public sealed partial class MainWindow
                 DispatcherQueue,
                 () => Content?.XamlRoot,
                 PluginDisplayName,
-                () => PickFolderAsync(null)),
+                () => PickFolderAsync(null),
+                (message, isError) => ShowMessage(
+                    PluginDisplayName(pluginId),
+                    message,
+                    isError ? InfoBarSeverity.Error : InfoBarSeverity.Informational)),
             Workspace = _pluginWorkspace,
             Log = AppendPluginLog,
             // The current client, so a reconnected service is used; ReconnectBackendAsync then registers the
@@ -108,11 +144,15 @@ public sealed partial class MainWindow
                 : $"returned {element.GetType().FullName}, not a Microsoft.UI.Xaml.FrameworkElement",
         });
         _plugins = manager;
-        manager.Changed += OnPluginsChanged;
+        timer.Lap("plugins-manager-built");
 
         try
         {
-            await manager.DiscoverAsync(await pending.Scan, cts.Token);
+            // Usually complete by now: it ran while the file service started.
+            var prepared = await pending.Scan;
+            timer.Lap("plugins-scan-awaited");
+            // Nothing left to read or hash, so this completes here, on the UI thread. No backend starts yet.
+            await manager.DiscoverAsync(prepared, startBackends: false, cts.Token);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -120,9 +160,19 @@ public sealed partial class MainWindow
             AppendPluginLog("host", $"[error] Plugin discovery failed: {exception}");
         }
 
+        timer.Lap("plugins-evaluated");
+        // The one render inside the span (spec §5.2 counts contribution rendering).
+        ApplyPluginContributions();
         var discovered = manager.Plugins;
         timer.Mark("plugins-discovered", $"count={discovered.Count}");
-        // After the mark, so log writes stay out of the discovery budget. The smokes point both overrides at
+
+        // Only now: the scan's own Changed would have queued a second render into the span. Every later change renders
+        // again, and nothing can change a plugin before this line: no backend has started and the user cannot act yet.
+        manager.Changed += OnPluginsChanged;
+        // After the mark, so no launch competes with the span; an archive engine registers once its backend runs.
+        manager.StartStartupBackends();
+
+        // After the mark, so log writes stay out of the discovery budget. The smokes point the overrides at
         // disposable locations; say so, so a stray override on a user machine is visible.
         foreach (var line in PluginDiscovery.DescribeOverrides())
         {
@@ -134,8 +184,6 @@ public sealed partial class MainWindow
         {
             AppendPluginLog(record.Id, $"[info] Discovered: {record.State}");
         }
-
-        ApplyPluginContributions();
     }
 
     /// <summary>
@@ -394,9 +442,6 @@ public sealed partial class MainWindow
     private static string PluginPipeName(string pluginId) =>
         $"SumaFile.Plugin.{WindowsSessionId.Value}.{Environment.ProcessId}.{pluginId}";
 
-    private static string LocalSumaFileDirectory() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile");
-
     /// <summary>Awaits background plugin work that nothing else awaits and logs a failure to plugins.log.</summary>
     private static async Task ObserveAsync(Task task)
     {
@@ -413,14 +458,26 @@ public sealed partial class MainWindow
         }
     }
 
-    /// <summary>Appends to %LOCALAPPDATA%\SumaFile\plugins.log, rotating at 1 MB like service.log.</summary>
+    /// <summary>
+    /// <c>&lt;install&gt;\plugins.log</c>, or the smokes' disposable <c>SUMAFILE_PLUGIN_LOG_PATH</c>; resolved once.
+    /// </summary>
+    private static readonly string PluginLogPath = PluginDiscovery.LogPath();
+
+    /// <summary>
+    /// Appends to <see cref="PluginLogPath"/>, rotating at 1 MB like service.log. When its folder cannot be written
+    /// (an install folder the user cannot write to) the line is dropped, like any failed log write; it never falls back
+    /// to %LOCALAPPDATA%.
+    /// </summary>
     private static void AppendPluginLog(string pluginId, string line)
     {
         try
         {
-            var directory = LocalSumaFileDirectory();
-            Directory.CreateDirectory(directory);
-            var logPath = Path.Combine(directory, "plugins.log");
+            var logPath = PluginLogPath;
+            if (Path.GetDirectoryName(logPath) is { Length: > 0 } directory)
+            {
+                Directory.CreateDirectory(directory);
+            }
+
             lock (PluginLogGate)
             {
                 RotatePluginLogIfNeeded(logPath);

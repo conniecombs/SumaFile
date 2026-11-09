@@ -21,6 +21,8 @@ public sealed class PluginHostServices : IPluginHost
         IPluginDialogs dialogs,
         IPluginWorkspace workspace,
         IPluginWindows windows,
+        IPluginPanels panels,
+        IPluginDecorations decorations,
         Action<string, string> log)
     {
         PluginId = pluginId;
@@ -30,6 +32,8 @@ public sealed class PluginHostServices : IPluginHost
         Dialogs = dialogs;
         Workspace = workspace;
         Windows = windows;
+        Panels = panels;
+        Decorations = decorations;
         Logger = new LoggerFacade(pluginId, log);
     }
 
@@ -40,6 +44,8 @@ public sealed class PluginHostServices : IPluginHost
     public IPluginWorkspace Workspace { get; }
     public IPluginLogger Logger { get; }
     public IPluginWindows Windows { get; }
+    public IPluginPanels Panels { get; }
+    public IPluginDecorations Decorations { get; }
 
     private Task<PluginBackendConnection> GetBackend()
     {
@@ -209,4 +215,38 @@ public sealed class PluginHostServices : IPluginHost
         public void Error(string message, Exception? exception = null) =>
             log(pluginId, exception is null ? $"[error] {message}" : $"[error] {message}: {exception}");
     }
+}
+
+/// <summary>
+/// The panel service of a host without panels (<see cref="PluginManagerOptions.PanelsFor"/> is null): no panel is ever
+/// visible, <c>Hide</c> does nothing and <c>ShowAsync</c> throws, so a provider that only asks whether a panel is shown
+/// works on such a host.
+/// </summary>
+internal sealed class NoPluginPanels : IPluginPanels
+{
+    public const string NoPanelsMessage = "This host has no panels.";
+
+    public static NoPluginPanels Instance { get; } = new();
+
+    private NoPluginPanels()
+    {
+    }
+
+    public Task ShowAsync(string panelId, CancellationToken ct) =>
+        Task.FromException(new InvalidOperationException(NoPanelsMessage));
+
+    public void Hide(string panelId)
+    {
+    }
+
+    public bool IsVisible(string panelId) => false;
+}
+
+/// <summary>
+/// A plugin's <see cref="IPluginDecorations"/>: <c>Invalidate</c> hands the plugin id to
+/// <see cref="PluginManagerOptions.InvalidateDecorations"/>, which only queues work.
+/// </summary>
+internal sealed class PluginDecorationsFacade(string pluginId, Action<string>? invalidate) : IPluginDecorations
+{
+    public void Invalidate() => invalidate?.Invoke(pluginId);
 }

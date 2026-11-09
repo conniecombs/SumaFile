@@ -49,4 +49,23 @@
     <Copy SourceFiles="@(HelloFile)" DestinationFolder="$(HelloDest)" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\target\debug\hello-plugin-backend.exe" DestinationFolder="$(HelloDest)" SkipUnchangedFiles="true" Condition="Exists('$(MSBuildThisFileDirectory)..\..\target\debug\hello-plugin-backend.exe')" />
   </Target>
+  <!--
+    The remote plugin as scripts/build-plugins.ps1 stages it, its bundled.json (which lists the remote plugin's hash; the
+    7-Zip entry is simply absent from this root) and the loopback SFTP test server that scripts/build-fixture-plugin.ps1
+    builds. Each is copied only when it exists: Remote/RemoteBackendHarness names the scripts when one is missing.
+    A staged remote plugin replaces the fixture's copy whole, so a file a rebuild dropped does not linger.
+  -->
+  <Target Name="CopyRemotePluginFixture" AfterTargets="Build">
+    <PropertyGroup>
+      <_RepoTarget>$(MSBuildThisFileDirectory)..\..\target\</_RepoTarget>
+      <RemoteFixtureDest>$(OutDir)Fixtures\remote\</RemoteFixtureDest>
+    </PropertyGroup>
+    <ItemGroup>
+      <RemotePluginFile Include="$(_RepoTarget)plugins\com.sumafile.remote\**" />
+    </ItemGroup>
+    <RemoveDir Directories="$(RemoteFixtureDest)plugins\com.sumafile.remote" Condition="Exists('$(_RepoTarget)plugins\com.sumafile.remote')" />
+    <Copy SourceFiles="@(RemotePluginFile)" DestinationFiles="@(RemotePluginFile->'$(RemoteFixtureDest)plugins\com.sumafile.remote\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(_RepoTarget)plugins\bundled.json" DestinationFolder="$(RemoteFixtureDest)plugins\" SkipUnchangedFiles="true" Condition="Exists('$(_RepoTarget)plugins\bundled.json')" />
+    <Copy SourceFiles="$(_RepoTarget)debug\sumafile-remote-test-server.exe" DestinationFolder="$(RemoteFixtureDest)" SkipUnchangedFiles="true" Condition="Exists('$(_RepoTarget)debug\sumafile-remote-test-server.exe')" />
+  </Target>
 </Project>

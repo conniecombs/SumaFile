@@ -124,19 +124,15 @@ public class UxShellTests
         Assert.DoesNotContain("\"New Tab\"", chrome);
     }
 
-    // Change 10 / Change 9: one noun per concept in the sidebar.
+    // Change 10 / Change 9: one noun per concept in the sidebar. Connections is the remote plugin's section now.
     [Fact]
-    public void Sidebar_UsesLabelsConnectionsAndSidebarCopy()
+    public void Sidebar_UsesLabelsAndSidebarCopy()
     {
         var sidebar = Read("SidebarView.xaml");
         Assert.Contains("Text=\"Labels\"", sidebar);
         Assert.Contains("Text=\"No labels yet\"", sidebar);
-        Assert.Contains("Text=\"Connections\"", sidebar);
-        Assert.Contains("AutomationProperties.Name=\"Manage connections\"", sidebar);
-        Assert.Contains("Text=\"No connections. Open the manager to add one.\"", sidebar);
         Assert.Contains("AutomationProperties.Name=\"Collapse This PC\"", sidebar);
         Assert.Contains("Text=\"Run a search, then save it here to run it again later.\"", sidebar);
-        Assert.Matches(new Regex(@"AccessibilityView=""Raw""[\s\S]{0,300}Glyph=""&#xE8A7;"""), sidebar);
         foreach (var stale in new[] { "Text=\"Tags\"", "FTP/SFTP", "No color labels yet", "My PC\"", "side menu" })
         {
             Assert.DoesNotContain(stale, sidebar);
@@ -185,23 +181,6 @@ public class UxShellTests
         Assert.Contains("PrimaryToolbarPanel.ViewRememberRequested += OnViewRememberRequested;", Read("MainWindow.Controls.cs"));
         var save = Slice(commands, "private async void OnViewRememberRequested(", "private async Task SaveFolderViewSettingsFromFlyoutAsync(");
         Assert.Contains("SaveFolderViewSettingsFromFlyoutAsync(scope)", save);
-    }
-
-    // Integration: plain-FTP connections carry the same "Insecure" badge in the sidebar as in the manager.
-    [Fact]
-    public void SidebarConnections_ShowInsecureBadgeForPlainFtp()
-    {
-        var rows = Read("ExplorerRows.cs");
-        var row = Slice(rows, "public sealed class RemoteProfileSidebarRow", "private static string FormatDescription(");
-        Assert.Contains("public bool IsInsecure", row);
-        Assert.Contains("IsInsecure = RemoteManagerViewModel.IsInsecureProfile(profile)", row);
-
-        var sidebar = Read("SidebarView.xaml");
-        var template = Slice(sidebar, "<DataTemplate x:DataType=\"local:RemoteProfileSidebarRow\">", "</DataTemplate>");
-        Assert.Contains("Text=\"{x:Bind Protocol}\"", template);
-        Assert.Contains("Visibility=\"{x:Bind InsecureBadgeVisibility}\"", template);
-        Assert.Contains("Text=\"Insecure\"", template);
-        Assert.Contains("left.IsInsecure == right.IsInsecure", Read("MainWindow.Remote.cs"));
     }
 
     // Integration: the detached View-flyout stand-ins for the removed rows are gone from App source.

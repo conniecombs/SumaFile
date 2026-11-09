@@ -357,23 +357,30 @@ internal sealed partial class RemoteManagerWindow : Window
         IsClosed = true;
         _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         DetachLists();
-        _viewModel.CancelTransfer();
-        if (_viewModel.IsConnected)
-        {
-            // The session lives in the backend until it exits; end it with the window, as nothing can reach it after.
-            _ = DisconnectQuietlyAsync();
-        }
+        // The session lives in the backend until it exits; end it with the window, as nothing can reach it after.
+        // A running transfer holds the session, so it is cancelled and given time to clean up first.
+        _ = CloseSessionQuietlyAsync();
     }
 
-    private async Task DisconnectQuietlyAsync()
+    private async Task CloseSessionQuietlyAsync()
     {
         try
         {
-            await _viewModel.DisconnectAsync();
+            if (!await _viewModel.CloseSessionAsync(TimeSpan.FromSeconds(10)))
+            {
+                _host.Logger.Info("The closed manager's session was still busy after 10 seconds; it ends when the backend stops.");
+            }
         }
         catch (Exception exception)
         {
-            _host.Logger.Info("The closed manager's session did not disconnect: " + exception.Message);
+            try
+            {
+                _host.Logger.Info("The closed manager's session did not disconnect: " + exception.Message);
+            }
+            catch
+            {
+                // Closing the window never throws, even when the plugin is already stopping.
+            }
         }
     }
 
@@ -479,18 +486,41 @@ internal sealed partial class RemoteManagerWindow : Window
         };
         var completed = false;
         var workTask = work(cancellation.Token);
+        // The window may close before the work ends (the host then hides the dialog itself). Hide on a dialog whose
+        // XamlRoot is gone throws, and from these callbacks nothing would catch it.
         dialog.Opened += (_, _) =>
         {
-            if (completed)
+            if (!completed || dialog.XamlRoot is null)
+            {
+                return;
+            }
+
+            try
             {
                 dialog.Hide();
+            }
+            catch (Exception)
+            {
+                // The window is going: the dialog is not showing any more.
             }
         };
         _ = workTask.ContinueWith(
             _ => dialog.DispatcherQueue.TryEnqueue(() =>
             {
                 completed = true;
-                dialog.Hide();
+                if (dialog.XamlRoot is null)
+                {
+                    return;
+                }
+
+                try
+                {
+                    dialog.Hide();
+                }
+                catch (Exception)
+                {
+                    // The window is going: the dialog is not showing any more.
+                }
             }),
             TaskScheduler.Default);
 

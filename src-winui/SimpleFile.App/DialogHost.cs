@@ -12,6 +12,7 @@ namespace SimpleFile.App;
 internal static class DialogHost
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
+    private static readonly List<ShownDialog> Shown = [];
     private static int _openCount;
 
     /// <summary>True while any dialog shown through the host is open or waiting to open.</summary>
@@ -23,15 +24,81 @@ internal static class DialogHost
     {
         await Gate.WaitAsync(cancellationToken);
         Interlocked.Increment(ref _openCount);
+        var shown = new ShownDialog(dialog);
+        lock (Shown)
+        {
+            Shown.Add(shown);
+        }
+
         try
         {
-            return await dialog.ShowAsync();
+            var showing = dialog.ShowAsync().AsTask();
+            // A dialog on a window that closes may never complete its ShowAsync. HideDialogsOn completes Hidden, so the
+            // gate is released either way.
+            if (await Task.WhenAny(showing, shown.Hidden.Task) == showing)
+            {
+                return await showing;
+            }
+
+            _ = showing.ContinueWith(
+                task => _ = task.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            return ContentDialogResult.None;
         }
         finally
         {
+            lock (Shown)
+            {
+                Shown.Remove(shown);
+            }
+
             Interlocked.Decrement(ref _openCount);
             Gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Hides every dialog shown through the host on <paramref name="root"/>, and releases its <see cref="ShowAsync"/>
+    /// even if WinUI never completes the dialog's own <c>ShowAsync</c> (its window is closing). Runs on the UI thread;
+    /// returns how many dialogs it hid. The plugin window host calls it before it closes a plugin window.
+    /// </summary>
+    internal static int HideDialogsOn(XamlRoot? root)
+    {
+        if (root is null)
+        {
+            return 0;
+        }
+
+        ShownDialog[] candidates;
+        lock (Shown)
+        {
+            candidates = [.. Shown];
+        }
+
+        var hidden = 0;
+        foreach (var shown in candidates)
+        {
+            if (!IsOn(shown.Dialog, root))
+            {
+                continue;
+            }
+
+            hidden++;
+            try
+            {
+                shown.Dialog.Hide();
+            }
+            catch (Exception)
+            {
+                // The window is already going: the dialog is not showing any more, and Hidden releases its ShowAsync.
+            }
+
+            shown.Hidden.TrySetResult();
+        }
+
+        return hidden;
     }
 
     /// <summary>
@@ -66,18 +133,41 @@ internal static class DialogHost
         var progress = new Progress<string>(message => status.Text = message);
         var completed = false;
         var workTask = work(progress, cts.Token);
+        // Both hides may run after the dialog's window closed; Hide on a dialog whose XamlRoot is gone throws, and from
+        // these callbacks nothing would catch it.
         dialog.Opened += (_, _) =>
         {
-            if (completed)
+            if (!completed || dialog.XamlRoot is null)
+            {
+                return;
+            }
+
+            try
             {
                 dialog.Hide();
+            }
+            catch (Exception)
+            {
+                // Its window is going: the dialog is not showing any more.
             }
         };
         _ = workTask.ContinueWith(
             _ => dialog.DispatcherQueue.TryEnqueue(() =>
             {
                 completed = true;
-                dialog.Hide();
+                if (dialog.XamlRoot is null)
+                {
+                    return;
+                }
+
+                try
+                {
+                    dialog.Hide();
+                }
+                catch (Exception)
+                {
+                    // Its window is going: the dialog is not showing any more.
+                }
             }),
             TaskScheduler.Default);
 
@@ -112,5 +202,26 @@ internal static class DialogHost
                 return true;
             },
             cancellationToken);
+    }
+
+    /// <summary>True when <paramref name="dialog"/> shows on <paramref name="root"/>; false when its root cannot be read.</summary>
+    private static bool IsOn(ContentDialog dialog, XamlRoot root)
+    {
+        try
+        {
+            return ReferenceEquals(dialog.XamlRoot, root);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>A dialog inside <see cref="ShowAsync"/>; <see cref="HideDialogsOn"/> completes <see cref="Hidden"/>.</summary>
+    private sealed class ShownDialog(ContentDialog dialog)
+    {
+        public ContentDialog Dialog { get; } = dialog;
+
+        public TaskCompletionSource Hidden { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }

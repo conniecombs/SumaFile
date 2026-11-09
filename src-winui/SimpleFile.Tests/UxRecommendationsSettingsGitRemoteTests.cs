@@ -184,63 +184,19 @@ public class UxRecommendationsSettingsGitRemoteTests
         Assert.Contains("\"Unpin preview\" : \"Pin preview open\"", code);
     }
 
+    // The manager window, its consent and host-key dialogs, the insecure-profile rule and the host-key prefixes moved to
+    // the remote plugin with core FTP/SFTP (RemotePluginSourceShapeTests, RemoteProfileRowTests). The plain wording of the
+    // backend's plain-FTP refusal is pinned here, where the old core text was.
     [Fact]
-    public void RemoteManager_AsksForPlainFtpConsentAndTrustsHostKeysExplicitly()
+    public void RemoteBackendMessages_UsePlainWordingForPlainFtpConsent()
     {
-        var code = Read("RemoteManagerWindow.xaml.cs");
-        var xaml = Read("RemoteManagerWindow.xaml");
-
-        Assert.Contains("\"Connect without encryption. Passwords and files are sent in plain text.\"", code);
-        Assert.Contains("\"Confirm the unencrypted connection to save this profile\"", code);
-        Assert.Contains("dialog.IsPrimaryButtonEnabled = !needsConsent;", code);
-        Assert.DoesNotContain("Allow plain FTP", code);
-        var connection = Slice(code, "\"Connection\",", "rootBox),");
-        Assert.True(
-            connection.IndexOf("protocolBox,", StringComparison.Ordinal) < connection.IndexOf("insecureBox,", StringComparison.Ordinal),
-            "Plain-FTP consent sits directly under Protocol.");
-        Assert.DoesNotContain("credentialBox,\n                    ftpOptionsPanel", code);
-        Assert.Contains("DefaultPortFor(", code);
-
-        Assert.Contains("Title = \"Trust this server?\"", code);
-        Assert.Contains("PrimaryButtonText = \"Trust and connect\"", code);
-        Assert.Contains("Title = \"Server key changed\"", code);
-        Assert.Contains("PrimaryButtonText = \"Replace trusted key\"", code);
-        Assert.Contains("TrustFingerprintAndConnectAsync(fingerprint, token)", code);
-        var mismatch = Slice(code, "Title = \"Server key changed\"", "if (await DialogHost.ShowAsync(dialog)");
-        Assert.Contains("DefaultButton = ContentDialogButton.Close", mismatch);
-
-        Assert.Contains("Text=\"Insecure\"", xaml);
-        Assert.Contains("InsecureBadgeVisibility(Protocol, InsecurePlainFtp)", xaml);
-        Assert.Contains("Content=\"Transfer options...\"", xaml);
-        Assert.Contains("Replace (keeps a backup until the transfer finishes)", xaml);
-        Assert.DoesNotContain("Text=\"Reload\"", xaml);
-    }
-
-    [Fact]
-    public void RustRemoteMessages_UsePlainWordingAndStableHostKeyPrefixes()
-    {
-        var crates = Path.Combine(UiAuditSprint3Tests.FindRepoRoot(), "..", "crates");
-        var profiles = File.ReadAllText(Path.Combine(crates, "simplefile-core", "src", "remote", "profiles.rs"));
-        var ftp = File.ReadAllText(Path.Combine(crates, "simplefile-service", "src", "remote", "ftp.rs"));
-        var sftp = File.ReadAllText(Path.Combine(crates, "simplefile-service", "src", "remote", "sftp.rs"));
+        var backend = Path.Combine(UiAuditSprint3Tests.FindRepoRoot(), "..", "plugins", "remote", "backend", "src");
+        var profiles = File.ReadAllText(Path.Combine(backend, "profiles.rs"));
+        var ftp = File.ReadAllText(Path.Combine(backend, "ftp.rs"));
 
         Assert.Contains("\"Confirm the unencrypted connection to use plain FTP\"", profiles);
         Assert.Contains("\"Confirm the unencrypted connection to use plain FTP\"", ftp);
         Assert.DoesNotContain("insecure_plain_ftp acknowledgement", profiles + ftp);
-        Assert.Contains("\"" + RemoteManagerViewModel.UntrustedFingerprintPrefix + ".", sftp);
-        Assert.Contains("\"" + RemoteManagerViewModel.FingerprintMismatchPrefix + ".", sftp);
-        Assert.Contains("Expected {expected}, got {fingerprint}", sftp);
-    }
-
-    [Theory]
-    [InlineData("ftp", true, true)]
-    [InlineData("FTP", true, true)]
-    [InlineData("ftp", false, false)]
-    [InlineData("ftps", true, false)]
-    [InlineData("sftp", true, false)]
-    public void RemoteProfiles_AreInsecureOnlyForConfirmedPlainFtp(string protocol, bool insecure, bool expected)
-    {
-        Assert.Equal(expected, RemoteManagerViewModel.IsInsecureProfile(protocol, insecure));
     }
 
     [Fact]

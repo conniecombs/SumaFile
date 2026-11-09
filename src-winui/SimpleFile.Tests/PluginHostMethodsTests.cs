@@ -328,7 +328,7 @@ public class PluginHostMethodsTests : IAsyncLifetime
 
     private PluginHostServices NewServices(
         Func<Action<PluginBackendConnection>, CancellationToken, Task<PluginBackendConnection>> backend) =>
-        new(PluginId, backend, _settings, _sink, null!, null!, null!, (_, _) => { });
+        new(PluginId, backend, _settings, _sink, null!, null!, null!, null!, null!, (_, _) => { });
 }
 
 internal sealed class FakeSettings : ISettingsBackend

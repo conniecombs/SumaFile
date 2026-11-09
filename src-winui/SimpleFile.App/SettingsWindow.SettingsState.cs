@@ -56,7 +56,16 @@ public sealed partial class SettingsWindow
         settings.EnableGitIntegration = EnableGitSwitch.IsOn;
         settings.ShowFolderSizes = ShowFolderSizesSwitch.IsOn;
         settings.ShortcutOverrides = CurrentShortcutOverrides();
-        settings.CommandSurface = CurrentCommandSurfaceLayout();
+        var surface = CurrentCommandSurfaceLayout();
+        if (!_toolbarOffersReset && settings.CommandSurface is { } current)
+        {
+            // Carries the current layout's offers, so saving never offers again an item the user removed. An offer a
+            // plugin made while Settings was open also keeps its item, which the editor's rows never had. After Reset
+            // the offers are dropped on purpose, and the enabled plugins offer their items again.
+            surface.MergeOffersFrom(current, _toolbarBaseline);
+        }
+
+        settings.CommandSurface = surface;
         settings.ThumbnailCacheMaxMb = EnableThumbnailCacheSwitch.IsOn ? (uint)Math.Round(CacheSizeSlider.Value) : 0;
         settings.ThumbnailCachePath = ThumbnailCachePathBox.Text.Trim();
     }
@@ -133,6 +142,7 @@ public sealed partial class SettingsWindow
         EnableGitSwitch.IsOn = settings.EnableGitIntegration;
         ShowFolderSizesSwitch.IsOn = settings.ShowFolderSizes;
         ApplyShortcutOverrides(settings.ShortcutOverrides);
+        _toolbarOffersReset = false;
         ApplyCommandSurfaceLayout(CloneCommandSurfaceLayout(settings.CommandSurface));
 
         var cacheMaxMb = settings.ThumbnailCacheMaxMb;
@@ -152,6 +162,7 @@ public sealed partial class SettingsWindow
             PrimaryToolbar = layout.PrimaryToolbar
                 .Select(item => item.IsSeparator ? CommandSurfaceItem.Separator() : CommandSurfaceItem.Command(item.Id))
                 .ToList(),
+            OfferedPrimaryItems = [.. layout.OfferedPrimaryItems],
         };
     }
 

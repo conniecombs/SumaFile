@@ -16,19 +16,34 @@ internal sealed class PluginDialogs : IPluginDialogs
     private readonly Func<XamlRoot?> _xamlRoot;
     private readonly Func<string, string> _pluginName;
     private readonly Func<Task<string?>> _pickFolder;
+    private readonly Action<string, bool> _notify;
 
+    /// <param name="notify">
+    /// Shows a message-bar text titled with the plugin's name (message, isError); called on the window's thread.
+    /// </param>
     public PluginDialogs(
         string pluginId,
         DispatcherQueue dispatcher,
         Func<XamlRoot?> xamlRoot,
         Func<string, string> pluginName,
-        Func<Task<string?>> pickFolder)
+        Func<Task<string?>> pickFolder,
+        Action<string, bool> notify)
     {
         _pluginId = pluginId;
         _dispatcher = dispatcher;
         _xamlRoot = xamlRoot;
         _pluginName = pluginName;
         _pickFolder = pickFolder;
+        _notify = notify;
+    }
+
+    /// <summary>
+    /// Queues the message to the window's thread, even from that thread, and returns at once; a closed window drops it.
+    /// </summary>
+    public void Notify(string message, bool isError)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        _dispatcher.TryEnqueue(() => _notify(message, isError));
     }
 
     public Task ShowMessageAsync(string title, string message, CancellationToken ct) =>
@@ -120,6 +135,7 @@ internal sealed class PluginDialogs : IPluginDialogs
 /// <summary>Runs plugin-requested UI work on the window's thread and hands the result back to any thread.</summary>
 internal static class PluginUiDispatch
 {
+    /// <summary>Runs <paramref name="work"/> inline when already on the window's thread, otherwise queues it there.</summary>
     public static Task<T> RunAsync<T>(DispatcherQueue dispatcher, Func<Task<T>> work)
     {
         if (dispatcher.HasThreadAccess)
@@ -127,6 +143,15 @@ internal static class PluginUiDispatch
             return work();
         }
 
+        return EnqueueAsync(dispatcher, work);
+    }
+
+    /// <summary>
+    /// Always queues <paramref name="work"/> to the window's thread, even from that thread, so a plugin's call can never
+    /// re-enter the host method that is running it (a workspace sync, a layout pass) inline.
+    /// </summary>
+    public static Task<T> EnqueueAsync<T>(DispatcherQueue dispatcher, Func<Task<T>> work)
+    {
         var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         var queued = dispatcher.TryEnqueue(async () =>
         {

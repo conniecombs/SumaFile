@@ -137,20 +137,21 @@ public static class EntryPresentation
         };
     }
 
+    /// <summary>
+    /// A row's secondary text: the plugin decoration's text as the plugin gave it (the host adds no prefix), the link
+    /// target, and the parent folder or the extension when nothing else is shown.
+    /// </summary>
     public static string ContentSecondaryText(
         string? parentText,
-        string? gitText,
+        string? decorationText,
         string? symlinkText,
         string? extensionText = null,
         bool includeParent = false)
     {
         var parts = new List<string>(3);
-        if (!string.IsNullOrWhiteSpace(gitText))
+        if (!string.IsNullOrWhiteSpace(decorationText))
         {
-            var trimmedGit = gitText.Trim();
-            parts.Add(trimmedGit.StartsWith("Git:", StringComparison.OrdinalIgnoreCase)
-                ? trimmedGit
-                : $"Git: {trimmedGit}");
+            parts.Add(decorationText.Trim());
         }
 
         if (!string.IsNullOrWhiteSpace(symlinkText))
@@ -220,14 +221,19 @@ public static class EntryPresentation
         }).ToList();
     }
 
+    /// <param name="decorationText">
+    /// The decoration text of a row path, which the status column (<see cref="ColumnLayout.DecorationColumnId"/>) sorts
+    /// by; without it every row sorts as undecorated.
+    /// </param>
     public static IReadOnlyList<FileEntry> SortEntries(
         IEnumerable<FileEntry> entries,
         string sortBy = "name",
         bool sortAsc = true,
-        bool keepFoldersOnTop = true)
+        bool keepFoldersOnTop = true,
+        Func<string, string?>? decorationText = null)
     {
         var list = entries is List<FileEntry> ownedList ? [.. ownedList] : entries.ToList();
-        SortEntriesInPlace(list, sortBy, sortAsc, keepFoldersOnTop);
+        SortEntriesInPlace(list, sortBy, sortAsc, keepFoldersOnTop, decorationText);
         return list;
     }
 
@@ -235,7 +241,8 @@ public static class EntryPresentation
         List<FileEntry> list,
         string sortBy = "name",
         bool sortAsc = true,
-        bool keepFoldersOnTop = true)
+        bool keepFoldersOnTop = true,
+        Func<string, string?>? decorationText = null)
     {
         if (list.Count <= 1)
         {
@@ -244,7 +251,7 @@ public static class EntryPresentation
 
         var direction = sortAsc ? 1 : -1;
         var normalizedSortBy = (sortBy ?? "name").Trim().ToLowerInvariant();
-        list.Sort((left, right) => CompareEntries(left, right, normalizedSortBy, direction, keepFoldersOnTop));
+        list.Sort((left, right) => CompareEntries(left, right, normalizedSortBy, direction, keepFoldersOnTop, decorationText));
     }
 
     public static IReadOnlyList<FileEntry> VisibleEntries(
@@ -253,16 +260,17 @@ public static class EntryPresentation
         bool showHidden = false,
         string sortBy = "name",
         bool sortAsc = true,
-        bool keepFoldersOnTop = true)
+        bool keepFoldersOnTop = true,
+        Func<string, string?>? decorationText = null)
     {
         var filtered = FilterEntries(entries, filterQuery, showHidden);
         if (filtered is List<FileEntry> list)
         {
-            SortEntriesInPlace(list, sortBy, sortAsc, keepFoldersOnTop);
+            SortEntriesInPlace(list, sortBy, sortAsc, keepFoldersOnTop, decorationText);
             return list;
         }
 
-        return SortEntries(filtered, sortBy, sortAsc, keepFoldersOnTop);
+        return SortEntries(filtered, sortBy, sortAsc, keepFoldersOnTop, decorationText);
     }
 
     /// <summary>
@@ -277,11 +285,12 @@ public static class EntryPresentation
         bool sortAsc = true,
         bool keepFoldersOnTop = true,
         bool listingInProgress = false,
-        int progressiveViewportLimit = DefaultProgressiveViewportCount)
+        int progressiveViewportLimit = DefaultProgressiveViewportCount,
+        Func<string, string?>? decorationText = null)
     {
         if (!listingInProgress || progressiveViewportLimit <= 0)
         {
-            return VisibleEntries(entries, filterQuery, showHidden, sortBy, sortAsc, keepFoldersOnTop);
+            return VisibleEntries(entries, filterQuery, showHidden, sortBy, sortAsc, keepFoldersOnTop, decorationText);
         }
 
         var normalizedQuery = filterQuery.Trim();
@@ -306,7 +315,7 @@ public static class EntryPresentation
             }
         }
 
-        SortEntriesInPlace(viewportEntries, sortBy, sortAsc, keepFoldersOnTop);
+        SortEntriesInPlace(viewportEntries, sortBy, sortAsc, keepFoldersOnTop, decorationText);
         return viewportEntries;
     }
 
@@ -328,14 +337,15 @@ public static class EntryPresentation
         FileEntry right,
         string normalizedSortBy,
         int direction,
-        bool keepFoldersOnTop)
+        bool keepFoldersOnTop,
+        Func<string, string?>? decorationText)
     {
         if (keepFoldersOnTop && left.IsDir != right.IsDir)
         {
             return left.IsDir ? -1 : 1;
         }
 
-        var primary = CompareColumn(left, right, normalizedSortBy) * direction;
+        var primary = CompareColumn(left, right, normalizedSortBy, decorationText) * direction;
         if (primary != 0)
         {
             return primary;
@@ -344,7 +354,11 @@ public static class EntryPresentation
         return StringComparer.CurrentCultureIgnoreCase.Compare(left.Name, right.Name);
     }
 
-    private static int CompareColumn(FileEntry left, FileEntry right, string normalizedSortBy)
+    private static int CompareColumn(
+        FileEntry left,
+        FileEntry right,
+        string normalizedSortBy,
+        Func<string, string?>? decorationText)
     {
         switch (normalizedSortBy)
         {
@@ -363,8 +377,10 @@ public static class EntryPresentation
             }
             case "items":
                 return (left.ItemCount ?? 0UL).CompareTo(right.ItemCount ?? 0UL);
-            case "git":
-                return StringComparer.CurrentCultureIgnoreCase.Compare(left.GitStatus ?? "", right.GitStatus ?? "");
+            case ColumnLayout.DecorationColumnId:
+                return StringComparer.CurrentCultureIgnoreCase.Compare(
+                    decorationText?.Invoke(left.Path) ?? "",
+                    decorationText?.Invoke(right.Path) ?? "");
             case "path":
                 return StringComparer.CurrentCultureIgnoreCase.Compare(left.Path ?? "", right.Path ?? "");
             case "parent":

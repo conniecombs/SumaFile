@@ -1672,4 +1672,393 @@ public class ExplorerWorkspaceTests
         Assert.Equal(["alpha.txt", "beta", "zoo"], workspace.VisibleEntries.Select(entry => entry.Name));
     }
 
+    private const string DecoratedHome = @"C:\Users\test";
+    private const string DecoratedNotes = @"C:\Users\test\notes.txt";
+
+    private static (FakeExplorerBackend Backend, ExplorerWorkspace Workspace, FakeRowDecorationSource Source) DecoratedWorkspace(
+        TimeSpan budget,
+        bool ready = true,
+        params string[] pluginIds)
+    {
+        var backend = FakeExplorerBackend.Typical();
+        var workspace = new ExplorerWorkspace(backend, rowDecorations: new RowDecorationCoordinator(budget));
+        var source = new FakeRowDecorationSource(pluginIds.Length == 0 ? ["com.a"] : pluginIds);
+        foreach (var pluginId in source.PluginIds)
+        {
+            source.Results[pluginId] = FakeRowDecorationSource.Batch(pluginId, [(DecoratedNotes, "M")], pluginId + ":inRepository");
+        }
+
+        workspace.RowDecorations.SetSource(source);
+        if (ready)
+        {
+            workspace.RowDecorations.MarkStartupReady();
+        }
+
+        return (backend, workspace, source);
+    }
+
+    [Fact]
+    public async Task Navigate_PublishesTheListingWithItsDecorations()
+    {
+        var (_, workspace, source) = DecoratedWorkspace(TimeSpan.FromSeconds(2));
+        var publishedUndecorated = 0;
+        workspace.Changed += (_, _) =>
+        {
+            lock (workspace.Gate)
+            {
+                if (workspace.Primary.Entries.Count == 2 && workspace.Primary.Decorations.For(DecoratedNotes) is null)
+                {
+                    Interlocked.Increment(ref publishedUndecorated);
+                }
+            }
+        };
+
+        await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+
+        Assert.Equal(0, Volatile.Read(ref publishedUndecorated));
+        Assert.Equal("M", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+        Assert.Equal("com.a", workspace.Primary.Decorations.For(DecoratedNotes)?.PluginId);
+        Assert.Contains("com.a:inRepository", workspace.Primary.Decorations.FolderFlags);
+        Assert.Equal(DecoratedHome, workspace.Primary.Decorations.FolderPath);
+        var call = Assert.Single(source.Calls);
+        Assert.Equal(DecoratedHome, call.FolderPath);
+    }
+
+    [Fact]
+    public async Task LateDecorations_ForAnOlderNavigation_AreDropped()
+    {
+        var (_, workspace, source) = DecoratedWorkspace(TimeSpan.FromMilliseconds(50));
+        var slowHome = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.Handler = (pluginId, folder, _, _) => PathRules.PathsEqual(folder, DecoratedHome)
+            ? slowHome.Task
+            : Task.FromResult<FolderDecorationBatch?>(
+                FakeRowDecorationSource.Batch(pluginId, [(@"C:\Users\test\Desktop\shot.png", "D")]));
+
+        await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+        Assert.Null(workspace.Primary.Decorations.For(DecoratedNotes));
+
+        await workspace.NavigatePaneAsync(PaneId.Primary, @"C:\Users\test\Desktop");
+        var desktopDecorations = workspace.Primary.Decorations;
+        Assert.Equal("D", desktopDecorations.For(@"C:\Users\test\Desktop\shot.png")?.Text);
+        var version = workspace.Primary.ContentVersion;
+
+        slowHome.SetResult(FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "late")], "com.a:inRepository"));
+        await Task.Delay(200);
+
+        Assert.Same(desktopDecorations, workspace.Primary.Decorations);
+        Assert.Equal(version, workspace.Primary.ContentVersion);
+        Assert.Null(workspace.Primary.Decorations.For(DecoratedNotes));
+        Assert.DoesNotContain("com.a:inRepository", workspace.Primary.Decorations.FolderFlags);
+    }
+
+    [Fact]
+    public async Task LateDecorations_FromAnOlderRequest_AreDroppedOnceANewerOneApplied()
+    {
+        var (backend, workspace, source) = DecoratedWorkspace(TimeSpan.FromMilliseconds(50));
+        await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+        Assert.Equal("M", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+
+        var older = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newer = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        source.Handler = (_, _, _, _) => Interlocked.Increment(ref calls) == 1 ? older.Task : newer.Task;
+
+        await workspace.InvalidateDecorationsAsync();
+        await workspace.InvalidateDecorationsAsync();
+        Assert.Equal(2, Volatile.Read(ref calls));
+
+        newer.SetResult(FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "newer")]));
+        await WaitUntilAsync(() => workspace.Primary.Decorations.For(DecoratedNotes)?.Text == "newer");
+        var applied = workspace.Primary.Decorations;
+        var version = workspace.Primary.ContentVersion;
+
+        older.SetResult(FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "older")]));
+        await Task.Delay(200);
+
+        Assert.Same(applied, workspace.Primary.Decorations);
+        Assert.Equal(version, workspace.Primary.ContentVersion);
+        Assert.Equal(1, backend.ListDirectoryCalls);
+    }
+
+    [Fact]
+    public async Task InvalidateDecorations_RedecoratesTheShownFoldersWithoutRelisting()
+    {
+        var (backend, workspace, source) = DecoratedWorkspace(TimeSpan.FromSeconds(2));
+        workspace.SetDualPaneEnabledCore(true);
+        await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+        await workspace.NavigatePaneAsync(PaneId.Secondary, @"C:\Users\test\Desktop");
+        var listings = backend.ListDirectoryCalls;
+        source.Results["com.a"] = FakeRowDecorationSource.Batch(
+            "com.a",
+            [(DecoratedNotes, "staged"), (@"C:\Users\test\Desktop\shot.png", "new")]);
+        var changes = 0;
+        workspace.Changed += (_, _) => Interlocked.Increment(ref changes);
+
+        await workspace.InvalidateDecorationsAsync();
+
+        Assert.Equal("staged", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+        Assert.Equal("new", workspace.Secondary.Decorations.For(@"C:\Users\test\Desktop\shot.png")?.Text);
+        Assert.Equal(listings, backend.ListDirectoryCalls);
+        Assert.True(Volatile.Read(ref changes) >= 1);
+    }
+
+    [Fact]
+    public async Task InvalidateDecorations_SkipsAPaneStillListing()
+    {
+        var (backend, workspace, source) = DecoratedWorkspace(TimeSpan.FromSeconds(2));
+        var listing = backend.Listings[DecoratedHome];
+        var pending = new TaskCompletionSource<DirectoryListing>(TaskCreationOptions.RunContinuationsAsynchronously);
+        backend.Pending[DecoratedHome] = pending.Task;
+
+        var navigation = workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+        Assert.True(workspace.Primary.ListingInProgress);
+
+        await workspace.InvalidateDecorationsAsync();
+        Assert.Empty(source.Calls);
+
+        pending.SetResult(listing);
+        await navigation;
+
+        Assert.Single(source.Calls);
+        Assert.Equal("M", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+    }
+
+    [Fact]
+    public async Task InvalidateDecorations_NeverRunsTheSourceOnTheCallingThread()
+    {
+        var (_, workspace, source) = DecoratedWorkspace(TimeSpan.FromSeconds(1));
+        await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+        using var release = new ManualResetEventSlim(false);
+        var sourceThread = -1;
+        source.Handler = (pluginId, _, _, _) =>
+        {
+            Volatile.Write(ref sourceThread, Environment.CurrentManagedThreadId);
+            release.Wait(TimeSpan.FromSeconds(10));
+            return Task.FromResult<FolderDecorationBatch?>(FakeRowDecorationSource.Batch(pluginId, [(DecoratedNotes, "after")]));
+        };
+
+        try
+        {
+            Task? invalidation = null;
+            var callerThread = -1;
+            using var returned = new ManualResetEventSlim(false);
+            var caller = new Thread(() =>
+            {
+                callerThread = Environment.CurrentManagedThreadId;
+                invalidation = workspace.InvalidateDecorationsAsync();
+                returned.Set();
+            })
+            {
+                IsBackground = true,
+            };
+            caller.Start();
+
+            Assert.True(returned.Wait(TimeSpan.FromSeconds(2)), "InvalidateDecorationsAsync blocked its caller.");
+            Assert.NotNull(invalidation);
+            Assert.False(invalidation!.IsCompleted);
+            await WaitUntilAsync(() => Volatile.Read(ref sourceThread) != -1);
+            Assert.NotEqual(callerThread, Volatile.Read(ref sourceThread));
+
+            release.Set();
+            await invalidation.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal("after", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    [Fact]
+    public async Task MarkStartupReady_RedecoratesTheShownFolders()
+    {
+        var (backend, workspace, source) = DecoratedWorkspace(TimeSpan.FromSeconds(2), ready: false);
+
+        await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+        Assert.Equal(2, workspace.Primary.Entries.Count);
+        Assert.Null(workspace.Primary.Decorations.For(DecoratedNotes));
+        Assert.Empty(workspace.Primary.Decorations.FolderFlags);
+        Assert.Empty(source.Calls);
+        var listings = backend.ListDirectoryCalls;
+
+        // What the App's ready callback does.
+        workspace.RowDecorations.MarkStartupReady();
+        await workspace.InvalidateDecorationsAsync();
+
+        Assert.Equal("M", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+        Assert.Contains("com.a:inRepository", workspace.Primary.Decorations.FolderFlags);
+        Assert.Equal(listings, backend.ListDirectoryCalls);
+    }
+
+    [Fact]
+    public async Task PublishedListing_AskedBeforeTheGenerationChanged_IsDecoratedAgain()
+    {
+        var (backend, workspace, sourceA) = DecoratedWorkspace(TimeSpan.FromMilliseconds(300), true, "com.a");
+        var aCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var aResult = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        sourceA.Handler = (_, _, _, _) =>
+        {
+            aCalled.TrySetResult();
+            return aResult.Task;
+        };
+        var sourceB = new FakeRowDecorationSource("com.b");
+        sourceB.Results["com.b"] = FakeRowDecorationSource.Batch("com.b", [(DecoratedNotes, "B")], "com.b:inRepository");
+
+        var navigation = workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+        await aCalled.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var generation = workspace.RowDecorations.Generation;
+        Assert.True(workspace.RowDecorations.SetSource(sourceB));
+        Assert.NotEqual(generation, workspace.RowDecorations.Generation);
+        await navigation.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await WaitUntilAsync(() => workspace.Primary.Decorations.For(DecoratedNotes)?.Text == "B");
+        Assert.Contains("com.b:inRepository", workspace.Primary.Decorations.FolderFlags);
+        Assert.Equal(1, backend.ListDirectoryCalls);
+        Assert.Single(sourceB.Calls);
+
+        aResult.SetResult(FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "A")], "com.a:inRepository"));
+        await Task.Delay(200);
+
+        Assert.Equal("B", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+        Assert.DoesNotContain("com.a:inRepository", workspace.Primary.Decorations.FolderFlags);
+        Assert.Equal(1, backend.ListDirectoryCalls);
+    }
+
+    private const string DecoratedDesktop = @"C:\Users\test\Desktop";
+
+    // Plugins com.a (decorates notes.txt) and com.b (decorates Desktop), both shown on the home folder.
+    private static async Task<(ExplorerWorkspace Workspace, FakeRowDecorationSource Source)> TwoPluginsShownAsync()
+    {
+        var (_, workspace, source) = DecoratedWorkspace(TimeSpan.FromMilliseconds(50), true, "com.a", "com.b");
+        source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "A")], "com.a:inRepository");
+        source.Results["com.b"] = FakeRowDecorationSource.Batch("com.b", [(DecoratedDesktop, "B")], "com.b:inRepository");
+        await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+        Assert.Equal("A", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+        Assert.Equal("B", workspace.Primary.Decorations.For(DecoratedDesktop)?.Text);
+        Assert.Contains("com.b:inRepository", workspace.Primary.Decorations.FolderFlags);
+        return (workspace, source);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InvalidateDecorations_SlowSourceThatAnswersNothing_ClearsItsStaleDecorations(bool throws)
+    {
+        var (workspace, source) = await TwoPluginsShownAsync();
+        var slow = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.Handler = (pluginId, _, _, _) => pluginId == "com.b" ? slow.Task : null;
+        source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "A2")], "com.a:inRepository");
+
+        await workspace.InvalidateDecorationsAsync();
+
+        // The fast plugin's fresh result shows at once; the slow one keeps its shown decorations while it is pending.
+        Assert.Equal("A2", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+        Assert.Equal("B", workspace.Primary.Decorations.For(DecoratedDesktop)?.Text);
+        Assert.Contains("com.b:inRepository", workspace.Primary.Decorations.FolderFlags);
+
+        if (throws)
+        {
+            slow.SetException(new InvalidOperationException("git status failed"));
+        }
+        else
+        {
+            slow.SetResult(null);
+        }
+
+        await WaitUntilAsync(() => workspace.Primary.Decorations.For(DecoratedDesktop) is null);
+        Assert.DoesNotContain("com.b:inRepository", workspace.Primary.Decorations.FolderFlags);
+        Assert.Equal("A2", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+        Assert.Contains("com.a:inRepository", workspace.Primary.Decorations.FolderFlags);
+    }
+
+    [Fact]
+    public async Task InvalidateDecorations_FastResultApplies_WhileASlowSourceHangs()
+    {
+        var (workspace, source) = await TwoPluginsShownAsync();
+        var hang = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.Handler = (pluginId, _, _, _) => pluginId == "com.b" ? hang.Task : null;
+        source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "A2")]);
+
+        try
+        {
+            await workspace.InvalidateDecorationsAsync();
+
+            Assert.Equal("A2", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+            Assert.DoesNotContain("com.a:inRepository", workspace.Primary.Decorations.FolderFlags);
+            Assert.Equal("B", workspace.Primary.Decorations.For(DecoratedDesktop)?.Text);
+        }
+        finally
+        {
+            hang.TrySetResult(null);
+        }
+    }
+
+    [Fact]
+    public async Task InvalidateDecorations_PluginThatLeftTheSet_IsClearedWhileTheRestArePending()
+    {
+        var (workspace, _) = await TwoPluginsShownAsync();
+        var hang = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var onlyB = new FakeRowDecorationSource("com.b") { Handler = (_, _, _, _) => hang.Task };
+        Assert.True(workspace.RowDecorations.SetSource(onlyB));
+
+        try
+        {
+            await workspace.InvalidateDecorationsAsync();
+
+            Assert.Null(workspace.Primary.Decorations.For(DecoratedNotes));
+            Assert.DoesNotContain("com.a:inRepository", workspace.Primary.Decorations.FolderFlags);
+            Assert.Empty(workspace.Primary.Decorations.PluginsFor([DecoratedNotes]));
+            Assert.Equal("B", workspace.Primary.Decorations.For(DecoratedDesktop)?.Text);
+            Assert.Contains("com.b:inRepository", workspace.Primary.Decorations.FolderFlags);
+        }
+        finally
+        {
+            hang.TrySetResult(null);
+        }
+
+        await WaitUntilAsync(() => workspace.Primary.Decorations.For(DecoratedDesktop) is null);
+        Assert.Empty(workspace.Primary.Decorations.FolderFlags);
+    }
+
+    [Fact]
+    public async Task Navigate_DecoratesWhateverTheColumnLayout()
+    {
+        var (_, workspace, source) = DecoratedWorkspace(TimeSpan.FromSeconds(2));
+        Assert.False(workspace.PrimaryColumns.IsVisible(ColumnLayout.DecorationColumnId));
+        Assert.False(workspace.SecondaryColumns.IsVisible(ColumnLayout.DecorationColumnId));
+
+        await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+
+        Assert.Single(source.Calls);
+        Assert.Equal("M", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+        Assert.Contains("com.a:inRepository", workspace.Primary.Decorations.FolderFlags);
+    }
+
+    [Fact]
+    public async Task Sort_ByTheStatusColumn_UsesTheDecorationText()
+    {
+        var (backend, workspace, source) = DecoratedWorkspace(TimeSpan.FromSeconds(2));
+        backend.Listings[@"C:\Repo"] = new DirectoryListing
+        {
+            Path = @"C:\Repo",
+            Entries =
+            [
+                new FileEntry { Name = "alpha.txt", Path = @"C:\Repo\alpha.txt", GitStatus = "a" },
+                new FileEntry { Name = "beta.txt", Path = @"C:\Repo\beta.txt", GitStatus = "z" },
+                new FileEntry { Name = "gamma.txt", Path = @"C:\Repo\gamma.txt" },
+            ],
+        };
+        source.Results["com.a"] = FakeRowDecorationSource.Batch(
+            "com.a",
+            [("C:/Repo/alpha.txt", "M"), (@"C:\Repo\GAMMA.txt", "A")]);
+
+        await workspace.NavigatePaneAsync(PaneId.Primary, @"C:\Repo");
+        workspace.SetSort(PaneId.Primary, ColumnLayout.DecorationColumnId);
+
+        // The decoration text decides, not the retired FileEntry.GitStatus: "" < "A" < "M".
+        Assert.Equal(["beta.txt", "gamma.txt", "alpha.txt"], workspace.VisibleEntriesFor(PaneId.Primary).Select(entry => entry.Name));
+        workspace.SetSort(PaneId.Primary, ColumnLayout.DecorationColumnId);
+        Assert.Equal(["alpha.txt", "gamma.txt", "beta.txt"], workspace.VisibleEntriesFor(PaneId.Primary).Select(entry => entry.Name));
+    }
+
 }

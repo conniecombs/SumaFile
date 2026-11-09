@@ -22,6 +22,9 @@ Unicode True
 Name "SumaFile"
 OutFile "${OUTFILE}"
 InstallDir "$LOCALAPPDATA\Programs\SumaFile-WinUI"
+; A reinstall or upgrade without /D= goes to the folder the last install recorded below, so the user's plugins, plugin
+; data, plugin-approvals.json and plugins.log in that folder are kept.
+InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SumaFile-WinUI" "InstallLocation"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 Icon "${ICON}"
@@ -54,14 +57,17 @@ Function .onInit
   nsExec::ExecToLog 'taskkill /F /IM simplefile.exe'
   ; The bundled 7-Zip plugin's backend. Never kill 7za.exe: it could be the user's own job.
   nsExec::ExecToLog 'taskkill /F /IM sumafile-sevenzip-backend.exe'
-  ; The bundled FTP/SFTP plugin's backend. Its profiles and saved passwords live outside $INSTDIR.
+  ; The bundled FTP/SFTP plugin's backend. Its profiles live in $INSTDIR\plugins-data\com.sumafile.remote, which a
+  ; reinstall keeps, and its saved passwords in Windows Credential Manager.
   nsExec::ExecToLog 'taskkill /F /IM sumafile-remote-backend.exe'
   Pop $0
 FunctionEnd
 
 Section "Install"
   ; 1.0.4 shipped 7-Zip in tools\7zip; it now ships as the bundled plugin. Replace each bundled plugin folder
-  ; whole so no file from an older plugin stays behind. The user plugin root under %LOCALAPPDATA% is never touched.
+  ; whole so no file from an older plugin stays behind. Only those folders: the user's plugins in $INSTDIR\plugins,
+  ; $INSTDIR\plugins-data, plugin-approvals.json and plugins.log are the app's own files and survive a reinstall or
+  ; upgrade. Uninstall removes them with the rest of $INSTDIR.
   RMDir /r "$INSTDIR\tools\7zip"
   RMDir "$INSTDIR\tools"
   RMDir /r "$INSTDIR\plugins\com.sumafile.sevenzip"
@@ -107,5 +113,11 @@ Section "Uninstall"
   Delete "$DESKTOP\SimpleFile (WinUI).lnk"
   Delete "$INSTDIR\uninstall.exe"
   RMDir /r "$INSTDIR"
+  ; A user plugin's backend can still be exiting after SumaFile's kill-on-close job closed, with its exe or a file in
+  ; plugins-data open: try once more after it has had time to go.
+  ${If} ${FileExists} "$INSTDIR\*.*"
+    Sleep 1500
+    RMDir /r "$INSTDIR"
+  ${EndIf}
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\SumaFile-WinUI"
 SectionEnd

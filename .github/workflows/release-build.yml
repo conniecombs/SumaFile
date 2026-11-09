@@ -150,6 +150,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Smoke WinUI MSI install, upgrade, and uninstall
+        if: inputs.full_installer_smoke
+        run: npm run smoke:winui-msi-lifecycle
+
       - name: Smoke WinUI NSIS upgrade from first SumaFile baseline
         if: inputs.full_installer_smoke
         run: npm run smoke:winui-upgrade-from-ref -- -PreviousRef b80caed932ab567695bb3ce38d5659217a7cb176

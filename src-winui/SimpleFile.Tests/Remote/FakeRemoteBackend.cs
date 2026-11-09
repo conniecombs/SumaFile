@@ -14,6 +14,15 @@ internal sealed class FakeRemoteBackend(RemoteProfile[] profiles) : IRemoteBacke
     public string? CancelledOperation { get; private set; }
     public RemoteTransferRequest? LastTransfer { get; private set; }
     public Func<string[], Task<RemoteTransferOutcome>>? TransferHandler { get; set; }
+
+    /// <summary>A transfer handler that sees the transfer's token (it wins over <see cref="TransferHandler"/>).</summary>
+    public Func<string[], CancellationToken, Task<RemoteTransferOutcome>>? CancellableTransferHandler { get; set; }
+
+    /// <summary>Runs before each disconnect; throwing models a backend that refuses it (a busy session).</summary>
+    public Action<string>? DisconnectHandler { get; set; }
+
+    /// <summary>When each disconnect was attempted (<see cref="System.Diagnostics.Stopwatch"/> timestamps).</summary>
+    public List<long> DisconnectAttempts { get; } = [];
     public int ListCalls { get; private set; }
     public string? ConnectedProfileId { get; private set; }
     public string? ConnectedSecret { get; private set; }
@@ -113,7 +122,13 @@ internal sealed class FakeRemoteBackend(RemoteProfile[] profiles) : IRemoteBacke
 
     public Task DisconnectAsync(string remoteSessionId, CancellationToken ct)
     {
+        lock (DisconnectAttempts)
+        {
+            DisconnectAttempts.Add(System.Diagnostics.Stopwatch.GetTimestamp());
+        }
+
         ThrowIfSessionLost(remoteSessionId);
+        DisconnectHandler?.Invoke(remoteSessionId);
         DisconnectedSessionId = remoteSessionId;
         return Task.CompletedTask;
     }
@@ -178,6 +193,11 @@ internal sealed class FakeRemoteBackend(RemoteProfile[] profiles) : IRemoteBacke
         // As the real client: a cancel is one message naming the request's operation id, and the outcome is
         // still awaited.
         using var registration = ct.Register(() => CancelledOperation = request.OperationId);
+        if (CancellableTransferHandler is not null)
+        {
+            return await CancellableTransferHandler(request.Sources, ct);
+        }
+
         if (TransferHandler is not null)
         {
             return await TransferHandler(request.Sources);

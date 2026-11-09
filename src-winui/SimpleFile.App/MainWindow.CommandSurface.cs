@@ -30,7 +30,8 @@ public sealed partial class MainWindow
         _primaryToolbarActionElements.Clear();
         PrimaryActionsHost.Children.Clear();
 
-        foreach (var item in layout.PrimaryToolbar)
+        // The toolbar as drawn: a saved item of an absent plugin stays in the layout and comes back with its plugin.
+        foreach (var item in layout.VisibleItems())
         {
             if (item.IsSeparator)
             {

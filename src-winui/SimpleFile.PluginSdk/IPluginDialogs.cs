@@ -17,4 +17,11 @@ public interface IPluginDialogs
     /// there. Create the dialog on the UI thread.
     /// </summary>
     Task<PluginDialogResult> ShowDialogAsync(object contentDialog, CancellationToken ct);
+
+    /// <summary>
+    /// Shows <paramref name="message"/> in SumaFile's message bar, titled with the plugin's name, as an error when
+    /// <paramref name="isError"/> is true and as information otherwise. It is not modal and does not wait: callable
+    /// from any thread, it queues the message to the UI thread and returns at once.
+    /// </summary>
+    void Notify(string message, bool isError);
 }

@@ -26,6 +26,12 @@ public sealed class FileListColumn
 public sealed class ColumnLayout
 {
     public const double UnboundedMaxWidth = 10000;
+
+    /// <summary>
+    /// The status column, which shows and sorts by the plugin row decorations. It keeps the id <c>git</c>, so saved
+    /// layouts, presets and sort settings from before the Git plugin still load.
+    /// </summary>
+    public const string DecorationColumnId = "git";
     public const double CompactPaneWidth = 560;
 
     public static readonly string[] DefaultVisible = ["name", "size", "date", "type"];
@@ -50,7 +56,7 @@ public sealed class ColumnLayout
             new("date", "Modified", "date", 160, 36, UnboundedMaxWidth),
             new("type", "Type", "type", 100, 36, UnboundedMaxWidth),
             new("extension", "Ext", "extension", 72, 36, UnboundedMaxWidth),
-            new("git", "Git", "git", 92, 36, UnboundedMaxWidth),
+            new(DecorationColumnId, "Status", DecorationColumnId, 92, 36, UnboundedMaxWidth),
             new("symlink", "Link target", "symlink", 180, 36, UnboundedMaxWidth),
             new("path", "Path", "path", 220, 36, UnboundedMaxWidth),
             new("parent", "Parent", "parent", 180, 36, UnboundedMaxWidth),
@@ -170,7 +176,11 @@ public sealed class ColumnLayout
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public ColumnLayout EffectiveForPaneWidth(double paneWidth, bool dualPane, bool gitEnabled)
+    /// <param name="decorationsAvailable">
+    /// Whether a plugin decorates rows. Without one the compact projection drops the status column, as it dropped the
+    /// Git column while Git integration was off.
+    /// </param>
+    public ColumnLayout EffectiveForPaneWidth(double paneWidth, bool dualPane, bool decorationsAvailable)
     {
         var effective = Clone();
         if (!ShouldUseCompactColumns(paneWidth, dualPane))
@@ -181,9 +191,9 @@ public sealed class ColumnLayout
         var compactIds = CompactVisible
             .Where(IsVisible)
             .ToList();
-        if (gitEnabled && IsVisible("git"))
+        if (decorationsAvailable && IsVisible(DecorationColumnId))
         {
-            compactIds.Add("git");
+            compactIds.Add(DecorationColumnId);
         }
 
         if (compactIds.Count == 0)
@@ -194,7 +204,7 @@ public sealed class ColumnLayout
         // Keep every chosen column accessible by horizontal scrolling. Only the
         // leading columns and widths adapt; the saved layout is never rewritten.
         compactIds.AddRange(VisibleIds.Where(id => !compactIds.Contains(id, StringComparer.Ordinal)
-            && (gitEnabled || id != "git")));
+            && (decorationsAvailable || id != DecorationColumnId)));
 
         effective.RestoreVisibleIds(compactIds);
         ApplyCompactWidths(effective, paneWidth);
@@ -223,10 +233,10 @@ public sealed class ColumnLayout
     {
         columns.Resize("size", Math.Min(columns.WidthOf("size"), 86));
         columns.Resize("date", Math.Min(columns.WidthOf("date"), 136));
-        columns.Resize("git", Math.Min(columns.WidthOf("git"), 82));
+        columns.Resize(DecorationColumnId, Math.Min(columns.WidthOf(DecorationColumnId), 82));
 
         var supportingWidth = columns.VisibleColumns
-            .Where(column => column.Id is "size" or "date" or "git")
+            .Where(column => column.Id is "size" or "date" or DecorationColumnId)
             .Sum(column => column.Width);
         var availableNameWidth = double.IsNaN(paneWidth) || paneWidth <= 0
             ? 220

@@ -73,21 +73,38 @@ public class ColumnLayoutTests
         columns.ApplyPreset("developer");
         columns.Resize("name", 420);
 
-        var wide = columns.EffectiveForPaneWidth(900, dualPane: true, gitEnabled: true);
+        var wide = columns.EffectiveForPaneWidth(900, dualPane: true, decorationsAvailable: true);
         Assert.Equal(["name", "size", "date", "extension", "git", "symlink", "path"], wide.SnapshotVisibleIds());
         Assert.Equal(420, wide.WidthOf("name"));
 
-        var compact = columns.EffectiveForPaneWidth(520, dualPane: true, gitEnabled: true);
+        var compact = columns.EffectiveForPaneWidth(520, dualPane: true, decorationsAvailable: true);
         Assert.Equal(["name", "size", "date", "git", "extension", "symlink", "path"], compact.SnapshotVisibleIds());
         Assert.Equal(86, compact.WidthOf("size"));
         Assert.Equal(136, compact.WidthOf("date"));
         Assert.Equal(82, compact.WidthOf("git"));
         Assert.Equal(180, compact.WidthOf("name"));
 
-        var compactWithoutGit = columns.EffectiveForPaneWidth(520, dualPane: true, gitEnabled: false);
+        var compactWithoutGit = columns.EffectiveForPaneWidth(520, dualPane: true, decorationsAvailable: false);
         Assert.Equal(["name", "size", "date", "extension", "symlink", "path"], compactWithoutGit.SnapshotVisibleIds());
         Assert.Equal(["name", "size", "date", "extension", "git", "symlink", "path"], columns.SnapshotVisibleIds());
         Assert.Equal(420, columns.WidthOf("name"));
+    }
+
+    [Fact]
+    public void StatusColumn_KeepsTheIdGitWithTheHeaderStatus()
+    {
+        Assert.Equal("git", ColumnLayout.DecorationColumnId);
+        var columns = new ColumnLayout();
+        var status = columns.Find(ColumnLayout.DecorationColumnId);
+
+        Assert.NotNull(status);
+        Assert.Equal("Status", status!.Label);
+        Assert.Equal("git", status.Sort);
+
+        // Saved layouts that name the column by its old id still load.
+        columns.RestoreVisibleIds(["name", "git"]);
+        Assert.Equal(["name", "git"], columns.SnapshotVisibleIds());
+        Assert.Contains("git", ColumnLayout.Presets["developer"]);
     }
 
     [Fact]

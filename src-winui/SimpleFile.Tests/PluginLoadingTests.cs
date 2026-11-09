@@ -181,6 +181,8 @@ public class PluginLoadingTests
         public IPluginWorkspace Workspace => null!;
         public IPluginLogger Logger => null!;
         public IPluginWindows Windows => null!;
+        public IPluginPanels Panels => null!;
+        public IPluginDecorations Decorations => null!;
     }
 
     [Fact]

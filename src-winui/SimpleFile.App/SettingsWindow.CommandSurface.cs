@@ -21,7 +21,10 @@ public sealed class ToolbarEditorRow
 
         var action = ToolbarActionCatalog.Find(ActionId);
         Label = action?.Label ?? ActionId;
-        Detail = action is null ? "Custom" : action.Group;
+        // A saved item of a disabled, failed or missing plugin stays in the layout, hidden; listed so it can be removed.
+        Detail = action is not null ? action.Group
+            : CommandSurfaceLayout.IsPluginItemId(ActionId) ? "Plugin not loaded"
+            : "Custom";
         IconGlyph = action?.IconGlyph ?? ContextMenuIconCatalog.Document;
     }
 
@@ -50,6 +53,17 @@ public sealed partial class SettingsWindow
 {
     private readonly ObservableCollection<ToolbarEditorRow> _toolbarRows = [];
 
+    // The plugin items the edited layout has offered (CommandSurfaceLayout.OfferedPrimaryItems), carried through the
+    // editor so a save never offers an item the user removed again. Reset clears them.
+    private List<string> _toolbarOfferedItems = [];
+
+    // True after Reset: ApplyTo then also drops the offers the live layout gained while Settings was open.
+    private bool _toolbarOffersReset;
+
+    // The layout the editor loaded. ApplyTo compares the live layout's offers with it, so an offer a plugin made while
+    // Settings was open keeps its item on save, while an item the user saw and removed stays removed.
+    private CommandSurfaceLayout _toolbarBaseline = CommandSurfaceLayout.CreateDefault();
+
     private void InitializeToolbarEditor()
     {
         ToolbarLayoutList.ItemsSource = _toolbarRows;
@@ -62,6 +76,7 @@ public sealed partial class SettingsWindow
         {
             ToolbarDisplayMode = SelectedToolbarDisplayMode(),
             PrimaryToolbar = _toolbarRows.Select(row => row.ToItem()).ToList(),
+            OfferedPrimaryItems = [.. _toolbarOfferedItems],
         };
         layout.Normalize();
         return layout;
@@ -70,6 +85,8 @@ public sealed partial class SettingsWindow
     private void ApplyCommandSurfaceLayout(CommandSurfaceLayout layout)
     {
         layout.Normalize();
+        _toolbarBaseline = CloneCommandSurfaceLayout(layout);
+        _toolbarOfferedItems = [.. layout.OfferedPrimaryItems];
         SelectToolbarDisplayMode(layout.ToolbarDisplayMode);
         _toolbarRows.Clear();
         foreach (var item in layout.PrimaryToolbar)
@@ -156,7 +173,9 @@ public sealed partial class SettingsWindow
 
     private void OnToolbarResetClicked(object sender, RoutedEventArgs e)
     {
+        // The default layout has no offers, so the enabled plugins offer their items again after a reset.
         ApplyCommandSurfaceLayout(CommandSurfaceLayout.CreateDefault());
+        _toolbarOffersReset = true;
     }
 
     private void OnToolbarMoveUpClicked(object sender, RoutedEventArgs e)

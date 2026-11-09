@@ -7,7 +7,6 @@ $servicePath = Join-Path $payloadDir "simplefile-service.exe"
 $expectedTitle = "SumaFile"
 $timeoutSeconds = 25
 $startupTimingLog = Join-Path $env:LOCALAPPDATA "SumaFile\startup-timing.log"
-$pluginsLog = Join-Path $env:LOCALAPPDATA "SumaFile\plugins.log"
 $payloadPluginsDir = Join-Path $payloadDir "plugins"
 $sevenZipPluginId = "com.sumafile.sevenzip"
 $sevenZipRegisteredLine = "[$sevenZipPluginId] [info] Archive engines registered: .7z"
@@ -15,6 +14,9 @@ $remotePluginId = "com.sumafile.remote"
 # Written at discovery (Task 3), so it does not depend on whether the user's sidebar shows the Connections section.
 $remoteDiscoveredLine = "[$remotePluginId] [info] Discovered: Enabled"
 $pluginRegistrationTimeoutSeconds = 20
+
+# Get-AppOwnedPluginItems and the pre-release plugin location checks.
+. (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
 
 if (-not (Test-Path -LiteralPath $exePath)) {
     throw "WinUI payload executable not found at $exePath. Run 'npm run build:winui:release' first."
@@ -31,14 +33,15 @@ if (-not (Test-Path -LiteralPath (Join-Path $payloadDir "MainWindow.xbf"))) {
 if (-not (Test-Path -LiteralPath (Join-Path $payloadPluginsDir "bundled.json"))) {
     throw "WinUI payload is missing plugins\bundled.json."
 }
+# The payload is the install folder of this run; it must start, and stay, free of app-owned plugin files.
+$payloadAppOwned = @(Get-AppOwnedPluginItems -InstallDir $payloadDir)
+if ($payloadAppOwned.Count -gt 0) {
+    throw "WinUI payload already contains app-owned plugin files before the startup smoke: $($payloadAppOwned -join ', '). Rebuild the payload."
+}
 
 $startupTimingOffset = 0
 if (Test-Path -LiteralPath $startupTimingLog) {
     $startupTimingOffset = (Get-Item -LiteralPath $startupTimingLog).Length
-}
-$pluginsLogOffset = 0
-if (Test-Path -LiteralPath $pluginsLog) {
-    $pluginsLogOffset = (Get-Item -LiteralPath $pluginsLog).Length
 }
 
 function Get-NewStartupTimingLines {
@@ -87,16 +90,19 @@ function Get-NewStartupTimingLines {
 $approvalsDir = Join-Path ([System.IO.Path]::GetTempPath()) ("sumafile-startup-smoke-" + [System.Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $approvalsDir | Out-Null
 $approvalsPath = Join-Path $approvalsDir "plugin-approvals.json"
-# Never the user's data: plugin backends write under a disposable data root, and the service and the remote backend
-# read and seed a disposable metadata.db, so the remote plugin imports no real profiles and writes no
-# plugin.com.sumafile.remote.* keys into the real settings. startup-timing.log and plugins.log stay in
-# %LOCALAPPDATA%\SumaFile, where this smoke reads them.
+# Never the user's data, and nothing written into the payload, which is this run's install folder: plugin backends
+# write under a disposable data root, the plugin log is a fresh disposable file (so this smoke reads it from the
+# start), and the service and the remote backend read and seed a disposable metadata.db, so the remote plugin
+# imports no real profiles and writes no plugin.com.sumafile.remote.* keys into the real settings.
+# startup-timing.log is the app's own and stays in %LOCALAPPDATA%\SumaFile, where this smoke reads it.
+$pluginsLog = Join-Path $approvalsDir "plugins.log"
 $smokeAppDataDir = Join-Path $approvalsDir "app-data"
 New-Item -ItemType Directory -Force -Path $smokeAppDataDir | Out-Null
 $smokeEnvironment = [ordered]@{
     SUMAFILE_PLUGIN_ROOTS = $payloadPluginsDir
     SUMAFILE_PLUGIN_APPROVALS_PATH = $approvalsPath
     SUMAFILE_PLUGIN_DATA_ROOT = Join-Path $approvalsDir "plugins-data"
+    SUMAFILE_PLUGIN_LOG_PATH = $pluginsLog
     SIMPLEFILE_METADATA_DB = Join-Path $smokeAppDataDir "metadata.db"
     SIMPLEFILE_APP_DATA_DIR = $smokeAppDataDir
 }
@@ -106,6 +112,9 @@ foreach ($name in $smokeEnvironment.Keys) {
 }
 $process = $null
 $windowProcess = $null
+$smokeCompleted = $false
+# The app never reads, writes or deletes the pre-release plugin locations under %LOCALAPPDATA%\SumaFile.
+$legacyPluginLocations = Get-LegacyPluginLocationSnapshot
 
 try {
     foreach ($name in $smokeEnvironment.Keys) {
@@ -166,7 +175,7 @@ try {
     $registered = $false
     $registrationDeadline = (Get-Date).AddSeconds($pluginRegistrationTimeoutSeconds)
     do {
-        $pluginLines = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset $pluginsLogOffset)
+        $pluginLines = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0)
         if ($pluginLines | Where-Object { $_.Contains($sevenZipRegisteredLine) }) {
             $registered = $true
             break
@@ -179,8 +188,8 @@ try {
     } while ((Get-Date) -lt $registrationDeadline)
 
     if (-not $registered) {
-        $recent = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset $pluginsLogOffset | Select-Object -Last 10) -join [Environment]::NewLine
-        throw "plugins.log did not record '$sevenZipRegisteredLine' within $pluginRegistrationTimeoutSeconds seconds. New plugins.log lines:$([Environment]::NewLine)$recent"
+        $recent = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0 | Select-Object -Last 10) -join [Environment]::NewLine
+        throw "$pluginsLog did not record '$sevenZipRegisteredLine' within $pluginRegistrationTimeoutSeconds seconds. Last plugins.log lines:$([Environment]::NewLine)$recent"
     }
 
     if (Test-Path -LiteralPath $approvalsPath) {
@@ -196,7 +205,7 @@ try {
     $remoteDiscovered = $false
     $remoteDeadline = (Get-Date).AddSeconds($pluginRegistrationTimeoutSeconds)
     do {
-        $pluginLines = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset $pluginsLogOffset)
+        $pluginLines = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0)
         if ($pluginLines | Where-Object { $_.Contains($remoteDiscoveredLine) }) {
             $remoteDiscovered = $true
             break
@@ -209,8 +218,8 @@ try {
     } while ((Get-Date) -lt $remoteDeadline)
 
     if (-not $remoteDiscovered) {
-        $recent = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset $pluginsLogOffset | Where-Object { $_.Contains("[$remotePluginId]") } | Select-Object -Last 10) -join [Environment]::NewLine
-        throw "plugins.log did not record '$remoteDiscoveredLine' within $pluginRegistrationTimeoutSeconds seconds. New $remotePluginId lines:$([Environment]::NewLine)$recent"
+        $recent = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0 | Where-Object { $_.Contains("[$remotePluginId]") } | Select-Object -Last 10) -join [Environment]::NewLine
+        throw "$pluginsLog did not record '$remoteDiscoveredLine' within $pluginRegistrationTimeoutSeconds seconds. Last $remotePluginId lines:$([Environment]::NewLine)$recent"
     }
 
     if (Test-Path -LiteralPath $approvalsPath) {
@@ -221,6 +230,7 @@ try {
     }
 
     Write-Host "Bundled remote plugin trusted."
+    $smokeCompleted = $true
 }
 finally {
     foreach ($name in $smokeEnvironment.Keys) {
@@ -241,9 +251,32 @@ finally {
 
     # The host's kill-on-close job ends the backend with the app; stop any payload backend that is still running.
     # The remote backend starts on first call, for example when the sidebar shows the Connections section.
-    Get-Process -Name "sumafile-sevenzip-backend", "sumafile-remote-backend" -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and $_.Path.StartsWith($payloadPluginsDir, [System.StringComparison]::OrdinalIgnoreCase) } |
-        Stop-Process -Force -ErrorAction SilentlyContinue
+    $backends = @(Get-Process -Name "sumafile-sevenzip-backend", "sumafile-remote-backend" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($payloadPluginsDir, [System.StringComparison]::OrdinalIgnoreCase) })
+    $backends | Stop-Process -Force -ErrorAction SilentlyContinue
+    # Wait, so the backends release their files in the disposable data root and leave nothing half-written behind
+    # before the checks below and the clean-up run.
+    foreach ($backend in $backends) {
+        try { [void]$backend.WaitForExit(5000) } catch { }
+    }
+
+    # Checked once every process is gone. A failure here fails a smoke that otherwise passed; after an earlier
+    # failure it is only reported, so the first error stays the one thrown.
+    $afterRunFailures = @()
+    $payloadAppOwned = @(Get-AppOwnedPluginItems -InstallDir $payloadDir)
+    if ($payloadAppOwned.Count -gt 0) {
+        $afterRunFailures += "The startup smoke left app-owned plugin files in the payload ${payloadDir}: $($payloadAppOwned -join ', ')"
+    }
+    try {
+        Assert-LegacyPluginLocationsUnchanged -Before $legacyPluginLocations
+    } catch {
+        $afterRunFailures += $_.Exception.Message
+    }
 
     Remove-Item -LiteralPath $approvalsDir -Recurse -Force -ErrorAction SilentlyContinue
+
+    if ($afterRunFailures.Count -gt 0) {
+        if ($smokeCompleted) { throw ($afterRunFailures -join [Environment]::NewLine) }
+        foreach ($failure in $afterRunFailures) { Write-Warning $failure }
+    }
 }

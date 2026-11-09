@@ -307,6 +307,43 @@ public class RemoteManagerViewModelTests
     }
 
     [Fact]
+    public async Task RemoteMutationMethods_KeepTheFolderOtherEntries()
+    {
+        // Found by the Task 15 UI smoke: each mutation rebuilt the list from a lazy query over the list it had just
+        // cleared, so creating, renaming or deleting one entry dropped every other entry of the folder.
+        var backend = new FakeRemoteBackend(
+        [
+            new RemoteProfile { Id = "prod", Name = "Production", Protocol = "sftp", Host = "example.com", Port = 22, RootPath = "/", AuthKind = "password" },
+        ])
+        {
+            Session = new RemoteSession { SessionId = "remote-session-1", ProfileId = "prod", Protocol = "sftp", RootPath = "/" },
+            Listing = new RemoteDirectoryListing
+            {
+                Path = "/",
+                Parent = null,
+                IsNetwork = true,
+                Entries =
+                [
+                    new RemoteFileEntry { Name = "big.bin", Path = "/big.bin" },
+                    new RemoteFileEntry { Name = "café 資料", Path = "/café 資料", IsDir = true },
+                ],
+            },
+        };
+        var viewModel = Create(backend);
+        await viewModel.LoadProfilesAsync();
+        await viewModel.ConnectSelectedProfileAsync();
+
+        await viewModel.CreateRemoteDirectoryAsync("smoke-folder");
+        Assert.Equal(["big.bin", "café 資料", "smoke-folder"], viewModel.RemoteEntries.Select(entry => entry.Name));
+
+        await viewModel.RenameRemoteEntryAsync(viewModel.RemoteEntries.Single(entry => entry.Name == "smoke-folder"), "renamed folder [ok]");
+        Assert.Equal(["big.bin", "café 資料", "renamed folder [ok]"], viewModel.RemoteEntries.Select(entry => entry.Name));
+
+        await viewModel.DeleteRemoteEntriesAsync([viewModel.RemoteEntries.Single(entry => entry.Name == "renamed folder [ok]")]);
+        Assert.Equal(["big.bin", "café 資料"], viewModel.RemoteEntries.Select(entry => entry.Name));
+    }
+
+    [Fact]
     public async Task RemoteTransferMethods_DownloadAndUploadFiles()
     {
         var backend = new FakeRemoteBackend(
@@ -735,6 +772,210 @@ public class RemoteManagerViewModelTests
         Assert.False(vm.IsBusy);
         Assert.True(vm.CanRetryTransfers);
         Assert.Equal("Cancelled", Assert.Single(vm.Transfers).Status);
+    }
+
+    private const string BusyText = "Remote session is busy; wait for or cancel its transfer";
+
+    [Fact]
+    public async Task CloseSessionAsync_DuringATransfer_WaitsForItToEndThenDisconnects()
+    {
+        long transferEndedAt = 0;
+        var transferRunning = false;
+        var backend = new FakeRemoteBackend([new RemoteProfile { Id = "test" }])
+        {
+            Session = new RemoteSession { SessionId = "session", ProfileId = "test", RootPath = "/" },
+            Listing = new RemoteDirectoryListing { Path = "/" },
+        };
+        // As the real backend: the session stays locked until the transfer has cleaned up, 300 ms after the cancel.
+        backend.CancellableTransferHandler = async (_, ct) =>
+        {
+            Volatile.Write(ref transferRunning, true);
+            try
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            await Task.Delay(300, CancellationToken.None);
+            Interlocked.Exchange(ref transferEndedAt, System.Diagnostics.Stopwatch.GetTimestamp());
+            Volatile.Write(ref transferRunning, false);
+            return new RemoteTransferOutcome { Cancelled = true };
+        };
+        backend.DisconnectHandler = _ =>
+        {
+            if (Volatile.Read(ref transferRunning))
+            {
+                throw new InvalidOperationException(BusyText);
+            }
+        };
+        var vm = Create(backend);
+        await vm.LoadProfilesAsync();
+        await vm.ConnectSelectedProfileAsync();
+        var running = vm.UploadLocalFilesAsync([@"C:\a.bin"]);
+        Assert.True(vm.CanCancelTransfer);
+
+        var closed = await vm.CloseSessionAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(closed);
+        await running.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal("session", backend.DisconnectedSessionId);
+        Assert.NotEqual(0, Interlocked.Read(ref transferEndedAt));
+        Assert.True(backend.DisconnectAttempts[^1] >= Interlocked.Read(ref transferEndedAt),
+            "The successful disconnect ran before the transfer ended.");
+        Assert.Null(vm.CurrentSession);
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task CloseSessionAsync_TransferThatNeverEnds_GivesUpAfterTheWait()
+    {
+        var backend = new FakeRemoteBackend([new RemoteProfile { Id = "test" }])
+        {
+            Session = new RemoteSession { SessionId = "session", ProfileId = "test", RootPath = "/" },
+            Listing = new RemoteDirectoryListing { Path = "/" },
+            // It ignores the cancel and never answers, and the session stays busy all along.
+            CancellableTransferHandler = (_, _) => new TaskCompletionSource<RemoteTransferOutcome>().Task,
+            DisconnectHandler = _ => throw new InvalidOperationException(BusyText),
+        };
+        var vm = Create(backend);
+        await vm.LoadProfilesAsync();
+        await vm.ConnectSelectedProfileAsync();
+        _ = vm.UploadLocalFilesAsync([@"C:\a.bin"]);
+        var wait = TimeSpan.FromMilliseconds(1000);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        var closed = await vm.CloseSessionAsync(wait);
+
+        clock.Stop();
+        Assert.False(closed);
+        Assert.InRange(clock.Elapsed, wait - TimeSpan.FromMilliseconds(50), wait + TimeSpan.FromSeconds(2));
+        Assert.Null(backend.DisconnectedSessionId);
+        Assert.NotNull(vm.CurrentSession);
+        long[] attempts;
+        lock (backend.DisconnectAttempts)
+        {
+            attempts = backend.DisconnectAttempts.ToArray();
+        }
+
+        Assert.InRange(attempts.Length, 1, (int)(wait.TotalMilliseconds / 200) + 1);
+        for (var i = 1; i < attempts.Length; i++)
+        {
+            var gap = System.Diagnostics.Stopwatch.GetElapsedTime(attempts[i - 1], attempts[i]);
+            Assert.True(gap >= TimeSpan.FromMilliseconds(190), $"Two disconnect attempts were {gap.TotalMilliseconds} ms apart.");
+        }
+    }
+
+    [Fact]
+    public async Task CloseSessionAsync_SessionStillBusyAfterTheTransfer_RetriesEvery200MsUntilItIsFree()
+    {
+        long busyUntil = 0;
+        var backend = new FakeRemoteBackend([new RemoteProfile { Id = "test" }])
+        {
+            Session = new RemoteSession { SessionId = "session", ProfileId = "test", RootPath = "/" },
+            Listing = new RemoteDirectoryListing { Path = "/" },
+        };
+        // The transfer answers at once on cancel, but the backend keeps the session locked 500 ms longer.
+        backend.CancellableTransferHandler = async (_, ct) =>
+        {
+            try
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            Interlocked.Exchange(
+                ref busyUntil,
+                System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency / 2);
+            return new RemoteTransferOutcome { Cancelled = true };
+        };
+        backend.DisconnectHandler = _ =>
+        {
+            var until = Interlocked.Read(ref busyUntil);
+            if (until == 0 || System.Diagnostics.Stopwatch.GetTimestamp() < until)
+            {
+                throw new InvalidOperationException(BusyText);
+            }
+        };
+        var vm = Create(backend);
+        await vm.LoadProfilesAsync();
+        await vm.ConnectSelectedProfileAsync();
+        var running = vm.UploadLocalFilesAsync([@"C:\a.bin"]);
+        Assert.True(vm.CanCancelTransfer);
+
+        var closed = await vm.CloseSessionAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(closed);
+        await running.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal("session", backend.DisconnectedSessionId);
+        Assert.Null(vm.CurrentSession);
+        AssertBusyRetries(backend, Interlocked.Read(ref busyUntil));
+    }
+
+    [Fact]
+    public async Task CloseSessionAsync_SessionBusyWithoutATransfer_RetriesEvery200MsUntilItIsFree()
+    {
+        var backend = new FakeRemoteBackend([new RemoteProfile { Id = "test" }])
+        {
+            Session = new RemoteSession { SessionId = "session", ProfileId = "test", RootPath = "/" },
+            Listing = new RemoteDirectoryListing { Path = "/" },
+        };
+        var vm = Create(backend);
+        await vm.LoadProfilesAsync();
+        await vm.ConnectSelectedProfileAsync();
+        // No transfer runs, but another call (a listing, say) holds the session for 400 ms.
+        var busyUntil = System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency * 2 / 5;
+        backend.DisconnectHandler = _ =>
+        {
+            if (System.Diagnostics.Stopwatch.GetTimestamp() < busyUntil)
+            {
+                throw new InvalidOperationException(BusyText);
+            }
+        };
+
+        var closed = await vm.CloseSessionAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(closed);
+        Assert.Equal("session", backend.DisconnectedSessionId);
+        Assert.Null(vm.CurrentSession);
+        AssertBusyRetries(backend, busyUntil);
+    }
+
+    private static void AssertBusyRetries(FakeRemoteBackend backend, long busyUntil)
+    {
+        long[] attempts;
+        lock (backend.DisconnectAttempts)
+        {
+            attempts = backend.DisconnectAttempts.ToArray();
+        }
+
+        Assert.NotEqual(0, busyUntil);
+        Assert.True(attempts.Length >= 2, $"Expected the busy disconnect to be retried, saw {attempts.Length} attempt(s).");
+        for (var i = 1; i < attempts.Length; i++)
+        {
+            var gap = System.Diagnostics.Stopwatch.GetElapsedTime(attempts[i - 1], attempts[i]);
+            Assert.True(gap >= TimeSpan.FromMilliseconds(190), $"Two disconnect attempts were {gap.TotalMilliseconds} ms apart.");
+        }
+
+        Assert.True(attempts[^2] < busyUntil, "The attempt before the last one was not refused as busy.");
+        Assert.True(attempts[^1] >= busyUntil, "The successful disconnect ran while the session was still busy.");
+    }
+
+    [Fact]
+    public async Task CloseSessionAsync_NoSession_ReturnsTrueAtOnce()
+    {
+        var backend = new FakeRemoteBackend([new RemoteProfile { Id = "test" }]);
+        var vm = Create(backend);
+        await vm.LoadProfilesAsync();
+
+        var close = vm.CloseSessionAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(close.IsCompleted);
+        Assert.True(await close);
+        Assert.Empty(backend.DisconnectAttempts);
     }
 
     [Fact]

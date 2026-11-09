@@ -14,4 +14,10 @@ public interface IPluginHost
 
     /// <summary>Hands plugin-created windows to the host, which closes them before it stops the plugin.</summary>
     IPluginWindows Windows { get; }
+
+    /// <summary>Shows and hides the plugin's <c>contributions.panels</c>; callable from any thread.</summary>
+    IPluginPanels Panels { get; }
+
+    /// <summary>Asks the plugin's row decoration provider again; callable from any thread.</summary>
+    IPluginDecorations Decorations { get; }
 }

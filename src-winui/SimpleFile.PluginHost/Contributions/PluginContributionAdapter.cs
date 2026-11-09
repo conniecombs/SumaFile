@@ -25,7 +25,7 @@ public static class PluginContributionAdapter
         {
             var id = PluginManager.HostCommandId(m.Id, spec.Command);
             var group = m.Contributions.Commands.FirstOrDefault(c => c.Id == spec.Command)?.Group ?? m.Name;
-            return new ToolbarAction(id, spec.Label, group, spec.Glyph, id);
+            return new ToolbarAction(id, spec.Label, group, spec.Glyph, id) { When = spec.When, PluginId = m.Id };
         }))];
 
     public static IReadOnlyList<string> PrimaryToolbarCommandIds(IEnumerable<PluginRecord> enabled) =>
@@ -58,6 +58,40 @@ public static class PluginContributionAdapter
                         epoch);
                 });
             })];
+
+    /// <summary>
+    /// Every panel of the enabled plugins, plugin by plugin and in manifest order within each, with the toggle command
+    /// as a host command id and the record's epoch.
+    /// </summary>
+    public static IReadOnlyList<PluginPanel> Panels(IEnumerable<PluginRecord> enabled) =>
+        [.. enabled
+            .Where(record => record.Discovered.Manifest is not null)
+            .SelectMany(record =>
+            {
+                var manifest = record.Discovered.Manifest!;
+                var epoch = record.Epoch;
+                return manifest.Contributions.Panels.Select(spec => new PluginPanel(
+                    manifest.Id,
+                    spec.Id,
+                    spec.Title,
+                    spec.Placement,
+                    spec.Detachable,
+                    spec.Command is { } command ? PluginManager.HostCommandId(manifest.Id, command) : null,
+                    epoch));
+            })];
+
+    /// <summary>
+    /// The row decoration provider of every enabled plugin that declares one, ordered by plugin id (ordinal), which is
+    /// the precedence order when two plugins decorate the same row.
+    /// </summary>
+    public static IReadOnlyList<PluginDecorationProvider> RowDecorationProviders(IEnumerable<PluginRecord> enabled) =>
+        [.. enabled
+            .Where(record => record.Discovered.Manifest?.Contributions.RowDecorations is not null)
+            .Select(record => new PluginDecorationProvider(
+                record.Discovered.Manifest!.Id,
+                record.Discovered.Manifest.Contributions.RowDecorations!.Provider,
+                record.Epoch))
+            .OrderBy(provider => provider.PluginId, StringComparer.Ordinal)];
 
     private static IEnumerable<PluginManifest> Manifests(IEnumerable<PluginRecord> enabled) =>
         enabled.Select(record => record.Discovered.Manifest).OfType<PluginManifest>();

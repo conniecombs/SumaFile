@@ -48,7 +48,14 @@ internal sealed class PluginWindowHost : IPluginWindowHost
             return;
         }
 
-        pluginWindow.Closed += (_, _) => _windows.Remove(pluginWindow);
+        pluginWindow.Closed += (_, _) =>
+        {
+            // A window the user closes (title-bar X, Alt+F4) or the plugin closes itself never goes through CloseEach,
+            // and WinUI does not complete a dialog's ShowAsync when its window closes: hide its dialogs here too, so the
+            // app-wide DialogHost gate is released. After CloseEach this finds nothing left to hide.
+            DialogHost.HideDialogsOn(XamlRootOf(pluginWindow));
+            _windows.Remove(pluginWindow);
+        };
         SecondaryWindowChrome.Apply(pluginWindow, options.Title, options.Width, options.Height);
     }
 
@@ -107,8 +114,24 @@ internal sealed class PluginWindowHost : IPluginWindowHost
             // A window that closed in the meantime has left the set: skip it.
             if (_windows.Open.Contains(window))
             {
+                // A dialog open on the window holds the app-wide DialogHost gate, and WinUI may never complete its
+                // ShowAsync once the window is gone: hide it first, which releases the gate either way.
+                DialogHost.HideDialogsOn(XamlRootOf(window));
                 TryClose(window);
             }
+        }
+    }
+
+    private static XamlRoot? XamlRootOf(Window window)
+    {
+        try
+        {
+            return window.Content?.XamlRoot;
+        }
+        catch (Exception)
+        {
+            // Its content is already gone, and with it any dialog on it.
+            return null;
         }
     }
 

@@ -15,12 +15,13 @@ namespace SimpleFile.Tests;
 public class PluginProcessLauncherTests
 {
     private static readonly string Cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    private static readonly IReadOnlyDictionary<string, string> NoEnvironment = new Dictionary<string, string>();
 
     [Fact]
     public async Task Launch_ShortLivedProcess_RaisesExited()
     {
         var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var process = new ProcessLauncher().Launch(Cmd, ["/c", "exit", "3"], Environment.SystemDirectory, _ => { });
+        using var process = new ProcessLauncher().Launch(Cmd, ["/c", "exit", "3"], Environment.SystemDirectory, NoEnvironment, _ => { });
         process.Exited += (_, _) => exited.TrySetResult();
         if (process.HasExited)
         {
@@ -40,6 +41,7 @@ public class PluginProcessLauncherTests
             Cmd,
             ["/c", "echo err 1>&2"],
             Environment.SystemDirectory,
+            NoEnvironment,
             line =>
             {
                 lines.Enqueue(line);
@@ -54,7 +56,7 @@ public class PluginProcessLauncherTests
     public async Task Dispose_EndsLongRunningProcess()
     {
         var process = new ProcessLauncher().Launch(
-            Cmd, ["/c", "ping 127.0.0.1 -n 30 >nul"], Environment.SystemDirectory, _ => { });
+            Cmd, ["/c", "ping 127.0.0.1 -n 30 >nul"], Environment.SystemDirectory, NoEnvironment, _ => { });
         Assert.False(process.HasExited);
 
         process.Dispose();

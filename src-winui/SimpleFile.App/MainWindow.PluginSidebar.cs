@@ -27,6 +27,15 @@ public sealed partial class MainWindow
     // False until startup has marked ready: the bodies load plugin code, which must stay out of the startup path.
     private bool _pluginSectionsReady;
 
+    // Every plugin body load goes through this queue at low priority, so plugin code (the assembly load, activation,
+    // the provider) never runs inline inside a host layout pass or workspace sync (carry-over #82). Built on the
+    // constructing (UI) thread.
+    private readonly PluginBodyLoadQueue _pluginBodyLoads = CreatePluginBodyLoadQueue(
+        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
+
+    private static PluginBodyLoadQueue CreatePluginBodyLoadQueue(Microsoft.UI.Dispatching.DispatcherQueue? dispatcher) =>
+        new(load => dispatcher?.TryEnqueue(DispatcherQueuePriority.Low, () => load()));
+
     private StackPanel PluginSectionsHost => SidebarPanel.PluginSections;
 
     /// <summary>One rendered plugin section: its manifest description and the controls built for it.</summary>
@@ -93,6 +102,7 @@ public sealed partial class MainWindow
         }
 
         view.Removed = true;
+        _pluginBodyLoads.Forget(PluginSidebarLayout.BodyLoadKey(view.Section));
         // Drop the body so the plugin's element has no parent if the plugin hands the same element out again.
         view.Body.Content = null;
         PluginSectionsHost.Children.Remove(view.Root);
@@ -196,11 +206,17 @@ public sealed partial class MainWindow
             return;
         }
 
-        var collapsed = workspace.Settings.CollapsedPluginSidebarSections;
+        // Copy-on-write: a settings save may be reading the old list on the thread pool right now.
+        var settings = workspace.Settings;
+        var old = settings.CollapsedPluginSidebarSections;
         var key = PluginSidebarLayout.CollapseKey(view.Section);
-        if (!collapsed.Remove(key))
+        if (old.Contains(key, StringComparer.Ordinal))
         {
-            collapsed.Add(key);
+            settings.CollapsedPluginSidebarSections = [.. old.Where(k => !string.Equals(k, key, StringComparison.Ordinal))];
+        }
+        else
+        {
+            settings.CollapsedPluginSidebarSections = [.. old, key];
         }
 
         ApplyPluginSectionCollapse();
@@ -221,7 +237,7 @@ public sealed partial class MainWindow
 
     /// <summary>
     /// After startup has marked ready, lets section bodies load: at low priority, so the first paint and input come
-    /// first.
+    /// first. The loads themselves are queued again (<see cref="_pluginBodyLoads"/>), never run inside this callback.
     /// </summary>
     private void QueuePluginSectionActivation()
     {
@@ -233,8 +249,9 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// Asks for the body of every section that may load now. Called when startup reaches ready, when the sidebar is
-    /// shown, when a section is expanded and when the sections change.
+    /// Queues the body load of every section that may load now. Called when startup reaches ready, when the sidebar is
+    /// shown, when a section is expanded and when the sections change, often from inside a layout pass or a workspace
+    /// sync, so it never loads a body itself: <see cref="_pluginBodyLoads"/> runs the load later, at low priority.
     /// </summary>
     private void ActivateVisiblePluginSections()
     {
@@ -249,14 +266,15 @@ public sealed partial class MainWindow
             if (PluginSidebarLayout.ShouldActivate(_pluginSectionsReady, sidebarVisible, IsPluginSectionCollapsed(view.Section), view.Activated))
             {
                 view.Activated = true;
-                _ = LoadPluginSectionBodyAsync(view);
+                _pluginBodyLoads.Request(PluginSidebarLayout.BodyLoadKey(view.Section), () => LoadPluginSectionBodyAsync(view));
             }
         }
     }
 
     private async Task LoadPluginSectionBodyAsync(PluginSidebarSectionView view)
     {
-        if (_plugins is not { } manager)
+        // Queued: the section may have left the sidebar, or the plugins stopped, before this ran.
+        if (view.Removed || _plugins is not { } manager)
         {
             return;
         }

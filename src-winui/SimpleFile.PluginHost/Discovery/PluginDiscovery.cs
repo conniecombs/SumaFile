@@ -8,46 +8,63 @@ public static class PluginDiscovery
 {
     private const string ManifestFileName = "plugin.json";
 
-    /// <summary>Semicolon-separated roots that replace the defaults when set (the UI smoke uses it).</summary>
+    /// <summary>
+    /// Semicolon-separated roots that replace the default when set (the UI smoke uses it). Only these overrides can
+    /// name more than one root, so only they can shadow one plugin folder with another.
+    /// </summary>
     public const string RootsVariable = "SUMAFILE_PLUGIN_ROOTS";
 
     /// <summary>
     /// A folder that replaces the plugin data root when set (every UI smoke mode uses it), so a smoke's plugin
-    /// backends never write to the user's real plugin data.
+    /// backends never write into the installation folder.
     /// </summary>
     public const string DataRootVariable = "SUMAFILE_PLUGIN_DATA_ROOT";
 
+    /// <summary>A file that replaces <c>plugins.log</c> when set, so a smoke never writes into the installation folder.</summary>
+    public const string LogPathVariable = "SUMAFILE_PLUGIN_LOG_PATH";
+
+    /// <summary>
+    /// The plugin roots: <see cref="InstallRoot"/> alone, which holds the bundled plugins and the ones the user
+    /// installs (user requirement 2026-11-09: every plugin file stays in the installation folder), unless
+    /// <see cref="RootsVariable"/> names others.
+    /// </summary>
     public static IReadOnlyList<string> DefaultRoots()
     {
         var overrideRoots = OverrideRoots();
         if (overrideRoots.Length > 0) return overrideRoots;
 
-        return [InstallRoot(), UserRoot()];
+        return [InstallRoot()];
     }
 
     /// <summary>
-    /// The <c>plugins</c> folder next to the app, where the release ships first-party plugins and
-    /// <c>bundled.json</c>; not affected by <see cref="RootsVariable"/>.
+    /// The <c>plugins</c> folder next to the app: the release ships first-party plugins and <c>bundled.json</c>
+    /// there, and Install from file unzips into it. Not affected by <see cref="RootsVariable"/>.
     /// </summary>
     public static string InstallRoot() => Path.Combine(AppContext.BaseDirectory, "plugins");
 
     /// <summary>
     /// The folder that holds each plugin backend's data folder, <c>&lt;root&gt;\&lt;id&gt;\</c>: the
-    /// <see cref="DataRootVariable"/> override when set, else <c>%LOCALAPPDATA%\SumaFile\plugins-data</c>.
+    /// <see cref="DataRootVariable"/> override when set, else <c>plugins-data</c> next to the app.
     /// </summary>
     public static string DataRoot() =>
-        OverrideDataRoot()
-        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile", "plugins-data");
+        Override(DataRootVariable) ?? Path.Combine(AppContext.BaseDirectory, "plugins-data");
 
-    private static string? OverrideDataRoot() =>
-        Environment.GetEnvironmentVariable(DataRootVariable) is { } value && !string.IsNullOrWhiteSpace(value)
+    /// <summary>
+    /// The plugin log, rotating to <c>plugins.log.1</c> at 1 MB: the <see cref="LogPathVariable"/> override when set,
+    /// else <c>plugins.log</c> next to the app.
+    /// </summary>
+    public static string LogPath() =>
+        Override(LogPathVariable) ?? Path.Combine(AppContext.BaseDirectory, "plugins.log");
+
+    private static string? Override(string variable) =>
+        Environment.GetEnvironmentVariable(variable) is { } value && !string.IsNullOrWhiteSpace(value)
             ? value.Trim()
             : null;
 
     /// <summary>
     /// One <c>[warn]</c> line for each plugin environment override in effect (<see cref="RootsVariable"/>,
-    /// <see cref="PluginApprovalStore.PathVariable"/> and <see cref="DataRootVariable"/>), for <c>plugins.log</c>;
-    /// empty when none is set.
+    /// <see cref="PluginApprovalStore.PathVariable"/>, <see cref="DataRootVariable"/> and <see cref="LogPathVariable"/>),
+    /// for <c>plugins.log</c>; empty when none is set.
     /// </summary>
     public static IReadOnlyList<string> DescribeOverrides()
     {
@@ -58,15 +75,19 @@ public static class PluginDiscovery
             lines.Add($"[warn] {RootsVariable} replaces the plugin roots: {string.Join(';', overrideRoots)}");
         }
 
-        if (Environment.GetEnvironmentVariable(PluginApprovalStore.PathVariable) is { } approvals
-            && !string.IsNullOrWhiteSpace(approvals))
+        if (Override(PluginApprovalStore.PathVariable) is { } approvals)
         {
-            lines.Add($"[warn] {PluginApprovalStore.PathVariable} replaces the plugin approvals file: {approvals.Trim()}");
+            lines.Add($"[warn] {PluginApprovalStore.PathVariable} replaces the plugin approvals file: {approvals}");
         }
 
-        if (OverrideDataRoot() is { } dataRoot)
+        if (Override(DataRootVariable) is { } dataRoot)
         {
             lines.Add($"[warn] {DataRootVariable} replaces the plugin data folder: {dataRoot}");
+        }
+
+        if (Override(LogPathVariable) is { } logPath)
+        {
+            lines.Add($"[warn] {LogPathVariable} replaces the plugin log: {logPath}");
         }
 
         return lines;
@@ -75,10 +96,6 @@ public static class PluginDiscovery
     private static string[] OverrideRoots() =>
         (Environment.GetEnvironmentVariable(RootsVariable) ?? string.Empty)
             .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-
-    /// <summary>The per-user root the installer writes to; not affected by <see cref="RootsVariable"/>.</summary>
-    public static string UserRoot() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SumaFile", "plugins");
 
     public static IReadOnlyList<DiscoveredPlugin> Scan(IReadOnlyList<string> roots)
     {
@@ -122,7 +139,7 @@ public static class PluginDiscovery
             }
         }
 
-        // Later root wins: shadow every earlier entry with the same id.
+        // Later root wins: shadow every earlier entry with the same id (only an override names more than one root).
         var liveById = new Dictionary<string, DiscoveredPlugin>(StringComparer.Ordinal);
         foreach (var p in all) liveById[p.Id] = p;
 

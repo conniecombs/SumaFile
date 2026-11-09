@@ -106,4 +106,129 @@ public sealed partial class ExplorerWorkspace
         PaneId pane,
         CancellationToken cancellationToken = default) =>
         _navigation.OpenPathAsync(this, path, isDirectory, pane, cancellationToken);
+
+    /// <summary>
+    /// Decorates every shown pane whose listing is published again, without listing it again: after startup becomes
+    /// ready, after the decorating plugins change, and when a plugin asks (<c>IPluginDecorations.Invalidate</c>, a
+    /// setting write). A pane still listing is skipped, because its publish checks
+    /// <see cref="RowDecorationCoordinator.Generation"/> itself. The provider calls start on the thread pool, so the
+    /// caller is never blocked and never runs plugin code.
+    /// </summary>
+    public Task InvalidateDecorationsAsync() =>
+        DualPaneEnabled
+            ? Task.WhenAll(InvalidateDecorationsAsync(PaneId.Primary), InvalidateDecorationsAsync(PaneId.Secondary))
+            : InvalidateDecorationsAsync(PaneId.Primary);
+
+    /// <summary>
+    /// Decorates one pane again under a new request number. The result within the budget applies at once: a plugin
+    /// that answered (or answered nothing) replaces its part, a plugin that left the set loses its part, and a plugin
+    /// still pending keeps its shown part, so a slow provider never blanks the badges and folder flags in between. The
+    /// final merge follows once the pending plugins settle, whatever they answer.
+    /// </summary>
+    internal async Task InvalidateDecorationsAsync(PaneId pane)
+    {
+        var state = PaneFor(pane);
+        string path;
+        bool isNetwork;
+        List<string> paths;
+        int navigationToken;
+        long request;
+        CancellationToken cancellation;
+        lock (_gate)
+        {
+            if (state.ListingInProgress || string.IsNullOrEmpty(state.Path))
+            {
+                return;
+            }
+
+            path = state.Path;
+            isNetwork = state.PathIsNetwork;
+            paths = state.Entries.Select(entry => entry.Path).ToList();
+            navigationToken = state.NavigationToken;
+            request = state.NextDecorationRequest();
+            cancellation = state.DecorationCancellation;
+        }
+
+        var decorations = await RowDecorations.DecorateAsync(
+                path,
+                isNetwork,
+                paths,
+                late => ApplyLateDecorations(pane, navigationToken, request, path, late),
+                cancellation)
+            .ConfigureAwait(false);
+        ApplyDecorations(pane, navigationToken, request, path, decorations, late: false);
+    }
+
+    /// <summary>
+    /// Applies a decoration result that arrived after its listing was published. It applies only while the pane still
+    /// shows that navigation's folder and no newer request's result was applied, whatever order results arrive in.
+    /// </summary>
+    internal void ApplyLateDecorations(
+        PaneId pane,
+        int navigationToken,
+        long request,
+        string folderPath,
+        PaneDecorations decorations) =>
+        ApplyDecorations(pane, navigationToken, request, folderPath, decorations, late: true);
+
+    private void ApplyDecorations(
+        PaneId pane,
+        int navigationToken,
+        long request,
+        string folderPath,
+        PaneDecorations decorations,
+        bool late)
+    {
+        var state = PaneFor(pane);
+        lock (_gate)
+        {
+            if (state.NavigationToken != navigationToken
+                || !PathRules.PathsEqual(state.Path, folderPath)
+                || !ShouldApplyDecorationsLocked(state, request, late))
+            {
+                return;
+            }
+
+            if (!late)
+            {
+                decorations = decorations.KeepingPendingFrom(state.Decorations);
+            }
+
+            var unchanged = (decorations.HasNoDecorations && state.Decorations.HasNoDecorations)
+                || decorations.HasSameContentAs(state.Decorations);
+            state.AppliedDecorationRequest = request;
+            state.AppliedDecorationLate = late;
+            state.Decorations = decorations;
+            if (unchanged)
+            {
+                return;
+            }
+
+            state.BumpContentVersion();
+        }
+
+        RaiseChanged();
+    }
+
+    // Results compare by (request, late): a newer request wins, and a request's late merge beats its own budget cut.
+    internal static bool ShouldApplyDecorationsLocked(ExplorerPane state, long request, bool late) =>
+        request > state.AppliedDecorationRequest
+        || (request == state.AppliedDecorationRequest && late && !state.AppliedDecorationLate);
+
+    /// <summary>
+    /// Starts <see cref="InvalidateDecorationsAsync(PaneId)"/> without awaiting it, logging a failure through
+    /// <see cref="RowDecorationCoordinator.Log"/>.
+    /// </summary>
+    internal void StartDecorationRefresh(PaneId pane)
+    {
+        _ = InvalidateDecorationsAsync(pane).ContinueWith(
+            task => RowDecorations.Log?.Invoke($"[warn] Decorating the folder again failed: {task.Exception?.GetBaseException().Message}"),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    // The pane itself, never normalized: a result for the secondary pane must not land on the primary one while dual
+    // pane is off.
+    private ExplorerPane PaneFor(PaneId pane) => pane == PaneId.Secondary ? Secondary : Primary;
 }

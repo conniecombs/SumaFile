@@ -158,6 +158,7 @@ internal sealed class WorkspaceNavigationController
             state.ListingInProgress = true;
             state.Path = path;
             state.Entries = [];
+            state.Decorations = PaneDecorations.Empty;
             state.SelectedPath = null;
             workspace.SetErrorMessageCore(null);
             workspace.SetFileOpenUnsupportedCore(false);
@@ -167,6 +168,8 @@ internal sealed class WorkspaceNavigationController
         }
 
         workspace.NotifyChanged();
+        var published = false;
+        var generation = 0;
 
         try
         {
@@ -201,8 +204,19 @@ internal sealed class WorkspaceNavigationController
                 return;
             }
 
+            // The decorations are asked before the publish and waited for at most the coordinator's budget, so the
+            // listing appears with them; the progressive chunks above never wait. Late results apply when they arrive.
+            generation = workspace.RowDecorations.Generation;
+            var decorations = await DecorateListingAsync(workspace, target, state, token, listing, listing.Path)
+                .ConfigureAwait(false);
+
             lock (workspace.Gate)
             {
+                if (token != state.NavigationToken)
+                {
+                    return;
+                }
+
                 state.Path = listing.Path;
                 state.Entries = [.. listing.Entries];
                 state.PathIsNetwork = listing.IsNetwork || workspace.DrivesController.IsNetworkFsPath(listing.Path);
@@ -213,6 +227,8 @@ internal sealed class WorkspaceNavigationController
                 workspace.PlacesController.RecordRecent(listing.Path);
                 workspace.SetPhotoFolderActiveCore(
                     MediaFolder.IsMediaFolder(listing.Entries, workspace.Settings.PhotoFolderImageThreshold));
+                PublishDecorationsLocked(state, decorations);
+                published = true;
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -250,7 +266,70 @@ internal sealed class WorkspaceNavigationController
                 }
 
                 workspace.NotifyChanged();
+                RedecorateIfGenerationChanged(workspace, target, published, generation);
             }
+        }
+    }
+
+    /// <summary>
+    /// Asks the decorating plugins about a listing that is about to be published, under a new request number. A
+    /// result that arrives after the budget goes through <see cref="ExplorerWorkspace.ApplyLateDecorations"/>.
+    /// </summary>
+    private static async Task<(long Request, PaneDecorations Decorations)> DecorateListingAsync(
+        ExplorerWorkspace workspace,
+        PaneId target,
+        ExplorerPane state,
+        int token,
+        DirectoryListing listing,
+        string folderPath)
+    {
+        long request;
+        bool isNetwork;
+        CancellationToken cancellation;
+        lock (workspace.Gate)
+        {
+            if (token != state.NavigationToken)
+            {
+                // A newer navigation owns the pane: its publish check drops this listing, so ask nothing and leave
+                // the newer navigation's decoration request alone.
+                return (0, PaneDecorations.Empty);
+            }
+
+            request = state.NextDecorationRequest();
+            cancellation = state.DecorationCancellation;
+            isNetwork = listing.IsNetwork || workspace.DrivesController.IsNetworkFsPath(folderPath);
+        }
+
+        var decorations = await workspace.RowDecorations.DecorateAsync(
+                folderPath,
+                isNetwork,
+                listing.Entries.Select(entry => entry.Path).ToList(),
+                late => workspace.ApplyLateDecorations(target, token, request, folderPath, late),
+                cancellation)
+            .ConfigureAwait(false);
+        return (request, decorations);
+    }
+
+    // Under the gate, with the listing: the result is kept unless the same request's late merge already landed.
+    private static void PublishDecorationsLocked(ExplorerPane state, (long Request, PaneDecorations Decorations) result)
+    {
+        if (ExplorerWorkspace.ShouldApplyDecorationsLocked(state, result.Request, late: false))
+        {
+            state.Decorations = result.Decorations;
+            state.AppliedDecorationRequest = result.Request;
+            state.AppliedDecorationLate = false;
+        }
+
+        state.BumpContentVersion();
+    }
+
+    // A listing whose decorations were asked before startup became ready, or before the decorating plugins changed,
+    // is decorated again as soon as it is published, without listing it again.
+    private static void RedecorateIfGenerationChanged(ExplorerWorkspace workspace, PaneId target, bool published, int generation)
+    {
+        if (published && workspace.RowDecorations.Generation != generation)
+        {
+            workspace.StartDecorationRefresh(target);
         }
     }
 
@@ -499,6 +578,8 @@ internal sealed class WorkspaceNavigationController
             state.ListingInProgress = true;
         }
 
+        var published = false;
+        var generation = 0;
         try
         {
             var refresh = await workspace.Navigator.RefreshAsync(state, path, token, cancellationToken)
@@ -513,6 +594,16 @@ internal sealed class WorkspaceNavigationController
             {
                 return;
             }
+
+            generation = workspace.RowDecorations.Generation;
+            var decorations = await DecorateListingAsync(
+                    workspace,
+                    target,
+                    state,
+                    token,
+                    listing,
+                    string.IsNullOrEmpty(listing.Path) ? path : listing.Path)
+                .ConfigureAwait(false);
 
             lock (workspace.Gate)
             {
@@ -539,6 +630,9 @@ internal sealed class WorkspaceNavigationController
                 {
                     workspace.SetErrorMessageCore(null);
                 }
+
+                PublishDecorationsLocked(state, decorations);
+                published = true;
             }
 
             workspace.NotifyChanged();
@@ -571,6 +665,7 @@ internal sealed class WorkspaceNavigationController
                 }
 
                 workspace.NotifyChanged();
+                RedecorateIfGenerationChanged(workspace, target, published, generation);
             }
         }
     }

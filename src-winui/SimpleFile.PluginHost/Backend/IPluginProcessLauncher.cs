@@ -13,10 +13,15 @@ public interface IPluginProcess : IDisposable
 
 public interface IPluginProcessLauncher
 {
+    /// <summary>
+    /// Starts a backend. Each <paramref name="environment"/> entry is set on top of the environment SumaFile's own
+    /// process passes on (the host sets <c>TMP</c> and <c>TEMP</c> to the plugin's data folder).
+    /// </summary>
     IPluginProcess Launch(
         string executable,
         IReadOnlyList<string> args,
         string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
         Action<string> onStderrLine);
 }
 
@@ -26,6 +31,7 @@ public sealed class ProcessLauncher : IPluginProcessLauncher
         string executable,
         IReadOnlyList<string> args,
         string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
         Action<string> onStderrLine)
     {
         var start = new ProcessStartInfo
@@ -39,6 +45,12 @@ public sealed class ProcessLauncher : IPluginProcessLauncher
         foreach (var arg in args)
         {
             start.ArgumentList.Add(arg);
+        }
+
+        // ProcessStartInfo.Environment starts as a copy of this process's environment, so only these entries change.
+        foreach (var (name, value) in environment)
+        {
+            start.Environment[name] = value;
         }
 
         // Created first: a backend that cannot be tied to a job must not start.

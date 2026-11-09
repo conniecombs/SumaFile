@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using SimpleFile.PluginHost.Manifest;
+using SimpleFile.PluginHost.Trust;
 
 namespace SimpleFile.PluginHost.Install;
 
@@ -13,22 +14,27 @@ public sealed class PluginInstallException : Exception
     public PluginInstallException(string message, Exception inner) : base(message, inner) { }
 }
 
-/// <summary>Installs <c>.sfplugin</c> packages (zip files with <c>plugin.json</c> at the root) into a plugin root.</summary>
+/// <summary>
+/// Installs <c>.sfplugin</c> packages (zip files with <c>plugin.json</c> at the root) into SumaFile's plugins folder,
+/// <c>&lt;install&gt;\plugins</c>, beside the bundled plugins, and removes them again. Plugins that folder's
+/// <c>bundled.json</c> lists ship with SumaFile: a package never replaces one and Remove never deletes one.
+/// </summary>
 public static class PluginPackageInstaller
 {
     private const string ManifestFileName = "plugin.json";
     private const long MaxManifestBytes = 1_048_576;
 
     /// <summary>
-    /// Validates the package (a valid root manifest, every entry inside <c>&lt;userRoot&gt;\&lt;id&gt;\</c>), extracts it
-    /// into a staging folder next to the target and moves it into place, replacing an existing folder. Returns the
-    /// installed folder. Throws <see cref="PluginInstallException"/> without writing anything when validation fails.
+    /// Validates the package (a valid root manifest whose id <c>bundled.json</c> does not list, every entry inside
+    /// <c>&lt;pluginsRoot&gt;\&lt;id&gt;\</c>), extracts it into a staging folder next to the target and moves it into
+    /// place, replacing an existing folder. Returns the installed folder. Throws <see cref="PluginInstallException"/>
+    /// without writing anything when validation fails, and explains an unwritable plugins folder.
     /// </summary>
-    public static string Install(string sfpluginPath, string userRoot)
+    public static string Install(string sfpluginPath, string pluginsRoot)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sfpluginPath);
-        ArgumentException.ThrowIfNullOrWhiteSpace(userRoot);
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(userRoot));
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginsRoot);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pluginsRoot));
 
         ZipArchive zip;
         try
@@ -43,6 +49,12 @@ public static class PluginPackageInstaller
         using (zip)
         {
             var id = ReadManifestId(zip);
+            if (BundledPluginList.Read(root).ContainsKey(id))
+            {
+                // Trust is keyed on bundled.json: a package must never replace a plugin that ships with SumaFile.
+                throw new PluginInstallException($"{id} ships with SumaFile and cannot be installed from a package.");
+            }
+
             var target = Path.Combine(root, id);
 
             // Validate every entry before anything touches the disk.
@@ -66,11 +78,26 @@ public static class PluginPackageInstaller
                 }
             }
 
-            Directory.CreateDirectory(root);
             var staging = Path.Combine(root, $".{id}.installing-{Guid.NewGuid():N}");
             try
             {
+                Directory.CreateDirectory(root);
                 Directory.CreateDirectory(staging);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                // An install folder the user cannot write to (a portable copy under Program Files, an admin-protected
+                // custom folder). Nothing falls back to another folder.
+                throw Unwritable(root, ex);
+            }
+            catch (IOException ex)
+            {
+                TryDelete(staging);
+                throw new PluginInstallException($"The plugin could not be installed: {ex.Message}", ex);
+            }
+
+            try
+            {
                 foreach (var directory in directories)
                 {
                     Directory.CreateDirectory(Contained(staging, directory));
@@ -101,15 +128,37 @@ public static class PluginPackageInstaller
     }
 
     /// <summary>
-    /// Deletes an installed plugin folder, which must be a direct child of <paramref name="userRoot"/> (plugins
-    /// shipped in the install root are never removed). The folder is renamed aside first, so a plugin whose files
-    /// are in use fails cleanly instead of being half deleted.
+    /// The record is a plugin the user installed: it sits in <paramref name="pluginsRoot"/> and its id is not one that
+    /// <c>bundled.json</c> lists (<see cref="PluginRecord.IsBundledId"/>). Settings offers Remove only for these.
     /// </summary>
-    public static void Remove(string pluginFolder, string userRoot)
+    public static bool IsRemovable(PluginRecord record, string pluginsRoot)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        if (record.IsBundledId || string.IsNullOrWhiteSpace(pluginsRoot)) return false;
+        try
+        {
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(record.Discovered.Root)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(pluginsRoot)),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Deletes a plugin folder the user installed, which must be a direct child of <paramref name="pluginsRoot"/> whose
+    /// id that root's <c>bundled.json</c> does not list (plugins that ship with SumaFile are never removed). Its settings
+    /// and its <c>plugins-data</c> folder are kept. The folder is renamed aside first, so a plugin whose files are in
+    /// use fails cleanly instead of being half deleted.
+    /// </summary>
+    public static void Remove(string pluginFolder, string pluginsRoot)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginFolder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(userRoot);
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(userRoot));
+        ArgumentException.ThrowIfNullOrWhiteSpace(pluginsRoot);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pluginsRoot));
         var folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pluginFolder));
         var parent = Path.GetDirectoryName(folder);
         var name = Path.GetFileName(folder);
@@ -118,7 +167,12 @@ public static class PluginPackageInstaller
             || name.Length == 0
             || name.StartsWith('.'))
         {
-            throw new PluginInstallException("Only plugins installed in your user plugins folder can be removed.");
+            throw new PluginInstallException("Only plugins in SumaFile's plugins folder can be removed.");
+        }
+
+        if (BundledPluginList.Read(root).Keys.Any(id => string.Equals(id, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new PluginInstallException($"{name} ships with SumaFile and cannot be removed. Disable it instead.");
         }
 
         if (!Directory.Exists(folder))
@@ -145,6 +199,9 @@ public static class PluginPackageInstaller
                 $"The plugin {name} was removed, but some of its files are still in use. Restart SumaFile to finish removing them.");
         }
     }
+
+    private static PluginInstallException Unwritable(string root, UnauthorizedAccessException ex) =>
+        new($"SumaFile cannot write to its plugins folder {root}: {ex.Message}", ex);
 
     private static string ReadManifestId(ZipArchive zip)
     {

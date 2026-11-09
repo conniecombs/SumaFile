@@ -718,8 +718,8 @@ public class PluginTrustTests(ITestOutputHelper output)
     [Fact]
     public async Task Discover_WithAPreparedScan_ReadsNothingAgain()
     {
-        // Budget fallback F2: the App prepares the scan on the thread pool while the file service starts, so the
-        // plugins-discovered span holds only evaluation.
+        // Budget fallback F2: the App prepares the scan on the thread pool while the file service starts, so its
+        // plugins-* startup span reads nothing.
         var tmp = NewTemp();
         try
         {
@@ -776,6 +776,76 @@ public class PluginTrustTests(ITestOutputHelper output)
             // Prepared for another root: ignored, and this manager reads for itself.
             Assert.Equal(1, manager.Approvals.LoadCount);
             Assert.Equal("com.example.first", Assert.Single(manager.Plugins).Id);
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
+    [Fact]
+    public async Task Discover_WithAPreparedScan_CompletesOnTheCallersThread()
+    {
+        // The prepared scan was read and judged on the thread pool already, so the App's startup span holds no hop to
+        // the pool and no hop back to the UI thread: discovery completes, and raises Changed, before it returns.
+        var tmp = NewTemp();
+        try
+        {
+            var root = Path.Combine(tmp, "plugins");
+            var approvals = Path.Combine(tmp, "approvals.json");
+            var bundled = WriteContributingPlugin(root, "com.example.first");
+            WriteContributingPlugin(root, "com.example.second");
+            WriteBundledList(root, [bundled]);
+            var prepared = PluginManager.PrepareScan([root], root, approvals);
+
+            await using var manager = NewManager(tmp, root, approvals);
+            var caller = Environment.CurrentManagedThreadId;
+            var changedOn = -1;
+            manager.Changed += (_, _) => changedOn = Environment.CurrentManagedThreadId;
+            var discover = manager.DiscoverAsync(prepared, startBackends: false, CancellationToken.None);
+
+            Assert.True(discover.IsCompletedSuccessfully, "discovery from a prepared scan must not wait for anything");
+            Assert.Equal(caller, changedOn);
+            await discover;
+            Assert.Equal(
+                [PluginState.Enabled, PluginState.NeedsConsent],
+                manager.Plugins.OrderBy(p => p.Id, StringComparer.Ordinal).Select(p => p.State));
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
+    [Fact]
+    public async Task PrepareScan_VerifiesSignaturesBeforeDiscovery()
+    {
+        // PrepareScan judges every plugin (signature hashing included) while the file service starts; discovery from
+        // it checks nothing again, and a rescan verifies afresh.
+        var tmp = NewTemp();
+        try
+        {
+            var root = Path.Combine(tmp, "plugins");
+            var approvals = Path.Combine(tmp, "approvals.json");
+            var (pub, priv) = NewKeyPair();
+            var folder = WriteContributingPlugin(root, "com.example.signed", Convert.ToBase64String(pub));
+            var payload = Encoding.UTF8.GetBytes("signed payload");
+            File.WriteAllBytes(Path.Combine(folder, "payload.bin"), payload);
+            var files = new Dictionary<string, string> { ["payload.bin"] = Hex(SHA256.HashData(payload)) };
+            WriteSignature(folder, files, Sign(priv, PluginSignatureVerifier.CanonicalPayload(folder, files)));
+            new PluginApprovalStore(approvals).Set("com.example.signed", PluginPackageHash.ComputeManifestHash(folder),
+                SignatureStatus.Verified, ApprovalState.Enabled, folder);
+
+            var prepared = PluginManager.PrepareScan([root], root, approvals);
+            // A verification after this point fails: the listed file no longer matches its recorded hash.
+            File.WriteAllText(Path.Combine(folder, "payload.bin"), "tampered");
+
+            await using var manager = NewManager(tmp, root, approvals);
+            await manager.DiscoverAsync(prepared, startBackends: false, CancellationToken.None);
+
+            var record = Assert.Single(manager.Plugins);
+            Assert.Equal(SignatureStatus.Verified, record.Signature.Status);
+            Assert.Equal(PluginState.Enabled, record.State);
+
+            await manager.RescanAsync(CancellationToken.None);
+
+            record = Assert.Single(manager.Plugins);
+            Assert.Equal(SignatureStatus.Invalid, record.Signature.Status);
+            Assert.Equal(PluginState.NeedsConsent, record.State);
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
     }
@@ -896,7 +966,11 @@ public class PluginTrustTests(ITestOutputHelper output)
     private sealed class NeverLaunches : IPluginProcessLauncher
     {
         public IPluginProcess Launch(
-            string executable, IReadOnlyList<string> args, string workingDirectory, Action<string> onStderrLine) =>
+            string executable,
+            IReadOnlyList<string> args,
+            string workingDirectory,
+            IReadOnlyDictionary<string, string> environment,
+            Action<string> onStderrLine) =>
             throw new InvalidOperationException("a plugin without a backend must not launch one");
     }
 

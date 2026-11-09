@@ -4,7 +4,8 @@ Applies to **SumaFile 1.0.3**. See the [release notes](RELEASE_1.0.3.md) for cha
 
 Open **Transfers > Transfer defaults** to choose a policy. A running or queued task's
 **Options** button overrides those defaults for that task; **Use defaults** removes the
-override. Settings persist locally. Bandwidth and scheduler limits refresh within
+override. Rows a plugin reports (7-Zip archive jobs, FTP/SFTP transfers) have no per-task
+Options: their settings live under Settings > Plugins. Settings persist locally. Bandwidth and scheduler limits refresh within
 five seconds during streamed copies.
 Each newly dispatched file snapshots current integrity, storage and buffer settings;
 active files finish with their current settings. Directory checkers, queue order,
@@ -38,10 +39,13 @@ policy. Existing settings and per-job overrides take precedence over the default
   copying use the scheduler before source deletion; file selections across drive
   roots also copy concurrently. Source deletion follows successful destination
   promotion. This does not make an entire multi-file move transactional.
-* FTP, FTPS and SFTP uploads/downloads share policy defaults and bandwidth pacing.
-  Their current provider session permits one file stream. The remote window states
-  this limit explicitly; selecting a higher file limit does not create extra server
-  connections. Parallel remote sessions require a separate provider enhancement.
+* FTP, FTPS and SFTP uploads/downloads run in the bundled FTP/SFTP plugin
+  (`com.sumafile.remote`), not in this scheduler. They reuse the shared staging,
+  journal and retry code, but read the plugin's own settings (Settings > Plugins >
+  FTP/SFTP connections, or the manager's Transfer options dialog): bandwidth limit,
+  up-to-date check, direct writes, pre-allocation, flushing and retries. The
+  `transfer.policy` row seeds them once per legacy database on upgrade and is not
+  read by remote transfers afterwards. A remote session copies one file at a time.
 * Archive extraction, checksum scans, server-side operations, and a cloud client's
   internal upload queue are not file-stream jobs controlled by this scheduler.
 
@@ -87,10 +91,10 @@ For a cloud drive, observed speed is filesystem/cache throughput. The cloud clie
 controls caching and remote completion. Windows can split a large file across byte ranges when both endpoints qualify as
 local fixed, non-virtual volumes, the stream count is at least two, and the file
 meets the cutoff and memory limits. Checksum mode hashes the bytes and uses
-the sequential pipeline. A move by itself does not enable hashing. Native remote sessions
-use provider-sized buffers; unsupported local concurrency/buffer controls are
-disabled in the remote options dialog. Remote checksum mode performs an additional
-remote read, and retry passes never replay files already completed. Native pCloud
+the sequential pipeline. A move by itself does not enable hashing. FTP/SFTP plugin
+sessions use provider-sized buffers, and the plugin's settings offer no concurrency
+or buffer controls. The plugin's checksum check performs an additional remote read,
+and retry passes never replay files already completed. Native pCloud
 API/OAuth and system-wide disk/CPU utilization sensing are outside this scheduler.
 
 See [Transport engine review and repairs](TRANSPORT_ENGINE_REVIEW.md) for ownership,

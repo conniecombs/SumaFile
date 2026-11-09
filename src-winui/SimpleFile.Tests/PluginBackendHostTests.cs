@@ -19,6 +19,8 @@ public class PluginBackendHostTests : IAsyncLifetime
     private readonly string _temp = Path.Combine(Path.GetTempPath(), "sumafile-tests", Guid.NewGuid().ToString("N"));
     private readonly List<FakePluginProcessLauncher> _launchers = [];
 
+    private readonly List<IDisposable> _denials = [];
+
     public Task InitializeAsync() => Task.CompletedTask;
 
     public async Task DisposeAsync()
@@ -26,6 +28,12 @@ public class PluginBackendHostTests : IAsyncLifetime
         foreach (var launcher in _launchers)
         {
             await launcher.DisposeAsync();
+        }
+
+        // The deny entries first, or the folder could not be deleted.
+        foreach (var denial in _denials)
+        {
+            denial.Dispose();
         }
 
         try { Directory.Delete(_temp, true); } catch { }
@@ -100,6 +108,66 @@ public class PluginBackendHostTests : IAsyncLifetime
         Assert.Contains("--extra", args);
         Assert.Equal(Path.Combine(plugin.Folder, "backend.exe"), launcher.LastExecutable);
         Assert.Equal(plugin.Folder, launcher.LastWorkingDirectory);
+    }
+
+    [Fact]
+    public async Task Start_PointsTmpAndTempAtTheDataFolder()
+    {
+        var launcher = Launcher(async (s, ct) =>
+        {
+            await AnswerHandshake(s, ct);
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        var host = Host(launcher);
+
+        await using var connection = await host.StartAsync(Plugin(), CancellationToken.None);
+
+        var tmp = Path.Combine(_temp, "data", PluginId, "tmp");
+        var environment = launcher.LastEnvironment!;
+        Assert.Equal(["TEMP", "TMP"], environment.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(tmp, environment["TMP"]);
+        Assert.Equal(tmp, environment["TEMP"]);
+        Assert.True(Directory.Exists(tmp));
+    }
+
+    [Fact]
+    public async Task Start_DataFolderNotWritable_FailsWithAClearMessage()
+    {
+        var launcher = Launcher(async (s, ct) =>
+        {
+            await AnswerHandshake(s, ct);
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        var host = Host(launcher);
+        _denials.Add(DenyAce.Add(
+            Path.Combine(_temp, "data"),
+            System.Security.AccessControl.FileSystemRights.CreateDirectories
+            | System.Security.AccessControl.FileSystemRights.CreateFiles
+            | System.Security.AccessControl.FileSystemRights.WriteData
+            | System.Security.AccessControl.FileSystemRights.AppendData));
+
+        var thrown = await Assert.ThrowsAsync<PluginBackendException>(() => host.StartAsync(Plugin(), CancellationToken.None));
+
+        Assert.StartsWith("SumaFile cannot create the data folder of plugin '", thrown.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{PluginId}' at {Path.Combine(_temp, "data", PluginId)}", thrown.Message, StringComparison.Ordinal);
+        Assert.Equal(0, launcher.Launches);
+    }
+
+    [Fact]
+    public async Task ProcessLauncher_PassesTheEnvironmentToTheBackend()
+    {
+        var tmp = Path.Combine(_temp, "x y");
+        Directory.CreateDirectory(tmp);
+        var line = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var process = new ProcessLauncher().Launch(
+            Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+            ["/d", "/c", "1>&2 echo %TMP%"],
+            Environment.SystemDirectory,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["TMP"] = tmp },
+            received => line.TrySetResult(received));
+
+        Assert.Equal(tmp, (await line.Task.WaitAsync(TimeSpan.FromSeconds(10))).Trim());
     }
 
     [Fact]
@@ -362,18 +430,30 @@ internal sealed class FakePluginProcessLauncher : IPluginProcessLauncher, IAsync
     public string? LastExecutable { get; private set; }
     public IReadOnlyList<string>? LastArgs { get; private set; }
     public string? LastWorkingDirectory { get; private set; }
+    public IReadOnlyDictionary<string, string>? LastEnvironment { get; private set; }
     public string? PipeName { get; private set; }
     public FakePluginProcess? Process { get; private set; }
 
     /// <summary>Completed with the executable path when <see cref="Launch"/> is called.</summary>
     public TaskCompletionSource<string> Launched { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    private int _launches;
+
+    /// <summary>How many times <see cref="Launch"/> was called.</summary>
+    public int Launches => Volatile.Read(ref _launches);
+
     public IPluginProcess Launch(
-        string executable, IReadOnlyList<string> args, string workingDirectory, Action<string> onStderrLine)
+        string executable,
+        IReadOnlyList<string> args,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string> environment,
+        Action<string> onStderrLine)
     {
+        Interlocked.Increment(ref _launches);
         LastExecutable = executable;
         LastArgs = args;
         LastWorkingDirectory = workingDirectory;
+        LastEnvironment = environment;
         var index = args.ToList().IndexOf("--pipe-name");
         PipeName = args[index + 1];
         Process = new FakePluginProcess();

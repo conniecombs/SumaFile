@@ -73,53 +73,6 @@ pub(super) struct ArchiveOperationJob {
     pub(super) cancel: Arc<AtomicBool>,
 }
 
-pub(super) struct RemoteTransferJob {
-    pub id: Option<Value>,
-    pub provider: crate::remote::session::SharedRemoteProvider,
-    pub request: crate::remote::transfer::RemoteTransferRequest,
-    pub cancel: Arc<AtomicBool>,
-}
-
-pub(super) fn spawn_remote_transfer(
-    writer: OutboundSink,
-    registry: Arc<OperationRegistry>,
-    scheduler: BlockingScheduler,
-    events: EventSink,
-    cache: SessionCache,
-    job: RemoteTransferJob,
-) {
-    tokio::spawn(async move {
-        let operation_id = job.request.operation_id.clone();
-        let destination_for_cache = job.request.destination.clone();
-        let sources_for_cache = job.request.sources.clone();
-        let cancel = job.cancel.clone();
-        let id = job.id;
-        let result = scheduler
-            .run_transfer(move || {
-                job.provider.with(|provider| {
-                    crate::remote::transfer::transfer_entries_with_tuning(
-                        provider,
-                        &job.request,
-                        &job.cancel,
-                        &|update| events.emit_progress(&update),
-                        &|update| events.emit("transfer-tuning", &update),
-                    )
-                })
-            })
-            .await;
-        cache.invalidate_path(&destination_for_cache);
-        cache.invalidate_paths(&sources_for_cache);
-        let response = scheduled_result_response(
-            id,
-            result,
-            "remote transfer",
-            "failed to serialize remote transfer results",
-        );
-        let _ = write_json(&writer, &response).await;
-        registry.remove_token(&operation_id, &cancel).await;
-    });
-}
-
 /// Run a tracked `extract_archive` or `create_archive` on the Transfer lane.
 /// It emits `operation-progress`: `running` (0/0) first, then one event per
 /// engine progress (engine bytes, no file counts), then `completed`,
