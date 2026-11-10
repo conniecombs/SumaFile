@@ -715,7 +715,7 @@ public sealed partial class MainWindow
         {
             SettingsWindow? settings = null;
             // Shown, not only loaded: the window renders its cards before ShowAsync activates it.
-            await SmokeWaitAsync(() => (settings = _fileOperationDialogs.OpenSettingsWindow) is not null
+            await SmokeWaitAsync(() => (settings = _fileOperationDialogs.OpenSettingsWindow) is { IsShown: true }
                 && settings.Content is FrameworkElement { IsLoaded: true }
                 && settings.SmokePluginsList.Children.Count > 0, "Settings window with plugin cards");
             ContentPresenter? slot = null;

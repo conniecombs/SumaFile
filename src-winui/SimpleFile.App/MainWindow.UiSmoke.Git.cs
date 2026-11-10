@@ -230,7 +230,7 @@ public sealed partial class MainWindow
         {
             SettingsWindow? settings = null;
             await SmokeGitWaitAsync(
-                () => (settings = _fileOperationDialogs.OpenSettingsWindow) is not null
+                () => (settings = _fileOperationDialogs.OpenSettingsWindow) is { IsShown: true }
                     && settings.Content is FrameworkElement { IsLoaded: true }
                     && settings.SmokePluginsList.Children.Count > 0,
                 () => "the Settings window with plugin cards");
@@ -641,7 +641,7 @@ public sealed partial class MainWindow
             // The first Settings window of a process builds all of its XAML, which a loaded runner can take well over
             // the UI wait to do (CI run 42760411425).
             await SmokeWaitWithinAsync(
-                () => Task.FromResult((settings = _fileOperationDialogs.OpenSettingsWindow) is not null
+                () => Task.FromResult((settings = _fileOperationDialogs.OpenSettingsWindow) is { IsShown: true }
                     && settings.Content is FrameworkElement { IsLoaded: true }),
                 TimeSpan.FromSeconds(30),
                 () => "the Settings window");

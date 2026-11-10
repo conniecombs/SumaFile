@@ -134,6 +134,7 @@ public sealed partial class SettingsWindow : Window
         }
 
         Activate();
+        IsShown = true;
         OwnerHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         return _resultSource.Task;
     }
@@ -882,6 +883,12 @@ public sealed partial class SettingsWindow : Window
     }
 
     public bool IsClosed { get; private set; }
+
+    /// <summary>
+    /// True once <see cref="ShowAsync"/> has activated the window: its settings are loaded by then. A window can be
+    /// created, and its content loaded, while its settings are still loading.
+    /// </summary>
+    internal bool IsShown { get; private set; }
 
     private bool _discardConfirmed;
 

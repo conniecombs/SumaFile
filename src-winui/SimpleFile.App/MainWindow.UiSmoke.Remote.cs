@@ -455,7 +455,7 @@ public sealed partial class MainWindow
         try
         {
             SettingsWindow? settings = null;
-            await SmokeRemoteWaitAsync(() => (settings = _fileOperationDialogs.OpenSettingsWindow) is not null
+            await SmokeRemoteWaitAsync(() => (settings = _fileOperationDialogs.OpenSettingsWindow) is { IsShown: true }
                 && settings.Content is FrameworkElement { IsLoaded: true }
                 && settings.SmokePluginsList.Children.Count > 0, () => "the Settings window with plugin cards");
             Button? open = null;
@@ -560,7 +560,7 @@ public sealed partial class MainWindow
         try
         {
             SettingsWindow? settings = null;
-            await SmokeRemoteWaitAsync(() => (settings = _fileOperationDialogs.OpenSettingsWindow) is not null
+            await SmokeRemoteWaitAsync(() => (settings = _fileOperationDialogs.OpenSettingsWindow) is { IsShown: true }
                 && settings.Content is FrameworkElement { IsLoaded: true }, () => "the Settings window");
             var content = (FrameworkElement)settings!.Content;
             var named = content.FindName("SettingsRemoteManagerButton") is not null
