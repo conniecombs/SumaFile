@@ -111,6 +111,9 @@ if (!displayMatch || !displayConstMatch) {
 }
 if (!displayMatch || !readmeBadgeMatch) {
   fail('Could not read InformationalVersion and README version badge.');
+} else if (decodeURIComponent(readmeBadgeMatch[1]) === 'Beta') {
+  // The Beta branch shows no version number: its badge says "Beta" until the merge into main sets the real version
+  // (scripts/release-version.mjs then writes the number into the badge).
 } else if (displayMatch[1] !== decodeURIComponent(readmeBadgeMatch[1])) {
   fail(
     `Display version mismatch: InformationalVersion=${displayMatch[1]} README badge=${decodeURIComponent(readmeBadgeMatch[1])}`,

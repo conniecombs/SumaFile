@@ -1,14 +1,15 @@
-# SumaFile 1.1.0-beta.1 Release Notes
+# SumaFile Beta Notes
 
-Prepared November 10, 2026. This Windows x64 build is a **beta** of 1.1.0. It
-introduces the plugin system and moves three built-in features into plugins
-that ship with SumaFile. A default install keeps the features of 1.0.4; how
-they are built, stored and removed has changed, so read "Upgrading" before you
-install it over 1.0.4.
+Prepared November 10, 2026. These notes describe the **Beta** branch of
+SumaFile for Windows x64. It introduces the plugin system and moves three
+built-in features into plugins that ship with SumaFile. A default install
+keeps the features of 1.0.4; how they are built, stored and removed has
+changed, so read "Upgrading" before you install a Beta build over 1.0.4.
 
-It is a pre-release: GitHub marks it as one, so the in-app updater of a 1.0.4
-install does not offer it. A beta install is offered the final 1.1.0 when that
-is published.
+The Beta has no version number of its own: its builds still carry 1.0.4, and
+the real version is set when the branch is merged into `main`. Until then, do
+not publish a Beta build as a release: the updater and the MSI would treat it
+as the same version as the published 1.0.4.
 
 ## What is new
 
@@ -52,23 +53,6 @@ is published.
 
 ## Upgrading
 
-Windows 10 version 2004 or later, or Windows 11, x64. Close SumaFile after
-active transfers finish. Use the
-[Releases page](https://github.com/conniecombs/SumaFile/releases) for published
-files.
-
-| Artifact | Use |
-| --- | --- |
-| `SumaFile_1.1.0-beta.1_x64-winui-setup.exe` | Per-user install or upgrade |
-| `SumaFile_1.1.0-beta.1_x64-winui.msi` | Windows Installer deployment |
-| `SumaFile_1.1.0-beta.1_x64-winui-portable.zip` | Extract the complete archive into a fresh folder and launch SumaFile.exe |
-| `SumaFile_1.1.0-beta.1_x64-winui-setup.exe.sig` | Detached signature for the NSIS installer |
-| `latest-winui.json` | Signed updater manifest used by the application |
-
-Open About after upgrading and check for 1.1.0-beta.1. Existing settings,
-bookmarks, layouts and keyboard shortcuts are kept.
-
-
 - Plugins, their data (`plugins-data`, which holds the FTP/SFTP profiles), the
   approvals file and `plugins.log` all live in the installation folder.
   Upgrades keep them. **Uninstalling removes them**, including the FTP/SFTP
@@ -76,13 +60,10 @@ bookmarks, layouts and keyboard shortcuts are kept.
   `SumaFile.Remote.*`.
 - Git for Windows with `git.exe` on `PATH` is needed for Git status and the
   Git workbench, as before.
-- MSI: this beta and the final 1.1.0 share the numeric version 1.1.0. Uninstall
-  a beta MSI before installing the final 1.1.0 MSI. The NSIS setup and the
-  in-app updater upgrade a beta in place.
 
 ## Dogfood 10-Step Script
 
-1. Upgrade a disposable v1.0.4 installation and verify About reports 1.1.0-beta.1.
+1. Install a Beta build over a disposable v1.0.4 installation.
 2. Open Settings -> Plugins: the overview lists 7-Zip archives, FTP/SFTP connections and Git as enabled, and each has its own page under Plugins.
 3. Browse a Git repository and a plain folder; badges, the Git menu group and the Git toolbar button appear only in the repository.
 4. Open the Git workbench, stage and unstage a file, view a diff, then fetch and cancel it from the Transfers window.
@@ -99,7 +80,7 @@ No manual import is needed for normal SimpleFile-to-SumaFile use. SumaFile keeps
 
 ## Known Limitations
 
-- This is a beta. The installer build and the installer smokes
+- The installer build and the installer smokes
   (`npm run release:build`, the NSIS, MSI and upgrade smokes) and the
   `-Counts 10000` UI smoke variants have not run for this build; run them on
   the release commit.
@@ -109,4 +90,4 @@ No manual import is needed for normal SimpleFile-to-SumaFile use. SumaFile keeps
 - The SDK package and the Rust helper crate for plugin authors are not
   published yet.
 
-Release checklist: run the repository, Rust, .NET, packaging and Windows UI checks on the release commit. Require a signed test release before claiming in-app updater installation is proven.
+Checklist before the merge into `main`: set the version, write that version's release notes, and run the repository, Rust, .NET, packaging and Windows UI checks on the release commit.

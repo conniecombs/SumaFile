@@ -157,7 +157,7 @@
           "CommunityToolkit.Mvvm": "[8.4.0, )",
           "Markdig": "[1.3.2, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.0, )",
-          "SimpleFile.Ipc": "[1.1.0, )",
+          "SimpleFile.Ipc": "[1.0.4, )",
           "System.Data.OleDb": "[9.0.6, )"
         }
       },
@@ -168,9 +168,9 @@
         "type": "Project",
         "dependencies": {
           "BouncyCastle.Cryptography": "[2.7.0, )",
-          "SimpleFile.Core": "[1.1.0, )",
-          "SimpleFile.Ipc": "[1.1.0, )",
-          "SimpleFile.PluginSdk": "[1.1.0, )"
+          "SimpleFile.Core": "[1.0.4, )",
+          "SimpleFile.Ipc": "[1.0.4, )",
+          "SimpleFile.PluginSdk": "[1.0.4, )"
         }
       },
       "simplefile.pluginsdk": {
@@ -179,13 +179,13 @@
       "sumafile.git.model": {
         "type": "Project",
         "dependencies": {
-          "SimpleFile.PluginSdk": "[1.1.0, )"
+          "SimpleFile.PluginSdk": "[1.0.4, )"
         }
       },
       "sumafile.remote.model": {
         "type": "Project",
         "dependencies": {
-          "SimpleFile.PluginSdk": "[1.1.0, )"
+          "SimpleFile.PluginSdk": "[1.0.4, )"
         }
       }
     },

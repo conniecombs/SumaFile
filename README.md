@@ -3,7 +3,7 @@
 [![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
 [![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
 [![Installer Smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
-![Version](https://img.shields.io/badge/version-1.1.0--beta.1-2563eb)
+![Version](https://img.shields.io/badge/version-Beta-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%7C%20Windows%2011-0078D4?logo=windows)
 ![UI](https://img.shields.io/badge/UI-WinUI%203-5b8def)
 ![Backend](https://img.shields.io/badge/backend-Rust%20IPC-b7410e?logo=rust)
@@ -71,7 +71,7 @@ All visible files and paths belong to its generated test workspace.
 
 | Area | Current state |
 | --- | --- |
-| Product version | `1.1.0-beta.1` |
+| Product version | `1.0.4` |
 | Platform | Windows 10 2004+ / Windows 11, x64 |
 | UI | Unpackaged WinUI 3 desktop app |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
@@ -83,11 +83,11 @@ The active application is the WinUI host under `src-winui/` plus the Rust crates
 under `crates/`. Historical migration notes remain in `docs/winui-migration/`,
 but the Svelte/Tauri surface is not the shipping UI for this branch.
 
-This README describes **1.1.0-beta.1**, a beta. Its plugin system, and the move
-of Git, FTP/SFTP and 7-Zip into three bundled plugins, are new in this beta:
+This README describes the **Beta** branch. Its plugin system, and the move
+of Git, FTP/SFTP and 7-Zip into three bundled plugins, are new in the Beta:
 the latest stable release, 1.0.4, has those features built into SumaFile
 itself. See [Plugins](#plugins), the
-[1.1.0-beta.1 release notes](docs/RELEASE_1.1.0-beta.1.md) and the
+[Beta notes](docs/RELEASE_BETA.md) and the
 [changelog](docs/CHANGELOG.md).
 
 ## What changed in 1.0.4
@@ -103,13 +103,14 @@ labels, the sidebar, profiles and connections each have one name everywhere.
 See the [v1.0.4 release notes](docs/RELEASE_1.0.4.md) for the changes since
 v1.0.3, upgrade instructions and known limitations.
 
-## What changed in 1.1.0-beta.1
+## What changed in the Beta
 
 Git, FTP/SFTP and 7-Zip are now three plugins that ship with SumaFile, on a new
 plugin system that third parties can build on. Settings -> Plugins has an
 overview and one page per plugin. Uninstalling now also removes plugin data,
 including FTP/SFTP profiles. See the
-[1.1.0-beta.1 release notes](docs/RELEASE_1.1.0-beta.1.md).
+[Beta notes](docs/RELEASE_BETA.md). The Beta has no version number of its own yet: it gets one when it is
+merged into `main`.
 
 ## Highlights
 
@@ -130,11 +131,11 @@ including FTP/SFTP profiles. See the
 Download the latest Windows release from
 [GitHub Releases](https://github.com/conniecombs/SumaFile/releases).
 
-| v1.1.0-beta.1 artifact | Recommended use |
+| v1.0.4 artifact | Recommended use |
 | --- | --- |
-| `SumaFile_1.1.0-beta.1_x64-winui-setup.exe` | Normal per-user installation |
-| `SumaFile_1.1.0-beta.1_x64-winui.msi` | MSI deployment or installer validation |
-| `SumaFile_1.1.0-beta.1_x64-winui-portable.zip` | Portable, extracted-folder usage |
+| `SumaFile_1.0.4_x64-winui-setup.exe` | Normal per-user installation |
+| `SumaFile_1.0.4_x64-winui.msi` | MSI deployment or installer validation |
+| `SumaFile_1.0.4_x64-winui-portable.zip` | Portable, extracted-folder usage |
 | `latest-winui.json` | Signed updater metadata for published releases |
 
 Requirements:
@@ -145,7 +146,7 @@ Requirements:
 - Built-in RAR listing and extraction; RAR creation is not supported
 
 `.7z` support (with the bundled 7-Zip), FTP/FTPS/SFTP connections and Git
-come with SumaFile. In 1.0.4 they are part of the app; in 1.1.0-beta.1 they
+come with SumaFile. In 1.0.4 they are part of the app; in the Beta they
 are three bundled plugins that install with SumaFile: `com.sumafile.sevenzip`, `com.sumafile.remote` and
 `com.sumafile.git`.
 
@@ -154,7 +155,7 @@ with trusted updater metadata can download and launch the NSIS setup from inside
 the app. Builds without complete trusted metadata fall back to the release page.
 
 Uninstalling (Windows Settings -> Apps, or removing the MSI) deletes the
-installation folder. From 1.1.0-beta.1 that includes every plugin file
+installation folder. In the Beta that includes every plugin file
 SumaFile keeps there: plugins you installed, `plugins-data` (with the FTP/SFTP
 connection profiles), `plugin-approvals.json` and `plugins.log`; an upgrade or
 reinstall keeps them. Saved FTP/SFTP passwords and passphrases stay in Windows
@@ -440,7 +441,7 @@ Runtime diagnostics are written under:
 
 ## Plugins
 
-The plugin system is new in 1.1.0-beta.1; the latest stable release, 1.0.4,
+The plugin system is new in the Beta; the latest stable release, 1.0.4,
 does not have it.
 
 Plugins add commands, menus, toolbar buttons, sidebar sections, panels, file
@@ -767,7 +768,7 @@ Before creating a release tag:
 
 1. Confirm the version fields above match.
 2. Run `npm run check:release`.
-3. Run the WinUI smoke commands required by `docs/RELEASE_1.1.0-beta.1.md`.
+3. Run the WinUI smoke commands required by `docs/RELEASE_1.0.4.md`, and for the Beta by `docs/RELEASE_BETA.md`.
 4. Confirm the Installer Smoke workflow succeeds on the release commit.
 5. Merge the version bump, then tag the merged commit or start a new Release run from the updated `main`.
 
@@ -787,7 +788,7 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 | [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
 | [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
 | [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | Signed updater releases |
-| [docs/RELEASE_1.1.0-beta.1.md](docs/RELEASE_1.1.0-beta.1.md) | The 1.1.0 beta: the plugin system, what changed for Git, FTP/SFTP and 7-Zip, upgrading and known limitations |
+| [docs/RELEASE_BETA.md](docs/RELEASE_BETA.md) | The Beta: the plugin system, what changed for Git, FTP/SFTP and 7-Zip, upgrading and known limitations |
 | [docs/RELEASE_1.0.4.md](docs/RELEASE_1.0.4.md) | Changes since v1.0.3, upgrade instructions and release checklist |
 | [docs/RELEASE_1.0.3.md](docs/RELEASE_1.0.3.md) | Changes since v1.0.2, upgrade instructions and release checklist |
 | [docs/RELEASE_1.0.2.md](docs/RELEASE_1.0.2.md) | Complete 1.0.1 → 1.0.2 release notes, upgrade guidance and checklist |
@@ -813,7 +814,7 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 
 ## Known Limitations
 
-- SumaFile 1.1.0-beta.1 is Windows-only.
+- SumaFile 1.0.4 is Windows-only.
 - Installing SumaFile for the first time is manual; in-app update installation requires a
   newer published release with signed `latest-winui.json` metadata.
 - RAR archives can be listed and extracted, but RAR creation and in-place RAR
