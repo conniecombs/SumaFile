@@ -1623,7 +1623,17 @@ mod tests {
                 fs::write(self.path(path), vec![0u8; copied as usize]).unwrap();
             }
             if let Some((local_path, replacement)) = &self.mutate_local_during_upload {
+                let before = fs::metadata(local_path).unwrap().modified().unwrap();
                 fs::write(local_path, replacement).unwrap();
+                // Windows stamps write times from a clock that can tick as coarsely as ~15 ms, so a rewrite right
+                // after the copy may keep the old time and look unchanged to a metadata check (CI run
+                // 42733344464). A real later edit has a later time: give the rewrite one deterministically.
+                OpenOptions::new()
+                    .write(true)
+                    .open(local_path)
+                    .unwrap()
+                    .set_modified(before + Duration::from_secs(2))
+                    .unwrap();
             }
             Ok(copied)
         }
