@@ -76,6 +76,7 @@ public sealed partial class MainWindow
             _ = PluginContributionAdapter.PrimaryToolbarCommandIds(none);
             _ = PluginContributionAdapter.SidebarSections(none);
             _ = PluginContributionAdapter.Panels(none);
+            _ = PluginContributionAdapter.RowDecorationProviders(none);
             _ = CreatePluginSectionView(new PluginSidebarSection("warm-up", "warm-up", "Warm-up", "warm-up", null, 0));
         }
         catch (Exception exception)
@@ -143,6 +144,9 @@ public sealed partial class MainWindow
             WindowsFor = WindowsFor,
             // IPluginHost.Panels: shows and hides the plugin's own panels, always queued to this window's thread.
             PanelsFor = CreatePluginPanels,
+            // IPluginHost.Decorations and WriteSettingAsync: re-decorate the shown folders. Only starts thread-pool work
+            // (the coordinator calls every source with Task.Run), so it is safe from the UI thread and from plugin code.
+            InvalidateDecorations = pluginId => _ = ObserveAsync(_workspace?.InvalidateDecorationsAsync() ?? Task.CompletedTask),
             ValidateUiElement = element => element is FrameworkElement
                 ? null
                 : $"returned {element.GetType().FullName}, not a Microsoft.UI.Xaml.FrameworkElement",
@@ -175,6 +179,9 @@ public sealed partial class MainWindow
         manager.Changed += OnPluginsChanged;
         // After the mark, so no launch competes with the span; an archive engine registers once its backend runs.
         manager.StartStartupBackends();
+        // After the mark too: copies legacy settings into bundled plugins' declared settings (spec §8.1). Activation
+        // waits for it, bounded, so no plugin reads a setting before the copy.
+        _ = ObserveAsync(manager.MigrateLegacySettingsAsync(cts.Token));
 
         // After the mark, so log writes stay out of the discovery budget. The smokes point the overrides at
         // disposable locations; say so, so a stray override on a user machine is visible.
@@ -205,6 +212,9 @@ public sealed partial class MainWindow
         // From here on, catalog changes rebuild the toolbar; before this the first sync builds it.
         AttachCommandCatalogEvents();
         ApplyPluginToolbarPlacements(manager.EnabledPlugins);
+        // The workspace exists now: hand the coordinator the enabled decoration providers. Its startup gate holds every
+        // request until ready (QueuePluginSectionActivation).
+        ApplyRowDecorationSource();
         _pluginWorkspace?.Refresh();
     }
 
@@ -233,9 +243,30 @@ public sealed partial class MainWindow
         _pluginMenus = PluginContributionAdapter.ContextMenus(enabled);
         SyncPluginSidebarSections(enabled);
         SyncPluginPanels(enabled);
+        ApplyRowDecorationSource();
         if (ApplyPluginToolbarPlacements(enabled))
         {
             ApplyCommandSurfaceLayout();
+        }
+    }
+
+    /// <summary>
+    /// Gives the workspace's decoration coordinator the enabled plugins' row decoration providers, and re-decorates the
+    /// shown folders when that set changed. A no-op until the workspace exists. It only queues: it awaits nothing and
+    /// calls no source, and the coordinator starts every source call with <c>Task.Run</c>, so a provider's activation
+    /// never runs inside <see cref="ApplyPluginContributions"/> (carry-over #82).
+    /// </summary>
+    private void ApplyRowDecorationSource()
+    {
+        if (_plugins is not { } manager || _workspace is not { } workspace)
+        {
+            return;
+        }
+
+        var source = new PluginRowDecorationSource(manager, PluginContributionAdapter.RowDecorationProviders(manager.EnabledPlugins));
+        if (workspace.RowDecorations.SetSource(source))
+        {
+            _ = ObserveAsync(workspace.InvalidateDecorationsAsync());
         }
     }
 
@@ -440,6 +471,8 @@ public sealed partial class MainWindow
         _pluginWorkspace = null;
         _pluginLayoutReady = false;
         _pluginMenus = [];
+        // The plugins are going: no source, so no decoration request reaches the manager while it stops.
+        _workspace?.RowDecorations.SetSource(null);
         AppCommandCatalog.SetPluginCommands([]);
         ToolbarActionCatalog.SetPluginActions([]);
         ClearPluginSidebarSections();

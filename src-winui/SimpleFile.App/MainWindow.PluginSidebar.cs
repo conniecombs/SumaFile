@@ -238,6 +238,9 @@ public sealed partial class MainWindow
     /// <summary>
     /// After startup has marked ready, lets section bodies load: at low priority, so the first paint and input come
     /// first. The loads themselves are queued again (<see cref="_pluginBodyLoads"/>), never run inside this callback.
+    /// The same callback opens the row decoration gate (carry-over h): no decoration request, and no plugin activation
+    /// it would cause, precedes it. The shown panes are then decorated again: a listing published before the gate
+    /// opened got no decorations, and a startup navigation still listing sees the changed generation when it publishes.
     /// </summary>
     private void QueuePluginSectionActivation()
     {
@@ -245,6 +248,11 @@ public sealed partial class MainWindow
         {
             _pluginSectionsReady = true;
             ActivateVisiblePluginSections();
+            if (_workspace is { } workspace)
+            {
+                workspace.RowDecorations.MarkStartupReady();
+                _ = ObserveAsync(workspace.InvalidateDecorationsAsync());
+            }
         });
     }
 

@@ -257,7 +257,8 @@ public sealed partial class PluginManager
                 TakeArchiveRegistrationLocked(runtime);
                 record.BackendRunning = false;
                 if (record.State == PluginState.Enabled) record.State = PluginState.Faulted;
-                record.Error = message;
+                // Disabled before its teardown detached the runtime: the record stays as Disable left it.
+                if (record.State != PluginState.Disabled) record.Error = message;
             }
         }
 

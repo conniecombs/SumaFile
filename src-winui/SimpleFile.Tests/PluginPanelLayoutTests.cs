@@ -84,4 +84,20 @@ public class PluginPanelLayoutTests
         Assert.Equal(PluginSidebarLayout.Key(section), PluginPanelLayout.Key(panel));
         Assert.NotEqual(PluginSidebarLayout.BodyLoadKey(section), PluginPanelLayout.BodyLoadKey(panel));
     }
+
+    [Fact]
+    public void NeedsBodyLoad_OncePerPresentation()
+    {
+        // A shown panel with no body and no load for this presentation asks for one.
+        Assert.True(PluginPanelLayout.NeedsBodyLoad(hasBody: false, presentation: 4, loadingPresentation: null));
+
+        // A body already there, or a load for this very presentation still running (it cleared its queue mark before it
+        // started), means no second CreatePanel call.
+        Assert.False(PluginPanelLayout.NeedsBodyLoad(hasBody: true, presentation: 4, loadingPresentation: null));
+        Assert.False(PluginPanelLayout.NeedsBodyLoad(hasBody: false, presentation: 4, loadingPresentation: 4));
+        Assert.False(PluginPanelLayout.NeedsBodyLoad(hasBody: true, presentation: 4, loadingPresentation: 4));
+
+        // A load still running for an ended presentation is dropped when it returns, so the new one loads its own.
+        Assert.True(PluginPanelLayout.NeedsBodyLoad(hasBody: false, presentation: 5, loadingPresentation: 4));
+    }
 }

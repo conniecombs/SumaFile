@@ -163,6 +163,10 @@ public sealed partial class MainWindow
         {
             button.Opacity = 1;
         }
+
+        // Last, because the label above reset the name and tooltip: a plugin panel's button is its toggle on every
+        // build and chrome refresh, whether or not the overflow set changed.
+        ApplyPluginPanelToggleChrome(button, action.CommandId ?? action.Id);
     }
 
     /// <summary>
@@ -311,15 +315,46 @@ public sealed partial class MainWindow
 
     private void ApplyPrimaryToolbarCommandVisibility(IReadOnlySet<string> overflowed)
     {
+        // Built at most once per pass, and only when a plugin action has a `when`.
+        ContextMenuRequest? whenRequest = null;
         foreach (var pair in _primaryToolbarActionElements)
         {
             var enabledBySettings = !pair.Key.StartsWith("git-", StringComparison.Ordinal)
                 || IsGitIntegrationEnabled;
-            SetOverflowVisible(pair.Value, enabledBySettings && !overflowed.Contains(pair.Key));
+            SetOverflowVisible(
+                pair.Value,
+                enabledBySettings && !overflowed.Contains(pair.Key) && PluginToolbarWhenAllows(pair.Key, ref whenRequest));
         }
 
         RefreshToolbarSeparatorVisibility();
         RefreshPluginPanelToggleButtons();
+    }
+
+    /// <summary>
+    /// False when <paramref name="actionId"/> is a plugin action whose <c>when</c> is false for the active pane, from the
+    /// same request menus use (so from the pane's current decorations; no provider is asked). A panel toggle stays
+    /// visible while its panel is shown, so the user can always hide it.
+    /// </summary>
+    private bool PluginToolbarWhenAllows(string actionId, ref ContextMenuRequest? request)
+    {
+        if (ToolbarActionCatalog.Find(actionId) is not { PluginId: { } pluginId } action
+            || string.IsNullOrWhiteSpace(action.When))
+        {
+            return true;
+        }
+
+        if (IsPluginPanelShownForCommand(action.CommandId ?? action.Id))
+        {
+            return true;
+        }
+
+        if (_workspace is null)
+        {
+            return false;
+        }
+
+        request ??= BuildContextMenuRequest(SelectedRowsForPane(_workspace.ActivePane), forWhenOnly: true);
+        return PluginMenuWhen.Evaluate(action.When, pluginId, request);
     }
 
     private void RefreshToolbarSeparatorVisibility()

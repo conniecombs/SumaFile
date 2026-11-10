@@ -142,10 +142,15 @@ public sealed partial class PluginManager
 
             // Fresh services so the next call retries instead of replaying the cached failure.
             runtime.NewGeneration();
-            record.Error = ex.Message;
-            if (runtime.RecordFailure() && record.State == PluginState.Enabled)
+            // A Disable that set the state before its teardown detached the runtime keeps its clean record (as in
+            // MarkLoadFailedAsync): the plugin is off, so a start that failed meanwhile is only logged.
+            if (record.State != PluginState.Disabled)
             {
-                record.State = PluginState.Faulted;
+                record.Error = ex.Message;
+                if (runtime.RecordFailure() && record.State == PluginState.Enabled)
+                {
+                    record.State = PluginState.Faulted;
+                }
             }
         }
 
@@ -156,6 +161,9 @@ public sealed partial class PluginManager
     private void OnBackendLost(PluginRecord record, PluginRuntime runtime, PluginBackendConnection connection, Exception? ex)
     {
         long unregisterGeneration;
+        var message = ex is null
+            ? "The plugin backend stopped unexpectedly."
+            : $"The plugin backend stopped unexpectedly: {ex.Message}";
         lock (_gate)
         {
             if (!ReferenceEquals(runtime.Connection, connection)) return;
@@ -164,12 +172,11 @@ public sealed partial class PluginManager
             unregisterGeneration = TakeArchiveRegistrationLocked(runtime);
             record.BackendRunning = false;
             if (record.State == PluginState.Enabled) record.State = PluginState.Faulted;
-            record.Error = ex is null
-                ? "The plugin backend stopped unexpectedly."
-                : $"The plugin backend stopped unexpectedly: {ex.Message}";
+            // Disabled before its teardown detached the runtime: the record stays as Disable left it.
+            if (record.State != PluginState.Disabled) record.Error = message;
         }
 
-        _options.Log(record.Id, $"[error] {record.Error}");
+        _options.Log(record.Id, $"[error] {message}");
         // Off this thread: Lost may be raised from the connection's own read loop. This runs independently of a
         // restart, so it passes its generation and is skipped if the replacement has registered meanwhile.
         _ = Task.Run(async () =>

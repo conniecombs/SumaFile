@@ -341,10 +341,7 @@ public sealed partial class FileRowView : UserControl
         {
             var value = isTileView ? Row.ModifiedText : SecondaryText(Row);
             _secondaryText.Text = value;
-            _secondaryText.Foreground = Brush(
-                !isTileView && !string.IsNullOrWhiteSpace(Row.GitText) && string.IsNullOrWhiteSpace(Row.SymlinkText)
-                    ? EntryPresentation.GitStatusBrushKey(Row.GitText)
-                    : "SfTextMutedBrush");
+            _secondaryText.Foreground = SecondaryTextBrush(isTileView);
             ToolTipService.SetToolTip(_secondaryText, string.IsNullOrWhiteSpace(value) ? null : value);
         }
 
@@ -352,12 +349,14 @@ public sealed partial class FileRowView : UserControl
         {
             var value = Row.ColumnText(id);
             text.Text = value;
-            if (string.Equals(id, "git", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(id, ColumnLayout.DecorationColumnId, StringComparison.OrdinalIgnoreCase))
             {
-                text.Foreground = Brush(EntryPresentation.GitStatusBrushKey(value));
+                text.Foreground = DecorationBrush();
                 text.FontWeight = string.IsNullOrWhiteSpace(value)
                     ? Microsoft.UI.Text.FontWeights.Normal
                     : Microsoft.UI.Text.FontWeights.SemiBold;
+                ToolTipService.SetToolTip(text, DecorationTooltipFor(Row, value));
+                continue;
             }
 
             ToolTipService.SetToolTip(text, string.IsNullOrWhiteSpace(value) ? null : value);
@@ -807,10 +806,34 @@ public sealed partial class FileRowView : UserControl
     {
         return EntryPresentation.ContentSecondaryText(
             row.ParentText,
-            row.GitText,
+            row.DecorationText,
             row.SymlinkText,
             row.ExtensionText);
     }
+
+    /// <summary>The decoration's tooltip, else its text; null when the row has no decoration.</summary>
+    private static string? DecorationTooltipFor(FileRow row, string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(row.DecorationTooltip) ? text : row.DecorationTooltip;
+    }
+
+    /// <summary>
+    /// The decoration's brush: the plugin's key only when the allow-list holds it (else <c>SfTextMutedBrush</c>),
+    /// looked up against this row so it follows the row's actual theme.
+    /// </summary>
+    private Brush DecorationBrush() =>
+        ThemeResourceLookup.Brush(this, DecorationBrushKeys.Normalize(Row?.DecorationBrushKey));
+
+    /// <summary>The secondary line is drawn in the decoration's brush when it leads with the decoration text.</summary>
+    private Brush SecondaryTextBrush(bool isTileView) =>
+        Row is not null && !isTileView && !string.IsNullOrWhiteSpace(Row.DecorationText) && string.IsNullOrWhiteSpace(Row.SymlinkText)
+            ? DecorationBrush()
+            : Brush("SfTextMutedBrush");
 
     private void ApplyTagPip(string color)
     {
@@ -849,18 +872,14 @@ public sealed partial class FileRowView : UserControl
         if (_secondaryText is not null)
         {
             var isTileView = Row is not null && ViewFor(Row.Pane) == "tiles";
-            _secondaryText.Foreground = Brush(
-                Row is not null && !isTileView && !string.IsNullOrWhiteSpace(Row.GitText) && string.IsNullOrWhiteSpace(Row.SymlinkText)
-                    ? EntryPresentation.GitStatusBrushKey(Row.GitText)
-                    : "SfTextMutedBrush");
+            _secondaryText.Foreground = SecondaryTextBrush(isTileView);
         }
 
         foreach (var (id, text) in _textCells)
         {
-            text.Foreground = Brush(
-                string.Equals(id, "git", StringComparison.OrdinalIgnoreCase)
-                    ? EntryPresentation.GitStatusBrushKey(text.Text)
-                    : "SfTextMutedBrush");
+            text.Foreground = string.Equals(id, ColumnLayout.DecorationColumnId, StringComparison.OrdinalIgnoreCase)
+                ? DecorationBrush()
+                : Brush("SfTextMutedBrush");
         }
     }
 

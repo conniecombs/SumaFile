@@ -20,7 +20,16 @@ public sealed class FileRow : IInspectionEntryPresentation
     public ulong Size { get; set; }
     public string Extension { get; set; } = "";
     public string ExtensionText { get; set; } = "";
+    // The service's Git status. No longer rendered: the status column shows DecorationText. It goes with core Git.
     public string GitText { get; set; } = "";
+    /// <summary>The row's plugin decoration text (the status column and the secondary text), or empty.</summary>
+    public string DecorationText { get; set; } = "";
+    /// <summary>The decoration's theme brush key as the plugin gave it; drawn through <see cref="DecorationBrushKeys"/>.</summary>
+    public string DecorationBrushKey { get; set; } = "";
+    /// <summary>The decoration's tooltip, or empty.</summary>
+    public string DecorationTooltip { get; set; } = "";
+    /// <summary>Every plugin that decorates this row, for the <c>hasDecoration</c> of <c>when</c> expressions.</summary>
+    public IReadOnlySet<string> DecorationPlugins { get; set; } = NoDecorationPlugins;
     public string SymlinkText { get; set; } = "";
     public string PathText { get; set; } = "";
     public string ParentText { get; set; } = "";
@@ -28,6 +37,8 @@ public sealed class FileRow : IInspectionEntryPresentation
     public string TagName { get; set; } = "";
     public PaneId Pane { get; set; } = PaneId.Primary;
     public bool IsHidden { get; set; }
+    private static readonly IReadOnlySet<string> NoDecorationPlugins = new HashSet<string>(StringComparer.Ordinal);
+
     public string AutomationName => IsDir ? $"Folder {Name}" : $"File {Name}";
 
     public string ColumnText(string columnId)
@@ -40,7 +51,7 @@ public sealed class FileRow : IInspectionEntryPresentation
             "date" or "modified" => ModifiedText,
             "type" => TypeText,
             "extension" => ExtensionText,
-            "git" => GitText,
+            "git" => DecorationText,
             "symlink" => SymlinkText,
             "path" => PathText,
             "parent" => ParentText,

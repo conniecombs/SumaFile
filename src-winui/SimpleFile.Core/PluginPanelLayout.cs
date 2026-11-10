@@ -73,6 +73,15 @@ public static class PluginPanelLayout
             : wanted.FirstOrDefault(panel => string.Equals(panel.CommandId, hostCommandId, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Whether a shown panel's body must be asked for: it has none, and no load for this <paramref name="presentation"/>
+    /// is running (<paramref name="loadingPresentation"/>, the presentation of the load in flight, or null). The body
+    /// is created once per presentation; a load still running for an ended presentation is dropped when it returns, so
+    /// it does not hold up the new one. The body-load queue only skips a key while it waits, not once its load started.
+    /// </summary>
+    public static bool NeedsBodyLoad(bool hasBody, int presentation, int? loadingPresentation) =>
+        !hasBody && loadingPresentation != presentation;
+
     private static double Clamp(double requested, double available, double min, double fallback, double fraction)
     {
         var size = double.IsFinite(requested) ? requested : fallback;

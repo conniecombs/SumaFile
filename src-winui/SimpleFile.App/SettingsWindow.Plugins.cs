@@ -115,7 +115,8 @@ public sealed partial class SettingsWindow
             PluginsList.Children.Add(builder.Build(
                 record,
                 key => fileOps.GetSettingAsync(key, token),
-                (key, value) => fileOps.SetSettingAsync(key, value, token)));
+                // Through the manager: it checks the key is the plugin's own and re-decorates the shown folders.
+                (storageKey, value) => manager.WriteSettingAsync(record.Id, storageKey, value, token)));
         }
     }
 

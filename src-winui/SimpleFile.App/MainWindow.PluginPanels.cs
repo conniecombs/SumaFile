@@ -112,7 +112,10 @@ public sealed partial class MainWindow
         _shownPluginPanel = panel;
         PlacePluginPanelChrome(chrome);
         PublishShownPluginPanel();
-        if (chrome.Body.Content is null)
+
+        // Once per presentation: not when a body is there, nor while this presentation's load runs (the queue no
+        // longer holds its key then, so it would accept a second request).
+        if (PluginPanelLayout.NeedsBodyLoad(chrome.Body.Content is not null, chrome.Presentation, chrome.LoadingPresentation))
         {
             var presentation = chrome.Presentation;
             _pluginBodyLoads.Request(PluginPanelLayout.BodyLoadKey(panel), () => LoadPluginPanelBodyAsync(chrome, presentation, detached: false));
@@ -301,6 +304,10 @@ public sealed partial class MainWindow
         _pluginPanelWindow = null;
         _shownPluginPanelStateKey = null;
     }
+
+    /// <summary>True when <paramref name="commandId"/> toggles the panel that is shown now, docked or detached.</summary>
+    private bool IsPluginPanelShownForCommand(string commandId) =>
+        PluginPanelLayout.ForCommand(_pluginPanels, commandId) is { } panel && IsPluginPanelShown(panel);
 
     private bool IsPluginPanelShown(PluginPanel panel) =>
         _shownPluginPanel is { } shown
@@ -515,16 +522,27 @@ public sealed partial class MainWindow
         RefreshPluginPanelToggleButtons();
     }
 
-    /// <summary>Draws each panel's generated toolbar button as a toggle: "Hide &lt;title&gt;" while shown, else "Show".</summary>
+    /// <summary>Redraws each panel's generated toolbar button as a toggle, after a panel was shown or hidden.</summary>
     private void RefreshPluginPanelToggleButtons()
     {
         foreach (var pair in _primaryToolbarActionElements)
         {
-            if (pair.Value is not Button button || PluginPanelLayout.ForCommand(_pluginPanels, pair.Key) is not { } panel)
+            if (pair.Value is Button button)
             {
-                continue;
+                ApplyPluginPanelToggleChrome(button, pair.Key);
             }
+        }
+    }
 
+    /// <summary>
+    /// Draws the toolbar button of <paramref name="commandId"/> as its panel's toggle: "Hide &lt;title&gt;" and the
+    /// selected background while the panel is shown, else "Show &lt;title&gt;". Nothing for a command that toggles no
+    /// panel. <c>ConfigureToolbarButton</c> calls it last, so a toolbar rebuild or chrome refresh keeps the toggle.
+    /// </summary>
+    private void ApplyPluginPanelToggleChrome(Button button, string commandId)
+    {
+        if (PluginPanelLayout.ForCommand(_pluginPanels, commandId) is { } panel)
+        {
             SetToggleChromeState(button, IsPluginPanelShown(panel), "Hide " + panel.Title, "Show " + panel.Title);
         }
     }
@@ -542,12 +560,15 @@ public sealed partial class MainWindow
         }
 
         bool Current() => !chrome.Removed && chrome.Presentation == presentation && ReferenceEquals(manager, _plugins);
-        if (!Current())
+        if (!Current()
+            || !PluginPanelLayout.NeedsBodyLoad(chrome.Body.Content is not null, presentation, chrome.LoadingPresentation))
         {
+            // Ended, or this presentation already has its body or a load running for it.
             return;
         }
 
         var panel = chrome.Panel;
+        chrome.LoadingPresentation = presentation;
         try
         {
             var element = await manager.CreatePanelAsync(
@@ -555,7 +576,7 @@ public sealed partial class MainWindow
                 panel.PanelId,
                 detached,
                 _pluginCts?.Token ?? CancellationToken.None);
-            if (!Current())
+            if (!Current() || chrome.Body.Content is not null)
             {
                 return;
             }
@@ -598,6 +619,14 @@ public sealed partial class MainWindow
 
             AutomationProperties.SetAutomationId(failure, AutomationProperties.GetAutomationId(chrome.Root) + ".Error");
             chrome.Body.Content = failure;
+        }
+        finally
+        {
+            // Only this load's mark: a later presentation's load may have started while this one awaited.
+            if (chrome.LoadingPresentation == presentation)
+            {
+                chrome.LoadingPresentation = null;
+            }
         }
     }
 

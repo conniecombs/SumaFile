@@ -524,6 +524,101 @@ public class PluginManagerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Disable_BackendStartFailsAfterStateSet_LeavesTheRecordClean()
+    {
+        // Formerly: the Hello fixture's archive format starts its backend at discovery; a launch that failed between
+        // Disable setting the state and its teardown wrote "Could not start the backend" over the Disabled record's Error.
+        var folder = HelloFixture.CopyTo(Root);
+        Approve(HelloFixture.Id, folder);
+        using var launcher = new BlockingThrowingLauncher();
+        var startFailed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var manager = Manager(launcher, log: (_, line) =>
+        {
+            if (line.Contains("Backend start failed", StringComparison.Ordinal)) startFailed.TrySetResult();
+        });
+        await Task.Run(() => manager.DiscoverAsync(CancellationToken.None)).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(launcher.Entered.Wait(TimeSpan.FromSeconds(5)), "startup launch never began");
+        manager.AfterDisableStateSet = async () =>
+        {
+            launcher.Release.Set();
+            await startFailed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        };
+
+        await manager.DisableAsync(HelloFixture.Id, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        var record = Record(manager, HelloFixture.Id);
+        Assert.Equal(PluginState.Disabled, record.State);
+        Assert.Equal(record.Signature.Error, record.Error);
+        Assert.False(record.BackendRunning);
+    }
+
+    [Fact]
+    public async Task Disable_BackendLostAfterStateSet_LeavesTheRecordClean()
+    {
+        var folder = WriteBackendPlugin("startup");
+        Approve(BackendId, folder);
+        var launcher = HandshakingLauncher();
+        var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var manager = Manager(launcher, log: (_, line) =>
+        {
+            if (line.Contains("stopped unexpectedly", StringComparison.Ordinal)) lost.TrySetResult();
+        });
+        await manager.DiscoverAsync(CancellationToken.None);
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning);
+        manager.AfterDisableStateSet = async () =>
+        {
+            launcher.Process!.SimulateExit();
+            await lost.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        };
+
+        await manager.DisableAsync(BackendId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        var record = Record(manager, BackendId);
+        Assert.Equal(PluginState.Disabled, record.State);
+        Assert.Equal(record.Signature.Error, record.Error);
+        Assert.False(record.BackendRunning);
+    }
+
+    [Fact]
+    public async Task Disable_ArchiveRegistrationFaultsAfterStateSet_LeavesTheRecordClean()
+    {
+        var folder = WriteArchivePlugin();
+        Approve(BackendId, folder);
+        var launcher = HandshakingLauncher();
+        var lastAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseLastAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registrar = new RecordingRegistrar
+        {
+            Failure = new InvalidOperationException("service refused"),
+            AttemptGate = attempt =>
+            {
+                if (attempt != 3) return Task.CompletedTask;
+                lastAttempt.TrySetResult();
+                return releaseLastAttempt.Task;
+            },
+        };
+        var faulted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var manager = Manager(launcher, registrar, (_, line) =>
+        {
+            if (line.Contains("[error] Archive engine registration failed", StringComparison.Ordinal)) faulted.TrySetResult();
+        });
+        await manager.DiscoverAsync(CancellationToken.None);
+        await lastAttempt.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        manager.AfterDisableStateSet = async () =>
+        {
+            releaseLastAttempt.SetResult();
+            await faulted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        };
+
+        await manager.DisableAsync(BackendId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        var record = Record(manager, BackendId);
+        Assert.Equal(PluginState.Disabled, record.State);
+        Assert.Equal(record.Signature.Error, record.Error);
+        Assert.False(record.BackendRunning);
+    }
+
+    [Fact]
     public async Task Backend_SubscribeWhileStartupLaunchBlocked_DoesNotDeadlock()
     {
         // Formerly: the blocked launch held the services lock, the subscribing plugin held the runtime

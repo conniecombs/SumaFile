@@ -16,15 +16,22 @@
       { "id": "toggle-panel", "label": "Hello: toggle panel", "group": "Hello" },
       { "id": "show-bottom", "label": "Hello: show bottom panel", "group": "Hello" }
     ],
-    "contextMenu": [ { "group": "Hello", "items": [ { "command": "greet", "label": "Say hello", "when": "selectionCount >= 1" } ] } ],
-    "toolbar": [ { "command": "greet", "label": "Hello", "glyph": "", "placement": "overflow" } ],
+    "contextMenu": [ { "group": "Hello", "items": [
+      { "command": "greet", "label": "Say hello", "when": "selectionCount >= 1" },
+      { "command": "greet", "label": "Say hello to decorated", "when": "folderFlag(helloFolder) && hasDecoration" }
+    ] } ],
+    "toolbar": [
+      { "command": "greet", "label": "Hello", "glyph": "", "placement": "overflow" },
+      { "command": "toggle-panel", "label": "Hello panel", "glyph": "", "placement": "primary" }
+    ],
     "archiveFormats": [ { "extension": ".hello", "canList": true, "canExtract": true, "canCreate": true, "canModify": true, "engineName": "hello" } ],
     "sidebar": [ { "id": "hello", "title": "Hello section", "provider": "hello-section", "command": "greet" } ],
     "settingsPage": { "provider": "hello-page" },
     "panels": [
       { "id": "hello-panel", "title": "Hello panel", "provider": "hello-panel", "placement": "right", "detachable": true, "command": "toggle-panel" },
       { "id": "hello-bottom", "title": "Hello bottom", "provider": "hello-bottom", "placement": "bottom", "detachable": false }
-    ]
+    ],
+    "rowDecorations": { "provider": "hello-decorations" }
   },
   "settings": [
     { "key": "greeting", "type": "string", "label": "Greeting", "default": "Hello", "group": "General" },

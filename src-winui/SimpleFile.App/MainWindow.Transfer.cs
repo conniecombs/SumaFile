@@ -1565,7 +1565,8 @@ public sealed partial class MainWindow
         return columns.EffectiveForPaneWidth(
             paneWidth,
             _workspace?.DualPaneEnabled == true,
-            IsGitIntegrationEnabled);
+            // The status column shows only when a plugin decorates rows.
+            decorationsAvailable: _workspace?.RowDecorations.HasProviders == true);
     }
 
     private static void ClearDetailsItemWidths(ListView list)

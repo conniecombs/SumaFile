@@ -114,6 +114,12 @@ if ($PluginsDir) {
     $random.NextBytes($buffer)
     [System.IO.File]::WriteAllBytes((Join-Path $remoteLocal 'download\big.bin'), $buffer)
     $remoteInfo = Join-Path $testRoot 'remote-server.json'
+    # Hello's row decorations: every row of hello-decorated is decorated at once, those of hello-slow after 600 ms.
+    foreach ($relative in @('hello-decorated\a.txt', 'hello-decorated\b.txt', 'hello-slow\c.txt')) {
+        $target = Join-Path $testRoot $relative
+        New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($target)) -Force | Out-Null
+        [System.IO.File]::WriteAllText($target, 'SumaFile decoration smoke')
+    }
 }
 $start = New-Object System.Diagnostics.ProcessStartInfo
 $start.FileName = $exe

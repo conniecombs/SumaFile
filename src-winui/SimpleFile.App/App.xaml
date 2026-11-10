@@ -230,6 +230,10 @@
                     <SolidColorBrush x:Key="SfGitModifiedBrush" Color="#E5C07B" />
                     <SolidColorBrush x:Key="SfGitUntrackedBrush" Color="#79C0FF" />
                     <SolidColorBrush x:Key="SfGitDeletedBrush" Color="#F85149" />
+                    <SolidColorBrush x:Key="SfDecorationAddedBrush" Color="#4EC9B0" />
+                    <SolidColorBrush x:Key="SfDecorationModifiedBrush" Color="#E5C07B" />
+                    <SolidColorBrush x:Key="SfDecorationUntrackedBrush" Color="#79C0FF" />
+                    <SolidColorBrush x:Key="SfDecorationDeletedBrush" Color="#F85149" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Dark">
                     <SolidColorBrush x:Key="SfBgPrimaryBrush" Color="#F01C1C1F" />
@@ -251,6 +255,10 @@
                     <SolidColorBrush x:Key="SfGitModifiedBrush" Color="#E5C07B" />
                     <SolidColorBrush x:Key="SfGitUntrackedBrush" Color="#79C0FF" />
                     <SolidColorBrush x:Key="SfGitDeletedBrush" Color="#F85149" />
+                    <SolidColorBrush x:Key="SfDecorationAddedBrush" Color="#4EC9B0" />
+                    <SolidColorBrush x:Key="SfDecorationModifiedBrush" Color="#E5C07B" />
+                    <SolidColorBrush x:Key="SfDecorationUntrackedBrush" Color="#79C0FF" />
+                    <SolidColorBrush x:Key="SfDecorationDeletedBrush" Color="#F85149" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="SfBgPrimaryBrush" Color="#F4FAFBFD" />
@@ -272,6 +280,10 @@
                     <SolidColorBrush x:Key="SfGitModifiedBrush" Color="#9A6700" />
                     <SolidColorBrush x:Key="SfGitUntrackedBrush" Color="#0969DA" />
                     <SolidColorBrush x:Key="SfGitDeletedBrush" Color="#CF222E" />
+                    <SolidColorBrush x:Key="SfDecorationAddedBrush" Color="#1A7F37" />
+                    <SolidColorBrush x:Key="SfDecorationModifiedBrush" Color="#9A6700" />
+                    <SolidColorBrush x:Key="SfDecorationUntrackedBrush" Color="#0969DA" />
+                    <SolidColorBrush x:Key="SfDecorationDeletedBrush" Color="#CF222E" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
                     <SolidColorBrush x:Key="SfBgPrimaryBrush" Color="#000000" />
@@ -293,6 +305,10 @@
                     <SolidColorBrush x:Key="SfGitModifiedBrush" Color="#FFFF00" />
                     <SolidColorBrush x:Key="SfGitUntrackedBrush" Color="#FFFFFF" />
                     <SolidColorBrush x:Key="SfGitDeletedBrush" Color="#FFFF00" />
+                    <SolidColorBrush x:Key="SfDecorationAddedBrush" Color="#FFFF00" />
+                    <SolidColorBrush x:Key="SfDecorationModifiedBrush" Color="#FFFF00" />
+                    <SolidColorBrush x:Key="SfDecorationUntrackedBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="SfDecorationDeletedBrush" Color="#FFFF00" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
         </ResourceDictionary>

@@ -41,6 +41,12 @@ internal sealed class PluginPanelChrome
     /// </summary>
     public int Presentation { get; set; }
 
+    /// <summary>
+    /// The <see cref="Presentation"/> whose body load is running (it awaits the plugin's activation and provider), or
+    /// null. A show during that load must not ask again: the body is created once per presentation.
+    /// </summary>
+    public int? LoadingPresentation { get; set; }
+
     /// <summary>True once the chrome left the host (its plugin or epoch left, or the plugins stopped).</summary>
     public bool Removed { get; set; }
 

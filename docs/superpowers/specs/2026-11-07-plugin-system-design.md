@@ -296,6 +296,11 @@ strings), which the host keeps stable:
 and the decoration brushes `SfDecorationAddedBrush`,
 `SfDecorationModifiedBrush`, `SfDecorationUntrackedBrush` and
 `SfDecorationDeletedBrush`, which a `RowDecoration.BrushKey` may name.
+`App.xaml` defines the four decoration brushes in each of its theme
+dictionaries (`Default`, `Dark`, `Light` and `HighContrast`) with the colours
+of the `SfGit*Brush` keys they replace; those stay until core Git is removed.
+Settings > Plugins draws a declarative setting's error text with
+`SfDecorationDeletedBrush`.
 
 `PluginSdk.Version` stays `1.0.0` until phase 5 publishes the package; the
 additions above change the pinned surface snapshot
@@ -424,6 +429,20 @@ smoke environment, 32 CPUs, five starts each, median):
   `plugins-discovered span 10.0 ms (budget 50 ms, count=3)`.
 - The hosted-runner evidence is still pending: CI is not run in phase 4, so
   74.2 ms at `46860dc` stays the last hosted figure, and the budget stays 50 ms.
+
+Row decorations follow the same startup rule (phase 4 Task 11). The
+workspace's `RowDecorationCoordinator` starts with its gate closed, and only the
+Low-priority callback that `QueuePluginSectionActivation` queues once startup
+marked `ready` opens it (`MarkStartupReady`). Until then no decoration request
+reaches a provider, so no decoration-driven plugin activation (an assembly load
+and `ActivateAsync`) runs before `plugins-discovered` or `ready`. Right after
+opening the gate the same callback starts `InvalidateDecorationsAsync()`, so the
+folder shown when SumaFile starts is still decorated: a pane whose listing was
+published before the callback is decorated again then, and a startup navigation
+still listing (it lists on the thread pool, in parallel with the callback) asked
+with the gate closed and sees the changed `Generation` when it publishes. The
+legacy settings migration also starts after the mark, right after
+`StartStartupBackends()`.
 
 ### 5.3 XAML
 
@@ -817,11 +836,18 @@ SDK. Backends in other languages implement the framing directly; the spec in
   - **Toggle semantics.** A panel's `command` run from the palette, a menu or
     `RunAppCommandAsync` shows the panel. Its generated toolbar button
     toggles it and is drawn as a toggle (`Hide <title>` / `Show <title>`).
-    The plugin's `ICommandHandler` never receives a panel command.
+    `ConfigureToolbarButton` draws that toggle last, so every toolbar
+    rebuild and chrome refresh keeps it, whether or not the overflow set
+    changed. The plugin's `ICommandHandler` never receives a panel command.
   - **Body.** Every body load goes through the `PluginBodyLoadQueue` under
     `panel:<key>` at low priority, never inline, so a panel's first
     activation never nests inside a host pass (#82). A failure shows
-    `This panel could not be loaded: <message>` in the body. A hidden panel
+    `This panel could not be loaded: <message>` in the body. The queue only
+    drops a request while its key waits, so the chrome also marks the
+    presentation whose load is running (`LoadingPresentation`), and
+    `PluginPanelLayout.NeedsBodyLoad` asks for a body only when there is
+    none and no load runs for this presentation. A show during a slow first
+    activation therefore never calls `CreatePanel` twice. A hidden panel
     keeps no element: hiding, detaching and docking drop the body, and a
     body that arrives after its presentation ended is dropped.
   - **Contribution changes.** The contribution render only records the
@@ -909,6 +935,53 @@ SDK. Backends in other languages implement the framing directly; the spec in
     `DecorationBrushKeys.Allowed` lists it (`SfDecoration{Added,Modified,
     Untracked,Deleted}Brush`, `SfTextPrimaryBrush`, `SfTextMutedBrush`,
     `SfAccentBrush`); any other key falls back to `SfTextMutedBrush`.
+  The App side, as built (phase 4 Task 11):
+  - **Source.** `PluginRowDecorationSource` (PluginHost) is the coordinator's
+    `IRowDecorationSource`: one `PluginManager.GetRowDecorationsAsync` call per
+    plugin and folder, with the provider the manifest names. It maps each
+    `RowDecoration` to a `RowDecorationEntry`, prefixes each folder flag with
+    `<pluginId>:`, and keeps a null result null. Its key filter keeps a
+    returned key only when it matches a requested path under
+    `RowDecorationKeys.Comparer`, the rule the row lookup uses, and stores the
+    entry under the requested path's spelling; of two returned keys for one
+    path the first wins. So the filter, which runs before the merge, never
+    drops git's `R:/repo/Dir/A.TXT` or `R:\repo\untracked\`.
+  - **Wiring.** `ApplyPluginContributions` and `OnPluginWorkspaceInitialized`
+    call `ApplyRowDecorationSource()`, a no-op until the workspace exists. It
+    sets a new source over `PluginContributionAdapter.RowDecorationProviders`
+    and, when `SetSource` reports a changed plugin set, starts
+    `InvalidateDecorationsAsync()` without awaiting it. It only queues: it
+    awaits nothing and calls no source (#82). `DisposePluginsAsync` sets no
+    source. `PluginManagerOptions.InvalidateDecorations`, which
+    `IPluginDecorations.Invalidate` and `WriteSettingAsync` call, starts
+    `InvalidateDecorationsAsync()` the same way.
+  - **Rows.** `FileRow` carries `DecorationText`, `DecorationBrushKey`,
+    `DecorationTooltip` and `DecorationPlugins`, filled from the pane's
+    `Decorations` when the row is built and compared when rows are replaced.
+    The status column (`git`) and the row's secondary text show
+    `DecorationText`; both are drawn with
+    `ThemeResourceLookup.Brush(row, DecorationBrushKeys.Normalize(key))`, so the
+    brush follows the row's own theme, and the status cell's tooltip is the
+    decoration's tooltip, else its text. The status column is available when a
+    decoration provider is set (`RowDecorations.HasProviders`), no longer with
+    the legacy Git switch. `Row.GitText` stays, unrendered, until core Git is
+    removed.
+  - **Menus.** The context menu request takes `FolderFlags` and
+    `SelectionDecorationPlugins` from the active pane's `Decorations`
+    (`PluginsFor` over the selected paths). Building a menu never asks a
+    provider.
+  - **Toolbar `when`.** A plugin toolbar button whose `when` is false for the
+    active pane is hidden; the request is the menu's, without the shell
+    queries (Windows clipboard, Open with) no `when` reads. A panel's toggle
+    stays visible while its panel is shown, so it can always be hidden. The
+    visibility is applied after every workspace sync, and every decoration
+    change raises one.
+  - **Settings.** Settings > Plugins writes each declarative setting through
+    `PluginManager.WriteSettingAsync`, so a decorating plugin's setting
+    re-decorates the shown folders at once. Each declarative control has the
+    AutomationId `PluginSetting.<pluginId>.<key>`
+    (`PluginSettingsPanelBuilder.SettingAutomationId`); for a `path` setting it
+    is the text box.
   Panel layout rules live in `PluginPanelLayout` (Core): a docked bottom panel is
   200 px to 70% of the available height (default 320), a docked right panel 260
   px to 60% of the available width (default 360), a detached panel window is

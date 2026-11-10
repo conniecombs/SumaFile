@@ -37,6 +37,9 @@ internal sealed class PluginSettingsPanelBuilder
     /// <summary>The automation id of a plugin's custom settings page slot.</summary>
     public static string SettingsPageAutomationId(string pluginId) => $"PluginSettingsPage.{pluginId}";
 
+    /// <summary>The AutomationId of a declarative setting's input control.</summary>
+    public static string SettingAutomationId(string pluginId, string key) => $"PluginSetting.{pluginId}.{key}";
+
     public FrameworkElement Build(PluginRecord record, Func<string, Task<string?>> read, Func<string, string, Task> write)
     {
         ArgumentNullException.ThrowIfNull(record);
@@ -162,7 +165,7 @@ internal sealed class PluginSettingsPanelBuilder
         TextBlock status)
     {
         var storageKey = PluginHostMethods.SettingsKey(pluginId, spec.Key);
-        var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Brush("SfGitDeletedBrush"), Visibility = Visibility.Collapsed };
+        var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Brush("SfDecorationDeletedBrush"), Visibility = Visibility.Collapsed };
         var loading = true;
 
         async Task SaveAsync(string value)
@@ -184,6 +187,8 @@ internal sealed class PluginSettingsPanelBuilder
         }
 
         FrameworkElement input;
+        // The control the user edits, when input is a row around it.
+        FrameworkElement? control = null;
         Action<string> apply;
         switch (spec.Type)
         {
@@ -266,6 +271,7 @@ internal sealed class PluginSettingsPanelBuilder
                 Grid.SetColumn(browse, 1);
                 row.Children.Add(browse);
                 apply = value => box.Text = value;
+                control = box;
                 input = row;
                 break;
             }
@@ -279,6 +285,8 @@ internal sealed class PluginSettingsPanelBuilder
             }
         }
 
+        // The input itself (the text box of a path row), so UI automation and the smokes find the control.
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(control ?? input, SettingAutomationId(pluginId, spec.Key));
         var panel = new StackPanel { Spacing = 4 };
         panel.Children.Add(input);
         if (!string.IsNullOrWhiteSpace(spec.Description))

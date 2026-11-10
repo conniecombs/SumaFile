@@ -829,7 +829,19 @@ public sealed partial class MainWindow
         {
             tag = tags.FirstOrDefault();
         }
-        return FileRow.From(entry, cut, tag, pane);
+
+        var row = FileRow.From(entry, cut, tag, pane);
+        // The pane's plugin decorations, merged by the coordinator; a row no plugin decorates keeps the empty defaults.
+        var decorations = _workspace?.Pane(pane).Decorations ?? PaneDecorations.Empty;
+        if (decorations.For(entry.Path) is { } decoration)
+        {
+            row.DecorationText = decoration.Text;
+            row.DecorationBrushKey = decoration.BrushKey ?? "";
+            row.DecorationTooltip = decoration.Tooltip ?? "";
+            row.DecorationPlugins = decorations.PluginsFor([entry.Path]);
+        }
+
+        return row;
     }
 
     private FileRow SearchRowFrom(SearchResult result, PaneId pane)
@@ -925,6 +937,10 @@ public sealed partial class MainWindow
         && left.TypeText == right.TypeText
         && left.ExtensionText == right.ExtensionText
         && left.GitText == right.GitText
+        && left.DecorationText == right.DecorationText
+        && left.DecorationBrushKey == right.DecorationBrushKey
+        && left.DecorationTooltip == right.DecorationTooltip
+        && left.DecorationPlugins.SetEquals(right.DecorationPlugins)
         && left.SymlinkText == right.SymlinkText
         && left.IsHidden == right.IsHidden
         && left.PathText == right.PathText

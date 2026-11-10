@@ -29,6 +29,8 @@ public sealed partial class MainWindow
     {
         var root = UiSmokeRoot();
         if (root is null) return false;
+        // ConnectAsync marked ready just before this call: the smoke's record of it.
+        var readyAt = DateTimeOffset.UtcNow;
         var results = new List<object>();
         string? failure = null;
         var gaps = new List<double>();
@@ -64,8 +66,19 @@ public sealed partial class MainWindow
             workspace.ApplyUiSettings(settings);
             ApplyPreviewVisibility();
             SyncFromWorkspace();
+            // The startup folder, the decoration gate's real path. Nothing has yielded since ConnectAsync queued the
+            // Low-priority ready callback, so the gate must still be closed; the navigation starts now, before the first
+            // await, and races that callback as a real startup navigation does. SmokePluginsAsync checks the result.
+            SmokeStartupFolder? startupFolder = null;
+            if (Environment.GetEnvironmentVariable("SUMAFILE_SMOKE_PLUGINS") == "with")
+            {
+                var gateOpen = workspace.RowDecorations.IsStartupReady;
+                var folder = Path.Combine(root, "hello-decorated");
+                var navigation = workspace.NavigatePaneAsync(PaneId.Primary, folder);
+                startupFolder = new SmokeStartupFolder(gateOpen, folder, navigation, workspace.Primary.NavigationToken, readyAt);
+            }
             await CheckpointAsync("plugins");
-            await SmokePluginsAsync(results, CheckpointAsync);
+            await SmokePluginsAsync(results, CheckpointAsync, startupFolder);
             var empty = Path.Combine(root, "empty");
             var folders = Directory.GetDirectories(Path.Combine(root, "fixtures"))
                 .OrderBy(path => int.Parse(Path.GetFileName(path))).ToArray();
@@ -236,7 +249,7 @@ public sealed partial class MainWindow
     /// SUMAFILE_SMOKE_PLUGINS=with: the Hello fixture is discovered, pre-approved, on the palette, and its command
     /// runs through the normal command path. =none: no plugin is discovered. Unset: nothing is checked.
     /// </summary>
-    private async Task SmokePluginsAsync(List<object> results, Func<string, Task> checkpoint)
+    private async Task SmokePluginsAsync(List<object> results, Func<string, Task> checkpoint, SmokeStartupFolder? startupFolder)
     {
         const string helloId = "com.sumafile.hello";
         const string greetCommand = "plugin:" + helloId + ":greet";
@@ -251,6 +264,8 @@ public sealed partial class MainWindow
         SmokePluginLocations(dataRoot);
         if (mode == "with")
         {
+            await checkpoint("plugin-startup-folder");
+            var startupDecorations = await SmokeStartupFolderDecoratedAsync(startupFolder);
             var manager = _plugins ?? throw new InvalidOperationException("Plugin manager was not created");
             var hello = manager.Plugins.FirstOrDefault(record => record.Id == helloId);
             SmokeAssert(hello is not null, $"Plugin {helloId} was not discovered");
@@ -310,6 +325,8 @@ public sealed partial class MainWindow
             // After the window checks: this step disables and re-enables Hello, which would close their window.
             await checkpoint("plugin-panels");
             var pluginPanels = await SmokePluginPanelsAsync(manager, markerDirectory!);
+            await checkpoint("plugin-decorations");
+            var pluginDecorations = await SmokePluginDecorationsAsync(markerDirectory!, startupFolder!.ReadyAt);
             results.Add(new
             {
                 scenario = "plugins",
@@ -319,6 +336,8 @@ public sealed partial class MainWindow
                 pluginWindow = pluginWindowTitle,
                 settingsPage,
                 pluginPanels,
+                startupDecorations,
+                pluginDecorations,
                 dataRoot,
                 command = greetCommand,
                 archiveFormat = helloFormat!.Extension,
@@ -336,6 +355,7 @@ public sealed partial class MainWindow
             SmokeAssert(discovered.Length == 0, "Unexpected plugins: " + string.Join(", ", discovered));
             SmokeAssert(PluginSectionsHost.Children.Count == 0,
                 $"Unexpected plugin sidebar sections: {PluginSectionsHost.Children.Count}");
+            SmokeAssert(_workspace?.RowDecorations.HasProviders == false, "A row decoration provider is set without plugins");
             results.Add(new { scenario = "plugins", mode, plugins = 0, dataRoot, passed = true });
         }
 
@@ -360,6 +380,141 @@ public sealed partial class MainWindow
 
         // Every mode, plain included, once the plugin scenarios have started what they start.
         if (_plugins is { } plugins) SmokePluginBackendTempFolders(plugins, dataRoot);
+    }
+
+    /// <summary>The startup-folder navigation <see cref="RunUiSmokeIfRequestedAsync"/> starts before its first await.</summary>
+    private sealed record SmokeStartupFolder(bool GateOpenAtStart, string Folder, Task Navigation, int NavigationToken, DateTimeOffset ReadyAt);
+
+    /// <summary>
+    /// Carry-over (h), Review Focus 6: the folder shown at startup gets its decorations with no further navigation or
+    /// refresh, whichever side wins the race between the startup navigation and the ready callback that opens the gate.
+    /// </summary>
+    private async Task<string> SmokeStartupFolderDecoratedAsync(SmokeStartupFolder? startup)
+    {
+        SmokeAssert(startup is not null, "The startup-folder navigation was not started");
+        SmokeAssert(!startup!.GateOpenAtStart, "The row decoration gate was open before the ready callback could run");
+        var workspace = _workspace ?? throw new InvalidOperationException("Workspace is not available");
+        await startup.Navigation.WaitAsync(TimeSpan.FromSeconds(30));
+        string[] names = ["a.txt", "b.txt"];
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult(names.All(name => PrimaryFiles.Any(row => row.Name == name && row.DecorationText == "hello"))),
+            TimeSpan.FromSeconds(10),
+            () => "the startup folder's rows to be decorated: "
+                + string.Join(", ", PrimaryFiles.Select(row => $"{row.Name}='{row.DecorationText}'"))
+                + $" (gate open {workspace.RowDecorations.IsStartupReady})");
+        SmokeAssert(workspace.Primary.NavigationToken == startup.NavigationToken,
+            $"The startup folder was navigated again: token {workspace.Primary.NavigationToken}, expected {startup.NavigationToken}");
+        SmokeAssert(PathRules.PathsEqual(workspace.Primary.Path, startup.Folder),
+            $"The primary pane shows {workspace.Primary.Path}, expected {startup.Folder}");
+        SmokeAssert(workspace.RowDecorations.IsStartupReady, "The row decoration gate is still closed");
+        return startup.Folder;
+    }
+
+    /// <summary>
+    /// Hello's row decorations through the real coordinator, source and manager: rows, brush keys, folder flags and
+    /// the <c>when</c> of its menu item, provider calls off the UI thread and after ready, and the 250 ms budget against
+    /// <c>hello-slow</c>'s 600 ms provider. Every wait is bounded at 10 s.
+    /// </summary>
+    private async Task<object> SmokePluginDecorationsAsync(string markerDirectory, DateTimeOffset readyAt)
+    {
+        const string flag = SmokeHelloId + ":helloFolder";
+        const string menuId = "ctx-plugin-menu:" + SmokeHelloId;
+        const string decoratedItem = "Say hello to decorated";
+        var workspace = _workspace ?? throw new InvalidOperationException("Workspace is not available");
+        var root = UiSmokeRoot()!;
+        var decorated = Path.Combine(root, "hello-decorated");
+        var empty = Path.Combine(root, "empty");
+        var slow = Path.Combine(root, "hello-slow");
+        var uiThread = Environment.CurrentManagedThreadId;
+        var tenSeconds = TimeSpan.FromSeconds(10);
+        string Rows() => string.Join(", ", PrimaryFiles.Select(row => $"{row.Name}='{row.DecorationText}'/{row.DecorationBrushKey}"));
+        ContextMenuEntry? DecoratedItem(ContextMenuRequest request) =>
+            SmokeFlatten(ContextMenuBuilder.Build(request)).FirstOrDefault(entry => entry.Id == menuId)?
+                .Children.FirstOrDefault(child => child.Label == decoratedItem);
+
+        // 1. Every row of hello-decorated gets Hello's text and brush key.
+        await workspace.NavigatePaneAsync(PaneId.Primary, decorated);
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult(PrimaryFiles.Count == 2 && PrimaryFiles.All(row =>
+                row.DecorationText == "hello" && row.DecorationBrushKey == "SfDecorationAddedBrush"
+                && row.DecorationTooltip == "Hello decoration" && row.DecorationPlugins.Contains(SmokeHelloId))),
+            tenSeconds,
+            () => "hello-decorated's rows to be decorated: " + Rows());
+
+        // 2. With a.txt selected, the menu request carries the folder flag and the selection's decorating plugin, and
+        //    Hello's `folderFlag(helloFolder) && hasDecoration` item shows.
+        var aPath = Path.Combine(decorated, "a.txt");
+        workspace.SelectPath(aPath, PaneId.Primary);
+        SyncFromWorkspace();
+        IReadOnlyList<FileRow> selected = [];
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult((selected = SelectedRowsForPane(PaneId.Primary)).Count == 1 && selected[0].Path == aPath),
+            tenSeconds,
+            () => "a.txt to be selected: " + string.Join(", ", selected.Select(row => row.Name)));
+        var request = BuildContextMenuRequest(selected);
+        SmokeAssert(request.FolderFlags.Contains(flag), "The menu request's folder flags are: " + string.Join(", ", request.FolderFlags));
+        SmokeAssert(request.SelectionDecorationPlugins.Contains(SmokeHelloId),
+            "The menu request's selection decoration plugins are: " + string.Join(", ", request.SelectionDecorationPlugins));
+        var item = DecoratedItem(request);
+        SmokeAssert(item is { Hidden: false }, $"{menuId} does not show '{decoratedItem}' (hidden {item?.Hidden})");
+
+        // 3. A folder Hello does not decorate: no flag, no decoration, and the item is hidden.
+        await workspace.NavigatePaneAsync(PaneId.Primary, empty);
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult(PathRules.PathsEqual(workspace.Primary.Path, empty) && !workspace.Primary.ListingInProgress && PrimaryFiles.Count == 0),
+            tenSeconds,
+            () => "the empty folder: " + Rows());
+        SmokeAssert(PrimaryFiles.All(row => row.DecorationText.Length == 0), "A row of the empty folder is decorated: " + Rows());
+        SmokeAssert(workspace.Primary.Decorations.FolderFlags.Count == 0,
+            "The empty folder has flags: " + string.Join(", ", workspace.Primary.Decorations.FolderFlags));
+        var emptyRequest = BuildContextMenuRequest(SelectedRowsForPane(PaneId.Primary));
+        SmokeAssert(!emptyRequest.FolderFlags.Contains(flag), "The empty folder's menu request carries " + flag);
+        SmokeAssert(DecoratedItem(emptyRequest) is null or { Hidden: true }, $"'{decoratedItem}' shows in the empty folder");
+
+        // 4. The provider ran on the thread pool, never on the UI thread.
+        var log = Path.Combine(markerDirectory, "decorations.log");
+        var calls = File.Exists(log) ? File.ReadAllLines(log).Where(line => line.Length > 0).ToArray() : [];
+        SmokeAssert(calls.Length > 0, "decorations.log is empty");
+        var last = calls[^1];
+        SmokeAssert(int.TryParse(last[(last.LastIndexOf('|') + 1)..], out var lastThread) && lastThread != uiThread,
+            $"The last decoration call '{last}' ran on the UI thread {uiThread}");
+        var onUiThread = calls.Where(line => line.EndsWith("|" + uiThread, StringComparison.Ordinal)).ToArray();
+        SmokeAssert(onUiThread.Length == 0, "Decoration calls ran on the UI thread: " + string.Join(", ", onUiThread));
+
+        // 5. No request reached a provider before ready.
+        var firstRequest = workspace.RowDecorations.FirstRequestAt;
+        SmokeAssert(firstRequest is { } first && first > readyAt, $"The first decoration request was at {firstRequest:O}, ready at {readyAt:O}");
+
+        // 6. hello-slow answers after 600 ms: the listing is published undecorated within the 250 ms budget, and the late
+        //    result decorates it afterwards.
+        var watch = Stopwatch.StartNew();
+        var navigation = workspace.NavigatePaneAsync(PaneId.Primary, slow);
+        FileRow? listed;
+        while ((listed = PrimaryFiles.FirstOrDefault(row => row.Name == "c.txt")) is null)
+        {
+            SmokeAssert(watch.Elapsed < tenSeconds, "hello-slow was not listed within 10 s: " + Rows());
+            await Task.Delay(10);
+        }
+
+        var listedMs = watch.Elapsed.TotalMilliseconds;
+        SmokeAssert(listedMs < 600, $"hello-slow's rows appeared after {listedMs:0} ms, expected under 600 ms");
+        SmokeAssert(listed.DecorationText.Length == 0, $"hello-slow's c.txt appeared already decorated ('{listed.DecorationText}')");
+        await navigation.WaitAsync(tenSeconds);
+        await SmokeWaitWithinAsync(
+            () => Task.FromResult(PrimaryFiles.Any(row => row.Name == "c.txt" && row.DecorationText == "hello")),
+            tenSeconds,
+            () => "hello-slow's late decoration: " + Rows());
+        var decoratedMs = watch.Elapsed.TotalMilliseconds;
+
+        return new
+        {
+            flag,
+            menuItem = decoratedItem,
+            providerCalls = calls.Length,
+            firstRequestAfterReadyMs = (firstRequest!.Value - readyAt).TotalMilliseconds,
+            slowListedMs = listedMs,
+            slowDecoratedMs = decoratedMs,
+        };
     }
 
     /// <summary>
@@ -711,7 +866,10 @@ public sealed partial class MainWindow
     /// <item>A dialog on the detached window's XamlRoot, then Disable: the window closes, the gate is free and no panel
     /// is shown. Then Enable.</item>
     /// <item>The panel opens docked again, and Close hides it: <c>IsVisible</c> is false.</item>
+    /// <item>The panel's primary toolbar button toggles it, and reads "Show/Hide Hello panel" after every toolbar rebuild
+    /// and chrome refresh, even when the overflow set is unchanged.</item>
     /// </list>
+    /// Between steps 1 and 2, a second show and a second body load for the same presentation create no second body.
     /// </summary>
     private async Task<string> SmokePluginPanelsAsync(PluginManager manager, string markerDirectory)
     {
@@ -751,6 +909,29 @@ public sealed partial class MainWindow
 
         SmokeAssert(NothingShown(), "A plugin panel is shown before the panel check: " + Describe());
 
+        // Hello's primary toolbar button for toggle-panel, drawn as the panel's toggle by every toolbar build.
+        Button? ToggleButton() => _primaryToolbarActionElements.TryGetValue(toggleCommand, out var element) ? element as Button : null;
+        bool ToggleSelected() => ToggleButton() is { } button && ReferenceEquals(button.Background, Brush("SfBgSelectedBrush"));
+        string DescribeToggle() => ToggleButton() is { } button
+            ? $"toggle button '{AutomationProperties.GetName(button)}', tooltip '{ToolTipService.GetToolTip(button)}', selected {ToggleSelected()}"
+            : "no toggle button";
+        void AssertToggle(bool shown, string when) => SmokeAssert(ToggleButton() is { } button
+                && AutomationProperties.GetName(button) == (shown ? "Hide Hello panel" : "Show Hello panel")
+                && ToolTipService.GetToolTip(button) as string == AutomationProperties.GetName(button)
+                && ToggleSelected() == shown,
+            $"{when}: {DescribeToggle()}, expected {(shown ? "Hide" : "Show")} Hello panel");
+        void RebuildToolbar()
+        {
+            // A full rebuild: every button is new, while the overflow set stays what it was.
+            _appliedPrimaryToolbarSignature = null;
+            ApplyCommandSurfaceLayout();
+        }
+
+        SmokeAssert(ToggleButton() is not null, $"Hello's primary toolbar button {toggleCommand} is missing");
+        AssertToggle(false, "Before any panel is shown");
+        RebuildToolbar();
+        AssertToggle(false, "After a toolbar rebuild with no panel shown");
+
         // 1. The toggle command from RunAppCommandAsync shows the right panel, and only the host handles it.
         await RunAppCommandAsync(toggleCommand);
         await WaitAsync(() => PluginPanelRightRegion.Visibility == Visibility.Visible
@@ -760,6 +941,26 @@ public sealed partial class MainWindow
         SmokeAssert(panels.IsVisible(panelId) && !panels.IsVisible(bottomId), "IsVisible does not report hello-panel alone");
         SmokeAssert(!File.Exists(commandsLog) || !File.ReadAllLines(commandsLog).Contains(toggleCommand),
             "Hello's command handler received the panel command");
+        AssertToggle(true, "With hello-panel shown");
+        RebuildToolbar();
+        AssertToggle(true, "After a toolbar rebuild with hello-panel shown");
+        ApplyCommandSurfaceLayout();
+        AssertToggle(true, "After a toolbar chrome refresh with hello-panel shown");
+
+        // Once per presentation: showing the shown panel again and a second load for this presentation (as a show
+        // during a running load would start) neither call Hello's CreatePanel nor replace the body.
+        int DockedBodies() => File.Exists(panelLog) ? File.ReadAllLines(panelLog).Count(line => line == panelId + ":False") : 0;
+        var bodiesBefore = DockedBodies();
+        var bodyBefore = RightBody();
+        await ShowPluginPanelAsync(SmokeHelloId, panelId);
+        var shownChrome = _pluginPanelChromes[PluginPanelLayout.Key(_shownPluginPanel!)];
+        await LoadPluginPanelBodyAsync(shownChrome, shownChrome.Presentation, detached: false);
+        var drained = new TaskCompletionSource();
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => drained.TrySetResult());
+        await drained.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        SmokeAssert(DockedBodies() == bodiesBefore && ReferenceEquals(RightBody(), bodyBefore),
+            $"A second show or body load of the same presentation built another body: panel.txt has {DockedBodies()} docked "
+            + $"bodies, expected {bodiesBefore}; body replaced {!ReferenceEquals(RightBody(), bodyBefore)}");
 
         // 2. The resize path the grips use: the saved width grows by 40, clamped, and the region follows.
         var widthBefore = CurrentPluginPanelRightWidth();
@@ -860,6 +1061,10 @@ public sealed partial class MainWindow
             () => "Hello's panels after the re-enable: " + string.Join(", ", _pluginPanels.Select(PluginPanelLayout.Key)));
         var record = manager.Plugins.FirstOrDefault(item => item.Id == SmokeHelloId);
         SmokeAssert(record?.State == PluginState.Enabled, $"Hello is {record?.State} after re-enable: {record?.Error}");
+        // The re-enable rebuilt the toolbar with a new button for Hello's toggle; it reads as the toggle at once.
+        await WaitAsync(() => ToggleButton() is { } rebuilt && AutomationProperties.GetName(rebuilt) == "Show Hello panel",
+            () => "Hello's toggle button after the re-enable: " + DescribeToggle());
+        AssertToggle(false, "After the re-enable");
 
         // 7. Shown again it opens docked, not in a window; Close hides it.
         await RunAppCommandAsync(toggleCommand);
@@ -874,6 +1079,18 @@ public sealed partial class MainWindow
         SmokeInvoke(close!);
         await WaitAsync(NothingShown, () => "after Close: " + Describe());
         SmokeAssert(!panels.IsVisible(panelId), "IsVisible is true after Close");
+        AssertToggle(false, "After Close");
+
+        // 8. The toolbar button's click toggles the panel (it shows, then hides), and the button follows.
+        OnGeneratedToolbarCommandClick(ToggleButton()!, new RoutedEventArgs());
+        await WaitAsync(() => IdOf(PluginPanelRightRegion.Child) == rightId && IsHelloBody(RightBody()) && panels.IsVisible(panelId),
+            () => "hello-panel from its toolbar button: " + Describe());
+        AssertToggle(true, "After the toolbar button showed hello-panel");
+        OnGeneratedToolbarCommandClick(ToggleButton()!, new RoutedEventArgs());
+        await WaitAsync(NothingShown, () => "after the toolbar button hid hello-panel: " + Describe());
+        AssertToggle(false, "After the toolbar button hid hello-panel");
+        SmokeAssert(!File.Exists(commandsLog) || !File.ReadAllLines(commandsLog).Contains(toggleCommand),
+            "Hello's command handler received the panel command from the toolbar");
         return panelId + "," + bottomId;
     }
 

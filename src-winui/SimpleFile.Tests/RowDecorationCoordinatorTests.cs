@@ -6,10 +6,14 @@ namespace SimpleFile.Tests;
 
 public class RowDecorationCoordinatorTests
 {
-    // Tests that need the budget to pass first use ShortBudget with a source that is still pending. Tests whose sources
-    // answer at once use AmpleBudget: each source call starts through Task.Run, and on a loaded CI runner the thread pool
-    // can take longer than 50 ms to start it, which made an instant answer look late (CI run 42713361860).
+    // Each source call starts through Task.Run, and on a loaded CI runner the thread pool can take longer than 50 ms to
+    // start it, which made an instant answer look late (CI runs 42713361860 and 42716903378). So a test only uses
+    // ShortBudget when it asserts no instant source's answer in the returned merge. Tests whose sources all answer at once
+    // use AmpleBudget (they return as soon as the sources settle). Tests that let the budget pass while one source is
+    // still pending AND assert an instant source's answer in the returned merge use PendingBudget: they wait it in full,
+    // so it is a margin for the instant call to start on a starved pool, kept short enough for the class to stay quick.
     private static readonly TimeSpan ShortBudget = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan PendingBudget = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan AmpleBudget = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan Watchdog = TimeSpan.FromSeconds(10);
 
@@ -59,7 +63,7 @@ public class RowDecorationCoordinatorTests
         source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(@"R:\repo\a.txt", "M")]);
         var slow = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
         source.Handler = (pluginId, _, _, _) => pluginId == "com.slow" ? slow.Task : null;
-        var coordinator = Ready(source, ShortBudget);
+        var coordinator = Ready(source, PendingBudget);
         var lates = new ConcurrentQueue<PaneDecorations>();
 
         var result = await coordinator.DecorateAsync(
@@ -93,7 +97,7 @@ public class RowDecorationCoordinatorTests
         source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(@"R:\repo\a.txt", "M")], "com.a:inRepository");
         var slow = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
         source.Handler = (pluginId, _, _, _) => pluginId == "com.slow" ? slow.Task : null;
-        var coordinator = Ready(source, ShortBudget);
+        var coordinator = Ready(source, PendingBudget);
         var lates = new ConcurrentQueue<PaneDecorations>();
 
         var result = await coordinator.DecorateAsync(

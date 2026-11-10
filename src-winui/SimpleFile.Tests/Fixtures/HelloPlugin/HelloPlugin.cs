@@ -23,7 +23,8 @@ public static class HelloMarkers
     }
 }
 
-public sealed class HelloPlugin : IPlugin, ICommandHandler, ISidebarSectionProvider, ISettingsPageProvider, IPanelProvider
+public sealed class HelloPlugin
+    : IPlugin, ICommandHandler, ISidebarSectionProvider, ISettingsPageProvider, IPanelProvider, IRowDecorationProvider
 {
     private const string OpenWindowCommand = "plugin:com.sumafile.hello:open-window";
     private const string ShowDialogCommand = "plugin:com.sumafile.hello:show-dialog";
@@ -80,6 +81,35 @@ public sealed class HelloPlugin : IPlugin, ICommandHandler, ISidebarSectionProvi
     {
         HelloMarkers.Append("panel.txt", request.PanelId + ":" + request.Detached);
         return HelloPanels.Create(_host ?? throw new InvalidOperationException("Hello is not activated."), request);
+    }
+
+    /// <summary>
+    /// Hello's row decorations (provider <c>hello-decorations</c>), on a thread-pool thread. Every row of a folder named
+    /// <c>hello-decorated</c> gets <c>hello</c> and the folder flag <c>helloFolder</c>; a folder named <c>hello-slow</c>
+    /// gets the same after 600 ms, honouring <paramref name="ct"/>; any other folder gets nothing. Appends
+    /// <c>&lt;folder name&gt;|&lt;managed thread id&gt;</c> to <c>decorations.log</c>.
+    /// </summary>
+    public async Task<PluginFolderDecorations> GetDecorationsAsync(PluginDecorationRequest request, CancellationToken ct)
+    {
+        var folder = Path.GetFileName(request.FolderPath.TrimEnd('\\', '/'));
+        HelloMarkers.Append("decorations.log", folder + "|" + Environment.CurrentManagedThreadId);
+        if (string.Equals(folder, "hello-slow", StringComparison.OrdinalIgnoreCase))
+        {
+            await Task.Delay(600, ct);
+        }
+        else if (!string.Equals(folder, "hello-decorated", StringComparison.OrdinalIgnoreCase))
+        {
+            return PluginFolderDecorations.Empty;
+        }
+
+        var decoration = new RowDecoration("hello", "SfDecorationAddedBrush", "Hello decoration");
+        var rows = new Dictionary<string, RowDecoration>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in request.Paths)
+        {
+            rows[path] = decoration;
+        }
+
+        return new PluginFolderDecorations(rows, ["helloFolder"]);
     }
 
     /// <summary>Hello's one section, <c>hello</c>: a code-built TextBlock. Writes <c>sidebar.txt</c> with the section id.</summary>

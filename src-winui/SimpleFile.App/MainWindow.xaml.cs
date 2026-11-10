@@ -619,6 +619,9 @@ public sealed partial class MainWindow : Window
 
         _toolbar?.SyncFromWorkspace();
         ApplyCommandSurfaceLayout();
+        // Every sync, which follows every decoration change too: plugin toolbar `when` reads the active pane's
+        // selection and decorations, which change without changing the overflow set.
+        ApplyPrimaryOverflowVisibility(_primaryToolbarOverflow);
         ApplyToolbarState();
 
         SetExpandGlyph(QuickAccessCollapseButton, _quickAccessCollapsed);

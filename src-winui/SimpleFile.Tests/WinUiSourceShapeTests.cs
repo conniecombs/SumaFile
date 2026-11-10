@@ -1433,7 +1433,64 @@ public class WinUiSourceShapeTests
         Assert.Contains("RefreshPluginPanelToggleButtons();", MethodBody(surface, "private void ApplyPrimaryToolbarCommandVisibility("));
 
         var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
-        Assert.Contains("SetToggleChromeState(", MethodBody(panels, "private void RefreshPluginPanelToggleButtons("));
+        Assert.Contains("ApplyPluginPanelToggleChrome(", MethodBody(panels, "private void RefreshPluginPanelToggleButtons("));
+        Assert.Contains("SetToggleChromeState(", MethodBody(panels, "private void ApplyPluginPanelToggleChrome("));
+    }
+
+    [Fact]
+    public void PanelToggleChrome_SurvivesEveryToolbarBuildAndChromeRefresh()
+    {
+        // ConfigureToolbarButton runs for every new toolbar button (a rebuild) and every chrome refresh, and resets the
+        // name, tooltip and background. It must end by drawing a panel's button as its toggle again, or "Hide <title>"
+        // is lost on any toolbar rebuild whose overflow set is unchanged.
+        var root = FindRepoRoot();
+        var surface = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.CommandSurface.cs"));
+        var configure = MethodBody(surface, "private void ConfigureToolbarButton(Button button, ToolbarAction action, bool showLabels)");
+        var toggle = configure.IndexOf("ApplyPluginPanelToggleChrome(button, ", StringComparison.Ordinal);
+        Assert.True(toggle >= 0, "ConfigureToolbarButton does not redraw a panel's toggle chrome.");
+        Assert.True(toggle > configure.LastIndexOf("AutomationProperties.SetName(button, ", StringComparison.Ordinal),
+            "The panel toggle chrome must be drawn after the action label's name.");
+        Assert.True(toggle > configure.LastIndexOf("ToolTipService.SetToolTip(button, ", StringComparison.Ordinal),
+            "The panel toggle chrome must be drawn after the action label's tooltip.");
+
+        // Both ApplyCommandSurfaceLayout branches reach ConfigureToolbarButton.
+        Assert.Contains("ConfigureToolbarButton(", MethodBody(surface, "private void RefreshPrimaryToolbarActionChrome(bool showLabels)"));
+        Assert.Contains("ConfigureToolbarButton(generated, ", MethodBody(surface, "private FrameworkElement? ToolbarElementFor("));
+
+        // Hello puts its panel toggle on the primary toolbar, so the UI smoke drives this path for real.
+        using var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(root, "SimpleFile.Tests", "Fixtures", "HelloPlugin", "plugin.json")));
+        Assert.Contains(manifest.RootElement.GetProperty("contributions").GetProperty("toolbar").EnumerateArray(), entry =>
+            entry.GetProperty("command").GetString() == "toggle-panel" && entry.GetProperty("placement").GetString() == "primary");
+    }
+
+    [Fact]
+    public void PanelBodies_LoadOncePerPresentation()
+    {
+        // Spec §7: a panel's body is created once per presentation. The queue only drops a request while the key waits,
+        // so a show during a running load must see the load marked on the chrome, and the load itself must not run or
+        // place a second body for a presentation that already has one.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        var show = MethodBody(panels, "internal Task ShowPluginPanelAsync(string pluginId, string panelId)");
+        var showGuard = show.IndexOf("PluginPanelLayout.NeedsBodyLoad(", StringComparison.Ordinal);
+        Assert.True(showGuard >= 0, "ShowPluginPanelAsync does not ask PluginPanelLayout.NeedsBodyLoad.");
+        Assert.True(showGuard < show.IndexOf("_pluginBodyLoads.Request(", StringComparison.Ordinal));
+        Assert.Contains("chrome.LoadingPresentation", show[showGuard..]);
+
+        var load = MethodBody(panels, "private async Task LoadPluginPanelBodyAsync(");
+        var loadGuard = load.IndexOf("PluginPanelLayout.NeedsBodyLoad(", StringComparison.Ordinal);
+        var mark = load.IndexOf("chrome.LoadingPresentation = presentation;", StringComparison.Ordinal);
+        var create = load.IndexOf(".CreatePanelAsync(", StringComparison.Ordinal);
+        Assert.True(loadGuard >= 0 && loadGuard < mark && mark < create,
+            "LoadPluginPanelBodyAsync must check NeedsBodyLoad, then mark the load on the chrome, before CreatePanelAsync.");
+        Assert.Contains("finally", load[create..]);
+        Assert.Contains("chrome.LoadingPresentation = null;", load[create..]);
+        var place = load.IndexOf("chrome.Body.Content = element;", StringComparison.Ordinal);
+        Assert.Contains("chrome.Body.Content is not null", load[create..place]);
+
+        var chrome = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginPanelWindow.cs"));
+        Assert.Contains("public int? LoadingPresentation { get; set; }", chrome);
     }
 
     [Fact]
@@ -1502,6 +1559,192 @@ public class WinUiSourceShapeTests
 
         var hide = MethodBody(panels, "public void Hide(string panelId)");
         Assert.Contains("TryEnqueue(", hide);
+    }
+
+    [Fact]
+    public void BuildContextMenuRequest_FillsFolderFlagsAndSelectionDecorationPlugins()
+    {
+        // Menus read the decorations the active pane already has; building a menu never asks a provider.
+        var root = FindRepoRoot();
+        var commands = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Commands.cs"));
+        var body = MethodBody(commands, "private ContextMenuRequest BuildContextMenuRequest(");
+
+        Assert.Matches(@"FolderFlags\s*=\s*decorations\.FolderFlags", body);
+        Assert.Matches(@"SelectionDecorationPlugins\s*=\s*decorations\.PluginsFor\(", body);
+        Assert.Contains(".Decorations", body);
+        Assert.DoesNotContain("GetRowDecorationsAsync(", body);
+        Assert.DoesNotContain(".DecorateAsync(", body);
+        Assert.DoesNotContain("InvalidateDecorationsAsync(", body);
+    }
+
+    [Fact]
+    public void FileRowView_RendersDecorationsThroughTheBrushAllowList()
+    {
+        // A plugin's brush key is a hint: it is drawn only through the allow-list, against the row's own theme.
+        var root = FindRepoRoot();
+        var view = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "FileRowView.xaml.cs"));
+        Assert.Contains("ThemeResourceLookup.Brush(this, DecorationBrushKeys.Normalize(", view);
+        Assert.Contains("Row.DecorationText", view);
+        Assert.Contains("DecorationTooltip", view);
+        Assert.DoesNotContain("GitText", view);
+        Assert.DoesNotContain("GitStatusBrushKey", view);
+
+        var rows = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "ExplorerRows.cs"));
+        Assert.Contains("\"git\" => DecorationText", rows);
+        foreach (var member in new[] { "DecorationText", "DecorationBrushKey", "DecorationTooltip", "DecorationPlugins" })
+        {
+            Assert.Matches($@"public [\w<>?]+ {member} \{{ get; set; \}}", rows);
+        }
+
+        var chrome = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Chrome.cs"));
+        var toRow = MethodBody(chrome, "private FileRow ToFileRow(FileEntry entry, PaneId pane)");
+        Assert.Contains(".Decorations", toRow);
+        var same = chrome[chrome.IndexOf("private static bool SameFileRow(", StringComparison.Ordinal)..];
+        same = same[..same.IndexOf(';')];
+        foreach (var member in new[] { "DecorationText", "DecorationBrushKey", "DecorationTooltip", "DecorationPlugins" })
+        {
+            Assert.Contains("left." + member, same);
+        }
+
+        // The status column shows only when a decoration provider exists, not with the legacy Git switch.
+        var transfer = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Transfer.cs"));
+        var effective = MethodBody(transfer, "private ColumnLayout EffectiveColumnsForPane(");
+        Assert.Contains("RowDecorations.HasProviders", effective);
+        Assert.DoesNotContain("IsGitIntegrationEnabled", effective);
+    }
+
+    [Fact]
+    public void ThemeDictionaries_DefineTheDecorationBrushes()
+    {
+        // Spec §5.1: the stable decoration keys exist in every theme dictionary, with the old Git colours.
+        var root = FindRepoRoot();
+        var app = System.Xml.Linq.XDocument.Load(Path.Combine(root, "SimpleFile.App", "App.xaml"));
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var themes = app.Descendants()
+            .Where(element => element.Name.LocalName == "ResourceDictionary" && element.Attribute(x + "Key") is not null)
+            .ToList();
+        Assert.Equal(["Default", "Dark", "Light", "HighContrast"], themes.Select(theme => theme.Attribute(x + "Key")!.Value));
+        foreach (var theme in themes)
+        {
+            string? Color(string key) => theme.Elements()
+                .FirstOrDefault(element => element.Attribute(x + "Key")?.Value == key)?.Attribute("Color")?.Value;
+
+            foreach (var state in new[] { "Added", "Modified", "Untracked", "Deleted" })
+            {
+                var color = Color($"SfDecoration{state}Brush");
+                Assert.NotNull(color);
+                Assert.Equal(Color($"SfGit{state}Brush"), color);
+            }
+        }
+
+        var builder = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginSettingsPanelBuilder.cs"));
+        Assert.Contains("Brush(\"SfDecorationDeletedBrush\")", builder);
+        Assert.DoesNotContain("SfGitDeletedBrush", builder);
+    }
+
+    [Fact]
+    public void StartupReady_RedecoratesAfterMarkingReady()
+    {
+        // Carry-over (h): no decoration request precedes ready, and the folder shown at startup is still decorated.
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var callers = Directory.EnumerateFiles(appRoot, "*.cs")
+            .Where(path => File.ReadAllText(path).Contains("MarkStartupReady(", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ToList();
+        Assert.Equal(["MainWindow.PluginSidebar.cs"], callers);
+
+        var sidebar = File.ReadAllText(Path.Combine(appRoot, "MainWindow.PluginSidebar.cs"));
+        Assert.Equal(1, CountOccurrences(sidebar, "MarkStartupReady("));
+        var body = MethodBody(sidebar, "private void QueuePluginSectionActivation(");
+        var queued = body.IndexOf("TryEnqueue(DispatcherQueuePriority.Low", StringComparison.Ordinal);
+        var mark = body.IndexOf(".RowDecorations.MarkStartupReady();", StringComparison.Ordinal);
+        var redecorate = body.IndexOf("ObserveAsync(", mark < 0 ? 0 : mark, StringComparison.Ordinal);
+        Assert.True(queued >= 0, "QueuePluginSectionActivation does not queue its callback at Low priority.");
+        Assert.True(mark > queued, "MarkStartupReady is not called inside the Low-priority callback.");
+        Assert.True(redecorate > mark, "No ObserveAsync follows MarkStartupReady.");
+        Assert.Contains(".InvalidateDecorationsAsync()", body[redecorate..]);
+    }
+
+    [Fact]
+    public void ApplyRowDecorationSource_OnlyQueues()
+    {
+        // Carry-over #82: setting the source runs inside ApplyPluginContributions, so it only queues thread-pool work.
+        var root = FindRepoRoot();
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        var body = MethodBody(plugins, "private void ApplyRowDecorationSource(");
+
+        Assert.Contains("SetSource(", body);
+        Assert.Contains("new PluginRowDecorationSource(", body);
+        Assert.Contains("PluginContributionAdapter.RowDecorationProviders(", body);
+        Assert.Contains("ObserveAsync(", body);
+        Assert.DoesNotContain("await", body);
+        Assert.DoesNotContain("GetRowDecorationsAsync(", body);
+        Assert.DoesNotContain(".DecorateAsync(", body);
+
+        Assert.Contains("ApplyRowDecorationSource();", MethodBody(plugins, "private void ApplyPluginContributions("));
+        Assert.Contains("ApplyRowDecorationSource();", MethodBody(plugins, "private void OnPluginWorkspaceInitialized("));
+        Assert.Contains("RowDecorations.SetSource(null)", MethodBody(plugins, "private async Task DisposePluginsAsync("));
+        var options = MethodBody(plugins, "private async Task InitializePluginsAsync(");
+        Assert.Matches(@"InvalidateDecorations\s*=\s*\w+\s*=>\s*_\s*=\s*ObserveAsync\(", options);
+    }
+
+    [Fact]
+    public void PluginSettingsCard_WritesThroughWriteSettingAsync()
+    {
+        // Review Focus 1: a declarative setting written from Settings > Plugins re-decorates at once.
+        var root = FindRepoRoot();
+        var settings = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "SettingsWindow.Plugins.cs"));
+        var build = settings.IndexOf("builder.Build(", StringComparison.Ordinal);
+        Assert.True(build >= 0, "SettingsWindow.Plugins.cs does not call builder.Build(.");
+        var call = settings[build..settings.IndexOf(");", build, StringComparison.Ordinal)];
+        Assert.Contains("WriteSettingAsync(record.Id,", call);
+        Assert.DoesNotContain("SetSettingAsync(", call);
+
+        var builder = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginSettingsPanelBuilder.cs"));
+        Assert.Contains("public static string SettingAutomationId(string pluginId, string key) => $\"PluginSetting.{pluginId}.{key}\";", builder);
+        var control = MethodBody(builder, "private FrameworkElement SettingControl(");
+        Assert.Contains("SetAutomationId(", control);
+        Assert.Contains("SettingAutomationId(pluginId, spec.Key)", control);
+    }
+
+    [Fact]
+    public void InitializePlugins_StartsTheLegacyMigrationAfterTheMark()
+    {
+        // The migration writes settings; it stays out of the budgeted span and starts once the backends may start.
+        var root = FindRepoRoot();
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        var body = MethodBody(plugins, "private async Task InitializePluginsAsync(");
+        const string migration = "_ = ObserveAsync(manager.MigrateLegacySettingsAsync(cts.Token));";
+
+        Assert.Equal(1, CountOccurrences(plugins, "MigrateLegacySettingsAsync("));
+        var mark = body.IndexOf("timer.Mark(\"plugins-discovered\"", StringComparison.Ordinal);
+        var backends = body.IndexOf("manager.StartStartupBackends();", StringComparison.Ordinal);
+        var migrate = body.IndexOf(migration, StringComparison.Ordinal);
+        Assert.True(mark >= 0 && backends > mark, "StartStartupBackends must follow the plugins-discovered mark.");
+        Assert.True(migrate > backends, "The legacy settings migration must start right after StartStartupBackends.");
+    }
+
+    [Fact]
+    public void PrimaryToolbar_HidesPluginActionsWhoseWhenIsFalse()
+    {
+        // Toolbar `when` reads the same request as menus; a panel toggle stays visible while its panel is shown, and the
+        // visibility is applied again after every workspace sync (which follows every decoration change).
+        var root = FindRepoRoot();
+        var surface = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.CommandSurface.cs"));
+        var visibility = MethodBody(surface, "private void ApplyPrimaryToolbarCommandVisibility(");
+        Assert.Contains("PluginToolbarWhenAllows(", visibility);
+        var when = MethodBody(surface, "private bool PluginToolbarWhenAllows(");
+        Assert.Contains("PluginMenuWhen.Evaluate(", when);
+        Assert.Contains("BuildContextMenuRequest(", when);
+        Assert.Contains("IsPluginPanelShownForCommand(", when);
+
+        var window = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var sync = MethodBody(window, "private void SyncFromWorkspaceCore()");
+        Assert.True(
+            sync.IndexOf("ApplyCommandSurfaceLayout();", StringComparison.Ordinal)
+                < sync.IndexOf("ApplyPrimaryOverflowVisibility(_primaryToolbarOverflow);", StringComparison.Ordinal),
+            "SyncFromWorkspaceCore does not apply the toolbar visibility after the command surface.");
     }
 
     private static string MethodBody(string source, string signature)
