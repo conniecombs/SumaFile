@@ -4,8 +4,12 @@
 //! process of its own: repository status, per-folder row decorations, the
 //! file-level commands (stage, unstage, discard, diff) and commit, fetch,
 //! pull and push. Every git process runs in its own kill-on-close job (see
-//! [`run`]), read-only queries cannot run repository-controlled programs (see
-//! [`git`]), and the status cache is per repository root (see [`status`]).
+//! [`run`]). Read-only queries (status, rev-parse, decorations, the diff
+//! preview) run no program the repository's config names: no hook, no
+//! fsmonitor, no filter driver, no external diff or textconv and no git inside
+//! a submodule (see [`git`]); the path commands and commit keep hooks and
+//! filters on. The status cache is per repository root and shares a run in
+//! flight (see [`status`]).
 //! The handler serves the methods of `plugins/git/protocol.json`.
 
 pub mod commands;

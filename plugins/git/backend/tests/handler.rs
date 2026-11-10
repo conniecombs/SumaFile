@@ -259,3 +259,66 @@ async fn failed_pull_fails_its_row_with_gits_message() {
         ]
     );
 }
+
+/// A stand-in for git that hangs for 30 s whatever it is asked, without
+/// using the CPU: `sleep` off Windows, `ping` on Windows.
+fn hanging_git(folder: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let script = folder.join("hanging-git.cmd");
+        std::fs::write(&script, "@ping -n 30 127.0.0.1 >nul\r\n").unwrap();
+        script
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let script = folder.join("hanging-git");
+        std::fs::write(&script, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+}
+
+/// `repo.decorations` honours `cancel` for its `operationId`: the hung git
+/// is killed and the call fails with `Git operation cancelled`. Without an
+/// `operationId` the call is not cancellable, as before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_by_operation_id_stops_a_decorations_request() {
+    let repo = TestRepo::new();
+    let git = Git::with_executable(
+        Some(hanging_git(repo.temp.path())),
+        repo.data.join("no-hooks-test"),
+    )
+    .with_env(repo.env());
+    let handler = Arc::new(GitHandler::with_git(git));
+    let host = HostClient::fake(HashMap::new());
+    let call = {
+        let handler = handler.clone();
+        let host = host.clone();
+        let folder = text(&repo.root);
+        tokio::spawn(async move {
+            handler
+                .handle(
+                    "repo.decorations",
+                    json!({ "folder": folder, "operationId": "op-decorations" }),
+                    &host,
+                )
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!call.is_finished(), "git hangs, so the call must still run");
+    host.fake_cancel("op-decorations");
+    let cancelled_at = Instant::now();
+
+    let reply = tokio::time::timeout(Duration::from_secs(10), call)
+        .await
+        .expect("the decorations call did not stop after its cancel")
+        .unwrap();
+
+    assert!(cancelled_at.elapsed() < Duration::from_secs(5));
+    assert_eq!(
+        reply,
+        Err(PluginError::Application(GIT_CANCELLED.to_string()))
+    );
+}

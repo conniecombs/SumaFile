@@ -131,7 +131,7 @@ The backend sends no events.
 | Method | Params | Result |
 | --- | --- | --- |
 | `repo.status` | `{ path }` | `GitRepositoryStatus` |
-| `repo.decorations` | `{ folder }` | `GitFolderDecorations { in_repository, root, rows: [{ path, status }] }` |
+| `repo.decorations` | `{ folder, operationId? }` | `GitFolderDecorations { in_repository, root, rows: [{ path, status }] }` |
 | `paths.stage`, `paths.unstage`, `paths.discard` | `{ path, paths }` | `GitCommandResult` |
 | `paths.diff` | `{ path, filePath }` | `string` |
 | `repo.commit` | `{ path, message, operationId }` | `GitCommandResult` |
@@ -142,7 +142,20 @@ The backend sends no events.
   `GIT_CEILING_DIRECTORIES` and is skipped when `GIT_DIR` or `GIT_WORK_TREE`
   is set), for a missing folder and on any git failure it answers
   `{ in_repository: false, root: null, rows: [] }`, and outside a repository
-  it runs no git.
+  it runs no git. Without git it answers the same, spawns nothing and logs
+  one warning per backend process. A `cancel` naming its optional
+  `operationId` kills that request's git process, or ends its wait for a
+  status run another caller started, and the call fails with `-32000` and
+  `Git operation cancelled`.
+- `repo.status`, `repo.decorations` and `paths.diff` are read-only: they run
+  no program the repository's config names (no hook, fsmonitor, filter
+  driver, external diff, textconv, or git inside a submodule). Callers asking
+  for the same repository root while its status runs share that one run.
+- `paths.stage`, `paths.unstage` and `paths.discard` resolve `.` and `..`
+  first: a path that resolves to the root fails with `Refusing to run a
+  file-level Git action against the repository root.`, one that leaves it as
+  outside the repository. They run the repository's hooks and filters, as
+  git does for the user's own actions.
 - fetch, pull and push open a Transfers row, `Fetching <repository folder
   name>` (`Pulling …`, `Pushing …`), or run without one when no host
   connection exists. The row ends with `progress_complete`, or with

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use crate::profiles::CREDENTIAL_TARGET_PREFIX;
+
 #[cfg(windows)]
 use std::{ptr, slice};
 #[cfg(windows)]
@@ -21,6 +23,62 @@ pub trait RemoteSecretStore: Send + Sync {
     fn write_secret(&self, target: &str, secret: &RemoteSecret) -> Result<(), String>;
     fn read_secret(&self, target: &str) -> Result<Option<RemoteSecret>, String>;
     fn delete_secret(&self, target: &str) -> Result<(), String>;
+}
+
+/// A secret store that only reads, writes and deletes targets in the
+/// plugin's own namespace, [`CREDENTIAL_TARGET_PREFIX`]. New saves always get
+/// such a target, but a 1.0.1/1.0.2 profile imported verbatim can name any
+/// Credential Manager entry, and the backend must never send another
+/// application's secret to a server or delete it. A foreign target is
+/// skipped and logged: a read finds nothing, a delete leaves it and a write
+/// fails.
+pub struct OwnTargetsOnly {
+    inner: std::sync::Arc<dyn RemoteSecretStore>,
+}
+
+impl OwnTargetsOnly {
+    pub fn new(inner: std::sync::Arc<dyn RemoteSecretStore>) -> OwnTargetsOnly {
+        OwnTargetsOnly { inner }
+    }
+}
+
+/// True for a target in the plugin's own namespace.
+pub fn is_own_target(target: &str) -> bool {
+    target.trim().starts_with(CREDENTIAL_TARGET_PREFIX)
+}
+
+fn skip_foreign(action: &str, target: &str) {
+    log::warn!(
+        "Skipping the {action} of credential target {target}: it does not start with {CREDENTIAL_TARGET_PREFIX}"
+    );
+}
+
+impl RemoteSecretStore for OwnTargetsOnly {
+    fn write_secret(&self, target: &str, secret: &RemoteSecret) -> Result<(), String> {
+        if !is_own_target(target) {
+            skip_foreign("write", target);
+            return Err(format!(
+                "remote profile credential target must start with {CREDENTIAL_TARGET_PREFIX}: {target}"
+            ));
+        }
+        self.inner.write_secret(target, secret)
+    }
+
+    fn read_secret(&self, target: &str) -> Result<Option<RemoteSecret>, String> {
+        if !is_own_target(target) {
+            skip_foreign("read", target);
+            return Ok(None);
+        }
+        self.inner.read_secret(target)
+    }
+
+    fn delete_secret(&self, target: &str) -> Result<(), String> {
+        if !is_own_target(target) {
+            skip_foreign("delete", target);
+            return Ok(());
+        }
+        self.inner.delete_secret(target)
+    }
 }
 
 #[derive(Default)]
@@ -198,6 +256,33 @@ fn normalize_target(target: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_targets_only_skips_foreign_targets() {
+        let inner = std::sync::Arc::new(MemoryRemoteSecretStore::default());
+        let foreign = RemoteSecret::Password("theirs".to_string());
+        inner.write_secret("OtherApp.Token", &foreign).unwrap();
+        let store = OwnTargetsOnly::new(inner.clone());
+
+        assert_eq!(store.read_secret("OtherApp.Token").unwrap(), None);
+        store.delete_secret("OtherApp.Token").unwrap();
+        let error = store
+            .write_secret("OtherApp.Token", &RemoteSecret::Password("mine".into()))
+            .unwrap_err();
+        assert!(
+            error.contains("must start with SumaFile.Remote."),
+            "{error}"
+        );
+        assert_eq!(inner.read_secret("OtherApp.Token").unwrap(), Some(foreign));
+        // A target that only contains the prefix is foreign too.
+        assert_eq!(store.read_secret("X.SumaFile.Remote.a").unwrap(), None);
+
+        let own = RemoteSecret::Password("ours".to_string());
+        store.write_secret("SumaFile.Remote.abc", &own).unwrap();
+        assert_eq!(store.read_secret("SumaFile.Remote.abc").unwrap(), Some(own));
+        store.delete_secret("SumaFile.Remote.abc").unwrap();
+        assert_eq!(inner.read_secret("SumaFile.Remote.abc").unwrap(), None);
+    }
 
     #[test]
     fn secret_encoding_round_trips_passwords_and_passphrases() {

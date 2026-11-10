@@ -183,6 +183,35 @@ public class GitWorkbenchControllerTests
     }
 
     [Fact]
+    public async Task FileListCommands_AskForAFreshStatusEachTime()
+    {
+        // Review finding: a status cached by an earlier command (here one that ended early) hid a newly changed file.
+        var (host, backend, _, _, controller) = Create();
+        var changes = new List<GitFileStatus>
+        {
+            new() { Path = "a.txt", AbsolutePath = @"R:\repo\a.txt", Status = "modified", Unstaged = true },
+        };
+        backend.Status = (_, _) => Task.FromResult(new GitRepositoryStatus { IsRepo = true, Root = Repo, Changes = changes.ToList() });
+
+        await controller.ExecuteAsync(Context(GitCommandIds.StageSelected, @"R:\repo\b.txt"), CancellationToken.None);
+        Assert.Empty(backend.CallsOf("stage"));
+        Assert.Equal(("Select one or more changed paths first.", false), host.Notifications[^1]);
+
+        // b.txt changes on disk; the hidden workbench refreshed nothing.
+        changes.Add(new GitFileStatus { Path = "b.txt", AbsolutePath = @"R:\repo\b.txt", Status = "untracked", Untracked = true });
+        await controller.ExecuteAsync(Context(GitCommandIds.StageSelected, @"R:\repo\b.txt"), CancellationToken.None);
+        Assert.Equal([@"stage R:\repo [R:\repo\b.txt]"], backend.CallsOf("stage"));
+
+        // The same for a diff after one that ended early.
+        await controller.ExecuteAsync(Context(GitCommandIds.DiffSelected, @"R:\repo\a.txt", @"R:\repo\b.txt"), CancellationToken.None);
+        Assert.Equal(("Select exactly one changed path.", false), host.Notifications[^1]);
+        changes.Add(new GitFileStatus { Path = "c.txt", AbsolutePath = @"R:\repo\c.txt", Status = "modified", Unstaged = true });
+        await controller.ExecuteAsync(Context(GitCommandIds.DiffSelected, @"R:\repo\c.txt"), CancellationToken.None);
+        Assert.Equal([@"diff R:\repo [R:\repo\c.txt]"], backend.CallsOf("diff"));
+        Assert.Equal(4, backend.CallsOf("status").Count);
+    }
+
+    [Fact]
     public async Task StageSelected_PanelRowsThatCannotStage_RunNothing()
     {
         var (host, backend, model, _, controller) = Create();

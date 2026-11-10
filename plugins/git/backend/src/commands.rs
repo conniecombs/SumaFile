@@ -18,7 +18,7 @@ use crate::status::{find_root, repo_status, StatusCache};
 /// The work tree root that holds `path`.
 pub fn repository_root(git: &Git, path: &str) -> Result<PathBuf, String> {
     let path = existing_path(path)?;
-    find_root(git, &path)?
+    find_root(git, &path, None)?
         .ok_or_else(|| "The current path is not inside a Git repository.".to_string())
 }
 
@@ -184,7 +184,12 @@ pub fn discard(
 }
 
 /// The staged and the working tree diff of one path, each under its own
-/// heading.
+/// heading. Like status it runs no program the repository configures: the
+/// filter drivers are switched off (see [`Git::filter_overrides`]), and
+/// `--no-ext-diff --no-textconv` skip `diff.external` and every diff
+/// driver's `command` and `textconv`. `--ignore-submodules=dirty
+/// --submodule=short` keep git from starting a `git status` or a `git diff`
+/// inside a submodule.
 pub fn diff(git: &Git, cache: &StatusCache, path: &str, file_path: &str) -> Result<String, String> {
     let root = repository_root(git, path)?;
     let pathspec = repo_relative_path(&root, file_path)?;
@@ -199,8 +204,21 @@ pub fn diff(git: &Git, cache: &StatusCache, path: &str, file_path: &str) -> Resu
         );
     }
 
-    let staged = git.query(&root, &["diff", "--cached", "--", &pathspec])?;
-    let working = git.query(&root, &["diff", "--", &pathspec])?;
+    let config = git.filter_overrides(&root, None)?;
+    let diff_of = |cached: &[&str]| {
+        let mut args = vec![
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--ignore-submodules=dirty",
+            "--submodule=short",
+        ];
+        args.extend_from_slice(cached);
+        args.extend(["--", pathspec.as_str()]);
+        git.query_with(&root, &config, &args, None)
+    };
+    let staged = diff_of(&["--cached"])?;
+    let working = diff_of(&[])?;
 
     let mut sections = Vec::new();
     if !staged.trim().is_empty() {

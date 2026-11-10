@@ -1,7 +1,7 @@
 //! Path spellings: native paths for the UI, `/`-separated repository-relative
 //! pathspecs for git, and comparison keys.
 
-use std::path::{Path, PathBuf, MAIN_SEPARATOR_STR};
+use std::path::{Component, Path, PathBuf, MAIN_SEPARATOR_STR};
 
 /// `text` with every `/` turned into the native separator, as Git for
 /// Windows reports `C:/repo` for `C:\repo`. A no-op where `/` is native.
@@ -18,7 +18,8 @@ pub fn existing_path(path: &str) -> Result<PathBuf, String> {
 }
 
 /// The sorted, deduplicated pathspecs of `paths` relative to `root`. Fails
-/// on an empty selection and on any path that names the root itself.
+/// on an empty selection and on any path that names the root itself, once
+/// `.` and `..` are resolved (`sub\..` is the root), or that leaves it.
 pub fn pathspecs_under_root(root: &Path, paths: &[String]) -> Result<Vec<String>, String> {
     if paths.is_empty() {
         return Err("Select at least one Git path.".to_string());
@@ -42,7 +43,9 @@ pub fn pathspecs_under_root(root: &Path, paths: &[String]) -> Result<Vec<String>
 }
 
 /// `value`, absolute or relative to `root`, as a `/`-separated path relative
-/// to `root`. A root spelled with other ASCII letter cases still matches, and
+/// to `root`, with `.` and `..` resolved lexically first, as git resolves
+/// them in a pathspec: `sub/..` is `""` (the root) and `sub/../..` is
+/// outside. A root spelled with other ASCII letter cases still matches, and
 /// the rest of the path keeps its own spelling.
 pub fn repo_relative_path(root: &Path, value: &str) -> Result<String, String> {
     let value = value.trim();
@@ -51,11 +54,12 @@ pub fn repo_relative_path(root: &Path, value: &str) -> Result<String, String> {
     }
 
     let input = Path::new(value);
-    let absolute = if input.is_absolute() {
+    let root = &lexically_normal(root);
+    let absolute = lexically_normal(&if input.is_absolute() {
         input.to_path_buf()
     } else {
         root.join(input)
-    };
+    });
 
     if let Ok(relative) = absolute.strip_prefix(root) {
         return Ok(path_to_git_relative(relative));
@@ -89,6 +93,27 @@ pub fn repo_relative_path(root: &Path, value: &str) -> Result<String, String> {
     }
 
     Ok(absolute_lower[prefix.len()..].to_string())
+}
+
+/// `path` without `.` components, each `..` removing the name before it. A
+/// `..` at the top of an absolute path stays there, as the file system keeps
+/// it; one at the start of a relative path is kept.
+fn lexically_normal(path: &Path) -> PathBuf {
+    let mut normal = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match normal.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    normal.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => normal.push(".."),
+            },
+            other => normal.push(other.as_os_str()),
+        }
+    }
+    normal
 }
 
 pub fn path_to_git_relative(path: &Path) -> String {
@@ -170,6 +195,55 @@ mod tests {
             pathspecs_under_root(root, &["b".to_string(), "a".to_string(), "b".to_string()])
                 .unwrap(),
             vec!["a", "b"]
+        );
+    }
+
+    #[test]
+    fn dot_dot_that_lands_on_the_root_is_the_root() {
+        let root = Path::new(ROOT);
+        let refused = "Refusing to run a file-level Git action against the repository root.";
+
+        for path in [
+            "sub/..".to_string(),
+            "./sub/../.".to_string(),
+            format!("{ROOT}/sub/.."),
+            format!("{ROOT}/sub/deeper/../.."),
+        ] {
+            assert_eq!(
+                pathspecs_under_root(root, std::slice::from_ref(&path)).unwrap_err(),
+                refused,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn dot_dot_that_leaves_the_root_is_outside_the_repository() {
+        let root = Path::new(ROOT);
+
+        for path in ["sub/../..", "../other/lib.rs"] {
+            let error = pathspecs_under_root(root, &[path.to_string()]).unwrap_err();
+            assert!(
+                error.starts_with("Git path is outside the repository: "),
+                "{path}: {error}"
+            );
+        }
+        let repo_lookalike = format!("{ROOT}/../repo2/a.txt");
+        assert!(repo_relative_path(root, &repo_lookalike).is_err());
+    }
+
+    #[test]
+    fn dot_and_dot_dot_inside_the_root_resolve_lexically() {
+        let root = Path::new(ROOT);
+
+        assert_eq!(
+            repo_relative_path(root, "sub/./a/../b.txt").unwrap(),
+            "sub/b.txt"
+        );
+        assert_eq!(repo_relative_path(root, "./a.txt").unwrap(), "a.txt");
+        assert_eq!(
+            repo_relative_path(root, &format!("{ROOT}/sub/../a.txt")).unwrap(),
+            "a.txt"
         );
     }
 }

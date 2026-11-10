@@ -9,6 +9,12 @@ public sealed class GitChangeRow
     public string StatusText { get; set; } = "";
     public string DetailText { get; set; } = "";
     public string StageText { get; set; } = "";
+
+    /// <summary>
+    /// Git's index status letter (<see cref="GitFileStatus.IndexStatus"/>); <c>A</c> marks a file staged as added,
+    /// which discard deletes from disk like an untracked one.
+    /// </summary>
+    public string IndexStatus { get; set; } = "";
     public bool CanStage { get; set; }
     public bool CanUnstage { get; set; }
     public bool CanDiscard { get; set; }
@@ -27,6 +33,7 @@ public sealed class GitChangeRow
             OriginalPath = status.OriginalPath,
             StatusText = status.Status,
             DetailText = detail,
+            IndexStatus = status.IndexStatus ?? "",
             StageText = status.Conflicted
                 ? "conflict"
                 : status.Staged && status.Unstaged

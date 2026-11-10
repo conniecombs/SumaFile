@@ -15,7 +15,7 @@ namespace SumaFile.Git.Model;
 /// <item>A refresh's result applies only while its <see cref="CancellationTokenSource"/> is still the current one and
 /// the active folder is still the one it asked about.</item>
 /// <item>The paths a command runs on are the workbench's selected rows, or else the file list's selection filtered by
-/// the last status's changes.</item>
+/// the changes of a status asked for at that moment.</item>
 /// <item>After stage, unstage, discard, commit and pull it asks the host to decorate again; after discard and pull it
 /// also lists the folder again.</item>
 /// </list>
@@ -601,7 +601,8 @@ public sealed class GitWorkbenchController : IDisposable
 
     /// <summary>
     /// The rows and paths a path command runs on: the workbench's selected rows, or else the file list's selection
-    /// filtered by the status of <paramref name="path"/>, asked for when the last one is for another folder.
+    /// filtered by a status of <paramref name="path"/> asked for now. The last status can be stale (the repository
+    /// changed while the workbench was hidden), and the backend caches status for 1.5 s, so asking again is cheap.
     /// </summary>
     private async Task<(IReadOnlyList<GitChangeRow> Rows, IReadOnlyList<string> Paths)> ResolveSelectionAsync(
         string path,
@@ -614,11 +615,8 @@ public sealed class GitWorkbenchController : IDisposable
             return (panelRows, SelectedPaths(panelRows, []));
         }
 
-        if (_status is null || !GitPaths.PathsEqual(_statusPath, path))
-        {
-            _status = await _backend.StatusAsync(path, ct) ?? new GitRepositoryStatus();
-            _statusPath = path;
-        }
+        _status = await _backend.StatusAsync(path, ct) ?? new GitRepositoryStatus();
+        _statusPath = path;
 
         var rows = MatchingChanges(fileSelection ?? []);
         return (rows, rows.Select(row => row.AbsolutePath).ToArray());

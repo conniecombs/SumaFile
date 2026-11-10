@@ -472,3 +472,333 @@ fn mutating_command_refreshes_the_cached_status() {
 
     assert_eq!((after.untracked, after.staged), (0, 1));
 }
+
+/// A shell command, as git runs configured commands, that appends a line to
+/// `marker` and then passes stdin through (a clean filter's or a textconv's
+/// output). Git for Windows runs it with its own `sh`, which takes
+/// `C:/…` paths.
+fn marker_command(marker: &Path) -> String {
+    let marker = text(marker).replace('\\', "/");
+    format!("echo ran >> '{marker}'; cat")
+}
+
+fn markers_in(folder: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|name| name.starts_with("marker-"))
+        .collect();
+    names.sort();
+    names
+}
+
+/// Makes `relative` stat-dirty with the same contents, so git has to read
+/// (and clean-filter) it to tell whether it changed.
+fn touch(repo: &TestRepo, relative: &str) {
+    let path = repo.path(relative);
+    let contents = std::fs::read(&path).unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(&path, contents).unwrap();
+    let file = std::fs::File::options().write(true).open(&path).unwrap();
+    let stamp = std::time::SystemTime::now() + Duration::from_secs(5);
+    file.set_modified(stamp).unwrap();
+}
+
+/// A browsed repository's config can name programs: a clean filter and a
+/// long-running filter process (through `.gitattributes`, `.git/info/attributes`
+/// or `core.attributesFile`), `diff.external` and a textconv driver. Status,
+/// decorations and the diff preview must run none of them.
+#[test]
+fn read_only_queries_run_no_program_the_repository_configures() {
+    let repo = TestRepo::new();
+    repo.write("a.txt", "one\n");
+    repo.write("b.txt", "one\n");
+    repo.write("c.txt", "one\n");
+    repo.commit_all("initial");
+    let markers = repo.temp.path().join("markers");
+    std::fs::create_dir_all(&markers).unwrap();
+    let clean = marker_command(&markers.join("marker-clean"));
+    let process = marker_command(&markers.join("marker-process"));
+    let external = marker_command(&markers.join("marker-external"));
+    let textconv = marker_command(&markers.join("marker-textconv"));
+    let attributes_file = repo.temp.path().join("attributes");
+    std::fs::write(&attributes_file, "c.txt filter=Mixed.Case\n").unwrap();
+    for (key, value) in [
+        ("filter.x.clean", clean.as_str()),
+        ("filter.x.required", "true"),
+        ("filter.p.process", process.as_str()),
+        ("filter.Mixed.Case.clean", clean.as_str()),
+        ("diff.external", external.as_str()),
+        ("diff.y.textconv", textconv.as_str()),
+        ("core.attributesFile", &text(&attributes_file)),
+    ] {
+        repo.git(&["config", key, value]);
+    }
+    repo.write(".gitattributes", "* filter=x diff=y\n");
+    let info = repo.root.join(".git").join("info");
+    std::fs::create_dir_all(&info).unwrap();
+    std::fs::write(info.join("attributes"), "b.txt filter=p\n").unwrap();
+    repo.write("a.txt", "two\n");
+    for name in ["b.txt", "c.txt"] {
+        touch(&repo, name);
+    }
+    let git = repo.git_under_test();
+
+    let status = repo_status(&git, &cache(), &repo.root).unwrap();
+    let decorations = folder_decorations(&git, &cache(), &repo.root);
+    let preview = diff(
+        &git,
+        &cache(),
+        &text(&repo.root),
+        &text(&repo.path("a.txt")),
+    )
+    .unwrap();
+
+    assert!(
+        markers_in(&markers).is_empty(),
+        "{:?}",
+        markers_in(&markers)
+    );
+    assert!(status.is_repo);
+    assert!(
+        status.changes.iter().any(|change| change.path == "a.txt"),
+        "{:?}",
+        status.changes
+    );
+    assert!(decorations.in_repository);
+    assert!(preview.contains("+two"), "{preview}");
+
+    // The planted commands do run when git is not told to skip them, so the
+    // checks above prove something.
+    touch(&repo, "b.txt");
+    touch(&repo, "c.txt");
+    let _ = repo
+        .command_in(&repo.root, &["status", "--porcelain"])
+        .output();
+    let no_filters = [
+        "-c",
+        "filter.x.clean=",
+        "-c",
+        "filter.x.required=false",
+        "-c",
+        "filter.p.process=",
+        "-c",
+        "filter.Mixed.Case.clean=",
+    ];
+    for extra in [&[][..], &["--no-ext-diff"][..]] {
+        let mut args = no_filters.to_vec();
+        args.push("diff");
+        args.extend_from_slice(extra);
+        args.extend(["--", "a.txt"]);
+        let _ = repo.command_in(&repo.root, &args).output();
+    }
+    assert_eq!(
+        markers_in(&markers),
+        vec![
+            "marker-clean",
+            "marker-external",
+            "marker-process",
+            "marker-textconv"
+        ]
+    );
+}
+
+/// `git status` checks each submodule with a `git status` of its own, which
+/// would run the submodule's filters. Status and decorations skip that check
+/// and still show a submodule whose checked-out commit moved.
+#[test]
+fn read_only_queries_run_no_program_a_submodule_configures() {
+    let repo = TestRepo::new();
+    let source = repo.temp.path().join("subsource");
+    std::fs::create_dir_all(&source).unwrap();
+    repo.git_in(&source, &["init", "-b", "main"]);
+    write_under(&source, "s.txt", "one\n");
+    repo.git_in(&source, &["add", "--", "s.txt"]);
+    repo.git_in(
+        &source,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@sumafile.invalid",
+            "commit",
+            "-m",
+            "s",
+        ],
+    );
+    repo.git(&[
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        &text(&source).replace('\\', "/"),
+        "sm",
+    ]);
+    repo.git(&["commit", "-m", "add submodule"]);
+    let markers = repo.temp.path().join("markers");
+    std::fs::create_dir_all(&markers).unwrap();
+    let submodule = repo.path("sm");
+    repo.git_in(
+        &submodule,
+        &[
+            "config",
+            "filter.z.clean",
+            &marker_command(&markers.join("marker-submodule")),
+        ],
+    );
+    let module_dir = repo.root.join(".git").join("modules").join("sm");
+    std::fs::create_dir_all(module_dir.join("info")).unwrap();
+    std::fs::write(module_dir.join("info").join("attributes"), "* filter=z\n").unwrap();
+    touch(&repo, "sm/s.txt");
+    let git = repo.git_under_test();
+
+    let status = repo_status(&git, &cache(), &repo.root).unwrap();
+    let decorations = folder_decorations(&git, &cache(), &repo.root);
+
+    assert!(
+        markers_in(&markers).is_empty(),
+        "{:?}",
+        markers_in(&markers)
+    );
+    assert!(status.is_repo && decorations.in_repository);
+    assert!(status.changes.is_empty(), "{:?}", status.changes);
+
+    let _ = repo
+        .command_in(&repo.root, &["status", "--porcelain"])
+        .output();
+    assert_eq!(markers_in(&markers), vec!["marker-submodule"]);
+    std::fs::remove_file(markers.join("marker-submodule")).unwrap();
+
+    // A moved submodule commit still shows.
+    write_under(&submodule, "s.txt", "two\n");
+    repo.git_in(&submodule, &["-c", "filter.z.clean=", "add", "--", "s.txt"]);
+    repo.git_in(
+        &submodule,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@sumafile.invalid",
+            "commit",
+            "-m",
+            "moved",
+        ],
+    );
+    // The commit above may run the submodule's filter itself.
+    let _ = std::fs::remove_file(markers.join("marker-submodule"));
+    touch(&repo, "sm/s.txt");
+    let moved = repo_status(&git, &cache(), &repo.root).unwrap();
+    assert_eq!(moved.changes.len(), 1, "{:?}", moved.changes);
+    assert_eq!(moved.changes[0].path, "sm");
+    assert!(
+        markers_in(&markers).is_empty(),
+        "{:?}",
+        markers_in(&markers)
+    );
+}
+
+/// The work tree's `.gitattributes` still applies: a file checked out with
+/// CRLF under `text eol=crlf` is not reported as modified once it is
+/// stat-dirty.
+#[test]
+fn status_keeps_the_repositorys_eol_attributes() {
+    let repo = TestRepo::new();
+    repo.write(".gitattributes", "*.txt text eol=crlf\n");
+    repo.write("f.txt", "a\nb\n");
+    repo.commit_all("initial");
+    std::fs::remove_file(repo.path("f.txt")).unwrap();
+    repo.git(&["checkout", "--", "f.txt"]);
+    assert_eq!(std::fs::read(repo.path("f.txt")).unwrap(), b"a\r\nb\r\n");
+    touch(&repo, "f.txt");
+    let git = repo.git_under_test();
+
+    let status = repo_status(&git, &cache(), &repo.root).unwrap();
+
+    assert!(status.changes.is_empty(), "{:?}", status.changes);
+}
+
+/// `link` becomes a directory symbolic link (a junction on Windows) to
+/// `target`.
+fn link_folder(link: &Path, target: &Path) {
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J failed");
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+fn canonical(path: &str) -> std::path::PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|error| panic!("{path}: {error}"))
+}
+
+/// Git counts `--show-cdup` on the resolved folder, so through a link the
+/// caller's path minus those levels can be another folder, even another
+/// repository. The root is then git's own `--show-toplevel`.
+#[test]
+fn root_through_a_link_is_the_real_repository_root() {
+    let repo = TestRepo::new();
+    repo.write("sub/deeper/a.txt", "one\n");
+    repo.commit_all("initial");
+    repo.write("sub/deeper/a.txt", "two\n");
+    let git = repo.git_under_test();
+
+    // `<temp>\link\deeper` is `<repo>\sub\deeper`: one level up from the
+    // caller's spelling is `<temp>`, not the repository.
+    let link = repo.temp.path().join("link");
+    link_folder(&link, &repo.path("sub"));
+    let through_link = repo_status(&git, &cache(), &link.join("deeper")).unwrap();
+    assert!(through_link.is_repo);
+    assert_eq!(
+        canonical(through_link.root.as_deref().unwrap()),
+        canonical(&text(&repo.root))
+    );
+    assert_eq!(through_link.changes.len(), 1, "{:?}", through_link.changes);
+
+    // A link inside another repository, at the same depth: one level up is
+    // that other repository's root, which has a `.git` of its own.
+    let other = repo.temp.path().join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    repo.git_in(&other, &["init", "-b", "main"]);
+    let inner = other.join("inner");
+    link_folder(&inner, &repo.path("sub"));
+    let decorations = folder_decorations(&git, &cache(), &inner);
+    assert!(decorations.in_repository);
+    assert_eq!(
+        canonical(decorations.root.as_deref().unwrap()),
+        canonical(&text(&repo.root))
+    );
+}
+
+/// `<root>\sub\..` is the root: discarding it would make `git clean -fd`
+/// and `git restore` cover the whole repository, so it is refused.
+#[test]
+fn discard_refuses_a_path_that_resolves_to_the_root() {
+    let repo = TestRepo::new();
+    repo.write("sub/a.txt", "one\n");
+    repo.commit_all("initial");
+    repo.write("sub/a.txt", "two\n");
+    repo.write("junk.txt", "x\n");
+    let git = repo.git_under_test();
+    let root = text(&repo.root);
+    let dot_dot = text(&repo.path("sub").join(".."));
+
+    let error = discard(&git, &cache(), &root, &[dot_dot]).unwrap_err();
+
+    assert_eq!(
+        error,
+        "Refusing to run a file-level Git action against the repository root."
+    );
+    assert!(repo.path("junk.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(repo.path("sub/a.txt")).unwrap(),
+        "two\n"
+    );
+}

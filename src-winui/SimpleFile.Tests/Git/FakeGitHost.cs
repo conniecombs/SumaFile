@@ -32,6 +32,9 @@ internal sealed class FakeGitHost : IPluginHost
     /// <summary>The plugin's settings by key; a missing key reads as null.</summary>
     public Dictionary<string, string> SettingValues { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>When set, <see cref="IPluginSettings.GetAsync"/> fails with it (a settings store that does not answer).</summary>
+    public Exception? SettingsFailure { get; set; }
+
     /// <summary>What <see cref="IPluginPanels.IsVisible"/> answers for every panel id.</summary>
     public bool PanelVisible { get; set; }
 
@@ -128,6 +131,11 @@ internal sealed class FakeGitHost : IPluginHost
         public Task<string?> GetAsync(string key, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
+            if (owner.SettingsFailure is { } failure)
+            {
+                return Task.FromException<string?>(failure);
+            }
+
             lock (owner._gate)
             {
                 return Task.FromResult(owner.SettingValues.TryGetValue(key, out var value) ? value : null);

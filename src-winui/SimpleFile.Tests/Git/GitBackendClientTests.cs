@@ -49,7 +49,12 @@ public class GitBackendClientTests
             calls.Select(call => call.Method).ToArray());
         const string pathsJson = """{"path":"R:\\repo","paths":["R:\\repo\\café 資料\\a.txt","R:\\repo\\-n.txt"]}""";
         Assert.Equal("""{"path":"R:\\repo"}""", Normalize(calls[0].ArgsJson));
-        Assert.Equal("""{"folder":"R:\\repo"}""", Normalize(calls[1].ArgsJson));
+        using (var decorationsSent = JsonDocument.Parse(calls[1].ArgsJson))
+        {
+            Assert.Equal(["folder", "operationId"], decorationsSent.RootElement.EnumerateObject().Select(p => p.Name).ToArray());
+            Assert.Equal(@"R:\repo", decorationsSent.RootElement.GetProperty("folder").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(decorationsSent.RootElement.GetProperty("operationId").GetString()));
+        }
         Assert.Equal(pathsJson, Normalize(calls[2].ArgsJson));
         Assert.Equal(pathsJson, Normalize(calls[3].ArgsJson));
         Assert.Equal(pathsJson, Normalize(calls[4].ArgsJson));
@@ -152,6 +157,31 @@ public class GitBackendClientTests
         var failure = await Assert.ThrowsAsync<SimpleFile.Ipc.IpcException>(() => running);
         Assert.Equal(GitErrors.Cancelled, failure.Message);
         Assert.Single(host.Calls, call => call.Method == GitMethods.Cancel);
+    }
+
+    [Fact]
+    public async Task Decorations_CancelledByTheCaller_SendsCancelAndReturnsAtOnce()
+    {
+        var host = new FakePluginHost("com.sumafile.git");
+        var reply = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.Responders[GitMethods.Decorations] = _ => reply.Task;
+        var client = new GitBackendClient(host);
+        using var cancellation = new CancellationTokenSource();
+
+        var running = client.DecorationsAsync(@"R:\repo", cancellation.Token);
+        Assert.False(running.IsCompleted);
+        cancellation.Cancel();
+
+        // Unlike fetch, the caller stops waiting at once: the host dropped this folder's request.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running.WaitAsync(TimeSpan.FromSeconds(5)));
+        var decorations = Assert.Single(host.Calls, call => call.Method == GitMethods.Decorations);
+        using var sent = JsonDocument.Parse(decorations.ArgsJson);
+        var operationId = sent.RootElement.GetProperty("operationId").GetString();
+        var cancel = Assert.Single(host.Calls, call => call.Method == GitMethods.Cancel);
+        Assert.Equal($$"""{"operationId":"{{operationId}}"}""", cancel.ArgsJson);
+
+        // The backend's later failure of the abandoned call is observed, not left unobserved.
+        reply.SetException(new SimpleFile.Ipc.IpcException(-32000, GitErrors.Cancelled));
     }
 
     [Fact]

@@ -7,11 +7,14 @@
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::git::Git;
 use crate::models::{GitDecorationRow, GitFolderDecorations};
 use crate::paths::{comparable_path, native_path};
-use crate::status::{repo_status, StatusCache};
+use crate::run::CancelCheck;
+use crate::status::{repo_status_with_cancel, StatusCache};
+use crate::{GIT_CANCELLED, GIT_NOT_FOUND};
 
 /// The nearest folder, starting with `folder` itself, that holds a `.git`
 /// file or folder. The walk never goes up into a folder of `ceilings`.
@@ -52,30 +55,54 @@ pub fn marker_walk_applies(git_dir: Option<&OsStr>, git_work_tree: Option<&OsStr
     !is_set(git_dir) && !is_set(git_work_tree)
 }
 
+/// Set once "Git was not found" has been logged: decorations log it once
+/// per process and keep answering "not in a repository" without a spawn.
+static GIT_NOT_FOUND_LOGGED: AtomicBool = AtomicBool::new(false);
+
 /// The decorations of `folder`'s direct children, from one cached status
 /// run of its repository. A missing folder, a folder outside any repository
 /// and any git failure give `{ in_repository: false, root: null, rows: [] }`.
 pub fn folder_decorations(git: &Git, cache: &StatusCache, folder: &Path) -> GitFolderDecorations {
+    folder_decorations_with_cancel(git, cache, folder, None)
+        .unwrap_or_else(|_| GitFolderDecorations::outside())
+}
+
+/// [`folder_decorations`] that `cancel` stops: it then fails with
+/// [`GIT_CANCELLED`], its only error. A status run other callers share goes
+/// on for them.
+pub fn folder_decorations_with_cancel(
+    git: &Git,
+    cache: &StatusCache,
+    folder: &Path,
+    cancel: Option<&CancelCheck>,
+) -> Result<GitFolderDecorations, String> {
     if !folder.is_dir() {
-        return GitFolderDecorations::outside();
+        return Ok(GitFolderDecorations::outside());
     }
     let git_dir: Option<OsString> = git.env_var("GIT_DIR");
     let git_work_tree: Option<OsString> = git.env_var("GIT_WORK_TREE");
     if marker_walk_applies(git_dir.as_deref(), git_work_tree.as_deref()) {
         let ceilings = ceilings_from(git.env_var("GIT_CEILING_DIRECTORIES").as_deref());
         if find_repository_marker(folder, &ceilings).is_none() {
-            return GitFolderDecorations::outside();
+            return Ok(GitFolderDecorations::outside());
         }
     }
-    let status = match repo_status(git, cache, folder) {
+    let status = match repo_status_with_cancel(git, cache, folder, cancel) {
         Ok(status) if status.is_repo => status,
-        Ok(_) => return GitFolderDecorations::outside(),
+        Ok(_) => return Ok(GitFolderDecorations::outside()),
+        Err(error) if error == GIT_CANCELLED => return Err(error),
+        Err(error) if error == GIT_NOT_FOUND => {
+            if !GIT_NOT_FOUND_LOGGED.swap(true, Ordering::Relaxed) {
+                log::warn!("Git decorations are off: {error}");
+            }
+            return Ok(GitFolderDecorations::outside());
+        }
         Err(error) => {
             log::debug!(
                 "Git decorations for {} are empty: {error}",
                 folder.display()
             );
-            return GitFolderDecorations::outside();
+            return Ok(GitFolderDecorations::outside());
         }
     };
 
@@ -94,17 +121,77 @@ pub fn folder_decorations(git: &Git, cache: &StatusCache, folder: &Path) -> GitF
             })
         })
         .collect();
-    GitFolderDecorations {
+    Ok(GitFolderDecorations {
         in_repository: true,
         root: status.root,
         rows,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ceilings_from, find_repository_marker, marker_walk_applies};
-    use std::ffi::OsStr;
+    use super::{ceilings_from, find_repository_marker, folder_decorations, marker_walk_applies};
+    use crate::git::Git;
+    use crate::status::{StatusCache, STATUS_CACHE_CAPACITY, STATUS_CACHE_TTL};
+    use crate::GIT_NOT_FOUND;
+    use std::ffi::{OsStr, OsString};
+    use std::sync::Mutex;
+
+    /// Keeps every warning logged in this test binary.
+    struct Warnings(Mutex<Vec<String>>);
+
+    impl log::Log for Warnings {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata()) {
+                self.0
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(record.args().to_string());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    static WARNINGS: Warnings = Warnings(Mutex::new(Vec::new()));
+
+    /// Git missing is a warning in `plugins.log`, once per process; every
+    /// request still answers "not in a repository" and spawns nothing.
+    #[test]
+    fn git_not_found_is_warned_once_per_process() {
+        let _ = log::set_logger(&WARNINGS);
+        log::set_max_level(log::LevelFilter::Warn);
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".git")).unwrap();
+        let git = Git::with_executable(None, temp.path().join("no-hooks-test")).with_env(
+            ["GIT_DIR", "GIT_WORK_TREE", "GIT_CEILING_DIRECTORIES"]
+                .into_iter()
+                .map(|name| (OsString::from(name), OsString::new()))
+                .collect(),
+        );
+        let cache = StatusCache::new(STATUS_CACHE_TTL, STATUS_CACHE_CAPACITY);
+
+        for _ in 0..3 {
+            let decorations = folder_decorations(&git, &cache, temp.path());
+            assert!(!decorations.in_repository);
+            assert!(decorations.rows.is_empty());
+        }
+
+        let warned: Vec<String> = WARNINGS
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|message| message.contains(GIT_NOT_FOUND))
+            .cloned()
+            .collect();
+        assert_eq!(warned.len(), 1, "{warned:?}");
+        assert_eq!(git.spawn_count(), 0);
+    }
 
     #[test]
     fn marker_walk_honours_git_ceiling_directories() {

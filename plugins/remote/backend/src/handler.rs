@@ -23,7 +23,7 @@ use crate::legacy::{
 use crate::models::{RemoteAuthKind, RemoteProfile, RemoteProfileInput};
 use crate::profiles::ProfileStore;
 use crate::provider::{DefaultRemoteProviderFactory, RemoteProviderFactory};
-use crate::secrets::{RemoteSecret, RemoteSecretStore, WindowsRemoteSecretStore};
+use crate::secrets::{OwnTargetsOnly, RemoteSecret, RemoteSecretStore, WindowsRemoteSecretStore};
 use crate::session::RemoteSessionRegistry;
 use crate::settings::{settings_from_legacy_policy, TransferSettingsCache};
 use crate::transfer::{transfer_entries, validate_request, RemoteTransferRequest};
@@ -207,7 +207,9 @@ impl RemoteHandler {
     ) -> RemoteHandler {
         RemoteHandler {
             store: ProfileStore::open(&data_dir),
-            secrets,
+            // Every read, write and delete goes through the namespace check,
+            // whatever store the caller passes.
+            secrets: Arc::new(OwnTargetsOnly::new(secrets)),
             sessions: RemoteSessionRegistry::with_factory(factory),
             session_hosts: Mutex::new(HashMap::new()),
             settings: Arc::new(TransferSettingsCache::new()),

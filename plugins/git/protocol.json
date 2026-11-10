@@ -2,20 +2,28 @@
   "plugin": "com.sumafile.git",
   "notes": "Methods the Git plugin's UI calls through IPluginHost.InvokeBackendAsync. Params are camelCase; results keep the 1.0.4 IPC shapes, with snake_case fields. Paths in results use native separators. Without git.exe on PATH every method except repo.decorations fails with the gitNotFound text and runs no git.",
   "methods": {
-    "repo.status": { "params": { "path": "string" }, "result": "GitRepositoryStatus" },
+    "repo.status": {
+      "params": { "path": "string" },
+      "result": "GitRepositoryStatus",
+      "notes": "Runs no program the repository's config names: no hook, no fsmonitor, no filter driver (each configured filter.<name> is overridden empty, whichever attributes file names it) and no git inside a submodule (--ignore-submodules=dirty: a submodule shows only when its checked-out commit moved). Callers asking for the same root while its status runs share that one run."
+    },
     "repo.decorations": {
-      "params": { "folder": "string" },
+      "params": { "folder": "string", "operationId": "string" },
       "result": "GitFolderDecorations",
-      "notes": "Rows for the folder's direct children only, from one status run cached per repository root for 1.5 s. A folder below no .git marker (the walk honours GIT_CEILING_DIRECTORIES and is skipped when GIT_DIR or GIT_WORK_TREE is set), a missing folder and any git failure give { in_repository: false, root: null, rows: [] }; outside a repository no git runs."
+      "notes": "Rows for the folder's direct children only, from one status run cached per repository root for 1.5 s and shared with every caller asking for that root while it runs (repo.status included). A folder below no .git marker (the walk honours GIT_CEILING_DIRECTORIES and is skipped when GIT_DIR or GIT_WORK_TREE is set), a missing folder and any git failure give { in_repository: false, root: null, rows: [] }; outside a repository no git runs. Without git on PATH it answers the same, spawns nothing and logs one warning per backend process. operationId is optional: a cancel naming it kills this request's git process (or ends its wait for a shared run, which goes on for the others), and the call fails with -32000 and the gitCancelled text."
     },
     "paths.stage": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
     "paths.unstage": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
     "paths.discard": {
       "params": { "path": "string", "paths": "string[]" },
       "result": "GitCommandResult",
-      "notes": "Restores the selected tracked paths and deletes the selected untracked paths with git clean -fd; nothing else changes."
+      "notes": "Restores the selected tracked paths and deletes the selected untracked paths with git clean -fd; nothing else changes. Paths are resolved lexically first: one that resolves to the repository root (sub\\..) fails with the repositoryRoot text, one that leaves it fails as outside the repository. Like stage and unstage it runs the repository's hooks and filters, as git does for the user's own actions."
     },
-    "paths.diff": { "params": { "path": "string", "filePath": "string" }, "result": "string" },
+    "paths.diff": {
+      "params": { "path": "string", "filePath": "string" },
+      "result": "string",
+      "notes": "Read-only like repo.status, and also --no-ext-diff --no-textconv --submodule=short: no diff.external, diff driver command or textconv runs."
+    },
     "repo.commit": {
       "params": { "path": "string", "message": "string", "operationId": "string" },
       "result": "GitCommandResult",

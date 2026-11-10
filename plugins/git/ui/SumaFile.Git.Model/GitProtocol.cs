@@ -35,7 +35,9 @@ public static class GitErrors
 
 internal sealed record PathParams([property: JsonPropertyName("path")] string Path);
 
-internal sealed record FolderParams([property: JsonPropertyName("folder")] string Folder);
+internal sealed record FolderParams(
+    [property: JsonPropertyName("folder")] string Folder,
+    [property: JsonPropertyName("operationId")] string OperationId);
 
 internal sealed record PathsParams(
     [property: JsonPropertyName("path")] string Path,

@@ -4,7 +4,8 @@
 //! Every git call runs in `spawn_blocking`, so the connection keeps reading
 //! cancels and other calls while one runs. fetch, pull and push show a
 //! Transfers row; a `cancel` naming the request's `operationId` or the row's
-//! id stops them, and so does one for a commit's `operationId`.
+//! id stops them, and so does one for a commit's `operationId` or a
+//! decorations request's `operationId`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,7 +18,7 @@ use sumafile_plugin::{async_trait, HostClient, PluginError, PluginHandler};
 use crate::commands::{
     commit, diff, discard, remote_in_root, repository_root, stage, unstage, RemoteCommand,
 };
-use crate::decorations::folder_decorations;
+use crate::decorations::folder_decorations_with_cancel;
 use crate::git::Git;
 use crate::run::CancelCheck;
 use crate::status::{repo_status, StatusCache, STATUS_CACHE_CAPACITY, STATUS_CACHE_TTL};
@@ -39,8 +40,11 @@ struct PathParams {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct FolderParams {
     folder: String,
+    #[serde(default)]
+    operation_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -211,10 +215,16 @@ impl PluginHandler for GitHandler {
             }
             REPO_DECORATIONS => {
                 let params: FolderParams = parse(method, params)?;
+                let cancel = params.operation_id.map(|id| cancel_check(host, vec![id]));
                 let (git, cache) = (self.git.clone(), self.cache.clone());
                 to_value(
                     blocking(move || {
-                        Ok(folder_decorations(&git, &cache, Path::new(&params.folder)))
+                        folder_decorations_with_cancel(
+                            &git,
+                            &cache,
+                            Path::new(&params.folder),
+                            cancel.as_ref(),
+                        )
                     })
                     .await?,
                 )

@@ -5,21 +5,37 @@
 //! process happens to run in. Without one every call fails with
 //! [`GIT_NOT_FOUND`] and spawns nothing.
 //!
-//! Read-only queries (status, rev-parse, diff) run against whatever
-//! repository the user happens to browse. Such a repository's own config can
-//! name executables (`core.fsmonitor`, `core.hooksPath`), so a listing must
-//! never let it run them: queries pass `-c core.fsmonitor=false` and point
-//! `core.hooksPath` at a randomly named folder inside the data folder that is
-//! never created, so no hook ever runs. They also pass `--no-optional-locks`,
-//! so browsing never takes the index lock a concurrent `git commit` needs.
-//! Hooks stay on for the user's own explicit actions (commit, push).
+//! Read-only queries (rev-parse, status, the diff preview) run against
+//! whatever repository the user happens to browse, and that repository's
+//! config can name programs. A query runs none of them:
+//!
+//! - every query passes `-c core.fsmonitor=false` and points
+//!   `core.hooksPath` at a randomly named folder inside the data folder that
+//!   is never created, so no fsmonitor program or hook runs;
+//! - status and the diff preview, which read file contents, first list the
+//!   configured filter drivers (`git config --list -z`, which runs nothing)
+//!   and override each one with an empty `clean`, `smudge` and `process` and
+//!   `required=false`, so no clean filter or filter process runs, whichever
+//!   attributes file (`.gitattributes`, `.git/info/attributes`,
+//!   `core.attributesFile`) names it. The work tree's attributes still apply,
+//!   so `text` and `eol` keep their meaning;
+//! - status and the diff preview pass `--ignore-submodules=dirty`, so git
+//!   starts no `git status` inside a submodule (whose own filters would run);
+//! - the diff preview adds `--no-ext-diff --no-textconv --submodule=short`,
+//!   so neither `diff.external`, a diff driver's `command` or `textconv`, nor
+//!   a diff inside a submodule runs (see `crate::commands::diff`).
+//!
+//! Queries also pass `--no-optional-locks`, so browsing never takes the
+//! index lock a concurrent `git commit` needs. Hooks and filters stay on for
+//! the user's own explicit actions (stage, unstage, discard, commit, fetch,
+//! pull, push): staging must run clean filters by design.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::models::GitCommandResult;
-use crate::run::{run_command, CancelCheck, RunOptions, GIT_REMOTE_TIMEOUT};
+use crate::run::{run_command, CancelCheck, RunOptions, GIT_LOCAL_TIMEOUT, GIT_REMOTE_TIMEOUT};
 use crate::GIT_NOT_FOUND;
 
 #[cfg(windows)]
@@ -81,22 +97,48 @@ impl Git {
 
     /// The arguments of a read-only query in `path`.
     pub fn query_args(&self, path: &Path, args: &[OsString]) -> Vec<OsString> {
-        query_args(&self.hooks_off, path, args)
+        query_args(&self.hooks_off, path, &[], args)
     }
 
     /// Runs a read-only query in `path` and returns its stdout.
     pub fn query(&self, path: &Path, args: &[&str]) -> Result<String, String> {
-        let args: Vec<OsString> = args.iter().map(OsString::from).collect();
-        self.query_os(path, &args)
+        self.query_with(path, &[], args, None)
     }
 
-    pub fn query_os(&self, path: &Path, args: &[OsString]) -> Result<String, String> {
+    /// Runs a read-only query in `path` with the extra `-c` pairs of
+    /// `config` (see [`Git::filter_overrides`]); `cancel` stops it with
+    /// [`crate::GIT_CANCELLED`].
+    pub fn query_with(
+        &self,
+        path: &Path,
+        config: &[OsString],
+        args: &[&str],
+        cancel: Option<&CancelCheck>,
+    ) -> Result<String, String> {
+        let args: Vec<OsString> = args.iter().map(OsString::from).collect();
         self.run(
-            self.query_args(path, args),
-            &RunOptions::local("command"),
+            query_args(&self.hooks_off, path, config, &args),
+            &RunOptions {
+                name: "command".to_string(),
+                timeout: GIT_LOCAL_TIMEOUT,
+                cancel: cancel.cloned(),
+            },
             "Git command completed.",
         )
         .map(|result| result.stdout)
+    }
+
+    /// The `-c` pairs that switch off every filter driver configured for the
+    /// repository at `root` (its own config, the user's and the system's,
+    /// includes followed). Fails, so the caller reads no file contents, when
+    /// the config cannot be listed or names a driver `-c` cannot spell.
+    pub fn filter_overrides(
+        &self,
+        root: &Path,
+        cancel: Option<&CancelCheck>,
+    ) -> Result<Vec<OsString>, String> {
+        let listing = self.query_with(root, &[], &["config", "--list", "-z"], cancel)?;
+        Ok(filter_overrides(&filter_drivers(&listing)?))
     }
 
     /// Runs a command that changes the repository at `root`, hooks on.
@@ -159,9 +201,59 @@ pub fn find_on_path(path: Option<&OsStr>) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+/// The filter driver names of a `git config --list -z` listing, in the
+/// order they first appear: `<name>` of every `filter.<name>.<key>`. A name
+/// that holds `=` cannot be overridden with `-c` (git splits the pair at the
+/// first `=`), so it fails the listing.
+pub fn filter_drivers(listing: &str) -> Result<Vec<String>, String> {
+    let mut drivers: Vec<String> = Vec::new();
+    for entry in listing.split('\0') {
+        // `<key>\n<value>`, or a bare `<key>` for a value-less boolean.
+        let key = entry.split_once('\n').map_or(entry, |(key, _)| key);
+        let Some(rest) = key
+            .get(..7)
+            .filter(|section| section.eq_ignore_ascii_case("filter."))
+            .map(|_| &key[7..])
+        else {
+            continue;
+        };
+        let Some((name, _)) = rest.rsplit_once('.') else {
+            continue;
+        };
+        if name.contains('=') {
+            return Err(format!(
+                "Git filter driver {name:?} cannot be switched off; its file contents are not read."
+            ));
+        }
+        if !drivers.iter().any(|known| known == name) {
+            drivers.push(name.to_string());
+        }
+    }
+    Ok(drivers)
+}
+
+/// `-c filter.<name>.clean= -c filter.<name>.smudge= -c filter.<name>.process=
+/// -c filter.<name>.required=false` for each driver: an empty command runs
+/// nothing, and a driver that is not required may run nothing.
+pub fn filter_overrides(drivers: &[String]) -> Vec<OsString> {
+    let mut config = Vec::with_capacity(drivers.len() * 8);
+    for name in drivers {
+        for setting in ["clean=", "smudge=", "process=", "required=false"] {
+            config.push(OsString::from("-c"));
+            config.push(OsString::from(format!("filter.{name}.{setting}")));
+        }
+    }
+    config
+}
+
 /// `--no-optional-locks --literal-pathspecs -c core.fsmonitor=false
-/// -c core.hooksPath=<hooks_off> -C <path> <args>`.
-pub fn query_args(hooks_off: &Path, path: &Path, args: &[OsString]) -> Vec<OsString> {
+/// -c core.hooksPath=<hooks_off> <config> -C <path> <args>`.
+pub fn query_args(
+    hooks_off: &Path,
+    path: &Path,
+    config: &[OsString],
+    args: &[OsString],
+) -> Vec<OsString> {
     let mut hooks = OsString::from("core.hooksPath=");
     hooks.push(hooks_off.as_os_str());
     let mut all = vec![
@@ -172,9 +264,10 @@ pub fn query_args(hooks_off: &Path, path: &Path, args: &[OsString]) -> Vec<OsStr
         OsString::from("core.fsmonitor=false"),
         OsString::from("-c"),
         hooks,
-        OsString::from("-C"),
-        path.as_os_str().to_os_string(),
     ];
+    all.extend(config.iter().cloned());
+    all.push(OsString::from("-C"));
+    all.push(path.as_os_str().to_os_string());
     all.extend(args.iter().cloned());
     all
 }
@@ -219,7 +312,10 @@ fn random_hex() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_on_path, git_remote_args, query_args, root_args, Git, GIT_EXE};
+    use super::{
+        filter_drivers, filter_overrides, find_on_path, git_remote_args, query_args, root_args,
+        Git, GIT_EXE,
+    };
     use std::ffi::OsString;
     use std::path::{Path, MAIN_SEPARATOR};
 
@@ -253,6 +349,7 @@ mod tests {
         let args = to_strings(query_args(
             Path::new("no-hooks"),
             Path::new("repo"),
+            &[],
             &[OsString::from("status")],
         ));
         let joined = args.join(" ");
@@ -352,5 +449,53 @@ mod tests {
         let only_relative = std::env::join_paths([relative.path().file_name().unwrap()]).unwrap();
         assert_eq!(find_on_path(Some(&only_relative)), None);
         assert_eq!(find_on_path(None), None);
+    }
+
+    #[test]
+    fn filter_drivers_come_from_every_filter_key_of_the_listing() {
+        let listing = "core.bare\nfalse\0filter.lfs.clean\ngit-lfs clean -- %f\0\
+             filter.lfs.process\ngit-lfs filter-process\0FILTER.Mixed.Case.smudge\ncat\0\
+             filter.flag.required\0filters.x.clean\ncat\0filter.noname\ncat\0\
+             diff.y.textconv\ncat\0";
+
+        assert_eq!(
+            filter_drivers(listing).unwrap(),
+            vec!["lfs", "Mixed.Case", "flag"]
+        );
+        assert!(filter_drivers("").unwrap().is_empty());
+        assert!(filter_drivers("filter.a=b.clean\ncat\0").is_err());
+    }
+
+    #[test]
+    fn filter_overrides_empty_every_command_and_drop_required() {
+        let args = to_strings(filter_overrides(&[
+            "x".to_string(),
+            "Mixed.Case".to_string(),
+        ]));
+
+        assert_eq!(
+            args.join(" "),
+            "-c filter.x.clean= -c filter.x.smudge= -c filter.x.process= \
+             -c filter.x.required=false -c filter.Mixed.Case.clean= \
+             -c filter.Mixed.Case.smudge= -c filter.Mixed.Case.process= \
+             -c filter.Mixed.Case.required=false"
+        );
+    }
+
+    #[test]
+    fn query_config_sits_before_the_repository_path() {
+        let args = to_strings(query_args(
+            Path::new("no-hooks"),
+            Path::new("repo"),
+            &filter_overrides(&["x".to_string()]),
+            &[OsString::from("status")],
+        ));
+        let joined = args.join(" ");
+
+        assert!(
+            joined.contains("-c filter.x.required=false -C repo status"),
+            "{joined}"
+        );
+        assert!(joined.starts_with("--no-optional-locks"), "{joined}");
     }
 }

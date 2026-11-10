@@ -4,7 +4,7 @@ namespace SumaFile.Git.Model;
 
 /// <summary>
 /// <see cref="IGitBackend"/> over <see cref="IPluginHost.InvokeBackendAsync"/>: the method names and param shapes of
-/// plugins/git/protocol.json. Commit, fetch, pull and push carry an operation id and are cancelled with the
+/// plugins/git/protocol.json. Decorations, commit, fetch, pull and push carry an operation id and are cancelled with the
 /// protocol's <c>cancel</c>, the <c>RemoteBackendClient.TransferAsync</c> pattern, so the backend ends git (and the
 /// processes it started) and fails the call with <see cref="GitErrors.Cancelled"/>.
 /// </summary>
@@ -15,8 +15,29 @@ public sealed class GitBackendClient(IPluginHost host) : IGitBackend
     public Task<GitRepositoryStatus> StatusAsync(string path, CancellationToken ct) =>
         _host.InvokeBackendAsync<GitRepositoryStatus>(GitMethods.Status, new PathParams(path), ct);
 
-    public Task<GitFolderDecorations> DecorationsAsync(string folder, CancellationToken ct) =>
-        _host.InvokeBackendAsync<GitFolderDecorations>(GitMethods.Decorations, new FolderParams(folder), ct);
+    /// <summary>
+    /// <c>repo.decorations</c> with an operation id. A cancel of <paramref name="ct"/> sends the protocol's
+    /// <c>cancel</c>, so the backend kills the status run it started for this request, and returns at once: the host
+    /// asks for decorations on every folder sync and drops a request the user navigated away from.
+    /// </summary>
+    public async Task<GitFolderDecorations> DecorationsAsync(string folder, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var operationId = "git-" + Guid.NewGuid().ToString("N");
+        var call = _host.InvokeBackendAsync<GitFolderDecorations>(
+            GitMethods.Decorations, new FolderParams(folder, operationId), CancellationToken.None);
+        using var registration = ct.Register(() => _ = SendCancelAsync(operationId));
+        try
+        {
+            return await call.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The backend now fails the abandoned call with GitErrors.Cancelled: observe it so it is never unobserved.
+            _ = call.ContinueWith(static task => _ = task.Exception, TaskScheduler.Default);
+            throw;
+        }
+    }
 
     public Task<GitCommandResult> StageAsync(string path, IReadOnlyList<string> paths, CancellationToken ct) =>
         PathsAsync(GitMethods.Stage, path, paths, ct);

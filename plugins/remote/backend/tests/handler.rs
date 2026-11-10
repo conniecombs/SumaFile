@@ -311,6 +311,10 @@ async fn create_rename_and_delete_through_the_handler() {
     harness.stop().await;
 }
 
+/// How long the fake connect stalls: well past the latency bound below, so a
+/// slow runner cannot let the stalled call finish before the timed one does.
+const STALL: Duration = Duration::from_secs(4);
+
 struct StallingFactory;
 
 impl RemoteProviderFactory for StallingFactory {
@@ -319,7 +323,7 @@ impl RemoteProviderFactory for StallingFactory {
         _: &RemoteProfile,
         _: Option<&RemoteSecret>,
     ) -> Result<Box<dyn RemoteProvider>, String> {
-        std::thread::sleep(Duration::from_millis(1500));
+        std::thread::sleep(STALL);
         Err("host unreachable".to_string())
     }
 }
@@ -354,10 +358,10 @@ async fn slow_connect_does_not_block_other_requests() {
     let started = Instant::now();
     assert_eq!(harness.ok("profiles.list", Value::Null).await, json!([]));
     let latency = started.elapsed();
-    assert!(latency < Duration::from_secs(1), "{latency:?}");
+    assert!(latency < Duration::from_secs(2), "{latency:?}");
     assert!(!slow.is_finished(), "the stalled connect is still running");
 
-    let result = tokio::time::timeout(Duration::from_secs(5), slow)
+    let result = tokio::time::timeout(Duration::from_secs(15), slow)
         .await
         .expect("profiles.test still replies after the stall")
         .unwrap();
@@ -613,4 +617,68 @@ async fn upgraded_profile_connects_with_its_saved_password() {
     }
     assert_eq!(store.read_secret(&target).unwrap(), None);
     server.stop().await;
+}
+
+/// A 1.0.1/1.0.2 row imported verbatim can name a credential outside the
+/// plugin's `SumaFile.Remote.` namespace. The backend never reads, writes or
+/// deletes such a target: connecting does not send its secret to the server,
+/// saving with a secret is refused, and deleting the profile leaves it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_foreign_credential_target_is_never_read_written_or_deleted() {
+    const FOREIGN: &str = "OtherApp.Token";
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let legacy = legacy_dir.path().join("metadata.db");
+    let harness = Harness::with(HarnessOptions {
+        legacy_db: Some(legacy.clone()),
+        ..HarnessOptions::default()
+    })
+    .await;
+    // The import runs on the first call, so the row can name this harness's
+    // own server.
+    write_legacy_metadata_db(
+        &legacy,
+        &[harness.info.legacy_profile("legacy-foreign", FOREIGN)],
+        None,
+    )
+    .unwrap();
+    // The other application's secret happens to be this server's password:
+    // a read of it would let the connect below succeed.
+    let foreign = RemoteSecret::Password(harness.info.password.clone());
+    harness.secrets.write_secret(FOREIGN, &foreign).unwrap();
+
+    let profiles = harness.ok("profiles.list", Value::Null).await;
+    assert_eq!(profiles[0]["credential_target"], FOREIGN, "{profiles}");
+
+    let error = harness
+        .err("session.connect", json!({ "profileId": "legacy-foreign" }))
+        .await;
+    // With the foreign secret the password login would succeed.
+    assert!(
+        !error.contains("refused") && !error.contains("not found"),
+        "{error}"
+    );
+
+    let mut resaved = profiles[0].clone();
+    resaved["host"] = json!("127.0.0.2");
+    let error = harness
+        .err(
+            "profiles.save",
+            json!({ "profile": resaved, "secret": "overwrite" }),
+        )
+        .await;
+    assert!(
+        error.contains("must start with SumaFile.Remote."),
+        "{error}"
+    );
+    assert_eq!(
+        harness.secrets.read_secret(FOREIGN).unwrap(),
+        Some(foreign.clone())
+    );
+
+    harness
+        .ok("profiles.delete", json!({ "profileId": "legacy-foreign" }))
+        .await;
+    assert_eq!(harness.ok("profiles.list", Value::Null).await, json!([]));
+    assert_eq!(harness.secrets.read_secret(FOREIGN).unwrap(), Some(foreign));
+    harness.stop().await;
 }

@@ -68,6 +68,32 @@ public class GitTextTests
             GitText.DiscardConfirmationText(seven));
     }
 
+    [Fact]
+    public void DiscardConfirmationText_CountsStagedNewFilesAsDeletedFromDisk()
+    {
+        // Review finding: discard runs restore --staged and then git clean -fd, so a file staged as added (index
+        // status A) is deleted from disk too.
+        var rows = new[]
+        {
+            GitChangeRow.From(new GitFileStatus { Path = "added.txt", AbsolutePath = @"R:\repo\added.txt", Status = "added", IndexStatus = "A", WorktreeStatus = " ", Staged = true }),
+            GitChangeRow.From(new GitFileStatus { Path = "mod.txt", AbsolutePath = @"R:\repo\mod.txt", Status = "staged", IndexStatus = "M", WorktreeStatus = " ", Staged = true }),
+        };
+        Assert.Equal("A", rows[0].IndexStatus);
+        Assert.Equal(
+            "added.txt\nmod.txt\n\nThis cannot be undone.\n1 untracked or added file will be deleted from disk, not moved to the Recycle Bin.",
+            GitText.DiscardConfirmationText(rows));
+
+        var mixed = new[]
+        {
+            new GitChangeRow { Path = "new.txt", StageText = "untracked", IndexStatus = "?" },
+            new GitChangeRow { Path = "both.txt", StageText = "staged + unstaged", IndexStatus = "A" },
+            new GitChangeRow { Path = "m.txt", StageText = "unstaged", IndexStatus = " " },
+        };
+        Assert.Equal(
+            "new.txt\nboth.txt\nm.txt\n\nThis cannot be undone.\n2 untracked or added files will be deleted from disk, not moved to the Recycle Bin.",
+            GitText.DiscardConfirmationText(mixed));
+    }
+
     [Theory]
     [InlineData("added", "SfDecorationAddedBrush")]
     [InlineData("staged", "SfDecorationAddedBrush")]
@@ -132,5 +158,49 @@ public class GitTextTests
         }
 
         Assert.Equal(enabled, await GitSettings.IsEnabledAsync(host.Settings, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GitSettings_AFailingStoreReadsAsTheLastValueReadSuccessfully()
+    {
+        // Review finding: a store that failed to answer (the service restarting) read as on, so git ran for a user
+        // who had turned Git off.
+        var host = new FakeGitHost();
+        host.SettingsFailure = new InvalidOperationException("The settings service is restarting.");
+        Assert.True(await GitSettings.IsEnabledAsync(host.Settings, CancellationToken.None));
+
+        host.SettingsFailure = null;
+        host.SettingValues[GitSettings.EnabledKey] = "false";
+        Assert.False(await GitSettings.IsEnabledAsync(host.Settings, CancellationToken.None));
+        host.SettingsFailure = new InvalidOperationException("The settings service is restarting.");
+        host.SettingValues[GitSettings.EnabledKey] = "true";
+        Assert.False(await GitSettings.IsEnabledAsync(host.Settings, CancellationToken.None));
+
+        host.SettingsFailure = null;
+        Assert.True(await GitSettings.IsEnabledAsync(host.Settings, CancellationToken.None));
+        host.SettingsFailure = new InvalidOperationException("again");
+        Assert.True(await GitSettings.IsEnabledAsync(host.Settings, CancellationToken.None));
+
+        // A missing value read successfully is the default, on.
+        host.SettingsFailure = null;
+        host.SettingValues[GitSettings.EnabledKey] = "false";
+        Assert.False(await GitSettings.IsEnabledAsync(host.Settings, CancellationToken.None));
+        host.SettingValues.Remove(GitSettings.EnabledKey);
+        Assert.True(await GitSettings.IsEnabledAsync(host.Settings, CancellationToken.None));
+        host.SettingsFailure = new InvalidOperationException("again");
+        Assert.True(await GitSettings.IsEnabledAsync(host.Settings, CancellationToken.None));
+
+        // What one plugin's store read says nothing about another's.
+        host.SettingsFailure = null;
+        host.SettingValues[GitSettings.EnabledKey] = "false";
+        Assert.False(await GitSettings.IsEnabledAsync(host.Settings, CancellationToken.None));
+        var other = new FakeGitHost { SettingsFailure = new InvalidOperationException("down") };
+        Assert.True(await GitSettings.IsEnabledAsync(other.Settings, CancellationToken.None));
+
+        // Cancellation still propagates.
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        host.SettingsFailure = null;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => GitSettings.IsEnabledAsync(host.Settings, cancelled.Token));
     }
 }

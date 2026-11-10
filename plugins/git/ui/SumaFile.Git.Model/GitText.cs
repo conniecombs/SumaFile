@@ -73,8 +73,9 @@ public static class GitText
     }
 
     /// <summary>
-    /// The discard confirmation: at most five paths, "and n more", that it cannot be undone, and how many untracked
-    /// files are deleted from disk rather than moved to the Recycle Bin.
+    /// The discard confirmation: at most five paths, "and n more", that it cannot be undone, and how many files are
+    /// deleted from disk rather than moved to the Recycle Bin: the untracked ones and those staged as added (index
+    /// status <c>A</c>), which discard unstages and then removes with <c>git clean -fd</c>.
     /// </summary>
     public static string DiscardConfirmationText(IReadOnlyList<GitChangeRow> rows)
     {
@@ -91,15 +92,24 @@ public static class GitText
 
         lines.Add("");
         lines.Add("This cannot be undone.");
-        var untracked = rows.Count(row => string.Equals(row.StageText, "untracked", StringComparison.OrdinalIgnoreCase));
-        if (untracked > 0)
+        var untracked = rows.Count(IsUntracked);
+        var added = rows.Count(row => !IsUntracked(row) && IsAdded(row));
+        var deleted = untracked + added;
+        if (deleted > 0)
         {
-            lines.Add(untracked == 1
-                ? "1 untracked file will be deleted from disk, not moved to the Recycle Bin."
-                : $"{untracked} untracked files will be deleted from disk, not moved to the Recycle Bin.");
+            var kind = added > 0 ? "untracked or added" : "untracked";
+            lines.Add(deleted == 1
+                ? $"1 {kind} file will be deleted from disk, not moved to the Recycle Bin."
+                : $"{deleted} {kind} files will be deleted from disk, not moved to the Recycle Bin.");
         }
 
         return string.Join("\n", lines);
+
+        static bool IsUntracked(GitChangeRow row) =>
+            string.Equals(row.StageText, "untracked", StringComparison.OrdinalIgnoreCase);
+
+        static bool IsAdded(GitChangeRow row) =>
+            string.Equals(row.IndexStatus?.Trim(), "A", StringComparison.Ordinal);
     }
 
     /// <summary>The host theme brush for a backend status label; the host falls back to the muted brush itself too.</summary>
