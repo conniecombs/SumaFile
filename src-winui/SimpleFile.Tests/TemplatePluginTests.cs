@@ -103,7 +103,7 @@ public class TemplatePluginTests : IAsyncLifetime
         Assert.Empty(m.Contributions.ArchiveFormats);
 
         // The plugin's version is the backend crate's, which the handshake reports.
-        var crate = File.ReadAllText(Path.Combine(TemplateRoot(), "backend", "Cargo.toml"));
+        var crate = File.ReadAllText(Path.Combine(TemplateRoot(), "backend", "Cargo.toml")).ReplaceLineEndings("\n");
         Assert.Matches(new Regex("^version = \"" + Regex.Escape(m.Version) + "\"$", RegexOptions.Multiline), crate);
 
         // Not bundled: nothing that stages the payload or writes bundled.json names the template.
@@ -218,7 +218,7 @@ public class TemplatePluginTests : IAsyncLifetime
         }
 
         // The backend crate: never published, on the helper crate, never on the host crates (spec §12).
-        var crate = File.ReadAllText(Path.Combine(template, "backend", "Cargo.toml"));
+        var crate = File.ReadAllText(Path.Combine(template, "backend", "Cargo.toml")).ReplaceLineEndings("\n");
         Assert.Contains("name = \"example-plugin-backend\"", crate, StringComparison.Ordinal);
         Assert.Contains("publish = false", crate, StringComparison.Ordinal);
         var dependencies = Regex.Match(crate, @"^\[dependencies\]\s*$(.*?)(?=^\[|\z)", RegexOptions.Multiline | RegexOptions.Singleline);
