@@ -1,0 +1,25 @@
+[package]
+name = "example-plugin-backend"
+version = "0.1.0"
+description = "Backend of the SumaFile plugin template (com.example.template)"
+license = "MIT"
+edition = "2021"
+# A plugin backend ships inside its plugin folder, never on crates.io.
+publish = false
+
+[[bin]]
+name = "example-plugin-backend"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The helper crate, by path inside the SumaFile repository. Outside it, once
+# the crate is published, use `sumafile-plugin = "1"` here and below.
+sumafile-plugin = { path = "../../../crates/sumafile-plugin" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+# `test-support` adds `HostClient::fake`, an in-memory host for handler tests.
+sumafile-plugin = { path = "../../../crates/sumafile-plugin", features = ["test-support"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

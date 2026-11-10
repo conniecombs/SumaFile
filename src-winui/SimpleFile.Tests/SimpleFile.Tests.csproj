@@ -26,6 +26,8 @@
   <ItemGroup>
     <!-- Hello targets 19041 (it builds WinUI code); the test project only needs it built, never referenced. -->
     <ProjectReference Include="Fixtures\HelloPlugin\SimpleFile.Tests.Fixtures.HelloPlugin.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" />
+    <!-- The plugin template's UI half: built with the tests, never referenced (TemplatePluginTests loads it through the host). -->
+    <ProjectReference Include="..\..\templates\sumafile-plugin\ui\Example.Plugin\Example.Plugin.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" />
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="Fixtures\HelloPlugin\**" />
@@ -50,6 +52,25 @@
     </ItemGroup>
     <Copy SourceFiles="@(HelloFile)" DestinationFolder="$(HelloDest)" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\target\debug\hello-plugin-backend.exe" DestinationFolder="$(HelloDest)" SkipUnchangedFiles="true" Condition="Exists('$(MSBuildThisFileDirectory)..\..\target\debug\hello-plugin-backend.exe')" />
+  </Target>
+  <!--
+    The plugin template's UI build output (its assembly, .deps.json and plugin.json) for TemplatePluginTests, which
+    run it against a fake backend, so no backend executable is copied. Only into this test output: the template is
+    never staged into the payload or the app's plugins folder. Nothing is copied when the assembly is missing; the
+    test then skips with TemplatePluginTests.NotBuiltMessage.
+  -->
+  <Target Name="CopyTemplatePlugin" AfterTargets="Build">
+    <MSBuild Projects="..\..\templates\sumafile-plugin\ui\Example.Plugin\Example.Plugin.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_TemplatePluginTargetPath" />
+    </MSBuild>
+    <PropertyGroup>
+      <TemplateOut>%(_TemplatePluginTargetPath.RootDir)%(_TemplatePluginTargetPath.Directory)</TemplateOut>
+      <TemplateDest>$(OutDir)Fixtures\template\com.example.template\</TemplateDest>
+    </PropertyGroup>
+    <ItemGroup>
+      <TemplateFile Include="$(TemplateOut)Example.Plugin.dll;$(TemplateOut)Example.Plugin.deps.json;$(TemplateOut)plugin.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(TemplateFile)" DestinationFolder="$(TemplateDest)" SkipUnchangedFiles="true" Condition="Exists('$(TemplateOut)Example.Plugin.dll')" />
   </Target>
   <!--
     The remote plugin as scripts/build-plugins.ps1 stages it, its bundled.json (which lists the remote plugin's hash; the

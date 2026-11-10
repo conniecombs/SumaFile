@@ -11,4 +11,5 @@ members = [
   "plugins/remote/backend",
   "plugins/remote/test-server",
   "plugins/git/backend",
+  "templates/sumafile-plugin/backend",
 ]
