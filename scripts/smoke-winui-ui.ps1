@@ -10,7 +10,9 @@ param(
     [int]$TimeoutSeconds = 600,
     # A plugin folder (holding plugin.json) or a roots folder of plugin folders; each is pre-approved.
     [string]$PluginsDir,
-    [switch]$NoPlugins
+    [switch]$NoPlugins,
+    # Keep test-results\ui-smoke\<run> after a passing run too. A failed run always keeps it.
+    [switch]$KeepResults
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3.0
@@ -27,6 +29,153 @@ function ConvertTo-SmokeCommandLineArgument {
     $escaped = [regex]::Replace($Value, '(\\*)"', [System.Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $match.Groups[1].Value + '\"' })
     $escaped = [regex]::Replace($escaped, '(\\+)$', [System.Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $match.Groups[1].Value })
     return '"' + $escaped + '"'
+}
+
+# A run folder's name: test-results\ui-smoke\<UTC yyyyMMdd-HHmmss>-<8 hex>.
+$UiSmokeRunNamePattern = '^\d{8}-\d{6}-[0-9a-f]{8}$'
+
+# Deletes a passed run's folder, and only one this script made: directly under the results root, named like a run,
+# holding the .sumafile-ui-smoke marker written when it was created, with no link anywhere under it (a junction's
+# target is never entered or deleted). Returns $true when the folder is gone; otherwise warns and keeps it.
+function Remove-UiSmokeRunFolder {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)][string]$ResultsRoot
+    )
+    $separators = [char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $results = [System.IO.Path]::GetFullPath($ResultsRoot).TrimEnd($separators)
+    $run = [System.IO.Path]::GetFullPath($RunRoot).TrimEnd($separators)
+    if (-not [string]::Equals([System.IO.Path]::GetDirectoryName($run), $results, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Warning "Kept $run, which is not directly under $results."
+        return $false
+    }
+    if ((Split-Path -Leaf $run) -notmatch $UiSmokeRunNamePattern) {
+        Write-Warning "Kept $run, whose name is not a UI smoke run's."
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $run '.sumafile-ui-smoke') -PathType Leaf)) {
+        Write-Warning "Kept $run, which has no .sumafile-ui-smoke marker."
+        return $false
+    }
+    foreach ($folder in @($results, $run)) {
+        if (([System.IO.File]::GetAttributes($folder) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Write-Warning "Kept $run, because $folder is a link."
+            return $false
+        }
+    }
+    # One walk that never follows a link: any link under the run folder keeps the whole folder. Git object files are
+    # read-only, which Directory.Delete refuses, so they are made writable first.
+    $readOnly = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+    $pending = New-Object System.Collections.Generic.Stack[System.IO.DirectoryInfo]
+    $pending.Push((New-Object System.IO.DirectoryInfo $run))
+    while ($pending.Count -gt 0) {
+        foreach ($entry in $pending.Pop().EnumerateFileSystemInfos()) {
+            if (($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                Write-Warning "Kept $run, because $($entry.FullName) is a link."
+                return $false
+            }
+            if ($entry -is [System.IO.DirectoryInfo]) { $pending.Push($entry) }
+            elseif ($entry.IsReadOnly) { $readOnly.Add($entry) }
+        }
+    }
+    foreach ($file in $readOnly) { $file.IsReadOnly = $false }
+    # A handle closing late (an indexer, an antivirus scan) can fail the first attempt.
+    for ($attempt = 1; ; $attempt++) {
+        try {
+            [System.IO.Directory]::Delete($run, $true)
+            return $true
+        } catch {
+            if ($attempt -ge 5) {
+                Write-Warning "Kept $run, which could not be deleted: $($_.Exception.Message)"
+                return $false
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+}
+
+# Every process: id, parent id, name, executable, command line and creation time (local). System.Management through
+# .NET directly: CimCmdlets, like Get-FileHash, can be missing when Windows PowerShell inherits a pwsh PSModulePath.
+function Get-UiSmokeProcessTable {
+    [void][System.Reflection.Assembly]::Load('System.Management, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a')
+    $searcher = New-Object System.Management.ManagementObjectSearcher 'SELECT ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine, CreationDate FROM Win32_Process'
+    try {
+        foreach ($row in $searcher.Get()) {
+            $created = $null
+            if ($row['CreationDate']) { $created = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$row['CreationDate']) }
+            [pscustomobject]@{
+                ProcessId       = [UInt32]$row['ProcessId']
+                ParentProcessId = [UInt32]$row['ParentProcessId']
+                Name            = [string]$row['Name']
+                ExecutablePath  = [string]$row['ExecutablePath']
+                CommandLine     = [string]$row['CommandLine']
+                CreationDate    = $created
+            }
+        }
+    } finally { $searcher.Dispose() }
+}
+
+# The processes of this run still alive: the app's and the SFTP server's process trees (by parent id), anything
+# started from the app, service, plugin or 7-Zip executables, and anything whose command line names the run folder,
+# among the processes created since the launch.
+function Get-UiSmokeHelperProcesses {
+    param(
+        [int[]]$RootProcessIds = @(),
+        [Parameter(Mandatory = $true)][DateTime]$Since,
+        [string[]]$Executables = @(),
+        [Parameter(Mandatory = $true)][string]$RunRoot
+    )
+    $recent = @(Get-UiSmokeProcessTable | Where-Object {
+            $_.ProcessId -ne $PID -and $null -ne $_.CreationDate -and $_.CreationDate -ge $Since })
+    $tree = New-Object 'System.Collections.Generic.HashSet[UInt32]'
+    foreach ($id in $RootProcessIds) { [void]$tree.Add([UInt32]$id) }
+    do {
+        $grown = $false
+        foreach ($candidate in $recent) {
+            if ($tree.Contains([UInt32]$candidate.ParentProcessId) -and $tree.Add([UInt32]$candidate.ProcessId)) { $grown = $true }
+        }
+    } while ($grown)
+    foreach ($candidate in $recent) {
+        $match = $tree.Contains([UInt32]$candidate.ProcessId)
+        if (-not $match -and $candidate.ExecutablePath) {
+            foreach ($executable in $Executables) {
+                $folderPrefix = $executable.TrimEnd('\') + '\'
+                if ([string]::Equals($candidate.ExecutablePath, $executable, [StringComparison]::OrdinalIgnoreCase) -or
+                    $candidate.ExecutablePath.StartsWith($folderPrefix, [StringComparison]::OrdinalIgnoreCase)) { $match = $true; break }
+            }
+        }
+        if (-not $match -and $candidate.CommandLine -and $candidate.CommandLine.IndexOf($RunRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            $match = $true
+        }
+        if ($match) { $candidate }
+    }
+}
+
+# Waits up to $TimeoutSeconds for every helper process to exit, so none holds a file in the run folder. $false, with
+# a warning naming them, when some are still running or the process list cannot be read.
+function Wait-UiSmokeHelperProcessesGone {
+    param(
+        [int[]]$RootProcessIds = @(),
+        [Parameter(Mandatory = $true)][DateTime]$Since,
+        [string[]]$Executables = @(),
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [int]$TimeoutSeconds = 30
+    )
+    $waited = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        try {
+            $left = @(Get-UiSmokeHelperProcesses -RootProcessIds $RootProcessIds -Since $Since -Executables $Executables -RunRoot $RunRoot)
+        } catch {
+            Write-Warning "Could not list the run's helper processes: $($_.Exception.Message)"
+            return $false
+        }
+        if ($left.Count -eq 0) { return $true }
+        if ($waited.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            Write-Warning ("Helper processes still running $TimeoutSeconds s after the app exited: " + (($left | ForEach-Object { "$($_.Name) ($($_.ProcessId))" }) -join ', '))
+            return $false
+        }
+        Start-Sleep -Milliseconds 500
+    }
 }
 
 # Runs git for the Git plugin fixture, bounded at 30 s, isolated as the app is: the smoke's empty global config, no
@@ -98,7 +247,9 @@ if (Test-Path -LiteralPath (Join-Path $bundledPluginsRoot 'bundled.json')) {
 }
 $sevenZa = Join-Path $root 'third_party\7zip\win-x64\7za.exe'
 if (($PluginsDir -or $NoPlugins) -and -not (Test-Path -LiteralPath $sevenZa)) { throw "7-Zip is missing: $sevenZa" }
-$testRoot = Join-Path $root ('test-results\ui-smoke\' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$uiSmokeRoot = Join-Path $root 'test-results\ui-smoke'
+$runName = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+$testRoot = Join-Path $uiSmokeRoot $runName
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $testRoot '.sumafile-ui-smoke'), 'disposable UI test data')
 foreach ($name in @('empty', 'destination', 'state')) { New-Item -ItemType Directory -Path (Join-Path $testRoot $name) | Out-Null }
@@ -282,7 +433,11 @@ if ($PluginsDir) {
 }
 $remoteServer = $null
 $process = $null
+$appProcessId = $null
+$serverProcessId = $null
 $smokeCompleted = $false
+# Every helper process of this run starts after this point (CIM creation times are local).
+$launchedAt = [DateTime]::Now.AddSeconds(-1)
 # Taken before the launch and checked after it: the app never touches the pre-release plugin locations under
 # %LOCALAPPDATA%\SumaFile, and writes no app-owned plugin file into the Debug exe folder.
 $legacyPluginLocations = Get-LegacyPluginLocationSnapshot
@@ -302,6 +457,7 @@ try {
         $serverStart.UseShellExecute = $false
         $serverStart.CreateNoWindow = $true
         $remoteServer = [System.Diagnostics.Process]::Start($serverStart)
+        $serverProcessId = $remoteServer.Id
         $waited = [System.Diagnostics.Stopwatch]::StartNew()
         while (-not (Test-Path -LiteralPath $remoteInfo)) {
             if ($remoteServer.HasExited) { throw "The SFTP test server exited ($($remoteServer.ExitCode)) before writing $remoteInfo." }
@@ -312,6 +468,7 @@ try {
         $start.EnvironmentVariables['SUMAFILE_SMOKE_REMOTE_LOCAL'] = $remoteLocal
     }
     $process = [System.Diagnostics.Process]::Start($start)
+    $appProcessId = $process.Id
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         $progressPath = Join-Path $testRoot 'progress.json'
         if (Test-Path -LiteralPath $progressPath) {
@@ -325,7 +482,7 @@ try {
     $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
     if (-not $report.passed) { throw "UI smoke failed: $($report.failure)`nEvidence: $reportPath" }
     if ($process.ExitCode -ne 0) { throw "App exited with code $($process.ExitCode) after reporting results. Evidence: $reportPath" }
-    Write-Host "UI runtime smoke passed. Report: $reportPath"
+    Write-Host 'UI runtime smoke scenarios passed.'
     $report.results | Where-Object { $_.scenario -eq 'large-folder' } | Format-Table -AutoSize | Out-Host
     Write-Host ("Completed scenarios: " + (($report.results | ForEach-Object { $_.scenario } | Group-Object | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ', '))
     $report.uiHeartbeat | Format-List | Out-Host
@@ -371,5 +528,23 @@ try {
     if ($afterRunFailures.Count -gt 0) {
         if ($smokeCompleted) { throw (($afterRunFailures -join [Environment]::NewLine) + "`nEvidence: $testRoot") }
         foreach ($failure in $afterRunFailures) { Write-Warning "After the failed run: $failure" }
+    }
+}
+
+# Only reached when the run and every after-run check passed: a throw above ends the script and keeps the run folder
+# as evidence. The report is copied beside the folder first, so the printed path, and CI's upload, outlive it.
+if (-not $smokeCompleted) { throw "UI smoke did not complete. Evidence: $testRoot" }
+$passedReportPath = Join-Path $uiSmokeRoot 'last-passed-report.json'
+Copy-Item -LiteralPath $reportPath -Destination $passedReportPath -Force
+Write-Host "UI runtime smoke passed. Report: $passedReportPath"
+if ($KeepResults) {
+    Write-Host "Kept the run folder (-KeepResults): $testRoot"
+} else {
+    $helperExecutables = @(@($installDir, $service, $sevenZa, $remoteServerExe, $pluginRoots) | Where-Object { $_ })
+    $helperRoots = @(@($appProcessId, $serverProcessId) | Where-Object { $null -ne $_ })
+    if (-not (Wait-UiSmokeHelperProcessesGone -RootProcessIds $helperRoots -Since $launchedAt -Executables $helperExecutables -RunRoot $testRoot)) {
+        Write-Warning "Kept the run folder while helper processes may still use it: $testRoot"
+    } elseif (Remove-UiSmokeRunFolder -RunRoot $testRoot -ResultsRoot $uiSmokeRoot) {
+        Write-Host "Deleted the passed run's folder $testRoot (pass -KeepResults to keep it)."
     }
 }

@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# The signed plugin fixture is hashed byte for byte: never convert its line endings.
+src-winui/SimpleFile.Tests/Fixtures/signed-plugin/** -text

@@ -169,6 +169,17 @@ public class PluginLoadingTests
     public void LoadContext_SharesWinUiAndWindowsAppSdkProjections(string name, bool shared) =>
         Assert.Equal(shared, PluginLoadContext.IsHostShared(name));
 
+    /// Parked #17/#22: the host ships the Windows App SDK's Microsoft.Graphics.Display and Microsoft.Graphics.Imaging
+    /// families, never Win2D (Microsoft.Graphics.Canvas*), so a plugin that bundles Win2D loads its own copy.
+    [Theory]
+    [InlineData("Microsoft.Graphics.Canvas", false)]
+    [InlineData("Microsoft.Graphics.Canvas.Interop", false)]
+    [InlineData("Microsoft.Graphics.Display", true)]
+    [InlineData("Microsoft.Graphics.Imaging", true)]
+    [InlineData("Microsoft.Graphics.Imaging.Projection", true)]
+    public void SharedPrefixes_DoNotCaptureWin2D(string name, bool shared) =>
+        Assert.Equal(shared, PluginLoadContext.IsHostShared(name));
+
     private sealed class FakePluginHost : IPluginHost
     {
         public string PluginId => HelloId;

@@ -1124,6 +1124,37 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
+    public void PluginWindowHost_NormalizesOptionsAndChecksTheThreadBeforeTracking()
+    {
+        // Parked #72/#92: Attach refuses a call off the UI thread before anything is tracked, and the chrome only ever
+        // sees options PluginWindowOptionsPolicy has checked (sizes clamped, a title present and cut to length).
+        var root = FindRepoRoot();
+        var host = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginWindowHost.cs"));
+        var attach = MethodBody(host, "public void Attach(object window, PluginWindowOptions options)");
+
+        var thread = attach.IndexOf("_queue.HasThreadAccess", StringComparison.Ordinal);
+        var refusal = attach.IndexOf("throw new InvalidOperationException(\"Attach must be called on the UI thread.\");", StringComparison.Ordinal);
+        var normalize = attach.IndexOf("PluginWindowOptionsPolicy.Normalize(options, ", StringComparison.Ordinal);
+        var track = attach.IndexOf("_windows.TryTrack(", StringComparison.Ordinal);
+        var chrome = attach.IndexOf("SecondaryWindowChrome.Apply(pluginWindow, normalized.Title, normalized.Width, normalized.Height);", StringComparison.Ordinal);
+        Assert.True(thread >= 0, "Attach does not check the thread.");
+        Assert.True(refusal > thread, "Attach must throw the UI-thread InvalidOperationException when off the UI thread.");
+        Assert.True(normalize > refusal, "Attach must normalize the options after the thread check.");
+        Assert.True(track > normalize, "Attach must check the thread and normalize the options before it tracks the window.");
+        Assert.True(chrome > track, "Attach must apply the chrome from the normalized options.");
+        Assert.DoesNotContain("options.Title", attach);
+        Assert.DoesNotContain("options.Width", attach);
+        Assert.DoesNotContain("options.Height", attach);
+
+        // The DIP-to-pixel conversion saturates, so no size or DPI scale can overflow the physical size.
+        var chromeSource = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "SecondaryWindowChrome.cs"));
+        var resize = MethodBody(chromeSource, "public static void Resize(Window window, int logicalWidth, int logicalHeight)");
+        Assert.Contains("PhysicalPixels(logicalWidth, scale)", resize);
+        Assert.Contains("PhysicalPixels(logicalHeight, scale)", resize);
+        Assert.Contains("Math.Clamp(Math.Round(logical * scale), 0, int.MaxValue)", chromeSource);
+    }
+
+    [Fact]
     public void DialogHost_ShowAsync_CompletesWhenTheHostHidesTheDialog()
     {
         // WinUI may never complete ShowAsync for a dialog whose window closed; the gate must not wait on it.

@@ -79,7 +79,13 @@ export function validateWorkflows(workflows, dependabot) {
     [/scripts\/check-winui-release-hash\.ps1/, 'behavioral release hashing check'],
     [/^npm run smoke:winui-ui\b/, 'real application UI smoke'],
     [/^node scripts\/check-winui-packaging\.mjs$/, 'packaging checks'],
+    [/^npm run pack:sdk\s*$/, 'plugin SDK pack (dry run)'],
   ]) command('ci.yml', 'winui', pattern, description);
+  // Phase 5: the SDK is packed after the tests that pin its surface and documentation.
+  const winuiRuns = runs(ci?.jobs?.winui);
+  const packSdk = winuiRuns.findIndex(line => /^npm run pack:sdk\s*$/.test(line));
+  check(packSdk < 0 || packSdk > winuiRuns.findIndex(line => /^npm run check:winui\s*$/.test(line)),
+    'ci.yml/winui: pack the plugin SDK after the WinUI tests');
   const reports = action(ci?.jobs?.winui, 'actions/upload-artifact');
   check(reports?.if === 'always()' && reports?.with?.path?.includes('report.json'), 'CI: retain runtime evidence on failure');
   needs('ci.yml', 'required', ['quality', 'repo-checks', 'security', 'build', 'winui', 'installer']);

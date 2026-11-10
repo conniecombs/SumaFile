@@ -1932,8 +1932,35 @@ public class PluginManagerTests : IAsyncLifetime
         plugin.Host!.Windows.Attach("window", new PluginWindowOptions("Title", 480, 320));
 
         var host = Assert.Single(created);
-        Assert.Same(host, plugin.Host.Windows);
+        // The plugin sees the host through the options guard, which forwards to this runtime's one host.
+        Assert.Same(host, Assert.IsType<PluginWindowOptionsGuard>(plugin.Host.Windows).Inner);
         Assert.Equal([("window", new PluginWindowOptions("Title", 480, 320))], host.Attached);
+    }
+
+    /// Parked #72/#92: the host checks the options before the window host sees them, so every window host gets sizes
+    /// in range and a title, the manifest name when the plugin gives none.
+    [Fact]
+    public async Task Windows_Attach_NormalizesTheOptionsWithTheManifestName()
+    {
+        Approve(UiId, WriteUiPlugin());
+        var order = new List<string>();
+        RecordingWindowHost? host = null;
+        var manager = Manager(windowsFor: _ => host = new RecordingWindowHost(order));
+        await manager.DiscoverAsync(CancellationToken.None);
+        var plugin = new UiPlugin(order);
+        manager.InstanceFactory = _ => plugin;
+        await manager.RunCommandAsync(OpenContext(UiId).CommandId, OpenContext(UiId), CancellationToken.None);
+
+        plugin.Host!.Windows.Attach("blank", new PluginWindowOptions("  ", int.MaxValue, -5));
+        plugin.Host.Windows.Attach("long", new PluginWindowOptions(new string('t', 500), 0, int.MinValue));
+        Assert.Throws<ArgumentNullException>(() => plugin.Host.Windows.Attach("none", null!));
+
+        Assert.Equal(
+            [
+                ("blank", new PluginWindowOptions("Ui", PluginWindowOptionsPolicy.MaxWidth, PluginWindowOptionsPolicy.MinHeight)),
+                ("long", new PluginWindowOptions(new string('t', PluginWindowOptionsPolicy.MaxTitleLength), PluginWindowOptionsPolicy.MinWidth, PluginWindowOptionsPolicy.MinHeight)),
+            ],
+            host!.Attached);
     }
 
     [Fact]
@@ -1970,7 +1997,7 @@ public class PluginManagerTests : IAsyncLifetime
         // The stopped instance still holds its IPluginHost (say, reporting a backend that died): its windows reach
         // only the sealed host, which closes a late window at once.
         first.Host.Windows.Attach("late", new PluginWindowOptions("Late", 480, 320));
-        Assert.Same(firstHost, first.Host.Windows);
+        Assert.Same(firstHost, Assert.IsType<PluginWindowOptionsGuard>(first.Host.Windows).Inner);
         Assert.Equal(["late"], firstHost.ClosedOnAttach);
         Assert.Empty(firstHost.Open);
 
@@ -1981,7 +2008,7 @@ public class PluginManagerTests : IAsyncLifetime
         Assert.Equal(2, created.Count);
         var secondHost = created[1];
         Assert.NotSame(firstHost, secondHost);
-        Assert.Same(secondHost, second.Host!.Windows);
+        Assert.Same(secondHost, Assert.IsType<PluginWindowOptionsGuard>(second.Host!.Windows).Inner);
 
         // A sealed host is never handed to a new runtime, so the re-enabled plugin's windows stay open.
         second.Host.Windows.Attach("again", new PluginWindowOptions("Again", 480, 320));

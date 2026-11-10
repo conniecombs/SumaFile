@@ -1,0 +1,1 @@
+SumaFile signed fixture payload: any byte change here makes the signature Invalid.

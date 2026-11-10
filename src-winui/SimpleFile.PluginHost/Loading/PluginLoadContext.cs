@@ -11,6 +11,9 @@ namespace SimpleFile.PluginHost.Loading;
 /// </summary>
 public sealed class PluginLoadContext : AssemblyLoadContext
 {
+    // docs/PLUGINS.md "Host-shared assemblies" prints this list (PluginSharedAssembliesDocTests pins the two together).
+    // Microsoft.Graphics is shared only for the two families the host ships, Display and Imaging: the bare prefix would
+    // also capture Win2D (Microsoft.Graphics.Canvas*), which the host does not ship, so a plugin could not bundle it.
     private static readonly string[] SharedPrefixes =
     [
         "SimpleFile.PluginSdk",
@@ -19,7 +22,8 @@ public sealed class PluginLoadContext : AssemblyLoadContext
         "Microsoft.UI",
         "Microsoft.WinUI",
         "Microsoft.InteractiveExperiences",
-        "Microsoft.Graphics",
+        "Microsoft.Graphics.Display",
+        "Microsoft.Graphics.Imaging",
         "Microsoft.Web.WebView2",
         "Microsoft.Security.Authentication.OAuth",
         "Microsoft.Windows",
@@ -28,6 +32,9 @@ public sealed class PluginLoadContext : AssemblyLoadContext
         "System.",
         "Microsoft.Extensions.",
     ];
+
+    /// <summary>The host-shared assembly name prefixes, in the order <see cref="IsHostShared"/> tries them.</summary>
+    internal static IReadOnlyList<string> SharedPrefixList => SharedPrefixes;
 
     private readonly AssemblyDependencyResolver _resolver;
     private readonly string _hostDirectory;

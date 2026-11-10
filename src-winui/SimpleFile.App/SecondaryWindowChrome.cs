@@ -118,10 +118,12 @@ internal static class SecondaryWindowChrome
     public static void Resize(Window window, int logicalWidth, int logicalHeight)
     {
         var scale = ScaleFor(window);
-        window.AppWindow.Resize(new SizeInt32(
-            (int)Math.Round(logicalWidth * scale),
-            (int)Math.Round(logicalHeight * scale)));
+        window.AppWindow.Resize(new SizeInt32(PhysicalPixels(logicalWidth, scale), PhysicalPixels(logicalHeight, scale)));
     }
+
+    /// <summary>A DIP length in physical pixels; saturates instead of overflowing, whatever the length and scale.</summary>
+    private static int PhysicalPixels(int logical, double scale) =>
+        (int)Math.Clamp(Math.Round(logical * scale), 0, int.MaxValue);
 
     public static double ScaleFor(Window window)
     {

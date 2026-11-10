@@ -1285,13 +1285,19 @@ public sealed partial class PluginManager : IAsyncDisposable
             _options.Progress,
             _options.DialogsFor(record.Id),
             _options.Workspace,
-            _options.WindowsFor?.Invoke(record.Id) ?? NullPluginWindowHost.Instance,
+            new PluginWindowOptionsGuard(
+                _options.WindowsFor?.Invoke(record.Id) ?? NullPluginWindowHost.Instance,
+                WindowTitleFallback(record)),
             _options.PanelsFor?.Invoke(record.Id) ?? NoPluginPanels.Instance,
             new PluginDecorationsFacade(record.Id, _options.InvalidateDecorations),
             _options.Log);
         record.Runtime = runtime;
         return runtime;
     }
+
+    /// <summary>The title a plugin window gets when the plugin gives none: its manifest name, else its id.</summary>
+    private static string WindowTitleFallback(PluginRecord record) =>
+        record.Discovered.Manifest?.Name is { } name && !string.IsNullOrWhiteSpace(name) ? name : record.Id;
 
     private int NextEpoch() => Interlocked.Increment(ref _epochs);
 

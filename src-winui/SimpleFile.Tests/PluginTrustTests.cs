@@ -387,6 +387,67 @@ public class PluginTrustTests(ITestOutputHelper output)
         }
     }
 
+    // Fixtures/signed-plugin was signed once by scripts/sign-plugin.mjs with a throwaway key; only its public key is
+    // committed. scripts/tests/sign-plugin.test.mjs expects the same fingerprint. Read from the source tree: the
+    // fixture is not copied to the test output.
+    private const string SignedFixtureFingerprint = "aea57a90c57b3693";
+
+    private static string SignedFixtureFolder()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "Cargo.toml")) && Directory.Exists(Path.Combine(dir.FullName, "src-winui")))
+                return Path.Combine(dir.FullName, "src-winui", "SimpleFile.Tests", "Fixtures", "signed-plugin");
+        }
+        throw new InvalidOperationException("No folder above " + AppContext.BaseDirectory + " holds both Cargo.toml and src-winui.");
+    }
+
+    private static PluginManifest ReadSignedFixtureManifest(string folder)
+    {
+        var read = PluginManifestReader.Read(File.ReadAllText(Path.Combine(folder, "plugin.json")), "signed-plugin");
+        Assert.True(read.Manifest is not null, string.Join("; ", read.Errors));
+        return read.Manifest!;
+    }
+
+    [Fact]
+    public void SignedFixture_FromTheSigningTool_Verifies()
+    {
+        var folder = SignedFixtureFolder();
+        var manifest = ReadSignedFixtureManifest(folder);
+
+        // The real BouncyCastle primitive: this class restores the seam after every test that replaces it.
+        var state = PluginSignatureVerifier.Verify(folder, manifest);
+
+        Assert.Equal(SignatureStatus.Verified, state.Status);
+        Assert.Null(state.Error);
+        Assert.Equal(SignedFixtureFingerprint, state.KeyFingerprint);
+        Assert.Equal(Hex(SHA256.HashData(Convert.FromBase64String(manifest.Publisher.PublicKey!)))[..16], state.KeyFingerprint);
+    }
+
+    [Theory]
+    [InlineData("payload.txt", "Listed file \"payload.txt\" does not match its recorded hash.")]
+    [InlineData("plugin.json", "Signature does not match the package contents.")]
+    public void SignedFixture_TamperedCopy_IsInvalid(string file, string error)
+    {
+        var tmp = NewTemp();
+        try
+        {
+            var copy = Path.Combine(tmp, "signed-plugin");
+            Directory.CreateDirectory(copy);
+            foreach (var source in Directory.GetFiles(SignedFixtureFolder()))
+                File.Copy(source, Path.Combine(copy, Path.GetFileName(source)));
+            Assert.Equal(SignatureStatus.Verified, PluginSignatureVerifier.Verify(copy, ReadSignedFixtureManifest(copy)).Status);
+
+            // One more byte; plugin.json stays valid JSON with the same publisher key.
+            File.AppendAllText(Path.Combine(copy, file), " ");
+            var state = PluginSignatureVerifier.Verify(copy, ReadSignedFixtureManifest(copy));
+
+            Assert.Equal(SignatureStatus.Invalid, state.Status);
+            Assert.Equal(error, state.Error);
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
     [Fact]
     public void Resolve_NoRecord_NeedsConsent()
     {

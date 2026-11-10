@@ -45,6 +45,8 @@ const requiredFiles = [
   'src-winui/SimpleFile.PluginHost/SimpleFile.PluginHost.csproj',
   'crates/simplefile-service/Cargo.toml',
   'crates/sumafile-plugin/Cargo.toml',
+  'crates/sumafile-plugin/README.md',
+  'crates/simplefile-ipc/README.md',
   'third_party/7zip/win-x64/7za.exe',
   'third_party/7zip/win-x64/7za.dll',
   'third_party/7zip/win-x64/7zxa.dll',
@@ -65,6 +67,13 @@ const requiredFiles = [
   'plugins/git/backend/Cargo.toml',
   'plugins/git/ui/SumaFile.Git/SumaFile.Git.csproj',
   'plugins/git/ui/SumaFile.Git.Model/SumaFile.Git.Model.csproj',
+  // Phase 5: the plugin template. CI builds and tests it; nothing stages it into the payload.
+  'templates/sumafile-plugin/plugin.json',
+  'templates/sumafile-plugin/README.md',
+  'templates/sumafile-plugin/stage.ps1',
+  'templates/sumafile-plugin/backend/Cargo.toml',
+  'templates/sumafile-plugin/ui/Example.Plugin/Example.Plugin.csproj',
+  'templates/sumafile-plugin/ui/Example.Plugin/ExamplePlugin.cs',
 ];
 
 for (const relativePath of requiredFiles) {
@@ -410,6 +419,7 @@ const pluginCrateManifests = [
   'plugins/remote/backend/Cargo.toml',
   'plugins/remote/test-server/Cargo.toml',
   'plugins/git/backend/Cargo.toml',
+  'templates/sumafile-plugin/backend/Cargo.toml',
 ];
 
 for (const manifest of pluginCrateManifests) {
@@ -417,6 +427,53 @@ for (const manifest of pluginCrateManifests) {
   if (source.includes('simplefile-core') || source.includes('simplefile-service')) {
     fail(`${manifest} must not depend on simplefile-core or simplefile-service (spec §12)`);
   }
+}
+
+// Phase 5: the plugin helper crate and the IPC crate it depends on are packaged together as a dry run
+// (`npm run pack:crates`, and the Rust quality gate in CI). scripts/tests/plugin-crates-package.test.mjs checks the
+// metadata in detail; this keeps the package readable on crates.io and the path dependency packageable.
+for (const crate of ['simplefile-ipc', 'sumafile-plugin']) {
+  const manifest = `crates/${crate}/Cargo.toml`;
+  const source = readText(manifest);
+  for (const snippet of ['readme = "README.md"', 'license = "MIT"', 'rust-version = "', 'keywords = [', 'categories = [']) {
+    requireSnippet(source, manifest, snippet);
+  }
+}
+if (!/^simplefile-ipc = \{ path = "\.\.\/simplefile-ipc", version = "[^"]+" \}/m.test(readText('crates/sumafile-plugin/Cargo.toml'))) {
+  fail('crates/sumafile-plugin/Cargo.toml must give its simplefile-ipc path dependency a version, which cargo package needs.');
+}
+if (!/^cargo package\b.*-p simplefile-ipc -p sumafile-plugin/.test(packageScripts['pack:crates'] ?? '')) {
+  fail('package.json must define pack:crates as a cargo package dry run of simplefile-ipc and sumafile-plugin.');
+}
+
+// Phase 5: the SDK packs as SumaFile.PluginSdk with its XML documentation and README (`npm run pack:sdk`, and the
+// WinUI host job in CI). PluginSdkPackageTests checks the metadata against PluginSdk.Version; this keeps the package
+// and the dry run wired. The id and version apply only while packing, so no referencing project's lock file changes.
+const sdkProject = 'src-winui/SimpleFile.PluginSdk/SimpleFile.PluginSdk.csproj';
+const sdkCsproj = readText(sdkProject);
+for (const snippet of [
+  '<GenerateDocumentationFile>true</GenerateDocumentationFile>',
+  '<IsPackable>true</IsPackable>',
+  `<PackageId Condition="'$(_IsPacking)' == 'true'">SumaFile.PluginSdk</PackageId>`,
+  `<PackageVersion Condition="'$(_IsPacking)' == 'true'">`,
+  '<PackageLicenseExpression>MIT</PackageLicenseExpression>',
+  '<RepositoryUrl>https://github.com/conniecombs/SumaFile</RepositoryUrl>',
+  '<PackageReadmeFile>README.md</PackageReadmeFile>',
+  '<None Include="README.md" Pack="true" PackagePath="\\" />',
+  '<Authors>',
+  '<Description>',
+]) {
+  requireSnippet(sdkCsproj, sdkProject, snippet);
+}
+if (!fs.existsSync(path.join(repoRoot, 'src-winui/SimpleFile.PluginSdk/README.md'))) {
+  fail('missing src-winui/SimpleFile.PluginSdk/README.md, the package README.');
+}
+if (packageScripts['pack:sdk'] !== 'dotnet pack src-winui/SimpleFile.PluginSdk -c Release -o target/packages') {
+  fail('package.json must define pack:sdk as "dotnet pack src-winui/SimpleFile.PluginSdk -c Release -o target/packages".');
+}
+requireSnippet(ciYml, 'ci.yml', 'npm run pack:sdk');
+if (/nuget push/i.test(packageJson) || /nuget push/i.test(ciYml)) {
+  fail('Nothing is published: package.json and ci.yml must not run dotnet nuget push.');
 }
 
 if (packageJson.includes('build:tauri') || packageJson.includes('smoke:release')) {

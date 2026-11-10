@@ -28,11 +28,26 @@ namespace SimpleFile.PluginSdk;
 public interface IPlugin
 {
     /// <summary>Runs on the UI thread, once, before the plugin's first command or provider call.</summary>
+    /// <remarks>
+    /// Keep it short: the command or provider call that caused the activation waits for it. A plugin stopped while it is
+    /// still activating is given 5 s to finish before the host abandons the instance.
+    /// </remarks>
+    /// <param name="host">The host services, which the plugin keeps for its lifetime.</param>
+    /// <param name="ct">
+    /// The token of the call that caused the activation; an activation a row decoration request caused gets one that is
+    /// never cancelled, so it always runs to its end.
+    /// </param>
+    /// <returns>A task that completes once the plugin is ready; an exception marks the plugin LoadFailed.</returns>
     Task ActivateAsync(IPluginHost host, CancellationToken ct);
 
     /// <summary>
     /// Runs on a thread-pool thread, so a plugin that touches UI objects here must marshal to the UI thread itself.
     /// By then the plugin's attached windows are closed and its backend is stopped.
     /// </summary>
+    /// <remarks>
+    /// The host waits at most 5 s for it. Past that it abandons the instance and records
+    /// <c>plugin did not deactivate in time</c>; the plugin's code is never unloaded.
+    /// </remarks>
+    /// <returns>A task that completes once the plugin has released what it holds.</returns>
     Task DeactivateAsync();
 }

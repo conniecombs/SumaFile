@@ -120,6 +120,22 @@ public sealed class PluginPackageInstallerTests : IDisposable
         Assert.False(Directory.Exists(PluginsRoot));
     }
 
+    /// Parked #28: the installer shares discovery's 1 MiB cap (PluginManifestReader.MaxManifestBytes).
+    [Fact]
+    public void Install_ManifestLargerThanTheCap_ThrowsAndWritesNothing()
+    {
+        var manifest = Manifest();
+        var atCap = manifest + new string(' ', SimpleFile.PluginHost.Manifest.PluginManifestReader.MaxManifestBytes - manifest.Length);
+
+        var over = Package(("plugin.json", atCap + " "));
+        var error = Assert.Throws<PluginInstallException>(() => PluginPackageInstaller.Install(over, PluginsRoot));
+        Assert.Equal("The package's plugin.json is larger than 1 MiB.", error.Message);
+        Assert.False(Directory.Exists(PluginsRoot));
+
+        var folder = PluginPackageInstaller.Install(Package(("plugin.json", atCap)), PluginsRoot);
+        Assert.Equal(atCap, File.ReadAllText(Path.Combine(folder, "plugin.json")));
+    }
+
     [Fact]
     public void Install_ZipSlipEntry_ThrowsAndWritesNothing()
     {

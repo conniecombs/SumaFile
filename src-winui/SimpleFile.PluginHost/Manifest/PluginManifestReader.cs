@@ -18,6 +18,23 @@ public static partial class PluginManifestReader
 
     private static readonly string[] ActivateOnValues = ["first-call", "startup"];
     private const int MaxWhenLength = 512;
+
+    // Parked #73: every free-text string a manifest hands the host's UI has an upper bound. The id is bounded by its
+    // grammar; a when expression by MaxWhenLength.
+    private const int MaxNameLength = 100;
+    private const int MaxDescriptionLength = 2000;
+    private const int MaxLabelLength = 200;
+    private const int MaxSettingDescriptionLength = 1000;
+    private const int MaxGlyphLength = 8;
+
+    /// <summary>
+    /// The largest <c>plugin.json</c> the host reads, 1 MiB, for discovery and the installer alike (parked #28). A
+    /// larger one is invalid with <see cref="ManifestTooLargeMessage"/>, and is never read whole.
+    /// </summary>
+    public const int MaxManifestBytes = 1_048_576;
+
+    /// <summary>The error a <c>plugin.json</c> larger than <see cref="MaxManifestBytes"/> gets.</summary>
+    public const string ManifestTooLargeMessage = "plugin.json is larger than 1 MiB.";
     private static readonly string[] PlacementValues = ["primary", "overflow"];
     private static readonly string[] PanelPlacementValues = ["bottom", "right"];
     private static readonly string[] SettingTypes = ["boolean", "string", "integer", "enum", "path"];
@@ -36,6 +53,44 @@ public static partial class PluginManifestReader
         return m.Success
             && int.TryParse(m.Groups[1].Value, out var major)
             && major == SimpleFile.PluginSdk.PluginSdk.Major;
+    }
+
+    /// <summary>
+    /// Reads a <c>plugin.json</c> from <paramref name="stream"/>, taking at most <see cref="MaxManifestBytes"/> + 1 bytes.
+    /// False, with no bytes, when the manifest is larger than the cap: a stream that reports a length over the cap is not
+    /// read at all, and any other is read only until the cap is passed, so a long or growing file is never held whole.
+    /// </summary>
+    public static bool TryReadManifestBytes(Stream stream, out byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        bytes = [];
+        long known = -1;
+        if (stream.CanSeek)
+        {
+            known = Math.Max(0, stream.Length - stream.Position);
+            if (known > MaxManifestBytes) return false;
+        }
+
+        // One byte past the expected end, so a file that grew since its length was read is still caught; a stream of
+        // unknown length starts small and doubles up to the cap + 1.
+        var buffer = new byte[known >= 0 ? known + 1 : Math.Min(16 * 1024, MaxManifestBytes + 1)];
+        var total = 0;
+        while (true)
+        {
+            if (total == buffer.Length)
+            {
+                if (buffer.Length > MaxManifestBytes) break;
+                Array.Resize(ref buffer, (int)Math.Min(buffer.Length * 2L, MaxManifestBytes + 1L));
+            }
+
+            var read = stream.Read(buffer, total, buffer.Length - total);
+            if (read == 0) break;
+            total += read;
+        }
+
+        if (total > MaxManifestBytes) return false;
+        bytes = total == buffer.Length ? buffer : buffer.AsSpan(0, total).ToArray();
+        return true;
     }
 
     public static ManifestReadResult Read(string json, string folderName)
@@ -66,7 +121,9 @@ public static partial class PluginManifestReader
                     errors.Add($"The id '{id}' does not match the plugin folder name '{folderName}'; the folder must be named exactly after the id.");
             }
 
-            var name = RequiredString(root, "name", "name", errors);
+            var name = Bounded(RequiredString(root, "name", "name", errors), "name", MaxNameLength, errors);
+            // Not kept: the host shows no description yet, but a third-party manifest still cannot carry an unbounded one.
+            Bounded(OptionalString(root, "description", "description", errors), "description", MaxDescriptionLength, errors);
             var version = RequiredString(root, "version", "version", errors);
             var sdkVersion = RequiredString(root, "sdkVersion", "sdkVersion", errors);
             if (sdkVersion is not null)
@@ -112,7 +169,7 @@ public static partial class PluginManifestReader
             errors.Add("The publisher field must be an object.");
             return null;
         }
-        var name = RequiredString(el, "name", "publisher.name", errors);
+        var name = Bounded(RequiredString(el, "name", "publisher.name", errors), "publisher.name", MaxNameLength, errors);
         var url = OptionalString(el, "url", "publisher.url", errors);
         var key = OptionalString(el, "publicKey", "publisher.publicKey", errors);
         return name is null ? null : new PluginPublisher(name, url, key);
@@ -166,8 +223,8 @@ public static partial class PluginManifestReader
             foreach (var (item, path) in Items(el.Value, "commands", "contributions.commands", errors))
             {
                 var id = RequiredCommand(item, "id", path + ".id", errors);
-                var label = RequiredString(item, "label", path + ".label", errors);
-                var group = OptionalString(item, "group", path + ".group", errors) ?? "";
+                var label = Label(RequiredString(item, "label", path + ".label", errors), path + ".label", errors);
+                var group = Label(OptionalString(item, "group", path + ".group", errors), path + ".group", errors) ?? "";
                 var shortcut = OptionalString(item, "shortcut", path + ".shortcut", errors);
                 if (id is null) continue;
                 if (!seen.Add(id))
@@ -178,12 +235,12 @@ public static partial class PluginManifestReader
 
             foreach (var (item, path) in Items(el.Value, "contextMenu", "contributions.contextMenu", errors))
             {
-                var group = OptionalString(item, "group", path + ".group", errors) ?? "";
+                var group = Label(OptionalString(item, "group", path + ".group", errors), path + ".group", errors) ?? "";
                 var items = new List<PluginContextMenuItemSpec>();
                 foreach (var (sub, subPath) in Items(item, "items", path + ".items", errors))
                 {
                     var cmd = RequiredCommand(sub, "command", subPath + ".command", errors);
-                    var label = RequiredString(sub, "label", subPath + ".label", errors);
+                    var label = Label(RequiredString(sub, "label", subPath + ".label", errors), subPath + ".label", errors);
                     var when = ReadWhen(sub, subPath, errors);
                     if (cmd is not null && label is not null)
                         items.Add(new PluginContextMenuItemSpec(cmd, label, when));
@@ -202,8 +259,8 @@ public static partial class PluginManifestReader
                     cmd = null;
                 }
 
-                var label = RequiredString(item, "label", path + ".label", errors);
-                var glyph = OptionalString(item, "glyph", path + ".glyph", errors) ?? "";
+                var label = Label(RequiredString(item, "label", path + ".label", errors), path + ".label", errors);
+                var glyph = Bounded(OptionalString(item, "glyph", path + ".glyph", errors), path + ".glyph", MaxGlyphLength, errors) ?? "";
                 var hasPlacement = item.TryGetProperty("placement", out var pEl) && pEl.ValueKind != JsonValueKind.Null;
                 var placement = OptionalString(item, "placement", path + ".placement", errors);
                 if (!hasPlacement)
@@ -315,7 +372,7 @@ public static partial class PluginManifestReader
         {
             declared = true;
             var id = RequiredString(item, "id", path + ".id", errors);
-            var title = RequiredString(item, "title", path + ".title", errors);
+            var title = Label(RequiredString(item, "title", path + ".title", errors), path + ".title", errors);
             var provider = RequiredString(item, "provider", path + ".provider", errors);
             var placement = OptionalString(item, "placement", path + ".placement", errors) ?? "bottom";
             var detachable = OptionalBool(item, "detachable", path + ".detachable", errors);
@@ -358,7 +415,7 @@ public static partial class PluginManifestReader
         {
             declared = true;
             var id = RequiredString(item, "id", path + ".id", errors);
-            var title = RequiredString(item, "title", path + ".title", errors);
+            var title = Label(RequiredString(item, "title", path + ".title", errors), path + ".title", errors);
             var provider = RequiredString(item, "provider", path + ".provider", errors);
             var command = OptionalString(item, "command", path + ".command", errors);
             if (id is not null && !Backend.PluginHostMethods.IsValidSettingKey(id))
@@ -386,9 +443,10 @@ public static partial class PluginManifestReader
         {
             var key = RequiredString(item, "key", path + ".key", errors);
             var type = RequiredString(item, "type", path + ".type", errors);
-            var label = RequiredString(item, "label", path + ".label", errors);
-            var description = OptionalString(item, "description", path + ".description", errors);
-            var group = OptionalString(item, "group", path + ".group", errors);
+            var label = Label(RequiredString(item, "label", path + ".label", errors), path + ".label", errors);
+            var description = Bounded(
+                OptionalString(item, "description", path + ".description", errors), path + ".description", MaxSettingDescriptionLength, errors);
+            var group = Label(OptionalString(item, "group", path + ".group", errors), path + ".group", errors);
             var options = OptionalStringList(item, "options", path + ".options", errors);
             var migrateFrom = OptionalString(item, "migrateFrom", path + ".migrateFrom", errors);
             if (migrateFrom is not null)
@@ -427,6 +485,22 @@ public static partial class PluginManifestReader
                 result.Add(new PluginSettingSpec(key, type, label, description, def, group, options) { MigrateFrom = migrateFrom });
         }
         return result;
+    }
+
+    /// <summary>A label, title or group: at most <see cref="MaxLabelLength"/> characters (<see cref="Bounded"/>).</summary>
+    private static string? Label(string? value, string path, List<string> errors) =>
+        Bounded(value, path, MaxLabelLength, errors);
+
+    /// <summary>
+    /// <paramref name="value"/> when it is at most <paramref name="max"/> UTF-16 characters, else null with the error
+    /// <c>The &lt;path&gt; field is longer than &lt;max&gt; characters.</c>, which makes the manifest invalid. A length
+    /// check only, so it adds nothing measurable to a startup scan.
+    /// </summary>
+    private static string? Bounded(string? value, string path, int max, List<string> errors)
+    {
+        if (value is null || value.Length <= max) return value;
+        errors.Add($"The {path} field is longer than {max} characters.");
+        return null;
     }
 
     private static void RequireBareFileName(string? value, string path, List<string> errors)

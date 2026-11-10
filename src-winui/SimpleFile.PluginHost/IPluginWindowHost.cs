@@ -39,3 +39,71 @@ internal sealed class NullPluginWindowHost : IPluginWindowHost
 
     public Task CloseAllAsync() => Task.CompletedTask;
 }
+
+/// <summary>
+/// The host's check of a plugin's <see cref="PluginWindowOptions"/> before a window is tracked (parked #72/#92): the
+/// size is clamped to <see cref="MinWidth"/>-<see cref="MaxWidth"/> by <see cref="MinHeight"/>-<see cref="MaxHeight"/>
+/// device-independent pixels, a null, empty or whitespace title becomes the fallback (the plugin's manifest name), and
+/// the title is cut to <see cref="MaxTitleLength"/> characters. The clamped size times any DPI scale Windows offers stays
+/// far inside <see cref="int"/>, so the physical size cannot overflow.
+/// </summary>
+public static class PluginWindowOptionsPolicy
+{
+    /// <summary>The smallest initial width, in DIPs.</summary>
+    public const int MinWidth = 320;
+
+    /// <summary>The largest initial width, in DIPs.</summary>
+    public const int MaxWidth = 3840;
+
+    /// <summary>The smallest initial height, in DIPs.</summary>
+    public const int MinHeight = 240;
+
+    /// <summary>The largest initial height, in DIPs.</summary>
+    public const int MaxHeight = 2160;
+
+    /// <summary>The longest title, in UTF-16 characters.</summary>
+    public const int MaxTitleLength = 120;
+
+    /// <summary>
+    /// <paramref name="options"/> with its size clamped and its title present and cut to length. Idempotent: normalized
+    /// options come back equal. A cut never splits a surrogate pair.
+    /// </summary>
+    /// <param name="options">What the plugin passed to <see cref="IPluginWindows.Attach"/>.</param>
+    /// <param name="fallbackTitle">The title for a blank one: the plugin's manifest name.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="fallbackTitle"/> is null, empty or whitespace.</exception>
+    public static PluginWindowOptions Normalize(PluginWindowOptions options, string fallbackTitle)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fallbackTitle);
+        var title = Cut(string.IsNullOrWhiteSpace(options.Title) ? fallbackTitle : options.Title);
+        var width = Math.Clamp(options.Width, MinWidth, MaxWidth);
+        var height = Math.Clamp(options.Height, MinHeight, MaxHeight);
+        return title == options.Title && width == options.Width && height == options.Height
+            ? options
+            : new PluginWindowOptions(title, width, height);
+    }
+
+    private static string Cut(string title)
+    {
+        if (title.Length <= MaxTitleLength) return title;
+        var length = char.IsHighSurrogate(title[MaxTitleLength - 1]) ? MaxTitleLength - 1 : MaxTitleLength;
+        return title[..length];
+    }
+}
+
+/// <summary>
+/// What a plugin sees as <see cref="IPluginHost.Windows"/>: it normalizes the options with
+/// <see cref="PluginWindowOptionsPolicy"/> and the plugin's manifest name before <see cref="Inner"/>, the runtime's one
+/// window host, sees them, so every window host gets checked options. <see cref="CloseAllAsync"/> forwards unchanged.
+/// </summary>
+internal sealed class PluginWindowOptionsGuard(IPluginWindowHost inner, string fallbackTitle) : IPluginWindowHost
+{
+    /// <summary>The runtime's window host, from <see cref="PluginManagerOptions.WindowsFor"/>.</summary>
+    public IPluginWindowHost Inner { get; } = inner;
+
+    public void Attach(object window, PluginWindowOptions options) =>
+        Inner.Attach(window, PluginWindowOptionsPolicy.Normalize(options, fallbackTitle));
+
+    public Task CloseAllAsync() => Inner.CloseAllAsync();
+}

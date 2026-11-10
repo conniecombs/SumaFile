@@ -150,6 +150,24 @@ plugins\<plugin-id>\
 | `settings` | no | Declarative settings schema, section 8. |
 | `permissions` | no | Informational list shown in the consent dialog: `network`, `credentials`, `shell`, `backend-process`. |
 
+Phase 5 limits (parked #28 and #73), for third-party input. `plugin.json` may be
+at most 1 MiB (`PluginManifestReader.MaxManifestBytes`, which the installer
+shares). A larger one is invalid with `plugin.json is larger than 1 MiB.`;
+discovery reads at most the cap plus one byte and never holds it whole. Free-text
+strings are bounded, measured in UTF-16 characters. A longer value makes the
+manifest invalid with `The <field> field is longer than <n> characters.`:
+
+| Field | Limit |
+| --- | --- |
+| `name`, `publisher.name` | 100 |
+| `description` (optional, a string; not shown yet) | 2000 |
+| each contribution `label`, `title` and `group`, and a setting's `label` and `group` | 200 |
+| a setting's `description` | 1000 |
+| `toolbar[].glyph` | 8 |
+
+The id stays bounded by its grammar, and a `when` expression by its existing
+512 characters (section 4.4).
+
 ### 4.4 Contributions
 
 Everything in `contributions` is rendered from the manifest before any plugin
@@ -341,12 +359,23 @@ dependencies resolve from the plugin folder.
 Phase 3 made the shared set exact. An assembly whose name starts with one of
 these prefixes always comes from the host: `SimpleFile.PluginSdk`,
 `Microsoft.WindowsAppSDK`, `Microsoft.WindowsAppRuntime`, `Microsoft.UI`,
-`Microsoft.WinUI`, `Microsoft.InteractiveExperiences`, `Microsoft.Graphics`,
+`Microsoft.WinUI`, `Microsoft.InteractiveExperiences`,
+`Microsoft.Graphics.Display`, `Microsoft.Graphics.Imaging`,
 `Microsoft.Web.WebView2`, `Microsoft.Security.Authentication.OAuth`,
 `Microsoft.Windows` (which covers `Microsoft.Windows.SDK.NET`), `WinRT`,
 `CommunityToolkit.Mvvm`, `System.` and `Microsoft.Extensions.`. So a plugin
 that references WinUI and the Windows App SDK compile-only gets the host's
 projections, and a `Window` or `UIElement` it builds is the host's type.
+
+Phase 5 (parked #17/#22): the prefix was `Microsoft.Graphics`, which also
+matched Win2D (`Microsoft.Graphics.Canvas*`), a library the host does not ship.
+It is now the two families the host ships, `Microsoft.Graphics.Display` and
+`Microsoft.Graphics.Imaging`, so a plugin can bundle Win2D
+(`SharedPrefixes_DoNotCaptureWin2D`). `docs/PLUGINS.md` ("Host-shared
+assemblies") prints the list and the package versions a plugin is bound to
+(`Microsoft.WindowsAppSDK`, `Microsoft.Windows.SDK.BuildTools`,
+`CommunityToolkit.Mvvm`); `PluginSharedAssembliesDocTests` pins the table to
+`PluginLoadContext` and the versions to the App's lock file.
 
 Native DLLs follow one rule. A native DLL the plugin's `deps.json` lists loads
 from the plugin folder, unless the host's own folder ships a DLL of that name
@@ -684,9 +713,25 @@ has stopped. The built-in formats keep the modal progress dialog.
 ### 6.5 Rust helper crate
 
 `crates/sumafile-plugin` wraps the pipe server, framing, handshake, host client
-and progress helpers for Rust backends. It is published to crates.io with the
+and progress helpers for Rust backends. It is meant for crates.io with the
 SDK. Backends in other languages implement the framing directly; the spec in
 `ipc/schema/plugin/v1` documents it.
+
+Packaging (phase 5) is a dry run only; nothing is published. The crate depends
+on `simplefile-ipc` by path, so the two are packaged together:
+`cargo package --locked -p simplefile-ipc -p sumafile-plugin`, which also
+builds each package from its packaged sources against a temporary local
+registry (`--no-verify` is never used). The path dependency names
+`version = "1.0.4"`, the registry requirement a package carries in place of
+the path; a `simplefile-ipc` release bump stays compatible, a new major raises
+it. Both manifests carry `readme = "README.md"` (each crate has one),
+`license`, `repository`, `keywords`, `categories` and a `rust-version` taken
+from the `rust-toolchain.toml` channel (never newer than it). The Rust quality
+gate in CI runs the dry run after its tests on the clean checkout;
+`npm run pack:crates` is the local form and adds `--allow-dirty`, so it works
+in a working tree with edits. `scripts/tests/plugin-crates-package.test.mjs`
+pins the metadata, the version requirement, both commands, and that no
+workflow or npm script runs `cargo publish` or `dotnet nuget push`.
 
 ## 7. Host slots added to the WinUI app
 
@@ -796,7 +841,19 @@ SDK. Backends in other languages implement the framing directly; the spec in
   (`SimpleFile.PluginHost`) holds the tracking and the seal.
   The App's host is `PluginWindowHost`: `Attach` accepts only a
   `Microsoft.UI.Xaml.Window` and applies `SecondaryWindowChrome` (icon, Mica,
-  DPI-aware size, the app theme). When the main window closes, `OnClosed`
+  DPI-aware size, the app theme).
+  Phase 5 (parked #72/#92): the host checks the options before it tracks the
+  window. `PluginWindowOptionsPolicy.Normalize` clamps the width to 320-3840 and
+  the height to 240-2160 DIPs, replaces a null, empty or whitespace title with
+  the plugin's manifest name, and cuts titles to 120 characters (never inside a
+  surrogate pair). The manager hands every runtime's host to the plugin through
+  `PluginWindowOptionsGuard`, which normalizes with the manifest name, so every
+  `IPluginWindowHost` sees checked options; `PluginWindowHost.Attach` normalizes
+  again (idempotent) and, first of all, throws
+  `InvalidOperationException("Attach must be called on the UI thread.")` off the
+  UI thread, before anything is tracked. `SecondaryWindowChrome.Resize`
+  saturates its DIP-to-pixel conversion, and the clamped sizes times any DPI
+  scale Windows offers stay far inside `int`. When the main window closes, `OnClosed`
   seals every plugin's host and closes its windows at once (`CloseAllNow`),
   before the session cleanup awaits, so the later teardown finds none open.
 - Teardown order (disable, rescan away, load failure, shutdown): the plugin's
@@ -1179,11 +1236,34 @@ There is no sandbox. The design is explicit with users about what runs.
   seen; the next scan with a readable store restores its state. Saves go through a temp file unique to the process and call, which is
   removed when the final move fails.
 - **Signature.** `signature.json` holds an ed25519 signature over
-  `plugin.json` plus the SHA-256 of every file listed in a `files` array. The
+  `plugin.json` plus the SHA-256 of every file listed in a `files` object. The
   host verifies it with the publisher's `publicKey` using an Ed25519
   verifier in the host (BouncyCastle) with the same raw 32-byte base64 public
   key format the updater uses, and shows "Verified publisher" with the key fingerprint. Unsigned
   or mismatched plugins show a warning but can still be enabled.
+- **Signing tool (phase 5).** `scripts/sign-plugin.mjs` (`npm run sign:plugin`,
+  `node:crypto` Ed25519) writes exactly what `PluginSignatureVerifier` checks:
+  - `keygen --out <dir>` writes `signing-key.pem` (PKCS#8, mode 0600 where the
+    OS has modes, never overwritten, refused inside a git work tree) and prints
+    the raw 32-byte base64 key for `publisher.publicKey` and its fingerprint
+    (the first 16 hex characters of its SHA-256);
+  - `sign <folder> --key <pem>` refuses a key that does not match
+    `publisher.publicKey`, a declared `ui.assembly` or `backend.executable`
+    missing from the folder, a symbolic link, a path the host cannot open and
+    two paths that differ only in case. It lists every file except `plugin.json`
+    and `signature.json` as a bare forward-slash relative path with its
+    lowercase SHA-256 hex, and signs the canonical payload (the `plugin.json`
+    bytes, `"\n"`, then `"<path>\n<hash>\n"` per file in ordinal path order);
+    `signature.json` is `{ "algorithm": "ed25519", "files": { ... },
+    "signature": "<base64 of 64 bytes>" }`;
+  - `verify <folder>` repeats the host's checks in the host's order, exits 0
+    only for Verified, and names the files `signature.json` does not cover
+    (the host ignores them).
+  The private key never enters a repository. The committed fixture
+  `SimpleFile.Tests/Fixtures/signed-plugin` was signed once with a throwaway
+  key that was then deleted; only its public key is kept, and every file in it
+  is one line so a Windows checkout hashes the same bytes. Both the node tests
+  and `PluginTrustTests.SignedFixture_FromTheSigningTool_Verifies` verify it.
 - **Change detection.** The approval store records the manifest hash and
   signature state. When either changes, the plugin returns to the consent
   dialog.
@@ -2043,6 +2123,7 @@ plugins/
   sevenzip/                          plugin.json, Rust backend, bundled 7-Zip
   remote/                            plugin.json, C# UI, Rust backend
   git/                               plugin.json, C# UI, Rust backend
+templates/sumafile-plugin/           phase 5: the plugin template (com.example.template), never shipped
 ipc/schema/plugin/v1/                backend pipe protocol and host methods
 docs/PLUGINS.md                      author guide
 ```
@@ -2097,6 +2178,45 @@ references the SDK, the model and `Microsoft.WindowsAppSDK` and
 `Microsoft.Windows.SDK.BuildTools` compile-only; it needs no
 `CommunityToolkit.Mvvm`, because its view model implements
 `INotifyPropertyChanged` itself. Both projects are in `src-winui/SimpleFile.sln`.
+
+Phase 5 refinement: `templates/sumafile-plugin` is a copyable starter for a
+third-party author, `com.example.template`:
+
+```text
+templates/sumafile-plugin/
+  plugin.json                        one command, one declarative setting, a first-call backend
+  stage.ps1                          builds both halves, stages target\template-plugins\com.example.template
+  README.md                          build, stage, SUMAFILE_PLUGIN_ROOTS, consent, signing, .sfplugin, packages
+  ui/Example.Plugin/                 net10.0-windows, WinUI-free: ExamplePlugin (IPlugin, ICommandHandler)
+  backend/                           example-plugin-backend (Rust, publish = false): example.echo
+```
+
+`Example.Plugin` references only `SimpleFile.PluginSdk` (compile-only) and no
+package; it is in `src-winui/SimpleFile.sln`, and `SimpleFile.Tests` builds it
+through a `ReferenceOutputAssembly="false"` reference and loads it through the
+real `PluginManager` against a fake backend. The backend is a Cargo workspace
+member and is listed in `pluginCrateManifests`. Nothing stages the template
+into the payload or writes it into `bundled.json`, so it always needs consent.
+
+Phase 5 refinement (#70/#75): `SimpleFile.PluginSdk` packs as
+`SumaFile.PluginSdk`, as a dry run only. `npm run pack:sdk`
+(`dotnet pack src-winui/SimpleFile.PluginSdk -c Release -o target/packages`)
+writes `target/packages/SumaFile.PluginSdk.1.0.0.nupkg`, and the WinUI host job
+in CI runs it after the tests ("Pack the plugin SDK (dry run)"); nothing pushes
+it. The package holds `lib/net10.0-windows7.0/SimpleFile.PluginSdk.dll`, its XML
+documentation `SimpleFile.PluginSdk.xml` and `README.md`, and declares the MIT
+license, the repository and no dependencies. Its version is the SDK contract
+version, `PluginSdk.Version`, not the app's. The project sets
+`GenerateDocumentationFile`, so every public type and member is documented (CS1591
+is an error); the docs state the thread contract, the `object` hand-off rule,
+the window-option ranges, the folder-flag grammar and the host's deadlines.
+`PackageId` and `PackageVersion` apply only while `dotnet pack` runs
+(`_IsPacking`): NuGet lock files name a project reference by its package id and
+version, so unconditional ones would rewrite every referencing project's lock
+file. The assembly keeps its name, `SimpleFile.PluginSdk`, and its assembly
+version follows the app's. `PluginSdkPackageTests` pins the metadata and the
+documentation, and `scripts/tests/plugin-sdk-package.test.mjs` the script and
+the CI step.
 
 ## 13. Testing
 

@@ -119,9 +119,20 @@ public static class PluginDiscovery
 
                 var id = Path.GetFileName(folder);
                 // Read once: the same bytes are parsed, hashed and signature-checked, so the hash the trust decision
-                // uses is the hash of the manifest that was read.
+                // uses is the hash of the manifest that was read. Bounded (parked #28): a plugin.json over the cap is
+                // invalid, and is read at most cap + 1 bytes, never whole.
                 byte[] bytes;
-                try { bytes = File.ReadAllBytes(manifestPath); }
+                try
+                {
+                    using var stream = new FileStream(
+                        manifestPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1, FileOptions.SequentialScan);
+                    if (!PluginManifestReader.TryReadManifestBytes(stream, out bytes))
+                    {
+                        all.Add(new DiscoveredPlugin(
+                            id, folder, root, DiscoveryState.InvalidManifest, null, [PluginManifestReader.ManifestTooLargeMessage], null));
+                        continue;
+                    }
+                }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     all.Add(new DiscoveredPlugin(id, folder, root, DiscoveryState.InvalidManifest, null, [ex.Message], null));

@@ -22,7 +22,6 @@ public sealed class PluginInstallException : Exception
 public static class PluginPackageInstaller
 {
     private const string ManifestFileName = "plugin.json";
-    private const long MaxManifestBytes = 1_048_576;
 
     /// <summary>
     /// Validates the package (a valid root manifest whose id <c>bundled.json</c> does not list, every entry inside
@@ -207,15 +206,27 @@ public static class PluginPackageInstaller
     {
         var entry = zip.Entries.FirstOrDefault(e => string.Equals(e.FullName, ManifestFileName, StringComparison.OrdinalIgnoreCase))
             ?? throw new PluginInstallException("The package has no plugin.json at its root.");
-        if (entry.Length > MaxManifestBytes)
+        // The cap discovery applies (parked #28). The declared size is checked first; the read itself is bounded too,
+        // so an entry whose header understates its size is never inflated past the cap.
+        const string tooLarge = "The package's " + PluginManifestReader.ManifestTooLargeMessage;
+        if (entry.Length > PluginManifestReader.MaxManifestBytes)
         {
-            throw new PluginInstallException("The package's plugin.json is too large.");
+            throw new PluginInstallException(tooLarge);
         }
 
         string json;
         try
         {
-            using var reader = new StreamReader(entry.Open(), Encoding.UTF8);
+            byte[] bytes;
+            using (var stream = entry.Open())
+            {
+                if (!PluginManifestReader.TryReadManifestBytes(stream, out bytes))
+                {
+                    throw new PluginInstallException(tooLarge);
+                }
+            }
+
+            using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8);
             json = reader.ReadToEnd();
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException)

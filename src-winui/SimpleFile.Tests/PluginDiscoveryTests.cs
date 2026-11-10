@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using SimpleFile.PluginHost.Discovery;
+using SimpleFile.PluginHost.Manifest;
 using SimpleFile.PluginHost.Trust;
 using Xunit;
 
@@ -181,6 +182,99 @@ public class PluginDiscoveryTests
             Assert.Equal(PluginPackageHash.ComputeManifestHash(folder), p.ManifestHash);
         }
         finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
+    /// Parked #28: a plugin.json over the 1 MiB cap is invalid, is read at most cap + 1 bytes and keeps no bytes; one of
+    /// exactly the cap is read as usual.
+    [Fact]
+    public void Discover_ManifestLargerThanTheCap_IsInvalidWithoutReadingItWhole()
+    {
+        var tmp = NewTemp();
+        try
+        {
+            var manifest = Manifest("com.example.big");
+            var atCap = manifest + new string(' ', PluginManifestReader.MaxManifestBytes - Encoding.UTF8.GetByteCount(manifest));
+            Plugin(tmp, "com.example.big", atCap + " ");
+            Plugin(tmp, "com.example.cap", atCap.Replace("com.example.big", "com.example.cap", StringComparison.Ordinal));
+            // Far over the cap: a whole read would allocate 64 MiB for nothing.
+            var huge = Plugin(tmp, "com.example.huge", Manifest("com.example.huge"));
+            using (var stream = new FileStream(Path.Combine(huge, "plugin.json"), FileMode.Open, FileAccess.Write))
+            {
+                stream.SetLength(64L * 1024 * 1024);
+            }
+
+            var result = PluginDiscovery.Scan([tmp]).ToDictionary(p => p.Id);
+
+            foreach (var id in new[] { "com.example.big", "com.example.huge" })
+            {
+                var p = result[id];
+                Assert.Equal(DiscoveryState.InvalidManifest, p.State);
+                Assert.Null(p.Manifest);
+                Assert.Equal(["plugin.json is larger than 1 MiB."], p.Errors);
+                Assert.Null(p.ManifestHash);
+                Assert.Null(p.ManifestBytes);
+            }
+
+            var cap = result["com.example.cap"];
+            Assert.Equal(DiscoveryState.Valid, cap.State);
+            Assert.Equal(PluginManifestReader.MaxManifestBytes, cap.ManifestBytes!.Length);
+            Assert.Equal(PluginPackageHash.ComputeManifestHash(Path.Combine(tmp, "com.example.cap")), cap.ManifestHash);
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
+    /// The bounded read never takes more than cap + 1 bytes from a stream, however long it is, and returns the exact
+    /// bytes of one within the cap; a stream that cannot report its length is read the same way.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ReadManifestBytes_ReadsAtMostOneByteOverTheCap(bool seekable)
+    {
+        using var endless = new CountingStream(long.MaxValue, seekable);
+        Assert.False(PluginManifestReader.TryReadManifestBytes(endless, out var none));
+        Assert.Empty(none);
+        Assert.InRange(endless.BytesRead, 0, PluginManifestReader.MaxManifestBytes + 1L);
+
+        using var small = new CountingStream(1234, seekable);
+        Assert.True(PluginManifestReader.TryReadManifestBytes(small, out var bytes));
+        Assert.Equal(1234, bytes.Length);
+        Assert.All(bytes, b => Assert.Equal((byte)'x', b));
+
+        using var exact = new CountingStream(PluginManifestReader.MaxManifestBytes, seekable);
+        Assert.True(PluginManifestReader.TryReadManifestBytes(exact, out var full));
+        Assert.Equal(PluginManifestReader.MaxManifestBytes, full.Length);
+    }
+
+    /// A read-only stream of <c>length</c> 'x' bytes that counts what it hands out and allocates nothing.
+    private sealed class CountingStream(long length, bool seekable) : Stream
+    {
+        private long _position;
+
+        public long BytesRead { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => seekable;
+        public override bool CanWrite => false;
+        public override long Length => seekable ? length : throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => seekable ? _position : throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var n = (int)Math.Min(count, length - _position);
+            buffer.AsSpan(offset, n).Fill((byte)'x');
+            _position += n;
+            BytesRead += n;
+            return n;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     [Fact]

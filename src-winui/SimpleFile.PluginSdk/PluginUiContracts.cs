@@ -10,9 +10,18 @@ public sealed record PluginSidebarSectionRequest(string SectionId, string Provid
 public sealed record PluginSettingsPageRequest(string Provider);
 
 /// <summary>How the host presents a window handed to <see cref="IPluginWindows.Attach"/>.</summary>
-/// <param name="Title">The window title.</param>
-/// <param name="Width">The initial width in device-independent pixels; the host scales it for the display.</param>
-/// <param name="Height">The initial height in device-independent pixels; the host scales it for the display.</param>
+/// <remarks>
+/// The host checks the options before it tracks the window, and clamps instead of failing: the width to 320-3840 and
+/// the height to 240-2160 device-independent pixels, and the title to 120 characters. A null, empty or whitespace
+/// title becomes the plugin's manifest <c>name</c>.
+/// </remarks>
+/// <param name="Title">The window title, up to 120 characters; a blank one becomes the plugin's name.</param>
+/// <param name="Width">
+/// The initial width in device-independent pixels, 320 to 3840; the host scales it for the display.
+/// </param>
+/// <param name="Height">
+/// The initial height in device-independent pixels, 240 to 2160; the host scales it for the display.
+/// </param>
 public sealed record PluginWindowOptions(string Title, int Width, int Height);
 
 /// <summary>Which button closed a dialog shown through <see cref="IPluginDialogs.ShowDialogAsync"/>.</summary>
@@ -56,7 +65,8 @@ public sealed record RowDecoration(string Text, string? BrushKey = null, string?
 /// </param>
 /// <param name="FolderFlags">
 /// Flags for the folder as a whole, such as <c>inRepository</c>, which the plugin's own <c>when</c> expressions read
-/// with <c>folderFlag(name)</c>.
+/// with <c>folderFlag(name)</c>. A flag must match <c>^[A-Za-z][A-Za-z0-9_-]{0,63}$</c>; any other is dropped, as are
+/// duplicates. The host scopes flags by plugin, so one plugin's flags never satisfy another plugin's <c>when</c>.
 /// </param>
 public sealed record PluginFolderDecorations(IReadOnlyDictionary<string, RowDecoration> Rows, IReadOnlyList<string> FolderFlags)
 {

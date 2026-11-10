@@ -32,15 +32,25 @@ internal sealed class PluginWindowHost : IPluginWindowHost
 
     public bool IsSealed => _windows.IsSealed;
 
-    /// <summary>Runs on the UI thread, where the plugin created the window.</summary>
+    /// <summary>
+    /// Runs on the UI thread, where the plugin created the window; a call from any other thread throws before anything
+    /// is tracked (parked #72/#92). The chrome only sees options <see cref="PluginWindowOptionsPolicy"/> has checked.
+    /// </summary>
     public void Attach(object window, PluginWindowOptions options)
     {
+        if (!_queue.HasThreadAccess)
+        {
+            throw new InvalidOperationException("Attach must be called on the UI thread.");
+        }
+
         if (window is not Window pluginWindow)
         {
             throw new ArgumentException("A plugin window must be a Microsoft.UI.Xaml.Window.", nameof(window));
         }
 
-        ArgumentNullException.ThrowIfNull(options);
+        // The manager's guard has already normalized the options with the plugin's manifest name; this second pass is
+        // idempotent and keeps the sizes and title in range for a host used without the manager.
+        var normalized = PluginWindowOptionsPolicy.Normalize(options, PluginId);
         if (!_windows.TryTrack(pluginWindow))
         {
             // Sealed: the host is stopping this plugin, so the window never opens past its DeactivateAsync.
@@ -56,7 +66,7 @@ internal sealed class PluginWindowHost : IPluginWindowHost
             DialogHost.HideDialogsOn(XamlRootOf(pluginWindow));
             _windows.Remove(pluginWindow);
         };
-        SecondaryWindowChrome.Apply(pluginWindow, options.Title, options.Width, options.Height);
+        SecondaryWindowChrome.Apply(pluginWindow, normalized.Title, normalized.Width, normalized.Height);
     }
 
     /// <summary>

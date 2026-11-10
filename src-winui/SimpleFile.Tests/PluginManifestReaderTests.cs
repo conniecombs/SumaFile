@@ -741,6 +741,87 @@ public class PluginManifestReaderTests
         }
     }
 
+    // Parked #73: every free-text manifest string has an upper bound, so a third-party manifest cannot hand the
+    // host's UI (Settings > Plugins, menus, the toolbar) an unbounded string.
+    private const string Bounded = """
+    {
+      "id": "com.example.limits", "name": "N", "version": "1.0.0", "sdkVersion": "1.0.0",
+      "publisher": { "name": "P" }, "description": "D",
+      "ui": { "assembly": "Limits.dll", "entryType": "Limits.Plugin" },
+      "contributions": {
+        "commands": [ { "id": "go", "label": "Go", "group": "G" } ],
+        "contextMenu": [ { "group": "G", "items": [ { "command": "go", "label": "Go" } ] } ],
+        "toolbar": [ { "command": "go", "label": "Go", "glyph": "E70F" } ],
+        "sidebar": [ { "id": "side", "title": "Side", "provider": "side" } ],
+        "panels": [ { "id": "panel", "title": "Panel", "provider": "panel" } ]
+      },
+      "settings": [ { "key": "k", "type": "string", "label": "K", "description": "D", "group": "G" } ]
+    }
+    """;
+
+    [Theory]
+    [InlineData("name", 100)]
+    [InlineData("publisher.name", 100)]
+    [InlineData("description", 2000)]
+    [InlineData("contributions.commands[0].label", 200)]
+    [InlineData("contributions.commands[0].group", 200)]
+    [InlineData("contributions.contextMenu[0].group", 200)]
+    [InlineData("contributions.contextMenu[0].items[0].label", 200)]
+    [InlineData("contributions.toolbar[0].label", 200)]
+    [InlineData("contributions.toolbar[0].glyph", 8)]
+    [InlineData("contributions.sidebar[0].title", 200)]
+    [InlineData("contributions.panels[0].title", 200)]
+    [InlineData("settings[0].label", 200)]
+    [InlineData("settings[0].group", 200)]
+    [InlineData("settings[0].description", 1000)]
+    public void Read_StringLongerThanItsLimit_IsInvalid(string field, int limit)
+    {
+        var baseline = PluginManifestReader.Read(Bounded, "com.example.limits");
+        Assert.True(baseline.IsValid, string.Join("; ", baseline.Errors));
+
+        var atLimit = PluginManifestReader.Read(WithString(field, new string('x', limit)), "com.example.limits");
+        Assert.True(atLimit.IsValid, string.Join("; ", atLimit.Errors));
+
+        var over = PluginManifestReader.Read(WithString(field, new string('x', limit + 1)), "com.example.limits");
+        Assert.False(over.IsValid);
+        Assert.Null(over.Manifest);
+        Assert.Equal([$"The {field} field is longer than {limit} characters."], over.Errors);
+    }
+
+    [Fact]
+    public void Read_Description_MustBeAString()
+    {
+        var r = PluginManifestReader.Read(Minimal(extra: ", \"description\": 5"), "com.example.a");
+        Assert.Equal(["The description field must be a string."], r.Errors);
+    }
+
+    /// <summary><see cref="Bounded"/> with the string at <paramref name="path"/> (dots and <c>[i]</c>) replaced.</summary>
+    private static string WithString(string path, string value)
+    {
+        var root = System.Text.Json.Nodes.JsonNode.Parse(Bounded)!;
+        var node = root;
+        var segments = path.Split('.');
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var segment = segments[i];
+            var bracket = segment.IndexOf('[', System.StringComparison.Ordinal);
+            var name = bracket < 0 ? segment : segment[..bracket];
+            if (i == segments.Length - 1 && bracket < 0)
+            {
+                node[name] = value;
+                break;
+            }
+
+            node = node[name]!;
+            if (bracket >= 0)
+            {
+                node = node[int.Parse(segment[(bracket + 1)..^1], System.Globalization.CultureInfo.InvariantCulture)]!;
+            }
+        }
+
+        return root.ToJsonString();
+    }
+
     private static string ReadRemoteManifest() => System.IO.File.ReadAllText(
         System.IO.Path.Combine(FindRepoRoot(), "plugins", "remote", "plugin.json"));
 
