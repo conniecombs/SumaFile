@@ -655,7 +655,20 @@ async fn sevenzip_read_with_a_host_settings_lookup_completes_quickly() {
         "Cannot open a directory as a file",
         "{opened}"
     );
-    assert!(elapsed < Duration::from_millis(1500), "{elapsed:?}");
+    // The read's own time is mostly 7za's, which a loaded runner can stretch past
+    // seconds (3.67 s in CI run 42746224565), so it only rules out a hang. The
+    // deadlock this test guards against shows in the settings round trip: the
+    // service answering get_db_settings while the read waits for it.
+    assert!(elapsed < Duration::from_secs(15), "{elapsed:?}");
+    let latencies = host.settings_latencies();
+    let latest = latencies
+        .last()
+        .copied()
+        .unwrap_or_else(|| panic!("no host.get_settings was answered: {:?}", host.served()));
+    assert!(
+        latest < Duration::from_millis(1500),
+        "the settings lookup took {latest:?}, near the backend's 2 s timeout"
+    );
     let served_after = host
         .served()
         .iter()

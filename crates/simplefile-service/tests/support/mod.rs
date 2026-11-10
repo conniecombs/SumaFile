@@ -312,6 +312,7 @@ pub struct FakeHost {
     writer: Arc<tokio::sync::Mutex<WriteHalf<NamedPipeClient>>>,
     replies: Arc<Mutex<HashMap<u64, Value>>>,
     served: Arc<Mutex<Vec<String>>>,
+    settings_latencies: Arc<Mutex<Vec<Duration>>>,
     next_id: AtomicU64,
     task: tokio::task::JoinHandle<()>,
 }
@@ -361,11 +362,13 @@ impl FakeHost {
         let writer = Arc::new(tokio::sync::Mutex::new(writer));
         let replies = Arc::new(Mutex::new(HashMap::new()));
         let served = Arc::new(Mutex::new(Vec::new()));
+        let settings_latencies = Arc::new(Mutex::new(Vec::new()));
         let task = tokio::spawn(serve_host(
             reader,
             Arc::clone(&writer),
             Arc::clone(&replies),
             Arc::clone(&served),
+            Arc::clone(&settings_latencies),
             plugin_id.clone(),
             service,
         ));
@@ -374,6 +377,7 @@ impl FakeHost {
             writer,
             replies,
             served,
+            settings_latencies,
             next_id: AtomicU64::new(1),
             task,
         }
@@ -386,6 +390,12 @@ impl FakeHost {
     /// Every `host.*` method the backend asked this host for, in order.
     pub fn served(&self) -> Vec<String> {
         self.served.lock().unwrap().clone()
+    }
+
+    /// How long each `host.get_settings` took to answer: the service's
+    /// `get_db_settings` round trip, which a deadlock would hold up.
+    pub fn settings_latencies(&self) -> Vec<Duration> {
+        self.settings_latencies.lock().unwrap().clone()
     }
 
     /// Send a request to the backend as the host and wait for its reply.
@@ -415,6 +425,7 @@ async fn serve_host(
     writer: Arc<tokio::sync::Mutex<WriteHalf<NamedPipeClient>>>,
     replies: Arc<Mutex<HashMap<u64, Value>>>,
     served: Arc<Mutex<Vec<String>>>,
+    settings_latencies: Arc<Mutex<Vec<Duration>>>,
     plugin_id: String,
     service: Service,
 ) {
@@ -444,9 +455,11 @@ async fn serve_host(
                     .iter()
                     .map(|key| format!("plugin.{plugin_id}.{key}"))
                     .collect();
+                let asked = Instant::now();
                 let stored = service
                     .call("get_db_settings", json!({ "keys": names }))
                     .await;
+                settings_latencies.lock().unwrap().push(asked.elapsed());
                 let values: serde_json::Map<String, Value> = keys
                     .iter()
                     .zip(&names)
