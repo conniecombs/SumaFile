@@ -96,7 +96,9 @@ export function planReleaseVersion(root, input) {
   edit('packaging/winui/sumafile-winui.nsi', source => source.replace(/(!define NUMERIC_VERSION ")[^"]+(")/, `$1${next.numeric}$2`));
   for (const file of findNugetLocks(root)) edit(file, source => source.replace(projectReference, `$1${next.numeric}$3`));
   edit('README.md', source => source
-    .replace(/(img\.shields\.io\/badge\/version-)[^-]+(?:-[^-]+)*(?=-2563eb\))/, `$1${encodeURIComponent(next.display).replaceAll('-', '%2D')}`)
+    // shields.io splits a static badge on single dashes: a dash in the text is written "--" and an underscore "__"
+    // ("%2D" gives "404 badge not found").
+    .replace(/(img\.shields\.io\/badge\/version-).+?(?=-2563eb\))/, `$1${encodeURIComponent(next.display).replaceAll('-', '--').replaceAll('_', '__')}`)
     .replace(/(\| Product version \| `)[^`]+(` \|)/, `$1${next.display}$2`)
     .replaceAll(`SumaFile_${current.display}_`, `SumaFile_${next.display}_`)
     .replace(`SumaFile ${current.display} is Windows-only.`, `SumaFile ${next.display} is Windows-only.`));

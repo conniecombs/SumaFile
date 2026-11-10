@@ -74,7 +74,11 @@ test('release preview is read-only and applying it keeps every identity in sync'
     assert.match(pluginCrate, /^simplefile-ipc = \{ path = "\.\.\/simplefile-ipc", version = "1\.2\.3" \}\r?$/m);
     assert.match(pluginCrate, /^version = "1\.0\.0"\r?$/m);
     const readme = readFileSync(resolve(root, 'README.md'), 'utf8');
-    assert.match(readme, /version-1\.2\.3%2Dbeta\.1-2563eb/);
+    // A dash inside a shields.io static badge's text is doubled; "%2D" renders "404 badge not found".
+    assert.match(readme, /badge\/version-1\.2\.3--beta\.1-2563eb\)/);
+    assert.doesNotMatch(readme, /badge\/version-[^)]*%2D/);
+    // A later stable bump replaces the whole pre-release text.
+    assert.match(planReleaseVersion(root, '1.2.3').changes.get('README.md'), /badge\/version-1\.2\.3-2563eb\)/);
     assert.match(readme, /SumaFile_1\.2\.3-beta\.1_x64-winui/);
     assert.equal(planReleaseVersion(root, '1.2.3-beta.1').changes.size, 0);
     const manifestPath = resolve(root, 'src-winui/SimpleFile.App/app.manifest');
