@@ -355,13 +355,10 @@ public sealed partial class MainWindow
             SmokeGitUiWait,
             () => "git diff --cached --name-only to drop new.txt after Unstage");
 
-        // Diff tracked.txt.
-        SmokeInvoke(await SmokeGitSelectChangeAsync("tracked.txt", SmokeGitDiffId));
-        TextBox? diff = null;
-        await SmokeGitWaitAsync(
-            () => (diff = SmokeGitBody() is { } body ? SmokeFindById<TextBox>(body, SmokeGitDiffTextId) : null) is not null
-                && (diff.Text ?? "").Contains("Working tree changes", StringComparison.Ordinal),
-            () => $"{SmokeGitDiffTextId} to show the working tree diff of tracked.txt, reads '{diff?.Text}'");
+        // Diff tracked.txt, once the refresh that Unstage started has landed: a status refresh replaces the rows and
+        // clears the preview, as 1.0.4 did (CI run 42740804951).
+        await SmokeGitSettleAsync("after Unstage");
+        await SmokeGitDiffAsync("tracked.txt", "Working tree changes");
 
         // Discard discard-me.txt through the confirmation's primary button.
         var discardPath = Path.Combine(repo, "discard-me.txt");
@@ -374,6 +371,7 @@ public sealed partial class MainWindow
             () => File.ReadAllText(discardPath) == committed
                 && PrimaryFiles.Any(row => row.Name == "discard-me.txt" && row.DecorationText.Length == 0),
             () => $"discard-me.txt to read its committed text and lose its badge: {SmokeGitDescribe()}");
+        await SmokeGitSettleAsync("after Discard");
 
         // Fetch: a Transfers row, behind 1 and ahead 0, and git's result in the message bar.
         var folderName = Path.GetFileName(repo);
@@ -396,6 +394,7 @@ public sealed partial class MainWindow
         var fromPeer = Path.Combine(repo, "from-peer.txt");
         await SmokeGitWaitAsync(() => File.Exists(fromPeer) && PrimaryFiles.Any(row => row.Name == "from-peer.txt"),
             () => $"from-peer.txt on disk ({File.Exists(fromPeer)}) and in the pane: {SmokeGitDescribe()}");
+        await SmokeGitSettleAsync("after Pull");
 
         // Commit the staged staged.txt: git's own output leads the message.
         SmokeGitClearMessageBar();
@@ -414,6 +413,7 @@ public sealed partial class MainWindow
                 && message.StartsWith("[main ", StringComparison.Ordinal),
             "git's commit output");
         var head = (await SmokeGitCliAsync(repo, "rev-parse", "HEAD")).Trim();
+        await SmokeGitSettleAsync("after Commit");
 
         // Push: the bare origin's main is repo's HEAD.
         await SmokeGitTransferAsync(transfers, SmokeGitPushId, "Pushing " + folderName);
@@ -918,6 +918,69 @@ public sealed partial class MainWindow
     /// <paramref name="buttonId"/> to be enabled. A refresh replaces the rows and clears the selection, so the row is
     /// selected again until the button follows it.
     /// </summary>
+    /// <summary>
+    /// Waits until the workbench's change list holds the same rows for 600 ms, so a refresh a mutation started has
+    /// landed before the next step selects a row or reads the preview. Bounded by the UI wait.
+    /// </summary>
+    private async Task SmokeGitSettleAsync(string what)
+    {
+        var timer = Stopwatch.StartNew();
+        var last = "";
+        var stableSince = TimeSpan.Zero;
+        while (true)
+        {
+            var current = SmokeGitChanges() is { } list ? string.Join(" | ", SmokeRowNames(list)) : "<no list>";
+            if (!string.Equals(current, last, StringComparison.Ordinal))
+            {
+                last = current;
+                stableSince = timer.Elapsed;
+            }
+            else if (timer.Elapsed - stableSince >= TimeSpan.FromMilliseconds(600))
+            {
+                return;
+            }
+
+            if (timer.Elapsed > SmokeGitUiWait)
+            {
+                throw new TimeoutException($"UI smoke timed out after {SmokeGitUiWait.TotalSeconds:0} s: {SmokeGitChangesId} to settle {what}, rows [{last}]");
+            }
+
+            await Task.Delay(100);
+        }
+    }
+
+    /// <summary>
+    /// Selects <paramref name="path"/>, presses Diff and waits for the preview to contain <paramref name="expected"/>.
+    /// A refresh that lands meanwhile clears the selection and the preview, so it selects and presses again, within the
+    /// UI wait overall.
+    /// </summary>
+    private async Task SmokeGitDiffAsync(string path, string expected)
+    {
+        var timer = Stopwatch.StartNew();
+        TextBox? diff = null;
+        while (true)
+        {
+            SmokeInvoke(await SmokeGitSelectChangeAsync(path, SmokeGitDiffId));
+            var attempt = Stopwatch.StartNew();
+            while (attempt.Elapsed < TimeSpan.FromSeconds(3))
+            {
+                diff = SmokeGitBody() is { } body ? SmokeFindById<TextBox>(body, SmokeGitDiffTextId) : null;
+                if ((diff?.Text ?? "").Contains(expected, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                await Task.Delay(100);
+            }
+
+            if (timer.Elapsed > SmokeGitUiWait)
+            {
+                throw new TimeoutException(
+                    $"UI smoke timed out after {SmokeGitUiWait.TotalSeconds:0} s: {SmokeGitDiffTextId} to show the diff of {path} with '{expected}', reads '{diff?.Text}'");
+            }
+        }
+    }
+
     private async Task<Button> SmokeGitSelectChangeAsync(string path, string buttonId)
     {
         Button? button = null;

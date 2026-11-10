@@ -100,8 +100,11 @@ public sealed partial class MainWindow
             if (_pluginPanelWindow is { } window)
             {
                 window.Activate();
-                return Task.CompletedTask;
             }
+
+            // Already shown, docked or detached: placing the chrome again would unload and reload the plugin's body
+            // (a Git "show diff" while the workbench is open hit that).
+            return Task.CompletedTask;
         }
         else
         {
