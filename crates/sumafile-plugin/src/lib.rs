@@ -5,6 +5,13 @@
 //! the `plugin.handshake`, routing of requests to the handler, backend-wide
 //! `cancel` flags, `archive.progress` notifications and the [`HostClient`]
 //! used for `host.*` calls back to the host.
+//!
+//! The pipe server needs Windows. Elsewhere the crate still builds, so a
+//! backend's handler and its `HostClient::fake` tests run on any platform,
+//! and [`serve`] fails at once.
+
+// Off Windows nothing calls the server-side plumbing `serve` would use.
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use std::path::PathBuf;
 
@@ -13,6 +20,7 @@ use simplefile_ipc::{ERR_APPLICATION, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND};
 
 mod handshake;
 mod host;
+#[cfg(windows)]
 mod server;
 
 pub use async_trait::async_trait;
@@ -20,7 +28,19 @@ pub use host::{
     HostClient, ARCHIVE_PROGRESS_NOTIFICATION, DEFAULT_CALL_TIMEOUT, EARLY_CANCEL_LIMIT,
     SERVICE_CONNECTION_ERROR,
 };
+#[cfg(windows)]
 pub use server::serve;
+
+/// Named pipes need Windows: off Windows, `serve` fails at once.
+#[cfg(not(windows))]
+pub async fn serve(
+    _args: Args,
+    _info: PluginInfo,
+    _accepts_multiple_clients: bool,
+    _handler: std::sync::Arc<dyn PluginHandler>,
+) -> Result<(), String> {
+    Err("SumaFile plugin backends serve a named pipe, which needs Windows".to_string())
+}
 
 /// Version of the plugin SDK protocol this crate speaks.
 pub const SDK_VERSION: &str = "1.0.0";

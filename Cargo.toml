@@ -10,4 +10,5 @@ members = [
   "plugins/sevenzip/backend",
   "plugins/remote/backend",
   "plugins/remote/test-server",
+  "plugins/git/backend",
 ]

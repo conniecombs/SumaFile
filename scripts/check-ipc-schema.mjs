@@ -487,62 +487,82 @@ if (!pluginProtocol) {
   }
 }
 
-// Remote plugin protocol (plugins/remote/protocol.json): the plugin-owned methods and events must be
-// string literals in the backend's handler (Task 10 adds the C# client), and each documented error text
-// must start a string literal in every source that produces it.
-const remoteProtocolPath = join(repoRoot, 'plugins', 'remote', 'protocol.json');
-const remoteProtocol = existsSync(remoteProtocolPath)
-  ? JSON.parse(readFileSync(remoteProtocolPath, 'utf8'))
-  : null;
-if (!remoteProtocol) {
-  fail('missing plugins/remote/protocol.json');
-} else {
+// Plugin-owned protocols (plugins/<name>/protocol.json): each plugin's methods and events must be
+// string literals in every file of its literalSources (the backend's handler, and the C# client once it
+// exists), and each documented error text must start a string literal in every source that produces it.
+// `events` is optional; a plugin that declares it must document at least one.
+const pluginProtocols = [
+  {
+    dir: 'plugins/remote',
+    id: 'com.sumafile.remote',
+    label: 'remote',
+    literalSources: [
+      'plugins/remote/backend/src/handler.rs',
+      'plugins/remote/ui/SumaFile.Remote.Model/RemoteProtocol.cs',
+    ],
+  },
+  {
+    dir: 'plugins/git',
+    id: 'com.sumafile.git',
+    label: 'git',
+    literalSources: ['plugins/git/backend/src/handler.rs'],
+  },
+];
+
+const objectKeys = (value) =>
+  value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : [];
+
+for (const { dir, id, label, literalSources } of pluginProtocols) {
+  const protocolFile = `${dir}/protocol.json`;
+  const protocolPath = join(repoRoot, protocolFile);
+  const protocol = existsSync(protocolPath) ? JSON.parse(readFileSync(protocolPath, 'utf8')) : null;
+  if (!protocol) {
+    fail(`missing ${protocolFile}`);
+    continue;
+  }
   const exitCodeBefore = process.exitCode;
   process.exitCode = undefined;
-  const objectKeys = (value) =>
-    value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : [];
-  if (remoteProtocol.plugin !== 'com.sumafile.remote') {
-    fail('plugins/remote/protocol.json plugin must be com.sumafile.remote');
+  if (protocol.plugin !== id) {
+    fail(`${protocolFile} plugin must be ${id}`);
   }
-  const remoteMethods = objectKeys(remoteProtocol.methods);
-  const remoteEvents = objectKeys(remoteProtocol.events);
-  const remoteErrors = objectKeys(remoteProtocol.errors);
-  if (remoteMethods.length === 0) {
-    fail('plugins/remote/protocol.json methods must be a non-empty object keyed by method name');
+  const methods = objectKeys(protocol.methods);
+  const events = objectKeys(protocol.events);
+  const errors = objectKeys(protocol.errors);
+  if (methods.length === 0) {
+    fail(`${protocolFile} methods must be a non-empty object keyed by method name`);
   }
-  if (remoteEvents.length === 0) {
-    fail('plugins/remote/protocol.json events must be a non-empty object keyed by event name');
+  if ('events' in protocol && events.length === 0) {
+    fail(`${protocolFile} events must be a non-empty object keyed by event name`);
   }
-  for (const method of remoteMethods) {
-    const entry = remoteProtocol.methods[method];
+  for (const method of methods) {
+    const entry = protocol.methods[method];
     if (!entry || !('params' in entry) || !('result' in entry)) {
-      fail(`remote plugin method ${method} needs params and result`);
+      fail(`${label} plugin method ${method} needs params and result`);
     }
     for (const event of [entry?.emits, entry?.progressEvent].filter(Boolean)) {
-      if (!remoteEvents.includes(event)) {
-        fail(`remote plugin method ${method} names an undocumented event ${event}`);
+      if (!events.includes(event)) {
+        fail(`${label} plugin method ${method} names an undocumented event ${event}`);
       }
     }
   }
-  // The backend serves each method and event; the C# client (Task 10) calls and subscribes to each.
-  const remoteLiteralSources = [
-    'plugins/remote/backend/src/handler.rs',
-    'plugins/remote/ui/SumaFile.Remote.Model/RemoteProtocol.cs',
-  ];
-  for (const sourcePath of remoteLiteralSources) {
+  for (const sourcePath of literalSources) {
+    if (!existsSync(join(repoRoot, sourcePath))) {
+      fail(`${label} plugin literal source ${sourcePath} is missing`);
+      continue;
+    }
     const source = readRepo(sourcePath);
-    for (const name of [...remoteMethods, ...remoteEvents]) {
+    for (const name of [...methods, ...events]) {
       if (!source.includes(`"${name}"`)) {
-        fail(`remote plugin method or event ${name} is not a string literal in ${sourcePath}`);
+        fail(`${label} plugin method or event ${name} is not a string literal in ${sourcePath}`);
       }
     }
   }
-  for (const key of remoteErrors) {
-    const entry = remoteProtocol.errors[key];
+  for (const key of errors) {
+    const entry = protocol.errors[key];
     const text = typeof entry?.text === 'string' ? entry.text : '';
     const sources = Array.isArray(entry?.sources) ? entry.sources : [];
     if (text.length === 0 || sources.length === 0) {
-      fail(`remote plugin error ${key} needs a text and at least one source`);
+      fail(`${label} plugin error ${key} needs a text and at least one source`);
       continue;
     }
     // The backend builds these texts with format!, so the literal starts with the text before
@@ -552,15 +572,15 @@ if (!remoteProtocol) {
     const prefix = placeholder === -1 ? text : text.slice(0, placeholder);
     for (const sourcePath of sources) {
       if (!existsSync(join(repoRoot, sourcePath))) {
-        fail(`remote plugin error ${key} names a missing source ${sourcePath}`);
+        fail(`${label} plugin error ${key} names a missing source ${sourcePath}`);
       } else if (!readRepo(sourcePath).includes(`"${prefix}`)) {
-        fail(`remote plugin error ${key} text "${prefix}" does not start a string literal in ${sourcePath}`);
+        fail(`${label} plugin error ${key} text "${prefix}" does not start a string literal in ${sourcePath}`);
       }
     }
   }
   if (!process.exitCode) {
     console.log(
-      `Checked remote plugin protocol: ${remoteMethods.length} methods, ${remoteEvents.length} events, ${remoteErrors.length} error texts.`,
+      `Checked ${label} plugin protocol: ${methods.length} methods, ${events.length} events, ${errors.length} error texts.`,
     );
   }
   process.exitCode = process.exitCode || exitCodeBefore;

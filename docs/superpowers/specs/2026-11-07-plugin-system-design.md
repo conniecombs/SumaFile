@@ -1431,8 +1431,54 @@ Decisions (phase 2, as built):
 ### 11.3 Git plugin, `com.sumafile.git`
 
 - Folder: `plugin.json`, `SumaFile.Git.dll`, `sumafile-git-backend.exe`.
-- Backend: `simplefile-core/src/git.rs` as its own process. Its status cache
-  moves with it.
+- Backend: `simplefile-core/src/git.rs` as its own process,
+  `sumafile-git-backend` (`plugins/git/backend`), serving the ten methods of
+  `plugins/git/protocol.json`. Its status cache moves with it. Phase 4 fixes
+  the Windows path defects and settles these rules:
+  - **Executable.** `git.exe` is resolved once, from absolute `PATH` entries
+    only; relative entries are skipped. Without it every method except
+    `repo.decorations` fails with `Git was not found. Install Git for Windows
+    or add git.exe to PATH.` and spawns nothing.
+  - **Read-only queries** run `git --no-optional-locks --literal-pathspecs
+    -c core.fsmonitor=false -c core.hooksPath=<data dir>\no-hooks-<16 random
+    hex> -C <path> …`. The hooks folder is never created, so a browsed
+    repository's config can run no hook or fsmonitor program; this replaces
+    `%TEMP%\sumafile-git-no-hooks`. Path commands keep `--literal-pathspecs
+    -c core.fsmonitor=false` with hooks on; fetch, pull and push add nothing.
+  - **One job per command.** Each git process is created suspended
+    (`CREATE_NO_WINDOW | CREATE_SUSPENDED`), assigned to its own
+    `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` job and only then resumed, so
+    nothing it starts, such as the real `git.exe` behind Git for Windows'
+    `cmd\git.exe` launcher or a remote helper, runs outside the job. A timeout
+    (60 s local, 600 s for fetch, pull and push) or a cancel closes the job,
+    which ends git and all of its children. The job nests in the host's
+    kill-on-close job of the backend.
+  - **Paths.** The status `root` and every change's `absolute_path` use `\`;
+    the root keeps the caller's spelling (`rev-parse --show-cdup`) and falls
+    back to git's `--show-toplevel`. An untracked directory's trailing
+    separator is trimmed.
+  - **Cache.** One status run per repository root is reused for 1.5 s, keyed
+    by root case-insensitively, at most 16 roots. Every command that changes
+    the repository drops its root's entry before it runs and after it ends.
+  - **Decorations.** `repo.decorations { folder }` answers
+    `{ in_repository, root, rows: [{ path, status }] }` for the folder's
+    direct children (`<folder>\<name>`). A missing folder, a folder below no
+    `.git` marker (the walk honours `GIT_CEILING_DIRECTORIES` and is skipped
+    when `GIT_DIR` or `GIT_WORK_TREE` is set) and any git failure give
+    `in_repository: false` with no rows; outside a repository no git runs.
+  - **Transfers rows and cancel.** fetch, pull and push open a row with
+    `host.progress_begin("Fetching <repository folder name>")` (`Pulling …`,
+    `Pushing …`), or run without one when no host connection exists, and end
+    it with `progress_complete` or with `progress_fail` and the error text. A
+    `cancel` naming the request's `operationId` or the row's id stops them
+    within 50 ms, and the call fails with `-32000` `Git operation cancelled`.
+    `repo.commit` honours `cancel` for its `operationId` and opens no row.
+  - **Errors** the UI matches stay byte-identical: `The current path is not
+    inside a Git repository.`, `Commit message is required.`, `Refusing to
+    run a file-level Git action against the repository root.`, `Select at
+    least one Git path.` and `git <name> timed out after <n> seconds`, plus
+    the new `Git was not found. Install Git for Windows or add git.exe to
+    PATH.` and `Git operation cancelled`.
 - UI assembly: `GitWorkbenchView`, `GitWorkbenchViewModel`, the detachable
   window, and the logic in `MainWindow.Git.cs`.
 - Contributions: ten commands, one context-menu group with `when`

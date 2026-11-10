@@ -1,0 +1,60 @@
+{
+  "plugin": "com.sumafile.git",
+  "notes": "Methods the Git plugin's UI calls through IPluginHost.InvokeBackendAsync. Params are camelCase; results keep the 1.0.4 IPC shapes, with snake_case fields. Paths in results use native separators. Without git.exe on PATH every method except repo.decorations fails with the gitNotFound text and runs no git.",
+  "methods": {
+    "repo.status": { "params": { "path": "string" }, "result": "GitRepositoryStatus" },
+    "repo.decorations": {
+      "params": { "folder": "string" },
+      "result": "GitFolderDecorations",
+      "notes": "Rows for the folder's direct children only, from one status run cached per repository root for 1.5 s. A folder below no .git marker (the walk honours GIT_CEILING_DIRECTORIES and is skipped when GIT_DIR or GIT_WORK_TREE is set), a missing folder and any git failure give { in_repository: false, root: null, rows: [] }; outside a repository no git runs."
+    },
+    "paths.stage": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
+    "paths.unstage": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
+    "paths.discard": {
+      "params": { "path": "string", "paths": "string[]" },
+      "result": "GitCommandResult",
+      "notes": "Restores the selected tracked paths and deletes the selected untracked paths with git clean -fd; nothing else changes."
+    },
+    "paths.diff": { "params": { "path": "string", "filePath": "string" }, "result": "string" },
+    "repo.commit": {
+      "params": { "path": "string", "message": "string", "operationId": "string" },
+      "result": "GitCommandResult",
+      "notes": "Opens no Transfers row. A cancel naming operationId stops it with the gitCancelled text."
+    },
+    "remote.fetch": {
+      "params": { "path": "string", "operationId": "string" },
+      "result": "GitCommandResult",
+      "notes": "Opens a Transfers row with host.progress_begin(\"Fetching <repository folder name>\"), or runs without one when no host connection exists. The row ends with progress_complete, or with progress_fail and the error text. A cancel naming operationId or the row's id stops git and every process it started within 50 ms, and the call fails with -32000 and the gitCancelled text."
+    },
+    "remote.pull": {
+      "params": { "path": "string", "operationId": "string" },
+      "result": "GitCommandResult",
+      "notes": "As remote.fetch, with the row title \"Pulling <repository folder name>\"."
+    },
+    "remote.push": {
+      "params": { "path": "string", "operationId": "string" },
+      "result": "GitCommandResult",
+      "notes": "As remote.fetch, with the row title \"Pushing <repository folder name>\"."
+    }
+  },
+  "types": {
+    "GitRepositoryStatus": {
+      "fields": ["is_repo", "root", "branch", "upstream", "head", "ahead", "behind", "staged", "unstaged", "untracked", "conflicted", "changes"],
+      "optional": ["root", "branch", "upstream", "head"]
+    },
+    "GitFileStatus": {
+      "fields": ["path", "absolute_path", "original_path", "status", "index_status", "worktree_status", "staged", "unstaged", "untracked", "conflicted"],
+      "optional": ["original_path"]
+    },
+    "GitCommandResult": { "fields": ["command", "exit_code", "stdout", "stderr", "summary"] },
+    "GitFolderDecorations": { "fields": ["in_repository", "root", "rows"], "optional": ["root"] },
+    "GitDecorationRow": { "fields": ["path", "status"] }
+  },
+  "errors": {
+    "gitNotFound": { "text": "Git was not found. Install Git for Windows or add git.exe to PATH.", "sources": ["plugins/git/backend/src/lib.rs"] },
+    "gitCancelled": { "text": "Git operation cancelled", "sources": ["plugins/git/backend/src/lib.rs"] },
+    "notARepository": { "text": "The current path is not inside a Git repository.", "sources": ["plugins/git/backend/src/commands.rs"] },
+    "commitMessageRequired": { "text": "Commit message is required.", "sources": ["plugins/git/backend/src/commands.rs"] },
+    "repositoryRoot": { "text": "Refusing to run a file-level Git action against the repository root.", "sources": ["plugins/git/backend/src/paths.rs"] }
+  }
+}

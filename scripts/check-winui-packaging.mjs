@@ -60,6 +60,8 @@ const requiredFiles = [
   'plugins/remote/test-server/Cargo.toml',
   'plugins/remote/ui/SumaFile.Remote/SumaFile.Remote.csproj',
   'plugins/remote/ui/SumaFile.Remote.Model/SumaFile.Remote.Model.csproj',
+  'plugins/git/protocol.json',
+  'plugins/git/backend/Cargo.toml',
 ];
 
 for (const relativePath of requiredFiles) {
@@ -387,6 +389,7 @@ const pluginCrateManifests = [
   'plugins/sevenzip/backend/Cargo.toml',
   'plugins/remote/backend/Cargo.toml',
   'plugins/remote/test-server/Cargo.toml',
+  'plugins/git/backend/Cargo.toml',
 ];
 
 for (const manifest of pluginCrateManifests) {

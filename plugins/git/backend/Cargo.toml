@@ -1,0 +1,39 @@
+[package]
+name = "sumafile-git-backend"
+version = "1.0.0"
+description = "Backend of the first-party SumaFile Git plugin: repository status, row decorations and Git commands"
+authors = ["SumaFile Team"]
+license = "MIT"
+repository = "https://github.com/conniecombs/SumaFile"
+edition = "2021"
+publish = false
+
+[lib]
+name = "sumafile_git_backend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sumafile-git-backend"
+path = "src/main.rs"
+
+[dependencies]
+getrandom = "0.4"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sumafile-plugin = { path = "../../../crates/sumafile-plugin" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+# Off Windows (development only: the product is Windows-only) git runs in its
+# own process group, which cancel and timeout kill as a whole.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+simplefile-ipc = { path = "../../../crates/simplefile-ipc" }
+sumafile-plugin = { path = "../../../crates/sumafile-plugin", features = ["test-support"] }
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
