@@ -375,7 +375,8 @@ internal sealed class FakePluginProcess : IPluginProcess
 {
     private int _exited;
 
-    public int Id => 4242;
+    // The fake backends serve their pipe from the test process, which the host checks the pipe server against.
+    public int Id => Environment.ProcessId;
     public bool Killed { get; private set; }
     public bool HasExited => Volatile.Read(ref _exited) != 0;
     public event EventHandler? Exited;

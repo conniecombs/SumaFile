@@ -7,8 +7,11 @@
     <!--
       The assembly identity is the SDK contract version, PluginSdk.Version (major.minor.0.0), not the app's version:
       the host hands every plugin its own copy of this assembly through the default load context, which refuses a
-      reference to a higher assembly version than it holds. So a plugin built against any 1.x package loads in every
-      1.x host. The file version still follows the app (Directory.Build.props).
+      reference to a higher assembly version than it holds. So a plugin built against SDK 1.x loads in a 1.y host only
+      when x <= y: an older or equal minor binds, a patch never matters, and a newer minor could not bind. The host's
+      manifest check enforces the same rule (PluginManifestReader.IsSdkCompatible), so such a plugin is listed as
+      IncompatibleSdk instead of failing to load. Bump this with the minor of PluginSdk.Version. The file version
+      still follows the app (Directory.Build.props).
     -->
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
   </PropertyGroup>

@@ -102,7 +102,9 @@ public class PluginManifestReaderTests
         Assert.False(r.IsValid);
         Assert.Contains(r.Errors, e => e.Contains("sdkVersion"));
         Assert.False(PluginManifestReader.IsSdkCompatible("2.0.0"));
-        Assert.True(PluginManifestReader.IsSdkCompatible("1.4.2"));
+        Assert.True(PluginManifestReader.IsSdkCompatible("1.0.4"));
+        // A newer minor than the host's SDK (1.0.0) cannot bind: see PluginManifestBoundsTests.
+        Assert.False(PluginManifestReader.IsSdkCompatible("1.4.2"));
         Assert.False(PluginManifestReader.IsSdkCompatible("banana"));
     }
 
@@ -131,7 +133,7 @@ public class PluginManifestReaderTests
         var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
         Assert.False(r.IsValid);
         Assert.Contains(
-            $"The contributions.commands[0].id value '{id}' is invalid: use 1 to 128 characters with no whitespace.",
+            $"The contributions.commands[0].id value '{PluginManifestReader.Echo(id)}' is invalid: use 1 to 128 characters with no whitespace.",
             r.Errors);
         Assert.False(SimpleFile.Core.CommandSurfaceLayout.IsPluginItemId("plugin:com.example.a:" + id));
     }
@@ -626,7 +628,8 @@ public class PluginManifestReaderTests
         var overLimit = PluginManifestReader.Read(Minimal(extra:
             ", \"settings\": [ { \"key\": \"k\", \"type\": \"string\", \"label\": \"K\", \"migrateFrom\": \"" + tooLong + "\" } ]"), "com.example.a");
         Assert.False(overLimit.IsValid);
-        Assert.Equal([$"The settings[0].migrateFrom value '{tooLong}' is not a valid settings key."], overLimit.Errors);
+        // The error repeats at most 80 characters of the value (PluginManifestBoundsTests).
+        Assert.Equal([$"The settings[0].migrateFrom value '{tooLong[..80]}…' is not a valid settings key."], overLimit.Errors);
     }
 
     /// The first-party 7-Zip manifest must parse with the host's own reader,

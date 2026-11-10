@@ -14,6 +14,12 @@ public sealed class PluginInstallException : Exception
     public PluginInstallException(string message, Exception inner) : base(message, inner) { }
 }
 
+/// <summary>The caps <see cref="PluginPackageInstaller"/> applies to a package (tests pass smaller ones).</summary>
+internal readonly record struct PackageLimits(int MaxEntries, long MaxUncompressedBytes)
+{
+    public static PackageLimits Default => new(PluginPackageInstaller.MaxEntries, PluginPackageInstaller.MaxUncompressedBytes);
+}
+
 /// <summary>
 /// Installs <c>.sfplugin</c> packages (zip files with <c>plugin.json</c> at the root) into SumaFile's plugins folder,
 /// <c>&lt;install&gt;\plugins</c>, beside the bundled plugins, and removes them again. Plugins that folder's
@@ -23,13 +29,32 @@ public static class PluginPackageInstaller
 {
     private const string ManifestFileName = "plugin.json";
 
+    /// <summary>The most entries (files and folders) a package may hold.</summary>
+    public const int MaxEntries = 10_000;
+
+    /// <summary>The most bytes a package's entries may inflate to, all together: 512 MiB.</summary>
+    public const long MaxUncompressedBytes = 512L * 1024 * 1024;
+
+    /// <inheritdoc cref="Install(string, string, Action{string}?)"/>
+    public static string Install(string sfpluginPath, string pluginsRoot) => Install(sfpluginPath, pluginsRoot, null);
+
     /// <summary>
-    /// Validates the package (a valid root manifest whose id <c>bundled.json</c> does not list, every entry inside
-    /// <c>&lt;pluginsRoot&gt;\&lt;id&gt;\</c>), extracts it into a staging folder next to the target and moves it into
-    /// place, replacing an existing folder. Returns the installed folder. Throws <see cref="PluginInstallException"/>
-    /// without writing anything when validation fails, and explains an unwritable plugins folder.
+    /// Validates the package (a valid root manifest whose id <c>bundled.json</c> does not list, at most
+    /// <see cref="MaxEntries"/> entries, every entry inside <c>&lt;pluginsRoot&gt;\&lt;id&gt;\</c> with a name Windows can
+    /// keep), extracts it into a staging folder next to the target, never past <see cref="MaxUncompressedBytes"/>
+    /// whatever the entries declare, and moves it into place, replacing an existing folder. Returns the installed
+    /// folder. Throws <see cref="PluginInstallException"/> without writing anything when validation fails, and explains
+    /// an unwritable plugins folder.
     /// </summary>
-    public static string Install(string sfpluginPath, string pluginsRoot)
+    /// <param name="beforeMove">
+    /// Called with the plugin id once the package is staged, before anything in the target folder changes;
+    /// <see cref="PluginManager.InstallPackageAsync"/> clears the plugin's stored approval there, so the installed code
+    /// needs consent again. If it throws, the staging folder is deleted and the previous version stays.
+    /// </param>
+    public static string Install(string sfpluginPath, string pluginsRoot, Action<string>? beforeMove) =>
+        Install(sfpluginPath, pluginsRoot, beforeMove, PackageLimits.Default);
+
+    internal static string Install(string sfpluginPath, string pluginsRoot, Action<string>? beforeMove, PackageLimits limits)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sfpluginPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginsRoot);
@@ -47,6 +72,20 @@ public static class PluginPackageInstaller
 
         using (zip)
         {
+            // Counted before anything else reads the entries (the central directory is already parsed, but bounded by
+            // the file's size); a declared size is only a first check, the copy below enforces the real one.
+            if (zip.Entries.Count > limits.MaxEntries)
+            {
+                throw new PluginInstallException(
+                    $"The package has more than {limits.MaxEntries.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} entries.");
+            }
+
+            var tooLarge = $"The package is larger than {FormatSize(limits.MaxUncompressedBytes)} uncompressed.";
+            if (zip.Entries.Sum(entry => entry.Length) > limits.MaxUncompressedBytes)
+            {
+                throw new PluginInstallException(tooLarge);
+            }
+
             var id = ReadManifestId(zip);
             if (BundledPluginList.Read(root).ContainsKey(id))
             {
@@ -102,13 +141,15 @@ public static class PluginPackageInstaller
                     Directory.CreateDirectory(Contained(staging, directory));
                 }
 
+                var remaining = limits.MaxUncompressedBytes;
                 foreach (var (entry, relative) in files)
                 {
                     var destination = Contained(staging, relative);
                     Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                    entry.ExtractToFile(destination, overwrite: false);
+                    remaining -= ExtractBounded(entry, destination, remaining, tooLarge);
                 }
 
+                beforeMove?.Invoke(id);
                 MoveIntoPlace(staging, target, root, id);
             }
             catch (Exception ex)
@@ -153,7 +194,15 @@ public static class PluginPackageInstaller
     /// and its <c>plugins-data</c> folder are kept. The folder is renamed aside first, so a plugin whose files are in
     /// use fails cleanly instead of being half deleted.
     /// </summary>
-    public static void Remove(string pluginFolder, string pluginsRoot)
+    public static void Remove(string pluginFolder, string pluginsRoot) => Remove(pluginFolder, pluginsRoot, null);
+
+    /// <inheritdoc cref="Remove(string, string)"/>
+    /// <param name="beforeRemove">
+    /// Called with the plugin id once the folder is known to be removable, before anything changes;
+    /// <see cref="PluginManager.RemovePackageAsync"/> clears the plugin's stored approval there, so a later install of
+    /// the same id needs consent again. If it throws, nothing is removed.
+    /// </param>
+    public static void Remove(string pluginFolder, string pluginsRoot, Action<string>? beforeRemove)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginFolder);
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginsRoot);
@@ -172,6 +221,18 @@ public static class PluginPackageInstaller
         if (BundledPluginList.Read(root).Keys.Any(id => string.Equals(id, name, StringComparison.OrdinalIgnoreCase)))
         {
             throw new PluginInstallException($"{name} ships with SumaFile and cannot be removed. Disable it instead.");
+        }
+
+        if (beforeRemove is not null)
+        {
+            try
+            {
+                beforeRemove(name);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new PluginInstallException($"The plugin {name} could not be removed: {ex.Message}", ex);
+            }
         }
 
         if (!Directory.Exists(folder))
@@ -282,7 +343,24 @@ public static class PluginPackageInstaller
             throw new PluginInstallException($"The package entry '{entryName}' points outside the plugin folder.");
         }
 
-        var relative = string.Join(Path.DirectorySeparatorChar, segments.Where(segment => segment != "."));
+        var kept = segments.Where(segment => segment != ".").ToArray();
+        foreach (var segment in kept)
+        {
+            // Win32 trims a trailing dot or space and opens a device for a reserved name, so such an entry would not
+            // land where its name says (or at all).
+            if (segment.EndsWith('.') || segment.EndsWith(' '))
+            {
+                throw new PluginInstallException(
+                    $"The package entry '{entryName}' has a name that ends in a dot or a space, which Windows cannot keep.");
+            }
+
+            if (IsDeviceName(segment))
+            {
+                throw new PluginInstallException($"The package entry '{entryName}' uses a name Windows reserves for a device.");
+            }
+        }
+
+        var relative = string.Join(Path.DirectorySeparatorChar, kept);
         if (relative.Length == 0)
         {
             return "";
@@ -291,6 +369,66 @@ public static class PluginPackageInstaller
         Contained(target, relative, entryName);
         return relative;
     }
+
+    private static readonly string[] DeviceNames = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
+
+    /// <summary>
+    /// CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM0-9 and LPT0-9 (the 0 and superscript ¹²³ forms are in Windows' list too),
+    /// with any extension, in any case; Win32 ignores trailing spaces before the extension, so they are ignored too.
+    /// </summary>
+    internal static bool IsDeviceName(string segment)
+    {
+        var dot = segment.IndexOf('.');
+        var stem = (dot < 0 ? segment : segment[..dot]).TrimEnd(' ');
+        if (DeviceNames.Any(device => string.Equals(stem, device, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return stem.Length == 4
+            && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
+            && stem[3] is (>= '0' and <= '9') or '\u00B9' or '\u00B2' or '\u00B3';
+    }
+
+    /// <summary>Copies the entry to a new file with <see cref="CopyBounded"/> and returns how many bytes it wrote.</summary>
+    private static long ExtractBounded(ZipArchiveEntry entry, string destination, long budget, string tooLarge)
+    {
+        using var input = entry.Open();
+        using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        return CopyBounded(input, output, budget, tooLarge);
+    }
+
+    /// <summary>
+    /// Copies <paramref name="input"/> to <paramref name="output"/>, reading at most <paramref name="budget"/> + 1 bytes
+    /// whatever the zip entry behind it declares, and returns how many it wrote. Throws <paramref name="tooLarge"/> once
+    /// the input passes the budget; nothing past the budget is written.
+    /// </summary>
+    internal static long CopyBounded(Stream input, Stream output, long budget, string tooLarge)
+    {
+        var buffer = new byte[81920];
+        long written = 0;
+        while (true)
+        {
+            var read = input.Read(buffer, 0, (int)Math.Min(buffer.Length, budget - written + 1));
+            if (read == 0)
+            {
+                return written;
+            }
+
+            written += read;
+            if (written > budget)
+            {
+                throw new PluginInstallException(tooLarge);
+            }
+
+            output.Write(buffer, 0, read);
+        }
+    }
+
+    private static string FormatSize(long bytes) =>
+        bytes % (1024 * 1024) == 0 ? $"{bytes / (1024 * 1024)} MiB"
+        : bytes % 1024 == 0 ? $"{bytes / 1024} KiB"
+        : $"{bytes} bytes";
 
     private static string Contained(string folder, string relative, string? entryName = null)
     {

@@ -23,6 +23,33 @@ public class PluginSharedAssembliesDocTests
         Assert.Equal(PluginLoadContext.SharedPrefixList.ToArray(), documented.Select(row => row.Key).ToArray());
         Assert.Contains("CommunityToolkit.Mvvm", documented.Select(row => row.Key));
         Assert.All(documented, row => Assert.False(string.IsNullOrWhiteSpace(row.Value), $"{row.Key} has no description."));
+
+        // The third column, "Comes from", is each prefix's kind (final fix wave: System. and Microsoft.Extensions. are
+        // host-first, every other prefix host-only).
+        foreach (var row in TableCells(SectionText(), "Prefix"))
+        {
+            var expected = PluginLoadContext.Classify(row[0]) switch
+            {
+                PluginLoadContext.SharedKind.HostOnly => "SumaFile only",
+                PluginLoadContext.SharedKind.HostFirst => "SumaFile first",
+                var other => throw new Xunit.Sdk.XunitException($"{row[0]} classifies as {other}."),
+            };
+            Assert.True(row.Length >= 3, $"The row for {row[0]} has no 'Comes from' cell.");
+            Assert.Equal(expected, row[2]);
+        }
+    }
+
+    /// <summary>The cells of the table headed <paramref name="firstHeader"/>, the first one unbackticked.</summary>
+    private static List<string[]> TableCells(string section, string firstHeader)
+    {
+        var lines = section.Split('\n');
+        var header = Array.FindIndex(lines, line => line.StartsWith("| " + firstHeader + " |", StringComparison.Ordinal));
+        Assert.True(header >= 0, $"The '{Section}' section has no table headed '{firstHeader}'.");
+        return lines.Skip(header + 2)
+            .TakeWhile(line => line.StartsWith('|'))
+            .Select(line => line.Split('|', StringSplitOptions.TrimEntries)[1..^1])
+            .Select(cells => cells.Select((cell, i) => i == 0 ? cell.Trim('`') : cell).ToArray())
+            .ToList();
     }
 
     [Fact]

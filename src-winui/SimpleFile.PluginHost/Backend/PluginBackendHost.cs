@@ -1,3 +1,4 @@
+using System.IO.Pipes;
 using System.Text.Json.Serialization;
 using SimpleFile.Ipc;
 using SimpleFile.PluginHost.Discovery;
@@ -49,6 +50,12 @@ public sealed class PluginBackendHost
         _connectTimeout = connectTimeout;
     }
 
+    /// <summary>
+    /// Which process serves a connected pipe (<see cref="PipeServerIdentity.ServerProcessId"/>); null skips the check.
+    /// A seam: the tests' backends serve their pipe from the test process, which a fake process id cannot match.
+    /// </summary>
+    internal Func<NamedPipeClientStream, int?> ServerProcessId { get; init; } = PipeServerIdentity.ServerProcessId;
+
     public async Task<PluginBackendConnection> StartAsync(
         DiscoveredPlugin plugin,
         CancellationToken ct,
@@ -95,10 +102,17 @@ public sealed class PluginBackendHost
                 connectCts.CancelAfter(_connectTimeout);
                 try
                 {
-                    client = await NamedPipeJsonClient.ConnectAsync(pipeName, _connectTimeout, connectCts.Token)
+                    // Only a pipe the current user created, and (on Windows) only one the launched backend serves:
+                    // another process that took the name first never sees the handshake or a host.* reply.
+                    client = await NamedPipeJsonClient.ConnectAsync(
+                            pipeName,
+                            _connectTimeout,
+                            PipeOptions.CurrentUserOnly,
+                            pipe => RequireServedBy(pipe, process, plugin.Id),
+                            connectCts.Token)
                         .ConfigureAwait(false);
                 }
-                catch (Exception ex) when (!ct.IsCancellationRequested)
+                catch (Exception ex) when (ex is not PluginBackendException && !ct.IsCancellationRequested)
                 {
                     throw new PluginBackendException(
                         $"Could not connect to the backend of plugin '{plugin.Id}'.", ex);
@@ -165,6 +179,27 @@ public sealed class PluginBackendHost
 
             process.Dispose();
             throw;
+        }
+    }
+
+    private void RequireServedBy(NamedPipeClientStream pipe, IPluginProcess process, string pluginId)
+    {
+        int? server;
+        try
+        {
+            server = ServerProcessId(pipe);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+        {
+            throw new PluginBackendException(
+                $"SumaFile could not tell which process serves the pipe of plugin '{pluginId}', so it did not connect to it.", ex);
+        }
+
+        if (server is { } id && id != process.Id)
+        {
+            throw new PluginBackendException(
+                $"The pipe of plugin '{pluginId}' is served by process {id}, not by the backend SumaFile started "
+                + $"(process {process.Id}); SumaFile did not connect to it.");
         }
     }
 

@@ -1,6 +1,8 @@
 # SumaFile plugin system
 
-**Status:** approved design, awaiting implementation plan
+**Status:** implemented through phase 5 (§14) on the `plugin-system-phase-1`
+branch; unreleased. Where this design and the code or `docs/PLUGINS.md` differ,
+the code is right.
 **Date:** 2026-11-07
 **Scope:** a third-party plugin system for SumaFile, and the migration of Git,
 FTP/SFTP and 7-Zip support out of the core product into three first-party
@@ -143,7 +145,7 @@ plugins\<plugin-id>\
 | `name` | yes | Display name. |
 | `version` | yes | Version of the plugin, shown to the user; semantic versioning by convention (the reader requires only a non-empty string). |
 | `publisher` | yes | `{ "name", "url", "publicKey" }`. `publicKey` is optional base64 ed25519. |
-| `sdkVersion` | yes | Semantic version of the SDK the plugin was built against. The host loads a plugin only when the major matches a major it supports. |
+| `sdkVersion` | yes | Semantic version of the SDK the plugin was built against. The host loads a plugin only when the major matches a major it supports and the minor is not above the minor of its `PluginSdk.Version` (final fix wave: the SDK assembly's version is major.minor.0.0, so a newer minor could not bind; such a plugin is IncompatibleSdk, "needs a newer SumaFile"). |
 | `ui` | no | `{ "assembly": "<file>.dll", "entryType": "<namespace>.<type>" }`. The entry type implements `IPlugin`. |
 | `backend` | no | `{ "executable": "<file>.exe", "args": [], "activateOn": "first-call" \| "startup", "acceptsMultipleClients": false }`. |
 | `contributions` | no | Declarative contributions, section 4.4. May be absent or empty. |
@@ -164,9 +166,17 @@ manifest invalid with `The <field> field is longer than <n> characters.`:
 | each contribution `label`, `title` and `group`, and a setting's `label` and `group` | 200 |
 | a setting's `description` | 1000 |
 | `toolbar[].glyph` | 8 |
+| `version`, `commands[].shortcut` (final fix wave) | 64 |
+| `publisher.url` | 2048 |
+| `ui.entryType`, each `provider` (sidebar, panels, settings page, row decorations) | 256 |
+| `archiveFormats[].engineName` | 100 |
+| `archiveFormats[].extension` | 32 |
+| each enum setting `options` entry (at most 256 entries) | 200 |
+| a setting's `default` (a string by its characters, any other value by its JSON text) | 1000 |
 
 The id stays bounded by its grammar, and a `when` expression by its existing
-512 characters (section 4.4).
+512 characters (section 4.4). An error message repeats at most 80 characters of
+an invalid value, then `…` (`PluginManifestReader.Echo`).
 
 ### 4.4 Contributions
 
@@ -369,10 +379,23 @@ these prefixes always comes from the host: `SimpleFile.PluginSdk`,
 that references WinUI and the Windows App SDK compile-only gets the host's
 projections, and a `Window` or `UIElement` it builds is the host's type.
 
+Final fix wave: `System.` and `Microsoft.Extensions.` captured packages the
+host does not ship (a plugin bundling System.Reactive got FileNotFound), and
+`Microsoft.Windows` also matched `Microsoft.WindowsAzure.*`. The prefix is now
+`Microsoft.Windows.`, and the prefixes come in two kinds
+(`PluginLoadContext.Classify`). `System.` and `Microsoft.Extensions.` are
+host-first: the host's copy when the default context can provide the name (a
+trusted platform assembly, or one already loaded there), otherwise the plugin's
+own copy through its `deps.json`; a bundled copy of a name the host has is never
+used. Every other prefix (the SDK, the Windows App SDK and WinUI families, the
+Windows SDK projection, WinRT, the MVVM Toolkit) stays host-only: a plugin never
+loads its own copy. `PluginLoadContextFallbackTests` pins both, and the
+`docs/PLUGINS.md` table gained a "Comes from" column the doc test checks.
+
 Phase 5 (parked #17/#22): the prefix was `Microsoft.Graphics`, which also
 matched Win2D (`Microsoft.Graphics.Canvas*`), a library the host does not ship.
 It is now the two families the host ships, `Microsoft.Graphics.Display` and
-`Microsoft.Graphics.Imaging`, so a plugin can bundle Win2D
+`Microsoft.Graphics.Imaging`, so Win2D's managed assemblies load from a plugin's folder (running Win2D from a plugin is not tested end to end)
 (`SharedPrefixes_DoNotCaptureWin2D`). `docs/PLUGINS.md` ("Host-shared
 assemblies") prints the list and the package versions a plugin is bound to
 (`Microsoft.WindowsAppSDK`, `Microsoft.Windows.SDK.BuildTools`,
@@ -396,6 +419,19 @@ and judges every plugin against those snapshots
 At startup the App does those reads on the thread pool while the file service
 starts (`PluginManager.PrepareScan`). Phase 3 measured the cold two-plugin
 delta at about 36 ms before this and about 12 ms after it. Rescans read afresh.
+
+A limit the budget does not cover (final fix wave). A signed plugin's check
+streams every file in its folder through SHA-256 (`signature.json` lists them
+all) and enumerates the folder for unlisted files, on every scan. At startup that
+runs inside `PrepareScan`, on the thread pool while the file service starts, so
+it reaches the span only as `plugins-scan-awaited`, once it outlasts the service
+start. A plugin of tens of megabytes costs tens of milliseconds there, roughly a
+millisecond per megabyte, which the ten-plugin pin (small, mostly unsigned
+plugins, as the bundled ones are) does not exercise. No hash cache was added: the
+startup scan is the first in its process, so an in-memory cache would help only
+rescans, which run off the UI thread anyway, and a cache keyed on path, length
+and write time would let a same-size swap that restores the write time keep its
+Signed state for the session.
 
 The budgeted span runs from `MainWindow.Connect.backend-started` to
 `MainWindow.Connect.plugins-discovered`. Since the phase 3 review it holds only
@@ -1242,8 +1278,20 @@ There is no sandbox. The design is explicit with users about what runs.
   `plugin.json` plus the SHA-256 of every file listed in a `files` object. The
   host verifies it with the publisher's `publicKey` using an Ed25519
   verifier in the host (BouncyCastle) with the same raw 32-byte base64 public
-  key format the updater uses, and shows "Verified publisher" with the key fingerprint. Unsigned
-  or mismatched plugins show a warning but can still be enabled.
+  key format the updater uses, and shows "Signed · key <fingerprint>". The
+  key comes from the plugin's own `plugin.json`, so a good signature proves
+  the files match that key, not who the publisher is; the final fix wave
+  dropped the earlier "Verified publisher" wording for that reason. Unsigned
+  or mismatched plugins show a warning but can still be enabled. Signed means
+  every file: a regular file anywhere in the folder (hidden ones included)
+  that `files` does not list, other than the root `plugin.json` and
+  `signature.json`, or any link to a folder, makes the state Invalid with
+  `"<path>" is in the plugin folder but not listed in signature.json files.`
+  (or `"<first>" and <n> other files in the plugin folder are not listed in
+  signature.json files.`). That check runs last, after the signature itself
+  verified, so the state keeps the key fingerprint. `signature.json` is read
+  bounded at 1 MiB (`signature.json is larger than 1 MiB.`), a leading UTF-8
+  byte order mark is skipped, and listed files are hashed as streams.
 - **Signing tool (phase 5).** `scripts/sign-plugin.mjs` (`npm run sign:plugin`,
   `node:crypto` Ed25519) writes exactly what `PluginSignatureVerifier` checks:
   - `keygen --out <dir>` writes `signing-key.pem` (PKCS#8, mode 0600 where the
@@ -1259,9 +1307,9 @@ There is no sandbox. The design is explicit with users about what runs.
     bytes, `"\n"`, then `"<path>\n<hash>\n"` per file in ordinal path order);
     `signature.json` is `{ "algorithm": "ed25519", "files": { ... },
     "signature": "<base64 of 64 bytes>" }`;
-  - `verify <folder>` repeats the host's checks in the host's order, exits 0
-    only for Verified, and names the files `signature.json` does not cover
-    (the host ignores them).
+  - `verify <folder>` repeats the host's checks in the host's order and exits
+    0 only for Verified; since the final fix wave a file `signature.json`
+    does not cover makes it Invalid there too, as in the host.
   The private key never enters a repository. The committed fixture
   `SimpleFile.Tests/Fixtures/signed-plugin` was signed once with a throwaway
   key that was then deleted; only its public key is kept, and every file in it
@@ -1269,9 +1317,24 @@ There is no sandbox. The design is explicit with users about what runs.
   and `PluginTrustTests.SignedFixture_FromTheSigningTool_Verifies` verify it.
 - **Change detection.** The approval store records the manifest hash and
   signature state. When either changes, the plugin returns to the consent
-  dialog.
-- **Compatibility.** A `sdkVersion` major the host does not support lists the
-  plugin as Incompatible and never loads it.
+  dialog. The hash covers only `plugin.json`, so a package with the same
+  manifest and other code would match an approval: Install from file (also
+  over an installed copy) and Remove clear the plugin's stored approval
+  (`PluginManager.InstallPackageAsync`, `RemovePackageAsync`; the installer
+  calls back once the package is staged, before the folder changes, and an
+  approvals file that cannot be written fails the install and keeps the old
+  version), so the next scan asks again. A folder copied in by hand is not
+  covered: its approval still keys on the manifest alone.
+- **Backend pipe identity (final fix wave).** The host connects to a
+  backend's pipe with `PipeOptions.CurrentUserOnly`, and on Windows requires
+  `GetNamedPipeServerProcessId` to name the process it launched; otherwise
+  the start fails with "The pipe of plugin '<id>' is served by process <n>,
+  not by the backend SumaFile started (process <m>); SumaFile did not
+  connect to it." So a backend must serve its pipe itself, not from a child
+  process.
+- **Compatibility.** A `sdkVersion` major the host does not support, or a
+  minor above the host SDK's, lists the plugin as Incompatible and never
+  loads it.
 
 ## 10. Failure handling
 
@@ -1597,7 +1660,12 @@ Decisions (phase 2, as built):
     is needed. Path commands (stage, unstage, discard) keep
     `--literal-pathspecs -c core.fsmonitor=false` with hooks and filters on:
     they are the user's own actions, and staging must run clean filters by
-    design. Fetch, pull and push add nothing.
+    design. Commit, like them, disables only fsmonitor and keeps hooks on.
+    Fetch, pull and push add nothing.
+    User-facing rule (README, Git and Developer Tools): Git hooks and filters
+    still run for the user's own stage, commit, fetch, pull and push, as with
+    the git command line; the read-only views (status column, workbench
+    status, diff preview) run none.
   - **One job per command.** Each git process is created suspended
     (`CREATE_NO_WINDOW | CREATE_SUSPENDED`), assigned to its own
     `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` job and only then resumed, so

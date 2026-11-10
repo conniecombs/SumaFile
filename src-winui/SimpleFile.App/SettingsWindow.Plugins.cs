@@ -249,10 +249,8 @@ public sealed partial class SettingsWindow
             await manager.DisableAsync(record.Id, token);
         }
 
-        var folder = record.Discovered.Folder;
-        // Only the folder goes: the plugin's settings and its plugins-data folder are kept.
-        await Task.Run(() => PluginPackageInstaller.Remove(folder, PluginsRoot), token);
-        await manager.RescanAsync(token);
+        // Only the folder and its stored approval go: the plugin's settings and its plugins-data folder are kept.
+        await manager.RemovePackageAsync(record.Discovered.Folder, PluginsRoot, token);
     }
 
     private async Task<string?> PickPluginFolderAsync()
@@ -292,9 +290,8 @@ public sealed partial class SettingsWindow
             }
 
             var token = _pluginsCts.Token;
-            var pluginsRoot = PluginsRoot;
-            var folder = await Task.Run(() => PluginPackageInstaller.Install(file.Path, pluginsRoot), token);
-            await manager.RescanAsync(token);
+            // Clears the plugin's stored approval and rescans, so the installed code always asks for consent.
+            var folder = await manager.InstallPackageAsync(file.Path, PluginsRoot, token);
             var id = Path.GetFileName(folder);
             var installed = manager.Plugins.FirstOrDefault(record => record.Id == id);
             ShowPluginsStatus(installed?.State == PluginState.NeedsConsent

@@ -27,9 +27,13 @@ public sealed partial class PluginConsentDialog : ContentDialog
             : "No background process";
     }
 
+    /// <summary>
+    /// The signature line of the consent dialog and the Settings card. A good signature only proves the files match the
+    /// key in the plugin's own plugin.json, not who the publisher is, so it reads "Signed · key", never "Verified".
+    /// </summary>
     internal static string SignatureText(SignatureState signature) => signature.Status switch
     {
-        SignatureStatus.Verified => $"Verified publisher · {signature.KeyFingerprint}",
+        SignatureStatus.Verified => $"Signed · key {signature.KeyFingerprint}",
         SignatureStatus.Invalid => $"Invalid signature: {signature.Error}",
         _ => "Unsigned plugin",
     };

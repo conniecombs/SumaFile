@@ -2,7 +2,9 @@ namespace SimpleFile.PluginSdk;
 
 /// <summary>
 /// The SDK contract version. A plugin's <c>plugin.json</c> names the version it was built against as
-/// <c>sdkVersion</c>, and the host loads it only when that major version is <see cref="Major"/>.
+/// <c>sdkVersion</c>, and the host loads it only when that major version is <see cref="Major"/> and its minor version is
+/// no higher than <see cref="Version"/>'s: the SDK assembly's version is major.minor.0.0, so a plugin built against a
+/// newer minor could not bind to an older host's SDK.
 /// </summary>
 /// <remarks>
 /// <para>

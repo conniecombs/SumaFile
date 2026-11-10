@@ -41,10 +41,23 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
 
     public event EventHandler<Exception?>? Disconnected;
 
+    public static Task<NamedPipeJsonClient> ConnectAsync(
+        string pipeName,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default) =>
+        ConnectAsync(pipeName, timeout, PipeOptions.None, verifyServer: null, cancellationToken);
+
+    /// <summary>
+    /// Connects with <paramref name="options"/> added to <see cref="PipeOptions.Asynchronous"/> (the plugin host adds
+    /// <see cref="PipeOptions.CurrentUserOnly"/>), then calls <paramref name="verifyServer"/> with the connected pipe
+    /// before a single byte is read or written; if it throws, the pipe is closed and the exception propagates.
+    /// </summary>
     public static async Task<NamedPipeJsonClient> ConnectAsync(
         string pipeName,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default)
+        PipeOptions options,
+        Action<NamedPipeClientStream>? verifyServer,
+        CancellationToken cancellationToken)
     {
         var name = pipeName.StartsWith(@"\\.\pipe\", StringComparison.OrdinalIgnoreCase)
             ? pipeName["\\\\.\\pipe\\".Length..]
@@ -54,11 +67,12 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
             ".",
             name,
             PipeDirection.InOut,
-            PipeOptions.Asynchronous);
+            PipeOptions.Asynchronous | options);
 
         try
         {
             await pipe.ConnectAsync((int)timeout.TotalMilliseconds, cancellationToken).ConfigureAwait(false);
+            verifyServer?.Invoke(pipe);
             return new NamedPipeJsonClient(pipe);
         }
         catch

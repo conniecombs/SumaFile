@@ -117,9 +117,9 @@ A complete example (the template's manifest):
 | --- | --- | --- | --- |
 | `id` | yes | string | `^[a-z0-9][a-z0-9.-]{1,63}$`: 2 to 64 lowercase letters, digits, dots or hyphens, starting with a letter or digit. Reverse-DNS style, such as `com.example.tool`. Must equal the folder name. |
 | `name` | yes | string | The display name, at most 100 characters. |
-| `version` | yes | string | The plugin's version, shown in the consent dialog and Settings > Plugins. Any non-empty string is accepted; use semantic versioning. |
+| `version` | yes | string | The plugin's version, shown in the consent dialog and Settings > Plugins. Any non-empty string of at most 64 characters is accepted; use semantic versioning. |
 | `publisher` | yes | object | See below. |
-| `sdkVersion` | yes | string | The SDK version the plugin was built against, `major.minor.patch` (a `-` or `+` suffix is allowed). The host loads the plugin only when the major is `1`, the major of `PluginSdk.Version` (`1.0.0`). |
+| `sdkVersion` | yes | string | The SDK version the plugin was built against, `major.minor.patch` (a `-` or `+` suffix is allowed). The host loads the plugin only when the major equals the major of its `PluginSdk.Version` (`1.0.0`) and the minor is not above its minor: the SDK assembly binds by major.minor, so a plugin built against SDK `1.1` cannot load in a `1.0` host. |
 | `description` | no | string | At most 2000 characters. Read and bounded, not shown yet. |
 | `ui` | no | object | The UI half; see below. |
 | `backend` | no | object | The backend; see below. |
@@ -135,7 +135,7 @@ Other top-level fields are ignored. Under `contributions`, an unknown key is an 
 | Field | Required | Rules |
 | --- | --- | --- |
 | `name` | yes | At most 100 characters. |
-| `url` | no | A string. |
+| `url` | no | A string of at most 2048 characters. |
 | `publicKey` | no | The publisher's raw 32-byte Ed25519 public key in base64. Needed only for a signed plugin (see [Signing](#signing)). |
 
 `ui`:
@@ -163,11 +163,19 @@ characters.`).
 | Field | Limit |
 | --- | --- |
 | `name`, `publisher.name` | 100 |
+| `version` | 64 |
+| `publisher.url` | 2048 |
 | `description` | 2000 |
 | each contribution `label`, `title` and `group`, and a setting's `label` and `group` | 200 |
+| `commands[].shortcut` | 64 |
 | a setting's `description` | 1000 |
+| a setting's `default` | 1000 |
+| each of an `enum` setting's `options` (at most 256 options) | 200 |
 | `when` (context menu items and toolbar buttons) | 512 |
 | `toolbar[].glyph` | 8 |
+| `archiveFormats[].engineName` | 100 |
+| `archiveFormats[].extension` | 32 |
+| `ui.entryType`, and the `provider` of `sidebar`, `panels`, `rowDecorations` and `settingsPage` | 256 |
 
 Ids are bounded by their grammars: the plugin id, command ids (1 to 128 characters), and setting, sidebar and panel
 ids (1 to 64 characters). Everything else is bounded by the size of the file.
@@ -178,11 +186,14 @@ ids (1 to 64 characters). Everything else is bounded by the size of the file.
 `plugin.json is larger than 1 MiB.`, and the host never reads more than the cap plus one byte of it. The installer
 applies the same cap.
 
-Reading every manifest and rendering every contribution is part of SumaFile's startup, and the host keeps that part
-under 50 ms for ten plugins (CI checks the budget; it is never raised). No plugin code runs in it: the host reads each
-`plugin.json` once, hashes the same bytes for trust, checks `signature.json`, and renders the contributions. Keep the
-manifest small, declare only what the plugin uses, and prefer `activateOn: first-call`: a startup backend is launched
-after this part of startup, but it still costs the user a process for as long as SumaFile runs.
+Reading every manifest and rendering every contribution is part of SumaFile's startup. The design target is 50 ms
+for ten plugins; CI checks the span in its UI smoke session, which has four plugins, against 50 ms. No plugin code
+runs in it. The scan runs on a thread-pool thread while the file service starts: it reads each `plugin.json` once,
+hashes the same bytes for trust, and checks `signature.json`, which hashes every file it lists. The budgeted span
+then waits for the scan and renders the contributions. Hashes are computed at scan time, so a very large signed
+plugin adds to startup once its hashing outlasts the file service's start. Keep the manifest small, declare only what
+the plugin uses, and prefer `activateOn: first-call`: a startup backend is launched after this part of startup, but it
+still costs the user a process for as long as SumaFile runs.
 
 ## Contributions
 
@@ -460,8 +471,8 @@ folder:
 </ItemGroup>
 ```
 
-The package is not published yet (see [Packages](#packages)); inside this repository the template uses a project
-reference instead. A plugin that builds WinUI elements targets `net10.0-windows10.0.19041.0` and also references
+The package is not published yet: outside this repository, pack it from a SumaFile checkout and add it as a local
+source (see [Packages](#packages)); inside this repository the template uses a project reference instead. A plugin that builds WinUI elements targets `net10.0-windows10.0.19041.0` and also references
 `Microsoft.WindowsAppSDK` and `Microsoft.Windows.SDK.BuildTools` compile-only, at the versions SumaFile ships
 ([Host-shared assemblies](#host-shared-assemblies)), as `plugins/git/ui/SumaFile.Git` does.
 
@@ -571,7 +582,8 @@ The host starts `<plugin folder>\<backend.executable>` with the plugin folder as
 - `--pipe-name`: the bare pipe name. The backend creates the pipe server `\\.\pipe\<name>`; the host connects as a
   client. Do not rely on the name's format.
 - `--data-dir`: the plugin's data folder, `<install folder>\plugins-data\<plugin id>\`, which the host creates first.
-  The backend owns its contents; SumaFile never empties it, and removing the plugin keeps it.
+  The backend owns its contents. SumaFile never empties it and removing the plugin keeps it, but uninstalling
+  SumaFile deletes it with the rest of the installation folder.
 - `TMP` and `TEMP` are set to `<data dir>\tmp`, which the host also creates, so the backend's temporary files and those
   of every process it starts stay in the installation folder. The rest of the environment is SumaFile's.
 - Anything the backend writes to stderr goes to `plugins.log`, line by line, tagged with the plugin id. Standard
@@ -729,12 +741,12 @@ relative to the archive root.
 | Method | Params | Result | Deadline |
 | --- | --- | --- | --- |
 | `archive.list` | `{ archivePath }` | `{ "entries": [{ "path", "isDir", "size", "compressedSize" }] }` | 30 s |
-| `archive.extract` | `{ archivePath, destination, operationId }` | `null` | 600 s idle |
-| `archive.read_entry` | `{ archivePath, innerPath, destination, maxBytes, maxEntries, operationId }` | `null` | 120 s idle |
-| `archive.create` | `{ archivePath, paths, operationId }` | `null` | 600 s idle |
-| `archive.rename` | `{ archivePath, innerPath, newPath, operationId }` | `null` | 600 s idle |
-| `archive.delete` | `{ archivePath, innerPaths, operationId }` | `null` | 600 s idle |
-| `archive.add` | `{ archivePath, baseDir, paths, operationId }` | `null` | 600 s idle |
+| `archive.extract` | `{ archivePath, destination, operationId? }` | `null` | 600 s idle |
+| `archive.read_entry` | `{ archivePath, innerPath, destination, maxBytes, maxEntries, operationId? }` | `null` | 120 s idle |
+| `archive.create` | `{ archivePath, paths, operationId? }` | `null` | 600 s idle |
+| `archive.rename` | `{ archivePath, innerPath, newPath, operationId? }` | `null` | 600 s idle |
+| `archive.delete` | `{ archivePath, innerPaths, operationId? }` | `null` | 600 s idle |
+| `archive.add` | `{ archivePath, baseDir, paths, operationId? }` | `null` | 600 s idle |
 
 - `archive.list` entries need `path`; `isDir` defaults to `false`, `size` and `compressedSize` to 0.
 - `innerPath` matches the entry and its descendants by whole segments, so `docs` never matches `docs2`.
@@ -750,8 +762,9 @@ relative to the archive root.
   or cancel the archive is left as it was.
 - `archive.add` stores `baseDir\<p>` (a file or a tree) at the entry path `<p>`. The caller guarantees that nothing
   but parent folders exists at those paths.
-- The service sends an `operationId` with every call except `archive.list`: the operation's own id, or
-  `svc-<pid>-<n>`. While working, send the notification `archive.progress` with
+- `operationId` is optional in the schema (`string?` in `ipc/schema/plugin/v1/protocol.json`), but SumaFile's service
+  sends one with every call except `archive.list`: the operation's own id, or `svc-<pid>-<n>`. An engine should still
+  accept a call without one, and then reports no progress for it and cannot be cancelled. While working, send the notification `archive.progress` with
   `{ operationId, current, total, currentItem? }` on the connection that carries the request, at least every 5 s,
   with `current <= total` (`total` 0 means unknown). Each one restarts the call's idle deadline, and the service shows it as the operation's progress.
 - A call that passes its deadline fails and the service closes that connection. After a `cancel`, the service waits
@@ -833,8 +846,10 @@ Implement [Framing](#framing), [Handshake](#handshake), [Cancellation](#cancella
 | What | Limit | Where |
 | --- | --- | --- |
 | `plugin.json` size | 1 MiB | discovery and the installer |
+| `signature.json` size | 1 MiB | discovery |
+| `.sfplugin` package | 10,000 entries, 512 MiB uncompressed | the installer |
 | Manifest strings | see [String limits](#string-limits) | the manifest reader |
-| Discovery and contribution rendering at startup | 50 ms for ten plugins (CI budget) | no plugin code runs in it |
+| Discovery and contribution rendering at startup | design target 50 ms for ten plugins; CI checks its four-plugin smoke session against 50 ms | no plugin code runs in it |
 | Pipe frame | 80 MiB (83,886,080 bytes), either direction | host, service and crate |
 | Backend connect | 5 s from the launch | host |
 | Handshake | 5 s | host and service |
@@ -879,6 +894,10 @@ Every plugin file lives in SumaFile's installation folder, next to `SumaFile.exe
   backend's stderr, each tagged with the plugin id.
 - When the installation folder is not writable (a portable copy under `Program Files`, say), installing, enabling and
   starting a backend fail with a message naming the folder; nothing falls back to another folder.
+- Upgrades and reinstalls keep all of these. Uninstalling SumaFile (the setup's uninstaller or the MSI) removes them:
+  the user's plugins, `plugins-data`, `plugin-approvals.json` and `plugins.log`. Secrets a backend stored elsewhere,
+  such as the FTP/SFTP plugin's passwords in Windows Credential Manager (`SumaFile.Remote.*`), stay where they are.
+- The `SUMAFILE_PLUGIN_*` overrides are honoured in release builds too, and each one in effect is logged as a warning.
 
 ## Trust and consent
 
@@ -891,21 +910,32 @@ There is no sandbox, so SumaFile asks before it runs a plugin.
 - **The approval store.** Enable and disable decisions go to `plugin-approvals.json`, one record per plugin id: the
   SHA-256 of the `plugin.json` bytes, the signature state, the decision, the time and the plugin folder.
 - **Change detection.** A decision holds only while the plugin's `plugin.json` hash, its signature state and its
-  folder match the record. When any of them changes, the plugin waits for consent again. Other files are not hashed
-  for this: an unsigned plugin whose DLL changes keeps its approval. Change `version` in `plugin.json` with every
+  folder match the record. When any of them changes, the plugin waits for consent again. Install from file and Remove
+  clear the plugin's stored decision, so the next scan asks again. Other files are not hashed for this: an unsigned
+  plugin whose DLL changes keeps its approval (whoever can write to the installation folder already controls
+  SumaFile). Change `version` in `plugin.json` with every
   release, so users confirm each release; sign the plugin so that any change to a listed file breaks the signature.
 - **Bundled plugins.** The release build writes `plugins\bundled.json` with the id and `plugin.json` SHA-256 of each
   plugin that ships with SumaFile (`{"plugins":[{"id":"com.sumafile.sevenzip","manifestSha256":"<64 hex>"}]}`). A listed
   plugin found in the app's own `plugins` folder with that hash is enabled without consent, unless the user disabled
   it. A copy in another root, or with another hash, needs consent. A package can never replace a bundled plugin, and
   Remove is never offered for one.
-- **Compatibility.** A plugin whose `sdkVersion` major is not `1` is listed as not compatible and never loads.
+- **Compatibility.** A plugin whose `sdkVersion` major is not `1`, or whose minor is above the host SDK's minor (`0`),
+  is listed as not compatible and never loads.
+- **Backend pipes.** The host checks that the server of a plugin's pipe is the backend process it launched and that
+  it runs as the current user.
 
 ## Signing
 
-A signature lets the consent dialog show **Verified publisher** with the key's fingerprint. Unsigned plugins and
+A signature lets the consent dialog and the plugin's card show **Signed · key <fingerprint>**. It proves that the
+plugin's files are unchanged since they were signed with that key. It does not prove who the publisher is: the key
+comes from the plugin's own `plugin.json`, so anyone can sign a plugin with a key of their own. Unsigned plugins and
 plugins with an invalid signature can still be enabled; the dialog says **Unsigned plugin** or **Invalid signature:
 <reason>**.
+
+The host verifies the signature when it scans plugins (at startup and on Rescan), not on each load. Verification
+hashes every listed file at scan time, so a very large signed plugin adds to startup (see
+[Size and the startup budget](#size-and-the-startup-budget)).
 
 `signature.json` in the plugin folder:
 
@@ -918,8 +948,9 @@ plugins with an invalid signature can still be enabled; the dialog says **Unsign
 ```
 
 - `files` lists files as bare forward-slash relative paths with their SHA-256 hex. It must not list `plugin.json` or
-  `signature.json`, and it must cover the declared `ui.assembly` and `backend.executable`. Files it does not list are
-  ignored.
+  `signature.json`, and it must cover the declared `ui.assembly` and `backend.executable`. Any other file in the plugin
+  folder that it does not list makes the signature Invalid, so sign the folder exactly as you ship it.
+- `signature.json` is at most 1 MiB, UTF-8 (a leading byte order mark is accepted).
 - `signature` is Ed25519 over the canonical payload: the `plugin.json` bytes, `"\n"`, then `"<path>\n<hash>\n"` for
   each file in ordinal path order.
 - `publisher.publicKey` in `plugin.json` is the raw 32-byte public key in base64. The fingerprint SumaFile shows is the
@@ -942,8 +973,10 @@ node scripts\sign-plugin.mjs verify target\template-plugins\com.example.template
 - `sign <plugin folder> --key <pem>` refuses a key that does not match `publisher.publicKey`, a declared
   `ui.assembly` or `backend.executable` that is not in the folder, symbolic links, paths the host cannot open and two
   paths that differ only in case. It hashes every other file and writes `signature.json`.
-- `verify <plugin folder>` repeats the host's checks in the host's order, exits 0 only for Verified, and names the
-  files `signature.json` does not cover.
+- `verify <plugin folder>` repeats the host's checks in the host's order and exits 0 only for a valid signature. A
+  file in the folder that `signature.json` does not list makes the result Invalid, as it does in SumaFile, and so does a
+  `signature.json` larger than 1 MiB. `sign` compares the decoded 32 key bytes with `publisher.publicKey`, so
+  whitespace in the manifest's key does not matter.
 
 Adding `publicKey` changes `plugin.json`, and so its hash: users confirm the plugin again. Sign after every build,
 since any change to a listed file breaks the signature.
@@ -967,16 +1000,20 @@ without writing anything:
 - a `plugin.json` larger than 1 MiB, by its declared or its actual size;
 - an invalid `plugin.json`, with the reader's errors (an incompatible `sdkVersion` included);
 - a package whose id `bundled.json` lists (`<id> ships with SumaFile and cannot be installed from a package.`);
-- an entry with an absolute path, a drive or `:`, or a `..` segment, or one that would land outside the plugin folder.
+- more than 10,000 entries, or more than 512 MiB uncompressed;
+- an entry with an absolute path, a drive or `:`, or a `..` segment, or one that would land outside the plugin folder;
+- an entry with a Windows device name as a segment (`CON`, `PRN`, `AUX`, `NUL`, `COM1`, `LPT1` and the like, with or
+  without an extension), or a segment that ends in a dot or a space.
 
 It extracts into a hidden staging folder and moves it into place. An existing copy of the plugin is replaced: it is
 renamed aside first and put back if the move fails, and a copy whose files are in use fails with a message asking the
-user to disable the plugin and restart SumaFile. The installed plugin then waits for consent. Ship a new version as a
-new package with a new `version`.
+user to disable the plugin and restart SumaFile. Installing clears the plugin's stored approval, so the installed
+plugin waits for consent, even when it replaces an approved copy. Ship a new version as a new package with a new
+`version`.
 
 **Remove** on a plugin's card deletes its folder, after a confirmation. It is offered only for plugins in SumaFile's
 own `plugins` folder that `bundled.json` does not list; bundled plugins are disabled instead. Remove stops the plugin
-first, and keeps its settings and its `plugins-data` folder.
+first, clears its stored approval, and keeps its settings and its `plugins-data` folder.
 
 ## The plugin template
 
@@ -994,7 +1031,7 @@ Inside this repository the template builds with everything else (the backend is 
 project is in `src-winui/SimpleFile.sln`), and `SimpleFile.Tests` loads it through the real plugin host. To try it in
 SumaFile, stage it, point `SUMAFILE_PLUGIN_ROOTS` at `target\template-plugins`, start SumaFile and enable it. Its
 README, `templates/sumafile-plugin/README.md`, walks through building, staging, consent, signing, packaging, renaming
-it, and switching it to the packages for use outside this repository.
+it, and building a copy outside this repository against a local SumaFile checkout (see [Packages](#packages)).
 
 ## Packages
 
@@ -1010,8 +1047,43 @@ The SDK and the helper crate are packaged, but only as dry runs: neither is publ
   sumafile-plugin`) builds each package from its packaged sources against a temporary local registry. CI runs it on a
   clean checkout without `--allow-dirty`.
 
-Once they are published, a plugin outside this repository references `SumaFile.PluginSdk` `1.0.0` compile-only and
-`sumafile-plugin = "1"`; the template's README shows the exact changes.
+Until they are published, a plugin outside this repository builds against a local SumaFile checkout
+(`<checkout>`):
+
+1. Run `npm run pack:sdk` in the checkout; it writes `<checkout>/target/packages/SumaFile.PluginSdk.1.0.0.nupkg`.
+2. Add a `nuget.config` beside the plugin's project (or any folder above it) with that folder as a package source,
+   here for a checkout in `C:\src\SumaFile`:
+
+   ```xml
+   <?xml version="1.0" encoding="utf-8"?>
+   <configuration>
+     <packageSources>
+       <add key="sumafile-local" value="C:\src\SumaFile\target\packages" />
+     </packageSources>
+   </configuration>
+   ```
+
+3. Reference the package compile-only, as in [Project setup](#project-setup) (the template's in-repository
+   `ProjectReference` has `<Private>false</Private>` and `<ExcludeAssets>runtime</ExcludeAssets>`; the package
+   reference is its equivalent), then run `dotnet restore --force-evaluate` when the project has a
+   `packages.lock.json`:
+
+   ```xml
+   <PackageReference Include="SumaFile.PluginSdk" Version="1.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
+   ```
+
+   NuGet caches a package by id and version: after packing the SDK again at the same version, delete
+   `%USERPROFILE%\.nuget\packages\sumafile.pluginsdk\1.0.0` before restoring.
+4. Take the crate by path, in `[dependencies]` and, with `features = ["test-support"]`, in `[dev-dependencies]`. It
+   finds `simplefile-ipc` in the checkout by itself, and it needs Rust 1.98.0 or newer (the checkout's
+   `rust-toolchain.toml` does not apply outside it):
+
+   ```toml
+   sumafile-plugin = { path = "<checkout>/crates/sumafile-plugin" }
+   ```
+
+Once the packages are published, drop the local source and use `sumafile-plugin = "1"`. The template's README,
+`templates/sumafile-plugin/README.md` ("Outside this repository"), walks through both with the template's files.
 
 ## Plugin states and troubleshooting
 
@@ -1023,7 +1095,7 @@ Settings > Plugins lists every plugin found, with its state:
 | Enabled | Enabled (· background process running) | Contributions are shown; code loads on first use. |
 | Disabled | Disabled | The user turned it off. |
 | InvalidManifest | Invalid plugin.json | The manifest broke a rule; the card lists the errors. |
-| IncompatibleSdk | Not compatible with this version of SumaFile | The `sdkVersion` major is not `1`. |
+| IncompatibleSdk | Not compatible with this version of SumaFile | The `sdkVersion` major is not `1`, or its minor is above the host SDK's. |
 | LoadFailed | Failed to load: <message> | The UI assembly or entry type could not load, `ActivateAsync` threw, or a provider failed. Disable and enable it, or rescan, to try again. |
 | Faulted | Stopped: <message> | The backend stopped, failed to start three times within 60 s, or its archive engine could not register. The status center offers Restart. |
 | Shadowed | Overridden by <folder> | The same id is in a later root (only with `SUMAFILE_PLUGIN_ROOTS`). |
@@ -1034,28 +1106,37 @@ manifest and signature state did not change keeps running.
 ## Host-shared assemblies
 
 A plugin's UI assembly loads in its own assembly load context. An assembly whose name starts with one of these
-prefixes always comes from SumaFile, never from the plugin folder, so the types a plugin uses from it are the host's
-types. Every other managed assembly the plugin's `deps.json` lists loads from the plugin folder.
+prefixes is shared with SumaFile, so the types a plugin uses from it are the host's types. Every other managed
+assembly the plugin's `deps.json` lists loads from the plugin folder. The third column says where a shared name
+comes from:
+
+- **SumaFile only**: always SumaFile's copy, never one from the plugin folder. A plugin that needs an assembly of
+  such a name SumaFile does not have fails to load it.
+- **SumaFile first**: SumaFile's copy when SumaFile has one (one of its trusted platform assemblies, or an assembly
+  already loaded into its default context); otherwise the plugin's own copy, when its `deps.json` lists one. So a
+  plugin can bundle `System.Reactive` or a `Microsoft.Extensions.*` package SumaFile does not ship, but never
+  replaces one SumaFile has: a bundled `System.Text.Json` is ignored, even a newer one.
+
 `PluginLoadContext_SharedPrefixes_MatchTheTableInPluginsDoc` checks this table against the host, so it is the
 complete list.
 
-| Prefix | What it covers |
-| --- | --- |
-| `SimpleFile.PluginSdk` | The SDK, the `SumaFile.PluginSdk` package. |
-| `Microsoft.WindowsAppSDK` | The Windows App SDK's own assemblies. |
-| `Microsoft.WindowsAppRuntime` | The Windows App SDK runtime's assemblies. |
-| `Microsoft.UI` | WinUI 3 (`Microsoft.UI.Xaml` and the rest of `Microsoft.UI`). |
-| `Microsoft.WinUI` | The WinUI 3 projection. |
-| `Microsoft.InteractiveExperiences` | The Windows App SDK's input and windowing projection. |
-| `Microsoft.Graphics.Display` | The Windows App SDK's display information. |
-| `Microsoft.Graphics.Imaging` | The Windows App SDK's imaging projection. Win2D (`Microsoft.Graphics.Canvas`) is not shared: a plugin that uses it ships its own copy. |
-| `Microsoft.Web.WebView2` | WebView2. |
-| `Microsoft.Security.Authentication.OAuth` | The Windows App SDK's OAuth projection. |
-| `Microsoft.Windows` | The Windows App SDK's `Microsoft.Windows.*` projections and the Windows SDK projection (`Microsoft.Windows.SDK.NET`). |
-| `WinRT` | The C#/WinRT runtime. |
-| `CommunityToolkit.Mvvm` | The MVVM Toolkit. |
-| `System.` | The .NET runtime libraries. |
-| `Microsoft.Extensions.` | The `Microsoft.Extensions.*` libraries the host ships. |
+| Prefix | What it covers | Comes from |
+| --- | --- | --- |
+| `SimpleFile.PluginSdk` | The SDK, the `SumaFile.PluginSdk` package. | SumaFile only |
+| `Microsoft.WindowsAppSDK` | The Windows App SDK's own assemblies. | SumaFile only |
+| `Microsoft.WindowsAppRuntime` | The Windows App SDK runtime's assemblies. | SumaFile only |
+| `Microsoft.UI` | WinUI 3 (`Microsoft.UI.Xaml` and the rest of `Microsoft.UI`). | SumaFile only |
+| `Microsoft.WinUI` | The WinUI 3 projection. | SumaFile only |
+| `Microsoft.InteractiveExperiences` | The Windows App SDK's input and windowing projection. | SumaFile only |
+| `Microsoft.Graphics.Display` | The Windows App SDK's display information. | SumaFile only |
+| `Microsoft.Graphics.Imaging` | The Windows App SDK's imaging projection. Win2D (`Microsoft.Graphics.Canvas`) is not shared, so its managed assemblies load from the plugin's folder; running Win2D from a plugin is not tested (CsWinRT may look for the native `Microsoft.Graphics.Canvas.dll` next to SumaFile, so preload it by full path in `ActivateAsync` if needed). | SumaFile only |
+| `Microsoft.Web.WebView2` | WebView2. | SumaFile only |
+| `Microsoft.Security.Authentication.OAuth` | The Windows App SDK's OAuth projection. | SumaFile only |
+| `Microsoft.Windows.` | The Windows App SDK's `Microsoft.Windows.*` projections and the Windows SDK projection (`Microsoft.Windows.SDK.NET`). The dot matters: `Microsoft.WindowsAzure.*` is not shared. | SumaFile only |
+| `WinRT` | The C#/WinRT runtime. | SumaFile only |
+| `CommunityToolkit.Mvvm` | The MVVM Toolkit. | SumaFile only |
+| `System.` | The .NET runtime libraries. | SumaFile first |
+| `Microsoft.Extensions.` | The `Microsoft.Extensions.*` libraries. | SumaFile first |
 
 So a plugin is bound to the versions SumaFile ships of the packages behind these assemblies. Reference them
 compile-only, at the versions below or lower, so no copy goes into the plugin folder:

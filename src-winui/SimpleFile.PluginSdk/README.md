@@ -6,7 +6,9 @@ services it receives in `IPlugin.ActivateAsync` (`IPluginHost`: the backend, set
 workspace, the log, windows, panels and decorations).
 
 The package version is the SDK contract version, `PluginSdk.Version`. A plugin's `plugin.json` names it as
-`sdkVersion`, and SumaFile loads a plugin only when that major version is one it supports.
+`sdkVersion`, and SumaFile loads a plugin only when that major version is one it supports and the minor version is
+not above the minor of the SDK it ships: the SDK assembly's version is `major.minor.0.0`, so a plugin built against
+SDK 1.1 cannot bind in a SumaFile that ships SDK 1.0. Build against the oldest SDK whose members you use.
 
 ## Referencing the SDK
 
