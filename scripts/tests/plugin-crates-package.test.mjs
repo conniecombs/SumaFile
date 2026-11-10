@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -105,6 +106,32 @@ test('sumafile-plugin names a simplefile-ipc version the path crate satisfies', 
   assert.equal(actual[0], wanted[0], 'simplefile-ipc keeps the major version sumafile-plugin requires');
   assert.ok(compare(actual, wanted) >= 0, 'simplefile-ipc is not older than the version sumafile-plugin requires');
 });
+
+// `cargo package --list`: the files each crate's package would hold (nothing is built or written).
+const cargo = spawnSync('cargo', ['--version'], { encoding: 'utf8' }).status === 0;
+const packagedFiles = crate => {
+  const result = spawnSync('cargo', ['package', '--list', '--locked', '--allow-dirty', '-p', crate], { cwd: root, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+};
+
+test('simplefile-ipc leaves out its schema test, which reads ../../ipc/schema/v1 outside the package', () => {
+  assert.match(read('crates/simplefile-ipc/tests/schema_consistency.rs'), /\.\.\/\.\.\/ipc\/schema\/v1/,
+    'the test still reads the workspace schema, so it cannot run from the package');
+  const exclude = array(pkg('simplefile-ipc').exclude);
+  assert.ok(exclude?.includes('tests/schema_consistency.rs'), 'crates/simplefile-ipc/Cargo.toml excludes it');
+});
+
+for (const crate of crates) {
+  test(`the ${crate} package holds no file that reads outside the crate`, { skip: !cargo && 'cargo is not installed' }, () => {
+    const files = packagedFiles(crate);
+    assert.ok(files.includes('src/lib.rs') && files.includes('Cargo.toml'), files.join(', '));
+    assert.ok(!files.includes('tests/schema_consistency.rs'), `${crate}: tests/schema_consistency.rs is packaged`);
+    for (const file of files.filter(name => /\.rs$/.test(name))) {
+      assert.doesNotMatch(read(`crates/${crate}/${file}`), /\.\.\/\.\.\//, `${crate}/${file} reads outside the package`);
+    }
+  });
+}
 
 const packagesBothCrates = command => /\bcargo package\b/.test(command)
   && /-p simplefile-ipc\b/.test(command) && /-p sumafile-plugin\b/.test(command);

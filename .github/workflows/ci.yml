@@ -205,12 +205,16 @@ jobs:
 
       # Directly after the -PluginsDir smoke and before the -NoPlugins one, so it reads the session that had plugins.
       - name: Check the WinUI startup budget
-        run: npm run check:winui-startup-budget
+        run: npm run check:winui-startup-budget -- --expect-plugins
 
-      # A passing smoke deletes its run folder and leaves test-results\ui-smoke\last-passed-report.json, which the
-      # next smoke replaces, so the plugin run's copy is kept under its own name for the upload below.
+      # A passing smoke deletes its run folder and leaves test-results\ui-smoke\last-passed-report.json and its polish
+      # screenshots in test-results\ui-smoke\last-passed\, which the next smoke clears and replaces, so the plugin
+      # run's copies are kept under their own names for the upload below.
       - name: Keep the plugin smoke report
-        run: Copy-Item -LiteralPath test-results\ui-smoke\last-passed-report.json -Destination test-results\ui-smoke\plugins-passed-report.json
+        run: |
+          Copy-Item -LiteralPath test-results\ui-smoke\last-passed-report.json -Destination test-results\ui-smoke\plugins-passed-report.json
+          New-Item -ItemType Directory -Force -Path test-results\ui-smoke\plugins-passed | Out-Null
+          Copy-Item -Path test-results\ui-smoke\last-passed\*.png -Destination test-results\ui-smoke\plugins-passed -Force
 
       - name: Smoke WinUI rendering, layout, and cancellation without plugins
         run: npm run smoke:winui-ui -- -Counts 10000 -SkipBuild -NoPlugins
@@ -223,6 +227,8 @@ jobs:
           path: |
             test-results/ui-smoke/last-passed-report.json
             test-results/ui-smoke/plugins-passed-report.json
+            test-results/ui-smoke/last-passed/*.png
+            test-results/ui-smoke/plugins-passed/*.png
             test-results/ui-smoke/**/report.json
             test-results/ui-smoke/**/progress.json
             test-results/ui-smoke/**/workspace-polish.png

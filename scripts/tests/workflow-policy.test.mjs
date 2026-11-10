@@ -52,3 +52,25 @@ test('release uploads cannot replace reviewed notes with a generic message', () 
   upload.with.body = 'Download the attached files.';
   assert.ok(validateWorkflows(workflows, dependabot).some(error => error.includes('version-specific release notes')));
 });
+test('the installer workflows resolve WiX with the build script\'s own Resolve-WixBin', () => {
+  // scripts/lib/wix-msi.ps1 refuses WiX older than 3.14.1 or without WixUtilExtension, so a workflow copy without that
+  // gate could find an old WiX, skip the bootstrap and fail the tag or dispatch build that PR CI never runs.
+  const { workflows, dependabot } = source();
+  for (const [file, id] of [['release.yml', 'build'], ['release-build.yml', 'windows-release-build'], ['installer-smoke.yml', 'windows-installer-smoke']]) {
+    const step = workflows[file].jobs[id].steps.find(current => current.name === 'Install WiX Toolset (MSI)');
+    assert.ok(step, `${file}: has the WiX step`);
+    assert.match(step.run, /^\. \.\/scripts\/lib\/wix-msi\.ps1$/m, `${file}: dot-sources the shared resolver`);
+    assert.doesNotMatch(step.run, /function Resolve-WixBin/, `${file}: no copy of Resolve-WixBin`);
+    // The resolver is checked before the bootstrap, so a WiX that is present but too old still gets installed.
+    assert.ok(step.run.indexOf('Resolve-WixBin') < step.run.indexOf('choco install wixtoolset'));
+  }
+  const broken = source();
+  const step = broken.workflows['release.yml'].jobs.build.steps.find(current => current.name === 'Install WiX Toolset (MSI)');
+  step.run = step.run.replace('. ./scripts/lib/wix-msi.ps1', '');
+  assert.ok(validateWorkflows(broken.workflows, broken.dependabot).some(error => error.includes('shared WiX resolver')));
+  const lifecycle = source();
+  lifecycle.workflows['release.yml'].jobs.build.steps = lifecycle.workflows['release.yml'].jobs.build.steps
+    .filter(current => !/smoke:winui-msi-lifecycle/.test(current.run ?? ''));
+  assert.ok(validateWorkflows(lifecycle.workflows, lifecycle.dependabot).some(error => error.includes('MSI lifecycle smoke')));
+  assert.deepEqual(validateWorkflows(workflows, dependabot), []);
+});

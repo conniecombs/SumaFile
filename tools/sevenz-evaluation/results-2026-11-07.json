@@ -348,7 +348,7 @@
   "compatibility_passed": false,
   "iterations": 3,
   "logical_processors": 32,
-  "reference": "\\\\?\\R:\\Repos\\SumaFile\\third_party\\7zip\\win-x64\\7za.exe",
+  "reference": "<repo>\\third_party\\7zip\\win-x64\\7za.exe",
   "reference_version": "7-Zip (a) 26.03 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-09-03",
   "release_mode": true,
   "scope": "Generated fixtures; engine benchmarks, not an integrated replacement"

@@ -1,6 +1,6 @@
 # WinUI runtime verification
 
-Current release target: **SumaFile 1.0.3**. See [release notes](RELEASE_1.0.3.md) for the complete change set.
+Latest release: **SumaFile 1.0.4**. See [release notes](RELEASE_1.0.4.md) for the complete change set.
 
 Run `npm run smoke:winui-ui` from a Windows desktop session. The script builds
 the Debug WinUI application and Rust service, generates folders containing
@@ -27,6 +27,16 @@ Settings, metadata database, operation journal, files and report are isolated
 under `test-results/ui-smoke/<run>/`. The marker file created by the script
 must exist before the host accepts the smoke root. Release binaries do not
 contain the scenario runner. No user settings or folders are modified.
+
+A failed run keeps its `<run>` folder as evidence. A passing run copies its
+`report.json` to `test-results/ui-smoke/last-passed-report.json` and its polish
+screenshots (`*-polish.png`) to `test-results/ui-smoke/last-passed/`, then
+deletes the `<run>` folder; pass `-KeepResults` to keep it. Each run first
+deletes the previous run's `last-passed-report.json` and `last-passed/*-polish.png`,
+so a failed run never leaves an older pass's files looking like its own. A
+folder that cannot be deleted (a helper process still running, a link inside
+it, a file that cannot be listed or made writable) is kept with a warning and
+does not fail a run that passed.
 
 ## Assertions
 
@@ -68,7 +78,12 @@ contain the scenario runner. No user settings or folders are modified.
 ## Refresh the README screenshots
 
 Use the `sumafile-winui-runtime` artifact from a successful **WinUI host** job on
-a GitHub-hosted Windows runner at the intended application revision. The three PNGs
+a GitHub-hosted Windows runner at the intended application revision. Take
+`workspace-polish.png`, `conflict-polish.png` and `rename-polish.png` from its
+`last-passed/` folder, which the `-NoPlugins` smoke wrote, so no test plugin
+contributes to them; `plugins-passed/` holds the plugin smoke's copies (run with
+the bundled plugins and the Hello fixture loaded) next to `plugins-passed-report.json`. A failed run's
+screenshots are under its `<run>/` folder instead. The three PNGs
 come from the running app with generated fixtures and isolated settings. Review
 each image at full size, including its sidebar, breadcrumbs and title. Use only
 runner-generated sample data for public screenshots. Record the source run next

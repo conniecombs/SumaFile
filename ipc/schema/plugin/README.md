@@ -67,9 +67,11 @@ error below is `-32602` (invalid params) unless noted.
 
 Requests the Rust service sends to a backend that registers an archive engine.
 Each replies `null` except `archive.list`. `operationId` is the id that
-`cancel` and `archive.progress` use. The service sends one on every read- and
-transfer-class call: the operation's own id when it is tracked, otherwise a
-service id `svc-<pid>-<n>`.
+`cancel` and `archive.progress` use. The schema marks it optional
+(`string?`), and an engine must accept a call without one (it then reports no
+progress and cannot be cancelled), but SumaFile's service sends one on every
+read- and transfer-class call: the operation's own id when it is tracked,
+otherwise a service id `svc-<pid>-<n>`. `archive.list` carries none.
 
 The service holds a small pool of connections per plugin (up to 8) and keeps
 at most one call in flight on each, so a listing never waits behind a long
@@ -217,7 +219,8 @@ The backend sends no events.
 
 | Code | Meaning |
 | --- | --- |
-| `-32600` | request before `plugin.handshake` |
+| `-32700` | parse error: the frame is not valid JSON (the reply's `id` is `null`) |
+| `-32600` | request before `plugin.handshake`, or a frame that is neither a request nor a reply |
 | `-32601` | method not found |
 | `-32602` | invalid params |
 | `-32603` | handler panicked |

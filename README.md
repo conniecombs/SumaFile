@@ -83,6 +83,12 @@ The active application is the WinUI host under `src-winui/` plus the Rust crates
 under `crates/`. Historical migration notes remain in `docs/winui-migration/`,
 but the Svelte/Tauri surface is not the shipping UI for this branch.
 
+This README describes the current development branch. Its plugin system, and
+the move of Git, FTP/SFTP and 7-Zip into three bundled plugins, are unreleased:
+they are not part of the published 1.0.4, where those features are built into
+SumaFile itself. See [Plugins](#plugins) and the `[Unreleased]` entry in the
+[changelog](docs/CHANGELOG.md).
+
 ## What changed in 1.0.4
 
 Menus grey out what is unavailable instead of hiding it, Delete is a direct
@@ -126,14 +132,27 @@ Requirements:
 
 - Windows 10 version 2004 or newer, or Windows 11
 - x64 Windows
-- The SumaFile 7-Zip plugin (`com.sumafile.sevenzip`), installed with SumaFile, for `.7z` workflows
-- The SumaFile FTP/SFTP plugin (`com.sumafile.remote`), installed with SumaFile, for FTP, FTPS and SFTP connections
-- The SumaFile Git plugin (`com.sumafile.git`), installed with SumaFile, and Git for Windows with `git.exe` on `PATH`, for Git status and the Git workbench
+- Git for Windows with `git.exe` on `PATH`, for Git status and the Git workbench
 - Built-in RAR listing and extraction; RAR creation is not supported
+
+`.7z` support (with the bundled 7-Zip), FTP/FTPS/SFTP connections and Git
+come with SumaFile. In 1.0.4 they are part of the app; on the current
+development branch (unreleased) they are three bundled plugins that install
+with SumaFile: `com.sumafile.sevenzip`, `com.sumafile.remote` and
+`com.sumafile.git`.
 
 After installing, open Settings -> Updates to check published releases. Builds
 with trusted updater metadata can download and launch the NSIS setup from inside
 the app. Builds without complete trusted metadata fall back to the release page.
+
+Uninstalling (Windows Settings -> Apps, or removing the MSI) deletes the
+installation folder. On the development branch that includes every plugin file
+SumaFile keeps there: plugins you installed, `plugins-data` (with the FTP/SFTP
+connection profiles), `plugin-approvals.json` and `plugins.log`; an upgrade or
+reinstall keeps them. Saved FTP/SFTP passwords and passphrases stay in Windows
+Credential Manager under `SumaFile.Remote.*` targets: delete the connections in
+SumaFile before uninstalling, or remove those entries in Credential Manager.
+Settings in `%APPDATA%\com.simplefile.desktop` are not removed.
 
 ## Use SumaFile
 
@@ -278,6 +297,9 @@ links and special entries that could escape the destination.
 - Settings -> Plugins -> Git can completely disable Git integration, hiding Git
   UI and preventing Git status/command calls; the Git commands stay listed and
   explain that Git is turned off
+- Git hooks and filters still run for your own stage, commit, fetch, pull and
+  push, as they do with the git command line; the read-only views (the Status
+  column, the workbench's status and the diff preview) run none
 - Open terminal here with ``Ctrl+` ``
 - Elevated PowerShell launch
 - Open With menu and chooser
@@ -410,6 +432,9 @@ Runtime diagnostics are written under:
 
 ## Plugins
 
+The plugin system is on the current development branch and is not part of any
+published release yet.
+
 Plugins add commands, menus, toolbar buttons, sidebar sections, panels, file
 row decorations, settings and archive formats to SumaFile. Three plugins install
 with SumaFile and are trusted without a prompt, because the release lists them
@@ -436,16 +461,24 @@ version, state, signature state and settings:
   for your approval, its declared settings, and its own settings page if it has
   one. Settings save as soon as you change them.
 - **Remove** appears only on plugins you installed. It asks first, then deletes
-  the plugin's folder; the plugin's settings and its `plugins-data` folder are
-  kept.
+  the plugin's folder and its stored approval; the plugin's settings and its
+  `plugins-data` folder are kept (uninstalling SumaFile deletes `plugins-data`).
 
 **Consent.** Plugins run with your permissions; there is no sandbox. The first
 time SumaFile finds a plugin it did not ship, it asks **Enable plugin?** and
-shows the plugin's name, publisher, version, signature state (Verified
-publisher, Unsigned or Invalid signature), the permissions it declares and
+shows the plugin's name, publisher, version, signature state (Signed · key
+<fingerprint>, Unsigned or Invalid signature), the permissions it declares and
 whether it runs a background process. **Keep disabled** leaves it off until you
-choose **Review…**. SumaFile asks again whenever the plugin's `plugin.json` or
-its signature state changes, for example after an update.
+choose **Review…**. SumaFile asks again when the plugin's `plugin.json`, its
+signature state or its folder changes, and after you install it from a file or
+remove it.
+
+**Signatures.** "Signed · key <fingerprint>" means the plugin's files are
+unchanged since they were signed with that key. It does not identify the
+publisher: the key comes from the plugin's own `plugin.json`. A file in the
+plugin's folder that its `signature.json` does not list makes the signature
+invalid. SumaFile checks signatures when it scans the plugins folder (at
+startup and on Rescan), not each time a plugin loads.
 
 **Where plugin files live.** Every plugin file stays in SumaFile's
 installation folder:
@@ -456,6 +489,10 @@ installation folder:
 <install folder>\plugin-approvals.json       your Enable and Disable decisions
 <install folder>\plugins.log                 plugin errors and log lines
 ```
+
+Upgrades and reinstalls keep them; uninstalling SumaFile deletes them (see
+[Install](#install)). Saved FTP/SFTP passwords are not in these files: they
+stay in Windows Credential Manager.
 
 A plugin whose background process stops is listed as Stopped, and the status
 center offers Restart. `plugins.log` has the details.
@@ -744,8 +781,11 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 
 ## Security
 
-- Do not commit updater private keys, signing keys, `.env` files, local secrets,
-  personal settings exports, or logs containing private paths.
+- Do not commit updater private keys, signing keys (including plugin signing
+  keys, `*.pem`), `.env` files, local secrets, personal settings exports, or
+  logs containing private paths.
+- Plugins run with your permissions and without a sandbox; see
+  [Plugins in docs/SECURITY.md](docs/SECURITY.md#plugins).
 - Gitignored sensitive locations include `.secrets/`, `*.key`, `.env`, and
   `.env.*`.
 - Archive extraction validates destination paths before writing.

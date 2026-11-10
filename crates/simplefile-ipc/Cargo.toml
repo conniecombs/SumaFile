@@ -10,6 +10,8 @@ rust-version = "1.98.0"
 readme = "README.md"
 keywords = ["sumafile", "ipc", "json-rpc", "named-pipe", "protocol"]
 categories = ["encoding", "network-programming"]
+# The schema test reads ../../ipc/schema/v1, which is not in the package; it runs in the workspace only.
+exclude = ["tests/schema_consistency.rs"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

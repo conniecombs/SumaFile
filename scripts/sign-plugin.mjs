@@ -6,8 +6,9 @@
 //   node scripts/sign-plugin.mjs verify <plugin folder>      re-checks signature.json, exit 0 only when Verified
 //
 // The format is the host's (src-winui/SimpleFile.PluginHost/Trust/PluginSignatureVerifier.cs, spec §9):
-// signature.json is { "algorithm": "ed25519", "files": { "<path>": "<sha256 hex>" }, "signature": "<base64>" }. The
-// files are every file of the folder except plugin.json and signature.json, as bare forward-slash relative paths. The
+// signature.json is { "algorithm": "ed25519", "files": { "<path>": "<sha256 hex>" }, "signature": "<base64>" }, at
+// most 1 MiB, optionally after a UTF-8 BOM. The files are every file of the folder except plugin.json and
+// signature.json, as bare forward-slash relative paths, and a file the list leaves out makes the folder Invalid. The
 // signature is Ed25519 over the canonical payload: the plugin.json bytes, "\n", then "<path>\n<hash>\n" per file in
 // ordinal path order. publisher.publicKey in plugin.json is the raw 32-byte public key in base64, and the key
 // fingerprint the host shows is the first 16 hex characters of its SHA-256.
@@ -24,6 +25,8 @@ import { fileURLToPath } from 'node:url';
 export const KEY_FILE = 'signing-key.pem';
 // PluginManifestReader.MaxManifestBytes: the host never reads a larger plugin.json.
 export const MAX_MANIFEST_BYTES = 1024 * 1024;
+// The host's cap on signature.json: a larger one is Invalid, so sign never writes one.
+export const MAX_SIGNATURE_BYTES = 1024 * 1024;
 const EXCLUDED = new Set(['plugin.json', 'signature.json']);
 
 // File.Exists: a file, following links; false for a folder or a missing path.
@@ -98,7 +101,7 @@ function readManifest(folder) {
   if (bytes.length > MAX_MANIFEST_BYTES) throw new Error('plugin.json is larger than 1 MiB.');
   let manifest;
   try {
-    manifest = JSON.parse(bytes.toString('utf8').replace(/^﻿/, ''));
+    manifest = JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, ''));
   } catch (error) {
     throw new Error(`plugin.json is not valid JSON: ${error.message}`);
   }
@@ -159,7 +162,14 @@ export function signPlugin(folder, keyPath) {
   if (typeof declared !== 'string' || declared.trim() === '') {
     throw new Error(`plugin.json has no publisher.publicKey; set it to "${publicKey}", the key's public key.`);
   }
-  if (declared !== publicKey) {
+  // The host decodes publicKey (Convert.FromBase64String, which skips whitespace) and checks the 32 bytes, so the
+  // key bytes are compared, not the text.
+  const declaredBytes = strictBase64(declared);
+  if (!declaredBytes) throw new Error(`publisher.publicKey in plugin.json is not valid base64; set it to "${publicKey}".`);
+  if (declaredBytes.length !== 32) {
+    throw new Error(`publisher.publicKey in plugin.json must be exactly 32 bytes; set it to "${publicKey}".`);
+  }
+  if (!declaredBytes.equals(Buffer.from(publicKey, 'base64'))) {
     throw new Error(`publisher.publicKey in plugin.json does not match the signing key (its public key is "${publicKey}").`);
   }
 
@@ -173,7 +183,12 @@ export function signPlugin(folder, keyPath) {
   for (const file of listed) files[file] = sha256Hex(readFileSync(path.join(folder, ...file.split('/'))));
   const signature = sign(null, canonicalPayload(bytes, files), privateKey).toString('base64');
   const document = { algorithm: 'ed25519', files, signature };
-  writeFileSync(path.join(folder, 'signature.json'), `${JSON.stringify(document, null, 2)}\n`);
+  const text = `${JSON.stringify(document, null, 2)}\n`;
+  const size = Buffer.byteLength(text, 'utf8');
+  if (size > MAX_SIGNATURE_BYTES) {
+    throw new Error(`signature.json would be ${size} bytes, larger than the 1 MiB the host reads; ship fewer files.`);
+  }
+  writeFileSync(path.join(folder, 'signature.json'), text);
   return { ...document, fingerprint: fingerprint(publicKey) };
 }
 
@@ -185,9 +200,42 @@ function strictBase64(text) {
 }
 
 /**
+ * PluginSignatureVerifier.Unlisted: every entry under the folder, hidden ones included, that is neither a listed file
+ * nor the root plugin.json or signature.json, as forward-slash relative paths in ordinal order. Folders count only when
+ * they are links (never followed); a link to a file counts as a file. Paths compare case-insensitively on Windows, as
+ * its file system does, and ordinally elsewhere. An unreadable folder throws.
+ */
+function unlistedEntries(folder, listed) {
+  const fold = process.platform === 'win32' ? file => file.toLowerCase() : file => file;
+  const covered = new Set([...listed, ...EXCLUDED].map(fold));
+  const unlisted = [];
+  const walk = relative => {
+    for (const entry of readdirSync(path.join(folder, ...relative), { withFileTypes: true })) {
+      const parts = [...relative, entry.name];
+      const file = parts.join('/');
+      if (entry.isDirectory()) {
+        walk(parts);
+      } else if (!covered.has(fold(file)) || (entry.isSymbolicLink() && isFolderLink(path.join(folder, ...parts)))) {
+        unlisted.push(file);
+      }
+    }
+  };
+  walk([]);
+  return unlisted.sort(ordinal);
+}
+
+const isFolderLink = full => {
+  try {
+    return statSync(full).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/**
  * PluginSignatureVerifier.Verify, check for check: { status: 'Unsigned' | 'Verified' | 'Invalid', fingerprint, error,
- * unlisted }. unlisted names the files signature.json does not cover; the host ignores them, so they do not change
- * the status.
+ * unlisted }. unlisted names the files of the folder signature.json does not list; any one makes the folder Invalid,
+ * as the host rules.
  */
 export function verifyPlugin(folder) {
   const result = (status, error, keyFingerprint = null, unlisted = []) => ({ status, fingerprint: keyFingerprint, error, unlisted });
@@ -198,7 +246,9 @@ export function verifyPlugin(folder) {
   let manifestBytes;
   let manifest;
   try {
-    root = JSON.parse(readFileSync(signaturePath, 'utf8').replace(/^﻿/, ''));
+    if (statSync(signaturePath).size > MAX_SIGNATURE_BYTES) return invalid('signature.json is larger than 1 MiB.');
+    // A UTF-8 BOM before the JSON is skipped, as the host skips it.
+    root = JSON.parse(readFileSync(signaturePath, 'utf8').replace(/^\uFEFF/, ''));
     ({ bytes: manifestBytes, manifest } = readManifest(folder));
   } catch (error) {
     return invalid(`Could not verify signature: ${error.message}`);
@@ -243,14 +293,23 @@ export function verifyPlugin(folder) {
   if (!verify(null, canonicalPayload(manifestBytes, root.files), key, sig)) {
     return result('Invalid', 'Signature does not match the package contents.', keyFingerprint);
   }
-  let unlisted = [];
+
+  // Verified must speak for every file the plugin can load, not only the listed ones: an unlisted file (or a link to a
+  // folder) beside the signed ones makes the folder Invalid, as the host rules.
+  let unlisted;
   try {
-    const covered = new Set(listed);
-    unlisted = listPluginFiles(folder).filter(file => !covered.has(file));
-  } catch {
-    // A folder the signer would refuse still verifies the way the host verifies it.
+    unlisted = unlistedEntries(folder, listed);
+  } catch (error) {
+    return invalid(`Could not verify signature: ${error.message}`);
   }
-  return result('Verified', null, keyFingerprint, unlisted);
+  if (unlisted.length === 1) {
+    return result('Invalid', `"${unlisted[0]}" is in the plugin folder but not listed in signature.json files.`, keyFingerprint, unlisted);
+  }
+  if (unlisted.length > 1) {
+    return result('Invalid', `"${unlisted[0]}" and ${unlisted.length - 1} other files in the plugin folder are not listed in `
+      + 'signature.json files.', keyFingerprint, unlisted);
+  }
+  return result('Verified', null, keyFingerprint);
 }
 
 const usage = `Usage:
@@ -299,12 +358,10 @@ function main(argv) {
     const state = verifyPlugin(positional[0]);
     if (state.status === 'Verified') {
       console.log(`Verified, key fingerprint ${state.fingerprint}.`);
-      if (state.unlisted.length) {
-        console.log(`Warning: these files are not covered by signature.json (the host ignores them): ${state.unlisted.join(', ')}`);
-      }
       return 0;
     }
     console.error(state.status === 'Unsigned' ? `${positional[0]} has no signature.json (Unsigned).` : `Invalid: ${state.error}`);
+    if (state.unlisted.length > 1) console.error(`Not listed in signature.json: ${state.unlisted.join(', ')}`);
     return 1;
   }
   throw new UsageError(command ? `Unexpected arguments for ${command}.` : 'No command given.');

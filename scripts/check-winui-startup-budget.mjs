@@ -2,6 +2,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// --expect-plugins: the session must also have discovered at least one plugin (count>=1). CI passes it right after the
+// -PluginsDir smoke, so a session without plugins (another run's) cannot stand in for the one it means to budget.
+const args = process.argv.slice(2);
+for (const arg of args) {
+  if (arg !== '--expect-plugins') {
+    console.error(`Unknown argument ${arg}. Usage: node scripts/check-winui-startup-budget.mjs [--expect-plugins]`);
+    process.exit(2);
+  }
+}
+const expectPlugins = args.includes('--expect-plugins');
+
 const logPath = process.env.SUMAFILE_STARTUP_TIMING_LOG
   ?? path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'), 'SumaFile', 'startup-timing.log');
 
@@ -37,13 +48,22 @@ checkMaximum(session, 'MainWindow.Connect.ready', budgets.readyMs, violations);
 checkDeferredDriveRefresh(session, budgets.driveRefreshMinMs, violations);
 
 // Printed whether or not the budget holds, stage by stage, so a CI log shows which part of discovery dominates.
+// Required: the App discovers plugins on every start, -NoPlugins included (MainWindow.ConnectAsync runs
+// InitializePluginsAsync before the workspace loads, and marks plugins-discovered with count=0 when there are none), so
+// a session that reached ready without the marker never measured the span and must not pass as if it had.
 const pluginSpan = pluginDiscoverySpan(session);
-if (pluginSpan) {
+if (!pluginSpan) {
+  violations.push(`Missing startup marker: MainWindow.Connect.plugins-discovered; the 50 ms plugin discovery budget could not be checked`);
+} else {
   const stages = pluginSpan.stages.map(stage => `${stage.marker} ${stage.deltaMs.toFixed(1)} ms`).join(', ');
   console.log(`plugins-discovered span ${pluginSpan.totalMs.toFixed(1)} ms (budget ${budgets.pluginsDiscoveredSpanMs} ms, ${pluginSpan.detail || 'no detail'}): ${stages}.`);
   if (pluginSpan.totalMs > budgets.pluginsDiscoveredSpanMs) {
     const count = pluginSpan.stages.length === 1 ? '1 stage' : `${pluginSpan.stages.length} stages`;
     violations.push(`MainWindow.Connect.plugins-discovered took ${pluginSpan.totalMs.toFixed(1)} ms over ${count}; budget is ${budgets.pluginsDiscoveredSpanMs} ms`);
+  }
+  const discovered = Number(/(?:^|\s)count=(\d+)(?:\s|$)/.exec(pluginSpan.detail)?.[1] ?? NaN);
+  if (expectPlugins && !(discovered >= 1)) {
+    violations.push(`The latest session discovered no plugins (${pluginSpan.detail || 'no count'}), but --expect-plugins needs a session that ran with plugins`);
   }
 }
 
@@ -113,7 +133,8 @@ function checkMaximum(session, stage, maxMs, violations) {
 // The plugin discovery span: MainWindow.Connect.plugins-discovered and the MainWindow.Connect.plugins-* sub-stages
 // written just before it. Each delta runs from the previous MainWindow.Connect stage, so the span runs from the stage
 // before the first of them (backend-started) to plugins-discovered, and a log from before the split budgets
-// plugins-discovered alone. Lines of other scopes are skipped. Optional: null without a plugins-discovered stage.
+// plugins-discovered alone. Lines of other scopes are skipped. Null without a plugins-discovered stage, which the
+// caller reports as a violation.
 function pluginDiscoverySpan(sessionEvents) {
   const scope = 'MainWindow.Connect.';
   const end = sessionEvents.findLastIndex(event => event.stage === `${scope}plugins-discovered`);

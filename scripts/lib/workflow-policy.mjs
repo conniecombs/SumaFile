@@ -120,6 +120,10 @@ export function validateWorkflows(workflows, dependabot) {
     check(action(current, 'actions/checkout')?.with?.['fetch-depth'] === 0, `${file}: upgrade smoke requires full history`);
     command(file, id, /build-winui-release\.ps1.*-RequireInstaller/, 'installer build');
     command(file, id, /choco install wixtoolset\b/, 'WiX bootstrap');
+    // scripts/lib/wix-msi.ps1's Resolve-WixBin, which refuses WiX older than 3.14.1, not a copy without that gate.
+    command(file, id, /^\. \.\/scripts\/lib\/wix-msi\.ps1$/, 'shared WiX resolver (scripts/lib/wix-msi.ps1)');
+    check(!steps(current).some(step => /function Resolve-WixBin\b/.test(step.run ?? '')), `${file}/${id}: use the shared Resolve-WixBin`);
+    command(file, id, /^npm run smoke:winui-msi-lifecycle\s*$/, 'MSI lifecycle smoke');
     command(file, id, /choco install nsis\b/, 'NSIS bootstrap');
     command(file, id, /^npm run smoke:winui-file-ops\s*$/, 'packaged file operations');
     command(file, id, /^npm run smoke:winui-upgrade\s*$/, 'published-version upgrade smoke');

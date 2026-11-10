@@ -12,6 +12,9 @@ setting, sends it to the backend's `example.echo` method and shows the reply in 
 The full author guide, with every manifest field and its limits, every contribution kind, the threading rules and the
 backend protocol, is [docs/PLUGINS.md](../../docs/PLUGINS.md).
 
+To build a copy outside the SumaFile repository, see [Outside this repository](#outside-this-repository): the SDK and
+the helper crate are not published yet, so it builds against a local SumaFile checkout.
+
 ## What is in the folder
 
 ```text
@@ -95,12 +98,14 @@ the command appears in the command palette (`Ctrl+Shift+P`) and the **Greeting**
 Settings > Plugins.
 
 SumaFile records the approval with the SHA-256 of `plugin.json`. When `plugin.json` changes (a new version, a new
-permission, a public key) or the signature state changes, the plugin waits for consent again.
+permission, a public key), the signature state or the plugin's folder changes, or the plugin is installed from a file
+or removed, the plugin waits for consent again.
 
 ## Sign it
 
-A signature lets the consent dialog show **Verified publisher** with your key's fingerprint; an unsigned plugin can
-still be enabled. The repository's signing tool is `scripts/sign-plugin.mjs` (Node 22):
+A signature lets the consent dialog and the plugin's card show **Signed · key <fingerprint>**; an unsigned plugin can
+still be enabled. The signature proves that the files are unchanged since you signed them with that key. It does not
+prove who you are: the key comes from the plugin's own `plugin.json`. The repository's signing tool is `scripts/sign-plugin.mjs` (Node 22):
 
 ```powershell
 # Once: a key pair. Keep signing-key.pem private, in a folder outside every repository (keygen refuses a git work tree).
@@ -123,8 +128,10 @@ node scripts\sign-plugin.mjs verify target\template-plugins\com.example.template
 
 `sign` refuses a key that does not match `publisher.publicKey`. It writes `signature.json`: the SHA-256 of every file
 in the folder except `plugin.json` and `signature.json`, and an Ed25519 signature over `plugin.json` and that list,
-the payload SumaFile's verifier checks. `verify` checks the folder the way SumaFile does and prints the fingerprint.
-`stage.ps1` always starts from an empty folder, so re-sign after every stage.
+the payload SumaFile's verifier checks. Any file added to the folder later that `signature.json` does not list makes
+the signature invalid, so sign last. `verify` checks the folder the way SumaFile does and prints the fingerprint.
+`stage.ps1` always starts from an empty folder, so re-sign after every stage. SumaFile checks the signature when it
+scans plugins (at startup and on Rescan), not each time the plugin loads.
 
 ## Package it as a `.sfplugin`
 
@@ -154,32 +161,72 @@ Rename consistently, then rebuild and re-stage:
 
 ## Outside this repository
 
-Inside SumaFile the template takes the SDK and the helper crate from the repository by path. A standalone copy uses
-the published packages instead, once they are published (neither is yet):
+Inside SumaFile the template takes the SDK and the helper crate from the repository by path. Neither package is
+published yet, so a copy outside the repository builds against a local SumaFile checkout (`<checkout>` below, such as
+`C:\src\SumaFile`):
 
-- `ui/Example.Plugin/Example.Plugin.csproj`: replace the `ProjectReference` to `SimpleFile.PluginSdk.csproj` with
+1. In the checkout, pack the SDK. This writes `<checkout>\target\packages\SumaFile.PluginSdk.1.0.0.nupkg`:
 
-  ```xml
-  <PackageReference Include="SumaFile.PluginSdk" Version="1.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
-  ```
+   ```powershell
+   cd <checkout>
+   npm run pack:sdk
+   ```
 
-  then run `dotnet restore --force-evaluate` to rewrite `packages.lock.json`. `ui/Directory.Build.props` and
-  `ui/Directory.Build.targets` import SumaFile's build settings only when they find them, and otherwise set the same
-  defaults themselves.
-- `backend/Cargo.toml`: replace both path dependencies on `sumafile-plugin` with the published crate:
+2. Next to the copy's `plugin.json`, add a `nuget.config` with that folder as a package source (nuget.org stays
+   available through your user configuration):
 
-  ```toml
-  [dependencies]
-  sumafile-plugin = "1"
+   ```xml
+   <?xml version="1.0" encoding="utf-8"?>
+   <configuration>
+     <packageSources>
+       <add key="sumafile-local" value="C:\src\SumaFile\target\packages" />
+     </packageSources>
+   </configuration>
+   ```
 
-  [dev-dependencies]
-  sumafile-plugin = { version = "1", features = ["test-support"] }
-  ```
+3. In `ui/Example.Plugin/Example.Plugin.csproj`, replace the `ProjectReference` to `SimpleFile.PluginSdk.csproj`
+   (the whole element, with its `Private` and `ExcludeAssets`) with the same compile-only reference to the package:
 
-  A copy outside any Cargo workspace builds on its own (its target folder is `backend\target`, which `stage.ps1`
-  finds through `cargo metadata`); a copy inside another workspace joins that workspace's `members`.
-- `scripts/sign-plugin.mjs` is a single Node file with no dependencies: copy it alongside.
+   ```xml
+   <PackageReference Include="SumaFile.PluginSdk" Version="1.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
+   ```
 
-The SDK version is the plugin's `sdkVersion` (`1.0.0`); SumaFile loads a plugin whose major version matches its own.
-A plugin is bound to the versions of the assemblies SumaFile shares with it (the SDK, WinUI and the Windows App SDK,
-`CommunityToolkit.Mvvm`); docs/PLUGINS.md lists them.
+   then run `dotnet restore --force-evaluate` in `ui/Example.Plugin` to rewrite `packages.lock.json`, and build as
+   usual. `ui/Directory.Build.props` and `ui/Directory.Build.targets` import SumaFile's build settings only when they
+   find them, and otherwise set the same defaults themselves. NuGet caches a package by id and version: after packing
+   the SDK again at the same version, delete `%USERPROFILE%\.nuget\packages\sumafile.pluginsdk\1.0.0` before you
+   restore.
+
+4. In `backend/Cargo.toml`, point both dependencies on `sumafile-plugin` at the checkout's crate (it finds its own
+   dependency, `simplefile-ipc`, in the checkout by path):
+
+   ```toml
+   [dependencies]
+   sumafile-plugin = { path = "C:/src/SumaFile/crates/sumafile-plugin" }
+
+   [dev-dependencies]
+   sumafile-plugin = { path = "C:/src/SumaFile/crates/sumafile-plugin", features = ["test-support"] }
+   ```
+
+   The crate needs Rust 1.98.0 or newer (its `rust-version`); the checkout's `rust-toolchain.toml` does not apply
+   outside it, so use `rustup toolchain install 1.98.0` and `cargo +1.98.0 test` if your default toolchain is older.
+   A copy outside any Cargo workspace builds on its own (its target folder is `backend\target`, which `stage.ps1`
+   finds through `cargo metadata`); a copy inside another workspace joins that workspace's `members`.
+
+5. `scripts/sign-plugin.mjs` is a single Node file with no dependencies: copy it alongside.
+
+Once the packages are published, drop the `nuget.config` source (the `PackageReference` stays as it is) and use the
+published crate instead of the path:
+
+```toml
+[dependencies]
+sumafile-plugin = "1"
+
+[dev-dependencies]
+sumafile-plugin = { version = "1", features = ["test-support"] }
+```
+
+The SDK version is the plugin's `sdkVersion` (`1.0.0`). SumaFile loads a plugin whose `sdkVersion` has its own SDK's
+major version and a minor version no higher than its own, because the SDK assembly binds by major.minor. A plugin is
+bound to the versions of the assemblies SumaFile shares with it (the SDK, WinUI and the Windows App SDK,
+`CommunityToolkit.Mvvm`); [docs/PLUGINS.md](../../docs/PLUGINS.md#host-shared-assemblies) lists them.

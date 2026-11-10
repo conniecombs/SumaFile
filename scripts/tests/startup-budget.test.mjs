@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -24,12 +24,12 @@ const session = pluginLines => [
   line('MainWindow.StartupDriveRefresh.refreshed', 5050, 5050),
 ];
 
-function check(lines) {
+function check(lines, ...args) {
   const dir = mkdtempSync(path.join(tmpdir(), 'sumafile-startup-budget-'));
   try {
     const log = path.join(dir, 'startup-timing.log');
     writeFileSync(log, `${lines.join('\r\n')}\r\n`);
-    return spawnSync(process.execPath, [script], {
+    return spawnSync(process.execPath, [script, ...args], {
       env: { ...process.env, SUMAFILE_STARTUP_TIMING_LOG: log },
       encoding: 'utf8',
     });
@@ -77,9 +77,57 @@ test('a session logged before the sub-stages budgets the plugins-discovered delt
   assert.match(result.stderr, /MainWindow\.Connect\.plugins-discovered took 74\.2 ms over 1 stage; budget is 50 ms/);
 });
 
-test('a session without plugin discovery is not budgeted for it', () => {
+// The App discovers plugins on every start (MainWindow.ConnectAsync runs InitializePluginsAsync before the workspace
+// loads), so a session that reached ready without plugins-discovered never measured the 50 ms span.
+test('a ready session without plugins-discovered fails: the plugin budget is never skipped silently', () => {
   const result = check(session([]));
 
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /Missing startup marker: MainWindow\.Connect\.plugins-discovered/);
+  assert.match(result.stderr, /50 ms plugin discovery budget/);
+});
+
+test('a -NoPlugins session (count=0) is budgeted and passes', () => {
+  const noPlugins = session([
+    line('MainWindow.Connect.plugins-begin', 240.2, 0.2),
+    line('MainWindow.Connect.plugins-manager-built', 241.2, 1),
+    line('MainWindow.Connect.plugins-scan-awaited', 241.2, 0),
+    line('MainWindow.Connect.plugins-evaluated', 241.5, 0.3),
+    line('MainWindow.Connect.plugins-discovered', 243, 1.5, 'count=0'),
+  ]);
+  const result = check(noPlugins);
+
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.doesNotMatch(result.stdout, /plugins-discovered/);
+  assert.match(result.stdout, /plugins-discovered span 3\.0 ms \(budget 50 ms, count=0\)/);
+  assert.match(result.stdout, /WinUI startup budget passed/);
+});
+
+test('--expect-plugins requires the session to have discovered plugins', () => {
+  const discovered = count => session([line('MainWindow.Connect.plugins-discovered', 250, 10, `count=${count}`)]);
+
+  const withPlugins = check(discovered(4), '--expect-plugins');
+  assert.equal(withPlugins.status, 0, withPlugins.stdout + withPlugins.stderr);
+
+  // CI checks the budget right after the -PluginsDir smoke: a session with no plugins is not the one it meant to read.
+  const none = check(discovered(0), '--expect-plugins');
+  assert.equal(none.status, 1, none.stdout + none.stderr);
+  assert.match(none.stderr, /discovered no plugins \(count=0\).*--expect-plugins/);
+
+  const missing = check(session([]), '--expect-plugins');
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /Missing startup marker: MainWindow\.Connect\.plugins-discovered/);
+
+  const unknown = check(discovered(4), '--expect-plugin');
+  assert.equal(unknown.status, 2, unknown.stdout + unknown.stderr);
+  assert.match(unknown.stderr, /Unknown argument --expect-plugin/);
+});
+
+test('CI checks the budget with --expect-plugins right after the -PluginsDir smoke', async () => {
+  const { parseWorkflow } = await import('../lib/workflow-policy.mjs');
+  const ci = parseWorkflow(readFileSync(fileURLToPath(new URL('../../.github/workflows/ci.yml', import.meta.url)), 'utf8'));
+  const steps = ci.jobs.winui.steps;
+  const budget = steps.findIndex(step => /check:winui-startup-budget/.test(step.run ?? ''));
+  assert.ok(budget > 0);
+  assert.match(steps[budget].run, /^npm run check:winui-startup-budget -- --expect-plugins$/);
+  assert.match(steps[budget - 1].run, /smoke:winui-ui .*-PluginsDir /);
 });

@@ -57,28 +57,35 @@ function Remove-UiSmokeRunFolder {
         Write-Warning "Kept $run, which has no .sumafile-ui-smoke marker."
         return $false
     }
-    foreach ($folder in @($results, $run)) {
-        if (([System.IO.File]::GetAttributes($folder) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-            Write-Warning "Kept $run, because $folder is a link."
-            return $false
-        }
-    }
-    # One walk that never follows a link: any link under the run folder keeps the whole folder. Git object files are
-    # read-only, which Directory.Delete refuses, so they are made writable first.
-    $readOnly = New-Object System.Collections.Generic.List[System.IO.FileInfo]
-    $pending = New-Object System.Collections.Generic.Stack[System.IO.DirectoryInfo]
-    $pending.Push((New-Object System.IO.DirectoryInfo $run))
-    while ($pending.Count -gt 0) {
-        foreach ($entry in $pending.Pop().EnumerateFileSystemInfos()) {
-            if (($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-                Write-Warning "Kept $run, because $($entry.FullName) is a link."
+    # The link checks, the walk and the read-only reset can throw (a folder that cannot be listed, a file whose
+    # attributes cannot be changed): that keeps the folder with a warning, and never fails a smoke that passed.
+    try {
+        foreach ($folder in @($results, $run)) {
+            if (([System.IO.File]::GetAttributes($folder) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                Write-Warning "Kept $run, because $folder is a link."
                 return $false
             }
-            if ($entry -is [System.IO.DirectoryInfo]) { $pending.Push($entry) }
-            elseif ($entry.IsReadOnly) { $readOnly.Add($entry) }
         }
+        # One walk that never follows a link: any link under the run folder keeps the whole folder. Git object files
+        # are read-only, which Directory.Delete refuses, so they are made writable first.
+        $readOnly = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+        $pending = New-Object System.Collections.Generic.Stack[System.IO.DirectoryInfo]
+        $pending.Push((New-Object System.IO.DirectoryInfo $run))
+        while ($pending.Count -gt 0) {
+            foreach ($entry in $pending.Pop().EnumerateFileSystemInfos()) {
+                if (($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    Write-Warning "Kept $run, because $($entry.FullName) is a link."
+                    return $false
+                }
+                if ($entry -is [System.IO.DirectoryInfo]) { $pending.Push($entry) }
+                elseif ($entry.IsReadOnly) { $readOnly.Add($entry) }
+            }
+        }
+        foreach ($file in $readOnly) { $file.IsReadOnly = $false }
+    } catch {
+        Write-Warning "Kept $run, which could not be prepared for deletion: $($_.Exception.Message)"
+        return $false
     }
-    foreach ($file in $readOnly) { $file.IsReadOnly = $false }
     # A handle closing late (an indexer, an antivirus scan) can fail the first attempt.
     for ($attempt = 1; ; $attempt++) {
         try {
@@ -91,6 +98,45 @@ function Remove-UiSmokeRunFolder {
             }
             Start-Sleep -Milliseconds 500
         }
+    }
+}
+
+# The passed report and screenshots live beside the run folders: test-results\ui-smoke\last-passed-report.json and
+# test-results\ui-smoke\last-passed\*-polish.png. A run first deletes the previous run's, so a failed run never
+# leaves an older pass's report or screenshots looking like its own. Only those files: the folder and anything else in
+# it stay, and nothing is deleted through a link.
+function Clear-UiSmokeLastPassed {
+    param([Parameter(Mandatory = $true)][string]$ResultsRoot)
+    if (-not (Test-Path -LiteralPath $ResultsRoot -PathType Container)) { return }
+    $report = Join-Path $ResultsRoot 'last-passed-report.json'
+    if (Test-Path -LiteralPath $report -PathType Leaf) { [System.IO.File]::Delete($report) }
+    $shots = Join-Path $ResultsRoot 'last-passed'
+    if (-not (Test-Path -LiteralPath $shots -PathType Container)) { return }
+    if (([System.IO.File]::GetAttributes($shots) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$shots is a link; remove it and rerun."
+    }
+    foreach ($shot in @(Get-ChildItem -LiteralPath $shots -Filter '*-polish.png' -File)) {
+        if (($shot.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) { [System.IO.File]::Delete($shot.FullName) }
+    }
+}
+
+# Copies the polish screenshots the run produced (workspace-, conflict- and rename-polish.png; none for -Baseline)
+# from the top of the run folder into Destination, so they outlive the folder. $false, with a warning, when a copy
+# fails: the caller then keeps the run folder, which still holds them.
+function Copy-UiSmokePassedScreenshots {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+    try {
+        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+        foreach ($shot in @(Get-ChildItem -LiteralPath $RunRoot -Filter '*-polish.png' -File)) {
+            Copy-Item -LiteralPath $shot.FullName -Destination (Join-Path $Destination $shot.Name) -Force
+        }
+        return $true
+    } catch {
+        Write-Warning "Could not copy the screenshots of $RunRoot to ${Destination}: $($_.Exception.Message)"
+        return $false
     }
 }
 
@@ -248,6 +294,8 @@ if (Test-Path -LiteralPath (Join-Path $bundledPluginsRoot 'bundled.json')) {
 $sevenZa = Join-Path $root 'third_party\7zip\win-x64\7za.exe'
 if (($PluginsDir -or $NoPlugins) -and -not (Test-Path -LiteralPath $sevenZa)) { throw "7-Zip is missing: $sevenZa" }
 $uiSmokeRoot = Join-Path $root 'test-results\ui-smoke'
+$passedShotsRoot = Join-Path $uiSmokeRoot 'last-passed'
+Clear-UiSmokeLastPassed -ResultsRoot $uiSmokeRoot
 $runName = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $testRoot = Join-Path $uiSmokeRoot $runName
 New-Item -ItemType Directory -Path $testRoot | Out-Null
@@ -532,13 +580,18 @@ try {
 }
 
 # Only reached when the run and every after-run check passed: a throw above ends the script and keeps the run folder
-# as evidence. The report is copied beside the folder first, so the printed path, and CI's upload, outlive it.
+# as evidence. The report and the polish screenshots are copied beside the folder first, so the printed paths, and
+# CI's upload, outlive it.
 if (-not $smokeCompleted) { throw "UI smoke did not complete. Evidence: $testRoot" }
 $passedReportPath = Join-Path $uiSmokeRoot 'last-passed-report.json'
 Copy-Item -LiteralPath $reportPath -Destination $passedReportPath -Force
+$shotsCopied = Copy-UiSmokePassedScreenshots -RunRoot $testRoot -Destination $passedShotsRoot
 Write-Host "UI runtime smoke passed. Report: $passedReportPath"
+if ($shotsCopied) { Write-Host "Screenshots: $passedShotsRoot" }
 if ($KeepResults) {
     Write-Host "Kept the run folder (-KeepResults): $testRoot"
+} elseif (-not $shotsCopied) {
+    Write-Warning "Kept the run folder, which holds the screenshots that could not be copied: $testRoot"
 } else {
     $helperExecutables = @(@($installDir, $service, $sevenZa, $remoteServerExe, $pluginRoots) | Where-Object { $_ })
     $helperRoots = @(@($appProcessId, $serverProcessId) | Where-Object { $null -ne $_ })

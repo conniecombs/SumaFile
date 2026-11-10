@@ -9,7 +9,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  canonicalPayload, fingerprint, generateSigningKey, publicKeyBase64, signPlugin, verifyPlugin,
+  MAX_SIGNATURE_BYTES, canonicalPayload, fingerprint, generateSigningKey, publicKeyBase64, signPlugin, verifyPlugin,
 } from '../sign-plugin.mjs';
 
 const script = fileURLToPath(new URL('../sign-plugin.mjs', import.meta.url));
@@ -139,14 +139,88 @@ test('a changed, missing or added file is caught', () => withTemp(dir => {
   assert.equal(state.status, 'Invalid');
   assert.match(state.error, /Signature does not match the package contents/);
 
-  // The host checks only listed files, so a file added later keeps the status; verify names it.
+  // The host rejects any file signature.json does not list (plugin.json and signature.json aside), so a file added
+  // after signing makes the folder Invalid, wherever it is.
   writeFileSync(manifestPath, readFileSync(manifestPath, 'utf8').replace('"Evil"', '"Signed"'));
   signPlugin(folder, keyPath);
   writeFileSync(path.join(folder, 'extra.txt'), 'added after signing');
   state = verifyPlugin(folder);
-  assert.equal(state.status, 'Verified');
+  assert.equal(state.status, 'Invalid');
+  assert.match(state.error, /"extra\.txt" is in the plugin folder but not listed in signature\.json files/);
   assert.deepEqual(state.unlisted, ['extra.txt']);
-  assert.match(cli('verify', folder).stdout, /not covered.*extra\.txt/s);
+  const result = cli('verify', folder);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Invalid: .*extra\.txt/);
+
+  rmSync(path.join(folder, 'extra.txt'));
+  mkdirSync(path.join(folder, 'assets', 'new'));
+  writeFileSync(path.join(folder, 'assets', 'new', 'Late.dll'), 'nested, added after signing');
+  writeFileSync(path.join(folder, '.hidden'), 'hidden files count too');
+  state = verifyPlugin(folder);
+  assert.equal(state.status, 'Invalid');
+  assert.deepEqual(state.unlisted, ['.hidden', 'assets/new/Late.dll']);
+  assert.match(state.error, /^"\.hidden" and 1 other files in the plugin folder are not listed in signature\.json files\.$/);
+  assert.equal(state.fingerprint, fingerprint(publicKey), 'the signature itself checked out');
+
+  // An empty folder holds no file, and re-signing covers the new files.
+  rmSync(path.join(folder, '.hidden'));
+  rmSync(path.join(folder, 'assets', 'new', 'Late.dll'));
+  assert.equal(verifyPlugin(folder).status, 'Verified');
+  writeFileSync(path.join(folder, 'assets', 'new', 'Late.dll'), 'now signed');
+  signPlugin(folder, keyPath);
+  assert.deepEqual(verifyPlugin(folder), { status: 'Verified', fingerprint: fingerprint(publicKey), error: null, unlisted: [] });
+}));
+
+test('signature.json may start with a UTF-8 BOM and is capped at 1 MiB', () => withTemp(dir => {
+  const { keyPath, publicKey } = keyIn(dir);
+  const folder = writePlugin(dir, publicKey);
+  signPlugin(folder, keyPath);
+  const signaturePath = path.join(folder, 'signature.json');
+  const text = readFileSync(signaturePath, 'utf8');
+  writeFileSync(signaturePath, `\uFEFF${text}`);
+  assert.equal(verifyPlugin(folder).status, 'Verified', 'the host skips a BOM, and so does the tool');
+
+  // Padded past the cap with whitespace, which JSON allows: the host never reads it.
+  writeFileSync(signaturePath, text + ' '.repeat(MAX_SIGNATURE_BYTES - Buffer.byteLength(text) + 1));
+  let state = verifyPlugin(folder);
+  assert.equal(state.status, 'Invalid');
+  assert.match(state.error, /signature\.json is larger than 1 MiB/);
+  writeFileSync(signaturePath, text + ' '.repeat(MAX_SIGNATURE_BYTES - Buffer.byteLength(text)));
+  assert.equal(verifyPlugin(folder).status, 'Verified', 'exactly 1 MiB is still read');
+  assert.equal(MAX_SIGNATURE_BYTES, 1024 * 1024);
+}));
+
+test('sign refuses to write a signature.json over 1 MiB', () => withTemp(dir => {
+  const { keyPath, publicKey } = keyIn(dir);
+  const folder = writePlugin(dir, publicKey);
+  // Enough files that their listing alone passes 1 MiB (about 190 bytes an entry).
+  const many = path.join(folder, 'many');
+  mkdirSync(many);
+  const name = index => `${String(index).padStart(5, '0')}-${'x'.repeat(100)}.txt`;
+  for (let index = 0; index < 6000; index += 1) writeFileSync(path.join(many, name(index)), '');
+  assert.throws(() => signPlugin(folder, keyPath), /signature\.json would be \d+ bytes, larger than the 1 MiB the host reads/);
+  assert.equal(existsSync(path.join(folder, 'signature.json')), false, 'nothing is written');
+}));
+
+test('publisher.publicKey is compared by its decoded 32 bytes, not its text', () => withTemp(dir => {
+  const { keyPath, publicKey } = keyIn(dir);
+  // The host decodes publicKey with Convert.FromBase64String, which skips whitespace.
+  const spaced = ` ${publicKey.slice(0, 20)}\n${publicKey.slice(20)} `;
+  const folder = writePlugin(dir, spaced);
+  const signed = signPlugin(folder, keyPath);
+  assert.equal(signed.fingerprint, fingerprint(publicKey));
+  assert.equal(verifyPlugin(folder).status, 'Verified');
+  rmSync(folder, { recursive: true });
+
+  for (const [declared, error] of [
+    ['not base64!', /publisher\.publicKey in plugin\.json is not valid base64/],
+    [Buffer.alloc(16).toString('base64'), /publisher\.publicKey in plugin\.json must be exactly 32 bytes/],
+  ]) {
+    const bad = writePlugin(dir, declared);
+    assert.throws(() => signPlugin(bad, keyPath), error);
+    assert.equal(existsSync(path.join(bad, 'signature.json')), false);
+    rmSync(bad, { recursive: true });
+  }
 }));
 
 test('a mismatched or missing publisher.publicKey is refused', () => withTemp(dir => {
@@ -200,6 +274,21 @@ test('symlinks and paths the host cannot open are refused', { skip: process.plat
   folder = writePlugin(dir, publicKey);
   writeFileSync(path.join(folder, 'assets', 'zeta.txt'), 'differs only in case');
   assert.throws(() => signPlugin(folder, keyPath), /differ only in case/);
+  rmSync(folder, { recursive: true });
+
+  // A link added after signing is not listed, so verify reports the folder Invalid, as the host does.
+  folder = writePlugin(dir, publicKey);
+  signPlugin(folder, keyPath);
+  symlinkSync(path.join(folder, 'assets', 'Zeta.txt'), path.join(folder, 'late-link.txt'));
+  let state = verifyPlugin(folder);
+  assert.equal(state.status, 'Invalid');
+  assert.match(state.error, /"late-link\.txt" is in the plugin folder/);
+  rmSync(path.join(folder, 'late-link.txt'));
+  // A link to a folder is never followed, and is itself an unlisted entry.
+  symlinkSync(path.join(folder, 'assets'), path.join(folder, 'linked-assets'));
+  state = verifyPlugin(folder);
+  assert.equal(state.status, 'Invalid');
+  assert.deepEqual(state.unlisted, ['linked-assets']);
 }));
 
 test('verify follows the host on malformed signature files', () => withTemp(dir => {
@@ -243,4 +332,12 @@ test('npm run sign:plugin runs the tool', () => {
   const usage = cli();
   assert.equal(usage.status, 2);
   assert.match(usage.stderr, /keygen --out <dir>/);
+});
+
+test('git ignores plugin signing keys anywhere in the repository', () => {
+  // `git check-ignore` exits 0 for an ignored path; nothing needs to exist.
+  for (const file of ['signing-key.pem', 'plugins/example/keys/signing-key.pem', 'my-publisher.pem']) {
+    const result = spawnSync('git', ['check-ignore', '--no-index', '-q', file], { cwd: repoRoot });
+    assert.equal(result.status, 0, `${file} is ignored`);
+  }
 });

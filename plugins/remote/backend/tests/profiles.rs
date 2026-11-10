@@ -63,13 +63,13 @@ fn remote_private_key_profiles_persist_key_path_metadata() {
     let store = store_in(temp.path());
     let mut input = sftp_input();
     input.auth_kind = RemoteAuthKind::PrivateKey;
-    input.private_key_path = Some(r" C:\Users\raz00\.ssh\id_ed25519 ".to_string());
+    input.private_key_path = Some(r" C:\Users\you\.ssh\id_ed25519 ".to_string());
 
     let saved = store.save(input).expect("save private-key profile");
 
     assert_eq!(
         saved.private_key_path.as_deref(),
-        Some(r"C:\Users\raz00\.ssh\id_ed25519")
+        Some(r"C:\Users\you\.ssh\id_ed25519")
     );
     let profiles = store.list().expect("list profiles");
     assert_eq!(profiles[0].private_key_path, saved.private_key_path);
