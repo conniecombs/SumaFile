@@ -337,6 +337,10 @@ async fn slow_connect_does_not_block_other_requests() {
     );
     let mut stalling = harness.profile();
     stalling["host"] = json!("203.0.113.1");
+    // The first store call opens the database and runs the legacy import, which a cold Windows runner can take over
+    // a second to do (CI run 42742758345). Do it first, so the timed call below measures only whether the stalled
+    // connect blocks it.
+    assert_eq!(harness.ok("profiles.list", Value::Null).await, json!([]));
 
     let slow = {
         let harness = harness.clone();
