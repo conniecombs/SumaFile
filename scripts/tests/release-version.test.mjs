@@ -41,8 +41,11 @@ test('release preview is read-only and applying it keeps every identity in sync'
     }
     // A plugin project's own version (1.0.0, not the app's) is never rewritten.
     const gitLock = resolve(root, 'plugins/git/ui/SumaFile.Git/packages.lock.json');
-    writeFileSync(gitLock, readFileSync(gitLock, 'utf8').replace('"SimpleFile.PluginSdk": "[1.0.4, )"',
-      '"SimpleFile.PluginSdk": "[1.0.4, )",\n          "SumaFile.Git.Model": "[1.0.0, )"'));
+    // Whatever the app's version is now: the fixture must not go stale at the next release bump.
+    const sdkReference = /"SimpleFile\.PluginSdk": "\[[^,\]]+, \)"/;
+    assert.match(readFileSync(gitLock, 'utf8'), sdkReference);
+    writeFileSync(gitLock, readFileSync(gitLock, 'utf8').replace(sdkReference,
+      found => `${found},\n          "SumaFile.Git.Model": "[1.0.0, )"`));
     const original = readReleaseVersion(root);
     const { changes } = planReleaseVersion(root, 'v1.2.3-beta.1');
     assert.deepEqual(readReleaseVersion(root), original);

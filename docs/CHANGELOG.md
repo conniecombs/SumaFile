@@ -8,7 +8,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
-### Plugin system (development branch, not in any published release)
+---
+
+## [1.1.0-beta.1] - prepared 2026-11-10
+
+A beta. See the [1.1.0-beta.1 release notes](RELEASE_1.1.0-beta.1.md).
+
+### Plugin system
 
 - A plugin system: a plugin is a folder with a `plugin.json` manifest, an
   optional C# UI half that SumaFile loads into its own process, and an

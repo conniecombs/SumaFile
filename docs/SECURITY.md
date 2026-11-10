@@ -2,10 +2,10 @@
 
 ## Supported Branch
 
-Security reports for `main` and the latest release, SumaFile 1.0.4, should be evaluated against the Windows release scope: local files, mapped network drives, archives, previews, metadata, cleanup tools, updater metadata, and Windows installers.
+Security reports for `main`, the latest release, SumaFile 1.0.4, and the 1.1.0-beta.1 pre-release should be evaluated against the Windows release scope: local files, mapped network drives, archives, previews, metadata, cleanup tools, updater metadata, and Windows installers.
 See [v1.0.4 release notes](RELEASE_1.0.4.md) for the release boundary.
 
-The plugin system on the development branch (not in any published release yet) moves Git status and the Git workbench, FTP/FTPS/SFTP sessions and 7-Zip archives into the bundled plugins `com.sumafile.git`, `com.sumafile.remote` and `com.sumafile.sevenzip`. Reports against those plugins and against the plugin host are in scope; see [Plugins](#plugins).
+The plugin system, new in the 1.1.0-beta.1 pre-release, moves Git status and the Git workbench, FTP/FTPS/SFTP sessions and 7-Zip archives into the bundled plugins `com.sumafile.git`, `com.sumafile.remote` and `com.sumafile.sevenzip`. Reports against those plugins and against the plugin host are in scope; see [Plugins](#plugins).
 
 ## Sensitive Files
 
