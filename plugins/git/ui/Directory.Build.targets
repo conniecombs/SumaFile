@@ -1,0 +1,4 @@
+<Project>
+  <!-- Offline NuGet cache fallback and the .NET runtime pack fallback from src-winui. -->
+  <Import Project="..\..\..\src-winui\Directory.Build.targets" />
+</Project>

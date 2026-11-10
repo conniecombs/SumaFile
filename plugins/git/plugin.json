@@ -1,0 +1,48 @@
+{
+  "id": "com.sumafile.git",
+  "name": "Git",
+  "version": "1.0.0",
+  "publisher": { "name": "SumaFile Team", "url": "https://github.com/conniecombs/SumaFile" },
+  "sdkVersion": "1.0.0",
+  "ui": { "assembly": "SumaFile.Git.dll", "entryType": "SumaFile.Git.GitPlugin" },
+  "backend": { "executable": "sumafile-git-backend.exe", "args": [], "activateOn": "startup", "acceptsMultipleClients": false },
+  "permissions": ["backend-process", "shell", "network"],
+  "contributions": {
+    "commands": [
+      { "id": "git-panel", "label": "Git: show workbench", "group": "Git" },
+      { "id": "git-refresh", "label": "Git: refresh status", "group": "Git" },
+      { "id": "git-fetch", "label": "Git: fetch", "group": "Git" },
+      { "id": "git-pull", "label": "Git: pull", "group": "Git" },
+      { "id": "git-push", "label": "Git: push", "group": "Git" },
+      { "id": "git-commit", "label": "Git: commit staged changes", "group": "Git" },
+      { "id": "git-stage-selected", "label": "Git: stage selected paths", "group": "Git" },
+      { "id": "git-unstage-selected", "label": "Git: unstage selected paths", "group": "Git" },
+      { "id": "git-discard-selected", "label": "Git: discard selected changes", "group": "Git" },
+      { "id": "git-diff-selected", "label": "Git: show selected diff", "group": "Git" }
+    ],
+    "contextMenu": [
+      { "group": "Git", "items": [
+        { "command": "git-panel", "label": "Show Git workbench", "when": "folderFlag(inRepository)" },
+        { "command": "git-refresh", "label": "Refresh status", "when": "folderFlag(inRepository)" },
+        { "command": "git-diff-selected", "label": "Show diff", "when": "selectionCount == 1 && hasDecoration" },
+        { "command": "git-stage-selected", "label": "Stage selected", "when": "selectionCount >= 1 && hasDecoration" },
+        { "command": "git-unstage-selected", "label": "Unstage selected", "when": "selectionCount >= 1 && hasDecoration" },
+        { "command": "git-discard-selected", "label": "Discard selected changes", "when": "selectionCount >= 1 && hasDecoration" },
+        { "command": "git-fetch", "label": "Fetch", "when": "folderFlag(inRepository)" },
+        { "command": "git-pull", "label": "Pull", "when": "folderFlag(inRepository)" },
+        { "command": "git-push", "label": "Push", "when": "folderFlag(inRepository)" },
+        { "command": "git-commit", "label": "Commit", "when": "folderFlag(inRepository)" }
+      ] }
+    ],
+    "toolbar": [
+      { "command": "git-panel", "label": "Git", "glyph": "", "placement": "primary", "when": "folderFlag(inRepository)" }
+    ],
+    "panels": [
+      { "id": "workbench", "title": "Git workbench", "provider": "workbench", "placement": "bottom", "detachable": true, "command": "git-panel" }
+    ],
+    "rowDecorations": { "provider": "status" }
+  },
+  "settings": [
+    { "key": "enabled", "type": "boolean", "label": "Show Git status, menus and the Git workbench", "description": "Off: SumaFile runs no Git commands.", "default": true, "group": "General", "migrateFrom": "enableGitIntegration" }
+  ]
+}

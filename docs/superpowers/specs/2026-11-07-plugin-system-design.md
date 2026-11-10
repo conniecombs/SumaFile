@@ -1430,7 +1430,12 @@ Decisions (phase 2, as built):
 
 ### 11.3 Git plugin, `com.sumafile.git`
 
-- Folder: `plugin.json`, `SumaFile.Git.dll`, `sumafile-git-backend.exe`.
+- Folder: `plugin.json`, `SumaFile.Git.dll`, `SumaFile.Git.Model.dll`,
+  `SumaFile.Git.deps.json` and `sumafile-git-backend.exe` (phase 4, as phase 3
+  did for remote: the WinUI-free model assembly holds the view model, the
+  controller, the backend client and the decoration provider, so their tests
+  run in `SimpleFile.Tests`; the deps file lets the plugin's load context
+  resolve it from the plugin folder).
 - Backend: `simplefile-core/src/git.rs` as its own process,
   `sumafile-git-backend` (`plugins/git/backend`), serving the ten methods of
   `plugins/git/protocol.json`. Its status cache moves with it. Phase 4 fixes
@@ -1481,14 +1486,132 @@ Decisions (phase 2, as built):
     PATH.` and `Git operation cancelled`.
 - UI assembly: `GitWorkbenchView`, `GitWorkbenchViewModel`, the detachable
   window, and the logic in `MainWindow.Git.cs`.
+  Phase 4 shape (`plugins/git/ui`, two projects):
+  - `SumaFile.Git.Model` (`net10.0-windows`, WinUI-free, references only the
+    SDK, compile-only) holds the backend DTOs with their snake_case names,
+    `GitProtocol` (the method literals and the two error texts the UI
+    matches), `GitBackendClient`, `GitText`, `GitChangeRow`,
+    `GitWorkbenchViewModel` (1.0.4's, without the host-mode members, plus
+    `IsBusy` and `ChangesEmpty`), `GitWorkbenchController`, `IGitPrompts`,
+    `GitDecorationProvider`, `GitSettings`, `GitPaths` (Core `PathRules`
+    semantics: `\` and `/` are both separators, case is ignored) and
+    `GitCommandIds`.
+  - `SumaFile.Git` (19041) holds the entry type `SumaFile.Git.GitPlugin`,
+    which implements `IPlugin`, `ICommandHandler`, `IPanelProvider` and
+    `IRowDecorationProvider`, and the code-built views: `GitWorkbenchPanel`
+    (`XamlReader` fragments with `{ThemeResource}` keys only, values set from
+    `PropertyChanged`, a virtualized `Extended` changes list through
+    `ListRows`, a read-only Consolas diff), `GitDiffSplitter` (a `Grid` with
+    the `SizeWestEast` cursor that clamps the diff to 260-960 and resets it to
+    420 on a double-tap) and `GitPrompts`. The host draws the panel's chrome
+    (title, dock or window toggle, close button, resize grip).
+  - `CreatePanel` returns a new workbench body per presentation and starts a
+    silent refresh; the state lives in the view model, so docking and
+    detaching keep it. While the workbench is shown, a change of the active
+    folder refreshes it after 250 ms.
+  - Commit and discard are code-built `ContentDialog`s shown through
+    `IPluginDialogs.ShowDialogAsync`, on the shown workbench element's
+    `XamlRoot` (docked or in its window), or on the main window when no
+    workbench is shown. The discard dialog lists at most five paths, warns
+    that untracked files are deleted from disk, uses a
+    `SystemFillColorCriticalBrush` primary button and defaults to Cancel.
+  - The controller never throws to the host. Results and errors go to the
+    message bar through `IPluginDialogs.Notify`; a command that ends with
+    `Git operation cancelled`, or that its caller cancels, shows
+    `<Command> was cancelled.`. A refresh's result applies only while it is
+    the latest refresh and the active folder is still the one it asked
+    about. A path command runs on the workbench's selected rows, or else on
+    the file list's selection filtered by the last status's changes. After
+    stage, unstage, discard, commit and pull it asks the host to decorate
+    again (`IPluginHost.Decorations.Invalidate`); after discard and pull it
+    also lists the folder again (`IPluginWorkspace.RefreshAsync`).
+  - `GitDecorationProvider` runs on the thread pool and touches no WinUI
+    object. A row gets its status label, a brush (`added` and `staged`:
+    `SfDecorationAddedBrush`; `modified`, `renamed` and `staged + modified`:
+    `SfDecorationModifiedBrush`; `untracked`: `SfDecorationUntrackedBrush`;
+    `deleted` and `conflicted`: `SfDecorationDeletedBrush`; anything else:
+    `SfTextMutedBrush`) and the tooltip `Git: <label>`; a folder inside a
+    repository gets the flag `inRepository`. A backend error gives no
+    decorations and is logged once per distinct message.
+  - The UI's automation ids (`GitAutomationIds`: `Git.Workbench`,
+    `Git.Branch`, `Git.Summary`, `Git.Refresh`, `Git.Fetch`, `Git.Pull`,
+    `Git.Push`, `Git.Commit`, `Git.Stage`, `Git.Unstage`, `Git.Discard`,
+    `Git.Diff`, `Git.Changes`, `Git.DiffTitle`, `Git.DiffText`,
+    `Git.DiffSplitter`, `Git.CommitMessage`) are the UI smoke's contract, and
+    the 1.0.4 automation names `Refresh Git status`, `Fetch`, `Discard
+    selected changes`, `Git changes` and `Resize Git diff preview` stay.
 - Contributions: ten commands, one context-menu group with `when`
   expressions, one toolbar toggle, one panel, one row decoration provider with
   `activateOn: startup`.
+  Phase 4 (`plugins/git/plugin.json`, publisher as remote's, permissions
+  `backend-process`, `shell` and `network`, backend `activateOn: startup`):
+  - Commands, group `Git`: `git-panel` (`Git: show workbench`), `git-refresh`
+    (`Git: refresh status`), `git-fetch` (`Git: fetch`), `git-pull`
+    (`Git: pull`), `git-push` (`Git: push`), `git-commit` (`Git: commit
+    staged changes`), `git-stage-selected` (`Git: stage selected paths`),
+    `git-unstage-selected` (`Git: unstage selected paths`),
+    `git-discard-selected` (`Git: discard selected changes`) and
+    `git-diff-selected` (`Git: show selected diff`), exposed as
+    `plugin:com.sumafile.git:<id>`.
+  - One context-menu group `Git`: `Show Git workbench` and `Refresh status`
+    (`folderFlag(inRepository)`), `Show diff` (`selectionCount == 1 &&
+    hasDecoration`), `Stage selected`, `Unstage selected` and `Discard
+    selected changes` (`selectionCount >= 1 && hasDecoration`), then `Fetch`,
+    `Pull`, `Push` and `Commit` (`folderFlag(inRepository)`).
+  - One primary toolbar button `Git` (glyph E8EF) running `git-panel`, with
+    `when: folderFlag(inRepository)`.
+  - One panel `workbench` (`Git workbench`, provider `workbench`, `bottom`,
+    detachable) toggled by `git-panel`: the host shows and toggles it itself,
+    and `git-diff-selected` shows it through `IPluginHost.Panels` before it
+    previews the diff.
+  - `rowDecorations: { provider: "status" }`.
 - Settings: `enabled` replaces `EnableGitIntegration`. A migration copies the
   old value on first run.
+  Phase 4: one declarative boolean `enabled` (`Show Git status, menus and the
+  Git workbench`, description `Off: SumaFile runs no Git commands.`, default
+  true, group `General`, `migrateFrom: "enableGitIntegration"`); a missing or
+  unparsable value reads as true. It gates what 1.0.4's
+  `EnableGitIntegration` gated, with three decisions:
+  - **Commands stay listed and refuse while it is off.** The ten commands
+    stay on the palette and in the omnibar, since the host has no
+    per-command `when`. Running one, or a refresh, shows `Git integration is
+    turned off. Turn it on in Settings > Plugins > Git.` in the message bar
+    and runs no git. 1.0.4 hid them.
+  - **Turning it off is still a complete disable.** The write goes through
+    `WriteSettingAsync`, which asks the decoration provider again at once.
+    The provider reads the setting first, so with it off it returns nothing
+    and calls no backend method: the badges, the `inRepository` flag and with
+    it the Git menu group and the toolbar toggle go. The first such request
+    after one that read it on also hides a shown workbench. A workbench the
+    user opens on purpose while Git is off is not hidden again; it shows the
+    message until the user closes it.
+  - **Decorations run whatever the column layout.** Inside a repository the
+    plugin runs one cached `git status` per folder sync, because the same
+    result carries `inRepository`; 1.0.4 ran it only while the Git column was
+    visible. Outside a repository it spawns nothing.
+  Workspace profiles and saved layouts no longer carry the Git flag. They
+  never applied it (`WorkspaceChromeLayout.Apply` skips it), so applying a
+  profile or a layout behaves as before.
 - Core removes 11 Git IPC methods, `GitText` on rows, the Git menu, the Git
   commands, the inline panel and the toolbar button. `domainMethodCount`
   drops to 75.
+- UX changes from the move (phase 4):
+  - Git menu items are hidden, not disabled, when their `when` is false.
+  - The Git toggle moves from the status bar to the primary toolbar. It is
+    visible inside a repository or while the workbench is open.
+  - `Git: show workbench` from the palette shows the workbench; the toolbar
+    button toggles it.
+  - A saved custom toolbar that held a core `git-*` button loses it.
+  - Fetch, pull and push become Transfers rows with Cancel.
+  - Results show in the message bar through `IPluginDialogs.Notify`.
+  - A pull or discard the plugin runs no longer invalidates the service's
+    listing cache; the folder watcher, the directory stamp and the 10 s cache
+    age bound the staleness, as phase 3 accepted for remote downloads.
+  - The commands' and the open workbench's behaviour while `enabled` is off,
+    the complete disable and the decorations' independence from the column
+    layout are the three decisions under Settings above.
+- Without the plugin, SumaFile shows no Git UI: no badges, no Git menu group,
+  no toolbar toggle and no workbench.
 
 ### 11.4 Installer
 
@@ -1749,9 +1872,30 @@ No copy of these packages ships in a plugin folder. At run time
 `PluginLoadContext`'s shared prefixes (§5.2, `CommunityToolkit.Mvvm` included)
 force the host's copies, so a plugin is bound to the host's versions.
 `RemotePlugin_ProjectsReferenceOnlyTheSdkAndEachOther` enforces the set for the
-remote plugin's projects. This
+remote plugin's projects, and `GitPlugin_ProjectsReferenceOnlyTheSdkAndEachOther`
+for the Git plugin's. This
 widens "reference only the SDK package and the helper crate" for C#, and phase 4
 (Git) and the phase 5 template inherit it.
+
+Phase 4 refinement: `plugins/git/ui` has the same two-project shape as
+`plugins/remote/ui`, with copies of its `Directory.Build.props` and
+`Directory.Build.targets`:
+
+```text
+plugins/git/
+  plugin.json, protocol.json
+  backend/                           sumafile-git-backend (Rust)
+  ui/
+    SumaFile.Git.Model/              net10.0-windows, WinUI-free: DTOs, client, view model, controller, decorations
+    SumaFile.Git/                    net10.0-windows10.0.19041.0: GitPlugin and the code-built views
+```
+
+`SumaFile.Git.Model` references only `SimpleFile.PluginSdk` (compile-only) and
+no package; `SimpleFile.Tests` references it directly. `SumaFile.Git`
+references the SDK, the model and `Microsoft.WindowsAppSDK` and
+`Microsoft.Windows.SDK.BuildTools` compile-only; it needs no
+`CommunityToolkit.Mvvm`, because its view model implements
+`INotifyPropertyChanged` itself. Both projects are in `src-winui/SimpleFile.sln`.
 
 ## 13. Testing
 

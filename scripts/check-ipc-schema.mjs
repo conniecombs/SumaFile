@@ -505,7 +505,7 @@ const pluginProtocols = [
     dir: 'plugins/git',
     id: 'com.sumafile.git',
     label: 'git',
-    literalSources: ['plugins/git/backend/src/handler.rs'],
+    literalSources: ['plugins/git/backend/src/handler.rs', 'plugins/git/ui/SumaFile.Git.Model/GitProtocol.cs'],
   },
 ];
 

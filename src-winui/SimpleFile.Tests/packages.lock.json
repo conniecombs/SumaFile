@@ -176,6 +176,12 @@
       "simplefile.pluginsdk": {
         "type": "Project"
       },
+      "sumafile.git.model": {
+        "type": "Project",
+        "dependencies": {
+          "SimpleFile.PluginSdk": "[1.0.4, )"
+        }
+      },
       "sumafile.remote.model": {
         "type": "Project",
         "dependencies": {

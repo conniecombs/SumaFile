@@ -7,14 +7,15 @@ namespace SimpleFile.Tests.Remote;
 /// <summary>
 /// An <see cref="IPluginHost"/> that records every backend call (method and args JSON, serialized with the
 /// host's own <see cref="IpcJson.Options"/>), answers from per-method responders and raises backend events.
+/// The Git plugin's client tests reuse it with their own <paramref name="pluginId"/>.
 /// </summary>
-internal sealed class FakePluginHost : IPluginHost
+internal sealed class FakePluginHost(string pluginId = "com.sumafile.remote") : IPluginHost
 {
     private readonly object _gate = new();
     private readonly List<BackendCall> _calls = [];
     private readonly Dictionary<string, List<Subscription>> _subscriptions = new(StringComparer.Ordinal);
 
-    public string PluginId => "com.sumafile.remote";
+    public string PluginId { get; } = pluginId;
 
     /// <summary>Per method: args JSON in, result JSON out. A method without one answers <c>null</c>.</summary>
     public Dictionary<string, Func<string, Task<string>>> Responders { get; } = new(StringComparer.Ordinal);
