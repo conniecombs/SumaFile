@@ -17,14 +17,14 @@ public static class PluginSidebarLayout
     }
 
     /// <summary>
-    /// The key the collapse state is saved under, <c>&lt;pluginId&gt;:&lt;sectionId&gt;</c>: it outlives epochs and restarts.
-    /// </summary>
-    /// <summary>
     /// The section's key in the <see cref="PluginBodyLoadQueue"/>, <c>sidebar:</c> followed by <see cref="Key"/>: the
     /// slot prefix keeps a section and a panel with the same ids from dropping each other's load.
     /// </summary>
     public static string BodyLoadKey(PluginSidebarSection section) => "sidebar:" + Key(section);
 
+    /// <summary>
+    /// The key the collapse state is saved under, <c>&lt;pluginId&gt;:&lt;sectionId&gt;</c>: it outlives epochs and restarts.
+    /// </summary>
     public static string CollapseKey(PluginSidebarSection section)
     {
         ArgumentNullException.ThrowIfNull(section);

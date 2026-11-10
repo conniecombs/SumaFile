@@ -3,28 +3,54 @@
 # the release (scripts/build-winui-release.ps1) and the MSI lifecycle smoke (scripts/smoke-winui-msi-lifecycle.ps1).
 # Dot-source it: `. scripts/lib/wix-msi.ps1`. WiX v3 with WixUtilExtension: Product.wxs uses util:RemoveFolderEx.
 
+# WiX 3.14.1 is the first v3 release whose util:RemoveFolderEx does not follow junctions and symlinks; the uninstall
+# purge of plugins\ and plugins-data\ runs it on folders a user plugin can write, so an older candle.exe is refused.
+$script:MinimumWixVersion = [version]'3.14.1'
+
+function Get-WixToolVersion([string]$Path) {
+    # The file version of a WiX tool (candle.exe), or $null when it cannot be read.
+    try {
+        $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
+        return New-Object System.Version $info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-WixBin([string]$Dir) {
+    # True when -Dir holds candle.exe, light.exe, heat.exe and WixUtilExtension.dll, and candle.exe is 3.14.1 or later.
+    if (-not $Dir) { return $false }
+    foreach ($name in @('candle.exe', 'light.exe', 'heat.exe', 'WixUtilExtension.dll')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Dir $name) -PathType Leaf)) { return $false }
+    }
+    $version = Get-WixToolVersion (Join-Path $Dir 'candle.exe')
+    if (-not $version -or $version -lt $script:MinimumWixVersion) {
+        Write-Warning "Skipping WiX in ${Dir}: candle.exe is $version; $($script:MinimumWixVersion) or later is required (RemoveFolderEx)."
+        return $false
+    }
+    return $true
+}
+
 function Resolve-WixBin {
-    # The WiX v3 bin folder holding candle.exe, light.exe, heat.exe and WixUtilExtension.dll, or $null.
+    # The WiX v3 bin folder holding candle.exe, light.exe, heat.exe and WixUtilExtension.dll, with candle.exe 3.14.1 or
+    # later, or $null. PATH, the WIX variable and the fixed install folders come first; only when none of them fits are
+    # both Program Files trees searched, which is slow.
     $candidates = New-Object System.Collections.Generic.List[string]
     $onPath = Get-Command 'candle.exe' -ErrorAction SilentlyContinue
     if ($onPath) { $candidates.Add((Split-Path -Parent $onPath.Source)) }
-    foreach ($dir in @(
-            'C:\Program Files (x86)\WiX Toolset v3.14\bin',
-            'C:\Program Files (x86)\WiX Toolset v3.11\bin',
-            'C:\Program Files\WiX Toolset v3.14\bin'
-        )) {
-        $candidates.Add($dir)
+    if ($env:WIX) { $candidates.Add((Join-Path $env:WIX 'bin')) }
+    foreach ($rootDir in @(${env:ProgramFiles(x86)}, $env:ProgramFiles) | Where-Object { $_ }) {
+        $candidates.Add((Join-Path $rootDir 'WiX Toolset v3.14\bin'))
+    }
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($dir in $candidates) {
+        if ($seen.Add($dir) -and (Test-WixBin $dir)) { return $dir }
     }
     foreach ($rootDir in @(${env:ProgramFiles(x86)}, $env:ProgramFiles) | Where-Object { $_ }) {
-        Get-ChildItem -Path $rootDir -Filter 'candle.exe' -Recurse -ErrorAction SilentlyContinue |
-            ForEach-Object { $candidates.Add($_.DirectoryName) }
-    }
-    foreach ($dir in $candidates) {
-        $complete = $true
-        foreach ($name in @('candle.exe', 'light.exe', 'heat.exe', 'WixUtilExtension.dll')) {
-            if (-not (Test-Path -LiteralPath (Join-Path $dir $name) -PathType Leaf)) { $complete = $false; break }
+        foreach ($candle in @(Get-ChildItem -Path $rootDir -Filter 'candle.exe' -Recurse -ErrorAction SilentlyContinue)) {
+            if ($seen.Add($candle.DirectoryName) -and (Test-WixBin $candle.DirectoryName)) { return $candle.DirectoryName }
         }
-        if ($complete) { return $dir }
     }
     return $null
 }

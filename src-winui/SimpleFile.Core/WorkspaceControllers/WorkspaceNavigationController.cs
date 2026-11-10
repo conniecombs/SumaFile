@@ -310,12 +310,16 @@ internal sealed class WorkspaceNavigationController
         return (request, decorations);
     }
 
-    // Under the gate, with the listing: the result is kept unless the same request's late merge already landed.
+    // Under the gate, with the listing: the result is kept unless the same request's late merge already landed. A
+    // same-folder publish (the re-list after a rename, delete or create) keeps each pending plugin's shown part, as an
+    // invalidation does, so a slow provider does not blank the badges and folder flags until its late merge. A
+    // navigation cleared the pane's decorations when it started, and KeepingPendingFrom keeps nothing of another
+    // folder, so a publish for a new folder is applied as it is.
     private static void PublishDecorationsLocked(ExplorerPane state, (long Request, PaneDecorations Decorations) result)
     {
         if (ExplorerWorkspace.ShouldApplyDecorationsLocked(state, result.Request, late: false))
         {
-            state.Decorations = result.Decorations;
+            state.Decorations = result.Decorations.KeepingPendingFrom(state.Decorations);
             state.AppliedDecorationRequest = result.Request;
             state.AppliedDecorationLate = false;
         }

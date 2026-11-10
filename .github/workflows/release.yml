@@ -146,7 +146,6 @@ jobs:
 
             $candidates = @(
               'C:\Program Files (x86)\WiX Toolset v3.14\bin',
-              'C:\Program Files (x86)\WiX Toolset v3.11\bin',
               'C:\Program Files\WiX Toolset v3.14\bin'
             )
             $candidate = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1

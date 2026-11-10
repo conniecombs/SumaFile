@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SimpleFile.Core;
 
 namespace SimpleFile.App;
 
@@ -13,11 +14,21 @@ internal static class DialogHost
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly List<ShownDialog> Shown = [];
+
+    // The roots HideDialogsOn was called for: their windows are closing. A dialog that waited at the gate meanwhile is
+    // never shown on one (DialogHostTests).
+    private static readonly ClosedRootRegistry<XamlRoot> ClosedRoots = new ClosedRootRegistry<XamlRoot>();
     private static int _openCount;
 
     /// <summary>True while any dialog shown through the host is open or waiting to open.</summary>
     public static bool IsDialogOpen => Volatile.Read(ref _openCount) > 0;
 
+    /// <summary>
+    /// Shows <paramref name="dialog"/> once no other dialog shown through the host is open. Returns
+    /// <see cref="ContentDialogResult.None"/> without showing it when, by the time it gets the gate, its root is gone or
+    /// its window closed (<see cref="HideDialogsOn"/> recorded the root), so a dialog queued for a closed window never
+    /// opens on the dead root and never holds the gate.
+    /// </summary>
     public static async Task<ContentDialogResult> ShowAsync(
         ContentDialog dialog,
         CancellationToken cancellationToken = default)
@@ -32,6 +43,11 @@ internal static class DialogHost
 
         try
         {
+            if (!ClosedRoots.CanShowOn(RootOf(dialog)))
+            {
+                return ContentDialogResult.None;
+            }
+
             var showing = dialog.ShowAsync().AsTask();
             // A dialog on a window that closes may never complete its ShowAsync. HideDialogsOn completes Hidden, so the
             // gate is released either way.
@@ -62,7 +78,8 @@ internal static class DialogHost
     /// <summary>
     /// Hides every dialog shown through the host on <paramref name="root"/>, and releases its <see cref="ShowAsync"/>
     /// even if WinUI never completes the dialog's own <c>ShowAsync</c> (its window is closing). Runs on the UI thread;
-    /// returns how many dialogs it hid. The plugin window host calls it before it closes a plugin window.
+    /// returns how many dialogs it hid. The plugin window host calls it before it closes a plugin window. It also
+    /// records <paramref name="root"/> as closed, so a dialog still waiting at the gate for that window is not shown.
     /// </summary>
     internal static int HideDialogsOn(XamlRoot? root)
     {
@@ -71,6 +88,7 @@ internal static class DialogHost
             return 0;
         }
 
+        ClosedRoots.MarkClosed(root);
         ShownDialog[] candidates;
         lock (Shown)
         {
@@ -205,15 +223,18 @@ internal static class DialogHost
     }
 
     /// <summary>True when <paramref name="dialog"/> shows on <paramref name="root"/>; false when its root cannot be read.</summary>
-    private static bool IsOn(ContentDialog dialog, XamlRoot root)
+    private static bool IsOn(ContentDialog dialog, XamlRoot root) => ReferenceEquals(RootOf(dialog), root);
+
+    /// <summary>The dialog's root, or null when it has none or it cannot be read (its window is going).</summary>
+    private static XamlRoot? RootOf(ContentDialog dialog)
     {
         try
         {
-            return ReferenceEquals(dialog.XamlRoot, root);
+            return dialog.XamlRoot;
         }
         catch (Exception)
         {
-            return false;
+            return null;
         }
     }
 

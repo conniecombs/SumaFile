@@ -493,7 +493,7 @@ if (-not $SkipInstaller) {
         $builtMsi = Test-Path -LiteralPath $msiPath
     }
     else {
-        $message = "WiX v3 candle/heat/light with WixUtilExtension.dll was not found; skipped WinUI MSI."
+        $message = "WiX v3.14.1 or later (candle/heat/light with WixUtilExtension.dll) was not found; skipped WinUI MSI."
         if ($RequireInstaller) { throw $message }
         Write-Warning $message
     }

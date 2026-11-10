@@ -33,7 +33,13 @@ public static class PluginSignatureVerifier
         return signer.VerifySignature(signature);
     }
 
-    public static SignatureState Verify(string folder, PluginManifest manifest)
+    public static SignatureState Verify(string folder, PluginManifest manifest) => Verify(folder, manifest, null);
+
+    /// <summary>
+    /// Checks <c>signature.json</c> in <paramref name="folder"/> against <paramref name="manifestBytes"/>, the
+    /// plugin.json bytes discovery read, parsed and hashed; null reads <c>plugin.json</c> from the folder.
+    /// </summary>
+    public static SignatureState Verify(string folder, PluginManifest manifest, byte[]? manifestBytes)
     {
         try
         {
@@ -97,7 +103,7 @@ public static class PluginSignatureVerifier
                     return Invalid($"Listed file \"{path}\" does not match its recorded hash.");
             }
 
-            var payload = CanonicalPayload(folder, files);
+            var payload = manifestBytes is null ? CanonicalPayload(folder, files) : CanonicalPayload(manifestBytes, files);
             bool ok;
             try { ok = Ed25519Verify(pub, payload, sig); }
             catch (Exception e)
@@ -117,10 +123,15 @@ public static class PluginSignatureVerifier
     }
 
     /// <summary>plugin.json bytes, "\n", then "&lt;path&gt;\n&lt;sha256 hex&gt;\n" per file in ordinal path order.</summary>
-    public static byte[] CanonicalPayload(string folder, IReadOnlyDictionary<string, string> files)
+    public static byte[] CanonicalPayload(string folder, IReadOnlyDictionary<string, string> files) =>
+        CanonicalPayload(File.ReadAllBytes(Path.Combine(folder, "plugin.json")), files);
+
+    /// <summary>The <see cref="CanonicalPayload(string, IReadOnlyDictionary{string, string})"/> of these plugin.json bytes.</summary>
+    public static byte[] CanonicalPayload(byte[] manifestBytes, IReadOnlyDictionary<string, string> files)
     {
+        ArgumentNullException.ThrowIfNull(manifestBytes);
         using var ms = new MemoryStream();
-        ms.Write(File.ReadAllBytes(Path.Combine(folder, "plugin.json")));
+        ms.Write(manifestBytes);
         ms.WriteByte((byte)'\n');
         foreach (var path in files.Keys.OrderBy(k => k, StringComparer.Ordinal))
         {

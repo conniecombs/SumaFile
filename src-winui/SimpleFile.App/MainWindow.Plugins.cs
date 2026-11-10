@@ -271,10 +271,22 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// Puts primary-placement plugin actions on the toolbar layout and saves it when that added any.
-    /// Returns false (and does nothing) until the workspace has loaded its settings.
+    /// Settings applied its toolbar layout: the enabled plugins offer their primary items again, under the offered-once
+    /// rule, then the toolbar is rebuilt. After a Reset the saved layout has no offers, so their items come back (spec
+    /// §7); after any other save every offer was carried, so an item the user removed stays removed
+    /// (ToolbarResetOfferTests). The Settings save that follows writes the layout, so nothing is saved here.
     /// </summary>
-    private bool ApplyPluginToolbarPlacements(IReadOnlyList<PluginRecord> enabled)
+    private void ApplySettingsCommandSurfaceLayout()
+    {
+        ApplyPluginToolbarPlacements(_plugins?.EnabledPlugins ?? [], save: false);
+        ApplyCommandSurfaceLayout();
+    }
+
+    /// <summary>
+    /// Puts primary-placement plugin actions on the toolbar layout and, when <paramref name="save"/>, saves it when that
+    /// added any. Returns false (and does nothing) until the workspace has loaded its settings.
+    /// </summary>
+    private bool ApplyPluginToolbarPlacements(IReadOnlyList<PluginRecord> enabled, bool save = true)
     {
         if (!_pluginLayoutReady || _workspace is not { } workspace)
         {
@@ -288,7 +300,7 @@ public sealed partial class MainWindow
             added |= layout.EnsurePrimaryItem(id);
         }
 
-        if (added)
+        if (added && save)
         {
             _ = RunUiActionAsync("Toolbar", () => workspace.SaveUiSettingsAsync());
         }

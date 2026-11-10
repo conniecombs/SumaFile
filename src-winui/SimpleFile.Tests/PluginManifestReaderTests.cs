@@ -116,6 +116,56 @@ public class PluginManifestReaderTests
         Assert.Contains(r.Errors, e => e.Contains("greet"));
     }
 
+    [Theory]
+    [InlineData("has space")]
+    [InlineData("tab\there")]
+    [InlineData("new\nline")]
+    [InlineData("x129")]
+    public void Read_RejectsCommandIdsOutsideTheCommandGrammar(string id)
+    {
+        // Review finding: the reader took any non-blank id, but a toolbar keeps only plugin item ids whose command is
+        // 1-128 characters without whitespace (CommandSurfaceLayout.IsPluginItemId).
+        if (id == "x129") id = new string('x', 129);
+        var json = System.Text.Json.JsonSerializer.Serialize(id);
+        var extra = ", \"contributions\": { \"commands\": [ { \"id\": " + json + ", \"label\": \"A\" } ] }";
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Contains(
+            $"The contributions.commands[0].id value '{id}' is invalid: use 1 to 128 characters with no whitespace.",
+            r.Errors);
+        Assert.False(SimpleFile.Core.CommandSurfaceLayout.IsPluginItemId("plugin:com.example.a:" + id));
+    }
+
+    [Fact]
+    public void Read_CommandReferencesFollowTheCommandGrammar()
+    {
+        var extra = ", \"contributions\": { " +
+            "\"commands\": [ { \"id\": \"" + new string('x', 128) + "\", \"label\": \"A\" }, { \"id\": \"a:b.c-d_e\", \"label\": \"B\" } ], " +
+            "\"contextMenu\": [ { \"group\": \"g\", \"items\": [ { \"command\": \"bad id\", \"label\": \"X\" } ] } ], " +
+            "\"toolbar\": [ { \"command\": \"\\tx\", \"label\": \"Y\" } ] }";
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.Equal(
+            [
+                "The contributions.contextMenu[0].items[0].command value 'bad id' is invalid: use 1 to 128 characters with no whitespace.",
+                "The contributions.toolbar[0].command value '\tx' is invalid: use 1 to 128 characters with no whitespace.",
+            ],
+            r.Errors);
+        Assert.True(SimpleFile.Core.CommandSurfaceLayout.IsPluginItemId("plugin:com.example.a:" + new string('x', 128)));
+        Assert.True(SimpleFile.Core.CommandSurfaceLayout.IsPluginItemId("plugin:com.example.a:a:b.c-d_e"));
+    }
+
+    [Fact]
+    public void Read_RejectsDuplicateToolbarCommands()
+    {
+        // Review finding: a repeated toolbar[].command was accepted and the catalog then dropped one silently.
+        var extra = ", \"contributions\": { \"commands\": [ { \"id\": \"greet\", \"label\": \"A\" } ], " +
+            "\"toolbar\": [ { \"command\": \"greet\", \"label\": \"A\", \"placement\": \"primary\" }, " +
+            "{ \"command\": \"greet\", \"label\": \"B\" } ] }";
+        var r = PluginManifestReader.Read(Minimal(extra: extra), "com.example.a");
+        Assert.False(r.IsValid);
+        Assert.Equal(["The toolbar command 'greet' is declared more than once in contributions.toolbar."], r.Errors);
+    }
+
     [Fact]
     public void Read_RejectsUnknownEnumValues()
     {

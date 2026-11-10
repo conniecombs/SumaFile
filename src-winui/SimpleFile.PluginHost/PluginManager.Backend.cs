@@ -66,12 +66,24 @@ public sealed partial class PluginManager
         // the pipe connect never run on the UI thread.
         await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
 
-        lock (_gate)
+        ThrowIfNotLive();
+
+        // A load failure's teardown of this plugin may still be stopping its old backend, which owns the pipe (pipe
+        // names repeat per id); a scan that read the plugins after it began did not wait for it. Bounded by
+        // LoadFailureTeardownWait, and ended by DisposeAsync. Completes at once when none is tracked.
+        var teardown = WaitForLoadFailureTeardownAsync(record.Id);
+        if (!teardown.IsCompleted)
         {
-            if (!IsLiveGeneration(record, runtime, services))
+            try
+            {
+                await teardown.WaitAsync(_disposeCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_disposeCts.IsCancellationRequested)
             {
                 throw new PluginBackendException($"The backend of plugin '{record.Id}' is not available.");
             }
+
+            ThrowIfNotLive();
         }
 
         var generation = Interlocked.Increment(ref _backendGenerations);
@@ -132,6 +144,17 @@ public sealed partial class PluginManager
 
         RaiseChanged();
         return connection;
+
+        void ThrowIfNotLive()
+        {
+            lock (_gate)
+            {
+                if (!IsLiveGeneration(record, runtime, services))
+                {
+                    throw new PluginBackendException($"The backend of plugin '{record.Id}' is not available.");
+                }
+            }
+        }
     }
 
     private void OnBackendStartFailed(PluginRecord record, PluginRuntime runtime, PluginHostServices services, Exception ex)

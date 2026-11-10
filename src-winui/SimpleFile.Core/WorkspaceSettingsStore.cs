@@ -146,7 +146,9 @@ internal static class WorkspaceSettingsStore
     /// await: the normalized settings, the JSON of the toolbar layout and the folder-view settings, the shortcut
     /// overrides, the plugin section keys, the bookmarks and the recents. A change the UI thread makes while the writes
     /// run (a section toggle swapping in a new list, a plugin offering a toolbar item) is therefore neither lost nor
-    /// read half-way, and no list property of <paramref name="settings"/> is assigned after an await.
+    /// read half-way, and no list property of <paramref name="settings"/> is assigned after an await. That holds only
+    /// when the caller runs on the UI thread, which owns <paramref name="settings"/>: every caller in the App does, and a
+    /// Core path that reaches it (the profile apply) keeps the caller's context up to here.
     /// </summary>
     public static async Task SaveAsync(
         ISettingsBackend fileOps,

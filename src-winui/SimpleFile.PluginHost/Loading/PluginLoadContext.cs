@@ -94,7 +94,8 @@ public sealed class PluginLoadContext : AssemblyLoadContext
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            // A name that is not a file name (say, an absolute path) is never the host's.
+            // A name Path.Combine or File.Exists rejects is never the host's. An absolute name is not caught here:
+            // Path.Combine returns it unchanged, so it counts as the host's when that file exists.
             return false;
         }
     }

@@ -299,6 +299,10 @@ finally {
         $startedProcess = Get-Process -Id $startedProcess.Id -ErrorAction SilentlyContinue
         if ($startedProcess) {
             Stop-Process -Id $startedProcess.Id -Force
+            # Stop-Process returns before the process is gone; the backend checks below must see it exited.
+            if (-not $startedProcess.WaitForExit(5000)) {
+                Write-Warning "WinUI smoke-test process $($startedProcess.Id) had not exited 5 s after Stop-Process."
+            }
         }
         Write-Host "Closed WinUI smoke-test process $($process.Id). CloseMainWindow sent: $closed."
     }

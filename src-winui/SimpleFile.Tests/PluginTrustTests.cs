@@ -239,6 +239,49 @@ public class PluginTrustTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Verify_WithTheBytesDiscoveryRead_SignsThoseBytesAndReadsNoManifest()
+    {
+        // Spec: a scan reads each plugin.json once. The verifier checks the bytes discovery parsed and hashed, so a
+        // manifest swapped on disk after the read cannot be judged apart from the hash the approval used.
+        var tmp = NewTemp();
+        try
+        {
+            var dir = Package(tmp, out var files);
+            var (pub, priv) = NewKeyPair();
+            WriteSignature(dir, files, Sign(priv, PluginSignatureVerifier.CanonicalPayload(dir, files)));
+            var read = File.ReadAllBytes(Path.Combine(dir, "plugin.json"));
+            Assert.Equal(PluginSignatureVerifier.CanonicalPayload(dir, files), PluginSignatureVerifier.CanonicalPayload(read, files));
+            File.WriteAllText(Path.Combine(dir, "plugin.json"), "{\"id\":\"" + Id + "\",\"evil\":true}");
+
+            Assert.Equal(SignatureStatus.Verified, PluginSignatureVerifier.Verify(dir, Manifest(Convert.ToBase64String(pub)), read).Status);
+            Assert.Equal(SignatureStatus.Invalid, PluginSignatureVerifier.Verify(dir, Manifest(Convert.ToBase64String(pub))).Status);
+
+            // Without a plugin.json on disk at all, the discovery bytes are still enough.
+            File.Delete(Path.Combine(dir, "plugin.json"));
+            Assert.Equal(SignatureStatus.Verified, PluginSignatureVerifier.Verify(dir, Manifest(Convert.ToBase64String(pub)), read).Status);
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
+    [Fact]
+    public void Discovery_KeepsTheManifestBytesItHashed()
+    {
+        var tmp = NewTemp();
+        try
+        {
+            var root = Path.Combine(tmp, "plugins");
+            var folder = WriteContributingPlugin(root, "com.example.read");
+            var expected = File.ReadAllBytes(Path.Combine(folder, "plugin.json"));
+
+            var plugin = Assert.Single(SimpleFile.PluginHost.Discovery.PluginDiscovery.Scan([root]));
+
+            Assert.Equal(expected, plugin.ManifestBytes);
+            Assert.Equal(Hex(SHA256.HashData(expected)), plugin.ManifestHash);
+        }
+        finally { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); }
+    }
+
+    [Fact]
     public void Verify_TamperedManifest_IsInvalid()
     {
         var tmp = NewTemp();

@@ -373,6 +373,95 @@ public class RowDecorationCoordinatorTests
         Assert.Empty(log);
     }
 
+    [Fact]
+    public async Task DecorateAsync_CancelledDuringTheBudgetWait_HandsBackAnIncompleteResult()
+    {
+        // The request is cancelled while it waits for a source that honours the token. Its result must not look complete:
+        // that source counts as pending, so a caller keeps its shown part, and the newer request decides.
+        using var cancel = new CancellationTokenSource();
+        var source = new FakeRowDecorationSource("com.a", "com.slow");
+        source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(@"R:\repo\a.txt", "M")]);
+        source.Handler = (pluginId, _, _, ct) => pluginId == "com.slow"
+            ? Task.Delay(Timeout.Infinite, ct).ContinueWith<FolderDecorationBatch?>(_ => throw new OperationCanceledException(ct), TaskScheduler.Default)
+            : null;
+        var coordinator = Ready(source, AmpleBudget);
+        var lates = new ConcurrentQueue<PaneDecorations>();
+
+        var decorate = coordinator.DecorateAsync(@"R:\repo", false, [@"R:\repo\a.txt", @"R:\repo\b.txt"], lates.Enqueue, cancel.Token);
+        await WaitUntilAsync(() => source.Calls.Count == 2);
+        await cancel.CancelAsync();
+        var result = await decorate.WaitAsync(Watchdog);
+
+        Assert.False(result.IsComplete);
+        var shown = PaneDecorations.Merge(
+            @"R:\repo",
+            ["com.a", "com.slow"],
+            [FakeRowDecorationSource.Batch("com.slow", [(@"R:\repo\b.txt", "shown")], "com.slow:seen")]);
+        var kept = result.KeepingPendingFrom(shown);
+        Assert.Equal("shown", kept.For(@"R:\repo\b.txt")?.Text);
+        Assert.Contains("com.slow:seen", kept.FolderFlags);
+        await Task.Delay(100);
+        Assert.Empty(lates);
+    }
+
+    [Fact]
+    public async Task DecorateAsync_SourceThatNeverSettles_DoesNotHoldTheLateMergeBeyondTheLateLimit()
+    {
+        // A source that ignores the token and never answers must not keep the other late plugins' answers back for good:
+        // at the late limit the merge of what settled is delivered, with the hung plugin still pending (it keeps its shown
+        // part), and the hung plugin is logged.
+        var source = new FakeRowDecorationSource("com.a", "com.slow", "com.hang");
+        source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(@"R:\repo\a.txt", "M")]);
+        var slow = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hang = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.Handler = (pluginId, _, _, _) => pluginId switch
+        {
+            "com.slow" => slow.Task,
+            "com.hang" => hang.Task,
+            _ => null,
+        };
+        // The budget cuts the slow plugins (nothing instant is asserted in the returned merge); the late limit must leave
+        // the instant plugin time to start on a starved pool, as its answer is asserted in the late merge.
+        var coordinator = new RowDecorationCoordinator(ShortBudget, PendingBudget);
+        coordinator.SetSource(source);
+        coordinator.MarkStartupReady();
+        var log = new ConcurrentQueue<string>();
+        coordinator.Log = log.Enqueue;
+        var lates = new ConcurrentQueue<PaneDecorations>();
+
+        try
+        {
+            var result = await coordinator.DecorateAsync(
+                @"R:\repo",
+                false,
+                [@"R:\repo\a.txt", @"R:\repo\b.txt", @"R:\repo\c.txt"],
+                lates.Enqueue,
+                CancellationToken.None).WaitAsync(Watchdog);
+            Assert.False(result.IsComplete);
+            slow.SetResult(FakeRowDecorationSource.Batch("com.slow", [(@"R:\repo\b.txt", "slow")]));
+
+            await WaitUntilAsync(() => !lates.IsEmpty);
+            var late = Assert.Single(lates);
+            Assert.Equal("M", late.For(@"R:\repo\a.txt")?.Text);
+            Assert.Equal("slow", late.For(@"R:\repo\b.txt")?.Text);
+            Assert.False(late.IsComplete);
+            var shown = PaneDecorations.Merge(
+                @"R:\repo",
+                ["com.a", "com.slow", "com.hang"],
+                [FakeRowDecorationSource.Batch("com.hang", [(@"R:\repo\c.txt", "last")])]);
+            Assert.Equal("last", late.KeepingPendingFrom(shown).For(@"R:\repo\c.txt")?.Text);
+            Assert.Contains(log, line => line.Contains("com.hang", StringComparison.Ordinal));
+        }
+        finally
+        {
+            hang.TrySetResult(FakeRowDecorationSource.Batch("com.hang", [(@"R:\repo\c.txt", "too late")]));
+        }
+
+        // Delivered once: the hung plugin's answer after the limit is not a second late merge.
+        await Task.Delay(150);
+        Assert.Single(lates);
+    }
+
     private static RowDecorationCoordinator Ready(IRowDecorationSource source, TimeSpan? budget = null)
     {
         var coordinator = new RowDecorationCoordinator(budget ?? AmpleBudget);

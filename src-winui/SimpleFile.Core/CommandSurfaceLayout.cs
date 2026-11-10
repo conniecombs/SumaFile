@@ -145,9 +145,35 @@ public sealed class CommandSurfaceLayout
         }
     }
 
+    /// <summary>The longest command a plugin item id carries (<see cref="IsPluginCommand"/>).</summary>
+    public const int MaxPluginCommandLength = 128;
+
+    /// <summary>
+    /// The plugin command grammar: 1 to <see cref="MaxPluginCommandLength"/> characters with no whitespace. The
+    /// manifest reader enforces it on every command id a plugin declares or references, so every plugin command makes
+    /// an item id <see cref="IsPluginItemId"/> accepts.
+    /// </summary>
+    public static bool IsPluginCommand(ReadOnlySpan<char> command)
+    {
+        if (command.Length is < 1 or > MaxPluginCommandLength)
+        {
+            return false;
+        }
+
+        foreach (var c in command)
+        {
+            if (char.IsWhiteSpace(c))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// True for a well-formed plugin item id, <c>plugin:&lt;id&gt;:&lt;command&gt;</c>: the plugin id follows the plugin id
-    /// grammar (<c>^[a-z0-9][a-z0-9.-]{1,63}$</c>) and the command is 1-128 characters with no whitespace. Such an item
+    /// grammar (<c>^[a-z0-9][a-z0-9.-]{1,63}$</c>) and the command follows <see cref="IsPluginCommand"/>. Such an item
     /// stays in a saved toolbar while its plugin is absent.
     /// </summary>
     public static bool IsPluginItemId(string? id)
@@ -166,7 +192,7 @@ public sealed class CommandSurfaceLayout
 
         var pluginId = id.AsSpan(prefix.Length, separator - prefix.Length);
         var command = id.AsSpan(separator + 1);
-        if (pluginId.Length is < 2 or > 64 || command.Length is < 1 or > 128 || !IsPluginIdStart(pluginId[0]))
+        if (pluginId.Length is < 2 or > 64 || !IsPluginCommand(command) || !IsPluginIdStart(pluginId[0]))
         {
             return false;
         }
@@ -174,14 +200,6 @@ public sealed class CommandSurfaceLayout
         foreach (var c in pluginId[1..])
         {
             if (!IsPluginIdStart(c) && c is not ('.' or '-'))
-            {
-                return false;
-            }
-        }
-
-        foreach (var c in command)
-        {
-            if (char.IsWhiteSpace(c))
             {
                 return false;
             }

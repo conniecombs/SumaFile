@@ -7,7 +7,7 @@ namespace SimpleFile.App;
 
 /// <summary>
 /// One plugin's dialogs, shown through <see cref="DialogHost"/> so they queue behind any other open
-/// dialog. Each dialog names the plugin, so a plugin cannot pass its prompt off as SumaFile's own.
+/// dialog. The message and confirm dialogs name the plugin; a dialog the plugin builds (ShowDialogAsync) shows as built.
 /// </summary>
 internal sealed class PluginDialogs : IPluginDialogs
 {
@@ -125,7 +125,24 @@ internal sealed class PluginDialogs : IPluginDialogs
     private async Task<ContentDialogResult> ShowAsync(ContentDialog dialog, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        using var registration = ct.Register(() => _dispatcher.TryEnqueue(dialog.Hide));
+        // The callback can run after the plugin window closed; Hide on a dialog whose XamlRoot is gone throws, and from a
+        // dispatcher callback nothing would catch it (DialogHost.RunWithProgressAsync guards its hides the same way).
+        using var registration = ct.Register(() => _dispatcher.TryEnqueue(() =>
+        {
+            if (dialog.XamlRoot is null)
+            {
+                return;
+            }
+
+            try
+            {
+                dialog.Hide();
+            }
+            catch (Exception)
+            {
+                // Its window is going: the dialog is not showing any more.
+            }
+        }));
         var result = await DialogHost.ShowAsync(dialog, ct);
         ct.ThrowIfCancellationRequested();
         return result;

@@ -164,11 +164,11 @@ public class PluginContributionAdapterTests
     public void ToolbarActions_CarryTheWhenExpressionAndThePluginId()
     {
         var contributions = new PluginContributions(
-            [new PluginCommandSpec("toggle", "Toggle", "Git", null)],
+            [new PluginCommandSpec("toggle", "Toggle", "Git", null), new PluginCommandSpec("refresh", "Refresh", "Git", null)],
             [],
             [
                 new PluginToolbarSpec("toggle", "Git", "", "primary") { When = "folderFlag(inRepository)" },
-                new PluginToolbarSpec("toggle", "Always", "", "overflow"),
+                new PluginToolbarSpec("refresh", "Always", "", "overflow"),
             ],
             []);
         var manifest = new PluginManifest(
@@ -183,6 +183,7 @@ public class PluginContributionAdapterTests
         Assert.Equal("com.example.git", actions[0].PluginId);
         Assert.Equal("", actions[1].When);
         Assert.Equal("com.example.git", actions[1].PluginId);
+        Assert.Equal(["plugin:com.example.git:toggle", "plugin:com.example.git:refresh"], actions.Select(action => action.Id).ToArray());
 
         var builtIn = new ToolbarAction("refresh", "Refresh", "View", "", "refresh");
         Assert.Equal("", builtIn.When);

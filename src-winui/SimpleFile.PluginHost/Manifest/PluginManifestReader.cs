@@ -165,7 +165,7 @@ public static partial class PluginManifestReader
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var (item, path) in Items(el.Value, "commands", "contributions.commands", errors))
             {
-                var id = RequiredString(item, "id", path + ".id", errors);
+                var id = RequiredCommand(item, "id", path + ".id", errors);
                 var label = RequiredString(item, "label", path + ".label", errors);
                 var group = OptionalString(item, "group", path + ".group", errors) ?? "";
                 var shortcut = OptionalString(item, "shortcut", path + ".shortcut", errors);
@@ -182,7 +182,7 @@ public static partial class PluginManifestReader
                 var items = new List<PluginContextMenuItemSpec>();
                 foreach (var (sub, subPath) in Items(item, "items", path + ".items", errors))
                 {
-                    var cmd = RequiredString(sub, "command", subPath + ".command", errors);
+                    var cmd = RequiredCommand(sub, "command", subPath + ".command", errors);
                     var label = RequiredString(sub, "label", subPath + ".label", errors);
                     var when = ReadWhen(sub, subPath, errors);
                     if (cmd is not null && label is not null)
@@ -191,9 +191,17 @@ public static partial class PluginManifestReader
                 menus.Add(new PluginContextMenuSpec(group, items));
             }
 
+            // The catalog keys toolbar actions by command, so a repeated one would be dropped without a word.
+            var toolbarCommands = new HashSet<string>(StringComparer.Ordinal);
             foreach (var (item, path) in Items(el.Value, "toolbar", "contributions.toolbar", errors))
             {
-                var cmd = RequiredString(item, "command", path + ".command", errors);
+                var cmd = RequiredCommand(item, "command", path + ".command", errors);
+                if (cmd is not null && !toolbarCommands.Add(cmd))
+                {
+                    errors.Add($"The toolbar command '{cmd}' is declared more than once in contributions.toolbar.");
+                    cmd = null;
+                }
+
                 var label = RequiredString(item, "label", path + ".label", errors);
                 var glyph = OptionalString(item, "glyph", path + ".glyph", errors) ?? "";
                 var hasPlacement = item.TryGetProperty("placement", out var pEl) && pEl.ValueKind != JsonValueKind.Null;
@@ -255,6 +263,19 @@ public static partial class PluginManifestReader
             Panels = panels,
             RowDecorations = rowDecorations,
         };
+    }
+
+    /// <summary>
+    /// A required command id, declared or referenced: it must follow the plugin command grammar
+    /// (<see cref="SimpleFile.Core.CommandSurfaceLayout.IsPluginCommand"/>), so every plugin command makes a toolbar item
+    /// id the command surface keeps. An id outside it is reported and read as missing.
+    /// </summary>
+    private static string? RequiredCommand(JsonElement item, string name, string path, List<string> errors)
+    {
+        var command = RequiredString(item, name, path, errors);
+        if (command is null || SimpleFile.Core.CommandSurfaceLayout.IsPluginCommand(command)) return command;
+        errors.Add($"The {path} value '{command}' is invalid: use 1 to {SimpleFile.Core.CommandSurfaceLayout.MaxPluginCommandLength} characters with no whitespace.");
+        return null;
     }
 
     /// <summary>

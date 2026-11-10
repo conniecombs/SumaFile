@@ -15,7 +15,7 @@ namespace SimpleFile.PluginHost;
 /// </summary>
 public sealed partial class PluginManager
 {
-    private static readonly TimeSpan ArchiveUnregisterTimeout = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan ArchiveUnregisterTimeout = TimeSpan.FromSeconds(5);
 
     internal const int ArchiveRegisterAttempts = 3;
 

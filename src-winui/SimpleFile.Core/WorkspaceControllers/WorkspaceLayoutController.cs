@@ -250,6 +250,13 @@ internal sealed class WorkspaceLayoutController
         return true;
     }
 
+    /// <summary>
+    /// Applies a saved profile and saves the result. Every await here resumes on the caller's context, on purpose:
+    /// applying the profile's chrome writes <see cref="ExplorerWorkspace.Settings"/>, and
+    /// <see cref="WorkspaceSettingsStore.SaveAsync"/> normalizes it (the toolbar layout's lists among it) before its first
+    /// await. The UI thread owns those lists (<c>EnsurePrimaryItem</c> and the section toggles change them in place), so
+    /// from the UI thread both run there, never on the thread pool (#78/#84).
+    /// </summary>
     public async Task ApplyWorkspaceProfileAsync(
         ExplorerWorkspace workspace,
         WorkspaceProfileService profiles,
@@ -258,18 +265,17 @@ internal sealed class WorkspaceLayoutController
     {
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(profiles);
-        var profile = await profiles.FindAsync(id, cancellationToken).ConfigureAwait(false)
+        var profile = await profiles.FindAsync(id, cancellationToken)
             ?? throw new KeyNotFoundException("Profile was not found.");
         var clone = profile.Clone();
         (clone.Chrome ?? new WorkspaceChromeLayout()).Apply(
             workspace.Settings,
             workspace.PrimaryColumns,
             workspace.SecondaryColumns);
-        await ApplyLayoutAsync(workspace, clone.Layout, cancellationToken).ConfigureAwait(false);
-        await profiles.SetActiveAsync(clone.Id, cancellationToken).ConfigureAwait(false);
-        await SaveAsync(workspace.FileOps, CaptureLayout(workspace), workspace.Settings, workspace.Active.Path, cancellationToken)
-            .ConfigureAwait(false);
-        await workspace.SaveUiSettingsAsync(cancellationToken).ConfigureAwait(false);
+        await ApplyLayoutAsync(workspace, clone.Layout, cancellationToken);
+        await profiles.SetActiveAsync(clone.Id, cancellationToken);
+        await SaveAsync(workspace.FileOps, CaptureLayout(workspace), workspace.Settings, workspace.Active.Path, cancellationToken);
+        await workspace.SaveUiSettingsAsync(cancellationToken);
     }
 
     public void RestorePaneState(

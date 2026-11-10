@@ -136,6 +136,8 @@
                             AutomationProperties.AutomationId="PluginPanel.RightGrip"
                             AutomationProperties.Name="Resize plugin panel"
                             DoubleTapped="OnPluginPanelGripDoubleTapped"
+                            PointerCanceled="OnPluginPanelGripReleased"
+                            PointerCaptureLost="OnPluginPanelGripReleased"
                             PointerMoved="OnPluginPanelGripMoved"
                             PointerPressed="OnPluginPanelGripPressed"
                             PointerReleased="OnPluginPanelGripReleased"
@@ -170,6 +172,8 @@
                                 AutomationProperties.AutomationId="PluginPanel.BottomGrip"
                                 AutomationProperties.Name="Resize plugin panel"
                                 DoubleTapped="OnPluginPanelGripDoubleTapped"
+                                PointerCanceled="OnPluginPanelGripReleased"
+                                PointerCaptureLost="OnPluginPanelGripReleased"
                                 PointerMoved="OnPluginPanelGripMoved"
                                 PointerPressed="OnPluginPanelGripPressed"
                                 PointerReleased="OnPluginPanelGripReleased">

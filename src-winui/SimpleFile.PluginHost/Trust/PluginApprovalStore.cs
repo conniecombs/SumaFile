@@ -138,17 +138,17 @@ public sealed class PluginApprovalStore
         return records;
     }
 
+    private int _loadCount;
+
+    /// <summary>How many times this store has read its file (tests).</summary>
+    internal int LoadCount => Volatile.Read(ref _loadCount);
+
     /// <summary>
     /// The stored records, and the error when the file exists but could not be read even after the retries
     /// (another SumaFile or the antivirus may hold it for a moment). A missing file, or one that is not valid
     /// JSON, is an empty store with no error, so every plugin falls back to NeedsConsent rather than the host
     /// failing to start, and the next Set replaces the corrupt file.
     /// </summary>
-    private int _loadCount;
-
-    /// <summary>How many times this store has read its file (tests).</summary>
-    internal int LoadCount => Volatile.Read(ref _loadCount);
-
     private (Dictionary<string, ApprovalRecord> Records, Exception? ReadError) Load()
     {
         Interlocked.Increment(ref _loadCount);

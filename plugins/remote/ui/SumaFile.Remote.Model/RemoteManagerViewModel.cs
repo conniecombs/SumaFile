@@ -230,8 +230,9 @@ public sealed class RemoteManagerViewModel : ObservableObject
     public const string FingerprintMismatchPrefix = "SFTP host fingerprint mismatch";
 
     /// <summary>
-    /// Connects the selected profile. Host-key trust failures are returned as an outcome
-    /// (so the window can ask the user) instead of thrown; every other failure still throws.
+    /// Connects the selected profile. Returns an outcome, never throws, for success, for no selected profile, for a
+    /// session the backend reports lost, and for host-key trust failures (so the window can ask the user); every other
+    /// failure, a cancellation included, still throws.
     /// </summary>
     public async Task<ConnectOutcome> ConnectSelectedProfileAsync(string? secret = null, CancellationToken ct = default)
     {
@@ -602,12 +603,16 @@ public sealed class RemoteManagerViewModel : ObservableObject
     /// <summary>
     /// Ends the session when the manager closes. It cancels a running transfer and waits up to
     /// <paramref name="transferWait"/> for it to finish, then disconnects; a session the backend still reports as
-    /// busy is asked again every 200 ms until the same deadline. Returns true once the session is gone (or none was
+    /// busy is asked again every 200 ms until the same deadline. Each disconnect, which is network I/O in the backend,
+    /// gets a token cancelled at that deadline and is not awaited past it, so the whole close is bounded by
+    /// <paramref name="transferWait"/> even when the backend hangs. Returns true once the session is gone (or none was
     /// open), false when the deadline passed first; the session then ends with the backend.
     /// </summary>
     public async Task<bool> CloseSessionAsync(TimeSpan transferWait, CancellationToken ct = default)
     {
         var deadline = Stopwatch.GetTimestamp() + (long)(Math.Max(0, transferWait.TotalSeconds) * Stopwatch.Frequency);
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        bound.CancelAfter(Remaining(deadline));
         var transfer = _transferFinished;
         if (transfer is not null)
         {
@@ -618,7 +623,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             }
             catch (TimeoutException)
             {
-                // Try the disconnect anyway: the backend may have released the session already.
+                // The deadline passed: the disconnect below gets an already cancelled token and gives up at once.
             }
         }
 
@@ -632,7 +637,8 @@ public sealed class RemoteManagerViewModel : ObservableObject
 
             try
             {
-                await _backend.DisconnectAsync(session.SessionId, ct);
+                // WaitAsync too: a backend call that ignores its token must not hold the close past the deadline.
+                await _backend.DisconnectAsync(session.SessionId, bound.Token).WaitAsync(bound.Token);
                 if (ReferenceEquals(CurrentSession, session))
                 {
                     CurrentSession = null;
@@ -642,6 +648,10 @@ public sealed class RemoteManagerViewModel : ObservableObject
                 }
 
                 return true;
+            }
+            catch (OperationCanceledException) when (bound.IsCancellationRequested && !ct.IsCancellationRequested)
+            {
+                return false;
             }
             catch (Exception exception) when (IsSessionLost(exception))
             {

@@ -57,7 +57,7 @@ $payloadExe = Join-Path $payloadDir "SumaFile.exe"
 if (-not (Test-Path -LiteralPath $payloadExe -PathType Leaf)) { throw "No WinUI payload at $payloadExe. Run 'npm run release:build' first." }
 if (-not (Test-Path -LiteralPath $harvestedWxs -PathType Leaf)) { throw "No WiX harvest at $harvestedWxs. Run 'npm run release:build' first." }
 $wixBin = Resolve-WixBin
-if (-not $wixBin) { throw "WiX v3 (candle, light, heat and WixUtilExtension.dll) was not found." }
+if (-not $wixBin) { throw "WiX v3.14.1 or later (candle, light, heat and WixUtilExtension.dll) was not found." }
 
 Assert-NoSumaFileProcess
 $existing = @(Get-SumaFileUninstallEntries -Scope CurrentUser)

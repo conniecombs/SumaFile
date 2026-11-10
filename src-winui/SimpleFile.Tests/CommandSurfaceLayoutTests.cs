@@ -410,6 +410,15 @@ public class CommandSurfaceLayoutTests
         Assert.False(CommandSurfaceLayout.IsPluginItemId("plugin:a:b"));
         Assert.False(CommandSurfaceLayout.IsPluginItemId("plugin:com.a:" + new string('x', 129)));
         Assert.True(CommandSurfaceLayout.IsPluginItemId("plugin:com.a:" + new string('x', 128)));
+
+        // The command grammar the manifest reader enforces on every command id.
+        Assert.Equal(128, CommandSurfaceLayout.MaxPluginCommandLength);
+        Assert.True(CommandSurfaceLayout.IsPluginCommand("x"));
+        Assert.True(CommandSurfaceLayout.IsPluginCommand(new string('x', 128)));
+        Assert.False(CommandSurfaceLayout.IsPluginCommand(""));
+        Assert.False(CommandSurfaceLayout.IsPluginCommand(new string('x', 129)));
+        Assert.False(CommandSurfaceLayout.IsPluginCommand("has space"));
+        Assert.False(CommandSurfaceLayout.IsPluginCommand("tab\t"));
     }
 
     [Fact]

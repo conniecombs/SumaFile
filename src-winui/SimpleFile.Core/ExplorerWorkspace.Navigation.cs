@@ -189,10 +189,8 @@ public sealed partial class ExplorerWorkspace
                 return;
             }
 
-            if (!late)
-            {
-                decorations = decorations.KeepingPendingFrom(state.Decorations);
-            }
+            // A budget-cut result, and a late merge the late limit cut, keep each pending plugin's shown part.
+            decorations = decorations.KeepingPendingFrom(state.Decorations);
 
             var unchanged = (decorations.HasNoDecorations && state.Decorations.HasNoDecorations)
                 || decorations.HasSameContentAs(state.Decorations);

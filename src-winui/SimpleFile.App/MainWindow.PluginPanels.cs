@@ -483,6 +483,10 @@ public sealed partial class MainWindow
         e.Handled = true;
     }
 
+    /// <summary>
+    /// Ends a grip drag: on release, and on <c>PointerCanceled</c> and <c>PointerCaptureLost</c> (Alt+Tab, a touch
+    /// cancel), which MainWindow.xaml wires here too, so a drag never stays on after the grip lost the pointer.
+    /// </summary>
     private async void OnPluginPanelGripReleased(object sender, PointerRoutedEventArgs e)
     {
         var wasDragging = _pluginPanelGripDragging;
@@ -518,11 +522,15 @@ public sealed partial class MainWindow
         await RunUiActionAsync("Resize plugin panel", () => workspace.SaveUiSettingsAsync());
     }
 
-    /// <summary>Publishes the shown panel's state for <see cref="IPluginPanels.IsVisible"/> and redraws the toggles.</summary>
+    /// <summary>
+    /// Publishes the shown panel's state for <see cref="IPluginPanels.IsVisible"/> and recomputes the toolbar's
+    /// visibility: a panel toggle with a <c>when</c> stays visible while its panel is shown, so showing or hiding a panel
+    /// can show or hide its button, not only redraw it as a toggle. That pass redraws the toggles too.
+    /// </summary>
     private void PublishShownPluginPanel()
     {
         _shownPluginPanelStateKey = _shownPluginPanel is { } shown ? PluginPanelLayout.StateKey(shown) : null;
-        RefreshPluginPanelToggleButtons();
+        ApplyPrimaryOverflowVisibility(_primaryToolbarOverflow);
     }
 
     /// <summary>Redraws each panel's generated toolbar button as a toggle, after a panel was shown or hidden.</summary>

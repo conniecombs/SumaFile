@@ -435,6 +435,34 @@ public class PluginManagerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Disable_ApprovalsFolderNotWritable_StopsRaisesChangedAndThrows()
+    {
+        // Review finding: the failed write skipped Changed, so the main window kept the stopped plugin's contributions.
+        var folder = WriteBackendPlugin("startup");
+        Approve(BackendId, folder);
+        var launcher = HandshakingLauncher();
+        var manager = Manager(launcher);
+        await manager.DiscoverAsync(CancellationToken.None);
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning);
+        // A folder where the approvals file goes: the save's final move fails on every OS (the Enable test's deny ACL
+        // is Windows-only).
+        File.Delete(StorePath);
+        Directory.CreateDirectory(StorePath);
+        var changed = 0;
+        manager.Changed += (_, _) => Interlocked.Increment(ref changed);
+
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => manager.DisableAsync(BackendId, CancellationToken.None));
+
+        Assert.True(error is IOException or UnauthorizedAccessException, error.ToString());
+        Assert.True(Volatile.Read(ref changed) >= 1, "Changed was not raised");
+        Assert.True(launcher.Process!.Killed);
+        var record = Record(manager, BackendId);
+        Assert.Equal(PluginState.Disabled, record.State);
+        Assert.False(record.BackendRunning);
+        Assert.Empty(manager.EnabledPlugins);
+    }
+
+    [Fact]
     public async Task Rescan_RemovedFolder_DropsRecordAndContributions()
     {
         var hello = HelloFixture.CopyTo(Root);
@@ -1547,26 +1575,71 @@ public class PluginManagerTests : IAsyncLifetime
     {
         var launcher = HandshakingLauncher();
         var (manager, gate, _, create) = await LoadFailedBehindAGate(BackendId, "startup", launcher);
+        // Disable stops waiting at once and leaves the teardown running, so only Enable's own wait can hold it back.
+        manager.LoadFailureTeardownWait = TimeSpan.FromMilliseconds(50);
+        await manager.DisableAsync(BackendId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(PluginState.Disabled, Record(manager, BackendId).State);
+        manager.LoadFailureTeardownWait = TimeSpan.FromSeconds(30);
 
-        var disable = manager.DisableAsync(BackendId, CancellationToken.None);
         var enable = manager.EnableAsync(BackendId, CancellationToken.None);
         try
         {
             await Task.Delay(300);
-            Assert.Equal(1, launcher.Launches);
             Assert.False(enable.IsCompleted, "EnableAsync returned while the load-failure teardown still ran");
+            Assert.Equal(PluginState.Disabled, Record(manager, BackendId).State);
+            Assert.Equal(1, launcher.Launches);
         }
         finally
         {
             gate.TrySetResult();
         }
 
-        await Task.WhenAll(disable, enable).WaitAsync(TimeSpan.FromSeconds(2));
+        await enable.WaitAsync(TimeSpan.FromSeconds(5));
         await WaitUntil(() => launcher.Launches >= 2, TimeSpan.FromSeconds(2), "the backend was not started again");
         await Task.Delay(200);
         Assert.Equal(2, launcher.Launches);
         Assert.Equal(PluginState.Enabled, Record(manager, BackendId).State);
         await Settle(create);
+    }
+
+    [Fact]
+    public async Task BackendStart_AfterALoadFailure_WaitsForItsTeardown()
+    {
+        // Review finding: a scan waits for load-failure teardowns before it reads, so a plugin that failed during the
+        // read was started again while its old backend still owned the pipe. The start itself now waits.
+        var launcher = HandshakingLauncher();
+        var (manager, gate, _, create) = await LoadFailedBehindAGate(BackendId, "startup", launcher);
+        Assert.Equal(1, launcher.Launches);
+        // The rescan's own wait gives up at once, as if the failure had come after it.
+        manager.LoadFailureTeardownWait = TimeSpan.FromMilliseconds(50);
+        var rescan = manager.RescanAsync(CancellationToken.None);
+        manager.LoadFailureTeardownWait = TimeSpan.FromSeconds(30);
+        try
+        {
+            await rescan.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(PluginState.Enabled, Record(manager, BackendId).State);
+            await Task.Delay(300);
+            Assert.Equal(1, launcher.Launches);
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
+
+        await WaitUntil(() => launcher.Launches >= 2, TimeSpan.FromSeconds(5), "the backend was not started after the teardown");
+        await WaitUntil(() => Record(manager, BackendId).BackendRunning, TimeSpan.FromSeconds(5), "the new backend did not run");
+        Assert.Equal(2, launcher.Launches);
+        await Settle(create);
+    }
+
+    [Fact]
+    public void LoadFailureTeardownWait_DefaultCoversEveryTeardownStep()
+    {
+        // Windows 5 s, the archive engine unregister 5 s, the backend's exit 2 s, then activation and deactivation 5 s each.
+        var manager = Manager();
+        Assert.Equal(TimeSpan.FromSeconds(22), manager.LoadFailureTeardownWait);
+        manager.WindowCloseTimeout = TimeSpan.FromSeconds(1);
+        Assert.Equal(TimeSpan.FromSeconds(18), manager.LoadFailureTeardownWait);
     }
 
     [Fact]
@@ -2132,6 +2205,12 @@ public class PluginManagerTests : IAsyncLifetime
         public Task<T> RunAsync<T>(Func<Task<T>> work)
         {
             Interlocked.Increment(ref _calls);
+            if (Environment.CurrentManagedThreadId == ThreadId)
+            {
+                // Inline on its own thread, as the App's PluginUiDispatch.RunAsync is.
+                return work();
+            }
+
             var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
             Post(async _ =>
             {
@@ -2321,9 +2400,10 @@ public class PluginManagerTests : IAsyncLifetime
         var plugin = new UiPlugin { Decorate = (_, _) => Task.FromResult(expected) };
         manager.InstanceFactory = _ => plugin;
 
-        // The coordinator calls from the thread pool (Task 9).
+        // The coordinator calls from the thread pool (Task 9); a call from the UI thread, where activation runs inline
+        // once the instance exists, must not run the provider there either.
         var first = await Task.Run(() => manager.GetRowDecorationsAsync(UiId, Badges, CancellationToken.None));
-        var second = await Task.Run(() => manager.GetRowDecorationsAsync(UiId, Badges, CancellationToken.None));
+        var second = await ui.RunAsync(() => manager.GetRowDecorationsAsync(UiId, Badges, CancellationToken.None));
 
         Assert.Same(expected, first);
         Assert.Same(expected, second);
@@ -2397,6 +2477,65 @@ public class PluginManagerTests : IAsyncLifetime
         await cts.CancelAsync();
 
         Assert.Null(await call.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(PluginState.Enabled, Record(manager, UiId).State);
+        Assert.DoesNotContain(Snapshot(log), line => line.StartsWith("[warn]", StringComparison.Ordinal));
+        Assert.DoesNotContain(Snapshot(log), line => line.StartsWith("[error]", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GetRowDecorations_CancelledWhileTheProviderIgnoresIt_ReturnsNullAtOnceWithoutALogLine()
+    {
+        // Review finding: the call waited for a provider that ignores its token, and logged what it threw afterwards.
+        Approve(UiId, WriteUiPlugin());
+        var log = new List<string>();
+        var manager = Manager(log: (_, line) => Note(log, line));
+        await manager.DiscoverAsync(CancellationToken.None);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        manager.InstanceFactory = _ => new UiPlugin
+        {
+            Decorate = async (_, ct) =>
+            {
+                entered.TrySetResult();
+                if (Interlocked.Increment(ref calls) == 1)
+                {
+                    await release.Task;
+                    throw new IOException("git status failed");
+                }
+
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    // A provider that reports its own cancellation as another error.
+                    throw new InvalidOperationException("git was stopped");
+                }
+
+                return PluginFolderDecorations.Empty;
+            },
+        };
+
+        using (var cts = new CancellationTokenSource())
+        {
+            var call = manager.GetRowDecorationsAsync(UiId, Badges, cts.Token);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await cts.CancelAsync();
+            Assert.Null(await call.WaitAsync(TimeSpan.FromSeconds(2)));
+            release.SetResult();
+        }
+
+        using (var cts = new CancellationTokenSource())
+        {
+            var call = manager.GetRowDecorationsAsync(UiId, Badges, cts.Token);
+            await WaitUntil(() => Volatile.Read(ref calls) == 2);
+            await cts.CancelAsync();
+            Assert.Null(await call.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+
+        await Task.Delay(200);
         Assert.Equal(PluginState.Enabled, Record(manager, UiId).State);
         Assert.DoesNotContain(Snapshot(log), line => line.StartsWith("[warn]", StringComparison.Ordinal));
         Assert.DoesNotContain(Snapshot(log), line => line.StartsWith("[error]", StringComparison.Ordinal));
@@ -2721,6 +2860,27 @@ public class PluginManagerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MigrateLegacySettings_ATimeoutOfItsOwn_IsLoggedAsAFailure()
+    {
+        // A TimeoutException the migration itself throws is a failure, not the wait's bound passing.
+        WriteBundledSettingsPlugin();
+        var settings = new StoreSettings { [LegacyKey] = "false", ReadFailure = new TimeoutException("The settings service did not answer.") };
+        var log = new List<string>();
+        var manager = Manager(bundledRoot: Root, settings: settings, log: (id, line) => Note(log, $"{id} {line}"));
+        await manager.DiscoverAsync(CancellationToken.None);
+        var plugin = new UiPlugin();
+        manager.InstanceFactory = _ => plugin;
+
+        await Assert.ThrowsAsync<TimeoutException>(() => manager.MigrateLegacySettingsAsync(CancellationToken.None));
+        await manager.RunCommandAsync(OpenContext(UiId).CommandId, OpenContext(UiId), CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, plugin.Activations);
+        Assert.Contains("host [warn] The legacy settings migration failed: The settings service did not answer.", Snapshot(log));
+        Assert.DoesNotContain(Snapshot(log), line => line.Contains("still running", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task WriteSetting_WritesTheKeyAndInvalidatesThatPluginsDecorations()
     {
         Approve(UiId, WriteUiPlugin(legacySetting: true));
@@ -2855,6 +3015,8 @@ public class PluginManagerTests : IAsyncLifetime
         private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
 
         public TaskCompletionSource? Gate { get; init; }
+        /// <summary>When set, every read fails with it.</summary>
+        public Exception? ReadFailure { get; init; }
         public TaskCompletionSource ReadEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Action<string, string>? OnWrite { get; init; }
         public List<(string Key, string Value)> Writes { get; } = [];
@@ -2879,6 +3041,7 @@ public class PluginManagerTests : IAsyncLifetime
             lock (_values) Reads.Add(keys.ToList());
             ReadEntered.TrySetResult();
             if (Gate is { } gate) await gate.Task.WaitAsync(ct);
+            if (ReadFailure is { } failure) throw failure;
             lock (_values) return keys.Distinct().ToDictionary(k => k, k => _values.GetValueOrDefault(k));
         }
 

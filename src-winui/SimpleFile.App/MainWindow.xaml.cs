@@ -153,7 +153,7 @@ public sealed partial class MainWindow : Window
             RefreshView,
             ApplyTheme,
             ApplyKeyboardShortcuts,
-            ApplyCommandSurfaceLayout,
+            ApplySettingsCommandSurfaceLayout,
             ClearRecentHistoryAsync,
             action => DispatcherQueue.TryEnqueue(() => action()),
             () => _plugins,

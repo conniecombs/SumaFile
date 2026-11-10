@@ -118,8 +118,8 @@ public static class PluginDiscovery
                 if (!File.Exists(manifestPath)) continue;
 
                 var id = Path.GetFileName(folder);
-                // Read once: the same bytes are parsed and hashed, so the hash the trust decision uses is the hash
-                // of the manifest that was read.
+                // Read once: the same bytes are parsed, hashed and signature-checked, so the hash the trust decision
+                // uses is the hash of the manifest that was read.
                 byte[] bytes;
                 try { bytes = File.ReadAllBytes(manifestPath); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -135,7 +135,7 @@ public static class PluginDiscovery
                     : read.Errors.Any(e => e.Contains("sdkVersion", StringComparison.Ordinal))
                         ? DiscoveryState.IncompatibleSdk
                         : DiscoveryState.InvalidManifest;
-                all.Add(new DiscoveredPlugin(id, folder, root, state, read.Manifest, read.Errors, null, hash));
+                all.Add(new DiscoveredPlugin(id, folder, root, state, read.Manifest, read.Errors, null, hash, bytes));
             }
         }
 

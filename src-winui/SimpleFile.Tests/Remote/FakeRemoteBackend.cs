@@ -21,6 +21,12 @@ internal sealed class FakeRemoteBackend(RemoteProfile[] profiles) : IRemoteBacke
     /// <summary>Runs before each disconnect; throwing models a backend that refuses it (a busy session).</summary>
     public Action<string>? DisconnectHandler { get; set; }
 
+    /// <summary>
+    /// After <see cref="DisconnectHandler"/>: the disconnect's network round trip. Its task is the disconnect's; one that
+    /// never completes models a backend that hangs on it.
+    /// </summary>
+    public Func<string, CancellationToken, Task>? DisconnectAsyncHandler { get; set; }
+
     /// <summary>When each disconnect was attempted (<see cref="System.Diagnostics.Stopwatch"/> timestamps).</summary>
     public List<long> DisconnectAttempts { get; } = [];
     public int ListCalls { get; private set; }
@@ -129,8 +135,19 @@ internal sealed class FakeRemoteBackend(RemoteProfile[] profiles) : IRemoteBacke
 
         ThrowIfSessionLost(remoteSessionId);
         DisconnectHandler?.Invoke(remoteSessionId);
+        if (DisconnectAsyncHandler is { } handler)
+        {
+            return CompleteDisconnectAsync(handler(remoteSessionId, ct), remoteSessionId);
+        }
+
         DisconnectedSessionId = remoteSessionId;
         return Task.CompletedTask;
+    }
+
+    private async Task CompleteDisconnectAsync(Task disconnect, string remoteSessionId)
+    {
+        await disconnect;
+        DisconnectedSessionId = remoteSessionId;
     }
 
     public Task<RemoteDirectoryListing> ListDirectoryAsync(string remoteSessionId, string path, CancellationToken ct)

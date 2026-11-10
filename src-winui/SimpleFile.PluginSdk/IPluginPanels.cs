@@ -11,8 +11,9 @@ namespace SimpleFile.PluginSdk;
 public interface IPluginPanels
 {
     /// <summary>
-    /// Shows the panel, docked or in its window as the user last left it, and hides any other plugin panel. Completes
-    /// once the panel is shown. A host without panels throws <see cref="InvalidOperationException"/>.
+    /// Shows the panel docked and hides any other plugin panel; a panel the user already moved into its own window
+    /// stays there and its window is activated. A hidden panel always shows docked: closing its window hides it.
+    /// Completes once the panel is shown. A host without panels throws <see cref="InvalidOperationException"/>.
     /// </summary>
     Task ShowAsync(string panelId, CancellationToken ct);
 

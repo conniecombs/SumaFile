@@ -169,13 +169,15 @@ public sealed partial class PluginManager : IAsyncDisposable
     internal TimeSpan WindowCloseTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// How long a scan, enable, disable, restart or dispose waits for a plugin's load-failure teardown before it goes on
-    /// anyway: by default the bound <see cref="DisposeAsync"/> gives a teardown, <see cref="WindowCloseTimeout"/> plus the
-    /// runtime's retire timeouts. A seam so tests can shorten it.
+    /// How long a scan, enable, disable, restart, dispose or backend start waits for a plugin's load-failure teardown
+    /// before it goes on anyway. By default it is the sum of every bounded teardown step:
+    /// <see cref="WindowCloseTimeout"/>, the archive engine unregister, the old backend's exit and the runtime's retire
+    /// timeouts. A seam so tests can shorten it.
     /// </summary>
     internal TimeSpan LoadFailureTeardownWait
     {
-        get => _loadFailureTeardownWait ?? WindowCloseTimeout + PluginRuntime.RetireTimeouts;
+        get => _loadFailureTeardownWait
+            ?? WindowCloseTimeout + ArchiveUnregisterTimeout + PluginBackendConnection.ExitWait + PluginRuntime.RetireTimeouts;
         set => _loadFailureTeardownWait = value;
     }
 
@@ -274,7 +276,8 @@ public sealed partial class PluginManager : IAsyncDisposable
         await _ops.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            // Completes at once when no load failure is tearing down, so discovery's startup path gains no yield.
+            // Completes at once when no load failure is tearing down, so discovery's startup path gains no yield. A
+            // load failure during the read below is waited for by the backend start itself (StartBackendAsync).
             await WaitForLoadFailureTeardownAsync(null).ConfigureAwait(false);
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (prepared is not null && !IsPreparedForThis(prepared))
@@ -411,7 +414,8 @@ public sealed partial class PluginManager : IAsyncDisposable
             return new PluginEvaluation(plugin, PluginState.InvalidManifest, unsigned, ex.Message, null, isBundledId);
         }
 
-        var signature = PluginSignatureVerifier.Verify(plugin.Folder, plugin.Manifest!);
+        // The bytes discovery hashed, so plugin.json is read once per scan (spec §5.2).
+        var signature = PluginSignatureVerifier.Verify(plugin.Folder, plugin.Manifest!, plugin.ManifestBytes);
         var approval = store.Resolve(plugin.Id, hash, signature.Status, plugin.Folder, approvals);
         if (approval == ApprovalState.NeedsConsent && IsBundled(plugin, hash, bundled, bundledRoot))
         {
@@ -495,32 +499,45 @@ public sealed partial class PluginManager : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Sets Disabled, tears the plugin down and stores Disabled. When the approvals file cannot be written the plugin
+    /// still stops and <see cref="Changed"/> is still raised (its contributions go), then the write's exception is
+    /// thrown; the next start reads the plugin as enabled again.
+    /// </summary>
     public async Task DisableAsync(string id, CancellationToken ct)
     {
+        var changed = false;
         await _ops.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            // So Disable returns only once the plugin has really stopped.
-            await WaitForLoadFailureTeardownAsync(id).ConfigureAwait(false);
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            var record = Approvable(id);
-            lock (_gate)
+            try
             {
-                // First, so no command can attach a new runtime while the old one is torn down.
-                record.State = PluginState.Disabled;
-                record.Error = record.Signature.Error;
-            }
+                // So Disable returns only once the plugin has really stopped.
+                await WaitForLoadFailureTeardownAsync(id).ConfigureAwait(false);
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                var record = Approvable(id);
+                lock (_gate)
+                {
+                    // First, so no command can attach a new runtime while the old one is torn down.
+                    record.State = PluginState.Disabled;
+                    record.Error = record.Signature.Error;
+                    changed = true;
+                }
 
-            if (AfterDisableStateSet is { } afterDisableStateSet) await afterDisableStateSet().ConfigureAwait(false);
-            await TeardownAsync(record).ConfigureAwait(false);
-            _approvals.Set(id, record.ManifestHash!, record.Signature.Status, ApprovalState.Disabled, record.Discovered.Folder);
+                if (AfterDisableStateSet is { } afterDisableStateSet) await afterDisableStateSet().ConfigureAwait(false);
+                await TeardownAsync(record).ConfigureAwait(false);
+                _approvals.Set(id, record.ManifestHash!, record.Signature.Status, ApprovalState.Disabled, record.Discovered.Folder);
+            }
+            finally
+            {
+                _ops.Release();
+            }
         }
         finally
         {
-            _ops.Release();
+            // Outside _ops, as everywhere; also when the approvals write threw, since the plugin has stopped.
+            if (changed) RaiseChanged();
         }
-
-        RaiseChanged();
     }
 
     public async Task RestartBackendAsync(string id, CancellationToken ct)
@@ -768,19 +785,33 @@ public sealed partial class PluginManager : IAsyncDisposable
                 .ConfigureAwait(false);
         }
 
+        Task<PluginFolderDecorations>? call = null;
         try
         {
             // The provider must not touch WinUI, and its first synchronous part must not hold up the caller either.
-            var decorations = await Task.Run(() => provider.GetDecorationsAsync(request, ct), ct).ConfigureAwait(false);
-            if (decorations is null)
+            // The caller's cancel ends the wait even for a provider that ignores its token.
+            call = Task.Run(() => provider.GetDecorationsAsync(request, ct), ct);
+            var decorations = await call.WaitAsync(ct).ConfigureAwait(false);
+            if (decorations is null && !ct.IsCancellationRequested)
             {
                 _options.Log(pluginId, "[warn] Row decorations failed: the provider returned no result.");
             }
 
-            return decorations;
+            return ct.IsCancellationRequested ? null : decorations;
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (Exception) when (ct.IsCancellationRequested)
         {
+            // Whatever the provider throws once its caller has gone (its own error for a stopped git, say) is not
+            // logged; nobody awaits an abandoned call, so its later failure is observed here.
+            if (call is not null)
+            {
+                _ = call.ContinueWith(
+                    static t => _ = t.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
+
             return null;
         }
         catch (Exception ex)
@@ -857,8 +888,10 @@ public sealed partial class PluginManager : IAsyncDisposable
         {
             await migration.WaitAsync(LegacyMigrationWait).ConfigureAwait(false);
         }
-        catch (TimeoutException)
+        catch (TimeoutException) when (!migration.IsCompleted)
         {
+            // The bound passed. A TimeoutException of the migration's own (a settings call that timed out) is a
+            // failure, logged below.
             var seconds = LegacyMigrationWait.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
             _options.Log(
                 "host",

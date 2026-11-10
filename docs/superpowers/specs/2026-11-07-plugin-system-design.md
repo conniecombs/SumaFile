@@ -189,6 +189,14 @@ Phase 4 reader rules for the slots it implements:
   needs a `ui` assembly (`contributions.rowDecorations needs a ui assembly.`).
 - `toolbar[].when` is validated like a context-menu item's `when`: at most 512
   characters, in the same grammar.
+- Every command id, declared (`commands[].id`) or referenced
+  (`contextMenu[].items[].command`, `toolbar[].command`), follows the toolbar's
+  command grammar (`CommandSurfaceLayout.IsPluginCommand`: 1-128 characters
+  with no whitespace), so every plugin command makes an item id a saved toolbar
+  keeps; another gives `The <path> value '<c>' is invalid: use 1 to 128
+  characters with no whitespace.` A command appears at most once in `toolbar`
+  (`The toolbar command '<c>' is declared more than once in
+  contributions.toolbar.`), since the catalog keys toolbar actions by command.
 - `activateOn: "startup"` stays a `backend` field and starts only the backend. A
   row decoration provider's UI assembly activates on the first decoration
   request, which the host holds until startup is `ready`.
@@ -206,8 +214,8 @@ below). The public surface:
 - `IPlugin`: `Task ActivateAsync(IPluginHost host, CancellationToken ct)` and
   `Task DeactivateAsync()`.
 - `IPluginHost`: `InvokeBackendAsync<T>(method, args, ct)`, `Settings`,
-  `Progress`, `Dialogs`, `Workspace`, `Logger`, and `Events` for backend
-  events.
+  `Progress`, `Dialogs`, `Workspace`, `Logger`, `Events` for backend
+  events, and `Windows`, `Panels` and `Decorations` (below).
 - `IPluginSettings`: typed get and set over the plugin's own keys.
 - `IPluginProgress`: `Begin(title)` returning an operation handle with
   `Report(current, total, detail)`, `Complete()`, `Fail(message)` and a
@@ -351,7 +359,7 @@ contributed sidebar section, panel or row decoration becomes visible, or the
 first time the settings page opens. Manifest reading and contribution rendering
 happen at startup and must stay under 50 ms for ten plugins in the startup trace.
 To keep it there, a scan reads each `plugin.json` once (the bytes it parses are
-the bytes it hashes for trust), reads `bundled.json` and the approvals file once,
+the bytes it hashes for trust and checks against `signature.json`), reads `bundled.json` and the approvals file once,
 and judges every plugin against those snapshots
 (`Discover_TenPlugins_StaysUnderTheStartupBudget` pins the ten-plugin case).
 At startup the App does those reads on the thread pool while the file service
@@ -693,7 +701,8 @@ SDK. Backends in other languages implement the framing directly; the spec in
   The toolbar rule (phase 4 Task 4):
   - A saved toolbar keeps a well-formed `plugin:<id>:<command>` item
     (`CommandSurfaceLayout.IsPluginItemId`: the id follows the plugin id
-    grammar, the command is 1-128 characters with no whitespace) in place while
+    grammar, the command follows `IsPluginCommand`, 1-128 characters with no
+    whitespace, which the manifest reader enforces) in place while
     its plugin is disabled, failed or missing. `Normalize` still drops unknown
     core ids, such as the retired `git-*` and `ftp-sftp-manager`.
   - `CommandSurfaceLayout.VisibleItems()` is the toolbar as drawn: only the
@@ -707,11 +716,16 @@ SDK. Backends in other languages implement the framing directly; the spec in
   - Settings > Toolbar lists an absent plugin's item with its raw id and the
     detail `Plugin not loaded`, so it can still be removed. The editor carries
     the offers through a save, and Reset clears them, so the enabled plugins
-    offer their items again after a reset.
+    offer their items again after a reset: once Settings applies its layout,
+    MainWindow re-applies the enabled plugins' placements before it rebuilds
+    the toolbar, and the Settings save writes them.
   - `WorkspaceSettingsStore.SaveAsync` computes every value it writes on the
     caller's thread before its first await, and the sidebar's collapse toggle
     replaces `CollapsedPluginSidebarSections` instead of editing it, so a toggle
     or an offer that lands during a save is neither lost nor read half-way.
+    That needs the save to start on the UI thread, which owns `UiSettings`:
+    every App caller is there, and the profile apply
+    (`ApplyWorkspaceProfileAsync`) keeps the caller's context up to its save.
 - Plugin body loads are queued, never run inline (phase 4 Task 4, carry-over
   #82). `ActivateVisiblePluginSections` only asks `PluginBodyLoadQueue` (Core)
   for a load, keyed `sidebar:<section key>` (`PluginSidebarLayout.BodyLoadKey`;
@@ -723,10 +737,12 @@ SDK. Backends in other languages implement the framing directly; the spec in
   and raises `Changed` at once, and the caller gets its `PluginLoadException`
   at once. The teardown (windows, backend, deactivation) then runs as a task
   the manager tracks per plugin id. Rescan, Enable, Disable, Restart and
-  Dispose wait for it, bounded by `WindowCloseTimeout` plus the runtime's
-  retire timeouts and logged past that, before they create a runtime or start
-  a backend. So a new backend never starts while the old one still owns the
-  plugin's pipe.
+  Dispose wait for it, and so does every backend start of that plugin (a
+  failure during a scan's read comes after the scan's own wait), bounded by
+  the sum of the teardown's own bounds (`WindowCloseTimeout`, the archive
+  engine unregister, the old backend's exit and the runtime's retire timeouts)
+  and logged past that, before they create a runtime or start a backend. So a
+  new backend never starts while the old one still owns the plugin's pipe.
 - `SidebarView` renders plugin sections below the built-in sections, with
   headers from the manifest (title, collapse button, optional command button).
   The body comes from `PluginManager.CreateSidebarSectionAsync`, which activates
@@ -764,7 +780,7 @@ SDK. Backends in other languages implement the framing directly; the spec in
   so it never writes into the Debug exe folder, which is its install folder.
   `SmokePluginsAsync` asserts that all three lie under the test root, that no
   plugin root lies under `%LOCALAPPDATA%\SumaFile`, and that every plugin whose
-  backend runs has its `<data root>\<id>	mp` folder. The script snapshots the
+  backend runs has its `<data root>\<id>\tmp` folder. The script snapshots the
   pre-release plugin locations under `%LOCALAPPDATA%\SumaFile`
   (`Get-LegacyPluginLocationSnapshot`) and the Debug exe folder's app-owned
   plugin files (`Get-AppOwnedPluginState`) before the launch and fails when
@@ -832,7 +848,8 @@ SDK. Backends in other languages implement the framing directly; the spec in
     detached. Spec §7's sizes apply: the bottom region's `RowResizeGrip`
     (north-south cursor, `PluginPanel.BottomGrip`) and the right region's
     `PaneResizeGrip` (`PluginPanel.RightGrip`) clamp through
-    `PluginPanelLayout`, write `UiSettings`, and save on release. A
+    `PluginPanelLayout`, write `UiSettings`, and save on release; a lost
+    capture or a cancelled pointer ends the drag as a release does. A
     double-tap resets the default. `ResizePluginPanelBy(delta)` is the one
     resize path, for the drag and the UI smoke.
   - **Detach and dock.** Detach drops the docked body and opens a host-owned
@@ -911,7 +928,10 @@ SDK. Backends in other languages implement the framing directly; the spec in
     applies only while the pane still shows the folder of the navigation that
     asked, and only when no newer request's result was applied, whatever order
     results arrive in; a request's late merge supersedes its own budget-cut
-    result. A newer request cancels the older one's token. An invalidation
+    result. A newer request cancels the older one's token; a request cancelled
+    before its result is handed back gets an incomplete result, in which every
+    plugin without an answer is pending, never a complete one. An invalidation,
+    and a same-folder re-list (the refresh after a rename, delete or create),
     applies its immediate result at once: each plugin that answered within the
     budget (or answered nothing) replaces its part, a plugin that left the set
     loses its part, and each plugin still pending keeps its shown part, so a slow
@@ -919,6 +939,13 @@ SDK. Backends in other languages implement the framing directly; the spec in
     plugins settle, the final merge always follows unless the request was
     cancelled, even when every late plugin answered null or threw, so an
     invalidation always converges and never pins stale decorations or flags.
+    The caveat: the late merge waits at most `DefaultLateLimit` (30 s from the
+    request). A plugin still unsettled then is logged and stays pending in that
+    merge, so it keeps its last part (the other plugins' late answers still
+    apply), and its answer after the limit is dropped; a provider that never
+    settles therefore converges only at the folder's next request. Swapping the
+    panes starts new navigation tokens, which drop the late merges both panes
+    waited for, so a swap decorates both shown panes again.
   - **Whatever the column layout.** Decorations are asked on every folder sync,
     whether or not the status column is shown, because they also carry folder
     flags such as `inRepository` for menus and the toolbar.
@@ -984,7 +1011,7 @@ SDK. Backends in other languages implement the framing directly; the spec in
     queries (Windows clipboard, Open with) no `when` reads. A panel's toggle
     stays visible while its panel is shown, so it can always be hidden. The
     visibility is applied after every workspace sync, and every decoration
-    change raises one.
+    change raises one, and again whenever a panel is shown or hidden.
   - **Settings.** Settings > Plugins writes each declarative setting through
     `PluginManager.WriteSettingAsync`, so a decorating plugin's setting
     re-decorates the shown folders at once. Each declarative control has the
@@ -1009,7 +1036,9 @@ SDK. Backends in other languages implement the framing directly; the spec in
   provider that throws or returns null gives null and one
   `[warn] Row decorations failed: <message>` line in `plugins.log`, and the
   plugin stays Enabled (§10). A call the caller cancels gives null with no log
-  line, because the host cancels every superseded navigation. For the same
+  line, because the host cancels every superseded navigation: it returns at
+  the cancel even when the provider ignores its token, and whatever the
+  provider throws after the cancel is observed but not logged. For the same
   reason the caller's token never reaches `IPlugin.ActivateAsync` on this
   path: the activation runs under `CancellationToken.None` and the caller's
   token only stops that caller's wait. A cancel during activation therefore
@@ -1305,7 +1334,7 @@ Decisions (phase 2, as built):
   including `transfer.rs`, `secrets.rs` and both providers move as they are.
   Transfer progress is reported through `host.progress_*` so remote transfers
   keep appearing in the Transfers window with cancel.
-- Profiles and credentials (phase 3 decision). Profiles: the backend keeps them in `<data dir>\remote-profiles.db`, which is `<install dir>\plugins-data\com.sumafile.remote\remote-profiles.db` (§4.1) (table `remote_profiles`, the 1.0.4 schema). On first use it imports, read-only, every row of the `remote_profiles` table in the metadata.db the 1.0.4 service used (resolved as the service does: `SIMPLEFILE_METADATA_DB`, else the first existing `metadata.db` under `SIMPLEFILE_APP_DATA_DIR`, `%APPDATA%\com.simplefile.desktop`, `%APPDATA%\SumaFile`, `%APPDATA%\SimpleFile`, `%LOCALAPPDATA%\SumaFile`, `%LOCALAPPDATA%\com.simplefile.desktop`, `%LOCALAPPDATA%\SimpleFile`), skips ids it already has, and records per legacy database that it ran, so a run against another database (a test's or a smoke's) never blocks the real import. It never writes the old table, which stays for a downgrade. Credentials are read in place: the plugin keeps the `SumaFile.Remote.` prefix, `CRED_TYPE_GENERIC`, `CRED_PERSIST_LOCAL_MACHINE`, the UTF-8 `kind\0value` blob and each profile's `credential_target`, so saved passwords and passphrases keep working with no migration. Deleting a profile deletes its credential.
+- Profiles and credentials (phase 3 decision). Profiles: the backend keeps them in `<data dir>\remote-profiles.db`, which is `<install dir>\plugins-data\com.sumafile.remote\remote-profiles.db` (§4.1) (table `remote_profiles`, the 1.0.4 schema). On first use it imports, read-only, every row of the `remote_profiles` table in the metadata.db the 1.0.4 service used (resolved as the service does: `SIMPLEFILE_METADATA_DB`, else the first existing `metadata.db` under `SIMPLEFILE_APP_DATA_DIR`, `%APPDATA%\com.simplefile.desktop`, `%APPDATA%\SumaFile`, `%APPDATA%\SimpleFile`, `%LOCALAPPDATA%\SumaFile`, `%LOCALAPPDATA%\com.simplefile.desktop`, `%LOCALAPPDATA%\SimpleFile`), skips ids it already has, and records per legacy database that it ran, so a run against another database (a test's or a smoke's) never blocks the real import. It never writes the old table, which stays for a downgrade. Credentials are read in place: the plugin keeps the `SumaFile.Remote.` prefix, `CRED_TYPE_GENERIC`, `CRED_PERSIST_LOCAL_MACHINE`, the UTF-8 `kind\0value` blob and each profile's `credential_target`, so saved passwords and passphrases keep working with no migration. Deleting a profile deletes its credential. The backend reads, writes and deletes only targets that start with `SumaFile.Remote.` (phase 4 fix): a 1.0.1/1.0.2 row imported verbatim can name another application's Credential Manager entry, so for such a target a read finds nothing (the connect asks for the password), a delete leaves the entry and logs a warning, and a save with a secret is refused, as a new save naming a foreign target always was.
 - Backend methods (phase 3). The backend serves eleven plugin-owned methods to
   its UI through `IPluginHost.InvokeBackendAsync`, documented with their
   params, results, events, types and error texts in
@@ -1382,6 +1411,11 @@ Decisions (phase 2, as built):
   eight keys and writes only the changed ones. Tests pin the manifest defaults
   to the engine's `Policy::default()` (Rust) and to
   `RemoteTransferSettings.DefaultValues` (C#).
+  Phase 4 review decision: unless `checkMode` is `checksum`, an upload proves
+  its local source unchanged by size, write and creation times and file id.
+  A same-length rewrite within one file-time tick (about 15 ms on Windows) is
+  not detected, as in 1.0.4 and the local copy engine; hashing every upload
+  would read each source twice. `checksum` re-reads the content.
 - Window lifetime: the plugin owns at most one manager window, shared by the
   command, the sidebar rows and the settings page; opening it again activates
   it (a sidebar row also selects its profile while no session is open).
@@ -1453,12 +1487,34 @@ Decisions (phase 2, as built):
     only; relative entries are skipped. Without it every method except
     `repo.decorations` fails with `Git was not found. Install Git for Windows
     or add git.exe to PATH.` and spawns nothing.
-  - **Read-only queries** run `git --no-optional-locks --literal-pathspecs
-    -c core.fsmonitor=false -c core.hooksPath=<data dir>\no-hooks-<16 random
-    hex> -C <path> …`. The hooks folder is never created, so a browsed
-    repository's config can run no hook or fsmonitor program; this replaces
-    `%TEMP%\sumafile-git-no-hooks`. Path commands keep `--literal-pathspecs
-    -c core.fsmonitor=false` with hooks on; fetch, pull and push add nothing.
+  - **Read-only queries** (rev-parse, status and the diff preview, which
+    run on whatever repository the user browses) run no program the
+    repository's config names. Every query runs `git --no-optional-locks
+    --literal-pathspecs -c core.fsmonitor=false -c core.hooksPath=<data
+    dir>\no-hooks-<16 random hex> -C <path> …`; the hooks folder is never
+    created, so no hook or fsmonitor program runs (this replaces
+    `%TEMP%\sumafile-git-no-hooks`). Status and the diff preview first list
+    the config (`git config --list -z`, which runs nothing) and override
+    every configured filter driver with `-c filter.<name>.clean= -c
+    filter.<name>.smudge= -c filter.<name>.process= -c
+    filter.<name>.required=false`, so no clean filter or filter process runs
+    whichever attributes file names it (`.gitattributes`,
+    `.git/info/attributes`, `core.attributesFile`); a driver name `-c`
+    cannot spell (one with `=`) makes the status changeless and the diff
+    fail rather than run it. Both pass `--ignore-submodules=dirty`, so git
+    starts no `git status` inside a submodule, whose own filters would run:
+    a submodule shows as changed only when its checked-out commit moved. The
+    diff preview adds `--no-ext-diff --no-textconv --submodule=short`
+    against `diff.external`, diff driver commands, textconv and a diff
+    inside a submodule. Phase 4 fix decision: `--attr-source=<empty tree>`
+    is not used. It still reads `.git/info/attributes`, is fatal in a
+    SHA-256 repository, and drops the work tree's `text`/`eol` attributes,
+    so a fresh checkout under `* text eol=crlf` would show every file as
+    modified; the override works on every Git version, so no version check
+    is needed. Path commands (stage, unstage, discard) keep
+    `--literal-pathspecs -c core.fsmonitor=false` with hooks and filters on:
+    they are the user's own actions, and staging must run clean filters by
+    design. Fetch, pull and push add nothing.
   - **One job per command.** Each git process is created suspended
     (`CREATE_NO_WINDOW | CREATE_SUSPENDED`), assigned to its own
     `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` job and only then resumed, so
@@ -1469,17 +1525,35 @@ Decisions (phase 2, as built):
     kill-on-close job of the backend.
   - **Paths.** The status `root` and every change's `absolute_path` use `\`;
     the root keeps the caller's spelling (`rev-parse --show-cdup`) and falls
-    back to git's `--show-toplevel`. An untracked directory's trailing
-    separator is trimmed.
+    back to git's `--show-toplevel`. Git counts `--show-cdup` on the resolved
+    folder, so through a junction or a symbolic link the rebuilt folder can
+    be another one: it is used only when it resolves to the same folder as
+    `--show-toplevel` (or, where a path cannot be resolved, holds a `.git`).
+    An untracked directory's trailing separator is trimmed. File-level
+    commands resolve `.` and `..` lexically before the root check, so
+    `<root>\sub\..` is refused as the root and a path that leaves the root
+    as outside the repository.
   - **Cache.** One status run per repository root is reused for 1.5 s, keyed
-    by root case-insensitively, at most 16 roots. Every command that changes
-    the repository drops its root's entry before it runs and after it ends.
+    by root case-insensitively, at most 16 roots. Callers that ask for a
+    root while its status runs wait for that run instead of starting one.
+    Every command that changes the repository drops its root's entry before
+    it runs and after it ends; a run in flight then still answers its
+    waiters but is not cached, and later callers start a new one.
   - **Decorations.** `repo.decorations { folder }` answers
     `{ in_repository, root, rows: [{ path, status }] }` for the folder's
     direct children (`<folder>\<name>`). A missing folder, a folder below no
     `.git` marker (the walk honours `GIT_CEILING_DIRECTORIES` and is skipped
     when `GIT_DIR` or `GIT_WORK_TREE` is set) and any git failure give
     `in_repository: false` with no rows; outside a repository no git runs.
+    Without git it answers the same with no spawn and logs `Git was not
+    found…` as a warning once per backend process. An optional
+    `operationId` makes it cancellable: a `cancel` naming it kills the
+    request's git process (or ends its wait for a shared status run, which
+    goes on for the others), and the call fails with `-32000` `Git operation
+    cancelled`. `--untracked-files=normal` stays (phase 4 fix decision): it
+    overrides a repository's `status.showUntrackedFiles=no`, as 1.0.4 did,
+    because the badges must show untracked files; the shared run, the cache
+    and cancel bound the cost in a large repository.
   - **Transfers rows and cancel.** fetch, pull and push open a row with
     `host.progress_begin("Fetching <repository folder name>")` (`Pulling …`,
     `Pushing …`), or run without one when no host connection exists, and end
@@ -1522,7 +1596,8 @@ Decisions (phase 2, as built):
     `IPluginDialogs.ShowDialogAsync`, on the shown workbench element's
     `XamlRoot` (docked or in its window), or on the main window when no
     workbench is shown. The discard dialog lists at most five paths, warns
-    that untracked files are deleted from disk, uses a
+    that untracked files and files staged as added (index status `A`, which
+    discard unstages and then cleans) are deleted from disk, uses a
     `SystemFillColorCriticalBrush` primary button and defaults to Cancel.
   - The controller never throws to the host. Results and errors go to the
     message bar through `IPluginDialogs.Notify`; a command that ends with
@@ -1530,7 +1605,9 @@ Decisions (phase 2, as built):
     `<Command> was cancelled.`. A refresh's result applies only while it is
     the latest refresh and the active folder is still the one it asked
     about. A path command runs on the workbench's selected rows, or else on
-    the file list's selection filtered by the last status's changes. After
+    the file list's selection filtered by the changes of a status it asks for
+    then (the backend's 1.5 s cache keeps that cheap; a cached one went stale
+    while the workbench was hidden). After
     stage, unstage, discard, commit and pull it asks the host to decorate
     again (`IPluginHost.Decorations.Invalidate`); after discard and pull it
     also lists the folder again (`IPluginWorkspace.RefreshAsync`).
@@ -1579,7 +1656,9 @@ Decisions (phase 2, as built):
   Phase 4: one declarative boolean `enabled` (`Show Git status, menus and the
   Git workbench`, description `Off: SumaFile runs no Git commands.`, default
   true, group `General`, `migrateFrom: "enableGitIntegration"`); a missing or
-  unparsable value reads as true. It gates what 1.0.4's
+  unparsable value reads as true. A settings store that fails to answer (a
+  service restart) reads as the last value read from it, true only before any
+  read succeeded, so Git stays off for a user who turned it off. It gates what 1.0.4's
   `EnableGitIntegration` gated, with three decisions:
   - **Commands stay listed and refuse while it is off.** The ten commands
     stay on the palette and in the omnibar, since the host has no
@@ -1888,7 +1967,9 @@ installers keep them on reinstall and upgrade and remove them on uninstall:
   `InstallDirMemory`. It writes `[INSTALLDIR]` to
   `HKCU\Software\SumaFile\WinUI\InstallDir`, and a `RegistrySearch` reads it
   back into `INSTALLDIR`, so a major upgrade installs into the remembered
-  folder. On uninstall only (`REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE`) the
+  folder. AppSearch runs after the command line is read, so a remembered
+  folder also overrides an `INSTALLDIR=` given on the `msiexec` command line;
+  that is intended, as it keeps the user's plugins with the app. On uninstall only (`REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE`) the
   same component purges the four app-owned items in that folder:
   - `util:RemoveFolderEx` on `plugins\` and on `plugins-data\`;
   - `RemoveFile` on `plugins.log*` and on `plugin-approvals.json*`.
@@ -1904,7 +1985,11 @@ installers keep them on reinstall and upgrade and remove them on uninstall:
   `WixRemoveFoldersEx` fails ("Missing folder property") instead of skipping
   an unset property, so none is ever left unset. `scripts/lib/wix-msi.ps1`
   (`Resolve-WixBin`, `New-WinUIMsi`) builds the MSI with `WixUtilExtension`,
-  for the release and for the lifecycle smoke.
+  for the release and for the lifecycle smoke. `Resolve-WixBin` looks on
+  `PATH`, under `%WIX%` and in the fixed `WiX Toolset v3.14\bin` folders first
+  and searches both Program Files trees only when none fits. It requires
+  `candle.exe` 3.14.1 or later by file version, because older `RemoveFolderEx`
+  (3.11 included) follows junctions, which the uninstall purge must not.
 - `smoke-winui-installer` (`smoke-winui-nsis.ps1`) installs with `/S /D=` into
   `%TEMP%\sumafile-nsis-smoke-<guid>\SumaFile-WinUI`. It launches that copy,
   and requires `plugins.log`, `plugins-data\com.sumafile.sevenzip` and its

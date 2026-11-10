@@ -1333,7 +1333,6 @@ public class WinUiSourceShapeTests
         Assert.DoesNotContain(".. current.OfferedPrimaryItems", applyTo);
     }
 
-    /// <summary>The body of the first method whose declaration contains <paramref name="signature"/>, braces included.</summary>
     [Fact]
     public void RowDecorationCoordinator_StartsEverySourceCallOnTheThreadPool()
     {
@@ -1758,6 +1757,89 @@ public class WinUiSourceShapeTests
             "SyncFromWorkspaceCore does not apply the toolbar visibility after the command surface.");
     }
 
+    [Fact]
+    public void PublishShownPluginPanel_RecomputesTheToolbarVisibility()
+    {
+        // A panel toggle with a `when` stays visible while its panel is shown. Showing or hiding a panel must recompute
+        // that visibility at once, not only redraw the toggle chrome and wait for the next workspace sync.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        var body = MethodBody(panels, "private void PublishShownPluginPanel(");
+
+        var key = body.IndexOf("_shownPluginPanelStateKey =", StringComparison.Ordinal);
+        var apply = body.IndexOf("ApplyPrimaryOverflowVisibility(_primaryToolbarOverflow)", StringComparison.Ordinal);
+        Assert.True(key >= 0 && apply > key, "PublishShownPluginPanel must recompute the toolbar visibility after it publishes the state.");
+
+        // That pass redraws the toggles as well, so nothing is lost by not calling RefreshPluginPanelToggleButtons here.
+        var surface = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.CommandSurface.cs"));
+        Assert.Contains("RefreshPluginPanelToggleButtons();", MethodBody(surface, "private void ApplyPrimaryToolbarCommandVisibility("));
+        var window = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        Assert.Contains("ApplyPrimaryToolbarCommandVisibility(overflowed);", MethodBody(window, "private void ApplyPrimaryOverflowVisibility("));
+    }
+
+    [Fact]
+    public void ApplyWorkspaceProfile_KeepsTheCallersContextUpToTheSettingsSave()
+    {
+        // #78/#84: the save normalizes Settings on the caller's thread; the profile apply must not hop to the pool first.
+        var root = FindRepoRoot();
+        var layouts = File.ReadAllText(Path.Combine(root, "SimpleFile.Core", "WorkspaceControllers", "WorkspaceLayoutController.cs"));
+        var body = MethodBody(layouts, "public async Task ApplyWorkspaceProfileAsync(");
+
+        Assert.DoesNotContain("ConfigureAwait(false)", body);
+        Assert.Contains("await workspace.SaveUiSettingsAsync(cancellationToken);", body);
+    }
+
+    [Fact]
+    public void SettingsSave_ReappliesThePluginToolbarPlacementsBeforeItSaves()
+    {
+        // Spec §7: after a toolbar Reset the enabled plugins offer their items again. Settings hands MainWindow its
+        // layout through the apply callback, which re-applies the placements (without a save of its own) before the
+        // toolbar is rebuilt; the Settings save that follows writes them.
+        var root = FindRepoRoot();
+        var window = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var construct = window[window.IndexOf("new FileOperationDialogService(", StringComparison.Ordinal)..];
+        construct = construct[..construct.IndexOf(");", StringComparison.Ordinal)];
+        Assert.Contains("ApplySettingsCommandSurfaceLayout,", construct);
+        Assert.DoesNotContain("            ApplyCommandSurfaceLayout,", construct);
+
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        var apply = MethodBody(plugins, "private void ApplySettingsCommandSurfaceLayout(");
+        var placements = apply.IndexOf("ApplyPluginToolbarPlacements(", StringComparison.Ordinal);
+        Assert.True(placements >= 0, "The Settings apply must re-apply the plugin toolbar placements.");
+        Assert.Contains("save: false", apply);
+        Assert.True(apply.IndexOf("ApplyCommandSurfaceLayout();", StringComparison.Ordinal) > placements);
+        Assert.Contains("if (added && save)", MethodBody(plugins, "private bool ApplyPluginToolbarPlacements("));
+
+        var dialogs = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "FileOperationDialogService.cs"));
+        var show = MethodBody(dialogs, "public async Task ShowSettingsAsync(");
+        var applied = show.IndexOf("_applyCommandSurfaceLayout();", StringComparison.Ordinal);
+        Assert.True(applied > show.IndexOf("settingsWindow.ApplyTo(workspace.Settings);", StringComparison.Ordinal));
+        Assert.True(show.IndexOf("await workspace.SaveUiSettingsAsync(", StringComparison.Ordinal) > applied);
+    }
+
+    [Fact]
+    public void PluginPanelGrips_EndTheDragWhenTheyLoseThePointer()
+    {
+        // As the column thumbs do (MainWindow.Columns.cs): Alt+Tab or a touch cancel ends the capture without a
+        // release, and the drag must not stay on.
+        var root = FindRepoRoot();
+        var xaml = System.Xml.Linq.XDocument.Load(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml"));
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        foreach (var name in new[] { "PluginPanelRightGrip", "PluginPanelBottomGrip" })
+        {
+            var grip = xaml.Descendants().Single(element => (string?)element.Attribute(x + "Name") == name);
+            Assert.Equal("OnPluginPanelGripReleased", (string?)grip.Attribute("PointerReleased"));
+            Assert.Equal("OnPluginPanelGripReleased", (string?)grip.Attribute("PointerCanceled"));
+            Assert.Equal("OnPluginPanelGripReleased", (string?)grip.Attribute("PointerCaptureLost"));
+        }
+
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        Assert.Contains("_pluginPanelGripDragging = false;", MethodBody(panels, "private async void OnPluginPanelGripReleased("));
+        var columns = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Columns.cs"));
+        Assert.Contains("thumb.PointerCaptureLost += OnColumnThumbReleased;", columns);
+    }
+
+    /// <summary>The body of the first method whose declaration contains <paramref name="signature"/>, braces included.</summary>
     private static string MethodBody(string source, string signature)
     {
         var start = source.IndexOf(signature, StringComparison.Ordinal);

@@ -955,6 +955,42 @@ public class RemoteManagerViewModelTests
         AssertBusyRetries(backend, expectedAttempts: 3);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CloseSessionAsync_DisconnectThatHangs_GivesUpAtTheDeadline(bool honoursTheToken)
+    {
+        // The backend's disconnect does network I/O. A disconnect that hangs (whether or not it honours its token) must
+        // not hold the close past its bound: CloseSessionAsync returns false at the deadline and keeps the session.
+        var tokens = new System.Collections.Concurrent.ConcurrentQueue<CancellationToken>();
+        var backend = new FakeRemoteBackend([new RemoteProfile { Id = "test" }])
+        {
+            Session = new RemoteSession { SessionId = "session", ProfileId = "test", RootPath = "/" },
+            Listing = new RemoteDirectoryListing { Path = "/" },
+        };
+        backend.DisconnectAsyncHandler = (_, ct) =>
+        {
+            tokens.Enqueue(ct);
+            return honoursTheToken ? Task.Delay(Timeout.Infinite, ct) : new TaskCompletionSource().Task;
+        };
+        var vm = Create(backend);
+        await vm.LoadProfilesAsync();
+        await vm.ConnectSelectedProfileAsync();
+        var wait = TimeSpan.FromMilliseconds(500);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        var closed = await vm.CloseSessionAsync(wait).WaitAsync(TimeSpan.FromSeconds(10));
+
+        clock.Stop();
+        Assert.False(closed);
+        Assert.InRange(clock.Elapsed, wait - TimeSpan.FromMilliseconds(50), wait + TimeSpan.FromSeconds(2));
+        var token = Assert.Single(tokens);
+        Assert.True(token.CanBeCanceled, "The disconnect got no token bound to the close deadline.");
+        Assert.True(token.IsCancellationRequested, "The disconnect's token was not cancelled at the deadline.");
+        Assert.Null(backend.DisconnectedSessionId);
+        Assert.NotNull(vm.CurrentSession);
+    }
+
     private static void AssertBusyRetries(FakeRemoteBackend backend, int expectedAttempts)
     {
         long[] attempts;

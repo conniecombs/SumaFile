@@ -151,7 +151,8 @@ try {
 
     $before = Get-AppOwnedPluginState -InstallDir $install
     Remove-Item -LiteralPath (Join-Path $install 'plugins.log') -Force
-    Assert-Throws { Assert-AppOwnedPluginStateUnchanged -InstallDir $install -Before $before } 'plugins.log' 'Case 8 (deleted)'
+    # The exact change, so a match on plugins.log.1 (still there) cannot pass for it.
+    Assert-Throws { Assert-AppOwnedPluginStateUnchanged -InstallDir $install -Before $before } 'plugins.log (removed)' 'Case 8 (deleted)'
 } finally {
     if (Test-Path -LiteralPath $install) { Remove-Item -LiteralPath $install -Recurse -Force }
 }
@@ -186,7 +187,7 @@ try {
     Assert-LegacyPluginLocationsUnchanged -Before $before -LocalAppData $localAppData
 
     [System.IO.File]::AppendAllText($legacyLog, "new line`r`n", $utf8)
-    Assert-Throws { Assert-LegacyPluginLocationsUnchanged -Before $before -LocalAppData $localAppData } 'plugins.log' 'Case 9 (log)'
+    Assert-Throws { Assert-LegacyPluginLocationsUnchanged -Before $before -LocalAppData $localAppData } 'plugins.log (changed)' 'Case 9 (log)'
     Assert-Throws { Assert-LegacyPluginLocationsUnchanged -Before $before -LocalAppData $localAppData } `
         'The app changed a pre-release plugin location under %LOCALAPPDATA%\SumaFile: ' 'Case 9 (message)'
 

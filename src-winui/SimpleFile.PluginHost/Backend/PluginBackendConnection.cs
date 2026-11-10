@@ -5,7 +5,7 @@ namespace SimpleFile.PluginHost.Backend;
 public sealed class PluginBackendConnection : IAsyncDisposable
 {
     /// <summary>How long <see cref="DisposeAsync"/> waits for the killed backend to exit.</summary>
-    private static readonly TimeSpan ExitWait = TimeSpan.FromSeconds(2);
+    internal static readonly TimeSpan ExitWait = TimeSpan.FromSeconds(2);
 
     private readonly NamedPipeJsonClient _client;
     private readonly IPluginProcess _process;

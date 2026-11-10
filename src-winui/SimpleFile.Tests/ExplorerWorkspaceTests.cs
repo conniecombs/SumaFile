@@ -1613,6 +1613,11 @@ public class ExplorerWorkspaceTests
     private const string DecoratedHome = @"C:\Users\test";
     private const string DecoratedNotes = @"C:\Users\test\notes.txt";
 
+    // As in RowDecorationCoordinatorTests: each source call starts through Task.Run, and under full-suite load the pool
+    // can take longer than 50 ms to start an instant one. So an instant source's answer is only asserted in a merge the
+    // budget could have cut when the budget is DecorationPendingBudget, which a test with a pending source waits in full.
+    private static readonly TimeSpan DecorationPendingBudget = TimeSpan.FromSeconds(2);
+
     private static (FakeExplorerBackend Backend, ExplorerWorkspace Workspace, FakeRowDecorationSource Source) DecoratedWorkspace(
         TimeSpan budget,
         bool ready = true,
@@ -1665,7 +1670,9 @@ public class ExplorerWorkspaceTests
     [Fact]
     public async Task LateDecorations_ForAnOlderNavigation_AreDropped()
     {
-        var (_, workspace, source) = DecoratedWorkspace(TimeSpan.FromMilliseconds(50));
+        // The home navigation waits the budget in full (its only source is pending); the Desktop one must show its
+        // instant answer, so the budget leaves it ample time to start on a loaded pool.
+        var (_, workspace, source) = DecoratedWorkspace(DecorationPendingBudget);
         var slowHome = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
         source.Handler = (pluginId, folder, _, _) => PathRules.PathsEqual(folder, DecoratedHome)
             ? slowHome.Task
@@ -1692,7 +1699,9 @@ public class ExplorerWorkspaceTests
     [Fact]
     public async Task LateDecorations_FromAnOlderRequest_AreDroppedOnceANewerOneApplied()
     {
-        var (backend, workspace, source) = DecoratedWorkspace(TimeSpan.FromMilliseconds(50));
+        // The navigation's instant answer must win its budget, so the budget is ample; the older invalidation ends early,
+        // cancelled by the newer one, and the newer one waits the budget in full before its answer arrives late.
+        var (backend, workspace, source) = DecoratedWorkspace(DecorationPendingBudget);
         await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
         Assert.Equal("M", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
 
@@ -1701,9 +1710,13 @@ public class ExplorerWorkspaceTests
         var calls = 0;
         source.Handler = (_, _, _, _) => Interlocked.Increment(ref calls) == 1 ? older.Task : newer.Task;
 
-        await workspace.InvalidateDecorationsAsync();
-        await workspace.InvalidateDecorationsAsync();
+        var first = workspace.InvalidateDecorationsAsync();
+        await WaitUntilAsync(() => Volatile.Read(ref calls) == 1);
+        var second = workspace.InvalidateDecorationsAsync();
+        await first.WaitAsync(TimeSpan.FromSeconds(1));
+        await second.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(2, Volatile.Read(ref calls));
+        Assert.False(newer.Task.IsCompleted);
 
         newer.SetResult(FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "newer")]));
         await WaitUntilAsync(() => workspace.Primary.Decorations.For(DecoratedNotes)?.Text == "newer");
@@ -1764,7 +1777,9 @@ public class ExplorerWorkspaceTests
     [Fact]
     public async Task InvalidateDecorations_NeverRunsTheSourceOnTheCallingThread()
     {
-        var (_, workspace, source) = DecoratedWorkspace(TimeSpan.FromSeconds(1));
+        // The invalidation must still wait for the blocked source when it is checked, and its answer must land inside
+        // the budget once released, so the budget is one the pool always meets.
+        var (_, workspace, source) = DecoratedWorkspace(DecorationPendingBudget);
         await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
         using var release = new ManualResetEventSlim(false);
         var sourceThread = -1;
@@ -1831,6 +1846,8 @@ public class ExplorerWorkspaceTests
     [Fact]
     public async Task PublishedListing_AskedBeforeTheGenerationChanged_IsDecoratedAgain()
     {
+        // Short on purpose: the navigation waits the budget out (com.a is pending), and com.b's instant answer is only
+        // awaited with WaitUntilAsync, so it may land in the re-decoration's result or in its late merge.
         var (backend, workspace, sourceA) = DecoratedWorkspace(TimeSpan.FromMilliseconds(300), true, "com.a");
         var aCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var aResult = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1867,7 +1884,9 @@ public class ExplorerWorkspaceTests
     // Plugins com.a (decorates notes.txt) and com.b (decorates Desktop), both shown on the home folder.
     private static async Task<(ExplorerWorkspace Workspace, FakeRowDecorationSource Source)> TwoPluginsShownAsync()
     {
-        var (_, workspace, source) = DecoratedWorkspace(TimeSpan.FromMilliseconds(50), true, "com.a", "com.b");
+        // Both answer at once on the navigation; the invalidations that follow leave one pending and assert the other's
+        // instant answer, so they wait this budget in full.
+        var (_, workspace, source) = DecoratedWorkspace(DecorationPendingBudget, true, "com.a", "com.b");
         source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "A")], "com.a:inRepository");
         source.Results["com.b"] = FakeRowDecorationSource.Batch("com.b", [(DecoratedDesktop, "B")], "com.b:inRepository");
         await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
@@ -1956,6 +1975,72 @@ public class ExplorerWorkspaceTests
 
         await WaitUntilAsync(() => workspace.Primary.Decorations.For(DecoratedDesktop) is null);
         Assert.Empty(workspace.Primary.Decorations.FolderFlags);
+    }
+
+    [Fact]
+    public async Task Refresh_SlowSource_KeepsItsShownDecorationsWhileItIsPending()
+    {
+        // A same-folder re-list (after a rename, delete or create) publishes like an invalidation: the slow plugin keeps
+        // its shown badges and folder flags until its answer lands, instead of blanking them in the budget-cut publish.
+        var (workspace, source) = await TwoPluginsShownAsync();
+        var slow = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.Handler = (pluginId, _, _, _) => pluginId == "com.b" ? slow.Task : null;
+        source.Results["com.a"] = FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "A2")], "com.a:inRepository");
+
+        await workspace.RefreshAsync(PaneId.Primary);
+
+        Assert.Equal("A2", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+        Assert.Equal("B", workspace.Primary.Decorations.For(DecoratedDesktop)?.Text);
+        Assert.Contains("com.b:inRepository", workspace.Primary.Decorations.FolderFlags);
+
+        slow.SetResult(FakeRowDecorationSource.Batch("com.b", [(DecoratedDesktop, "B2")]));
+        await WaitUntilAsync(() => workspace.Primary.Decorations.For(DecoratedDesktop)?.Text == "B2");
+        Assert.DoesNotContain("com.b:inRepository", workspace.Primary.Decorations.FolderFlags);
+        Assert.Equal("A2", workspace.Primary.Decorations.For(DecoratedNotes)?.Text);
+    }
+
+    [Fact]
+    public async Task SwapFilePanes_DecoratesBothPanesAgain()
+    {
+        // A swap starts new navigation tokens, so the late merge a pane was waiting for is dropped. Both panes are
+        // decorated again, or the home folder's pending plugin would stay without its answer after the swap.
+        // Short on purpose: the home navigation waits the budget out (its source is pending), and every instant answer
+        // is only awaited with WaitUntilAsync, so it may land in the immediate result or in the late merge.
+        var shot = @"C:\Users\test\Desktop\shot.png";
+        var (_, workspace, source) = DecoratedWorkspace(TimeSpan.FromMilliseconds(50));
+        workspace.SetDualPaneEnabledCore(true);
+        var slowHome = new TaskCompletionSource<FolderDecorationBatch?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var homeCalls = 0;
+        var desktopCalls = 0;
+        source.Handler = (pluginId, folder, _, _) =>
+        {
+            if (PathRules.PathsEqual(folder, DecoratedHome))
+            {
+                return Interlocked.Increment(ref homeCalls) == 1
+                    ? slowHome.Task
+                    : Task.FromResult<FolderDecorationBatch?>(
+                        FakeRowDecorationSource.Batch(pluginId, [(DecoratedNotes, "M2")], "com.a:inRepository"));
+            }
+
+            Interlocked.Increment(ref desktopCalls);
+            return Task.FromResult<FolderDecorationBatch?>(FakeRowDecorationSource.Batch(pluginId, [(shot, "D")]));
+        };
+
+        await workspace.NavigatePaneAsync(PaneId.Primary, DecoratedHome);
+        await workspace.NavigatePaneAsync(PaneId.Secondary, DecoratedDesktop);
+        await WaitUntilAsync(() => workspace.Secondary.Decorations.For(shot)?.Text == "D");
+        Assert.Null(workspace.Primary.Decorations.For(DecoratedNotes));
+
+        workspace.SwapFilePanes();
+
+        await WaitUntilAsync(() => workspace.Secondary.Decorations.For(DecoratedNotes)?.Text == "M2");
+        Assert.Contains("com.a:inRepository", workspace.Secondary.Decorations.FolderFlags);
+        await WaitUntilAsync(() => Volatile.Read(ref desktopCalls) >= 2);
+        Assert.Equal("D", workspace.Primary.Decorations.For(shot)?.Text);
+
+        slowHome.SetResult(FakeRowDecorationSource.Batch("com.a", [(DecoratedNotes, "late")]));
+        await Task.Delay(200);
+        Assert.Equal("M2", workspace.Secondary.Decorations.For(DecoratedNotes)?.Text);
     }
 
     [Fact]
