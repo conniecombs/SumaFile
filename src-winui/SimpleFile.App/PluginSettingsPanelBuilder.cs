@@ -40,6 +40,51 @@ internal sealed class PluginSettingsPanelBuilder
     /// <summary>The AutomationId of a declarative setting's input control.</summary>
     public static string SettingAutomationId(string pluginId, string key) => $"PluginSetting.{pluginId}.{key}";
 
+    /// <summary>The Tag of a plugin's navigation item in Settings, and the category name that shows its page.</summary>
+    public static string NavigationTag(string pluginId) => PluginCategoryPrefix + pluginId;
+
+    /// <summary>The prefix of <see cref="NavigationTag"/>: "Plugins/".</summary>
+    public const string PluginCategoryPrefix = "Plugins/";
+
+    /// <summary>True for a plugin the user should look at: it waits for consent or could not be loaded or started.</summary>
+    public static bool NeedsAttention(PluginRecord record) => record.State
+        is PluginState.NeedsConsent or PluginState.Faulted or PluginState.LoadFailed
+        or PluginState.InvalidManifest or PluginState.IncompatibleSdk;
+
+    /// <summary>
+    /// The plugin's row on the Plugins overview: its name, state and a button that opens its own page. It holds no
+    /// switch and no setting, so every control of a plugin exists once, on its page.
+    /// </summary>
+    public FrameworkElement BuildOverviewRow(PluginRecord record, Action open)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(open);
+        var name = record.Discovered.Manifest?.Name ?? record.Id;
+        var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Text = name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        text.Children.Add(Muted(StateText(record)));
+
+        var button = new Button { Content = "Open", VerticalAlignment = VerticalAlignment.Center };
+        AutomationName(button, $"Open the settings of plugin {name}");
+        button.Click += (_, _) => open();
+
+        var row = new Grid { ColumnSpacing = 12 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(button, 1);
+        row.Children.Add(text);
+        row.Children.Add(button);
+        return new Border
+        {
+            Background = Brush("SfBgSecondaryBrush"),
+            BorderBrush = Brush("SfBorderBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(12, 8, 12, 8),
+            Child = row,
+        };
+    }
+
     public FrameworkElement Build(PluginRecord record, Func<string, Task<string?>> read, Func<string, string, Task> write)
     {
         ArgumentNullException.ThrowIfNull(record);

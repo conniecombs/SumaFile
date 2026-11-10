@@ -151,6 +151,12 @@ public sealed partial class SettingsWindow : Window
 
     private void OnCategorySelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
+        if (_updatingPluginNavigation)
+        {
+            // The plugin items are being rebuilt; UpdatePluginNavigation restores the selection and the page.
+            return;
+        }
+
         ShowCategory(CategoryName(args.SelectedItemContainer as NavigationViewItem));
     }
 
@@ -160,6 +166,10 @@ public sealed partial class SettingsWindow : Window
             ?? item?.Content?.ToString()
             ?? "";
     }
+
+    /// <summary>The top-level category of a navigation item: "Plugins" for a plugin's own item ("Plugins/&lt;id&gt;").</summary>
+    private static string TopLevelCategory(string category) =>
+        category.StartsWith(PluginSettingsPanelBuilder.PluginCategoryPrefix, StringComparison.Ordinal) ? "Plugins" : category;
 
     private static string NormalizeCategoryName(string? category)
     {
@@ -185,9 +195,21 @@ public sealed partial class SettingsWindow : Window
             case "Shortcuts": ShortcutsPanel.Visibility = Visibility.Visible; break;
             case "Toolbar": ToolbarPanel.Visibility = Visibility.Visible; break;
             case "Tools": ToolsPanel.Visibility = Visibility.Visible; break;
-            case "Plugins": PluginsPanel.Visibility = Visibility.Visible; break;
+            case "Plugins":
+                PluginsPanel.Visibility = Visibility.Visible;
+                ShowPluginPage(null);
+                break;
             case "Updates": UpdatesPanel.Visibility = Visibility.Visible; break;
             case "About": AboutPanel.Visibility = Visibility.Visible; break;
+            default:
+                // A plugin's own item under Plugins: "Plugins/<plugin id>".
+                if (category.StartsWith(PluginSettingsPanelBuilder.PluginCategoryPrefix, StringComparison.Ordinal))
+                {
+                    PluginsPanel.Visibility = Visibility.Visible;
+                    ShowPluginPage(category[PluginSettingsPanelBuilder.PluginCategoryPrefix.Length..]);
+                }
+
+                break;
         }
     }
 
@@ -251,10 +273,21 @@ public sealed partial class SettingsWindow : Window
         }
 
         var matches = new Dictionary<string, FrameworkElement?>(StringComparer.Ordinal);
+        string? matchedPluginId = null;
+        bool Matches(FrameworkElement element) => SearchText(element).Contains(query, StringComparison.OrdinalIgnoreCase);
         foreach (var (category, panel) in CategoryPanels())
         {
-            var hit = SearchableElements(panel)
-                .FirstOrDefault(element => SearchText(element).Contains(query, StringComparison.OrdinalIgnoreCase));
+            FrameworkElement? hit;
+            if (ReferenceEquals(panel, PluginsPanel))
+            {
+                // Every plugin's page is searched, shown or not; the hit says whose page to show.
+                (hit, matchedPluginId) = FindPluginsSearchHit(Matches);
+            }
+            else
+            {
+                hit = SearchableElements(panel).FirstOrDefault(Matches);
+            }
+
             if (hit is not null)
             {
                 matches[category] = hit;
@@ -273,15 +306,27 @@ public sealed partial class SettingsWindow : Window
             item.Visibility = matches.ContainsKey(category) ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        var target = SettingsNavigation.SelectedItem is NavigationViewItem selected
-            && matches.ContainsKey(CategoryName(selected))
-                ? selected
-                : navItems.FirstOrDefault(item => matches.ContainsKey(CategoryName(item)));
+        // A plugin's own item counts as its parent category, Plugins.
+        var selectedTop = SettingsNavigation.SelectedItem is NavigationViewItem selected
+            ? navItems.FirstOrDefault(item => string.Equals(CategoryName(item), TopLevelCategory(CategoryName(selected)), StringComparison.Ordinal))
+            : null;
+        var target = selectedTop is not null && matches.ContainsKey(CategoryName(selectedTop))
+            ? selectedTop
+            : navItems.FirstOrDefault(item => matches.ContainsKey(CategoryName(item)));
         if (target is null)
         {
             SettingsNavigation.SelectedItem = null;
             HideCategoryPanels();
             return;
+        }
+
+        var firstMatch = matches[CategoryName(target)];
+        if (ReferenceEquals(target, PluginsNavItem) && matchedPluginId is not null && firstMatch is not null
+            && PluginNavigationItem(matchedPluginId) is { } pluginItem)
+        {
+            // The match is on a plugin's page: show that page, not the overview.
+            PluginsNavItem.IsExpanded = true;
+            target = pluginItem;
         }
 
         if (!ReferenceEquals(SettingsNavigation.SelectedItem, target))
@@ -290,7 +335,7 @@ public sealed partial class SettingsWindow : Window
         }
 
         ShowCategory(CategoryName(target));
-        _firstSearchMatch = matches[CategoryName(target)];
+        _firstSearchMatch = firstMatch;
         if (_firstSearchMatch is { } match)
         {
             // Wait for the newly shown panel to lay out before scrolling to the control.

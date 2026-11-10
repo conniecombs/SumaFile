@@ -458,6 +458,9 @@ public sealed partial class MainWindow
             await SmokeRemoteWaitAsync(() => (settings = _fileOperationDialogs.OpenSettingsWindow) is { IsShown: true }
                 && settings.Content is FrameworkElement { IsLoaded: true }
                 && settings.SmokePluginsList.Children.Count > 0, () => "the Settings window with plugin cards");
+            // The remote plugin's own page, under Plugins: its custom settings page is created when it is shown.
+            settings!.SmokeSelectPlugin(SmokeRemoteId);
+            await SmokeRemoteWaitAsync(() => settings.SmokeSelectedPlugin == SmokeRemoteId, () => "the remote plugin's Settings page");
             Button? open = null;
             var hasBandwidth = false;
             await SmokeRemoteWaitAsync(

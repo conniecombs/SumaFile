@@ -374,8 +374,10 @@ public async Task<PluginFolderDecorations> GetDecorationsAsync(PluginDecorationR
 "settingsPage": { "provider": "example-settings" }
 ```
 
-A custom page in the plugin's card under Settings > Plugins, below its declarative settings, for settings the
-declarative schema cannot express. `provider` is required, and the plugin needs a `ui` assembly
+A custom page on the plugin's own page under Settings > Plugins, below its declarative settings, for settings the
+declarative schema cannot express. SumaFile asks for it when the user first opens that plugin's page, not when Settings
+opens, so a plugin is not activated for a page nobody looks at; settings search finds the custom page's controls once
+it has been created. `provider` is required, and the plugin needs a `ui` assembly
 (`contributions.settingsPage needs a ui assembly.`). The entry type implements `ISettingsPageProvider`;
 `CreateSettingsPage(PluginSettingsPageRequest(Provider))` runs on the UI thread, once per Settings window, and returns
 a `FrameworkElement`. Settings search indexes its labelled controls. The page is shown only while the plugin is
@@ -417,8 +419,9 @@ backend's pipe as further clients. The methods the service then calls are in [Ar
 ]
 ```
 
-Settings > Plugins renders each setting as a control on the plugin's card, grouped by `group`, and settings search
-indexes them. The value is saved as soon as the user changes it.
+Each plugin has its own page under Settings > Plugins (the Plugins item itself is an overview of all plugins). The page
+renders each setting as a control, grouped by `group`, and settings search indexes them for every plugin and opens the
+page of the plugin that matches. The value is saved as soon as the user changes it.
 
 | Field | Required | Rules |
 | --- | --- | --- |
@@ -426,7 +429,7 @@ indexes them. The value is saved as soon as the user changes it.
 | `type` | yes | One of the types below. |
 | `label` | yes | At most 200 characters. |
 | `description` | no | Shown under the control; at most 1000 characters. |
-| `group` | no | A heading on the card; at most 200 characters. |
+| `group` | no | A heading on the plugin's page; at most 200 characters. |
 | `options` | for `enum` | A non-empty array of strings; allowed only on `enum`. |
 | `default` | no | Any JSON value; see below. |
 | `migrateFrom` | no | Bundled plugins only; see below. |
@@ -906,7 +909,7 @@ There is no sandbox, so SumaFile asks before it runs a plugin.
 - **Consent.** A plugin SumaFile has not been told to trust waits for consent. After startup SumaFile asks about each
   one in turn: **Enable plugin?**, with its name, publisher, version and id, its signature state, its `permissions`,
   and whether it runs a background process. **Enable** enables it; **Keep disabled** leaves it waiting, with a
-  **Review…** button on its card in Settings > Plugins that asks again.
+  **Review…** button on its page in Settings > Plugins that asks again.
 - **The approval store.** Enable and disable decisions go to `plugin-approvals.json`, one record per plugin id: the
   SHA-256 of the `plugin.json` bytes, the signature state, the decision, the time and the plugin folder.
 - **Change detection.** A decision holds only while the plugin's `plugin.json` hash, its signature state and its
@@ -927,7 +930,7 @@ There is no sandbox, so SumaFile asks before it runs a plugin.
 
 ## Signing
 
-A signature lets the consent dialog and the plugin's card show **Signed · key <fingerprint>**. It proves that the
+A signature lets the consent dialog and the plugin's Settings page show **Signed · key <fingerprint>**. It proves that the
 plugin's files are unchanged since they were signed with that key. It does not prove who the publisher is: the key
 comes from the plugin's own `plugin.json`, so anyone can sign a plugin with a key of their own. Unsigned plugins and
 plugins with an invalid signature can still be enabled; the dialog says **Unsigned plugin** or **Invalid signature:
@@ -1011,7 +1014,7 @@ user to disable the plugin and restart SumaFile. Installing clears the plugin's 
 plugin waits for consent, even when it replaces an approved copy. Ship a new version as a new package with a new
 `version`.
 
-**Remove** on a plugin's card deletes its folder, after a confirmation. It is offered only for plugins in SumaFile's
+**Remove** on a plugin's Settings page deletes its folder, after a confirmation. It is offered only for plugins in SumaFile's
 own `plugins` folder that `bundled.json` does not list; bundled plugins are disabled instead. Remove stops the plugin
 first, clears its stored approval, and keeps its settings and its `plugins-data` folder.
 
@@ -1087,14 +1090,15 @@ Once the packages are published, drop the local source and use `sumafile-plugin 
 
 ## Plugin states and troubleshooting
 
-Settings > Plugins lists every plugin found, with its state:
+Settings > Plugins lists every plugin found with its state, and each plugin's own page under it repeats the state
+with its details:
 
 | State | Shown as | Meaning |
 | --- | --- | --- |
 | NeedsConsent | Waiting for your approval | Found, not yet approved; **Review…** asks. |
 | Enabled | Enabled (· background process running) | Contributions are shown; code loads on first use. |
 | Disabled | Disabled | The user turned it off. |
-| InvalidManifest | Invalid plugin.json | The manifest broke a rule; the card lists the errors. |
+| InvalidManifest | Invalid plugin.json | The manifest broke a rule; the plugin's page lists the errors. |
 | IncompatibleSdk | Not compatible with this version of SumaFile | The `sdkVersion` major is not `1`, or its minor is above the host SDK's. |
 | LoadFailed | Failed to load: <message> | The UI assembly or entry type could not load, `ActivateAsync` threw, or a provider failed. Disable and enable it, or rescan, to try again. |
 | Faulted | Stopped: <message> | The backend stopped, failed to start three times within 60 s, or its archive engine could not register. The status center offers Restart. |

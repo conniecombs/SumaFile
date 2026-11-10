@@ -1238,6 +1238,26 @@ it deletes that folder only, and keeps the plugin's settings and
 `plugins-data\<id>`. A bundled plugin is disabled, never removed
 (`<name> ships with SumaFile and cannot be removed. Disable it instead.`).
 
+Layout (user request, 2026-11-10): each plugin has its own page instead of one
+panel that stacks every plugin's card.
+- The Plugins navigation item shows an overview: Install from file, Rescan,
+  Open plugins folder and one row per plugin (name, state, an **Open**
+  button). It has one child item per plugin, tagged `Plugins/<id>`, with an
+  attention mark while the plugin needs consent or failed.
+- A plugin's item shows that plugin's page only: identity, state and signature,
+  Enabled or Review…, Remove, its declarative settings and its custom settings
+  page. Every control of a plugin exists once, on its page.
+- All pages are built on every render, so settings search covers every
+  plugin's declarative settings and shows the page of the plugin that matches.
+  A custom settings page is plugin code: it is created when its plugin's page
+  is first shown (or reused when this window already holds it), not when
+  Settings opens, so opening Settings no longer activates every plugin that
+  declares one. Its controls are searchable from then on.
+- A re-render on a plugin change keeps the shown page; when that plugin is
+  gone, the overview shows.
+- Pinned by `PluginSettingsNavigationTests` (source shape) and the Hello,
+  remote and Git steps of the UI smoke, which open the plugin's page first.
+
 ## 9. Trust model
 
 There is no sandbox. The design is explicit with users about what runs.

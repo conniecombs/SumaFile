@@ -718,6 +718,24 @@ public sealed partial class MainWindow
             await SmokeWaitAsync(() => (settings = _fileOperationDialogs.OpenSettingsWindow) is { IsShown: true }
                 && settings.Content is FrameworkElement { IsLoaded: true }
                 && settings.SmokePluginsList.Children.Count > 0, "Settings window with plugin cards");
+
+            // Settings > Plugins opens on the overview: a row and a navigation item per plugin, and no plugin's page
+            // shown, so Hello's custom page (plugin code) has not been asked for yet.
+            var helloTag = PluginSettingsPanelBuilder.NavigationTag(SmokeHelloId);
+            SmokeAssert(settings!.SmokeSelectedPlugin is null, $"Settings > Plugins opened on the page of '{settings.SmokeSelectedPlugin}', not on the overview");
+            SmokeAssert(settings.SmokePluginNavigationTags.Contains(helloTag),
+                $"The Plugins navigation item has no child {helloTag}: [{string.Join(", ", settings.SmokePluginNavigationTags)}]");
+            SmokeAssert(settings.SmokePluginsOverviewList.Children.Count == settings.SmokePluginsList.Children.Count,
+                $"The overview lists {settings.SmokePluginsOverviewList.Children.Count} plugins for {settings.SmokePluginsList.Children.Count} pages");
+            SmokeAssert(!File.Exists(pageMarker), "Hello's settings page was created before its page was opened");
+            var pages = settings.SmokePluginsList.Children.OfType<FrameworkElement>().ToArray();
+            SmokeAssert(pages.All(item => item.Visibility == Visibility.Collapsed), "A plugin's page is visible on the overview");
+
+            // Hello's own item: only its page is visible, and its custom page loads now.
+            settings.SmokeSelectPlugin(SmokeHelloId);
+            await SmokeWaitAsync(() => settings.SmokeSelectedPlugin == SmokeHelloId
+                && settings.SmokePluginsList.Children.OfType<FrameworkElement>().Count(item => item.Visibility == Visibility.Visible) == 1,
+                "Hello's page to be the one visible plugin page");
             ContentPresenter? slot = null;
             var loading = Stopwatch.StartNew();
             while (true)

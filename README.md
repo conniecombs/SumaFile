@@ -448,8 +448,12 @@ in `plugins\bundled.json`:
 
 A bundled plugin can be disabled in Settings -> Plugins, but not removed.
 
-Settings -> Plugins lists every plugin SumaFile found, with its publisher,
-version, state, signature state and settings:
+Settings -> Plugins is an overview: it lists every plugin SumaFile found with
+its state, and each plugin has its own page under Plugins in the Settings
+navigation (also reached with the plugin's **Open** button). A plugin that
+needs your attention, such as one waiting for approval, carries a mark there.
+
+On the overview:
 
 - **Install from file…** installs a `.sfplugin` package (a zip of a plugin
   folder) into the plugins folder. A package that would replace a bundled
@@ -457,9 +461,14 @@ version, state, signature state and settings:
 - **Rescan** reads the plugins folder again, for example after you copied a
   plugin folder into it.
 - **Open plugins folder** opens `<install folder>\plugins`.
-- Each plugin's card has an **Enabled** switch, or **Review…** while it waits
-  for your approval, its declared settings, and its own settings page if it has
-  one. Settings save as soon as you change them.
+
+On a plugin's own page:
+
+- Its publisher, version, state and signature state.
+- An **Enabled** switch, or **Review…** while it waits for your approval.
+- Its declared settings, and its own settings page if it has one. Settings save
+  as soon as you change them. Settings search covers every plugin's declared
+  settings and opens the page of the plugin that matches.
 - **Remove** appears only on plugins you installed. It asks first, then deletes
   the plugin's folder and its stored approval; the plugin's settings and its
   `plugins-data` folder are kept (uninstalling SumaFile deletes `plugins-data`).

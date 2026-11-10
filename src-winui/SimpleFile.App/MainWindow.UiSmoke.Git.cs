@@ -234,6 +234,9 @@ public sealed partial class MainWindow
                     && settings.Content is FrameworkElement { IsLoaded: true }
                     && settings.SmokePluginsList.Children.Count > 0,
                 () => "the Settings window with plugin cards");
+            // The Git plugin's own page, under Plugins.
+            settings!.SmokeSelectPlugin(SmokeGitId);
+            await SmokeGitWaitAsync(() => settings.SmokeSelectedPlugin == SmokeGitId, () => "the Git plugin's Settings page");
 
             // The panel re-renders on plugin changes, so the card and its switch are looked up again each time. The
             // switch starts at the manifest default (on) and reads the stored value once it has loaded it.

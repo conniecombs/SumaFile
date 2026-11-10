@@ -9,7 +9,13 @@ using Windows.Storage.Pickers;
 
 namespace SimpleFile.App;
 
-/// <summary>Settings > Plugins: one card per discovered plugin, plus install, rescan and open-folder actions.</summary>
+/// <summary>
+/// Settings > Plugins. The Plugins navigation item shows an overview (a row per discovered plugin, plus install, rescan
+/// and open-folder actions) and has one child item per plugin, which shows that plugin's own page: identity, state, the
+/// enable switch, its declared settings and its custom settings page. Every plugin's page is built on each render, so
+/// settings search covers them all, but only the selected plugin's page is visible, and a custom settings page (plugin
+/// code) is first created when its plugin's page is shown.
+/// </summary>
 public sealed partial class SettingsWindow
 {
     private PluginManager? _pluginManager;
@@ -22,6 +28,14 @@ public sealed partial class SettingsWindow
     private readonly Dictionary<string, (int Epoch, ContentPresenter Slot)> _pluginPageSlots = new(StringComparer.Ordinal);
     private readonly HashSet<(string PluginId, int Epoch)> _pluginPagesLoading = [];
     private bool _pluginPageSearchQueued;
+
+    // The plugin whose page is shown, or null for the overview.
+    private string? _selectedPluginId;
+    // Custom page slots of this render that wait for their plugin's page to be shown.
+    private readonly Dictionary<string, (PluginRecord Record, ContentPresenter Slot)> _pluginPageRequests = new(StringComparer.Ordinal);
+    // The child navigation items as last built: (id, label, needs attention).
+    private List<(string Id, string Label, bool Attention)> _pluginNavShape = [];
+    private bool _updatingPluginNavigation;
 
     /// <summary>
     /// SumaFile's one plugins folder, <c>&lt;install&gt;\plugins</c>: Install from file unzips into it, Remove deletes
@@ -68,31 +82,35 @@ public sealed partial class SettingsWindow
 
     private void RenderPluginsPanel()
     {
-        // Every card is rebuilt: detach the pages from the old slots first, so a cached page can join its new slot.
+        // Every page is rebuilt: detach the custom pages from the old slots first, so a cached one can join its new slot.
         foreach (var (_, slot) in _pluginPageSlots.Values)
         {
             slot.Content = null;
         }
 
         _pluginPageSlots.Clear();
+        _pluginPageRequests.Clear();
         PluginsList.Children.Clear();
+        PluginsOverviewList.Children.Clear();
         var available = _pluginManager is not null && _fileOps is not null;
         InstallPluginButton.IsEnabled = available;
         RescanPluginsButton.IsEnabled = available;
         if (_pluginManager is not { } manager || _fileOps is not { } fileOps)
         {
-            PluginsList.Children.Add(new TextBlock { Text = "Plugins are not available.", TextWrapping = TextWrapping.Wrap });
+            PluginsOverviewList.Children.Add(new TextBlock { Text = "Plugins are not available.", TextWrapping = TextWrapping.Wrap });
+            UpdatePluginNavigation([]);
             return;
         }
 
         var plugins = manager.Plugins;
         if (plugins.Count == 0)
         {
-            PluginsList.Children.Add(new TextBlock
+            PluginsOverviewList.Children.Add(new TextBlock
             {
                 Text = "No plugins are installed. Install a .sfplugin file or copy a plugin folder into the plugins folder, then rescan.",
                 TextWrapping = TextWrapping.Wrap,
             });
+            UpdatePluginNavigation([]);
             return;
         }
 
@@ -107,17 +125,166 @@ public sealed partial class SettingsWindow
             ReviewAsync = record => ReviewPluginAsync(manager, record, token),
             RemoveAsync = record => RemovePluginAsync(manager, record, token),
             PickFolderAsync = PickPluginFolderAsync,
-            AttachSettingsPage = (record, slot) => AttachSettingsPage(manager, record, slot, token),
+            AttachSettingsPage = (record, slot) => RequestSettingsPage(manager, record, slot, token),
         };
         ForgetSettingsPagesOfPluginsNotEnabled(plugins);
         foreach (var record in plugins)
         {
-            PluginsList.Children.Add(builder.Build(
+            var id = record.Id;
+            PluginsOverviewList.Children.Add(builder.BuildOverviewRow(record, () => SelectPluginPage(id)));
+            var page = builder.Build(
                 record,
                 key => fileOps.GetSettingAsync(key, token),
                 // Through the manager: it checks the key is the plugin's own and re-decorates the shown folders.
-                (storageKey, value) => manager.WriteSettingAsync(record.Id, storageKey, value, token)));
+                (storageKey, value) => manager.WriteSettingAsync(record.Id, storageKey, value, token));
+            page.Tag = id;
+            PluginsList.Children.Add(page);
         }
+
+        UpdatePluginNavigation(plugins);
+    }
+
+    /// <summary>
+    /// A custom page slot of this render. A page this window already holds joins it at once (no plugin code runs);
+    /// otherwise the page is created when its plugin's page is shown, so opening Settings activates no plugin the user
+    /// does not look at.
+    /// </summary>
+    private void RequestSettingsPage(PluginManager manager, PluginRecord record, ContentPresenter slot, CancellationToken token)
+    {
+        if (string.Equals(_selectedPluginId, record.Id, StringComparison.Ordinal)
+            || (_pluginPages.TryGet(record.Id, record.Epoch, out var cached) && cached is not null))
+        {
+            AttachSettingsPage(manager, record, slot, token);
+            return;
+        }
+
+        _pluginPageRequests[record.Id] = (record, slot);
+    }
+
+    /// <summary>
+    /// Rebuilds the child items of the Plugins navigation item when the plugin list, a name or an attention mark
+    /// changed, keeps the shown plugin selected, and falls back to the overview when that plugin is gone.
+    /// </summary>
+    private void UpdatePluginNavigation(IReadOnlyList<PluginRecord> plugins)
+    {
+        var shape = plugins
+            .Select(record => (record.Id, Label: record.Discovered.Manifest?.Name ?? record.Id, Attention: PluginSettingsPanelBuilder.NeedsAttention(record)))
+            .ToList();
+        var selectedStillThere = _selectedPluginId is { } selected && shape.Any(item => item.Id == selected);
+        if (!shape.SequenceEqual(_pluginNavShape))
+        {
+            _pluginNavShape = shape;
+            // Only a plugin's item that is selected now is put back: on another category the selection stays there.
+            var pluginItemSelected = (SettingsNavigation.SelectedItem as NavigationViewItem)?.Tag is string tag
+                && tag.StartsWith(PluginSettingsPanelBuilder.PluginCategoryPrefix, StringComparison.Ordinal);
+            _updatingPluginNavigation = true;
+            try
+            {
+                PluginsNavItem.MenuItems.Clear();
+                foreach (var (id, label, attention) in shape)
+                {
+                    var item = new NavigationViewItem { Content = label, Tag = PluginSettingsPanelBuilder.NavigationTag(id) };
+                    if (attention)
+                    {
+                        item.InfoBadge = new InfoBadge();
+                    }
+
+                    PluginsNavItem.MenuItems.Add(item);
+                }
+
+                // Rebuilding the items dropped the selection of a plugin's item: put it back, or select the overview.
+                if (pluginItemSelected && _selectedPluginId is not null)
+                {
+                    SettingsNavigation.SelectedItem = selectedStillThere ? PluginNavigationItem(_selectedPluginId) : PluginsNavItem;
+                }
+            }
+            finally
+            {
+                _updatingPluginNavigation = false;
+            }
+        }
+
+        ShowPluginPage(selectedStillThere ? _selectedPluginId : null);
+    }
+
+    private NavigationViewItem? PluginNavigationItem(string pluginId) =>
+        PluginsNavItem.MenuItems.OfType<NavigationViewItem>()
+            .FirstOrDefault(item => string.Equals(item.Tag as string, PluginSettingsPanelBuilder.NavigationTag(pluginId), StringComparison.Ordinal));
+
+    /// <summary>Selects a plugin's navigation item, which shows its page; an unknown id selects the overview.</summary>
+    private void SelectPluginPage(string pluginId)
+    {
+        var item = PluginNavigationItem(pluginId) ?? PluginsNavItem;
+        PluginsNavItem.IsExpanded = true;
+        if (ReferenceEquals(SettingsNavigation.SelectedItem, item))
+        {
+            ShowCategory(CategoryName(item));
+        }
+        else
+        {
+            // Raises SelectionChanged, which shows the category.
+            SettingsNavigation.SelectedItem = item;
+        }
+    }
+
+    /// <summary>
+    /// Shows one plugin's page, or the overview for null (or for a plugin that is not listed), and creates that
+    /// plugin's custom settings page if it waits for this.
+    /// </summary>
+    private void ShowPluginPage(string? pluginId)
+    {
+        if (pluginId is not null && !PluginsList.Children.OfType<FrameworkElement>().Any(page => string.Equals(page.Tag as string, pluginId, StringComparison.Ordinal)))
+        {
+            pluginId = null;
+        }
+
+        _selectedPluginId = pluginId;
+        PluginsOverview.Visibility = pluginId is null ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var page in PluginsList.Children.OfType<FrameworkElement>())
+        {
+            page.Visibility = string.Equals(page.Tag as string, pluginId, StringComparison.Ordinal) ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (pluginId is not null && _pluginManager is { } manager && _pluginPageRequests.Remove(pluginId, out var request))
+        {
+            AttachSettingsPage(manager, request.Record, request.Slot, _pluginsCts.Token);
+        }
+    }
+
+    /// <summary>
+    /// The first control matching a settings search in the Plugins category, and the plugin whose page holds it (null
+    /// for the overview). The shown plugin's page is searched first, then the other pages, then the overview, so a
+    /// search for a plugin or one of its settings lands on that plugin's page.
+    /// </summary>
+    private (FrameworkElement? Hit, string? PluginId) FindPluginsSearchHit(Func<FrameworkElement, bool> matches)
+    {
+        var pages = PluginsList.Children.OfType<FrameworkElement>()
+            .OrderBy(page => string.Equals(page.Tag as string, _selectedPluginId, StringComparison.Ordinal) ? 0 : 1);
+        foreach (var page in pages)
+        {
+            if (SearchableElements(page).FirstOrDefault(matches) is { } hit)
+            {
+                return (hit, page.Tag as string);
+            }
+        }
+
+        foreach (var child in PluginsPanel.Children.OfType<FrameworkElement>().Where(child => !ReferenceEquals(child, PluginsList) && !ReferenceEquals(child, PluginsOverview)))
+        {
+            if (SearchableElements(child).FirstOrDefault(matches) is { } hit)
+            {
+                return (hit, null);
+            }
+        }
+
+        foreach (var child in PluginsOverview.Children)
+        {
+            if (SearchableElements(child).FirstOrDefault(matches) is { } hit)
+            {
+                return (hit, null);
+            }
+        }
+
+        return (null, null);
     }
 
     /// <summary>A page is kept only for an Enabled plugin: any other state retired the runtime that made it.</summary>
@@ -366,5 +533,16 @@ public sealed partial class SettingsWindow
     internal FrameworkElement? SmokeFirstSearchMatch => _firstSearchMatch;
 
     internal void SmokeSearch(string query) => SearchBox.Text = query;
+
+    /// <summary>Selects a plugin's navigation item, as a click on it does.</summary>
+    internal void SmokeSelectPlugin(string pluginId) => SelectPluginPage(pluginId);
+
+    /// <summary>The plugin whose page is shown; null while the overview is.</summary>
+    internal string? SmokeSelectedPlugin => _selectedPluginId;
+
+    internal Panel SmokePluginsOverviewList => PluginsOverviewList;
+
+    internal IReadOnlyList<string> SmokePluginNavigationTags =>
+        PluginsNavItem.MenuItems.OfType<NavigationViewItem>().Select(item => item.Tag as string ?? "").ToList();
 #endif
 }

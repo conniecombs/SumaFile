@@ -17,7 +17,8 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   sections, panels, file row decorations, declarative settings, settings
   pages and archive formats from the manifest before any plugin code runs.
   Settings -> Plugins lists every plugin, with Install from file (`.sfplugin`
-  packages), Rescan, Open plugins folder and Remove.
+  packages), Rescan and Open plugins folder, and gives each plugin its own
+  page under Plugins for its switch, settings and Remove.
 - SumaFile asks before it enables a plugin it did not ship (**Enable
   plugin?**) and asks again when the plugin's `plugin.json`, its signature
   state or its folder changes, and after Install from file or Remove. There
