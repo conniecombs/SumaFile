@@ -29,6 +29,7 @@ remote FTP/SFTP profiles can stay responsive in one local-first app.
 - [Use SumaFile](#use-sumafile)
 - [Feature Reference](#feature-reference)
 - [Settings and State](#settings-and-state)
+- [Plugins](#plugins)
 - [Transfer tuning](docs/TRANSFER_TUNING.md)
 - [Development](#development)
 - [Architecture](#architecture)
@@ -379,7 +380,7 @@ Settings is organized into:
 | Shortcuts | Searchable shortcut list with edit, reset, import, and export |
 | Toolbar | Button labels, command order, separators, removed commands, and reset |
 | Tools | Archive support summary |
-| Plugins | Installed plugins, their settings and pages, such as the FTP/SFTP plugin's page (opens the FTP/SFTP manager) below its declared settings and the Git plugin's on/off setting |
+| Plugins | Installed plugins with their state, Install from file, Rescan, Open plugins folder, and each plugin's enable switch, settings and page, such as the FTP/SFTP plugin's page (opens the FTP/SFTP manager) below its declared settings and the Git plugin's on/off setting; see [Plugins](#plugins) |
 | Updates | Version, update check, install action |
 | About | Product, version, repository, and build metadata |
 
@@ -406,6 +407,61 @@ Runtime diagnostics are written under:
 %LOCALAPPDATA%\SumaFile\startup.log
 %LOCALAPPDATA%\SumaFile\operations.jsonl
 ```
+
+## Plugins
+
+Plugins add commands, menus, toolbar buttons, sidebar sections, panels, file
+row decorations, settings and archive formats to SumaFile. Three plugins install
+with SumaFile and are trusted without a prompt, because the release lists them
+in `plugins\bundled.json`:
+
+| Plugin | Id | Adds |
+| --- | --- | --- |
+| 7-Zip archives | `com.sumafile.sevenzip` | `.7z` browsing, extraction, creation and in-place changes, with the bundled 7-Zip |
+| FTP/SFTP connections | `com.sumafile.remote` | The FTP/SFTP manager, the Connections sidebar section and the remote transfer settings |
+| Git | `com.sumafile.git` | Git status in file rows, Git menu items, the Git toolbar button and the Git workbench panel (needs Git for Windows) |
+
+A bundled plugin can be disabled in Settings -> Plugins, but not removed.
+
+Settings -> Plugins lists every plugin SumaFile found, with its publisher,
+version, state, signature state and settings:
+
+- **Install from file…** installs a `.sfplugin` package (a zip of a plugin
+  folder) into the plugins folder. A package that would replace a bundled
+  plugin is refused.
+- **Rescan** reads the plugins folder again, for example after you copied a
+  plugin folder into it.
+- **Open plugins folder** opens `<install folder>\plugins`.
+- Each plugin's card has an **Enabled** switch, or **Review…** while it waits
+  for your approval, its declared settings, and its own settings page if it has
+  one. Settings save as soon as you change them.
+- **Remove** appears only on plugins you installed. It asks first, then deletes
+  the plugin's folder; the plugin's settings and its `plugins-data` folder are
+  kept.
+
+**Consent.** Plugins run with your permissions; there is no sandbox. The first
+time SumaFile finds a plugin it did not ship, it asks **Enable plugin?** and
+shows the plugin's name, publisher, version, signature state (Verified
+publisher, Unsigned or Invalid signature), the permissions it declares and
+whether it runs a background process. **Keep disabled** leaves it off until you
+choose **Review…**. SumaFile asks again whenever the plugin's `plugin.json` or
+its signature state changes, for example after an update.
+
+**Where plugin files live.** Every plugin file stays in SumaFile's
+installation folder:
+
+```text
+<install folder>\plugins\<plugin id>\        the plugins, bundled and installed
+<install folder>\plugins-data\<plugin id>\   each plugin backend's data and temporary files
+<install folder>\plugin-approvals.json       your Enable and Disable decisions
+<install folder>\plugins.log                 plugin errors and log lines
+```
+
+A plugin whose background process stops is listed as Stopped, and the status
+center offers Restart. `plugins.log` has the details.
+
+To write a plugin, start from the guide, [docs/PLUGINS.md](docs/PLUGINS.md),
+and the template in `templates/sumafile-plugin`.
 
 ## Keyboard Shortcuts
 
@@ -488,7 +544,9 @@ Useful local-only overrides:
 | `SIMPLEFILE_SERVICE_PATH` | Use a specific `simplefile-service.exe` |
 | `SIMPLEFILE_APP_DATA_DIR` | Redirect app data for fixtures or tests |
 | `SIMPLEFILE_METADATA_DB` | Point settings/tags to a specific metadata database |
-| Settings > Plugins > 7-Zip archives > 7-Zip executable override | Use a specific 7-Zip executable (a file, or a folder holding `7zz.exe`, `7z.exe` or `7za.exe`) instead of the plugin's bundled `7za.exe` |
+| Settings -> Plugins -> 7-Zip archives -> 7-Zip executable override | Use a specific 7-Zip executable (a file, or a folder holding `7zz.exe`, `7z.exe` or `7za.exe`) instead of the plugin's bundled `7za.exe` |
+| `SUMAFILE_PLUGIN_ROOTS` | Semicolon-separated plugin roots that replace `<install folder>\plugins` (development and smokes; see [docs/PLUGINS.md](docs/PLUGINS.md)) |
+| `SUMAFILE_PLUGIN_DATA_ROOT`, `SUMAFILE_PLUGIN_APPROVALS_PATH`, `SUMAFILE_PLUGIN_LOG_PATH` | Redirect the plugin data folders, the approvals file and `plugins.log` (smokes) |
 | `SIMPLEFILE_UPDATE_MANIFEST_PATH` | Test updater metadata from a local file |
 | `SIMPLEFILE_UPDATE_MANIFEST_JSON` | Test updater metadata from inline JSON |
 
@@ -670,6 +728,7 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Near-term priorities and branch scope |
 | [docs/FEATURE_OPPORTUNITIES.md](docs/FEATURE_OPPORTUNITIES.md) | Candidate product gaps and recently closed gaps |
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Contributor workflow and expectations |
+| [docs/PLUGINS.md](docs/PLUGINS.md) | Writing SumaFile plugins: `plugin.json`, contributions, the SDK, the backend protocol, signing and packaging |
 | [docs/CI_MAINTENANCE.md](docs/CI_MAINTENANCE.md) | Pinned toolchains, bounded repair, update PRs, merge gates, and separate activation steps |
 | [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
 | [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |

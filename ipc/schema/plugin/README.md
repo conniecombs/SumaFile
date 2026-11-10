@@ -2,7 +2,12 @@
 
 JSON-RPC 2.0 spoken over a named pipe between a plugin's backend executable and
 either the WinUI host or the Rust service. Framing is the same as the main IPC
-schema (`ipc/schema/v1`): little-endian `uint32` length prefix, UTF-8 JSON body.
+schema (`ipc/schema/v1`): little-endian `uint32` length prefix, UTF-8 JSON body,
+at most 80 MiB per frame in either direction.
+
+The author guide, [docs/PLUGINS.md](../../../docs/PLUGINS.md), explains the
+protocol for backend authors ("The backend"), with the lifetime, limits and
+deadlines around it. This file is the reference for the wire shapes.
 
 | File | Role |
 | --- | --- |
@@ -17,11 +22,46 @@ schema (`ipc/schema/v1`): little-endian `uint32` length prefix, UTF-8 JSON body.
   `pluginId`, `hostVersion`, `sdkVersion`, and optional `client` (the Rust
   service sends `"simplefile-service"`). Result: `pluginId`, `pluginVersion`,
   `sdkVersion`. Any other request before it fails with `-32600`.
+- The handshake reply's `pluginId` must equal the manifest id and its
+  `sdkVersion` must be `major.minor.patch` with major 1, or the start fails. The
+  host waits 5 s for the backend to connect, then 5 s for the reply.
 - `host.*` methods are requests the backend sends to the WinUI host (settings,
   progress, log, notify). On the service connection `host.log` is a local no-op
   and every other `host.*` call fails at once; a handler serving the service
   reaches the host through the host's own connection (`HostClient::host_connection`
-  in the helper crate).
+  in the helper crate). The service never answers a request from a backend.
+- The host's request ids are integers, and a backend's `host.*` requests must
+  use 32-bit integer ids too: the host reads a request with any other id as a
+  notification and never answers it.
+
+## Host methods
+
+Requests from the backend to the WinUI host. `params` is an object; every
+error below is `-32602` (invalid params) unless noted.
+
+| Method | Params | Result | Errors |
+| --- | --- | --- | --- |
+| `host.get_settings` | `{ keys: string[] }` | `{ values: { <key>: string \| null } }` | `'keys' must be an array.`, `Invalid settings key.` |
+| `host.set_setting` | `{ key: string, value: string }` | `null` | `'key' must be a string.`, `'value' must be a string.`, `Invalid settings key.` |
+| `host.progress_begin` | `{ title: string }` | `{ operationId: string }` | `'title' must be a string.` |
+| `host.progress_report` | `{ operationId: string, current: int64, total: int64, detail?: string }` | `null` | `'current' must be an integer.`, `'total' must be an integer.`, `Unknown operationId.` |
+| `host.progress_complete` | `{ operationId: string }` | `null` | `Unknown operationId.` |
+| `host.progress_fail` | `{ operationId: string, message: string }` | `null` | `'message' must be a string.`, `Unknown operationId.` |
+| `host.log` | `{ level: "info" \| "warn" \| "error", message: string }` | `null` | `'level' must be info, warn or error.`, `'message' must be a string.` |
+| `host.notify` | `{ message: string, isError?: boolean }` | `null` | `'message' must be a string.` |
+
+- Settings keys match `^[a-z0-9][a-zA-Z0-9_-]{0,63}$`; the host stores them as
+  `plugin.<plugin id>.<key>`. An unset key reads as `null`.
+- Methods that take `operationId` also fail with `'operationId' must be a
+  string.` Only ids this backend's `host.progress_begin` returned are accepted;
+  rows still open when the backend stops fail with `Plugin backend stopped.`
+- `host.notify` shows the message in SumaFile's message bar, as an error when
+  `isError` is `true`. `host.log` writes `[<level>] <message>` to `plugins.log`.
+- An unknown `host.*` method fails with `-32601`
+  (`Unknown host method '<method>'.`); a host-side failure, such as a settings
+  write that failed, with `-32603` and its message.
+- The host sets no deadline on its replies; the helper crate waits 30 s
+  (`DEFAULT_CALL_TIMEOUT`).
 
 ## Archive engine methods
 
@@ -38,15 +78,21 @@ service connections at once. When the service's caller cancels, the service
 sends `cancel` on another connection of the pool and waits at most the cancel
 deadline (5 s) for the cancelled call's reply.
 
-| Method | Params | Deadline |
-| --- | --- | --- |
-| `archive.list` | `archivePath` | list, 30 s |
-| `archive.extract` | `archivePath`, `destination`, `operationId?` | transfer, 600 s idle |
-| `archive.read_entry` | `archivePath`, `innerPath`, `destination`, `maxBytes`, `maxEntries`, `operationId?` | read, 120 s idle |
-| `archive.create` | `archivePath`, `paths`, `operationId?` | transfer, 600 s idle |
-| `archive.rename` | `archivePath`, `innerPath`, `newPath`, `operationId?` | transfer, 600 s idle |
-| `archive.delete` | `archivePath`, `innerPaths`, `operationId?` | transfer, 600 s idle |
-| `archive.add` | `archivePath`, `baseDir`, `paths`, `operationId?` | transfer, 600 s idle |
+| Method | Params | Result | Deadline |
+| --- | --- | --- | --- |
+| `archive.list` | `{ archivePath: string }` | `{ entries: [{ path: string, isDir?: boolean, size?: number, compressedSize?: number }] }` | list, 30 s |
+| `archive.extract` | `{ archivePath: string, destination: string, operationId?: string }` | `null` | transfer, 600 s idle |
+| `archive.read_entry` | `{ archivePath: string, innerPath: string, destination: string, maxBytes: number, maxEntries: number, operationId?: string }` | `null` | read, 120 s idle |
+| `archive.create` | `{ archivePath: string, paths: string[], operationId?: string }` | `null` | transfer, 600 s idle |
+| `archive.rename` | `{ archivePath: string, innerPath: string, newPath: string, operationId?: string }` | `null` | transfer, 600 s idle |
+| `archive.delete` | `{ archivePath: string, innerPaths: string[], operationId?: string }` | `null` | transfer, 600 s idle |
+| `archive.add` | `{ archivePath: string, baseDir: string, paths: string[], operationId?: string }` | `null` | transfer, 600 s idle |
+
+A listed entry needs `path`; `isDir` defaults to `false`, `size` and
+`compressedSize` to 0. `archivePath`, `destination`, `baseDir` and the `paths`
+of `archive.create` are full Windows paths; `innerPath`, `newPath`,
+`innerPaths` and the `paths` of `archive.add` are entry paths. A failure is an
+error reply, normally `-32000` with a message the user sees.
 
 Semantics:
 
@@ -176,6 +222,20 @@ The backend sends no events.
 | `-32602` | invalid params |
 | `-32603` | handler panicked |
 | `-32000` | application error (`Archive operation cancelled` after a cancel) |
+
+Who answers with which code:
+
+- The backend (the helper crate's server, which other backends should match):
+  `-32600` for any request before `plugin.handshake`
+  (`plugin.handshake must come before <method>`) and for a frame that is
+  neither a request nor a reply; `-32700` with `"id": null` for a frame that is
+  not JSON; `-32601` for a method it does not serve; `-32602` for invalid
+  params, including a `cancel` without a string `operationId`; `-32603` when a
+  handler panicked; `-32000` for the method's own failure.
+- The host, answering `host.*`: `-32601` for an unknown method, `-32602` for
+  invalid params (see Host methods), `-32603` for a host-side failure.
+- `-32001` (host-owned) belongs to the main IPC schema; no plugin connection
+  uses it.
 
 ## Validation
 

@@ -141,12 +141,12 @@ plugins\<plugin-id>\
 | --- | --- | --- |
 | `id` | yes | Reverse-DNS style identifier, lowercase, `[a-z0-9.-]`. Folder name must match. |
 | `name` | yes | Display name. |
-| `version` | yes | Semantic version of the plugin. |
+| `version` | yes | Version of the plugin, shown to the user; semantic versioning by convention (the reader requires only a non-empty string). |
 | `publisher` | yes | `{ "name", "url", "publicKey" }`. `publicKey` is optional base64 ed25519. |
 | `sdkVersion` | yes | Semantic version of the SDK the plugin was built against. The host loads a plugin only when the major matches a major it supports. |
 | `ui` | no | `{ "assembly": "<file>.dll", "entryType": "<namespace>.<type>" }`. The entry type implements `IPlugin`. |
 | `backend` | no | `{ "executable": "<file>.exe", "args": [], "activateOn": "first-call" \| "startup", "acceptsMultipleClients": false }`. |
-| `contributions` | yes | Declarative contributions, section 4.4. May be empty. |
+| `contributions` | no | Declarative contributions, section 4.4. May be absent or empty. |
 | `settings` | no | Declarative settings schema, section 8. |
 | `permissions` | no | Informational list shown in the consent dialog: `network`, `credentials`, `shell`, `backend-process`. |
 
@@ -177,8 +177,8 @@ starts the backend.
 
 | Contribution | Shape | Host slot |
 | --- | --- | --- |
-| `commands` | `{ id, label, group, shortcut? }` | Command palette, shortcut map, command routing. Ids are prefixed with the plugin id by the host. |
-| `contextMenu` | `{ group, items: [{ command, label, when }] }` | `ContextMenuBuilder` appends plugin groups after the built-in ones. `when` is a small expression over selection facts: `selectionCount`, `singleFile`, `singleFolder`, `hasExtension(ext)`, `hasDecoration` (the selection carries this plugin's row decoration) and `folderFlag(name)` (a per-folder flag the plugin's row decoration provider sets, such as `inRepository`). |
+| `commands` | `{ id, label, group?, shortcut? }` | Command palette and command routing. Ids are prefixed with the plugin id by the host. `shortcut` is display text in the palette; the host binds no key for it. |
+| `contextMenu` | `{ group, items: [{ command, label, when? }] }` | `ContextMenuBuilder` appends plugin groups after the built-in ones. `when` is a small expression over selection facts: `selectionCount`, `singleFile`, `singleFolder`, `hasExtension(ext)`, `hasDecoration` (the selection carries this plugin's row decoration) and `folderFlag(name)` (a per-folder flag the plugin's row decoration provider sets, such as `inRepository`). |
 | `toolbar` | `{ command, label, glyph, placement: "primary" \| "overflow", when? }` | Primary toolbar and overflow planner. A `when` expression (the context menu's grammar) hides the button while it is false. |
 | `sidebar` | `{ id, title, provider, command? }` | A collapsible section in `SidebarView`. The host draws its header from the manifest: the title, a collapse button and, when `command` names a declared command, an icon button that runs it. The provider implements `ISidebarSectionProvider` and fills the body. `id` follows the settings key grammar and is unique within the plugin. |
 | `panels` | `{ id, title, provider, placement: "right" \| "bottom", detachable, command? }` | A dockable side panel next to the file list, with the same host-or-window toggle the Git workbench has today. The provider implements `IPanelProvider`. When `command` names a declared command, that command toggles the panel. |
@@ -232,15 +232,17 @@ below). The public surface:
 - `IPlugin`: `Task ActivateAsync(IPluginHost host, CancellationToken ct)` and
   `Task DeactivateAsync()`.
 - `IPluginHost`: `InvokeBackendAsync<T>(method, args, ct)`, `Settings`,
-  `Progress`, `Dialogs`, `Workspace`, `Logger`, `Events` for backend
-  events, and `Windows`, `Panels` and `Decorations` (below).
-- `IPluginSettings`: typed get and set over the plugin's own keys.
+  `Progress`, `Dialogs`, `Workspace`, `Logger`, `OnBackendEvent<T>(eventName,
+  handler)` for backend events, and `Windows`, `Panels` and `Decorations`
+  (below).
+- `IPluginSettings`: `GetAsync` and `SetAsync` of string values over the
+  plugin's own keys.
 - `IPluginProgress`: `Begin(title)` returning an operation handle with
   `Report(current, total, detail)`, `Complete()`, `Fail(message)` and a
   `CancellationToken` the host cancels from the Transfers window.
 - `IPluginDialogs`: show a content dialog, pick a folder, confirm.
-- `IPluginWorkspace`: read-only view of the active pane path, selection,
-  provider flags, and a `Changed` event. Navigation requests go through
+- `IPluginWorkspace`: read-only view of the active pane path and selection,
+  and a `Changed` event. Navigation requests go through
   `NavigateAsync(path)`.
 - `ICommandHandler`, `ISidebarSectionProvider`, `IPanelProvider`,
   `IRowDecorationProvider`, `ISettingsPageProvider`.
@@ -547,7 +549,8 @@ five-second timeout and performs a handshake that exchanges plugin id, plugin
 version and SDK version.
 
 The backend exits when its last client disconnects. The host also terminates it
-on shutdown, on plugin disable, and after three consecutive failed restarts.
+on shutdown and on plugin disable, and kills a backend whose start fails; three
+failed starts within 60 s mark the plugin Faulted.
 
 ### 6.2 Transport
 
@@ -590,7 +593,7 @@ backend therefore never holds more than its in-flight ids plus 64.
 | `host.get_settings` / `host.set_setting` | The plugin's own keys, section 8. |
 | `host.progress_begin` / `host.progress_report` / `host.progress_complete` / `host.progress_fail` | Appears in the Transfers window with cancel. |
 | `host.log` | Written to the SumaFile log with the plugin id. |
-| `host.notify` | A status-center message. |
+| `host.notify` | A message-bar notice titled with the plugin's name. |
 
 A plugin's progress row is an external Transfers row (`EnqueueExternal`). Its
 runner is `PluginOperationWait.WaitAsync(finished, cancellation, 30 s)`
@@ -1276,9 +1279,9 @@ There is no sandbox. The design is explicit with users about what runs.
 | --- | --- |
 | Manifest invalid | Listed in Settings with the parse error. Nothing loads. |
 | UI assembly fails to load or `ActivateAsync` throws | Listed as Load failed with the exception message. Contributions are removed. Rest of the app unaffected. |
-| Backend fails to start or handshake | The invoking command fails with a status-center message. The plugin is marked Faulted after three failures within a minute. |
+| Backend fails to start or handshake | The invoking command fails with a message-bar error. The plugin is marked Faulted after three failures within a minute. |
 | Backend exits unexpectedly | In-flight calls fail with a plugin-faulted error. Status center offers Restart. Archive engines are unregistered from the service until restart; the host raises its change notification again once that unregister has finished, so the archive capabilities never keep a lost engine. If the file service itself restarts, the host registers every live engine with the new service in the background, with the same bounded attempts as below; the reconnect does not wait for it. |
-| Backend call times out | Same timeouts as service calls. Registering an archive engine with the service makes up to 3 attempts of 15 s each, 1 s and then 3 s apart. After the third failure the plugin is Faulted, its backend is stopped and its engines are unregistered once more, unless a restart has registered a newer backend meanwhile. |
+| Backend call times out | The host sets no deadline on `InvokeBackendAsync` (its token only ends the wait), and the service applies the archive-engine deadlines of section 6.4. Registering an archive engine with the service makes up to 3 attempts of 15 s each, 1 s and then 3 s apart. After the third failure the plugin is Faulted, its backend is stopped and its engines are unregistered once more, unless a restart has registered a newer backend meanwhile. |
 | Row decoration provider is slow | Folder renders undecorated after 250 ms; decorations apply when they arrive. |
 | Row decoration provider throws (its own timeout included, such as `git <name> timed out after <n> seconds`) or returns null | Logged as `[warn] Row decorations failed: <message>`; the host's 250 ms budget only stops waiting and logs nothing. The folder shows no decorations from that plugin for that request. Not a load failure: the plugin stays Enabled and is asked again on the next folder sync. A request the host cancels is not logged. |
 | Plugin faulted while a 7-Zip archive is open in a pane | The pane re-lists and shows the listing error that carries the note `7-Zip support requires the SumaFile 7-Zip plugin.` Its old rows are dropped. Once the engine registers again, the pane re-lists without user action and the note is cleared. |
@@ -2430,6 +2433,7 @@ the CI step.
    slot and custom settings page.
 4. Git plugin. Adds the panel and row-decoration slots.
 5. Plugin template repository, `docs/PLUGINS.md`, NuGet and crates.io
-   publishing.
+   packaging. Phase 5 does dry runs only (`npm run pack:sdk`,
+   `npm run pack:crates`); publishing is a later, separate step.
 
 Each phase ends with the full check suite green and a release-build smoke run.
