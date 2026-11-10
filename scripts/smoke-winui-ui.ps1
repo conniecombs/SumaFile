@@ -18,6 +18,53 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'lib\plugin-staging.ps1')
 . (Join-Path $PSScriptRoot 'lib\credentials.ps1')
 if ($PluginsDir -and $NoPlugins) { throw 'Use -PluginsDir or -NoPlugins, not both.' }
+
+# One command-line argument for a Windows program: quoted when it holds whitespace or a quote, with the backslashes
+# before a quote, and a trailing run of them, doubled (the CommandLineToArgvW rules git follows).
+function ConvertTo-SmokeCommandLineArgument {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
+    $escaped = [regex]::Replace($Value, '(\\*)"', [System.Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $match.Groups[1].Value + '\"' })
+    $escaped = [regex]::Replace($escaped, '(\\+)$', [System.Text.RegularExpressions.MatchEvaluator] { param($match) $match.Groups[1].Value + $match.Groups[1].Value })
+    return '"' + $escaped + '"'
+}
+
+# Runs git for the Git plugin fixture, bounded at 30 s, isolated as the app is: the smoke's empty global config, no
+# system config, no fsmonitor, no prompts, and no repository walk out of the test root. Returns git's stdout.
+function Invoke-SmokeGit {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+    $gitStart = New-Object System.Diagnostics.ProcessStartInfo
+    $gitStart.FileName = $smokeGitExe
+    $gitStart.WorkingDirectory = $WorkingDirectory
+    $gitStart.Arguments = ((@('-c', 'core.fsmonitor=false') + $Arguments) | ForEach-Object { ConvertTo-SmokeCommandLineArgument -Value $_ }) -join ' '
+    $gitStart.UseShellExecute = $false
+    $gitStart.CreateNoWindow = $true
+    $gitStart.RedirectStandardOutput = $true
+    $gitStart.RedirectStandardError = $true
+    foreach ($name in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY')) {
+        if ($gitStart.EnvironmentVariables.ContainsKey($name)) { $gitStart.EnvironmentVariables.Remove($name) }
+    }
+    $gitStart.EnvironmentVariables['GIT_CONFIG_GLOBAL'] = $smokeGitConfig
+    $gitStart.EnvironmentVariables['GIT_CONFIG_NOSYSTEM'] = '1'
+    $gitStart.EnvironmentVariables['GIT_CEILING_DIRECTORIES'] = $testRoot
+    $gitStart.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'
+    $line = 'git ' + ($Arguments -join ' ')
+    $gitProcess = [System.Diagnostics.Process]::Start($gitStart)
+    try {
+        $stdout = $gitProcess.StandardOutput.ReadToEndAsync()
+        $stderr = $gitProcess.StandardError.ReadToEndAsync()
+        if (-not $gitProcess.WaitForExit(30000)) {
+            try { $gitProcess.Kill() } catch { Write-Warning "Could not stop '$line': $($_.Exception.Message)" }
+            throw "'$line' did not finish within 30 s in $WorkingDirectory."
+        }
+        $gitProcess.WaitForExit()
+        if ($gitProcess.ExitCode -ne 0) { throw "'$line' failed in $WorkingDirectory (exit $($gitProcess.ExitCode)): $($stderr.Result.Trim())" }
+        return $stdout.Result
+    } finally { $gitProcess.Dispose() }
+}
 $pluginRoots = $null
 if ($PluginsDir) {
     $pluginsPath = if ([System.IO.Path]::IsPathRooted($PluginsDir)) { $PluginsDir } else { Join-Path $root $PluginsDir }
@@ -55,6 +102,10 @@ $testRoot = Join-Path $root ('test-results\ui-smoke\' + [DateTime]::UtcNow.ToStr
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $testRoot '.sumafile-ui-smoke'), 'disposable UI test data')
 foreach ($name in @('empty', 'destination', 'state')) { New-Item -ItemType Directory -Path (Join-Path $testRoot $name) | Out-Null }
+# Every mode: git is isolated wherever the app's Git backend could run it, and the smoke's own git calls use the same
+# empty config. It lives with the app's state.
+$smokeGitConfig = Join-Path $testRoot 'state\gitconfig'
+[System.IO.File]::WriteAllText($smokeGitConfig, '')
 $png = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=')
 foreach ($count in $Counts) {
     if ($count -lt 1000 -or $count -gt 100000) { throw 'Counts must be between 1,000 and 100,000.' }
@@ -88,6 +139,61 @@ if ($PluginsDir -or $NoPlugins) {
         & $sevenZa a -t7z (Join-Path $archivesRoot 'sample.7z') '*' -bso0 -bsp0
         if ($LASTEXITCODE -ne 0) { throw "7za could not create sample.7z (exit $LASTEXITCODE)." }
     } finally { Pop-Location }
+}
+$gitRoot = $null
+if ($PluginsDir -or $NoPlugins) {
+    # The Git plugin's repositories under <testRoot>\git: a bare origin.git; repo, which pushed its first commit with
+    # an upstream; a peer clone that pushed one more commit (so repo is behind by 1 and its pull is a fast-forward);
+    # then repo's own changes, which it does not commit until the smoke has pulled; and not-a-repo. Every repository
+    # is created with -b main and gets its identity, so no global init.defaultBranch, hook or signing applies.
+    $gitCommands = @(Get-Command git -CommandType Application -ErrorAction SilentlyContinue)
+    if ($gitCommands.Count -eq 0) { throw 'Git for Windows is required for the Git plugin smoke' }
+    $smokeGitExe = $gitCommands[0].Path
+    $gitRoot = Join-Path $testRoot 'git'
+    $gitRepo = Join-Path $gitRoot 'repo'
+    $gitOrigin = Join-Path $gitRoot 'origin.git'
+    $gitPeer = Join-Path $gitRoot 'peer'
+    New-Item -ItemType Directory -Path $gitRoot | Out-Null
+    Invoke-SmokeGit -WorkingDirectory $gitRoot -Arguments @('init', '--bare', '-b', 'main', 'origin.git') | Out-Null
+    Invoke-SmokeGit -WorkingDirectory $gitRoot -Arguments @('init', '-b', 'main', 'repo') | Out-Null
+    $gitIdentity = @(
+        @('config', 'user.name', 'SumaFile Smoke'),
+        @('config', 'user.email', 'smoke@sumafile.invalid'),
+        @('config', 'commit.gpgsign', 'false'),
+        @('config', 'core.autocrlf', 'false'))
+    foreach ($setting in $gitIdentity) { Invoke-SmokeGit -WorkingDirectory $gitRepo -Arguments $setting | Out-Null }
+    $gitUnicodeFolder = 'caf' + [char]0x00E9 + ' ' + [char]0x8CC7 + [char]0x6599
+    $gitFiles = [ordered]@{
+        'tracked.txt' = "SumaFile Git smoke: tracked`n"
+        ($gitUnicodeFolder + '\hello.txt') = "SumaFile Git smoke: hello`n"
+        'literal [brackets] & spaces.txt' = "SumaFile Git smoke: literal`n"
+        'discard-me.txt' = "SumaFile Git smoke: committed`n"
+    }
+    foreach ($relative in $gitFiles.Keys) {
+        $target = Join-Path $gitRepo $relative
+        New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($target)) -Force | Out-Null
+        [System.IO.File]::WriteAllText($target, $gitFiles[$relative])
+    }
+    Invoke-SmokeGit -WorkingDirectory $gitRepo -Arguments @('add', '-A') | Out-Null
+    Invoke-SmokeGit -WorkingDirectory $gitRepo -Arguments @('commit', '-m', 'initial') | Out-Null
+    Invoke-SmokeGit -WorkingDirectory $gitRepo -Arguments @('remote', 'add', 'origin', $gitOrigin) | Out-Null
+    Invoke-SmokeGit -WorkingDirectory $gitRepo -Arguments @('push', '-u', 'origin', 'main') | Out-Null
+    Invoke-SmokeGit -WorkingDirectory $gitRoot -Arguments @('clone', $gitOrigin, 'peer') | Out-Null
+    foreach ($setting in $gitIdentity) { Invoke-SmokeGit -WorkingDirectory $gitPeer -Arguments $setting | Out-Null }
+    [System.IO.File]::WriteAllText((Join-Path $gitPeer 'from-peer.txt'), "SumaFile Git smoke: from the peer`n")
+    Invoke-SmokeGit -WorkingDirectory $gitPeer -Arguments @('add', '-A') | Out-Null
+    Invoke-SmokeGit -WorkingDirectory $gitPeer -Arguments @('commit', '-m', 'from the peer') | Out-Null
+    Invoke-SmokeGit -WorkingDirectory $gitPeer -Arguments @('push', 'origin', 'main') | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $gitRepo 'tracked.txt'), "SumaFile Git smoke: tracked, changed`n")
+    [System.IO.File]::WriteAllText((Join-Path $gitRepo 'discard-me.txt'), "SumaFile Git smoke: changed, to be discarded`n")
+    [System.IO.File]::WriteAllText((Join-Path $gitRepo 'new.txt'), "SumaFile Git smoke: untracked`n")
+    [System.IO.File]::WriteAllText((Join-Path $gitRepo 'staged.txt'), "SumaFile Git smoke: staged`n")
+    Invoke-SmokeGit -WorkingDirectory $gitRepo -Arguments @('add', '--', 'staged.txt') | Out-Null
+    $gitNotARepo = Join-Path $gitRoot 'not-a-repo'
+    New-Item -ItemType Directory -Path $gitNotARepo | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $gitNotARepo 'plain.txt'), "SumaFile Git smoke: not in a repository`n")
+    $gitStatus = @((Invoke-SmokeGit -WorkingDirectory $gitRepo -Arguments @('status', '--porcelain=v1')) -split "`n" | Where-Object { $_.Trim().Length -gt 0 })
+    if ($gitStatus.Count -ne 4) { throw "The Git fixture's repo has $($gitStatus.Count) changes, expected 4: $($gitStatus -join ' | ')" }
 }
 $remoteServerExe = $null
 $remoteInfo = $null
@@ -132,6 +238,7 @@ $start.EnvironmentVariables['SIMPLEFILE_SERVICE_PATH'] = $service
 $start.EnvironmentVariables['SIMPLEFILE_APP_DATA_DIR'] = Join-Path $testRoot 'state'
 $start.EnvironmentVariables['SIMPLEFILE_METADATA_DB'] = Join-Path $testRoot 'state\metadata.db'
 if ($archivesRoot) { $start.EnvironmentVariables['SUMAFILE_SMOKE_ARCHIVES'] = $archivesRoot }
+if ($gitRoot) { $start.EnvironmentVariables['SUMAFILE_SMOKE_GIT'] = $gitRoot }
 # Every mode, plain included: the plain run stages the bundled plugins too. The Debug exe folder is this run's
 # install folder, and plugin data, approvals and the plugin log default to it, so all three point into the test
 # root and the smoke never writes into the Debug exe folder (checked after the run).
@@ -142,9 +249,8 @@ $start.EnvironmentVariables['SUMAFILE_PLUGIN_LOG_PATH'] = Join-Path $testRoot 'p
 # Every mode too: git is isolated wherever the app's Git backend could run it. test-results\ lies inside the SumaFile
 # checkout, so git and the backend's repository walk stop at the test root and never find the checkout's own
 # repository, and git reads none of the developer's global or system config (a core.hooksPath, commit.gpgsign or
-# init.defaultBranch there could run, prompt or change a result). The empty config lives with the app's state.
-$smokeGitConfig = Join-Path $testRoot 'state\gitconfig'
-[System.IO.File]::WriteAllText($smokeGitConfig, '')
+# init.defaultBranch there could run, prompt or change a result). The empty config ($smokeGitConfig) lives with the
+# app's state, and the fixture's own git calls above used it too.
 $start.EnvironmentVariables['GIT_CEILING_DIRECTORIES'] = $testRoot
 $start.EnvironmentVariables['GIT_CONFIG_GLOBAL'] = $smokeGitConfig
 $start.EnvironmentVariables['GIT_CONFIG_NOSYSTEM'] = '1'

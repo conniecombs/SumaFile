@@ -376,6 +376,9 @@ public sealed partial class MainWindow
                 await checkpoint("remote-backend-loss");
                 await SmokeRemoteBackendLossAsync(results);
             }
+
+            await checkpoint("git");
+            await SmokeGitAsync(results, mode, checkpoint, startupFolder?.ReadyAt);
         }
 
         // Every mode, plain included, once the plugin scenarios have started what they start.
@@ -1425,7 +1428,10 @@ public sealed partial class MainWindow
         results.Add(new { scenario = "sevenzip-backend-loss", mode = "with", killedPid = killed[0], faulted, passed = true });
     }
 
-    /// <summary>The service dies; after the reconnect the new service serves .7z through the plugin again.</summary>
+    /// <summary>
+    /// The service dies; after the reconnect the new service serves .7z through the plugin again, and the remote and
+    /// Git backends (the App's own clients) survive it, with repo decorated again once listed through the new service.
+    /// </summary>
     private async Task SmokeServiceReconnectAsync(List<object> results)
     {
         var backend = _backend ?? throw new InvalidOperationException("The backend session is not available");
@@ -1436,6 +1442,7 @@ public sealed partial class MainWindow
         var installRoot = PluginDiscovery.InstallRoot();
         var remoteBackends = SmokeProcessIdsUnder(SmokeRemoteBackendName, installRoot);
         SmokeAssert(remoteBackends.Length == 1, $"Expected one {SmokeRemoteBackendName} under {installRoot} before the service kill, found {remoteBackends.Length}");
+        var gitBackends = await SmokeGitBackendsBeforeServiceKillAsync(installRoot);
         using (var service = Process.GetProcessById(pid))
         {
             service.Kill();
@@ -1465,6 +1472,7 @@ public sealed partial class MainWindow
             $"The service restart changed {SmokeRemoteBackendName} from [{string.Join(", ", remoteBackends)}] to [{string.Join(", ", remoteAfter)}]");
         var remote = _plugins?.Plugins.FirstOrDefault(item => item.Id == SmokeRemoteId);
         SmokeAssert(remote?.State == PluginState.Enabled, $"{SmokeRemoteId} is {remote?.State} after the service restart: {remote?.Error}");
+        await SmokeGitAfterServiceReconnectAsync(installRoot, gitBackends);
         results.Add(new
         {
             scenario = "service-reconnect",
@@ -1473,6 +1481,7 @@ public sealed partial class MainWindow
             servicePid = backend.ServiceProcessId,
             reconnectCount = backend.ReconnectCount,
             remoteBackendPid = remoteBackends[0],
+            gitBackendPid = gitBackends[0],
             files = files.Length,
             passed = true,
         });

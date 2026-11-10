@@ -430,8 +430,14 @@ smoke environment, 32 CPUs, five starts each, median):
   `ready` stayed at about 300 ms.
 - The UI smoke with the Hello fixture, followed by the budget check, printed
   `plugins-discovered span 10.0 ms (budget 50 ms, count=3)`.
-- The hosted-runner evidence is still pending: CI is not run in phase 4, so
-  74.2 ms at `46860dc` stays the last hosted figure, and the budget stays 50 ms.
+- The hosted runner has since retaken the evidence (carry-over h, recorded by
+  phase 4 Task 16). On windows-2025 the budget check printed
+  `plugins-discovered span 31.7 ms (budget 50 ms, count=3)` at `7a931df`
+  (CI run 42727627508), down from 74.2 ms at `46860dc`. The budget stays 50 ms.
+- With four plugins (Hello, 7-Zip, remote and Git, now bundled), the budget
+  check that follows the `-PluginsDir` UI smoke in the WinUI CI job printed
+  `plugins-discovered span 32.9 ms (budget 50 ms, count=4)` at `99b2bca`
+  (CI run 42738570057).
 
 Row decorations follow the same startup rule (phase 4 Task 11). The
 workspace's `RowDecorationCoordinator` starts with its gate closed, and only the
@@ -2074,8 +2080,12 @@ references the SDK, the model and `Microsoft.WindowsAppSDK` and
   - the smokes' guards.
 
   `scripts/test-plugin-staging.ps1` Case 10 covers the smokes' helpers.
-- UI smoke adds a run with `payload\plugins\` deleted to prove the app starts
-  and shows no Git, remote or 7-Zip UI.
+- UI smoke adds a run with no plugins to prove the app starts and shows no
+  Git, remote or 7-Zip UI. It is the `-NoPlugins` mode: the script points
+  `SUMAFILE_PLUGIN_ROOTS` at one empty folder. Since phase 4 there is one
+  plugin root, `<exe dir>\plugins`, and the override replaces it, so that run
+  discovers no plugin at all, bundled ones included, exactly as an install
+  whose `payload\plugins\` was deleted.
 - UI smoke covers `.7z` in both plugin modes (phase 2, as built), against a
   `sample.7z` the script makes with the bundled `7za.exe`
   (`SUMAFILE_SMOKE_ARCHIVES`):
@@ -2141,6 +2151,68 @@ references the SDK, the model and `Microsoft.WindowsAppSDK` and
     `overflow-ftp-sftp-manager` in the Pane More > Tools menu, and an opened
     Settings window has no `SettingsRemoteManagerButton` and no
     `FTP/SFTP connections` text.
+- UI smoke covers the Git plugin in both plugin modes (phase 4, as built;
+  `MainWindow.UiSmoke.Git.cs`). Both modes need git on `PATH` (the script
+  throws `Git for Windows is required for the Git plugin smoke` otherwise).
+  The script makes `<testRoot>\git` with its own git calls, each bounded at
+  30 s and isolated as the App is (`GIT_CONFIG_GLOBAL` at an empty
+  `<testRoot>\state\gitconfig`, `GIT_CONFIG_NOSYSTEM=1`,
+  `GIT_CEILING_DIRECTORIES=<testRoot>`, `-c core.fsmonitor=false`):
+  - a bare `origin.git` and `repo` (`git init -b main`, a repository-local
+    identity, `commit.gpgsign=false`, `core.autocrlf=false`) holding
+    `tracked.txt`, `café 資料\hello.txt`, `literal [brackets] & spaces.txt`
+    and `discard-me.txt`, committed and pushed with `git push -u origin main`;
+  - a `peer` clone that commits and pushes `from-peer.txt`, so `repo` is
+    behind by one and its pull is a fast-forward;
+  - in `repo`: `tracked.txt` and `discard-me.txt` modified, an untracked
+    `new.txt` and a staged `staged.txt`; and `not-a-repo\plain.txt`.
+
+  It exports `SUMAFILE_SMOKE_GIT`. The App checks the isolation variables
+  and verifies with the git command line itself (bounded at 30 s,
+  `--no-optional-locks`). Every UI wait is bounded at 10 s and every git
+  network step at 60 s. With plugins (`-PluginsDir`) the `git` scenario
+  checks, in order:
+  - trust and surface: `com.sumafile.git` is Enabled through `bundled.json`
+    from the install root with no approvals record, all ten
+    `plugin:com.sumafile.git:*` commands are on the palette and no bare
+    `git-*` remains, the toggle is in `OfferedPrimaryItems`, one
+    `sumafile-git-backend` runs under the install root, and the first
+    decoration request came after `ready`;
+  - the 1.0.4 migration: with `enableGitIntegration` = `false`,
+    `MigrateLegacySettingsAsync` copies it once; `repo` then shows no badge,
+    flag, menu group or toggle; the commands stay on the palette and
+    `git-refresh` shows `Git integration is turned off. Turn it on in
+    Settings > Plugins > Git.` in the message bar titled `Git`; the Settings
+    > Plugins switch `PluginSetting.com.sumafile.git.enabled` reads off and,
+    turned on through the control, decorates the open folder with no
+    navigation;
+  - decorations: the four changed rows with their labels and brush keys and
+    the `com.sumafile.git:inRepository` flag in `repo`; nothing in
+    `not-a-repo`;
+  - the panel from its toolbar toggle: `PluginPanel.com.sumafile.git.workbench`
+    docked at the bottom, the branch `main`, as many rows as
+    `git status --porcelain=v1` lines, and the toggle kept, toggled on, in
+    `not-a-repo` while the panel is shown;
+  - stage and unstage `new.txt`, the working tree diff of `tracked.txt`,
+    discard `discard-me.txt` through the confirmation, fetch (a
+    `Fetching repo` Transfers row, ahead 0 and behind 1), the fast-forward
+    pull, a commit whose message-bar text starts with git's
+    `[main <sha>] smoke commit`, and a push that moves `origin.git`'s `main`;
+  - detach and dock (`PluginPanelWindow` titled `Git workbench`), a
+    `ResizePluginPanelBy(-40)`, then Disable with the commit dialog open on
+    the detached window: the window closes, the dialog gate is free, the
+    badges, menu group, toggle and backend go; a save while disabled keeps
+    the toolbar item in place, and Enable draws it again there;
+  - a toggle the user removed stays removed across a backend restart and a
+    disable, save and enable.
+
+  `service-reconnect` also requires the Git backend's process to survive the
+  service restart and `repo` to be decorated again after it is listed
+  through the new service. Without plugins (`-NoPlugins`): no `git-*` or
+  `plugin:com.sumafile.git:*` command or toolbar action, no `GitPanel`,
+  `GitToggleButton` or `PluginPanel.*` element, no menu entry naming git for
+  a file in `repo`, no `Git integration` text in Settings, no decoration in
+  `repo`, no `sumafile-git-backend` process and `HasProviders == false`.
 - The startup budget check adds a stage for plugin discovery.
 
 ## 14. Phases
