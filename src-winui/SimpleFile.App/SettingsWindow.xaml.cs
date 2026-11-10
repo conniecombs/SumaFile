@@ -126,6 +126,13 @@ public sealed partial class SettingsWindow : Window
 
     public Task<ContentDialogResult> ShowAsync()
     {
+        // Closed while its settings were still loading (the user, or the app closing it): activating a closed
+        // window throws, so it simply ends without a result.
+        if (IsClosed)
+        {
+            return Task.FromResult(ContentDialogResult.None);
+        }
+
         Activate();
         OwnerHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         return _resultSource.Task;

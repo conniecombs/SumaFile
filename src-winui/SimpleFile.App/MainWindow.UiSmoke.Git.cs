@@ -634,11 +634,17 @@ public sealed partial class MainWindow
 
         // Settings: no "Git integration" text anywhere, including the collapsed category panels.
         var showing = _fileOperationDialogs.ShowSettingsAsync();
+        Exception? scanFailure = null;
         try
         {
             SettingsWindow? settings = null;
-            await SmokeGitWaitAsync(() => (settings = _fileOperationDialogs.OpenSettingsWindow) is not null
-                && settings.Content is FrameworkElement { IsLoaded: true }, () => "the Settings window");
+            // The first Settings window of a process builds all of its XAML, which a loaded runner can take well over
+            // the UI wait to do (CI run 42760411425).
+            await SmokeWaitWithinAsync(
+                () => Task.FromResult((settings = _fileOperationDialogs.OpenSettingsWindow) is not null
+                    && settings.Content is FrameworkElement { IsLoaded: true }),
+                TimeSpan.FromSeconds(30),
+                () => "the Settings window");
             var settingsContent = (FrameworkElement)settings!.Content;
             var texts = SmokeLogicalDescendants<TextBlock>(settingsContent).Concat(SmokeDescendants<TextBlock>(settingsContent)).ToArray();
             SmokeAssert(settingsContent.FindName("PluginsPanel") is Panel plugins && texts.Any(text => text.Text == "Plugins" && SmokeIsInside(text, plugins)),
@@ -646,10 +652,22 @@ public sealed partial class MainWindow
             var gitTexts = texts.Where(text => (text.Text ?? "").Contains("Git integration", StringComparison.OrdinalIgnoreCase)).ToArray();
             SmokeAssert(gitTexts.Length == 0, "The Settings window shows 'Git integration' without plugins");
         }
+        catch (Exception exception)
+        {
+            scanFailure = exception;
+            throw;
+        }
         finally
         {
             _fileOperationDialogs.CloseSettingsWindow();
-            await showing.WaitAsync(SmokeGitUiWait);
+            try
+            {
+                await showing.WaitAsync(SmokeGitUiWait);
+            }
+            catch when (scanFailure is not null)
+            {
+                // The scan's own failure is the one to report, not what closing the window then did to the show.
+            }
         }
 
         // Nothing can start git: no backend runs and no decoration provider is set.
