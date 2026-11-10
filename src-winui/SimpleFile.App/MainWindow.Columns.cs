@@ -269,7 +269,6 @@ public sealed partial class MainWindow
         var signatureParts = new List<string>
         {
             $"sizes={needsSizes}",
-            $"gitIntegration={_workspace.Settings.EnableGitIntegration}",
         };
         foreach (var pane in panes)
         {
@@ -385,24 +384,8 @@ public sealed partial class MainWindow
                 }
 
                 var columns = workspace.ColumnsFor(pane);
-                var needsGit = columns.IsVisible("git") && workspace.Settings.EnableGitIntegration;
                 var needsItems = columns.IsVisible("items");
                 var paneNeedsSizes = needsSizes;
-
-                if (needsGit)
-                {
-                    await workspace.ApplyGitStatusesAsync(pane, cancellationToken).ConfigureAwait(true);
-                    if (_gitPanelOpen && pane == workspace.ActivePane)
-                    {
-                        await RefreshGitPanelAsync(silent: true).ConfigureAwait(true);
-                    }
-                }
-
-                if (cancellationToken.IsCancellationRequested || token != _columnEnrichmentToken)
-                {
-                    return;
-                }
-
                 if (paneNeedsSizes || needsItems)
                 {
                     await workspace.FillFolderMetricsAsync(pane, paneNeedsSizes, needsItems, cancellationToken).ConfigureAwait(true);

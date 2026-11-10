@@ -90,16 +90,15 @@ public class UxRecommendationsSettingsGitRemoteTests
     }
 
     [Fact]
-    public void Settings_GroupsGitUnderDeveloperAndOpensTransferOptions()
+    public void Settings_OpensTransferOptionsAndLeavesGitToThePlugin()
     {
         var xaml = Read("SettingsWindow.xaml");
         var tools = Read("SettingsWindow.Tools.cs");
         var behavior = Slice(xaml, "x:Name=\"BehaviorPanel\"", "x:Name=\"StoragePanel\"");
 
-        var developer = Slice(behavior, "x:Name=\"DeveloperSettingsGroup\"", "</StackPanel>");
-        Assert.Contains("<TextBlock Text=\"Developer\" FontWeight=\"SemiBold\" />", developer);
-        Assert.Contains("<ToggleSwitch x:Name=\"EnableGitSwitch\" Header=\"Git integration\" />", developer);
-        Assert.Contains("Shows Git status for files inside repositories and enables the Git workbench.", developer);
+        // Git's on/off switch is the Git plugin's "enabled" setting (Settings > Plugins > Git) since phase 4.
+        Assert.DoesNotContain("DeveloperSettingsGroup", xaml);
+        Assert.DoesNotContain("EnableGitSwitch", xaml);
 
         var transfers = Slice(behavior, "x:Name=\"TransfersSettingsGroup\"", "</StackPanel>");
         Assert.Contains("Transfer options", transfers);
@@ -128,41 +127,6 @@ public class UxRecommendationsSettingsGitRemoteTests
         {
             Assert.Contains(source, text);
         }
-    }
-
-    [Fact]
-    public void GitDiscard_ListsPathsAndWarnsAboutUntrackedFiles()
-    {
-        var git = Read("MainWindow.Git.cs");
-        var text = Slice(git, "internal static string GitDiscardConfirmationText(", "private async Task<bool> ConfirmGitDiscardAsync(");
-        var confirm = Slice(git, "private async Task<bool> ConfirmGitDiscardAsync(IReadOnlyList<GitChangeRow> rows)", "return await DialogHost.ShowAsync(dialog)");
-
-        Assert.Contains("const int listed = 5;", text);
-        Assert.Contains("$\"and {rows.Count - listed} more\"", text);
-        Assert.Contains("\"This cannot be undone.\"", text);
-        Assert.Contains("\"1 untracked file will be deleted from disk, not moved to the Recycle Bin.\"", text);
-        Assert.Contains("untracked files will be deleted from disk, not moved to the Recycle Bin.", text);
-        Assert.Contains("DefaultButton = ContentDialogButton.Close", confirm);
-        Assert.Contains("ConfirmGitDiscardAsync(SelectedGitDiscardRows(selectedPaths))", git);
-
-        var workbench = Read("GitWorkbenchView.xaml");
-        var diff = workbench.IndexOf("Click=\"OnDiffClicked\"", StringComparison.Ordinal);
-        var discard = workbench.IndexOf("Click=\"OnDiscardClicked\"", StringComparison.Ordinal);
-        Assert.True(diff > 0 && discard > diff, "Discard sits after the other actions.");
-        var discardButton = Slice(workbench, "x:Name=\"DiscardButton\"", "</Button>");
-        Assert.Contains("Foreground=\"{ThemeResource SystemFillColorCriticalBrush}\"", discardButton);
-        Assert.Contains("AutomationProperties.Name=", discardButton);
-    }
-
-    [Fact]
-    public void GitStatusButton_AppearsOnlyInsideARepository()
-    {
-        var git = Read("MainWindow.Git.cs");
-        var visibility = Slice(git, "private void RefreshGitUiVisibility()", "private bool? ActivePaneInGitRepository()");
-
-        Assert.Contains("ActivePaneInGitRepository()", visibility);
-        Assert.Contains("enabled && (inRepository == true || _gitPanelOpen)", visibility);
-        Assert.Contains("pane.GitRepositoryRoot", git);
     }
 
     [Fact]

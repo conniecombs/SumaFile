@@ -84,7 +84,6 @@ public static class EntryPresentation
             "date" or "modified" => FormatModified(entry.Modified),
             "type" => FileType(entry),
             "extension" => FormatExtension(entry),
-            "git" => entry.GitStatus ?? "",
             "symlink" => entry.SymlinkTarget ?? "",
             "path" => entry.Path,
             "parent" => PathRules.GetParentPath(entry.Path) ?? "",
@@ -112,29 +111,6 @@ public static class EntryPresentation
     public static string EntryIcon(FileEntry entry)
     {
         return entry.IsDir ? "\uE8B7" : "\uE8A5";
-    }
-
-    public static string GitStatusBrushKey(string? status)
-    {
-        if (string.IsNullOrWhiteSpace(status))
-        {
-            return "SfTextMutedBrush";
-        }
-
-        var normalized = status.Trim().ToLowerInvariant();
-        if (normalized.StartsWith("git:", StringComparison.Ordinal))
-        {
-            normalized = normalized["git:".Length..].Trim();
-        }
-
-        return normalized switch
-        {
-            "added" or "staged" or "a" => "SfGitAddedBrush",
-            "modified" or "renamed" or "copied" or "m" or "r" => "SfGitModifiedBrush",
-            "untracked" or "?" or "??" => "SfGitUntrackedBrush",
-            "deleted" or "conflict" or "unmerged" or "d" or "u" => "SfGitDeletedBrush",
-            _ => "SfTextMutedBrush",
-        };
     }
 
     /// <summary>

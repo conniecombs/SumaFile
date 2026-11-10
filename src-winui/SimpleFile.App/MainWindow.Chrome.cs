@@ -936,7 +936,6 @@ public sealed partial class MainWindow
         && left.SizeText == right.SizeText
         && left.TypeText == right.TypeText
         && left.ExtensionText == right.ExtensionText
-        && left.GitText == right.GitText
         && left.DecorationText == right.DecorationText
         && left.DecorationBrushKey == right.DecorationBrushKey
         && left.DecorationTooltip == right.DecorationTooltip

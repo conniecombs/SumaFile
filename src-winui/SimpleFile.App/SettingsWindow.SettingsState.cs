@@ -53,7 +53,6 @@ public sealed partial class SettingsWindow
         settings.ShowRecentLocations = ShowRecentSwitch.IsOn;
         settings.ShowSmartFolders = ShowSmartFoldersSwitch.IsOn;
         settings.ShowTags = ShowTagsSwitch.IsOn;
-        settings.EnableGitIntegration = EnableGitSwitch.IsOn;
         settings.ShowFolderSizes = ShowFolderSizesSwitch.IsOn;
         settings.ShortcutOverrides = CurrentShortcutOverrides();
         var surface = CurrentCommandSurfaceLayout();
@@ -139,7 +138,6 @@ public sealed partial class SettingsWindow
         ShowSmartFoldersSwitch.IsOn = settings.ShowSmartFolders;
         ShowTagsSwitch.IsOn = settings.ShowTags;
 
-        EnableGitSwitch.IsOn = settings.EnableGitIntegration;
         ShowFolderSizesSwitch.IsOn = settings.ShowFolderSizes;
         ApplyShortcutOverrides(settings.ShortcutOverrides);
         _toolbarOffersReset = false;

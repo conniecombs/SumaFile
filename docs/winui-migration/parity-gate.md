@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 86-command schema vs Rust/C#
+npm run check:ipc-schema      # 75-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (86)
+## 2. IPC commands (75)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -141,21 +141,12 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `create_archive` | zip/tar/tar.gz, and 7z through the SumaFile 7-Zip plugin; with `operationId` it reports `operation-progress` and `cancel_operation` stops it | Create archive dialog; plugin formats as a Transfers row with progress and Cancel (`CreateArchiveTrackedAsync`) | IPC; RAR create rejected; `sevenzip_plugin.rs` create, progress and cancel tests; `FileOperationServiceTests` tracked tests | Compress selection | `MANUAL` |
 | `register_archive_engine` `unregister_archive_engine` | Plugin archive engines (extensions served by a plugin backend) | `ArchiveEngineRegistrar` | `crates/simplefile-service/tests/plugin_archive.rs`, `hello_plugin.rs` + dispatch tests | — | `PASS` |
 
-### 2.5 Git, terminals, tags, settings, updater
+### 2.5 Terminals, tags, settings, updater
+
+The eleven Git methods (`get_git_status`, `get_git_repository_status`, `get_git_file_statuses`, `git_stage_paths`, `git_unstage_paths`, `git_discard_paths`, `git_diff_path`, `git_commit`, `git_fetch`, `git_pull`, `git_push`) left the core IPC surface in plugin system phase 4; the service answers them `ERR_METHOD_NOT_FOUND` (`removed_git_methods_return_method_not_found`). See §2.7.
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `get_git_status` | Legacy repo status | Schema `compatOnly`; no live App/Core caller | Schema/client | — | `WAIVED` | Live UI uses repository/file status methods |
-| `get_git_repository_status` | Repo summary + changes | Git workbench | Schema/client/source-shape | Open Git workbench in a repo | `PASS` |
-| `get_git_file_statuses` | Git column | `ApplyGitStatusesAsync` + `FileRow.GitText` | Workspace + FileRow | Enable Git; open a repo | `PASS` |
-| `git_stage_paths` | Stage changed paths | Git workbench/context menu | Schema/client/source-shape | Stage a changed file | `MANUAL` |
-| `git_unstage_paths` | Unstage paths | Git workbench/context menu | Schema/client/source-shape | Unstage a staged file | `MANUAL` |
-| `git_discard_paths` | Discard selected changes | Git workbench/context menu confirmation | Schema/client/source-shape | Discard a scratch change | `MANUAL` |
-| `git_diff_path` | Show file diff | Workbench diff preview | Schema/client/source-shape | Preview diff for a changed file | `MANUAL` |
-| `git_commit` | Commit staged changes | Workbench commit prompt | Schema/client/source-shape | Commit staged scratch change | `MANUAL` |
-| `git_fetch` | Fetch remotes | Git workbench/context menu | Schema/client/source-shape | Fetch in a repo | `MANUAL` |
-| `git_pull` | Pull current repo | Git workbench/context menu/command palette | Catalog test | Git pull in a repo | `MANUAL` |
-| `git_push` | Push current repo | Git workbench/context menu/command palette | Catalog test | Git push | `MANUAL` |
 | `open_terminal` | F4 / context | IPC | — | F4 | `MANUAL` |
 | `open_powershell_admin` | Context | IPC | Context menu ID | Elevate PS | `MANUAL` |
 | `get_all_tags` | Color labels | Tag picker | Workspace seed | Set label | `MANUAL` |
@@ -186,6 +177,18 @@ FTP, FTPS and SFTP left the core IPC surface in plugin system phase 3: the 13 `r
 | `remote.ftps` | FTPS (explicit TLS) | Plugin manager window | Only the shared `ftp.rs` tests | The same steps against a real FTPS server whose certificate the system trusts | `MANUAL` |
 | `remote.sftp-key` | SFTP private-key auth, with and without a saved passphrase | Plugin profile dialog | None; the test server accepts passwords only | Connect with a key file; with a saved passphrase, reconnect without retyping it | `MANUAL` |
 | `remote.sftp-agent` | SFTP agent auth | Plugin profile dialog | None | Connect through a running OpenSSH agent or Pageant | `MANUAL` |
+
+### 2.7 Git (plugin `com.sumafile.git`)
+
+Git left the core in plugin system phase 4: `crates/simplefile-core/src/git.rs`, the eleven `git_*` / `get_git_*` service methods, the core palette commands and context-menu group, the `GitPanel` workbench and the `EnableGitIntegration` setting are gone. The bundled plugin `com.sumafile.git` serves its own methods over the plugin pipe (backend `plugins/git/backend`, UI `plugins/git/ui/SumaFile.Git`); its method and error table is [`plugins/git/protocol.json`](../../plugins/git/protocol.json). `FileEntry.git_status` stays in the v1 wire format and binary frame, always absent. The rows below track the feature by coverage level.
+
+| ID | Feature | WinUI verification | Automated | Manual | Status |
+| --- | --- | --- | --- | --- | --- |
+| `git.decorations` | Status column and row text inside a repository; `inRepository` folder flag for menus and the toolbar | Plugin row decoration provider (`activateOn: startup`) | `plugins/git/backend/tests/handler.rs`, `repo.rs`; `GitDecorationProviderTests`; `RowDecorationCoordinatorTests` | Open a repo with changes; the Status column shows them | `PASS` |
+| `git.workbench` | Stage, unstage, discard (with confirmation), diff and commit | Plugin panel `workbench` (bottom or detached `PluginPanelWindow`) | `GitWorkbenchControllerTests`, `GitWorkbenchViewModelTests`, `GitTextTests`; Git UI smoke | Open the workbench; stage, diff, commit a scratch change | `MANUAL` |
+| `git.sync` | Fetch, pull and push as Transfers rows with Cancel | Plugin commands and Transfers rows | `plugins/git/backend/tests/process.rs`; `GitWorkbenchControllerTests` (cancel); `GitPluginBackendTests` (real host, real backend) | Fetch, pull and push against a real remote | `MANUAL` |
+| `git.commands` | The ten `plugin:com.sumafile.git:git-*` commands, the Git context-menu group (`when` expressions) and the primary toolbar toggle | Command palette, omnibar, context menu, toolbar | `GitPluginManifestTests`; `PluginContributionAdapterTests` | Right-click a changed file in a repo | `PASS` |
+| `git.disable` | Settings > Plugins > Git > `enabled` (migrated from `enableGitIntegration`): off clears decorations, the menu group and the toggle, and hides the workbench; commands stay listed and refuse | Plugin settings | `Commands_WhenDisabled_NotifyTheDisabledMessageAndRunNothing`, `GetAsync_EnabledFalse_ReturnsNothingAndCallsNoBackend`, `GetAsync_TurnedOff_HidesAShownWorkbenchOnce`; `PluginManagerTests` migration tests | Turn Git off; nothing Git is drawn and the commands refuse | `PASS` |
 
 ---
 
@@ -249,7 +252,7 @@ FTP, FTPS and SFTP left the core IPC surface in plugin system phase 3: the 13 `r
 | `list.columns-default` | Name, Size, Modified, Type | Header + `FileRowView` | `ColumnLayout` tests | — | `PASS` |
 | `list.columns-resize` | Drag header thumbs | `ColumnLayout.Resize` | Clamp/preset tests | Drag thumbs | `PASS` |
 | `list.columns-presets` | details/media/developer/photo | `ColumnLayout.ApplyPreset` | `ColumnLayout` tests | Settings column preset | `PASS` |
-| `list.extra-columns` | items/git/extension/path/parent/symlink | FileRow git/extension/tag | ColumnLayout + FileRow | Enable git column | `PASS` |
+| `list.extra-columns` | items/status (column id `git`)/extension/path/parent/symlink | FileRow decoration/extension/tag | ColumnLayout + FileRow | Enable the Status column | `PASS` |
 | `list.multi-select` | Ctrl/Shift multi | `ListView` Multiple | — | Ctrl-click range | `MANUAL` |
 | `list.marquee` | Rubber-band | `MarqueeSelection` + ListView multi-select | `ParityFeaturesTests` | Drag-select rows | `PASS` |
 | `list.typeahead` | Type-to-select | `MatchTypeAhead` on list keys | `ParityFeaturesTests` | Type letters in a list | `PASS` |
@@ -348,7 +351,7 @@ FTP, FTPS and SFTP left the core IPC surface in plugin system phase 3: the 13 `r
 | `customize-toolbar` `toggle-toolbar-labels` | Toolbar customization | Pane More toolbar submenu + Settings Toolbar page | Catalog + context menu tests | More > Toolbar | `PASS` |
 | `command-palette` | Open command palette | Handler | Catalog test | Ctrl+Shift+P | `PASS` |
 | `keyboard-help` | F1 | Dialog | Catalog + shortcut map | F1 | `PASS` |
-| `git-panel` `git-refresh` `git-fetch` `git-pull` `git-push` `git-commit` `git-stage-selected` `git-unstage-selected` `git-discard-selected` `git-diff-selected` | Palette | Git workbench + IPC | Catalog + source-shape | Open workbench; stage, diff, commit, sync | `MANUAL` |
+| `git-panel` `git-refresh` `git-fetch` `git-pull` `git-push` `git-commit` `git-stage-selected` `git-unstage-selected` `git-discard-selected` `git-diff-selected` | Palette | Moved to the Git plugin in phase 4 as `plugin:com.sumafile.git:<id>` (§2.7) | `GitPluginManifestTests`; `AppCommandCatalogTests` (no core `git-*`) | See §2.7 | `PASS` |
 | `ctx-open` | Context Open | `ContextMenuBuilder` | `DesktopPolishTests` | Right-click | `PASS` |
 | `ctx-open-tab` `ctx-open-other-pane` | Context folder navigation | `ContextMenuBuilder` + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-open-with` `ctx-open-with-app-` `ctx-open-with-choose` | Open With | Builder | Same | — | `PASS` |
@@ -383,7 +386,7 @@ FTP, FTPS and SFTP left the core IPC surface in plugin system phase 3: the 13 `r
 | `ctx-folder-info` | Current folder properties (blank-space menu) | Builder + alias to `folder-properties` | `ContextMenuBuilderTests` | Right-click blank space | `PASS` |
 | `ctx-restore` | Restore Recycle Bin item | Recycle context menu | Context menu tests | Restore | `PASS` |
 | `ctx-empty-recycle-bin` | Empty Recycle Bin | Recycle context / more menu | Context menu tests | Empty Bin | `PASS` |
-| `ctx-git-menu` `ctx-git-panel` `ctx-git-refresh` `ctx-git-diff` `ctx-git-stage` `ctx-git-unstage` `ctx-git-discard` `ctx-git-fetch` `ctx-git-pull` `ctx-git-push` `ctx-git-commit` | Git context menu | `ContextMenuBuilder` + Git workbench handlers | Context menu tests | Right-click changed file in repo | `PASS` |
+| `ctx-git-menu` `ctx-git-panel` `ctx-git-refresh` `ctx-git-diff` `ctx-git-stage` `ctx-git-unstage` `ctx-git-discard` `ctx-git-fetch` `ctx-git-pull` `ctx-git-push` `ctx-git-commit` | Git context menu | Retired in phase 4: the Git plugin's context-menu group (`ctx-plugin-menu:com.sumafile.git`) replaces it (§2.7) | `ContextMenuBuilderTests` (no `ctx-git-*`); `GitPluginManifestTests` | Right-click changed file in repo | `PASS` |
 | `keys.path.focus` | Ctrl+L / Alt+D | Accelerators | `KeyboardShortcutMap` | Focus path | `PASS` |
 | `keys.nav` | Alt+arrows, Backspace, F5 | Accelerators | Shortcut map | — | `PASS` |
 | `keys.file` | F2 Del Shift+Del Ctrl+C/X/V/N | Accelerators | Shortcut map | — | `PASS` |
@@ -410,7 +413,7 @@ FTP, FTPS and SFTP left the core IPC surface in plugin system phase 3: the 13 `r
 | `set.keepFoldersOnTop` | Folders on top vs mixed sort | Settings Behavior | `EntryPresentationTests` | Toggle; sort by name | `PASS` |
 | `set.startLocation` | home/last/custom | Settings Navigation | `ResolveStartPath` | — | `PASS` |
 | `set.openInNewTab` | Open in tab | `OpenPathAsync` opens a tab | Workspace | Toggle; open folder | `PASS` |
-| `set.enableGit` | Git integration | `ApplyGitStatusesAsync` + `RefreshGitUiVisibility` | Workspace + source-shape | Disable Git; panel/actions disappear and no status calls run | `PASS` |
+| `set.enableGit` | Git integration | Moved in phase 4: Settings > Plugins > Git > `enabled`, migrated from `enableGitIntegration` (§2.7 `git.disable`); core no longer reads or writes the key | `SaveAsync_NoLongerWritesEnableGitIntegration`; §2.7 tests | Disable Git; panel/actions disappear and no status calls run | `PASS` |
 | `set.showFolderSizes` | Folder sizes | `FillFolderSizesAsync` | Workspace | Enable folder sizes | `PASS` |
 | `set.columnPreset` | Column preset | `ApplyPreset` | `ColumnLayout` | Change preset | `PASS` |
 | `persist.workspace` | Tabs/dual/sort | `workspace-layout` | Restore test | Relaunch | `PASS` |
@@ -432,7 +435,7 @@ FTP, FTPS and SFTP left the core IPC surface in plugin system phase 3: the 13 `r
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 86 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 75 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |

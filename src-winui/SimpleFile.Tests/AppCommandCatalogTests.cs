@@ -17,7 +17,6 @@ public class AppCommandCatalogTests
     public void CommandPalette_ContainsWinUiIdsAndFilters()
     {
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-home");
-        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-pull");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "keyboard-help");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "view-tiles");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "icon-size-extra-large");
@@ -46,9 +45,9 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "new-shortcut");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "customize-toolbar");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-toolbar-labels");
-        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-panel");
-        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-stage-selected");
-        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-discard-selected");
+        // Git is the Git plugin's (plugin:com.sumafile.git:*) since phase 4, not core's.
+        Assert.DoesNotContain(AppCommandCatalog.All, command => command.Id.StartsWith("git-", StringComparison.Ordinal));
+        Assert.DoesNotContain(AppCommandCatalog.BuiltIn, command => command.Group == "Git");
         // FTP/SFTP is the remote plugin's command (plugin:com.sumafile.remote:ftp-sftp-manager), not a core one.
         Assert.DoesNotContain(AppCommandCatalog.All, command => command.Id == "ftp-sftp-manager");
         Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
@@ -71,9 +70,6 @@ public class AppCommandCatalogTests
         Assert.Equal("Delete permanently", AppCommandCatalog.Find("delete-permanent")?.Label);
         Assert.Equal("Clear label filter", AppCommandCatalog.Find("clear-tag-filter")?.Label);
         Assert.Equal(AppCommandCatalog.All.Count, AppCommandCatalog.Filter("").Count);
-        var git = AppCommandCatalog.Filter("git");
-        Assert.Equal(10, git.Count);
-        Assert.All(git, command => Assert.StartsWith("git-", command.Id, StringComparison.Ordinal));
         Assert.Empty(AppCommandCatalog.Filter("sftp"));
         Assert.Equal(5, AppCommandCatalog.Filter("icon size").Count);
         Assert.Equal(7, AppCommandCatalog.Filter("profile").Count);
@@ -96,9 +92,6 @@ public class AppCommandCatalogTests
     [InlineData("ctx-toggle-toolbar-labels", "toggle-toolbar-labels")]
     [InlineData("ctx-restore", "restore-selected")]
     [InlineData("ctx-empty-recycle-bin", "empty-recycle-bin")]
-    [InlineData("ctx-git-stage", "git-stage-selected")]
-    [InlineData("ctx-git-discard", "git-discard-selected")]
-    [InlineData("ctx-git-panel", "git-panel")]
     [InlineData("view:details", "view:details")]
     public void CommandAliases_NormalizeSharedRouterIds(string id, string expected)
     {

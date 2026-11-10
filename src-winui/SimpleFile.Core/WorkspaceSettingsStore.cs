@@ -29,7 +29,6 @@ internal static class WorkspaceSettingsStore
         "customPath",
         "lastPath",
         "openInNewTab",
-        "enableGitIntegration",
         "progressQueue.visible",
         "showFolderSizes",
         "previewVisible",
@@ -87,7 +86,6 @@ internal static class WorkspaceSettingsStore
         settings.CustomPath = ReadSetting(values, "customPath") ?? "";
         settings.LastPath = ReadSetting(values, "lastPath") ?? "";
         settings.OpenInNewTab = ReadBoolSetting(values, "openInNewTab", false);
-        settings.EnableGitIntegration = ReadBoolSetting(values, "enableGitIntegration", true);
         settings.ProgressQueueVisible = ReadBoolSetting(values, "progressQueue.visible", false);
         settings.ShowFolderSizes = ReadBoolSetting(values, "showFolderSizes", false);
         settings.PreviewVisible = ReadBoolSetting(values, "previewVisible", true);
@@ -190,7 +188,6 @@ internal static class WorkspaceSettingsStore
             ("startLocation", settings.StartLocation),
             ("customPath", settings.CustomPath),
             ("openInNewTab", settings.OpenInNewTab ? "true" : "false"),
-            ("enableGitIntegration", settings.EnableGitIntegration ? "true" : "false"),
             ("progressQueue.visible", settings.ProgressQueueVisible ? "true" : "false"),
             ("showFolderSizes", settings.ShowFolderSizes ? "true" : "false"),
             ("previewVisible", settings.PreviewVisible ? "true" : "false"),

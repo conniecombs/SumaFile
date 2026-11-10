@@ -484,52 +484,52 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
-    public void GitIntegration_UsesDockableWorkbenchAndCompleteDisableSwitch()
+    public void GitUi_LivesOnlyInTheGitPlugin()
     {
+        // Phase 4 moved Git to the com.sumafile.git plugin. Its "complete disable" is
+        // pinned by behaviour tests (GitWorkbenchControllerTests and the Task 16 smoke),
+        // not by core source shape.
         var root = FindRepoRoot();
-        var appRoot = Path.Combine(root, "SimpleFile.App");
-        var coreRoot = Path.Combine(root, "SimpleFile.Core");
-        var ipcRoot = Path.Combine(root, "SimpleFile.Ipc");
-        var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
-        var mainWindowCode = ReadMainWindowSource(appRoot);
-        var workbenchXaml = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchView.xaml"));
-        var workbenchCode = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchView.xaml.cs"));
-        var workbenchModel = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchViewModel.cs"));
-        var workbenchWindow = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchWindow.xaml.cs"));
-        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml"));
-        var workspace = ReadExplorerWorkspaceSource(coreRoot);
-        var ipc = File.ReadAllText(Path.Combine(ipcRoot, "ISimpleFileIpc.cs"));
+        string[] forbidden =
+        [
+            "GitWorkbench",
+            "EnableGitIntegration",
+            "GitText",
+            "ctx-git-",
+            "\"git-panel\"",
+            "GitRepositoryStatus",
+            "GetGitRepositoryStatusAsync",
+        ];
+        var offenders = new List<string>();
+        foreach (var project in new[] { "SimpleFile.App", "SimpleFile.Core", "SimpleFile.Ipc" })
+        {
+            var projectRoot = Path.Combine(root, project);
+            foreach (var file in Directory.EnumerateFiles(projectRoot, "*.*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(projectRoot, file);
+                var firstSegment = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0];
+                if (firstSegment is "bin" or "obj"
+                    || file.EndsWith(".Generated.cs", StringComparison.Ordinal)
+                    || !(file.EndsWith(".cs", StringComparison.Ordinal) || file.EndsWith(".xaml", StringComparison.Ordinal)))
+                {
+                    continue;
+                }
 
-        Assert.Contains("GitPanel", mainWindowXaml);
-        Assert.Contains("GitToggleButton", mainWindowXaml);
-        Assert.Contains("GitWorkbench", mainWindowXaml);
-        Assert.Contains("GitWorkbenchViewModel", mainWindowCode);
-        Assert.Contains("GitWorkbenchWindow", mainWindowCode);
-        Assert.Contains("DetachGitWorkbenchAsync", mainWindowCode);
-        Assert.Contains("DockGitWorkbenchAsync", mainWindowCode);
-        Assert.Contains("PreviewSelectedGitDiffAsync", mainWindowCode);
-        Assert.Contains("CloseGitWorkbenchWindow", mainWindowCode);
-        Assert.Contains("SetHostMode(detached: true)", mainWindowCode);
-        Assert.Contains("SetHostMode(detached: false)", mainWindowCode);
-        Assert.Contains("SecondaryWindowChrome.Apply(this, \"Git Workbench\", 1180, 740)", workbenchWindow);
-        Assert.Contains("presenter.IsResizable = true;", File.ReadAllText(Path.Combine(appRoot, "SecondaryWindowChrome.cs")));
-        Assert.Contains("DiffPreviewColumn", workbenchXaml);
-        Assert.Contains("Resize Git diff preview", workbenchXaml);
-        Assert.Contains("HostActionText", workbenchXaml);
-        Assert.Contains("SelectedChanges", workbenchCode);
-        Assert.Contains("CanDiff", workbenchModel);
-        Assert.Contains("SetDiffLoading", workbenchModel);
-        Assert.DoesNotContain("ShowGitDiffDialogAsync", mainWindowCode);
-        Assert.Contains("OnGitStageRequested", mainWindowCode);
-        Assert.Contains("GitStageSelectedAsync", mainWindowCode);
-        Assert.Contains("GetGitRepositoryStatusAsync", mainWindowCode);
-        Assert.Contains("EnsureGitIntegrationEnabled", mainWindowCode);
-        Assert.Contains("Git integration is disabled in Settings.", mainWindowCode);
-        Assert.Contains("command.Group, \"Git\"", mainWindowCode);
-        Assert.Contains("ClearGitStatuses()", workspace);
-        Assert.Contains("EnableGitSwitch", settingsXaml);
-        Assert.Contains("Task<GitCommandResult> GitStagePathsAsync", ipc);
-        Assert.Contains("Task<GitCommandResult> GitPullAsync", ipc);
+                var text = File.ReadAllText(file);
+                offenders.AddRange(forbidden
+                    .Where(token => text.Contains(token, StringComparison.Ordinal))
+                    .Select(token => $"{project}/{relative.Replace('\\', '/')}: {token}"));
+            }
+        }
+
+        Assert.True(offenders.Count == 0, "Core still carries Git UI:\n" + string.Join("\n", offenders));
+
+        var mainWindowXaml = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml"));
+        Assert.DoesNotContain("GitPanel", mainWindowXaml);
+        Assert.DoesNotContain("GitToggleButton", mainWindowXaml);
+        Assert.True(
+            File.Exists(Path.Combine(root, "..", "plugins", "git", "ui", "SumaFile.Git", "Views", "GitWorkbenchPanel.cs")),
+            "The Git workbench must live in the Git plugin.");
     }
 
     [Fact]
@@ -1385,12 +1385,13 @@ public class WinUiSourceShapeTests
 
         var shell = Named("FilePaneShell");
         var shellRows = shell.Elements().Single(element => element.Name.LocalName == "Grid.RowDefinitions").Elements().ToList();
-        Assert.Equal(4, shellRows.Count);
-        Assert.Equal("Auto", (string?)shellRows[3].Attribute("Height"));
+        // Toolbar, panes and the bottom region; the core GitPanel row went with core Git in phase 4.
+        Assert.Equal(3, shellRows.Count);
+        Assert.Equal("Auto", (string?)shellRows[2].Attribute("Height"));
 
         var bottom = Named("PluginPanelBottomRegion");
         Assert.Same(shell, bottom.Parent);
-        Assert.Equal("3", (string?)bottom.Attribute("Grid.Row"));
+        Assert.Equal("2", (string?)bottom.Attribute("Grid.Row"));
         Assert.Equal("Collapsed", (string?)bottom.Attribute("Visibility"));
         var bottomGrip = bottom.Descendants().Single(element => element.Name.LocalName == "RowResizeGrip");
         Assert.Equal("PluginPanel.BottomGrip", (string?)bottomGrip.Attribute("AutomationProperties.AutomationId"));
@@ -1616,7 +1617,8 @@ public class WinUiSourceShapeTests
     [Fact]
     public void ThemeDictionaries_DefineTheDecorationBrushes()
     {
-        // Spec §5.1: the stable decoration keys exist in every theme dictionary, with the old Git colours.
+        // Spec §5.1: the stable decoration keys exist in every theme dictionary, with the colours of the SfGit*Brush
+        // keys they replaced (removed with core Git in phase 4).
         var root = FindRepoRoot();
         var app = System.Xml.Linq.XDocument.Load(Path.Combine(root, "SimpleFile.App", "App.xaml"));
         System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
@@ -1624,17 +1626,26 @@ public class WinUiSourceShapeTests
             .Where(element => element.Name.LocalName == "ResourceDictionary" && element.Attribute(x + "Key") is not null)
             .ToList();
         Assert.Equal(["Default", "Dark", "Light", "HighContrast"], themes.Select(theme => theme.Attribute(x + "Key")!.Value));
+        var expected = new Dictionary<string, string[]>
+        {
+            ["Default"] = ["#4EC9B0", "#E5C07B", "#79C0FF", "#F85149"],
+            ["Dark"] = ["#4EC9B0", "#E5C07B", "#79C0FF", "#F85149"],
+            ["Light"] = ["#1A7F37", "#9A6700", "#0969DA", "#CF222E"],
+            ["HighContrast"] = ["#FFFF00", "#FFFF00", "#FFFFFF", "#FFFF00"],
+        };
         foreach (var theme in themes)
         {
             string? Color(string key) => theme.Elements()
                 .FirstOrDefault(element => element.Attribute(x + "Key")?.Value == key)?.Attribute("Color")?.Value;
 
-            foreach (var state in new[] { "Added", "Modified", "Untracked", "Deleted" })
+            var states = new[] { "Added", "Modified", "Untracked", "Deleted" };
+            var colours = expected[theme.Attribute(x + "Key")!.Value];
+            for (var i = 0; i < states.Length; i++)
             {
-                var color = Color($"SfDecoration{state}Brush");
-                Assert.NotNull(color);
-                Assert.Equal(Color($"SfGit{state}Brush"), color);
+                Assert.Equal(colours[i], Color($"SfDecoration{states[i]}Brush"));
             }
+
+            Assert.DoesNotContain(theme.Elements(), element => element.Attribute(x + "Key")?.Value.StartsWith("SfGit", StringComparison.Ordinal) == true);
         }
 
         var builder = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginSettingsPanelBuilder.cs"));
@@ -1848,9 +1859,20 @@ public class WinUiSourceShapeTests
         Assert.Equal(@"Exists('$(_RepoTarget)plugins\com.sumafile.remote')", remoteRemove.Condition);
         AssertRemovesBeforeEveryCopy(remote, "CopyRemotePluginFixture");
 
-        foreach (var step in bundled.Concat(remote).Where(step => step.Name == "RemoveDir"))
+        var git = CopyTargetSteps(tests, "CopyGitPluginFixture");
+        var gitRemove = Assert.Single(git, step => step.Name == "RemoveDir");
+        Assert.Equal(@"$(GitFixtureDest)plugins\com.sumafile.git", gitRemove.Directories);
+        Assert.Equal(@"Exists('$(_RepoTarget)plugins\com.sumafile.git')", gitRemove.Condition);
+        AssertRemovesBeforeEveryCopy(git, "CopyGitPluginFixture");
+
+        foreach (var step in bundled.Concat(remote).Concat(git).Where(step => step.Name == "RemoveDir"))
         {
-            foreach (var whole in new[] { "$(OutDir)plugins", @"$(OutDir)plugins\", "$(OutDir)", "$(RemoteFixtureDest)", @"$(RemoteFixtureDest)plugins", @"$(RemoteFixtureDest)plugins\" })
+            foreach (var whole in new[]
+            {
+                "$(OutDir)plugins", @"$(OutDir)plugins\", "$(OutDir)",
+                "$(RemoteFixtureDest)", @"$(RemoteFixtureDest)plugins", @"$(RemoteFixtureDest)plugins\",
+                "$(GitFixtureDest)", @"$(GitFixtureDest)plugins", @"$(GitFixtureDest)plugins\",
+            })
             {
                 Assert.NotEqual(whole, step.Directories);
             }

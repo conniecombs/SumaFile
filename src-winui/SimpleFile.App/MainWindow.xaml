@@ -91,7 +91,6 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <local:PrimaryToolbarView x:Name="PrimaryToolbarPanel" Grid.Row="0" />
@@ -154,22 +153,10 @@
                             Visibility="Collapsed" />
                         </Grid>
 
-                        <Border
-                            x:Name="GitPanel"
-                            Grid.Row="2"
-                            MinHeight="280"
-                            MaxHeight="520"
-                            Background="{ThemeResource SfBgSecondaryBrush}"
-                            BorderBrush="{ThemeResource SfBorderBrush}"
-                            BorderThickness="0,1,0,0"
-                            Visibility="Collapsed">
-                            <local:GitWorkbenchView x:Name="GitWorkbench" />
-                        </Border>
-
                         <!-- Spec §7's PluginPanelHost: the bottom region and its grip (MainWindow.PluginPanels.cs). -->
                         <Grid
                             x:Name="PluginPanelBottomRegion"
-                            Grid.Row="3"
+                            Grid.Row="2"
                             Background="{ThemeResource SfBgSecondaryBrush}"
                             Visibility="Collapsed">
                             <Grid.RowDefinitions>
@@ -227,7 +214,6 @@
                     BorderThickness="0,1,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
@@ -373,27 +359,8 @@
                         </StackPanel>
                     </Button>
                     <Button
-                        x:Name="GitToggleButton"
-                        Grid.Column="2"
-                        Style="{StaticResource SfGhostButtonStyle}"
-                        MinHeight="26"
-                        Margin="8,0"
-                        Padding="8,3"
-                        HorizontalAlignment="Right"
-                        AutomationProperties.Name="Toggle Git workbench"
-                        Click="OnToggleGitPanel"
-                        ToolTipService.ToolTip="Toggle Git workbench">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon
-                                FontFamily="{StaticResource SfIconFont}"
-                                FontSize="12"
-                                Glyph="&#xE8EF;" />
-                            <TextBlock FontSize="12" Text="Git" />
-                        </StackPanel>
-                    </Button>
-                    <Button
                         x:Name="PreviewToggleButton"
-                        Grid.Column="3"
+                        Grid.Column="2"
                         Style="{StaticResource SfGhostButtonStyle}"
                         MinHeight="26"
                         Margin="8,0"
@@ -412,7 +379,7 @@
                     </Button>
                     <TextBlock
                         x:Name="CountText"
-                        Grid.Column="4"
+                        Grid.Column="3"
                         VerticalAlignment="Center"
                         FontSize="12"
                         Foreground="{ThemeResource SfTextMutedBrush}" />

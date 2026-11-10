@@ -91,7 +91,6 @@ fn commands_cover_domain_methods_plus_handshake() {
         "copy_entry",
         "move_entry",
         "cancel_count_items",
-        "get_git_status",
         "show_main_window",
     ] {
         assert_eq!(

@@ -194,15 +194,6 @@
                             TextWrapping="Wrap"
                             Visibility="Collapsed" />
                     </StackPanel>
-
-                    <StackPanel x:Name="DeveloperSettingsGroup" Spacing="8">
-                        <TextBlock Text="Developer" FontWeight="SemiBold" />
-                        <ToggleSwitch x:Name="EnableGitSwitch" Header="Git integration" />
-                        <TextBlock
-                            Foreground="{ThemeResource SfTextMutedBrush}"
-                            Text="Shows Git status for files inside repositories and enables the Git workbench."
-                            TextWrapping="Wrap" />
-                    </StackPanel>
                 </StackPanel>
 
                 <StackPanel x:Name="StoragePanel" Spacing="16" Visibility="Collapsed">

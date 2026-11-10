@@ -2,11 +2,11 @@ use super::params::parse_nullable_params;
 use super::params::{
     parse_params, BatchRenameParams, CompareParams, CopyMoveParams, CreateArchiveParams,
     DriveListParams, ExternalUrlParams, ExtractArchiveParams, GetFilesWithTagParams,
-    GitCommitParams, GitDiffPathParams, GitPathsParams, HandshakeParams, NameParams,
-    OpenWithParams, PathParams, PathsParams, PluginIdParams, PreviewParams,
-    RegisterArchiveEngineParams, RenameParams, ResolvedCopyMoveParams, SetTagsForPathParams,
-    SettingKeyParams, SettingKeysParams, SettingValueParams, ShortcutParams, SmartFolderIdParams,
-    SmartFolderParams, TagCreateParams, TagForPathParams, TagIdParams, TagUpdateParams,
+    HandshakeParams, NameParams, OpenWithParams, PathParams, PathsParams, PluginIdParams,
+    PreviewParams, RegisterArchiveEngineParams, RenameParams, ResolvedCopyMoveParams,
+    SetTagsForPathParams, SettingKeyParams, SettingKeysParams, SettingValueParams, ShortcutParams,
+    SmartFolderIdParams, SmartFolderParams, TagCreateParams, TagForPathParams, TagIdParams,
+    TagUpdateParams,
 };
 use super::{
     async_ops, ArchiveOperation, BlockingJob, BlockingLane, Dispatch, SessionState, APP_VERSION,
@@ -421,84 +421,6 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                     Dispatch::Reply(JsonRpcResponse::application_error(request.id.clone(), m))
                 }
             },
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GET_GIT_STATUS => match parse_params::<PathParams>(request) {
-            Ok(p) => reply_blocking(request, BlockingLane::General, move || {
-                simplefile_core::git::get_git_status(p.path)
-            }),
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GET_GIT_REPOSITORY_STATUS => match parse_params::<PathParams>(request) {
-            Ok(p) => reply_blocking(request, BlockingLane::General, move || {
-                simplefile_core::git::get_git_repository_status(p.path)
-            }),
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GET_GIT_FILE_STATUSES => match parse_params::<PathParams>(request) {
-            Ok(p) => reply_blocking(request, BlockingLane::General, move || {
-                simplefile_core::git::get_git_file_statuses(p.path)
-            }),
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GIT_STAGE_PATHS => match parse_params::<GitPathsParams>(request) {
-            Ok(p) => reply_blocking(request, BlockingLane::General, move || {
-                simplefile_core::git::git_stage_paths(p.path, p.paths)
-            }),
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GIT_UNSTAGE_PATHS => match parse_params::<GitPathsParams>(request) {
-            Ok(p) => reply_blocking(request, BlockingLane::General, move || {
-                simplefile_core::git::git_unstage_paths(p.path, p.paths)
-            }),
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GIT_DISCARD_PATHS => match parse_params::<GitPathsParams>(request) {
-            Ok(p) => {
-                let cache = state.cache.clone();
-                reply_blocking(request, BlockingLane::General, move || {
-                    let result =
-                        simplefile_core::git::git_discard_paths(p.path.clone(), p.paths.clone())?;
-                    cache.invalidate_path(&p.path);
-                    cache.invalidate_paths(&p.paths);
-                    Ok::<_, String>(result)
-                })
-            }
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GIT_DIFF_PATH => match parse_params::<GitDiffPathParams>(request) {
-            Ok(p) => reply_blocking(request, BlockingLane::General, move || {
-                simplefile_core::git::git_diff_path(p.path, p.file_path)
-            }),
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GIT_COMMIT => match parse_params::<GitCommitParams>(request) {
-            Ok(p) => reply_blocking(request, BlockingLane::General, move || {
-                simplefile_core::git::git_commit(p.path, p.message)
-            }),
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GIT_FETCH => match parse_params::<PathParams>(request) {
-            Ok(p) => reply_blocking(request, BlockingLane::General, move || {
-                simplefile_core::git::git_fetch(p.path)
-            }),
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GIT_PULL => match parse_params::<PathParams>(request) {
-            Ok(p) => {
-                let cache = state.cache.clone();
-                reply_blocking(request, BlockingLane::General, move || {
-                    let result = simplefile_core::git::git_pull(p.path.clone())?;
-                    cache.invalidate_path(&p.path);
-                    Ok::<_, String>(result)
-                })
-            }
-            Err(r) => Dispatch::Reply(r),
-        },
-        METHOD_GIT_PUSH => match parse_params::<PathParams>(request) {
-            Ok(p) => reply_blocking(request, BlockingLane::General, move || {
-                simplefile_core::git::git_push(p.path)
-            }),
             Err(r) => Dispatch::Reply(r),
         },
         METHOD_LIST_ARCHIVE => match parse_params::<PathParams>(request) {

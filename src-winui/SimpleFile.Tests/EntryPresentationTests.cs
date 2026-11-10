@@ -118,23 +118,9 @@ public class EntryPresentationTests
             GitStatus = "modified",
         };
         Assert.Equal(".txt", EntryPresentation.ColumnText(file, "extension"));
-        Assert.Equal("modified", EntryPresentation.ColumnText(file, "git"));
+        // The retired FileEntry.GitStatus is never shown: the status column draws the plugin decoration.
+        Assert.Equal("", EntryPresentation.ColumnText(file, ColumnLayout.DecorationColumnId));
         Assert.Equal(@"C:\Projects\App\notes.txt", EntryPresentation.ColumnText(file, "path"));
-    }
-
-    [Theory]
-    [InlineData("added", "SfGitAddedBrush")]
-    [InlineData("staged", "SfGitAddedBrush")]
-    [InlineData("modified", "SfGitModifiedBrush")]
-    [InlineData("Git: modified", "SfGitModifiedBrush")]
-    [InlineData("untracked", "SfGitUntrackedBrush")]
-    [InlineData("deleted", "SfGitDeletedBrush")]
-    [InlineData("conflict", "SfGitDeletedBrush")]
-    [InlineData("", "SfTextMutedBrush")]
-    [InlineData(null, "SfTextMutedBrush")]
-    public void GitStatusBrushKey_MapsSemanticStatusColors(string? status, string expectedBrushKey)
-    {
-        Assert.Equal(expectedBrushKey, EntryPresentation.GitStatusBrushKey(status));
     }
 
     [Fact]

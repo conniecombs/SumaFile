@@ -223,8 +223,7 @@ public sealed partial class MainWindow
 
     private void RefreshCommandPalette(string query)
     {
-        _paletteCommands = [.. AppCommandCatalog.WithEffectiveShortcuts(AppCommandCatalog.Filter(query), _workspace?.Settings.ShortcutOverrides)
-            .Where(command => !string.Equals(command.Group, "Git", StringComparison.Ordinal) || IsGitIntegrationEnabled)];
+        _paletteCommands = [.. AppCommandCatalog.WithEffectiveShortcuts(AppCommandCatalog.Filter(query), _workspace?.Settings.ShortcutOverrides)];
         CommandPaletteList.ItemsSource = _paletteCommands;
         if (_paletteCommands.Count > 0)
         {
@@ -910,9 +909,6 @@ public sealed partial class MainWindow
             ToolbarActionOrder = CurrentPrimaryToolbarActionOrder(),
             ToolbarDisplayMode = (_workspace?.Settings.CommandSurface ?? CommandSurfaceLayout.CreateDefault()).ToolbarDisplayMode,
             InRecycleBin = PathRules.IsRecycleBinPath(_workspace?.Active.Path),
-            GitEnabled = IsGitIntegrationEnabled,
-            InGitRepository = _gitStatus?.IsRepo == true || selected.Any(row => !string.IsNullOrWhiteSpace(row.GitText)),
-            SelectionHasGitStatus = selected.Any(row => !string.IsNullOrWhiteSpace(row.GitText)),
             PluginMenus = _pluginMenus,
             FolderFlags = decorations.FolderFlags,
             SelectionDecorationPlugins = decorations.PluginsFor(selected.Select(row => row.Path)),

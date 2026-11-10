@@ -1,16 +1,7 @@
 use crate::models::FileEntry;
 use chrono::{DateTime, Local};
-use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-
-pub fn hidden_command<S: AsRef<OsStr>>(program: S) -> Command {
-    use std::os::windows::process::CommandExt;
-    let mut command = Command::new(program);
-    command.creation_flags(0x08000000);
-    command
-}
 
 pub fn dirs_home() -> Result<String, String> {
     std::env::var("HOME")

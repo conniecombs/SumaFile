@@ -60,6 +60,9 @@ plugins that ship with the installer.
   the inline Git panel in `MainWindow.xaml`, a toolbar toggle, hard-coded
   entries in `ContextMenuBuilder` and `AppCommandCatalog`, per-row status
   colouring in `FileRowView`, and the `EnableGitIntegration` setting.
+- Since phase 4 the service has 75 domain methods (`domainMethodCount`): phase 3
+  moved the 13 remote methods and phase 4 the 11 Git methods into their bundled
+  plugins, and Git's core module, UI and setting are gone (§11.3).
 
 ## 4. Package format
 
@@ -298,7 +301,7 @@ and the decoration brushes `SfDecorationAddedBrush`,
 `SfDecorationDeletedBrush`, which a `RowDecoration.BrushKey` may name.
 `App.xaml` defines the four decoration brushes in each of its theme
 dictionaries (`Default`, `Dark`, `Light` and `HighContrast`) with the colours
-of the `SfGit*Brush` keys they replace; those stay until core Git is removed.
+of the `SfGit*Brush` keys they replace; those went with core Git in phase 4.
 Settings > Plugins draws a declarative setting's error text with
 `SfDecorationDeletedBrush`.
 
@@ -1595,6 +1598,38 @@ Decisions (phase 2, as built):
 - Core removes 11 Git IPC methods, `GitText` on rows, the Git menu, the Git
   commands, the inline panel and the toolbar button. `domainMethodCount`
   drops to 75.
+  Done in phase 4 (Task 15): `crates/simplefile-core/src/git.rs`, the four
+  Git model types, `utils::hidden_command` and the service's eleven Git
+  handlers are gone, and the service answers all eleven names (including
+  the compatOnly `get_git_status`) `ERR_METHOD_NOT_FOUND`
+  (`removed_git_methods_return_method_not_found`). `ipc/schema/v1` has no
+  Git method and no `Git*` type, and `check-ipc-schema.mjs` and
+  `check-winui-parity-gate.mjs` assert 75. `FileEntry.git_status` /
+  `FileEntry.GitStatus` stay in the v1 wire format and the binary listing
+  frame, always absent, and the status column keeps the id `git`
+  (`ColumnLayout.DecorationColumnId`). The App has no `MainWindow.Git.cs`,
+  `GitWorkbenchView`, `GitWorkbenchViewModel`, `GitWorkbenchWindow`,
+  `GitPanel` row (the bottom plugin panel region moved up to its row),
+  status-bar `GitToggleButton`, Settings > Behavior Developer group or
+  `SfGit*Brush` theme keys; Core has no `git-*` command, `ctx-git-*` menu,
+  Git toolbar glyphs, `GitStatusBrushKey`, repository probe or
+  `EnableGitIntegration`. `UiSettings`, `WorkspaceSettingsStore`, saved
+  layouts and the built-in profiles drop the flag: core never reads or
+  writes the `enableGitIntegration` key again, so the plugin's migration
+  finds the user's last value, and a stored layout's
+  `enableGitIntegration` is ignored when read and no longer written. The
+  three decisions about what the flag gated are recorded under Settings
+  above: the commands stay listed and refuse while `enabled` is off (the
+  palette's and omnibar's Git filter is gone), turning it off is still a
+  complete disable with the workbench hidden, and decorations run whatever
+  the column layout. Profiles and saved layouts never applied the flag.
+  `GitUi_LivesOnlyInTheGitPlugin` guards that no App, Core or Ipc source
+  names the Git UI again; the 1.0.4 "complete disable" source-shape checks
+  became the Git plugin's behaviour tests
+  (`Commands_WhenDisabled_NotifyTheDisabledMessageAndRunNothing`,
+  `GetAsync_EnabledFalse_ReturnsNothingAndCallsNoBackend`,
+  `GetAsync_TurnedOff_HidesAShownWorkbenchOnce`) and the Task 16 smoke.
+  Parity-gate §2.7 tracks the feature by coverage level.
 - UX changes from the move (phase 4):
   - Git menu items are hidden, not disabled, when their `when` is false.
   - The Git toggle moves from the status bar to the primary toolbar. It is
@@ -1733,6 +1768,81 @@ Phase 3 adds the second, `com.sumafile.remote` (§11.2):
   (`MainWindow.UiSmoke.Remote.cs`): bundled trust, the Connections section,
   one manager window per command, the profile dialog on the window's own
   `XamlRoot`, and the window host emptied on close.
+
+Phase 4 adds the third, `com.sumafile.git` (§11.3):
+
+- Payload layout with three plugins. `$script:BundledPluginIds` lists
+  `com.sumafile.sevenzip`, `com.sumafile.remote` and `com.sumafile.git`, in
+  this order, and `bundled.json` carries one entry for each:
+
+  ```text
+  payload\
+    SumaFile.exe, simplefile-service.exe, ...
+    plugins\
+      bundled.json
+      com.sumafile.sevenzip\
+        plugin.json, sumafile-sevenzip-backend.exe,
+        7za.exe, 7za.dll, 7zxa.dll, License.txt, SUMAFILE_BUNDLE.md
+      com.sumafile.remote\
+        plugin.json, sumafile-remote-backend.exe,
+        SumaFile.Remote.dll, SumaFile.Remote.Model.dll, SumaFile.Remote.deps.json
+      com.sumafile.git\
+        plugin.json, sumafile-git-backend.exe,
+        SumaFile.Git.dll, SumaFile.Git.Model.dll, SumaFile.Git.deps.json
+  ```
+
+  The folder carries no git: the backend runs `git.exe` from `PATH` (§11.3).
+- Sources. `Get-GitPluginSources` takes the backend from
+  `target\<debug|release>` and the three UI files from
+  `plugins\git\ui\SumaFile.Git\bin\<Configuration>\net10.0-windows10.0.19041.0\`,
+  as for the remote plugin. The freshness check compares the backend, both
+  DLLs, the deps file and `plugin.json`.
+- Builds. `scripts/build-plugins.ps1` adds `-p sumafile-git-backend` to its
+  `cargo build` and, unless `-SkipDotnet`, runs `dotnet build` for every UI
+  project in `$script:BundledPluginUiProjects`, in staging order
+  (`SumaFile.Remote.csproj`, then `SumaFile.Git.csproj`). The release build
+  adds `sumafile-git-backend` in release and builds both UI projects in
+  Release from one list, which it requires to match the staging table.
+- NSIS: `.onInit` and the uninstaller also stop `sumafile-git-backend.exe`,
+  never `git.exe`, which could be the user's own; `check-winui-packaging.mjs`
+  fails when the script ends `git.exe` or `7za.exe` by name. The installer
+  removes `$INSTDIR\plugins\com.sumafile.git` before it copies the payload.
+  The plugin's data folder, `$INSTDIR\plugins-data\com.sumafile.git`, is
+  kept on reinstall and upgrade like every plugin's.
+- Release smokes. None touches the user's data, and each one that runs git or
+  launches an app or backend that can run it isolates git from the
+  developer's config with `GIT_CONFIG_GLOBAL=<disposable>\gitconfig` (an
+  empty file) and `GIT_CONFIG_NOSYSTEM=1`:
+  - `smoke-winui-startup.ps1` sets both for the app it launches. It requires
+    the `plugins.log` line `[com.sumafile.git] [info] Discovered: Enabled`,
+    an approvals file with no record for the plugin, and, because the
+    plugin starts at startup, a running
+    `payload\plugins\com.sumafile.git\sumafile-git-backend.exe`. It prints
+    `Bundled Git plugin trusted.` and, when it ends, stops payload backends
+    of all three plugins by their path under the payload and waits up to
+    5 s for each.
+  - `smoke-winui-file-ops.ps1` (`Invoke-GitPluginSmoke`, after the remote
+    plugin's) starts the payload's `sumafile-git-backend.exe` with a
+    disposable `--data-dir`, `TMP` and `TEMP` in it, and the two git
+    variables plus `GIT_CEILING_DIRECTORIES=<smoke root>`, which its own git
+    calls use too. It creates a repository with `git init -b main`, a
+    repository-local identity and one commit, and handshakes with the
+    service's client name, as for the remote plugin. It checks `repo.status`
+    (`is_repo` true, branch `main`), `repo.decorations` on a folder outside
+    any repository (`in_repository` false, no rows) and `paths.stage` of one
+    new file (checked with `git diff --cached`), and prints
+    `Payload Git plugin smoke passed.`
+  - `smoke-winui-msi.ps1` sets the same two variables for the extracted app.
+  - The installer smokes launch their copy through `Start-InstalledSumaFile`,
+    which already isolates git.
+- Debug runs. The UI smoke builds `sumafile-git-backend` with the other
+  backends and, in every mode, sets `GIT_CEILING_DIRECTORIES=<testRoot>`
+  (because `test-results\` lies inside the SumaFile checkout),
+  `GIT_CONFIG_GLOBAL=<testRoot>\state\gitconfig` and `GIT_CONFIG_NOSYSTEM=1`
+  for the app. The test project's `CopyGitPluginFixture` copies the staged
+  `target\plugins\com.sumafile.git\**` and `bundled.json` into
+  `Fixtures\git\plugins\`, after removing only its own
+  `com.sumafile.git` folder there, for `GitPluginBackendTests` (§13).
 
 Phase 4 keeps every plugin file in the installation folder (§4.1), so the
 payload and the smokes follow those locations:
@@ -1915,7 +2025,42 @@ references the SDK, the model and `Microsoft.WindowsAppSDK` and
   and capability merging with a mock engine.
 - `check-ipc-schema.mjs` learns the new method count and validates
   `ipc/schema/plugin/v1`.
-- `check-winui-packaging.mjs` checks the three plugin folders in the payload.
+- `check-winui-packaging.mjs` checks source files only, never a payload: that
+  the three plugins' sources exist (manifests, protocols, backend crates and
+  UI projects), that the staging library names each plugin's staged files,
+  that the release build names each backend and UI project and the NSIS
+  script each backend and bundled folder, and that the workflows run the
+  staging, test and smoke scripts. The payload itself is checked by
+  `Assert-Payload` in `build-winui-release.ps1` and by `Assert-BundledPlugins`
+  in the MSI, NSIS and upgrade smokes, which require all three plugin folders
+  and `bundled.json`.
+- Git plugin through the real host (phase 4). `GitPluginBackendTests` run the
+  staged `com.sumafile.git` (`CopyGitPluginFixture`) with the real
+  `PluginManager` and `ProcessLauncher`, trusted through `bundled.json`.
+  `GitBackendHarness` replaces the entry type with a capturing plugin that
+  delegates to `GitDecorationProvider`, so `SumaFile.Git.dll` never loads;
+  makes the repository with the git CLI (`git init -b main`, a
+  repository-local identity); and sets `GIT_CONFIG_GLOBAL`,
+  `GIT_CONFIG_NOSYSTEM=1` and `GIT_CEILING_DIRECTORIES` for the test process,
+  which the backend inherits, so the tests run in the `Plugin environment`
+  collection. Every wait is bounded. They cover:
+  - bundled trust without an approvals record, and the backend started by
+    `StartStartupBackends()` from the staged folder;
+  - decorations through `GetRowDecorationsAsync` and through
+    `PluginRowDecorationSource` with the Core coordinator, on the repository
+    root and on `café 資料`: native-path keys, the status text, brush and
+    tooltip, and the `inRepository` flag; none outside a repository;
+  - stage, unstage, diff and commit, checked with the git CLI;
+  - a fetch from a loopback remote that never answers, cancelled from its
+    Transfers row, which fails with `Git operation cancelled` within 10 s
+    and closes git's connection;
+  - Disable stopping the backend process.
+
+  Without the staged plugin they skip with `The Git plugin is not staged. Run
+  scripts/build-plugins.ps1.`, except on GitHub Actions, where the WinUI job
+  stages it first and a missing plugin fails them. The release smokes add the
+  Git checks of §11.4: `Bundled Git plugin trusted.` in the startup smoke and
+  `Payload Git plugin smoke passed.` in the file-ops smoke.
 - Installer lifecycle (phase 4, §11.4). `smoke:winui-installer` (NSIS) and
   `smoke:winui-msi-lifecycle` (WiX) install into a disposable folder, seed a
   user plugin, reinstall or upgrade, and require the user plugin, its data,

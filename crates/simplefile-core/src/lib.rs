@@ -14,7 +14,6 @@ pub mod compare;
 pub mod dir_list;
 pub mod drives;
 pub mod file_ops;
-pub mod git;
 pub mod metadata;
 pub mod models;
 pub mod native_accel;

@@ -64,7 +64,7 @@ impl std::fmt::Debug for SessionState {
 /// Which scheduler lane a blocking handler runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BlockingLane {
-    /// Short blocking calls: metadata, previews, git.
+    /// Short blocking calls: metadata and previews.
     General,
     /// Whole-file work that can run for minutes: copies and archives. Uses
     /// the transfer lane so it never starves listings.

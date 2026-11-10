@@ -29,7 +29,8 @@
     "FileEntry": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["name", "path", "is_dir", "is_symlink", "is_hidden", "is_system", "size", "modified", "extension", "permissions", "symlink_target", "git_status"],
-      "optional": ["is_hidden", "is_system", "permissions", "symlink_target", "git_status"]
+      "optional": ["is_hidden", "is_system", "permissions", "symlink_target", "git_status"],
+      "notes": "git_status is retired and always absent: Git moved to the com.sumafile.git plugin in phase 4, whose row decorations replace it. The field stays so the v1 wire format and the binary listing frame keep their shape."
     },
     "DirectoryListing": {
       "source": "crates/simplefile-core/src/models.rs",
@@ -122,24 +123,6 @@
     "DuplicateCheckResult": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["groups", "scanned_files", "candidate_files", "hashed_files", "skipped_files", "errors", "total_reclaimable_bytes"]
-    },
-    "GitStatus": {
-      "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["is_repo", "branch", "modified", "staged", "untracked", "ahead", "behind"]
-    },
-    "GitFileStatus": {
-      "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["path", "absolute_path", "original_path", "status", "index_status", "worktree_status", "staged", "unstaged", "untracked", "conflicted"],
-      "optional": ["original_path"]
-    },
-    "GitRepositoryStatus": {
-      "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["is_repo", "root", "branch", "upstream", "head", "ahead", "behind", "staged", "unstaged", "untracked", "conflicted", "changes"],
-      "optional": ["root", "branch", "upstream", "head"]
-    },
-    "GitCommandResult": {
-      "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["command", "exit_code", "stdout", "stderr", "summary"]
     },
     "FilePreview": {
       "source": "crates/simplefile-core/src/models.rs",

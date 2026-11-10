@@ -12,8 +12,8 @@
 SumaFile is a native Windows file manager for people who work across several
 folders at once and need more than a basic file list. It pairs a WinUI 3 desktop
 shell with a Rust filesystem service so browsing, transfers, search, previews,
-archives, checksums, Git status, cleanup tools and, through the bundled FTP/SFTP
-plugin, remote FTP/SFTP profiles can stay responsive in one local-first app.
+archives, checksums, cleanup tools and, through bundled plugins, Git status and
+remote FTP/SFTP profiles can stay responsive in one local-first app.
 
 **Repository topics:** `windows`, `file-manager`, `winui-3`, `rust`,
 `named-pipe-ipc`, `dual-pane`, `tabs`, `file-preview`, `advanced-rename`,
@@ -105,7 +105,7 @@ v1.0.3, upgrade instructions and known limitations.
 | Inspect before opening | Persistent preview pane, Quick Look, metadata, checksums, properties, and compare |
 | Organize messy folders | Tags, bookmarks, recents, smart folders, duplicate finder, cleanup, and Advanced Rename |
 | Work with archives | Create, list, view, extract, pack, and unpack supported archives |
-| Handle developer folders | Git status column, dockable Git workbench, terminal launch, and Open With preferences |
+| Handle developer folders | Git status column and dockable Git workbench (bundled Git plugin), terminal launch, and Open With preferences |
 | Reach remote servers | FTP, FTPS, and SFTP profile manager from the bundled FTP/SFTP plugin, with test, browse, upload, download, rename, and delete actions |
 | Stay Windows-native | Drive labels, network-share status, shell icons, Windows installers, and Windows shortcuts |
 
@@ -127,6 +127,7 @@ Requirements:
 - x64 Windows
 - The SumaFile 7-Zip plugin (`com.sumafile.sevenzip`), installed with SumaFile, for `.7z` workflows
 - The SumaFile FTP/SFTP plugin (`com.sumafile.remote`), installed with SumaFile, for FTP, FTPS and SFTP connections
+- The SumaFile Git plugin (`com.sumafile.git`), installed with SumaFile, and Git for Windows with `git.exe` on `PATH`, for Git status and the Git workbench
 - Built-in RAR listing and extraction; RAR creation is not supported
 
 After installing, open Settings -> Updates to check published releases. Builds
@@ -267,11 +268,15 @@ links and special entries that could escape the destination.
 
 ### Git and Developer Tools
 
-- Developer column preset with Git status labels
+- Git comes from the bundled Git plugin (`com.sumafile.git`), which needs Git
+  for Windows with `git.exe` on `PATH`
+- Developer column preset with a Status column of Git status labels
 - Dockable Git workbench with branch/upstream summary, changed paths, resizable
-  diff preview, stage, unstage, discard, fetch, pull, push, and commit actions
-- Settings -> Behavior can completely disable Git integration, hiding Git UI
-  and preventing Git status/command calls
+  diff preview, stage, unstage, discard, fetch, pull, push, and commit actions;
+  fetch, pull and push run as Transfers rows with Cancel
+- Settings -> Plugins -> Git can completely disable Git integration, hiding Git
+  UI and preventing Git status/command calls; the Git commands stay listed and
+  explain that Git is turned off
 - Open terminal here with ``Ctrl+` ``
 - Elevated PowerShell launch
 - Open With menu and chooser
@@ -369,20 +374,20 @@ Settings is organized into:
 | --- | --- |
 | Appearance | Theme (Windows default, Dark, Light), default display style, default icon size, default file list columns, hidden files |
 | Navigation | Start location (Home folder, Restore last session, Custom folder), new-tab behavior, sidebar sections, recent history |
-| Behavior | Recycle Bin prompt, folders on top, folder sizes, rendered previews, video playback, preview collapse, transfer options, and a Developer group for Git integration |
+| Behavior | Recycle Bin prompt, folders on top, folder sizes, rendered previews, video playback, preview collapse, and transfer options |
 | Storage & cache | Thumbnail cache enablement, cache size, and cache location |
 | Shortcuts | Searchable shortcut list with edit, reset, import, and export |
 | Toolbar | Button labels, command order, separators, removed commands, and reset |
 | Tools | Archive support summary |
-| Plugins | Installed plugins, their settings and pages, such as the FTP/SFTP plugin's page (opens the FTP/SFTP manager) below its declared settings |
+| Plugins | Installed plugins, their settings and pages, such as the FTP/SFTP plugin's page (opens the FTP/SFTP manager) below its declared settings and the Git plugin's on/off setting |
 | Updates | Version, update check, install action |
 | About | Product, version, repository, and build metadata |
 
 Startup can open Home, the last used workspace, or a custom path. Last-used
 state persists panes, active pane, tabs, view mode, icon size, sort, and filter
 context. Named profiles are separate snapshots available from the Profiles
-button on the toolbar; applying a profile does not change the Git or
-folders-on-top settings.
+button on the toolbar; applying a profile does not change the folders-on-top
+setting or the Git plugin's settings.
 
 Persistent compatibility data stays at:
 
@@ -533,7 +538,7 @@ simplefile-service.exe
         v
 simplefile-core
   file ops, archive, preview data, metadata, checksum, compare,
-  drives, tags, smart folders, Git, updater, shell helpers
+  drives, tags, smart folders, updater, shell helpers
 ```
 
 Important contracts:
@@ -558,7 +563,7 @@ SumaFile/
 |   |-- SimpleFile.Ipc/       Named-pipe JSON-RPC client and generated bindings
 |   `-- SimpleFile.Tests/     xUnit tests for WinUI/core/IPC behavior
 |-- crates/
-|   |-- simplefile-core/      Filesystem, archive, preview, metadata, Git logic
+|   |-- simplefile-core/      Filesystem, archive, preview, metadata logic
 |   |-- simplefile-ipc/       Protocol constants, framing, schema tests
 |   `-- simplefile-service/   Rust named-pipe service process
 |-- ipc/schema/v1/            JSON-RPC command, type, event, and golden files

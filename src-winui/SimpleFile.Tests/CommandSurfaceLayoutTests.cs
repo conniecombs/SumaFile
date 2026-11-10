@@ -37,14 +37,34 @@ public class CommandSurfaceLayoutTests
     }
 
     [Fact]
+    public void FromJson_DropsTheRetiredCoreGitButtons()
+    {
+        // A custom toolbar saved before phase 4 loses its core git-* buttons; the plugin's own item stays.
+        var layout = CommandSurfaceLayout.FromJson("""
+            {
+              "toolbarDisplayMode": "icons",
+              "primaryToolbar": [
+                { "kind": "command", "id": "copy" },
+                { "kind": "command", "id": "git-panel" },
+                { "kind": "command", "id": "git-pull" },
+                { "kind": "command", "id": "plugin:com.sumafile.git:git-panel" }
+              ]
+            }
+            """);
+
+        Assert.Equal(["copy", "plugin:com.sumafile.git:git-panel"], layout.PrimaryToolbar.Select(item => item.Id));
+    }
+
+    [Fact]
     public void Catalog_IncludesBuiltInAndCommandPaletteActions()
     {
         Assert.True(ToolbarActionCatalog.Find(ToolbarOverflowPlanner.New)?.UsesBuiltInControl);
         Assert.True(ToolbarActionCatalog.Find(ToolbarOverflowPlanner.Settings)?.UsesBuiltInControl);
         Assert.Equal("Copy", ToolbarActionCatalog.Find("copy")?.Label);
         Assert.Equal("Tools", ToolbarActionCatalog.Find("terminal")?.Group);
-        Assert.Equal("Git", ToolbarActionCatalog.Find("git-panel")?.Group);
-        Assert.Equal(ContextMenuIconCatalog.Branch, ToolbarActionCatalog.Find("git-panel")?.IconGlyph);
+        // The Git toggle is the Git plugin's toolbar item since phase 4.
+        Assert.Null(ToolbarActionCatalog.Find("git-panel"));
+        Assert.DoesNotContain(ToolbarActionCatalog.All, action => action.PluginId is null && action.Group == "Git");
         Assert.Null(ToolbarActionCatalog.Find("search"));
         Assert.Null(ToolbarActionCatalog.Find("filter"));
         Assert.Equal(ToolbarActionCatalog.IconOnlyDisplayMode, ToolbarActionCatalog.NormalizeDisplayMode("wide"));

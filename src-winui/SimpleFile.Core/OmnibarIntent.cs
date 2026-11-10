@@ -104,10 +104,8 @@ public static class OmnibarIntentParser
             || (value.Length >= 2 && char.IsAsciiLetter(value[0]) && value[1] == ':');
     }
 
-    public static IReadOnlyList<AppCommand> FilterCommands(string? query, bool includeGit)
+    public static IReadOnlyList<AppCommand> FilterCommands(string? query)
     {
-        return AppCommandCatalog.Filter(query)
-            .Where(command => includeGit || !string.Equals(command.Group, "Git", StringComparison.Ordinal))
-            .ToList();
+        return AppCommandCatalog.Filter(query).ToList();
     }
 }

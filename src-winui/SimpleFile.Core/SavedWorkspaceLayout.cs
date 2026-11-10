@@ -134,9 +134,6 @@ public sealed class WorkspaceChromeLayout
     [JsonPropertyName("keepFoldersOnTop")]
     public bool KeepFoldersOnTop { get; set; } = true;
 
-    [JsonPropertyName("enableGitIntegration")]
-    public bool EnableGitIntegration { get; set; } = true;
-
     [JsonPropertyName("progressQueueVisible")]
     public bool ProgressQueueVisible { get; set; }
 
@@ -203,7 +200,6 @@ public sealed class WorkspaceChromeLayout
         return new WorkspaceChromeLayout
         {
             KeepFoldersOnTop = settings.KeepFoldersOnTop,
-            EnableGitIntegration = settings.EnableGitIntegration,
             ProgressQueueVisible = settings.ProgressQueueVisible,
             PreviewVisible = settings.PreviewVisible,
             PreviewPinned = settings.PreviewPinned,

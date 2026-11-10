@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 86,
+  "domainMethodCount": 75,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -155,15 +155,6 @@
     "get_db_setting": { "params": { "key": "string" }, "result": "string?" },
     "get_db_settings": { "params": { "keys": "string[]" }, "result": "SettingMap" },
     "set_db_setting": { "params": { "key": "string", "value": "string" }, "result": "null" },
-    "get_git_repository_status": { "params": { "path": "string" }, "result": "GitRepositoryStatus" },
-    "git_stage_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
-    "git_unstage_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
-    "git_discard_paths": { "params": { "path": "string", "paths": "string[]" }, "result": "GitCommandResult" },
-    "git_diff_path": { "params": { "path": "string", "filePath": "string" }, "result": "string" },
-    "git_commit": { "params": { "path": "string", "message": "string" }, "result": "GitCommandResult" },
-    "git_fetch": { "params": { "path": "string" }, "result": "GitCommandResult" },
-    "git_pull": { "params": { "path": "string" }, "result": "GitCommandResult" },
-    "git_push": { "params": { "path": "string" }, "result": "GitCommandResult" },
     "open_terminal": { "params": { "path": "string" }, "result": "null" },
     "open_powershell_admin": { "params": { "path": "string" }, "result": "null" },
     "search_files": { "params": { "options": "SearchOptions" }, "result": "SearchResult[]", "binaryFrameTags": { "batch": 3, "result": 4 } },
@@ -187,12 +178,6 @@
       "result": "DuplicateCheckResult"
     },
     "cancel_duplicate_check": { "params": { "operationId": "string?" }, "result": "null", "cancellation": true },
-    "get_git_status": {
-      "params": { "path": "string" },
-      "result": "GitStatus",
-      "compatOnly": true,
-      "replacement": "get_git_file_statuses"
-    },
     "compute_checksum": { "params": { "path": "string" }, "result": "Checksums" },
     "get_image_metadata": { "params": { "path": "string" }, "result": "ImageMetadata" },
     "get_file_metadata": { "params": { "path": "string" }, "result": "FileMetadata" },
@@ -207,7 +192,6 @@
       "compatOnly": true,
       "replacement": "WinUI AppWindow.Show/Activate"
     },
-    "get_git_file_statuses": { "params": { "path": "string" }, "result": "FileEntry[]" },
     "get_all_tags": { "params": null, "result": "Tag[]" },
     "create_tag": { "params": { "name": "string", "color": "string" }, "result": "Tag" },
     "update_tag": { "params": { "id": "number", "name": "string", "color": "string" }, "result": "Tag" },

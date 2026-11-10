@@ -560,14 +560,6 @@ public static class ToolbarActionCatalog
             "profile-manage" or "profile-save" or "profile-standard"
                 or "profile-developer" or "profile-photos" or "profile-transfer"
                 or "profile-minimal" => ContextMenuIconCatalog.Switch,
-            "git-panel" => ContextMenuIconCatalog.Branch,
-            "git-refresh" => "\uE72C",
-            "git-fetch" or "git-pull" => ContextMenuIconCatalog.Import,
-            "git-push" or "git-commit" => ContextMenuIconCatalog.Save,
-            "git-stage-selected" => "\uE73E",
-            "git-unstage-selected" => "\uE738",
-            "git-discard-selected" => ContextMenuIconCatalog.EraseTool,
-            "git-diff-selected" => ContextMenuIconCatalog.Switch,
             _ => ContextMenuIconCatalog.Document,
         };
     }

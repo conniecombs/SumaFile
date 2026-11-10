@@ -111,16 +111,6 @@ public sealed partial class MainWindow
             ["customize-toolbar"] = () => _fileOperationDialogs.ShowSettingsAsync("Toolbar"),
             ["toggle-toolbar-labels"] = ToggleToolbarLabelsAsync,
             ["keyboard-help"] = ShowKeyboardHelpAsync,
-            ["git-panel"] = OpenGitPanelAsync,
-            ["git-refresh"] = () => RefreshGitPanelAsync(),
-            ["git-fetch"] = GitFetchAsync,
-            ["git-pull"] = GitPullAsync,
-            ["git-push"] = GitPushAsync,
-            ["git-commit"] = PromptGitCommitAsync,
-            ["git-stage-selected"] = GitStageSelectedAsync,
-            ["git-unstage-selected"] = GitUnstageSelectedAsync,
-            ["git-discard-selected"] = GitDiscardSelectedAsync,
-            ["git-diff-selected"] = GitDiffSelectedAsync,
         };
     }
 

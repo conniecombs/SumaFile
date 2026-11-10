@@ -75,14 +75,6 @@ public sealed partial class MainWindow : Window
     private Flyout? _pathSuggestFlyout;
     private ListView? _pathSuggestList;
     private PaneId _pathSuggestPane;
-    private GitRepositoryStatus? _gitStatus;
-    private readonly GitWorkbenchViewModel _gitWorkbenchModel = new();
-    private GitWorkbenchWindow? _gitWorkbenchWindow;
-    private CancellationTokenSource? _gitCts;
-    private CancellationTokenSource? _gitDiffCts;
-    private string? _gitStatusPath;
-    private bool _gitPanelOpen;
-    private bool _closingGitWorkbenchWindowForDock;
 
     public ObservableCollection<FileRow> PrimaryFiles { get; } = [];
     public ObservableCollection<FileRow> SecondaryFiles { get; } = [];
@@ -185,8 +177,6 @@ public sealed partial class MainWindow : Window
         SecondaryFileList.ItemsSource = SecondaryFiles;
         PrimaryDetailsFileList.ItemsSource = PrimaryFiles;
         SecondaryDetailsFileList.ItemsSource = SecondaryFiles;
-        GitWorkbench.Start(_gitWorkbenchModel);
-        AttachGitWorkbenchView(GitWorkbench);
         AttachPaneActivationHandlers();
         DriveList.ItemsSource = Drives;
         QuickAccessList.ItemsSource = QuickAccess;
@@ -650,7 +640,6 @@ public sealed partial class MainWindow : Window
         SyncOmnibarFromWorkspace();
         UpdateSearchCancelButtons();
         UpdateDualPaneButton(_toolbar?.IsDualPaneEnabled ?? _workspace.DualPaneEnabled);
-        RefreshGitUiVisibility();
 
         if (!_editingPrimaryPath)
         {
@@ -1350,11 +1339,6 @@ public sealed partial class MainWindow : Window
         Interlocked.Increment(ref _viewIconSizeSaveToken);
         _folderRefreshCts?.Cancel();
         _folderRefreshCts = null;
-        _gitCts?.Cancel();
-        _gitCts = null;
-        _gitDiffCts?.Cancel();
-        _gitDiffCts = null;
-        CloseGitWorkbenchWindow(forDock: false);
         _previewPresenter.CancelPending();
         CancelNetworkReconnectPrompt();
         _fileOperationDialogs.CloseSettingsWindow();

@@ -319,11 +319,9 @@ public sealed partial class MainWindow
         ContextMenuRequest? whenRequest = null;
         foreach (var pair in _primaryToolbarActionElements)
         {
-            var enabledBySettings = !pair.Key.StartsWith("git-", StringComparison.Ordinal)
-                || IsGitIntegrationEnabled;
             SetOverflowVisible(
                 pair.Value,
-                enabledBySettings && !overflowed.Contains(pair.Key) && PluginToolbarWhenAllows(pair.Key, ref whenRequest));
+                !overflowed.Contains(pair.Key) && PluginToolbarWhenAllows(pair.Key, ref whenRequest));
         }
 
         RefreshToolbarSeparatorVisibility();

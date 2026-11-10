@@ -96,16 +96,6 @@ public static class AppCommandCatalog
         new("settings", "Open settings", "App", "Ctrl+,"),
         new("command-palette", "Open command palette", "App", "Ctrl+Shift+P"),
         new("keyboard-help", "Show keyboard shortcuts", "App", "F1"),
-        new("git-panel", "Git: show workbench", "Git"),
-        new("git-refresh", "Git: refresh status", "Git"),
-        new("git-fetch", "Git: fetch", "Git"),
-        new("git-pull", "Git: pull", "Git"),
-        new("git-push", "Git: push", "Git"),
-        new("git-commit", "Git: commit staged changes", "Git"),
-        new("git-stage-selected", "Git: stage selected paths", "Git"),
-        new("git-unstage-selected", "Git: unstage selected paths", "Git"),
-        new("git-discard-selected", "Git: discard selected changes", "Git"),
-        new("git-diff-selected", "Git: show selected diff", "Git"),
     ];
 
     private static volatile IReadOnlyList<AppCommand> _all = BuiltIn;

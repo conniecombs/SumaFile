@@ -571,7 +571,6 @@ internal sealed class WorkspaceNavigationController
         using var foregroundScope = workspace.ForegroundScheduler.BeginForegroundScope(ForegroundActivityKind.Navigation);
         var selected = state.SelectedPath;
         var token = state.NextNavigationToken();
-        state.InvalidateGitProbe();
 
         lock (workspace.Gate)
         {

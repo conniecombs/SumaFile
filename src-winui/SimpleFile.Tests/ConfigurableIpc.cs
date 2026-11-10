@@ -8,7 +8,6 @@ internal sealed class ConfigurableIpc : NullIpc
 
     public Dictionary<string, string> Settings { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, FileEntry> EntryInfo { get; } = new(StringComparer.OrdinalIgnoreCase);
-    public Dictionary<string, FileEntry[]> GitFileStatuses { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, ulong> FolderSizes { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, ulong> FolderItemCounts { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, FolderMetrics> FolderMetrics { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -57,7 +56,6 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<CancellationToken, Task>? CancelFolderMetricsHandler { get; set; }
     public Func<CancellationToken, Task<SmartFolder[]>>? LoadSmartFoldersHandler { get; set; }
 
-    public int GitStatusCalls { get; private set; }
     public int MoveWithProgressCalls { get; private set; }
     public int GetDbSettingCalls { get; private set; }
     public int GetDbSettingsCalls { get; private set; }
@@ -357,12 +355,6 @@ internal sealed class ConfigurableIpc : NullIpc
 
         OpenedFiles.Add(path);
         return Task.CompletedTask;
-    }
-
-    public override Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)
-    {
-        GitStatusCalls += 1;
-        return Task.FromResult(GitFileStatuses.TryGetValue(path, out var statuses) ? statuses : []);
     }
 
     public override Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)

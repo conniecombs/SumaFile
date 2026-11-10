@@ -340,63 +340,6 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
-    public async Task ApplyGitStatuses_UpdatesPaneEntriesWhenEnabled()
-    {
-        var backend = FakeExplorerBackend.Typical();
-        var settingsIpc = new ConfigurableIpc();
-        settingsIpc.GitFileStatuses[@"C:\Users\test"] =
-        [
-            new FileEntry
-            {
-                Name = "notes.txt",
-                Path = @"C:\Users\test\notes.txt",
-                GitStatus = "modified",
-            },
-        ];
-        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
-        await workspace.InitializeAsync();
-
-        await workspace.ApplyGitStatusesAsync(PaneId.Primary);
-
-        Assert.Equal(1, settingsIpc.GitStatusCalls);
-        Assert.Equal(
-            "modified",
-            workspace.VisibleEntries.Single(entry => entry.Name == "notes.txt").GitStatus);
-    }
-
-    [Fact]
-    public async Task ApplyGitStatuses_ClearsStaleEntryStatusesWhenClean()
-    {
-        var backend = FakeExplorerBackend.Typical();
-        backend.Listings[@"C:\Users\test"].Entries.Single(entry => entry.Name == "notes.txt").GitStatus = "modified";
-        var settingsIpc = new ConfigurableIpc();
-        settingsIpc.GitFileStatuses[@"C:\Users\test"] = [];
-        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
-        await workspace.InitializeAsync();
-
-        await workspace.ApplyGitStatusesAsync(PaneId.Primary);
-
-        Assert.Equal(1, settingsIpc.GitStatusCalls);
-        Assert.Null(workspace.VisibleEntries.Single(entry => entry.Name == "notes.txt").GitStatus);
-    }
-
-    [Fact]
-    public async Task ApplyGitStatuses_DisabledClearsEntriesAndDoesNotCallBackend()
-    {
-        var backend = FakeExplorerBackend.Typical();
-        backend.Listings[@"C:\Users\test"].Entries.Single(entry => entry.Name == "notes.txt").GitStatus = "modified";
-        var settingsIpc = new ConfigurableIpc();
-        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
-        await workspace.InitializeAsync();
-        workspace.Settings.EnableGitIntegration = false;
-
-        await workspace.ApplyGitStatusesAsync(PaneId.Primary);
-
-        Assert.Equal(0, settingsIpc.GitStatusCalls);
-        Assert.Null(workspace.VisibleEntries.Single(entry => entry.Name == "notes.txt").GitStatus);
-    }
-
-    [Fact]
     public async Task FillFolderMetrics_StaleNavigationDoesNotUpdateOldEntries()
     {
         var backend = FakeExplorerBackend.Typical();
@@ -1131,7 +1074,6 @@ public class ExplorerWorkspaceTests
         Assert.False(workspace.DualPaneEnabled);
         Assert.Equal("details", workspace.ViewFor(PaneId.Primary));
         Assert.Equal(16, workspace.IconSizeFor(PaneId.Primary));
-        Assert.True(workspace.Settings.EnableGitIntegration);
         Assert.Equal("developer", workspace.Settings.ColumnPreset);
         Assert.Contains("git", workspace.Columns.VisibleIds);
         Assert.Equal(
@@ -1150,7 +1092,6 @@ public class ExplorerWorkspaceTests
 
         var settings = workspace.Settings;
         settings.KeepFoldersOnTop = false;
-        settings.EnableGitIntegration = false;
         settings.ProgressQueueVisible = true;
         settings.PreviewVisible = false;
         settings.PreviewWidth = 420;
@@ -1174,7 +1115,6 @@ public class ExplorerWorkspaceTests
         Assert.Equal(saved.Id, document.ActiveProfileId);
         Assert.Equal(["name", "path", "git"], stored.Chrome!.VisibleColumnIds);
         Assert.False(stored.Chrome.KeepFoldersOnTop);
-        Assert.False(stored.Chrome.EnableGitIntegration);
         Assert.True(stored.Chrome.ProgressQueueVisible);
 
         await workspace.ApplyWorkspaceProfileAsync(WorkspaceProfileTemplates.MinimalId);
@@ -1190,7 +1130,6 @@ public class ExplorerWorkspaceTests
         Assert.Equal("date", workspace.SortByFor(PaneId.Secondary));
         Assert.False(workspace.SortAscendingFor(PaneId.Secondary));
         Assert.False(workspace.Settings.KeepFoldersOnTop);
-        Assert.False(workspace.Settings.EnableGitIntegration);
         Assert.True(workspace.Settings.ProgressQueueVisible);
         Assert.False(workspace.Settings.PreviewVisible);
         Assert.Equal(420, workspace.Settings.PreviewWidth);
@@ -1201,7 +1140,7 @@ public class ExplorerWorkspaceTests
         Assert.Equal("developer", workspace.Settings.ColumnPreset);
         Assert.Equal(["name", "path", "git"], workspace.Columns.SnapshotVisibleIds());
         Assert.Equal(360, workspace.Columns.WidthOf("path"));
-        Assert.Equal("false", settingsIpc.Settings["enableGitIntegration"]);
+        Assert.False(settingsIpc.Settings.ContainsKey("enableGitIntegration"));
         Assert.Equal("true", settingsIpc.Settings["progressQueue.visible"]);
 
         var duplicate = await workspace.DuplicateWorkspaceProfileAsync(WorkspaceProfileTemplates.PhotosId, "Vacation photos");
@@ -1223,7 +1162,6 @@ public class ExplorerWorkspaceTests
         Assert.Equal("tiles", workspace.ViewFor(PaneId.Primary));
         Assert.Equal(256, workspace.IconSizeFor(PaneId.Primary));
         Assert.Equal("photo", workspace.Settings.ColumnPreset);
-        Assert.False(workspace.Settings.EnableGitIntegration);
         Assert.Contains("date", workspace.Columns.VisibleIds);
 
         await workspace.DeleteWorkspaceProfileAsync(renamed.Id);

@@ -108,11 +108,11 @@ const schemaMethods = new Set(
   Object.keys(commands.methods || {}).filter((name) => !name.startsWith('ipc.')),
 );
 
-if (handlers.size !== 86) {
-  fail(`expected 86 domain handlers, found ${handlers.size}`);
+if (handlers.size !== 75) {
+  fail(`expected 75 domain handlers, found ${handlers.size}`);
 }
-if (commands.domainMethodCount !== 86) {
-  fail(`commands.json domainMethodCount must be 86, found ${commands.domainMethodCount}`);
+if (commands.domainMethodCount !== 75) {
+  fail(`commands.json domainMethodCount must be 75, found ${commands.domainMethodCount}`);
 }
 if (protocol.protocolVersion !== 1 || commands.protocolVersion !== 1) {
   fail('schema protocolVersion must be 1');
@@ -181,7 +181,6 @@ const compatOnlyMethods = {
   copy_entry: { replacement: 'copy_with_progress', legacy: true, caller: 'CopyEntryAsync' },
   move_entry: { replacement: 'move_with_progress', legacy: true, caller: 'MoveEntryAsync' },
   cancel_count_items: { replacement: 'cancel_folder_item_count', caller: 'CancelCountItemsAsync' },
-  get_git_status: { replacement: 'get_git_file_statuses', caller: 'GetGitStatusAsync' },
   show_main_window: { replacement: 'WinUI AppWindow.Show/Activate', hostOwned: true, caller: 'ShowMainWindowAsync' },
 };
 for (const [methodName, expected] of Object.entries(compatOnlyMethods)) {

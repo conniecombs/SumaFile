@@ -66,18 +66,6 @@ public class UiAuditRegressionTests
         Assert.Contains("AppCommandHandlers.ContainsKey(commandId)", router);
     }
 
-    // P4: a failing non-silent git status refresh left the workbench busy forever.
-    [Fact]
-    public void GitRefresh_ClearsBusyStateWhenStatusFails()
-    {
-        var git = File.ReadAllText(Path.Combine(AppRoot(), "MainWindow.Git.cs"));
-        var refresh = Slice(git, "_gitCts?.Cancel();", "private void RefreshGitUiVisibility()");
-
-        Assert.DoesNotContain("catch (Exception exception) when (silent)", refresh);
-        Assert.Contains("_gitWorkbenchModel.SetUnavailable(exception.Message);", refresh);
-        Assert.Matches(new Regex(@"if \(!silent\)\s*\{\s*throw;"), refresh);
-    }
-
     // F5: the internal clipboard shadowed the Windows clipboard; the app must observe
     // Clipboard.ContentChanged and reconcile against the stamp it exported.
     [Fact]
@@ -1026,7 +1014,7 @@ public class Sprint2WindowTests
                 $"{name} sizes its window in physical pixels.");
         }
 
-        foreach (var window in new[] { "SettingsWindow.xaml.cs", "GitWorkbenchWindow.xaml.cs", "AdvancedRenameDialog.xaml.cs", "DuplicateCheckerDialog.xaml.cs", "TransferProgressWindow.xaml.cs", "PluginWindowHost.cs" })
+        foreach (var window in new[] { "SettingsWindow.xaml.cs", "PluginPanelWindow.cs", "AdvancedRenameDialog.xaml.cs", "DuplicateCheckerDialog.xaml.cs", "TransferProgressWindow.xaml.cs", "PluginWindowHost.cs" })
         {
             Assert.Contains("SecondaryWindowChrome.Apply(", File.ReadAllText(Path.Combine(appRoot, window)));
         }

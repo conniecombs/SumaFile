@@ -55,7 +55,7 @@ The WinUI replacement must preserve that split:
 
 Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI host must keep those names or provide an explicit mapping.
 
-This is the historical Tauri inventory (74 commands). The live WinUI service contract is `ipc/schema/v1/commands.json`: 86 domain methods after plugin system phase 3, which moved the 13 `remote_*` FTP/SFTP methods into the bundled plugin `com.sumafile.remote` (`plugins/remote/protocol.json`). The parity record is [`parity-gate.md`](parity-gate.md).
+This is the historical Tauri inventory (74 commands). The live WinUI service contract is `ipc/schema/v1/commands.json`: 75 domain methods after plugin system phase 4. Phase 3 moved the 13 `remote_*` FTP/SFTP methods into the bundled plugin `com.sumafile.remote` (`plugins/remote/protocol.json`), and phase 4 moved the 11 Git methods into the bundled plugin `com.sumafile.git` (`plugins/git/protocol.json`). The parity record is [`parity-gate.md`](parity-gate.md).
 
 `list_directory` is the only command that also streams: the frontend creates a Tauri `Channel<DirectoryListingChunk>` and passes it as `onChunk`. Chunks arrive before the final `DirectoryListing` return.
 
@@ -656,7 +656,7 @@ Secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Any 
 
 These are real current-code facts, not extra features:
 
-1. `show_main_window`, `get_git_status`, `cancel_count_items`, `copy_entry`, `move_entry`, `onOperationComplete`, and `onOperationError` are part of the compatibility contract and are marked in schema as host-owned, legacy, or typed-not-emitted where applicable. Keep them unless a later protocol version removes them.
+1. `show_main_window`, `get_git_status`, `cancel_count_items`, `copy_entry`, `move_entry`, `onOperationComplete`, and `onOperationError` are part of the compatibility contract and are marked in schema as host-owned, legacy, or typed-not-emitted where applicable. Keep them unless a later protocol version removes them. (`get_git_status` went in plugin system phase 4 with the other ten Git methods, which moved to the `com.sumafile.git` plugin protocol; `FileEntry.git_status` stays in the wire format, always absent.)
 2. `search-complete` and `update-chunk` **are** emitted. Wire them in WinUI even if the Svelte UI currently ignores the wrappers.
 3. `operation-complete` / `operation-error` are **not** emitted. Do not invent them unless both sides agree.
 4. `list_directory` streaming is a Channel, not an event.

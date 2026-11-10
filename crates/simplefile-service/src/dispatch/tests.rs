@@ -265,6 +265,44 @@ fn unknown_method_is_not_found() {
     assert_eq!(response.error.unwrap().code, ERR_METHOD_NOT_FOUND);
 }
 
+#[test]
+fn removed_git_methods_return_method_not_found() {
+    // Git moved to the com.sumafile.git plugin in phase 4; the service no
+    // longer answers any of its eleven methods.
+    let mut state = SessionState {
+        handshake_done: true,
+        ..SessionState::default()
+    };
+    let path = std::env::temp_dir().to_string_lossy().into_owned();
+    for (id, method) in [
+        (300u64, "get_git_status"),
+        (301, "get_git_repository_status"),
+        (302, "get_git_file_statuses"),
+        (303, "git_stage_paths"),
+        (304, "git_unstage_paths"),
+        (305, "git_discard_paths"),
+        (306, "git_diff_path"),
+        (307, "git_commit"),
+        (308, "git_fetch"),
+        (309, "git_pull"),
+        (310, "git_push"),
+    ] {
+        let outcome = dispatch(
+            &mut state,
+            &request(
+                method,
+                id,
+                json!({ "path": path, "paths": [], "filePath": path, "message": "m" }),
+            ),
+        );
+        let response = reply(outcome);
+        let error = response
+            .error
+            .unwrap_or_else(|| panic!("{method} should be gone from the service"));
+        assert_eq!(error.code, ERR_METHOD_NOT_FOUND, "{method}");
+    }
+}
+
 fn register_archive_engine_request(id: u64, pipe_name: &str, extension: &str) -> JsonRpcRequest {
     request(
         "register_archive_engine",
@@ -635,17 +673,6 @@ fn leftover_domain_methods_are_wired() {
         (45, "get_files_with_tag"),
         (46, "save_smart_folder"),
         (47, "delete_smart_folder"),
-        (48, "get_git_status"),
-        (49, "get_git_repository_status"),
-        (50, "get_git_file_statuses"),
-        (51, "git_stage_paths"),
-        (52, "git_unstage_paths"),
-        (53, "git_discard_paths"),
-        (54, "git_diff_path"),
-        (55, "git_commit"),
-        (56, "git_fetch"),
-        (57, "git_pull"),
-        (58, "git_push"),
         (59, "disk_cleanup"),
         (60, "duplicate_check"),
         (63, "open_terminal"),
@@ -763,18 +790,6 @@ fn tags_and_smart_folders_round_trip_through_core() {
     let loaded = dispatch(&mut state, &request("load_smart_folders", 65, json!({})));
     let loaded_response = reply(loaded);
     assert_eq!(loaded_response.result.unwrap()[0]["id"], "sf-review");
-
-    let git_status = dispatch(
-        &mut state,
-        &request(
-            "get_git_status",
-            66,
-            json!({ "path": std::env::temp_dir().to_string_lossy() }),
-        ),
-    );
-    let git_status_response = reply(git_status);
-    assert!(git_status_response.error.is_none());
-    assert_eq!(git_status_response.result.unwrap()["is_repo"], false);
 
     let capabilities = dispatch(
         &mut state,

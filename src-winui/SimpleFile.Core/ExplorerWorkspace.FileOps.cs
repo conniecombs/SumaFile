@@ -131,15 +131,6 @@ public sealed partial class ExplorerWorkspace
     public void ToggleTreeExpanded(string path) =>
         _folderTree.ToggleExpanded(this, path);
 
-    public Task ApplyGitStatusesAsync(CancellationToken cancellationToken = default) =>
-        ApplyGitStatusesAsync(ActivePane, cancellationToken);
-
-    public Task ApplyGitStatusesAsync(PaneId pane, CancellationToken cancellationToken = default) =>
-        _enrichment.ApplyGitStatusesAsync(this, pane, cancellationToken);
-
-    public void ClearGitStatuses() =>
-        _enrichment.ClearGitStatuses(this);
-
     public Task FillFolderSizesAsync(CancellationToken cancellationToken = default) =>
         FillFolderMetricsAsync(ActivePane, includeSizes: Settings.ShowFolderSizes, includeItemCounts: false, cancellationToken);
 

@@ -226,10 +226,6 @@
                     <SolidColorBrush x:Key="SfBorderBrush" Color="#3A3A40" />
                     <SolidColorBrush x:Key="SfFolderBrush" Color="#F8D147" />
                     <SolidColorBrush x:Key="SfFileBrush" Color="#9CDCFE" />
-                    <SolidColorBrush x:Key="SfGitAddedBrush" Color="#4EC9B0" />
-                    <SolidColorBrush x:Key="SfGitModifiedBrush" Color="#E5C07B" />
-                    <SolidColorBrush x:Key="SfGitUntrackedBrush" Color="#79C0FF" />
-                    <SolidColorBrush x:Key="SfGitDeletedBrush" Color="#F85149" />
                     <SolidColorBrush x:Key="SfDecorationAddedBrush" Color="#4EC9B0" />
                     <SolidColorBrush x:Key="SfDecorationModifiedBrush" Color="#E5C07B" />
                     <SolidColorBrush x:Key="SfDecorationUntrackedBrush" Color="#79C0FF" />
@@ -251,10 +247,6 @@
                     <SolidColorBrush x:Key="SfBorderBrush" Color="#3A3A40" />
                     <SolidColorBrush x:Key="SfFolderBrush" Color="#F8D147" />
                     <SolidColorBrush x:Key="SfFileBrush" Color="#9CDCFE" />
-                    <SolidColorBrush x:Key="SfGitAddedBrush" Color="#4EC9B0" />
-                    <SolidColorBrush x:Key="SfGitModifiedBrush" Color="#E5C07B" />
-                    <SolidColorBrush x:Key="SfGitUntrackedBrush" Color="#79C0FF" />
-                    <SolidColorBrush x:Key="SfGitDeletedBrush" Color="#F85149" />
                     <SolidColorBrush x:Key="SfDecorationAddedBrush" Color="#4EC9B0" />
                     <SolidColorBrush x:Key="SfDecorationModifiedBrush" Color="#E5C07B" />
                     <SolidColorBrush x:Key="SfDecorationUntrackedBrush" Color="#79C0FF" />
@@ -276,10 +268,6 @@
                     <SolidColorBrush x:Key="SfBorderBrush" Color="#D8DDE5" />
                     <SolidColorBrush x:Key="SfFolderBrush" Color="#E6B422" />
                     <SolidColorBrush x:Key="SfFileBrush" Color="#0078D4" />
-                    <SolidColorBrush x:Key="SfGitAddedBrush" Color="#1A7F37" />
-                    <SolidColorBrush x:Key="SfGitModifiedBrush" Color="#9A6700" />
-                    <SolidColorBrush x:Key="SfGitUntrackedBrush" Color="#0969DA" />
-                    <SolidColorBrush x:Key="SfGitDeletedBrush" Color="#CF222E" />
                     <SolidColorBrush x:Key="SfDecorationAddedBrush" Color="#1A7F37" />
                     <SolidColorBrush x:Key="SfDecorationModifiedBrush" Color="#9A6700" />
                     <SolidColorBrush x:Key="SfDecorationUntrackedBrush" Color="#0969DA" />
@@ -301,10 +289,6 @@
                     <SolidColorBrush x:Key="SfBorderBrush" Color="#FFFFFF" />
                     <SolidColorBrush x:Key="SfFolderBrush" Color="#FFFF00" />
                     <SolidColorBrush x:Key="SfFileBrush" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="SfGitAddedBrush" Color="#FFFF00" />
-                    <SolidColorBrush x:Key="SfGitModifiedBrush" Color="#FFFF00" />
-                    <SolidColorBrush x:Key="SfGitUntrackedBrush" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="SfGitDeletedBrush" Color="#FFFF00" />
                     <SolidColorBrush x:Key="SfDecorationAddedBrush" Color="#FFFF00" />
                     <SolidColorBrush x:Key="SfDecorationModifiedBrush" Color="#FFFF00" />
                     <SolidColorBrush x:Key="SfDecorationUntrackedBrush" Color="#FFFFFF" />

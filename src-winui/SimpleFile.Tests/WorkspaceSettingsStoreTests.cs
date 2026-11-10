@@ -61,7 +61,6 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal(@"C:\Work", saved.Layout.Primary.Path);
         Assert.NotNull(saved.Chrome);
         Assert.False(saved.Chrome!.KeepFoldersOnTop);
-        Assert.False(saved.Chrome.EnableGitIntegration);
         Assert.True(saved.Chrome.ProgressQueueVisible);
         Assert.False(saved.Chrome.PreviewVisible);
         Assert.Equal(UiSettings.PreviewMaxWidth, saved.Chrome.PreviewWidth);
@@ -138,7 +137,6 @@ public class WorkspaceSettingsStoreTests
             StartLocation = "custom",
             CustomPath = @"D:\Work",
             OpenInNewTab = true,
-            EnableGitIntegration = false,
             ProgressQueueVisible = true,
             ShowFolderSizes = true,
             PreviewVisible = false,
@@ -225,7 +223,6 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal("custom", state.Settings.StartLocation);
         Assert.Equal(@"D:\Work", state.Settings.CustomPath);
         Assert.True(state.Settings.OpenInNewTab);
-        Assert.False(state.Settings.EnableGitIntegration);
         Assert.True(state.Settings.ProgressQueueVisible);
         Assert.True(state.Settings.ShowFolderSizes);
         Assert.False(state.Settings.PreviewVisible);
@@ -507,6 +504,64 @@ public class WorkspaceSettingsStoreTests
 
             Written[key] = value;
         }
+    }
+
+    /// <summary>A settings store that records every key read and written.</summary>
+    private sealed class RecordingSettingsBackend : ISettingsBackend
+    {
+        public Dictionary<string, string> Values { get; } = new(StringComparer.Ordinal);
+
+        public List<string> ReadKeys { get; } = [];
+
+        public List<string> WrittenKeys { get; } = [];
+
+        public Task<string?> GetSettingAsync(string key, CancellationToken ct = default)
+        {
+            ReadKeys.Add(key);
+            return Task.FromResult(Values.TryGetValue(key, out var value) ? value : null);
+        }
+
+        public Task<IReadOnlyDictionary<string, string?>> GetSettingsAsync(IReadOnlyList<string> keys, CancellationToken ct = default)
+        {
+            ReadKeys.AddRange(keys);
+            return Task.FromResult<IReadOnlyDictionary<string, string?>>(keys.ToDictionary(
+                key => key,
+                key => Values.TryGetValue(key, out var value) ? value : null,
+                StringComparer.Ordinal));
+        }
+
+        public Task SetSettingAsync(string key, string value, CancellationToken ct = default)
+        {
+            WrittenKeys.Add(key);
+            Values[key] = value;
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task SaveAsync_NoLongerWritesEnableGitIntegration()
+    {
+        // The Git plugin's "enabled" setting migrates from this key (settings[].migrateFrom), so
+        // core must leave the user's last stored value alone: never read it, never write it.
+        var backend = new RecordingSettingsBackend();
+        backend.Values["enableGitIntegration"] = "false";
+
+        await WorkspaceSettingsStore.SaveAsync(
+            backend,
+            UiSettings.CreateDefault(),
+            new ColumnLayout(),
+            new ColumnLayout(),
+            showHidden: false,
+            bookmarks: [],
+            recentPaths: [],
+            CancellationToken.None);
+        await WorkspaceSettingsStore.LoadAsync(backend, CancellationToken.None);
+
+        Assert.NotEmpty(backend.WrittenKeys);
+        Assert.NotEmpty(backend.ReadKeys);
+        Assert.DoesNotContain("enableGitIntegration", backend.WrittenKeys, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("enableGitIntegration", backend.ReadKeys, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("false", backend.Values["enableGitIntegration"]);
     }
 
     [Fact]

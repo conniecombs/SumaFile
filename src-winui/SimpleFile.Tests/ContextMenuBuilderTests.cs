@@ -90,7 +90,6 @@ public class ContextMenuBuilderTests
     public void ContextMenu_HidesInapplicableItems()
     {
         var file = ContextMenuBuilder.Build(new ContextMenuRequest { SelectionCount = 1, AllSelectedAreFiles = true });
-        Assert.DoesNotContain(Flatten(file), entry => entry.Id == "ctx-git-menu");
         Assert.DoesNotContain(Flatten(file), entry => entry.Id == "ctx-extract");
         Assert.DoesNotContain(Flatten(file), entry => entry.Id == "ctx-extract-folder");
         Assert.DoesNotContain(Flatten(file), entry => entry.Id == "ctx-extract-to");
@@ -98,11 +97,6 @@ public class ContextMenuBuilderTests
 
         var folder = ContextMenuBuilder.Build(new ContextMenuRequest { SelectionCount = 1, SelectedIsDirectory = true });
         Assert.DoesNotContain(folder, entry => entry.Id == "ctx-open-with");
-
-        var gitOff = ContextMenuBuilder.Build(new ContextMenuRequest { SelectionCount = 1, GitEnabled = false, InGitRepository = true });
-        Assert.DoesNotContain(gitOff, entry => entry.Id == "ctx-git-menu");
-        var gitOn = ContextMenuBuilder.Build(new ContextMenuRequest { SelectionCount = 1, GitEnabled = true, InGitRepository = true });
-        Assert.Contains(gitOn, entry => entry.Id == "ctx-git-menu");
     }
 
     [Fact]
@@ -146,14 +140,12 @@ public class ContextMenuBuilderTests
             SelectionCount = 1,
             SelectedIsArchive = true,
             FolderSelectionCount = 2,
-            GitEnabled = true,
-            InGitRepository = true,
         });
         var flat = Flatten(more);
         foreach (var removed in new[]
         {
             "ctx-rename", "ctx-delete-recycle", "ctx-delete-permanent", "ctx-color-label", "ctx-view-archive",
-            "ctx-extract-to", "ctx-compress", "ctx-folder-metrics", "ctx-duplicates", "ctx-git-menu",
+            "ctx-extract-to", "ctx-compress", "ctx-folder-metrics", "ctx-duplicates",
         })
         {
             Assert.DoesNotContain(flat, entry => entry.Id == removed);
@@ -299,44 +291,6 @@ public class ContextMenuBuilderTests
             AllSelectedAreFiles = true,
         });
         Assert.Contains(Flatten(twoFiles), entry => entry.Id == "ctx-compare");
-    }
-
-    [Fact]
-    public void ContextMenu_GitMenuRespectsSettingAndSelection()
-    {
-        var disabled = ContextMenuBuilder.Build(new ContextMenuRequest
-        {
-            SelectionCount = 1,
-            GitEnabled = false,
-            InGitRepository = true,
-            SelectionHasGitStatus = true,
-        });
-        Assert.DoesNotContain(disabled, entry => entry.Id == "ctx-git-menu");
-
-        var noRepo = ContextMenuBuilder.Build(new ContextMenuRequest
-        {
-            GitEnabled = true,
-            InGitRepository = false,
-        });
-        Assert.DoesNotContain(noRepo, entry => entry.Id == "ctx-git-menu");
-
-        var changedSelection = ContextMenuBuilder.Build(new ContextMenuRequest
-        {
-            SelectionCount = 1,
-            AllSelectedAreFiles = true,
-            GitEnabled = true,
-            InGitRepository = true,
-            SelectionHasGitStatus = true,
-        });
-        var git = Assert.Single(changedSelection, entry => entry.Id == "ctx-git-menu");
-        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-diff");
-        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-stage");
-        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-unstage");
-        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-discard");
-        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-fetch");
-        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-pull");
-        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-push");
-        Assert.Contains(git.Children, entry => entry.Id == "ctx-git-commit");
     }
 
     [Fact]
@@ -672,8 +626,6 @@ public class ContextMenuBuilderTests
     private static ContextMenuRequest PluginRequest(string when, int selectionCount = 1) => new()
     {
         SelectionCount = selectionCount,
-        GitEnabled = true,
-        InGitRepository = true,
         PluginMenus =
         [
             new PluginContextMenuGroup("com.a", "Alpha", [new PluginContextMenuItem("plugin:com.a:run", "Run", when)]),
@@ -681,14 +633,18 @@ public class ContextMenuBuilderTests
     };
 
     [Fact]
-    public void Build_AppendsPluginGroupsAfterGit()
+    public void Build_AppendsPluginGroupsAfterTheToolGroups()
     {
+        // Core has no Git group since phase 4: the Git plugin's group is one of the plugin groups.
         foreach (var count in new[] { 1, 0 })
         {
             var menu = ContextMenuBuilder.Build(PluginRequest("", count)).ToList();
-            var git = menu.FindIndex(entry => entry.Id == "ctx-git-menu");
+            Assert.DoesNotContain(Flatten(menu), entry => entry.Id.StartsWith("ctx-git-", StringComparison.Ordinal));
             var plugin = menu.FindIndex(entry => entry.Id == "ctx-plugin-menu:com.a");
-            Assert.True(git >= 0 && plugin == git + 1);
+            var tools = menu.FindIndex(entry => entry.Id == "ctx-tools-menu");
+            Assert.True(tools >= 0 && plugin > tools);
+            Assert.Equal(ContextMenuKind.Divider, menu[plugin + 1].Kind);
+            Assert.Equal(count == 1 ? "ctx-info" : "ctx-folder-info", menu[plugin + 2].Id);
             var group = menu[plugin];
             Assert.Equal("Alpha", group.Label);
             Assert.Equal("plugin:com.a:run", Assert.Single(group.Children).Id);
