@@ -88,7 +88,9 @@ const cargoMatches = new Map([
 const displayConstMatch = coreLib.match(
   /pub const APP_DISPLAY_VERSION:\s*&str\s*=\s*"([^"]+)"/,
 );
-const readmeBadgeMatch = readme.match(/img\.shields\.io\/badge\/version-([^-]+)-/);
+// The badge text up to the colour. shields.io writes a dash in the text as "--" and an underscore as "__".
+const readmeBadgeRaw = readme.match(/img\.shields\.io\/badge\/version-(.+?)-2563eb\)/);
+const readmeBadgeMatch = readmeBadgeRaw && [readmeBadgeRaw[0], readmeBadgeRaw[1].replaceAll('--', '-').replaceAll('__', '_')];
 if (!propsMatch) {
   fail('Could not read Version from Directory.Build.props.');
 } else {
