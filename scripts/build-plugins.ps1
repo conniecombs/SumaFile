@@ -1,6 +1,6 @@
 #requires -Version 5.1
 # Builds and stages SumaFile's bundled plugins ($script:BundledPluginIds in lib\plugin-staging.ps1:
-# com.sumafile.sevenzip and com.sumafile.remote) into a plugins root with its bundled.json.
+# com.sumafile.sevenzip, com.sumafile.remote and com.sumafile.git) into a plugins root with its bundled.json.
 # Debug builds of SimpleFile.App copy target\plugins into the app's plugins folder (CopyBundledPlugins).
 [CmdletBinding()]
 param(
@@ -10,7 +10,7 @@ param(
     [string]$Destination = 'target\plugins',
     # Stage what target\<debug|release> already holds instead of running cargo first.
     [switch]$SkipCargo,
-    # Stage what the remote UI project's bin\<Configuration> already holds instead of running dotnet build first.
+    # Stage what the plugin UI projects' bin\<Configuration> already hold instead of running dotnet build first.
     [switch]$SkipDotnet
 )
 $ErrorActionPreference = 'Stop'
@@ -21,15 +21,21 @@ $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 Push-Location -LiteralPath $root
 try {
     if (-not $SkipCargo) {
-        $cargoArgs = @('build', '--locked', '-p', 'sumafile-sevenzip-backend', '-p', 'sumafile-remote-backend')
+        $cargoArgs = @('build', '--locked', '-p', 'sumafile-sevenzip-backend', '-p', 'sumafile-remote-backend', '-p', 'sumafile-git-backend')
         if ($Configuration -eq 'Release') { $cargoArgs += '--release' }
         & cargo @cargoArgs
         if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE." }
     }
     if (-not $SkipDotnet) {
-        # To the host, so the script's output stays the staged root alone.
-        & dotnet build plugins/remote/ui/SumaFile.Remote/SumaFile.Remote.csproj -c $Configuration --nologo | Out-Host
-        if ($LASTEXITCODE -ne 0) { throw "dotnet build of SumaFile.Remote.csproj failed with exit code $LASTEXITCODE." }
+        # Every bundled plugin with a C# UI, in staging order (the table itself is unordered). To the host, so the
+        # script's output stays the staged root alone.
+        foreach ($id in $script:BundledPluginIds) {
+            $ui = $script:BundledPluginUiProjects[$id]
+            if (-not $ui) { continue }
+            $project = $ui.Project.Replace('\', '/')
+            & dotnet build $project -c $Configuration --nologo | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "dotnet build of $(Split-Path -Leaf $project) failed with exit code $LASTEXITCODE." }
+        }
     }
 } finally { Pop-Location }
 

@@ -2,8 +2,8 @@
 # Tests scripts/lib/plugin-staging.ps1's bundled.json writer and checker with two fake plugins in a temp root:
 # the list is valid JSON without a BOM for more than one plugin, and the checker reports a stale hash and a
 # missing id. Then the app-owned plugin items of an install folder (Case 8, which stages the real Debug bundled
-# plugins, so run scripts/build-plugins.ps1 first), the pre-release plugin locations (Case 9) and the installer smokes'
-# helpers (Case 10).
+# plugins, so run scripts/build-plugins.ps1 first), the pre-release plugin locations (Case 9), the installer smokes'
+# helpers (Case 10) and the Git plugin's staging table (Case 11).
 # Prints "Plugin staging tests passed." or throws.
 [CmdletBinding()]
 param()
@@ -68,11 +68,11 @@ try {
     if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
 }
 
-# 7. The real staging table: both bundled plugins, in order, and the remote plugin's five files from their build
-# outputs. Only paths are checked, so nothing needs to be built.
+# 7. The real staging table: the three bundled plugins, in order, and the remote plugin's five files from their
+# build outputs. Only paths are checked, so nothing needs to be built.
 $bundledIds = @($script:BundledPluginIds)
-if (($bundledIds -join ',') -cne 'com.sumafile.sevenzip,com.sumafile.remote') {
-    throw "Case 7: bundled plugin ids are '$($bundledIds -join ',')'; expected com.sumafile.sevenzip,com.sumafile.remote."
+if (($bundledIds -join ',') -cne 'com.sumafile.sevenzip,com.sumafile.remote,com.sumafile.git') {
+    throw "Case 7: bundled plugin ids are '$($bundledIds -join ',')'; expected com.sumafile.sevenzip,com.sumafile.remote,com.sumafile.git."
 }
 $repo = Get-PluginStagingRepoRoot
 $remoteUiOut = 'plugins\remote\ui\SumaFile.Remote\bin\Debug\net10.0-windows10.0.19041.0'
@@ -259,6 +259,44 @@ try {
     Assert-Throws { Start-InstalledSumaFile -Exe ($smoke + '-other\SumaFile.exe') -SmokeRoot $smoke } 'outside the smoke root' 'Case 10 (prefix)'
 } finally {
     if (Test-Path -LiteralPath $smoke) { Remove-Item -LiteralPath $smoke -Recurse -Force }
+}
+
+# 11. The Git plugin's staging: its five files from their build outputs, the five files the freshness check
+# compares, and its backend and UI entries. Only paths are checked, so nothing needs to be built.
+$gitUiOut = 'plugins\git\ui\SumaFile.Git\bin\Debug\net10.0-windows10.0.19041.0'
+$expectedGit = [ordered]@{
+    'plugin.json'              = 'plugins\git\plugin.json'
+    'sumafile-git-backend.exe' = 'target\debug\sumafile-git-backend.exe'
+    'SumaFile.Git.dll'         = "$gitUiOut\SumaFile.Git.dll"
+    'SumaFile.Git.Model.dll'   = "$gitUiOut\SumaFile.Git.Model.dll"
+    'SumaFile.Git.deps.json'   = "$gitUiOut\SumaFile.Git.deps.json"
+}
+$gitSources = Get-BundledPluginSources -Id com.sumafile.git -Configuration Debug
+if ((@($gitSources.Keys) -join '|') -cne (@($expectedGit.Keys) -join '|')) {
+    throw "Case 11: com.sumafile.git stages [$(@($gitSources.Keys) -join ', ')]; expected [$(@($expectedGit.Keys) -join ', ')]."
+}
+foreach ($name in $expectedGit.Keys) {
+    $expectedPath = Join-Path $repo $expectedGit[$name]
+    if ($gitSources[$name] -ne $expectedPath) { throw "Case 11: $name comes from $($gitSources[$name]); expected $expectedPath." }
+}
+$gitReleaseSources = Get-BundledPluginSources -Id com.sumafile.git -Configuration Release
+if ($gitReleaseSources['sumafile-git-backend.exe'] -ne (Join-Path $repo 'target\release\sumafile-git-backend.exe') -or
+    $gitReleaseSources['SumaFile.Git.dll'] -ne (Join-Path $repo ($gitUiOut.Replace('\bin\Debug\', '\bin\Release\') + '\SumaFile.Git.dll'))) {
+    throw 'Case 11: the Release sources of com.sumafile.git do not come from the Release outputs.'
+}
+$gitFreshness = @(Get-BundledPluginFreshnessFiles -Id com.sumafile.git)
+$expectedGitFreshness = @('sumafile-git-backend.exe', 'SumaFile.Git.dll', 'SumaFile.Git.Model.dll', 'SumaFile.Git.deps.json', 'plugin.json')
+if (($gitFreshness -join '|') -cne ($expectedGitFreshness -join '|')) {
+    throw "Case 11: com.sumafile.git freshness files are [$($gitFreshness -join ', ')]; expected [$($expectedGitFreshness -join ', ')]."
+}
+$gitBackend = $script:BundledPluginBackends['com.sumafile.git']
+if (-not $gitBackend -or $gitBackend.Exe -cne 'sumafile-git-backend.exe' -or $gitBackend.Package -cne 'sumafile-git-backend') {
+    throw 'Case 11: the backend table must build sumafile-git-backend.exe with cargo package sumafile-git-backend.'
+}
+$gitUi = $script:BundledPluginUiProjects['com.sumafile.git']
+if (-not $gitUi -or $gitUi.Project -cne 'plugins\git\ui\SumaFile.Git\SumaFile.Git.csproj' -or
+    (@($gitUi.Files) -join '|') -cne 'SumaFile.Git.dll|SumaFile.Git.Model.dll|SumaFile.Git.deps.json') {
+    throw 'Case 11: the UI table must build plugins\git\ui\SumaFile.Git\SumaFile.Git.csproj into its three staged files.'
 }
 
 Write-Host 'Plugin staging tests passed.'

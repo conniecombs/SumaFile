@@ -9,7 +9,7 @@
 
 # Every bundled plugin, in staging and bundled.json order. Each id needs a branch in Get-BundledPluginSources and
 # Get-BundledPluginFreshnessFiles.
-$script:BundledPluginIds = @('com.sumafile.sevenzip', 'com.sumafile.remote')
+$script:BundledPluginIds = @('com.sumafile.sevenzip', 'com.sumafile.remote', 'com.sumafile.git')
 $script:BundledListFileName = 'bundled.json'
 
 $script:SevenZipBackendExe = 'sumafile-sevenzip-backend.exe'
@@ -23,16 +23,24 @@ $script:RemoteBackendExe = 'sumafile-remote-backend.exe'
 $script:RemoteUiProject = 'plugins\remote\ui\SumaFile.Remote\SumaFile.Remote.csproj'
 $script:RemoteUiFiles = @('SumaFile.Remote.dll', 'SumaFile.Remote.Model.dll', 'SumaFile.Remote.deps.json')
 
+$script:GitBackendExe = 'sumafile-git-backend.exe'
+# The Git plugin's UI, staged like the remote plugin's: the code-built WinUI assembly, its WinUI-free model and the
+# deps file. The backend runs git.exe from PATH; the plugin folder carries no git.
+$script:GitUiProject = 'plugins\git\ui\SumaFile.Git\SumaFile.Git.csproj'
+$script:GitUiFiles = @('SumaFile.Git.dll', 'SumaFile.Git.Model.dll', 'SumaFile.Git.deps.json')
+
 # Per bundled plugin: its backend exe (named when that source is missing) and the cargo package that builds it.
 $script:BundledPluginBackends = @{
     'com.sumafile.sevenzip' = @{ Exe = $script:SevenZipBackendExe; Package = 'sumafile-sevenzip-backend' }
     'com.sumafile.remote'   = @{ Exe = $script:RemoteBackendExe; Package = 'sumafile-remote-backend' }
+    'com.sumafile.git'      = @{ Exe = $script:GitBackendExe; Package = 'sumafile-git-backend' }
 }
 
 # Per bundled plugin with a C# UI: its project (named, with the build command, when a UI source is missing) and the
 # staged names that build produces.
 $script:BundledPluginUiProjects = @{
     'com.sumafile.remote' = @{ Project = $script:RemoteUiProject; Files = $script:RemoteUiFiles }
+    'com.sumafile.git'    = @{ Project = $script:GitUiProject; Files = $script:GitUiFiles }
 }
 
 function Get-PluginStagingRepoRoot {
@@ -78,6 +86,20 @@ function Get-RemotePluginSources([string]$Configuration) {
     $sources
 }
 
+function Get-GitPluginSources([string]$Configuration) {
+    # Ordered: staged file name -> source path in the repository.
+    $repo = Get-PluginStagingRepoRoot
+    $cargoProfile = if ($Configuration -eq 'Release') { 'release' } else { 'debug' }
+    $uiConfiguration = if ($Configuration -eq 'Release') { 'Release' } else { 'Debug' }
+    $uiOutput = Join-Path $repo "plugins\git\ui\SumaFile.Git\bin\$uiConfiguration\net10.0-windows10.0.19041.0"
+    $sources = [ordered]@{
+        'plugin.json'         = Join-Path $repo 'plugins\git\plugin.json'
+        $script:GitBackendExe = Join-Path $repo "target\$cargoProfile\$($script:GitBackendExe)"
+    }
+    foreach ($name in $script:GitUiFiles) { $sources[$name] = Join-Path $uiOutput $name }
+    $sources
+}
+
 function Get-BundledPluginSources {
     # Ordered: staged file name -> source path in the repository, for one bundled plugin.
     [CmdletBinding()]
@@ -88,6 +110,7 @@ function Get-BundledPluginSources {
     switch -CaseSensitive ($Id) {
         'com.sumafile.sevenzip' { return Get-SevenZipPluginSources $Configuration }
         'com.sumafile.remote' { return Get-RemotePluginSources $Configuration }
+        'com.sumafile.git' { return Get-GitPluginSources $Configuration }
         default { throw "Unknown bundled plugin $Id." }
     }
 }
@@ -99,6 +122,7 @@ function Get-BundledPluginFreshnessFiles {
     switch -CaseSensitive ($Id) {
         'com.sumafile.sevenzip' { return @($script:SevenZipBackendExe, 'plugin.json') }
         'com.sumafile.remote' { return @($script:RemoteBackendExe, 'SumaFile.Remote.dll', 'SumaFile.Remote.Model.dll', 'SumaFile.Remote.deps.json', 'plugin.json') }
+        'com.sumafile.git' { return @($script:GitBackendExe, 'SumaFile.Git.dll', 'SumaFile.Git.Model.dll', 'SumaFile.Git.deps.json', 'plugin.json') }
         default { throw "Unknown bundled plugin $Id." }
     }
 }

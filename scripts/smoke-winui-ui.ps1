@@ -30,7 +30,7 @@ if ($PluginsDir) {
 if (-not $SkipBuild) {
     Push-Location -LiteralPath $root
     try {
-        & cargo build --locked -p simplefile-service -p sumafile-sevenzip-backend -p sumafile-remote-backend -p sumafile-remote-test-server
+        & cargo build --locked -p simplefile-service -p sumafile-sevenzip-backend -p sumafile-remote-backend -p sumafile-git-backend -p sumafile-remote-test-server
         if ($LASTEXITCODE -ne 0) { throw 'Backend build failed.' }
         # Restage target\plugins from the fresh target\debug output; the App's Debug build copies it into the exe folder.
         & (Join-Path $PSScriptRoot 'build-plugins.ps1') -SkipCargo | Out-Host
@@ -139,6 +139,15 @@ $installDir = Split-Path -Parent $exe
 $start.EnvironmentVariables['SUMAFILE_PLUGIN_DATA_ROOT'] = Join-Path $testRoot 'plugins-data'
 $start.EnvironmentVariables['SUMAFILE_PLUGIN_APPROVALS_PATH'] = Join-Path $testRoot 'state\plugin-approvals.json'
 $start.EnvironmentVariables['SUMAFILE_PLUGIN_LOG_PATH'] = Join-Path $testRoot 'plugins.log'
+# Every mode too: git is isolated wherever the app's Git backend could run it. test-results\ lies inside the SumaFile
+# checkout, so git and the backend's repository walk stop at the test root and never find the checkout's own
+# repository, and git reads none of the developer's global or system config (a core.hooksPath, commit.gpgsign or
+# init.defaultBranch there could run, prompt or change a result). The empty config lives with the app's state.
+$smokeGitConfig = Join-Path $testRoot 'state\gitconfig'
+[System.IO.File]::WriteAllText($smokeGitConfig, '')
+$start.EnvironmentVariables['GIT_CEILING_DIRECTORIES'] = $testRoot
+$start.EnvironmentVariables['GIT_CONFIG_GLOBAL'] = $smokeGitConfig
+$start.EnvironmentVariables['GIT_CONFIG_NOSYSTEM'] = '1'
 if ($PluginsDir) {
     # Same shape PluginApprovalStore writes (string enums, PascalCase, the plugin's full folder path), at a disposable path, so no consent dialog appears.
     $approvals = [ordered]@{}

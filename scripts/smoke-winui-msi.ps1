@@ -25,8 +25,12 @@ $extractedExeDir = $null
 
 # The extracted app must never touch the user's data: it scans only the extracted plugins folder, keeps approvals,
 # plugin data, the plugin log, metadata.db and app data under $smokeRoot, so the bundled remote plugin imports no
-# real profiles and seeds nothing into the real settings.
+# real profiles and seeds nothing into the real settings. It starts the bundled Git backend, so git gets an empty
+# global config under $smokeRoot and no system config: a developer's core.hooksPath, commit.gpgsign or
+# init.defaultBranch can never run, prompt or change a result.
 $smokeAppDataDir = Join-Path $smokeRoot "app-data"
+$smokeGitConfig = Join-Path $smokeRoot "gitconfig"
+[System.IO.File]::WriteAllText($smokeGitConfig, "")
 $smokeEnvironment = [ordered]@{
     SUMAFILE_PLUGIN_ROOTS = $null
     SUMAFILE_PLUGIN_APPROVALS_PATH = Join-Path $smokeRoot "plugin-approvals.json"
@@ -34,6 +38,8 @@ $smokeEnvironment = [ordered]@{
     SUMAFILE_PLUGIN_LOG_PATH = Join-Path $smokeRoot "plugins.log"
     SIMPLEFILE_METADATA_DB = Join-Path $smokeAppDataDir "metadata.db"
     SIMPLEFILE_APP_DATA_DIR = $smokeAppDataDir
+    GIT_CONFIG_GLOBAL = $smokeGitConfig
+    GIT_CONFIG_NOSYSTEM = "1"
 }
 $previousEnvironment = @{}
 foreach ($name in $smokeEnvironment.Keys) {

@@ -46,6 +46,22 @@ $remoteDataDir = Join-Path $smokeRoot "remote-data"
 $remoteBackend = $null
 $remotePipe = $null
 
+# The payload's bundled Git plugin, driven directly over its pipe like the remote one, against a disposable repository.
+# Every git process (the smoke's own and the backend's) gets an empty global config and no system config, so a
+# developer's core.hooksPath, commit.gpgsign or init.defaultBranch can never run, prompt or change the result, and
+# stops its repository search at the smoke root.
+$gitPluginId = "com.sumafile.git"
+$gitPluginDir = Join-Path $payloadDir "plugins\$gitPluginId"
+$gitBackendPath = Join-Path $gitPluginDir "sumafile-git-backend.exe"
+$gitPipeName = "sumafile-git-smoke-" + [System.Guid]::NewGuid().ToString("N")
+$gitDataDir = Join-Path $smokeRoot "git-data"
+$gitSmokeConfig = Join-Path $smokeRoot "gitconfig"
+$gitRepoDir = Join-Path $smokeRoot "git-repo"
+$gitPlainDir = Join-Path $smokeRoot "git-plain"
+$gitExe = $null
+$gitBackend = $null
+$gitPipe = $null
+
 function Test-JsonProperty {
     param(
         [Parameter(Mandatory = $true)]$Value,
@@ -435,6 +451,155 @@ function Stop-RemoteBackend {
     }
 }
 
+function ConvertTo-NativeArgument {
+    # One argument of a Windows command line, quoted the way the C runtime splits it.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') {
+        return $Value
+    }
+
+    $escaped = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
+    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+    return '"' + $escaped + '"'
+}
+
+function Set-SmokeGitIsolation {
+    # The isolation every git process of the Git plugin smoke runs with.
+    param([Parameter(Mandatory = $true)][System.Diagnostics.ProcessStartInfo]$StartInfo)
+
+    $StartInfo.EnvironmentVariables["GIT_CONFIG_GLOBAL"] = $gitSmokeConfig
+    $StartInfo.EnvironmentVariables["GIT_CONFIG_NOSYSTEM"] = "1"
+    $StartInfo.EnvironmentVariables["GIT_CEILING_DIRECTORIES"] = $smokeRoot
+    $StartInfo.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0"
+}
+
+function Invoke-SmokeGit {
+    # Runs git in -Directory with the smoke's isolation and returns its stdout; throws with git's stderr on failure.
+    param(
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $script:gitExe
+    $start.Arguments = (@(@("-C", $Directory) + $Arguments) | ForEach-Object { ConvertTo-NativeArgument $_ }) -join " "
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.StandardOutputEncoding = New-Object System.Text.UTF8Encoding $false
+    $start.StandardErrorEncoding = New-Object System.Text.UTF8Encoding $false
+    Set-SmokeGitIsolation -StartInfo $start
+    $process = [System.Diagnostics.Process]::Start($start)
+    try {
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $process.Kill() } catch {}
+            throw "git $($Arguments -join ' ') did not finish within $TimeoutSeconds seconds."
+        }
+
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) {
+            throw "git $($Arguments -join ' ') in $Directory failed with exit code $($process.ExitCode): $($stderr.Result)"
+        }
+
+        return $stdout.Result
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
+function Invoke-GitPluginSmoke {
+    Assert-Smoke (Test-Path -LiteralPath $gitBackendPath -PathType Leaf) "WinUI payload is missing the bundled Git plugin backend at $gitBackendPath."
+    $gitCommand = Get-Command "git.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    Assert-Smoke ($null -ne $gitCommand) "The payload Git plugin smoke needs git.exe on PATH."
+    $script:gitExe = $gitCommand.Path
+    [System.IO.File]::WriteAllText($gitSmokeConfig, "")
+
+    # A repository on main with its own identity and one commit, and a folder outside any repository.
+    New-Item -ItemType Directory -Force -Path $gitRepoDir, $gitPlainDir | Out-Null
+    Invoke-SmokeGit -Directory $gitRepoDir -Arguments @("init", "-b", "main") | Out-Null
+    Invoke-SmokeGit -Directory $gitRepoDir -Arguments @("config", "user.name", "SumaFile Smoke") | Out-Null
+    Invoke-SmokeGit -Directory $gitRepoDir -Arguments @("config", "user.email", "smoke@sumafile.invalid") | Out-Null
+    New-SmokeFile -Path (Join-Path $gitRepoDir "README.md") -Content "committed by the payload Git plugin smoke"
+    Invoke-SmokeGit -Directory $gitRepoDir -Arguments @("add", "--", "README.md") | Out-Null
+    Invoke-SmokeGit -Directory $gitRepoDir -Arguments @("commit", "-m", "initial") | Out-Null
+    New-SmokeFile -Path (Join-Path $gitPlainDir "plain.txt") -Content "not in a repository"
+
+    # Launched as the host launches it: its data folder, TMP and TEMP in that folder, and the smoke's git isolation.
+    $gitTempDir = Join-Path $gitDataDir "tmp"
+    New-Item -ItemType Directory -Force -Path $gitTempDir | Out-Null
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $gitBackendPath
+    $start.Arguments = "--pipe-name $gitPipeName --data-dir $(ConvertTo-NativeArgument $gitDataDir)"
+    $start.WorkingDirectory = $gitPluginDir
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.EnvironmentVariables["TMP"] = $gitTempDir
+    $start.EnvironmentVariables["TEMP"] = $gitTempDir
+    Set-SmokeGitIsolation -StartInfo $start
+    $script:gitBackend = [System.Diagnostics.Process]::Start($start)
+
+    $script:gitPipe = [System.IO.Pipes.NamedPipeClientStream]::new(".", $gitPipeName, [System.IO.Pipes.PipeDirection]::InOut)
+    $script:gitPipe.Connect($TimeoutSeconds * 1000)
+
+    # The service's client name, as for the remote plugin: every host.* call but log fails fast, so nothing waits on
+    # this smoke.
+    $handshake = Invoke-PluginRpc -Stream $script:gitPipe -Method "plugin.handshake" -Params ([ordered]@{
+        pluginId = $gitPluginId
+        hostVersion = "1.0.4"
+        sdkVersion = "1.0.0"
+        client = "simplefile-service"
+    })
+    Assert-Smoke ($handshake.pluginId -eq $gitPluginId) "The Git backend's handshake names '$($handshake.pluginId)'; expected $gitPluginId."
+
+    $status = Invoke-PluginRpc -Stream $script:gitPipe -Method "repo.status" -Params ([ordered]@{ path = $gitRepoDir })
+    Assert-Smoke ([bool]$status.is_repo) "repo.status reported $gitRepoDir as no repository."
+    Assert-Smoke ([string]$status.branch -ceq "main") "repo.status reported branch '$($status.branch)'; expected main."
+
+    $outside = Invoke-PluginRpc -Stream $script:gitPipe -Method "repo.decorations" -Params ([ordered]@{ folder = $gitPlainDir })
+    Assert-Smoke (-not [bool]$outside.in_repository) "repo.decorations reported $gitPlainDir as inside a repository."
+    Assert-Smoke (@($outside.rows).Count -eq 0) "repo.decorations returned $(@($outside.rows).Count) rows outside a repository; expected none."
+
+    $stagedFile = Join-Path $gitRepoDir "staged.txt"
+    New-SmokeFile -Path $stagedFile -Content "staged by the payload Git plugin smoke"
+    $staged = Invoke-PluginRpc -Stream $script:gitPipe -Method "paths.stage" -Params ([ordered]@{
+        path = $gitRepoDir
+        paths = @($stagedFile)
+    })
+    Assert-Smoke ([int]$staged.exit_code -eq 0) "paths.stage exited with $($staged.exit_code): $($staged.stderr)"
+    $cached = @((Invoke-SmokeGit -Directory $gitRepoDir -Arguments @("diff", "--cached", "--name-only")) -split "`r?`n" | Where-Object { $_ })
+    Assert-Smoke (($cached -join "|") -ceq "staged.txt") "git diff --cached lists [$($cached -join ', ')] after paths.stage; expected [staged.txt]."
+
+    Write-Host "Payload Git plugin smoke passed."
+}
+
+function Stop-GitBackend {
+    if ($script:gitPipe) {
+        $script:gitPipe.Dispose()
+        $script:gitPipe = $null
+    }
+
+    if ($script:gitBackend) {
+        $script:gitBackend.Refresh()
+        if (-not $script:gitBackend.HasExited) {
+            try {
+                $script:gitBackend.Kill()
+                $script:gitBackend.WaitForExit(5000) | Out-Null
+            }
+            catch {
+                Write-Warning "Could not stop sumafile-git-backend.exe: $($_.Exception.Message)"
+            }
+        }
+
+        $script:gitBackend.Dispose()
+        $script:gitBackend = $null
+    }
+}
+
 function Remove-SmokeRoot {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -543,10 +708,12 @@ try {
 
     Invoke-SevenZipPluginSmoke
     Invoke-RemotePluginSmoke
+    Invoke-GitPluginSmoke
 }
 finally {
     Stop-SevenZipBackend
     Stop-RemoteBackend
+    Stop-GitBackend
 
     if ($pipe) {
         try {

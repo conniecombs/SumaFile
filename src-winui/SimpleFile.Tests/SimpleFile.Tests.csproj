@@ -70,4 +70,22 @@
     <Copy SourceFiles="$(_RepoTarget)plugins\bundled.json" DestinationFolder="$(RemoteFixtureDest)plugins\" SkipUnchangedFiles="true" Condition="Exists('$(_RepoTarget)plugins\bundled.json')" />
     <Copy SourceFiles="$(_RepoTarget)debug\sumafile-remote-test-server.exe" DestinationFolder="$(RemoteFixtureDest)" SkipUnchangedFiles="true" Condition="Exists('$(_RepoTarget)debug\sumafile-remote-test-server.exe')" />
   </Target>
+  <!--
+    The Git plugin as scripts/build-plugins.ps1 stages it and its bundled.json (which lists the Git plugin's hash; the
+    other bundled entries are simply absent from this root). Each is copied only when it exists: the Git backend tests
+    skip with Git/GitBackendHarness's NotStagedMessage when it is missing. A staged Git plugin replaces the fixture's
+    copy whole, so a file a rebuild dropped does not linger.
+  -->
+  <Target Name="CopyGitPluginFixture" AfterTargets="Build">
+    <PropertyGroup>
+      <_RepoTarget>$(MSBuildThisFileDirectory)..\..\target\</_RepoTarget>
+      <GitFixtureDest>$(OutDir)Fixtures\git\</GitFixtureDest>
+    </PropertyGroup>
+    <ItemGroup>
+      <GitPluginFile Include="$(_RepoTarget)plugins\com.sumafile.git\**" />
+    </ItemGroup>
+    <RemoveDir Directories="$(GitFixtureDest)plugins\com.sumafile.git" Condition="Exists('$(_RepoTarget)plugins\com.sumafile.git')" />
+    <Copy SourceFiles="@(GitPluginFile)" DestinationFiles="@(GitPluginFile->'$(GitFixtureDest)plugins\com.sumafile.git\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(_RepoTarget)plugins\bundled.json" DestinationFolder="$(GitFixtureDest)plugins\" SkipUnchangedFiles="true" Condition="Exists('$(_RepoTarget)plugins\bundled.json')" />
+  </Target>
 </Project>

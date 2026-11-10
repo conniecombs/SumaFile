@@ -13,6 +13,11 @@ $sevenZipRegisteredLine = "[$sevenZipPluginId] [info] Archive engines registered
 $remotePluginId = "com.sumafile.remote"
 # Written at discovery (Task 3), so it does not depend on whether the user's sidebar shows the Connections section.
 $remoteDiscoveredLine = "[$remotePluginId] [info] Discovered: Enabled"
+$gitPluginId = "com.sumafile.git"
+$gitDiscoveredLine = "[$gitPluginId] [info] Discovered: Enabled"
+# activateOn: startup, so the app starts it once startup is ready, from the payload's plugin folder.
+$gitBackendName = "sumafile-git-backend"
+$gitBackendPath = Join-Path $payloadPluginsDir "$gitPluginId\$gitBackendName.exe"
 $pluginRegistrationTimeoutSeconds = 20
 
 # Get-AppOwnedPluginItems and the pre-release plugin location checks.
@@ -98,6 +103,11 @@ $approvalsPath = Join-Path $approvalsDir "plugin-approvals.json"
 $pluginsLog = Join-Path $approvalsDir "plugins.log"
 $smokeAppDataDir = Join-Path $approvalsDir "app-data"
 New-Item -ItemType Directory -Force -Path $smokeAppDataDir | Out-Null
+# The app starts the bundled Git backend, so git is isolated from the developer's config: an empty global config and
+# no system config, so a core.hooksPath, commit.gpgsign or init.defaultBranch there can never run, prompt or change a
+# result.
+$smokeGitConfig = Join-Path $approvalsDir "gitconfig"
+[System.IO.File]::WriteAllText($smokeGitConfig, "")
 $smokeEnvironment = [ordered]@{
     SUMAFILE_PLUGIN_ROOTS = $payloadPluginsDir
     SUMAFILE_PLUGIN_APPROVALS_PATH = $approvalsPath
@@ -105,6 +115,8 @@ $smokeEnvironment = [ordered]@{
     SUMAFILE_PLUGIN_LOG_PATH = $pluginsLog
     SIMPLEFILE_METADATA_DB = Join-Path $smokeAppDataDir "metadata.db"
     SIMPLEFILE_APP_DATA_DIR = $smokeAppDataDir
+    GIT_CONFIG_GLOBAL = $smokeGitConfig
+    GIT_CONFIG_NOSYSTEM = "1"
 }
 $previousEnvironment = @{}
 foreach ($name in $smokeEnvironment.Keys) {
@@ -230,6 +242,48 @@ try {
     }
 
     Write-Host "Bundled remote plugin trusted."
+
+    # The bundled Git plugin must be discovered from the payload, Enabled through bundled.json alone, and its backend
+    # (activateOn: startup) must run from the payload's plugin folder.
+    $gitDiscovered = $false
+    $gitBackendRunning = $false
+    $gitDeadline = (Get-Date).AddSeconds($pluginRegistrationTimeoutSeconds)
+    do {
+        if (-not $gitDiscovered) {
+            $pluginLines = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0)
+            $gitDiscovered = [bool]($pluginLines | Where-Object { $_.Contains($gitDiscoveredLine) })
+        }
+        if (-not $gitBackendRunning) {
+            $gitBackendRunning = [bool](@(Get-Process -Name $gitBackendName -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Path -and [string]::Equals($_.Path, $gitBackendPath, [System.StringComparison]::OrdinalIgnoreCase) }).Count)
+        }
+        if ($gitDiscovered -and $gitBackendRunning) {
+            break
+        }
+
+        if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+            throw "WinUI process exited before the bundled Git plugin was Enabled with its backend running."
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $gitDeadline)
+
+    if (-not $gitDiscovered) {
+        $recent = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0 | Where-Object { $_.Contains("[$gitPluginId]") } | Select-Object -Last 10) -join [Environment]::NewLine
+        throw "$pluginsLog did not record '$gitDiscoveredLine' within $pluginRegistrationTimeoutSeconds seconds. Last $gitPluginId lines:$([Environment]::NewLine)$recent"
+    }
+    if (-not $gitBackendRunning) {
+        $recent = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0 | Where-Object { $_.Contains("[$gitPluginId]") } | Select-Object -Last 10) -join [Environment]::NewLine
+        throw "The bundled Git plugin's backend $gitBackendPath was not running within $pluginRegistrationTimeoutSeconds seconds. Last $gitPluginId lines:$([Environment]::NewLine)$recent"
+    }
+
+    if (Test-Path -LiteralPath $approvalsPath) {
+        $approvals = [System.IO.File]::ReadAllText($approvalsPath)
+        if ($approvals.Contains($gitPluginId)) {
+            throw "The bundled Git plugin was written to the approval store at ${approvalsPath}; it must be trusted through bundled.json alone."
+        }
+    }
+
+    Write-Host "Bundled Git plugin trusted."
     $smokeCompleted = $true
 }
 finally {
@@ -249,9 +303,10 @@ finally {
         Write-Host "Closed WinUI smoke-test process $($process.Id). CloseMainWindow sent: $closed."
     }
 
-    # The host's kill-on-close job ends the backend with the app; stop any payload backend that is still running.
-    # The remote backend starts on first call, for example when the sidebar shows the Connections section.
-    $backends = @(Get-Process -Name "sumafile-sevenzip-backend", "sumafile-remote-backend" -ErrorAction SilentlyContinue |
+    # The host's kill-on-close job ends the backend with the app; stop any payload backend that is still running,
+    # by its path under the payload. The remote backend starts on first call, for example when the sidebar shows the
+    # Connections section; the Git backend starts with the app.
+    $backends = @(Get-Process -Name "sumafile-sevenzip-backend", "sumafile-remote-backend", $gitBackendName -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($payloadPluginsDir, [System.StringComparison]::OrdinalIgnoreCase) })
     $backends | Stop-Process -Force -ErrorAction SilentlyContinue
     # Wait, so the backends release their files in the disposable data root and leave nothing half-written behind

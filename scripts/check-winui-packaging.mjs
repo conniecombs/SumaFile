@@ -60,8 +60,11 @@ const requiredFiles = [
   'plugins/remote/test-server/Cargo.toml',
   'plugins/remote/ui/SumaFile.Remote/SumaFile.Remote.csproj',
   'plugins/remote/ui/SumaFile.Remote.Model/SumaFile.Remote.Model.csproj',
+  'plugins/git/plugin.json',
   'plugins/git/protocol.json',
   'plugins/git/backend/Cargo.toml',
+  'plugins/git/ui/SumaFile.Git/SumaFile.Git.csproj',
+  'plugins/git/ui/SumaFile.Git.Model/SumaFile.Git.Model.csproj',
 ];
 
 for (const relativePath of requiredFiles) {
@@ -100,6 +103,8 @@ const nsisSnippets = [
   '$INSTDIR\\plugins\\com.sumafile.sevenzip',
   'taskkill /F /IM sumafile-remote-backend.exe',
   '$INSTDIR\\plugins\\com.sumafile.remote',
+  'taskkill /F /IM sumafile-git-backend.exe',
+  '$INSTDIR\\plugins\\com.sumafile.git',
   // A reinstall or upgrade without /D= goes to the folder the last install used, so the user's plugins, plugin data,
   // approvals and plugin log in that folder are kept.
   'InstallDirRegKey HKCU',
@@ -121,6 +126,14 @@ const forbiddenNsisSnippets = [
 for (const snippet of forbiddenNsisSnippets) {
   if (nsis.includes(snippet)) {
     fail(`packaging/winui/sumafile-winui.nsi must not contain ${snippet}; user plugins and plugin data in $INSTDIR survive a reinstall or upgrade.`);
+  }
+}
+
+// The installer ends the bundled backends by image name, never the tools they run: a 7za.exe or git.exe that is
+// running could be the user's own.
+for (const tool of ['7za.exe', 'git.exe']) {
+  if (new RegExp(`/IM\\s+"?${tool.replace('.', '\\.')}"?(\\s|'|$)`, 'im').test(nsis)) {
+    fail(`packaging/winui/sumafile-winui.nsi must not end ${tool} by name; it could be the user's own.`);
   }
 }
 
@@ -175,6 +188,8 @@ const buildSnippets = [
   'sumafile-sevenzip-backend',
   'sumafile-remote-backend',
   'SumaFile.Remote.csproj',
+  'sumafile-git-backend',
+  'SumaFile.Git.csproj',
   // The release pipeline stages the C# tests' fixtures (the Hello plugin, the SFTP test server) before check:winui.
   'build-fixture-plugin.ps1',
   'Install-BundledPlugins',
@@ -267,6 +282,11 @@ const stagingSnippets = [
   'SumaFile.Remote.dll',
   'SumaFile.Remote.Model.dll',
   'SumaFile.Remote.deps.json',
+  'com.sumafile.git',
+  'sumafile-git-backend.exe',
+  'SumaFile.Git.dll',
+  'SumaFile.Git.Model.dll',
+  'SumaFile.Git.deps.json',
   'Assert-BundledPluginsFresh',
 ];
 

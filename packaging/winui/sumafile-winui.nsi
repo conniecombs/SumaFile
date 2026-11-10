@@ -60,6 +60,8 @@ Function .onInit
   ; The bundled FTP/SFTP plugin's backend. Its profiles live in $INSTDIR\plugins-data\com.sumafile.remote, which a
   ; reinstall keeps, and its saved passwords in Windows Credential Manager.
   nsExec::ExecToLog 'taskkill /F /IM sumafile-remote-backend.exe'
+  ; The bundled Git plugin's backend. Never kill git.exe: it could be the user's own.
+  nsExec::ExecToLog 'taskkill /F /IM sumafile-git-backend.exe'
   Pop $0
 FunctionEnd
 
@@ -72,6 +74,7 @@ Section "Install"
   RMDir "$INSTDIR\tools"
   RMDir /r "$INSTDIR\plugins\com.sumafile.sevenzip"
   RMDir /r "$INSTDIR\plugins\com.sumafile.remote"
+  RMDir /r "$INSTDIR\plugins\com.sumafile.git"
 
   SetOutPath "$INSTDIR"
   File /r "${PAYLOAD}\*.*"
@@ -105,6 +108,8 @@ Section "Uninstall"
   nsExec::ExecToLog 'taskkill /F /IM simplefile-service.exe'
   nsExec::ExecToLog 'taskkill /F /IM sumafile-sevenzip-backend.exe'
   nsExec::ExecToLog 'taskkill /F /IM sumafile-remote-backend.exe'
+  ; Never git.exe, as in .onInit.
+  nsExec::ExecToLog 'taskkill /F /IM sumafile-git-backend.exe'
   Pop $0
 
   Delete "$SMPROGRAMS\SumaFile.lnk"

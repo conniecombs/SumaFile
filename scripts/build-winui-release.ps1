@@ -238,7 +238,7 @@ function Get-LikelyWinUILockHolder {
     }
 
     $forward = $resolved.Replace('\', '/')
-    $processNames = @("SumaFile.exe", "SimpleFile.App.exe", "SimpleFile.exe", "simplefile-service.exe", "sumafile-sevenzip-backend.exe", "sumafile-remote-backend.exe")
+    $processNames = @("SumaFile.exe", "SimpleFile.App.exe", "SimpleFile.exe", "simplefile-service.exe", "sumafile-sevenzip-backend.exe", "sumafile-remote-backend.exe", "sumafile-git-backend.exe")
     $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
     if (-not $processes) {
         return @()
@@ -353,7 +353,7 @@ New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
 if (-not $SkipChecks) {
     Invoke-Native npm @("run", "check:winui-packaging")
     # check:winui runs the C# tests, whose fixtures the test project copies after its build: the Hello plugin and
-    # the SFTP test server (build-fixture-plugin.ps1), and the staged remote plugin with its bundled.json
+    # the SFTP test server (build-fixture-plugin.ps1), and the staged remote and Git plugins with their bundled.json
     # (build-plugins.ps1, Debug). The CI winui job runs the same two scripts before check:winui.
     Invoke-Native powershell @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\build-fixture-plugin.ps1")
     Invoke-Native powershell @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\build-plugins.ps1", "-Configuration", "Debug")
@@ -364,6 +364,7 @@ Write-Step "Build simplefile-service"
 Invoke-Native cargo @("build", "-p", "simplefile-service", "--locked", "--release")
 Invoke-Native cargo @("build", "-p", "sumafile-sevenzip-backend", "--locked", "--release")
 Invoke-Native cargo @("build", "-p", "sumafile-remote-backend", "--locked", "--release")
+Invoke-Native cargo @("build", "-p", "sumafile-git-backend", "--locked", "--release")
 
 $serviceExe = Find-ServiceExecutable
 if (-not $serviceExe) {
@@ -384,13 +385,25 @@ if (-not $publishDir) {
     throw "dotnet publish did not produce SumaFile.exe under src-winui\\SimpleFile.App\\bin\\**\\publish."
 }
 
-# The App publish does not build plugin projects; Install-BundledPlugins stages the remote UI from bin\Release.
-Write-Step "Build the remote plugin UI"
-Invoke-Native dotnet @(
-    "build", (Join-Path $root "plugins\remote\ui\SumaFile.Remote\SumaFile.Remote.csproj"),
-    "-c", "Release",
-    "--nologo"
+# The App publish does not build plugin projects; Install-BundledPlugins stages each plugin UI from bin\Release.
+# The list must name exactly the UI projects of the staging table, so no bundled UI is staged from an old build.
+$pluginUiProjects = @(
+    "plugins\remote\ui\SumaFile.Remote\SumaFile.Remote.csproj",
+    "plugins\git\ui\SumaFile.Git\SumaFile.Git.csproj"
 )
+$stagedUiProjects = @($script:BundledPluginIds | Where-Object { $script:BundledPluginUiProjects[$_] } |
+    ForEach-Object { $script:BundledPluginUiProjects[$_].Project })
+if (($pluginUiProjects -join "|") -cne ($stagedUiProjects -join "|")) {
+    throw "The release build's plugin UI projects [$($pluginUiProjects -join ', ')] differ from the staging table's [$($stagedUiProjects -join ', ')]."
+}
+foreach ($pluginUiProject in $pluginUiProjects) {
+    Write-Step "Build the plugin UI $(Split-Path -Leaf $pluginUiProject)"
+    Invoke-Native dotnet @(
+        "build", (Join-Path $root $pluginUiProject),
+        "-c", "Release",
+        "--nologo"
+    )
+}
 
 New-WinUIPayload -PublishDir $publishDir -ServiceExe $serviceExe -Destination $payloadDir
 
