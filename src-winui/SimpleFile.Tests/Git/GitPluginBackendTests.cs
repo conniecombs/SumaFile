@@ -238,8 +238,18 @@ public class GitPluginBackendTests
             connected.TrySetResult();
             var stream = socket.GetStream();
             var buffer = new byte[4096];
-            // Ends when git closes its side: it was stopped.
-            while (await stream.ReadAsync(buffer, serverStop.Token) > 0)
+            // Ends when git's side goes away because it was stopped: EOF, or a reset when the job kills the process
+            // with the connection open (Windows reports that as "forcibly closed", CI run 42736768287).
+            try
+            {
+                while (await stream.ReadAsync(buffer, serverStop.Token) > 0)
+                {
+                }
+            }
+            catch (IOException exception) when (exception.InnerException is SocketException
+                                                 {
+                                                     SocketErrorCode: SocketError.ConnectionReset or SocketError.ConnectionAborted,
+                                                 })
             {
             }
         });

@@ -870,13 +870,16 @@ public class RemoteManagerViewModelTests
     [Fact]
     public async Task CloseSessionAsync_SessionStillBusyAfterTheTransfer_RetriesEvery200MsUntilItIsFree()
     {
-        long busyUntil = 0;
+        long transferEnded = 0;
+        var refusals = 0;
         var backend = new FakeRemoteBackend([new RemoteProfile { Id = "test" }])
         {
             Session = new RemoteSession { SessionId = "session", ProfileId = "test", RootPath = "/" },
             Listing = new RemoteDirectoryListing { Path = "/" },
         };
-        // The transfer answers at once on cancel, but the backend keeps the session locked 500 ms longer.
+        // The transfer answers at once on cancel, but the backend keeps the session locked for the next two disconnect
+        // attempts. Counted, not timed: a 500 ms window let a loaded runner's first attempt land after it had closed
+        // (CI run 42736768287).
         backend.CancellableTransferHandler = async (_, ct) =>
         {
             try
@@ -887,15 +890,12 @@ public class RemoteManagerViewModelTests
             {
             }
 
-            Interlocked.Exchange(
-                ref busyUntil,
-                System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency / 2);
+            Interlocked.Exchange(ref transferEnded, System.Diagnostics.Stopwatch.GetTimestamp());
             return new RemoteTransferOutcome { Cancelled = true };
         };
         backend.DisconnectHandler = _ =>
         {
-            var until = Interlocked.Read(ref busyUntil);
-            if (until == 0 || System.Diagnostics.Stopwatch.GetTimestamp() < until)
+            if (Interlocked.Read(ref transferEnded) == 0 || Interlocked.Increment(ref refusals) <= 2)
             {
                 throw new InvalidOperationException(BusyText);
             }
@@ -912,7 +912,17 @@ public class RemoteManagerViewModelTests
         await running.WaitAsync(TimeSpan.FromSeconds(1));
         Assert.Equal("session", backend.DisconnectedSessionId);
         Assert.Null(vm.CurrentSession);
-        AssertBusyRetries(backend, Interlocked.Read(ref busyUntil));
+        long firstAttempt;
+        lock (backend.DisconnectAttempts)
+        {
+            firstAttempt = backend.DisconnectAttempts[0];
+        }
+
+        // Close waited for the cancelled transfer to release, then retried the busy session until it was free.
+        var ended = Interlocked.Read(ref transferEnded);
+        Assert.NotEqual(0, ended);
+        Assert.True(firstAttempt >= ended, "The first disconnect ran before the cancelled transfer released the session.");
+        AssertBusyRetries(backend, expectedAttempts: 3);
     }
 
     [Fact]
@@ -926,11 +936,12 @@ public class RemoteManagerViewModelTests
         var vm = Create(backend);
         await vm.LoadProfilesAsync();
         await vm.ConnectSelectedProfileAsync();
-        // No transfer runs, but another call (a listing, say) holds the session for 400 ms.
-        var busyUntil = System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency * 2 / 5;
+        // No transfer runs, but another call (a listing, say) holds the session for the first two disconnect attempts.
+        // Counted, not timed, so a loaded runner cannot skip the busy phase.
+        var refusals = 0;
         backend.DisconnectHandler = _ =>
         {
-            if (System.Diagnostics.Stopwatch.GetTimestamp() < busyUntil)
+            if (Interlocked.Increment(ref refusals) <= 2)
             {
                 throw new InvalidOperationException(BusyText);
             }
@@ -941,10 +952,10 @@ public class RemoteManagerViewModelTests
         Assert.True(closed);
         Assert.Equal("session", backend.DisconnectedSessionId);
         Assert.Null(vm.CurrentSession);
-        AssertBusyRetries(backend, busyUntil);
+        AssertBusyRetries(backend, expectedAttempts: 3);
     }
 
-    private static void AssertBusyRetries(FakeRemoteBackend backend, long busyUntil)
+    private static void AssertBusyRetries(FakeRemoteBackend backend, int expectedAttempts)
     {
         long[] attempts;
         lock (backend.DisconnectAttempts)
@@ -952,16 +963,15 @@ public class RemoteManagerViewModelTests
             attempts = backend.DisconnectAttempts.ToArray();
         }
 
-        Assert.NotEqual(0, busyUntil);
-        Assert.True(attempts.Length >= 2, $"Expected the busy disconnect to be retried, saw {attempts.Length} attempt(s).");
+        // Refused as busy until the last attempt, which disconnected; each retry waited about 200 ms.
+        Assert.True(
+            attempts.Length == expectedAttempts,
+            $"Expected {expectedAttempts} disconnect attempts (busy refusals, then success), saw {attempts.Length}.");
         for (var i = 1; i < attempts.Length; i++)
         {
             var gap = System.Diagnostics.Stopwatch.GetElapsedTime(attempts[i - 1], attempts[i]);
             Assert.True(gap >= TimeSpan.FromMilliseconds(190), $"Two disconnect attempts were {gap.TotalMilliseconds} ms apart.");
         }
-
-        Assert.True(attempts[^2] < busyUntil, "The attempt before the last one was not refused as busy.");
-        Assert.True(attempts[^1] >= busyUntil, "The successful disconnect ran while the session was still busy.");
     }
 
     [Fact]
