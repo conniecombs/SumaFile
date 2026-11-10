@@ -178,6 +178,9 @@ async fn launch(repo: &TestRepo) -> (Child, HostRole) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn backend_process_serves_status_and_decorations() {
     let repo = TestRepo::new();
+    // One commit first: an unborn branch reports no branch name ("## No commits yet on main"), as 1.0.4 did.
+    repo.write("seed.txt", "seed\n");
+    repo.commit_all("seed");
     repo.write("a.txt", "one\n");
     let plain = repo.temp.path().join("plain");
     std::fs::create_dir_all(&plain).unwrap();

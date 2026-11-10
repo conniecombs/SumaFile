@@ -342,7 +342,8 @@ public class PluginBackendHostTests : IAsyncLifetime
         Assert.True(stuckProcess.Killed);
         Assert.False(stuckProcess.HasExited);
         Assert.True(sw.Elapsed >= TimeSpan.FromSeconds(1.5), $"took {sw.Elapsed}");
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2.5), $"took {sw.Elapsed}");
+        // About 2 s, not unbounded. The margin covers a loaded CI runner, which once measured 2.52 s (run 42730236960).
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(4), $"took {sw.Elapsed}");
     }
 
     [Fact]
