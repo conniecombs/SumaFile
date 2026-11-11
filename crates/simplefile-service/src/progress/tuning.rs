@@ -16,7 +16,6 @@ const MAX_AGE: u64 = 30 * 24 * 60 * 60;
 static HISTORY_LOCK: Mutex<()> = Mutex::new(());
 
 pub(crate) use sumafile_transfer::policy::{CheckMode, Mode, OrderBy, Policy};
-pub(crate) use sumafile_transfer::tuning::Controller;
 
 /// The stored transfer policy, normalized; the default when none is stored.
 pub(crate) fn load_policy() -> Policy {
@@ -145,6 +144,7 @@ pub(crate) fn route_key(source: &str, destination: &str, bytes: u64, files: u64)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sumafile_transfer::tuning::Controller;
 
     #[test]
     fn history_is_bounded_expires_and_rejects_future_records() {

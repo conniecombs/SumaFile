@@ -1022,6 +1022,8 @@ struct Job {
     lanes: Lanes,
     now: Instant,
     bytes: [u64; 2],
+    files: [u64; 2],
+    route: DriveKind,
     histograms: [LatencyHistogram; 2],
     /// The lane still has files but fewer than it may run.
     draining: [bool; 2],
@@ -1029,6 +1031,10 @@ struct Job {
 
 impl Job {
     fn new(policy: Policy, two: bool) -> Self {
+        Self::on_route(policy, two, DriveKind::SolidState)
+    }
+
+    fn on_route(policy: Policy, two: bool, route: DriveKind) -> Self {
         let now = Instant::now();
         let mut lanes = Lanes::new(policy, 4 << 20, now);
         lanes.begin(two, now);
@@ -1036,27 +1042,48 @@ impl Job {
             lanes,
             now,
             bytes: [0; 2],
+            files: [0; 2],
+            route,
             histograms: [LatencyHistogram::default(), LatencyHistogram::default()],
             draining: [false; 2],
         }
     }
 
     fn start(&mut self, lane: usize, bytes: u64, files: usize) {
-        let controller = Controller::new_for_route(
+        let controller = self.lanes.controller_for(
+            lane,
             self.lanes.policy().clone(),
             4 << 20,
             None,
             bytes,
             files,
-            DriveKind::SolidState,
+            self.route,
         );
-        self.lanes
-            .start(lane, controller, self.now, self.bytes[lane]);
+        self.lanes.start(
+            lane,
+            controller,
+            self.now,
+            self.bytes[lane],
+            self.files[lane],
+        );
         self.report([0, 0], [true, true], [0, 0]);
     }
 
+    /// The same amount of progress in bytes and in files, so a test's rate
+    /// reads the same whichever the lane counts.
     fn report(&mut self, moved: [u64; 2], demand: [bool; 2], retries: [u64; 2]) {
+        self.report_split(moved, moved, demand, retries);
+    }
+
+    fn report_split(
+        &mut self,
+        moved: [u64; 2],
+        finished: [u64; 2],
+        demand: [bool; 2],
+        retries: [u64; 2],
+    ) {
         let report = |lane: usize| LaneReport {
+            files: self.files[lane] + finished[lane],
             bytes: self.bytes[lane] + moved[lane],
             saturated: demand[lane] && !self.draining[lane],
             demand: demand[lane],
@@ -1064,6 +1091,7 @@ impl Job {
         };
         let reports = [report(0), report(1)];
         self.bytes = [reports[0].bytes, reports[1].bytes];
+        self.files = [reports[0].files, reports[1].files];
         self.lanes.observe(
             self.now,
             reports,
@@ -1199,10 +1227,7 @@ fn a_lane_alone_has_the_whole_limit_and_gives_it_back() {
     job.start(1, 64 * 4096, 64);
     assert_eq!(job.plan()[1], 16);
     assert_eq!(job.lanes.planned(), 16);
-    assert_eq!(
-        job.lanes.explanation(),
-        "Scaling concurrency for small-file batch"
-    );
+    assert_eq!(job.lanes.explanation(), "Measuring files per second");
     // A large file turns up: the small lane makes room at once.
     job.start(0, 8 << 30, 1);
     assert_eq!(job.plan(), [4, 12]);
@@ -1295,4 +1320,362 @@ fn an_unfinished_test_in_a_draining_lane_does_not_hold_the_other_lane() {
         job.lanes.controller(1).explanation,
         "At the configured concurrency limit"
     );
+}
+
+// ----- the small-file lane: files per second ---------------------------------
+
+const JPEGS: u64 = 64 * 250 * 1024;
+
+fn small_lane(policy: Policy, route: DriveKind) -> Controller {
+    Controller::new_for_small_lane(policy, 512 << 10, None, JPEGS, 64, route)
+}
+
+#[test]
+fn the_small_lane_reads_completed_files_whatever_their_sizes() {
+    let mut job = Job::on_route(Policy::default(), true, DriveKind::Unknown);
+    job.start(1, JPEGS, 64);
+    assert!(job.lanes.controller(1).counts_files());
+    assert_eq!(job.lanes.controller(1).window_work(), 32);
+    assert_eq!(job.lanes.explanation(), "Measuring files per second");
+    // Forty files every second; their sizes swing between 50 and 500 KB, so
+    // bytes per second swings tenfold. Files per second is steady.
+    for second in 0..3 {
+        assert_eq!(job.plan()[1], 16);
+        let size = if second % 2 == 0 { 50_000 } else { 500_000 };
+        job.now += SECOND;
+        job.report_split([0, 40 * size], [0, 40], [false, true], [0, 0]);
+    }
+    assert_eq!(
+        job.plan()[1],
+        24,
+        "a reading after three one-second windows"
+    );
+    assert_eq!(
+        job.lanes.explanation(),
+        "Small files: adding simultaneous files"
+    );
+
+    // The large lane and a single pool still read bytes.
+    let general = Controller::new_for_route(
+        Policy::default(),
+        4 << 20,
+        None,
+        8 << 30,
+        4,
+        DriveKind::Unknown,
+    );
+    assert!(!general.counts_files());
+    assert_eq!(general.window_work(), 32 << 20);
+}
+
+#[test]
+fn a_small_file_window_waits_for_enough_files_or_the_cap() {
+    let c = small_lane(Policy::default(), DriveKind::Network);
+    let start = Instant::now();
+    let at = |ms: u64| start + Duration::from_millis(ms);
+    let mut sampler = Sampler::new(start, 0, c.window_work());
+    sampler.observe(start, 0, true, false);
+    // 20 files a second: 20 after one second is not enough, 32 is.
+    assert_eq!(sampler.observe(at(1000), 20, true, false), None);
+    let window = sampler.observe(at(1600), 32, true, false).unwrap();
+    assert_eq!(window.bytes, 32);
+    // 10 files a second: the two-second cap closes the window.
+    assert_eq!(sampler.observe(at(3500), 51, true, false), None);
+    let window = sampler.observe(at(3600), 52, true, false).unwrap();
+    assert_eq!(window.elapsed, Duration::from_secs(2));
+}
+
+#[test]
+fn on_a_latency_bound_route_the_small_lane_starts_at_sixteen_and_climbs_first() {
+    for route in [DriveKind::Network, DriveKind::Unknown] {
+        let mut c = small_lane(Policy::default(), route);
+        assert_eq!(c.concurrency, 16);
+        assert_eq!(c.limit(), 32);
+        assert_eq!(c.explanation, "Measuring files per second");
+        // Files per second follows the files in flight.
+        observe(&mut c, 16 * 2);
+        assert_eq!(c.concurrency, 24);
+        assert_eq!(c.explanation, "Small files: adding simultaneous files");
+        observe(&mut c, 24 * 2);
+        assert_eq!(c.explanation, "Small files: more at once is faster");
+        observe(&mut c, 24 * 2);
+        assert_eq!(c.concurrency, 32);
+        observe(&mut c, 32 * 2);
+        observe(&mut c, 32 * 2);
+        assert_eq!(c.concurrency, 32);
+        assert_eq!(c.explanation, "At the configured concurrency limit");
+        assert_eq!(c.learned_concurrency(), Some(32));
+    }
+    assert_eq!(
+        small_lane(
+            Policy {
+                mode: Mode::Maximum,
+                ..Policy::default()
+            },
+            DriveKind::Network
+        )
+        .concurrency,
+        24
+    );
+}
+
+#[test]
+fn a_step_up_that_merely_fails_to_help_is_no_reason_to_test_fewer() {
+    let mut c = small_lane(Policy::default(), DriveKind::Unknown);
+    let mut lowest = c.concurrency;
+    // Two minutes at a flat 30 files a second whatever the setting.
+    for _ in 0..40 {
+        observe(&mut c, 30);
+        lowest = lowest.min(c.concurrency);
+        assert_ne!(c.explanation, "Small files: testing fewer at once");
+    }
+    assert_eq!(lowest, 16);
+    assert_eq!(c.learned_concurrency(), Some(16));
+}
+
+#[test]
+fn a_measured_drop_after_a_step_up_does_ask_for_a_test_of_fewer() {
+    let mut c = small_lane(Policy::default(), DriveKind::Unknown);
+    observe(&mut c, 40);
+    assert_eq!(c.concurrency, 24);
+    observe(&mut c, 30); // a quarter slower with more files in flight
+    assert_eq!(c.concurrency, 16);
+    assert_eq!(c.explanation, "Small files: keeping the faster setting");
+    for _ in 0..COOLDOWN_SAMPLES {
+        observe(&mut c, 40);
+        assert_eq!(c.concurrency, 16);
+    }
+    observe(&mut c, 40);
+    assert_eq!(c.concurrency, 8);
+    assert_eq!(c.explanation, "Small files: testing fewer at once");
+    observe(&mut c, 22);
+    assert_eq!(c.concurrency, 16, "fewer was slower: back to sixteen");
+}
+
+#[test]
+fn a_ceiling_the_user_chose_and_the_memory_budget_still_bound_the_small_lane() {
+    let limit = |policy: Policy, route| small_lane(policy, route).limit();
+    // Only the untouched default of 16 is lifted, only where waiting dominates.
+    assert_eq!(limit(Policy::default(), DriveKind::Network), 32);
+    assert_eq!(limit(Policy::default(), DriveKind::SolidState), 16);
+    assert_eq!(limit(Policy::default(), DriveKind::Rotational), 16);
+    for chosen in [1, 8, 12, 24, 32] {
+        let policy = Policy {
+            max_concurrency: chosen,
+            ..Policy::default()
+        };
+        assert_eq!(limit(policy.clone(), DriveKind::Network), chosen);
+        assert!(small_lane(policy, DriveKind::Network).concurrency <= chosen);
+    }
+    // Conservative keeps its four, a custom limit is the custom limit.
+    let conservative = small_lane(
+        Policy {
+            mode: Mode::Conservative,
+            ..Policy::default()
+        },
+        DriveKind::Network,
+    );
+    assert_eq!((conservative.concurrency, conservative.limit()), (2, 4));
+    let custom = small_lane(
+        Policy {
+            mode: Mode::Manual,
+            manual_concurrency: 6,
+            ..Policy::default()
+        },
+        DriveKind::Network,
+    );
+    assert_eq!((custom.concurrency, custom.limit()), (6, 16));
+    // 16 MiB of buffers hold five files of 900 KiB (three buffers each).
+    let tight = Controller::new_for_small_lane(
+        Policy {
+            memory_budget_mb: 16,
+            ..Policy::default()
+        },
+        4 << 20,
+        None,
+        64 * 900 * 1024,
+        64,
+        DriveKind::Network,
+    );
+    assert_eq!((tight.concurrency, tight.limit()), (5, 5));
+    // A remembered setting is rechecked within the lane's own limit.
+    let remembered = Controller::new_for_small_lane(
+        Policy::default(),
+        512 << 10,
+        Some(28),
+        JPEGS,
+        64,
+        DriveKind::Network,
+    );
+    assert_eq!(remembered.concurrency, 28);
+    // A live change to a chosen ceiling takes the extra room away at once.
+    let mut live = small_lane(Policy::default(), DriveKind::Network);
+    observe(&mut live, 32);
+    assert_eq!(live.concurrency, 24);
+    live.update_policy(
+        Policy {
+            max_concurrency: 10,
+            ..Policy::default()
+        },
+        512 << 10,
+    );
+    assert_eq!((live.concurrency, live.limit()), (10, 10));
+    assert!(live.counts_files());
+}
+
+#[test]
+fn hard_disks_and_removable_drives_keep_their_caution_in_the_small_lane() {
+    for (route, start, reason) in [
+        (DriveKind::Rotational, 2, "Starting low for a hard disk"),
+        (
+            DriveKind::Removable,
+            2,
+            "Starting low for a removable drive",
+        ),
+        (DriveKind::Optical, 1, "Starting low for an optical disc"),
+    ] {
+        let mut c = small_lane(Policy::default(), route);
+        assert_eq!((c.concurrency, c.limit()), (start, 16));
+        assert_eq!(c.explanation, reason);
+        assert!(c.counts_files());
+        // A step up that does not help is followed by a test of fewer.
+        observe(&mut c, 30);
+        let probed = c.concurrency;
+        assert!(probed > start);
+        observe(&mut c, 30);
+        assert_eq!(c.concurrency, start);
+        if start > 1 {
+            for _ in 0..=COOLDOWN_SAMPLES {
+                observe(&mut c, 30);
+            }
+            assert_eq!(c.concurrency, start / 2);
+            assert_eq!(c.explanation, "Small files: testing fewer at once");
+        }
+    }
+    assert_eq!(
+        small_lane(Policy::default(), DriveKind::SolidState).concurrency,
+        16
+    );
+}
+
+#[test]
+fn a_retry_storm_brings_the_small_lane_down_fast_and_each_bout_holds_longer() {
+    let mut c = small_lane(Policy::default(), DriveKind::Unknown);
+    observe(&mut c, 32);
+    observe(&mut c, 48);
+    observe(&mut c, 48);
+    observe(&mut c, 64);
+    assert_eq!(c.concurrency, 32);
+    // The provider throttles: retries in three windows running.
+    for expected in [16, 8, 4] {
+        c.sample(10, SECOND, true, 5);
+        assert_eq!(c.concurrency, expected);
+        assert_eq!(c.explanation, "Reduced concurrency after an I/O retry");
+    }
+    assert_eq!(c.cooldown(), COOLDOWN_SAMPLES, "one storm is one bout");
+    assert_eq!(c.learned_concurrency(), None);
+    for _ in 0..COOLDOWN_SAMPLES {
+        observe(&mut c, 8);
+        assert_eq!(c.concurrency, 4, "held");
+    }
+    observe(&mut c, 8);
+    assert_eq!(c.concurrency, 6, "then it climbs again, never tests fewer");
+    // Throttled again: the second hold is twice as long, the third four times.
+    c.sample(10, SECOND, true, 1);
+    assert_eq!((c.concurrency, c.cooldown()), (3, 2 * COOLDOWN_SAMPLES));
+    for _ in 0..2 * COOLDOWN_SAMPLES {
+        observe(&mut c, 6);
+        assert_eq!(c.concurrency, 3);
+    }
+    observe(&mut c, 6);
+    assert!(c.concurrency > 3);
+    c.sample(10, SECOND, true, 1);
+    assert_eq!(c.cooldown(), 4 * COOLDOWN_SAMPLES);
+}
+
+#[test]
+fn write_latency_does_not_overrule_files_per_second_on_a_latency_bound_route() {
+    let mut eager = small_lane(Policy::default(), DriveKind::Network);
+    feed(&mut eager, 32, 10_000, 3);
+    assert_eq!(eager.concurrency, 24);
+    feed(&mut eager, 48, 10_000, 4);
+    assert_eq!(eager.explanation, "Small files: more at once is faster");
+    feed(&mut eager, 48, 10_000, 3);
+    assert_eq!(eager.concurrency, 32);
+    // Each write now takes four times as long, but more files finish per
+    // second: the step up is judged on that and kept.
+    feed(&mut eager, 64, 40_000, 4);
+    assert_eq!(eager.learned_concurrency(), Some(32));
+    feed(&mut eager, 64, 40_000, 12);
+    assert_eq!(eager.concurrency, 32);
+    assert_eq!(eager.explanation, "At the configured concurrency limit");
+
+    // On local storage the small lane keeps the latency warning.
+    let mut local = small_lane(
+        Policy {
+            max_concurrency: 32,
+            ..Policy::default()
+        },
+        DriveKind::SolidState,
+    );
+    feed(&mut local, 32, 10_000, 5);
+    assert_eq!(local.concurrency, 24);
+    feed(&mut local, 48, 30_000, 3);
+    assert_eq!(local.concurrency, 16);
+    assert_eq!(
+        local.explanation,
+        "Write latency rose; keeping the previous setting"
+    );
+}
+
+#[test]
+fn the_small_lane_grows_past_sixteen_beside_a_large_lane_on_a_cloud_to_nas_route() {
+    let mut job = Job::on_route(Policy::default(), true, DriveKind::Unknown);
+    job.start(0, 8 << 30, 1);
+    job.start(1, JPEGS, 64);
+    assert_eq!(job.plan(), [4, 16]);
+    assert_eq!(job.lanes.total_limit(), 32);
+    assert_eq!(job.lanes.planned(), 20);
+    for second in 0..60 {
+        let plan = job.plan();
+        job.second([LARGE_RATE, 2 * plan[1] as u64], [true, true]);
+        let plan = job.plan();
+        assert!(plan[0] + plan[1] <= 32, "second {second}: {plan:?}");
+        assert!(plan[0] >= 1 && plan[1] >= 16, "second {second}: {plan:?}");
+    }
+    let plan = job.plan();
+    assert!(plan[1] >= 24, "{plan:?}");
+    assert!(job.lanes.explanation().contains(" small \u{b7} "));
+
+    // A ceiling the user chose is the ceiling for both lanes together.
+    let mut chosen = Job::on_route(
+        Policy {
+            max_concurrency: 12,
+            ..Policy::default()
+        },
+        true,
+        DriveKind::Unknown,
+    );
+    chosen.start(0, 8 << 30, 1);
+    chosen.start(1, JPEGS, 64);
+    assert_eq!(chosen.lanes.total_limit(), 12);
+    for _ in 0..30 {
+        let plan = chosen.plan();
+        chosen.second([LARGE_RATE, 2 * plan[1] as u64], [true, true]);
+        let plan = chosen.plan();
+        assert!(plan[0] + plan[1] <= 12, "{plan:?}");
+    }
+    // A custom limit set mid-transfer takes the extra room away too.
+    job.lanes.update_policy(
+        Policy {
+            mode: Mode::Manual,
+            manual_concurrency: 6,
+            ..Policy::default()
+        },
+        [4 << 20, 4 << 20],
+    );
+    assert_eq!(job.lanes.total_limit(), 6);
+    job.second([LARGE_RATE, 12], [true, true]);
+    let plan = job.plan();
+    assert_eq!(plan[0] + plan[1], 6, "{plan:?}");
 }

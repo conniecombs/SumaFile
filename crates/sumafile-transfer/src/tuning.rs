@@ -554,6 +554,80 @@ pub fn lane_caps(limit: usize, wanted: [usize; 2], demand: [bool; 2]) -> [usize;
 // Controller
 // ---------------------------------------------------------------------------
 
+/// What a lane's controller counts and how boldly it explores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Profile {
+    /// Bytes per second; today's caution. Large files and single-pool jobs.
+    General,
+    /// The small-file lane: completed files per second, because the wait per
+    /// file (open, create, rename, cloud fetch) dwarfs the bytes. On a
+    /// `latency_bound` route (a network share or unidentified/cloud storage
+    /// at either end, no hard disk involved) that wait is spent off the
+    /// machine, so more files at once is the first thing to try.
+    SmallFiles { latency_bound: bool },
+}
+
+impl Profile {
+    pub fn for_small_lane(route: DriveKind) -> Self {
+        Self::SmallFiles {
+            latency_bound: matches!(route, DriveKind::Network | DriveKind::Unknown),
+        }
+    }
+
+    fn counts_files(self) -> bool {
+        matches!(self, Self::SmallFiles { .. })
+    }
+
+    fn eager(self) -> bool {
+        self == Self::SmallFiles {
+            latency_bound: true,
+        }
+    }
+}
+
+/// Completed files a small-file window should see before it closes early.
+const FILES_PER_WINDOW: u64 = 32;
+/// The most files the small lane may run on a latency-bound route when the
+/// file ceiling is still the default.
+pub const SMALL_LANE_CEILING: usize = 32;
+/// A rejected step up must have measured at least this drop before an eager
+/// lane suspects that fewer files would do better.
+const MEASURED_DROP: f64 = 0.05;
+
+/// The lane's own limit. The small lane on a latency-bound route may pass the
+/// default ceiling of 16 (its buffers are small and the memory budget still
+/// applies), but only in Automatic and Maximum modes and only while the
+/// ceiling is the default: any other value is the user's and is kept.
+fn lane_limit(policy: &Policy, buffer_bytes: usize, profile: Profile) -> usize {
+    let default_ceiling = policy.max_concurrency == Policy::default().max_concurrency;
+    if profile.eager() && matches!(policy.mode, Mode::Automatic | Mode::Maximum) && default_ceiling
+    {
+        Policy {
+            max_concurrency: SMALL_LANE_CEILING,
+            ..policy.clone()
+        }
+        .limit(buffer_bytes)
+    } else {
+        policy.limit(buffer_bytes)
+    }
+}
+
+/// Where the small-file lane starts. On a latency-bound route each file
+/// spends most of its time waiting on round trips, so files per second grows
+/// almost in step with the files in flight: Automatic starts at the old whole
+/// ceiling (16) and Maximum at 24, and two successful steps reach 32.
+fn small_lane_start(mode: Mode, route: DriveKind, profile: Profile) -> usize {
+    if profile.eager() {
+        match mode {
+            Mode::Conservative => 2,
+            Mode::Maximum => 24,
+            _ => 16,
+        }
+    } else {
+        starting_concurrency(mode, route, true).0
+    }
+}
+
 /// Bounded concurrency feedback for one lane of one transfer.
 pub struct Controller {
     pub policy: Policy,
@@ -586,6 +660,10 @@ pub struct Controller {
     hold: bool,
     /// A step up has paid off, so there is no reason to suspect fewer would do.
     grew: bool,
+    profile: Profile,
+    /// Separate bouts of I/O retries so far; each doubles the hold after the
+    /// next, so a provider that throttles is not pushed again right away.
+    retry_bouts: u32,
 }
 
 impl Controller {
@@ -626,8 +704,73 @@ impl Controller {
         } else {
             buffer_bytes
         };
-        let limit = policy.limit(effective_buffer);
         let (start, kind_reason) = starting_concurrency(policy.mode, route, small_file_burst);
+        let explanation = if let Some(reason) = kind_reason.filter(|_| {
+            // A small-file batch on fast storage is better described as that.
+            !(small_file_burst && route == DriveKind::SolidState)
+        }) {
+            reason
+        } else if small_file_burst {
+            "Scaling concurrency for small-file batch"
+        } else {
+            "Measuring transfer speed"
+        };
+        Self::build(
+            policy,
+            buffer_bytes,
+            effective_buffer,
+            remembered,
+            start,
+            explanation,
+            Profile::General,
+        )
+    }
+
+    /// The controller for the small-file lane (files under 1 MiB): it counts
+    /// completed files, sizes its buffers to the files, and on a
+    /// latency-bound route starts higher and may pass the default ceiling.
+    pub fn new_for_small_lane(
+        policy: Policy,
+        buffer_bytes: usize,
+        remembered: Option<usize>,
+        bytes: u64,
+        files: usize,
+        route: DriveKind,
+    ) -> Self {
+        let profile = Profile::for_small_lane(route);
+        let avg_size = bytes / (files as u64).max(1);
+        let effective_buffer =
+            buffer_bytes.min(usize::try_from(avg_size.max(64 * 1024)).unwrap_or(buffer_bytes));
+        let start = small_lane_start(policy.mode, route, profile);
+        let cautious = matches!(
+            route,
+            DriveKind::Rotational | DriveKind::Optical | DriveKind::Removable
+        );
+        let explanation = starting_concurrency(policy.mode, route, true)
+            .1
+            .filter(|_| cautious)
+            .unwrap_or("Measuring files per second");
+        Self::build(
+            policy,
+            buffer_bytes,
+            effective_buffer,
+            remembered,
+            start,
+            explanation,
+            profile,
+        )
+    }
+
+    fn build(
+        policy: Policy,
+        buffer_bytes: usize,
+        effective_buffer: usize,
+        remembered: Option<usize>,
+        start: usize,
+        start_explanation: &'static str,
+        profile: Profile,
+    ) -> Self {
+        let limit = lane_limit(&policy, effective_buffer, profile);
         let concurrency = if policy.mode == Mode::Manual {
             policy.manual_concurrency.clamp(1, limit)
         } else if let Some(remembered) = remembered {
@@ -640,15 +783,8 @@ impl Controller {
             "Manual limit"
         } else if remembered.is_some() {
             "Rechecking remembered setting"
-        } else if let Some(reason) = kind_reason.filter(|_| {
-            // A small-file batch on fast storage is better described as that.
-            !(small_file_burst && route == DriveKind::SolidState)
-        }) {
-            reason
-        } else if small_file_burst {
-            "Scaling concurrency for small-file batch"
         } else {
-            "Measuring transfer speed"
+            start_explanation
         };
         Self {
             policy,
@@ -674,6 +810,8 @@ impl Controller {
             probe_windows: 0,
             hold: false,
             grew: false,
+            profile,
+            retry_bouts: 0,
         }
     }
 
@@ -683,17 +821,23 @@ impl Controller {
         } else {
             buffer_bytes
         };
-        let limit = policy.limit(effective_buffer);
+        let limit = lane_limit(&policy, effective_buffer, self.profile);
         if policy.mode != self.policy.mode
             || limit != self.limit
             || policy.manual_concurrency != self.policy.manual_concurrency
         {
-            let mut updated =
-                Self::new(policy, effective_buffer, Some(self.concurrency.min(limit)));
-            updated.buffer_bytes = buffer_bytes;
-            updated.effective_buffer = effective_buffer;
+            let mut updated = Self::build(
+                policy,
+                buffer_bytes,
+                effective_buffer,
+                Some(self.concurrency.min(limit)),
+                self.concurrency,
+                self.explanation,
+                self.profile,
+            );
             updated.decisions = self.decisions;
             updated.hold = self.hold;
+            updated.retry_bouts = self.retry_bouts;
             let ceiling = self.ceiling;
             *self = updated;
             self.set_ceiling(ceiling);
@@ -754,7 +898,14 @@ impl Controller {
             self.settle = true;
             self.probing = false;
             self.learned = false;
-            self.cooldown = COOLDOWN_SAMPLES;
+            self.try_lower = false;
+            // Retries in consecutive windows are one bout and keep halving; a
+            // new bout after the hold ran out doubles the next hold.
+            if self.cooldown == 0 {
+                self.retry_bouts = self.retry_bouts.saturating_add(1);
+            }
+            let hold = COOLDOWN_SAMPLES << (self.retry_bouts.max(1) - 1).min(MAX_PROBE_BACKOFF);
+            self.cooldown = self.cooldown.max(hold);
             self.explanation = "Reduced concurrency after an I/O retry";
             return;
         }
@@ -768,10 +919,17 @@ impl Controller {
             self.latency.calm();
             return;
         }
+        // An eager lane is judged on files per second alone: more files in
+        // flight on a network round trip always lengthen each write a little.
+        let latency = latency.filter(|_| !self.profile.eager());
         if self.latency.observe(latency) {
             if self.probing && self.concurrency > self.best_concurrency {
                 // The device is queueing: do not wait for throughput to fall.
-                self.reject_probe(false, "Write latency rose; keeping the previous setting");
+                self.reject_probe(
+                    false,
+                    true,
+                    "Write latency rose; keeping the previous setting",
+                );
                 self.probing = false;
                 self.latency.calm();
                 return;
@@ -803,7 +961,11 @@ impl Controller {
                 if self.probe_windows >= UNREAD_PROBE_WINDOWS {
                     // An experiment that cannot be read is not worth keeping.
                     let lower = self.concurrency < self.best_concurrency;
-                    self.reject_probe(lower, "Keeping the faster stable setting");
+                    let explanation = self.say(
+                        "Keeping the faster stable setting",
+                        "Small files: keeping the faster setting",
+                    );
+                    self.reject_probe(lower, !self.profile.eager(), explanation);
                     self.probing = false;
                 }
             }
@@ -813,14 +975,24 @@ impl Controller {
         self.decide(reading);
     }
 
-    fn reject_probe(&mut self, lower: bool, explanation: &'static str) {
+    /// The lane's wording: small-file lanes say so.
+    fn say(&self, general: &'static str, small_files: &'static str) -> &'static str {
+        if self.profile.counts_files() {
+            small_files
+        } else {
+            general
+        }
+    }
+
+    /// `suspect_fewer`: whether the rejection is a reason to test fewer files.
+    fn reject_probe(&mut self, lower: bool, suspect_fewer: bool, explanation: &'static str) {
         self.concurrency = self.best_concurrency;
         self.cooldown = COOLDOWN_SAMPLES << self.rejected_probes.min(MAX_PROBE_BACKOFF);
         if !lower {
             self.rejected_probes = self.rejected_probes.saturating_add(1);
         }
         self.explanation = explanation;
-        self.try_lower = !lower && !self.lower_tested;
+        self.try_lower = !lower && !self.lower_tested && suspect_fewer;
         self.estimator.reset();
         self.settle = true;
     }
@@ -864,12 +1036,26 @@ impl Controller {
                     self.grew = true;
                 }
                 self.explanation = if lower {
-                    "Similar speed with fewer simultaneous files"
+                    self.say(
+                        "Similar speed with fewer simultaneous files",
+                        "Small files: fewer at once is as fast",
+                    )
                 } else {
-                    "Higher concurrency improved throughput"
+                    self.say(
+                        "Higher concurrency improved throughput",
+                        "Small files: more at once is faster",
+                    )
                 };
             } else {
-                self.reject_probe(lower, "Keeping the faster stable setting");
+                // An eager lane tests fewer files only on a measured drop,
+                // not because a step up merely failed to help.
+                let drop = MEASURED_DROP.max(2.0 * (reading.error + self.best_error));
+                let suspect_fewer = !self.profile.eager() || rate < self.best_rate * (1.0 - drop);
+                let explanation = self.say(
+                    "Keeping the faster stable setting",
+                    "Small files: keeping the faster setting",
+                );
+                self.reject_probe(lower, suspect_fewer, explanation);
             }
             self.probing = false;
             self.learned = true;
@@ -885,7 +1071,11 @@ impl Controller {
                 // One experiment at a time across lanes, so each is judged
                 // against a steady neighbour.
             } else if self.concurrency > 1
-                && (self.try_lower || (self.shares_limit() && !self.lower_tested && !self.grew))
+                && (self.try_lower
+                    || (self.shares_limit()
+                        && !self.lower_tested
+                        && !self.grew
+                        && !self.profile.eager()))
             {
                 // After a rejected step up, or when the other lane holds the
                 // room to step up and no step up has paid off yet: see whether
@@ -894,21 +1084,41 @@ impl Controller {
                 self.start_probe();
                 self.try_lower = false;
                 self.lower_tested = true;
-                self.explanation = "Testing whether fewer files reduce contention";
+                self.explanation = self.say(
+                    "Testing whether fewer files reduce contention",
+                    "Small files: testing fewer at once",
+                );
             } else if self.concurrency < cap {
                 self.concurrency = (self.concurrency + (self.concurrency / 2).max(1)).min(cap);
                 self.start_probe();
-                self.explanation = "Testing more simultaneous files";
+                self.explanation = self.say(
+                    "Testing more simultaneous files",
+                    "Small files: adding simultaneous files",
+                );
             } else {
                 self.explanation = "At the configured concurrency limit";
             }
         }
     }
 
-    /// Bytes a measuring window should see before it closes early: eight
+    /// Whether this lane's rate is completed files per second, not bytes.
+    pub fn counts_files(&self) -> bool {
+        self.profile.counts_files()
+    }
+
+    /// The lane's own limit, before the other lane's share is taken off.
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
+    /// Work a measuring window should see before it closes early. A
+    /// small-file lane counts completed files (32 of them). Otherwise: eight
     /// buffers, and for ordinary files at least four progress steps, because
     /// a file reports its progress in steps of four mebibytes.
     pub fn window_work(&self) -> u64 {
+        if self.profile.counts_files() {
+            return FILES_PER_WINDOW;
+        }
         let buffers = 8 * self.effective_buffer as u64;
         if self.effective_buffer < self.buffer_bytes {
             buffers
@@ -961,6 +1171,8 @@ pub struct LaneReport {
     pub demand: bool,
     /// I/O retries in this lane since the previous report.
     pub retries: u64,
+    /// Files this lane has finished copying in total.
+    pub files: u64,
 }
 
 /// The large-file and small-file lanes of one transfer: each has its own
@@ -1014,10 +1226,22 @@ impl Lanes {
 
     /// Give a lane the controller for its workload. `bytes` is what the lane
     /// has moved so far in this scheduler run.
-    pub fn start(&mut self, lane: usize, controller: Controller, now: Instant, bytes: u64) {
+    pub fn start(
+        &mut self,
+        lane: usize,
+        controller: Controller,
+        now: Instant,
+        bytes: u64,
+        files: u64,
+    ) {
         let hold = self.lanes[lane].controller.hold;
         let slot = &mut self.lanes[lane];
-        slot.sampler = Sampler::new(now, bytes, controller.window_work());
+        let progress = if controller.counts_files() {
+            files
+        } else {
+            bytes
+        };
+        slot.sampler = Sampler::new(now, progress, controller.window_work());
         slot.controller = controller;
         slot.controller.hold_experiments(hold);
         slot.started = true;
@@ -1042,7 +1266,34 @@ impl Lanes {
 
     /// The most files the job may run at once across both lanes.
     pub fn total_limit(&self) -> usize {
-        total_limit(self.policy())
+        let base = total_limit(self.policy());
+        let small = &self.lanes[Lane::Small.index()];
+        if self.two && small.started && self.policy().mode != Mode::Manual {
+            // The small lane may be allowed past the default ceiling.
+            base.max(small.controller.limit())
+        } else {
+            base
+        }
+    }
+
+    /// The controller a lane should start with: the small lane of a two-lane
+    /// run counts files; everything else is the general controller.
+    #[allow(clippy::too_many_arguments)]
+    pub fn controller_for(
+        &self,
+        lane: usize,
+        policy: Policy,
+        buffer_bytes: usize,
+        remembered: Option<usize>,
+        bytes: u64,
+        files: usize,
+        route: DriveKind,
+    ) -> Controller {
+        if self.two && lane == Lane::Small.index() {
+            Controller::new_for_small_lane(policy, buffer_bytes, remembered, bytes, files, route)
+        } else {
+            Controller::new_for_route(policy, buffer_bytes, remembered, bytes, files, route)
+        }
     }
 
     pub fn update_policy(&mut self, policy: Policy, buffer_bytes: [usize; 2]) {
@@ -1074,9 +1325,14 @@ impl Lanes {
                 && reports[1 - index].saturated
                 && other.controller.probing;
             let lane = &mut self.lanes[index];
+            let progress = if lane.controller.counts_files() {
+                report.files
+            } else {
+                report.bytes
+            };
             let Some(window) =
                 lane.sampler
-                    .observe(now, report.bytes, report.saturated, report.retries > 0)
+                    .observe(now, progress, report.saturated, report.retries > 0)
             else {
                 continue;
             };

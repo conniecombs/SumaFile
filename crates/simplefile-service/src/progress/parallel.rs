@@ -894,13 +894,21 @@ fn open_lanes(
     tasks: &BTreeMap<usize, FileTask>,
     buffer_size: usize,
     moved: &[u64; 2],
+    finished: &[u64; 2],
 ) {
     for lane in 0..2 {
         if open[lane] || ready[lane].is_empty() {
             continue;
         }
         let bytes = ready[lane].iter().map(|index| tasks[index].size).sum();
-        session.workload(lane, bytes, ready[lane].len(), buffer_size, moved[lane]);
+        session.workload(
+            lane,
+            bytes,
+            ready[lane].len(),
+            buffer_size,
+            moved[lane],
+            finished[lane],
+        );
         open[lane] = true;
     }
 }
@@ -930,6 +938,8 @@ fn copy_files_streaming_with_sink(
     let mut ready = [VecDeque::with_capacity(PRIME_COUNT), VecDeque::new()];
     // Bytes of finished files per lane; `result.bytes` stays the job's total.
     let mut lane_done = [0u64; 2];
+    // Files copied per lane: the small-file lane is tuned on files per second.
+    let mut lane_files = [0u64; 2];
     let mut producer_done = false;
     let (scan_tx, scan_rx) = mpsc::sync_channel::<Result<FileTask, String>>(channel_cap);
     let (event_tx, event_rx) = mpsc::sync_channel::<Message>(channel_cap);
@@ -1039,6 +1049,7 @@ fn copy_files_streaming_with_sink(
             &tasks,
             buffer_size,
             &lane_done,
+            &lane_files,
         );
         let worker_count = if producer_done {
             tasks.len().min(32)
@@ -1158,7 +1169,8 @@ fn copy_files_streaming_with_sink(
                                 producer_done: bool,
                                 last_display: &Instant,
                                 tasks: &mut BTreeMap<usize, FileTask>,
-                                lane_done: &mut [u64; 2]| {
+                                lane_done: &mut [u64; 2],
+                                lane_files: &mut [u64; 2]| {
             match message {
                 Message::ScanAvailable => {}
                 Message::Progress(index, update) => {
@@ -1187,6 +1199,7 @@ fn copy_files_streaming_with_sink(
                             result.bytes = result.bytes.saturating_add(bytes);
                             if let Some(lane) = lane {
                                 lane_done[lane] = lane_done[lane].saturating_add(bytes);
+                                lane_files[lane] += 1;
                             }
                             let Some(task) = tasks.remove(&index) else {
                                 return;
@@ -1313,6 +1326,7 @@ fn copy_files_streaming_with_sink(
                 &tasks,
                 buffer_size,
                 &lane_done,
+                &lane_files,
             );
 
             // Each lane fills up to its own limit and the job as a whole to the
@@ -1408,6 +1422,7 @@ fn copy_files_streaming_with_sink(
                         &last_display,
                         &mut tasks,
                         &mut lane_done,
+                        &mut lane_files,
                     );
                     while let Ok(msg) = event_rx.try_recv() {
                         handle_event(
@@ -1421,6 +1436,7 @@ fn copy_files_streaming_with_sink(
                             &last_display,
                             &mut tasks,
                             &mut lane_done,
+                            &mut lane_files,
                         );
                     }
                 }
@@ -1440,6 +1456,7 @@ fn copy_files_streaming_with_sink(
                 let retries = retry_counts[lane].load(Ordering::Relaxed);
                 let report = LaneReport {
                     bytes: lane_done[lane].saturating_add(lane_in_flight[lane]),
+                    files: lane_files[lane],
                     saturated: saturated[lane],
                     demand: demand[lane],
                     retries: retries - last_retries[lane],
@@ -1469,8 +1486,9 @@ fn copy_files_streaming_with_sink(
             result.cancelled = true;
         }
     });
-    session.observe(lane_done.map(|bytes| LaneReport {
-        bytes,
+    session.observe([0, 1].map(|lane| LaneReport {
+        bytes: lane_done[lane],
+        files: lane_files[lane],
         ..LaneReport::default()
     }));
     session.display(Vec::new(), true);

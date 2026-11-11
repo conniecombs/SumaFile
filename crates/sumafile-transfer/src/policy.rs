@@ -156,6 +156,14 @@ impl Policy {
         }
     }
 
+    /// Whether to reserve a destination file's size before writing it. A file
+    /// that fits in one buffer is written by a single write, so reserving its
+    /// size first only adds a round trip (a whole extra request on a network
+    /// share) and saves nothing: there is no later write to fragment.
+    pub fn preallocates(&self, network: bool, file_len: u64) -> bool {
+        self.preallocate && file_len > self.buffer_bytes(network) as u64
+    }
+
     pub fn checkers_limit(&self) -> usize {
         self.checkers.clamp(1, 64)
     }
@@ -206,6 +214,41 @@ mod tests {
     #[test]
     fn default_policy_is_normalized() {
         assert_eq!(Policy::default().normalized(), Policy::default());
+    }
+}
+
+#[cfg(test)]
+mod preallocation_tests {
+    use super::Policy;
+
+    #[test]
+    fn a_file_that_fits_in_one_write_is_not_preallocated() {
+        let policy = Policy::default();
+        // Network copies use 512 KiB buffers, local ones 4 MiB.
+        assert_eq!(policy.buffer_bytes(true), 512 * 1024);
+        assert!(!policy.preallocates(true, 0));
+        assert!(!policy.preallocates(true, 300 * 1024));
+        assert!(!policy.preallocates(true, 512 * 1024));
+        assert!(policy.preallocates(true, 512 * 1024 + 1));
+        assert!(!policy.preallocates(false, 4 << 20));
+        assert!(policy.preallocates(false, (4 << 20) + 1));
+        assert!(policy.preallocates(false, 1 << 30));
+        // A chosen buffer size moves the line with it.
+        let small_buffers = Policy {
+            buffer_size_kib: 64,
+            ..Policy::default()
+        };
+        assert!(small_buffers.preallocates(true, 300 * 1024));
+    }
+
+    #[test]
+    fn turning_preallocation_off_turns_it_off_for_every_size() {
+        let policy = Policy {
+            preallocate: false,
+            ..Policy::default()
+        };
+        assert!(!policy.preallocates(false, 1 << 30));
+        assert!(!policy.preallocates(true, 1 << 30));
     }
 }
 

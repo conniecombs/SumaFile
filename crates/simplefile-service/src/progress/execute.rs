@@ -144,7 +144,7 @@ pub(crate) fn copy_file_attempt_versioned(
     };
     let (resume_from, mut dst_file) = match first_open {
         Ok(file) => {
-            if ctx.policy.preallocate {
+            if ctx.policy.preallocates(ctx.network, file_len) {
                 preallocate_file(&file, file_len);
             }
             (0u64, file)
@@ -205,7 +205,7 @@ pub(crate) fn copy_file_attempt_versioned(
                 .map_err(|e| Failure::io("Open temporary destination", dst, e))?;
             file.seek(SeekFrom::Start(existing))
                 .map_err(|e| Failure::io("Seek temporary destination", dst, e))?;
-            if existing == 0 && ctx.policy.preallocate {
+            if existing == 0 && ctx.policy.preallocates(ctx.network, file_len) {
                 preallocate_file(&file, file_len);
             }
             (existing, file)

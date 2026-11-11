@@ -1,6 +1,6 @@
 use super::parallel::{ActiveFile, TuningUpdate};
 use super::resources::{MemoryBudget, RateLimit};
-use super::tuning::{self, Controller, Policy};
+use super::tuning::{self, Policy};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -138,7 +138,8 @@ impl<'a> Session<'a> {
     }
 
     /// Classify the work waiting in `lane` and pick its starting point.
-    /// `moved` is what the lane has already copied in this scheduler run.
+    /// `moved` and `finished` are the bytes and files the lane has already
+    /// copied in this scheduler run.
     pub fn workload(
         &mut self,
         lane: usize,
@@ -146,8 +147,17 @@ impl<'a> Session<'a> {
         files: usize,
         buffer_size: usize,
         moved: u64,
+        finished: u64,
     ) {
-        let route = tuning::route_key(&self.endpoints, &self.destination, bytes, files as u64);
+        let route = if self.lanes.two() && lane == Lane::Small.index() {
+            // Settings this lane learns are files-per-second optima. They are
+            // kept apart from what the bytes-per-second tuner stored for the
+            // same route, which was often lower than this lane now wants.
+            let endpoints = format!("{}#files", self.endpoints);
+            tuning::route_key(&endpoints, &self.destination, bytes, files as u64)
+        } else {
+            tuning::route_key(&self.endpoints, &self.destination, bytes, files as u64)
+        };
         if self.lanes.started(lane)
             && self.routes[lane] == route
             && self.buffers[lane] == buffer_size
@@ -155,13 +165,10 @@ impl<'a> Session<'a> {
             return;
         }
         self.save_lane(lane);
-        // The small lane is a stream of small files however few are known yet.
-        let files = if self.lanes.two() && lane == Lane::Small.index() {
-            files.max(16)
-        } else {
-            files
-        };
-        let controller = Controller::new_for_route(
+        // The small lane of a two-lane run counts files per second; every
+        // other lane reads bytes per second.
+        let controller = self.lanes.controller_for(
+            lane,
             (self.policy)(),
             buffer_size,
             tuning::recall(&route),
@@ -171,7 +178,8 @@ impl<'a> Session<'a> {
         );
         self.limiter.update(controller.policy.bandwidth_mib);
         self.memory.update(controller.policy.memory_bytes());
-        self.lanes.start(lane, controller, Instant::now(), moved);
+        self.lanes
+            .start(lane, controller, Instant::now(), moved, finished);
         self.routes[lane] = route;
         self.buffers[lane] = buffer_size;
     }
@@ -422,6 +430,7 @@ mod tests {
             saturated,
             demand: true,
             retries,
+            files: 0,
         }
     }
 
@@ -436,33 +445,36 @@ mod tests {
         assert!(session.two_lanes());
         assert!(!session.lane_started(0) && !session.lane_started(1));
 
-        session.workload(0, 8 << 30, 4, 4 << 20, 0);
+        session.workload(0, 8 << 30, 4, 4 << 20, 0, 0);
         assert_eq!(session.concurrency(0), 4);
-        session.workload(1, 64 * 4096, 64, 4 << 20, 0);
-        assert_eq!([session.concurrency(0), session.concurrency(1)], [4, 12]);
         assert_eq!(session.total_limit(), 16);
+        // Tests run with an unidentified route, where small files wait on
+        // round trips: the small lane starts at 16 and may reach 32.
+        session.workload(1, 64 * 4096, 64, 4 << 20, 0, 0);
+        assert_eq!([session.concurrency(0), session.concurrency(1)], [4, 16]);
+        assert_eq!(session.total_limit(), 32);
 
         session.display(Vec::new(), true);
         {
             let updates = updates.lock().unwrap();
             let shown = updates.last().unwrap();
-            assert_eq!(shown.concurrency, 16);
+            assert_eq!(shown.concurrency, 20);
             assert_eq!(
                 shown.explanation,
-                "4 large + 12 small \u{b7} Scaling concurrency for small-file batch"
+                "4 large + 16 small \u{b7} Measuring files per second"
             );
         }
 
         // An I/O retry in the small lane halves that lane only, at once.
         session.observe_at(Instant::now(), [report(true, 0), report(true, 2)]);
-        assert_eq!([session.concurrency(0), session.concurrency(1)], [4, 6]);
+        assert_eq!([session.concurrency(0), session.concurrency(1)], [4, 8]);
         session.display(Vec::new(), true);
         let updates = updates.lock().unwrap();
         let shown = updates.last().unwrap();
-        assert_eq!(shown.concurrency, 10);
+        assert_eq!(shown.concurrency, 12);
         assert_eq!(
             shown.explanation,
-            "4 large + 6 small \u{b7} Reduced concurrency after an I/O retry"
+            "4 large + 8 small \u{b7} Reduced concurrency after an I/O retry"
         );
     }
 
@@ -485,7 +497,7 @@ mod tests {
                 Session::new("one-pool-test", "copy", &[], &destination, &source, &|_| {});
             session.begin();
             assert!(!session.two_lanes());
-            session.workload(0, 8 << 30, 4, 4 << 20, 0);
+            session.workload(0, 8 << 30, 4, 4 << 20, 0, 0);
             let expected = if policy.mode == tuning::Mode::Manual {
                 5
             } else {

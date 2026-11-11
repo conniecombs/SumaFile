@@ -78,6 +78,10 @@ or less) or large:
 | Solid-state drive on both ends | 2 | 6 large, 16 small | 8 large, 24 small |
 | Not identified (cloud mount, RAM disk, a disk whose driver does not say) | 2 | 4 large, 12 small | 8 large, 16 small |
 
+With two lanes (below), the "small" numbers for network and unidentified
+routes apply only when lanes are off; the small-file lane has its own starting
+point on those routes.
+
 A hard disk on either end sets the pace, because parallel files make its head
 seek. Windows is asked once per transfer whether each fixed disk has a seek
 penalty; a disk that does not answer counts as not identified. A remembered
@@ -106,6 +110,44 @@ lanes active the Transfers window shows, for example, "4 large + 12 small".
 Lanes are off, and all files share one queue, when the mode is Custom or when
 you choose a queue order (by size or by name).
 
+**The small-file lane counts files, not bytes.** For files under 1 MiB the
+time goes into opening, creating and renaming each file (and, on a cloud
+drive, fetching it), not into its bytes, and bytes per second swings with the
+file sizes. So this lane is judged on completed files per second. Its window
+closes after at least one second once 32 files have finished, or after two
+seconds (stretching to five when files finish slowly). The large-file lane
+and single-queue transfers still read bytes per second.
+
+Where a network share or an unidentified drive (a cloud mount, for example) is
+at either end and no hard disk, removable drive or optical disc is involved,
+that per-file wait happens off your machine, so the small-file lane leans
+towards more files at once:
+
+* It starts with 16 files in Automatic and 24 in Maximum throughput (2 in
+  Conservative) instead of 8 or 12. Sixteen was the whole default ceiling
+  before, and each file in this lane holds one small buffer.
+* It tries more files first. It tests fewer only after a step up measurably
+  lowered files per second (by 5% or more), not merely because the step did
+  not help, and write latency does not overrule files per second here.
+* While "Most files at once in automatic modes" is still the default of 16,
+  this lane alone may grow to 32, within the buffer budget; the two lanes
+  together then stay within 32 and large files within 16. Any other value
+  is treated as your choice and is the ceiling for both lanes together;
+  Conservative keeps its limit of four and Custom its file limit. SumaFile
+  cannot tell an untouched 16 from a deliberately chosen 16: to hold small
+  files to fewer than 32 on such a route, set the ceiling to another number
+  (15, for instance).
+
+On hard-disk, removable and optical routes the small-file lane keeps the
+starting points in the table above and tests fewer files after any
+unsuccessful step up.
+
+An I/O retry still halves the lane at once, in every window that sees one, so
+a provider that starts throttling brings it down within seconds. The setting
+is then held for four readings; each later bout of retries in the same
+transfer doubles that hold (8, 16, up to 64 readings), so a throttling
+provider is not pushed again straight away. This applies to both lanes.
+
 **It watches write latency as an early warning.** Each write of 64 KiB or more
 is timed. When the typical (median) write in a lane takes at least twice as
 long as that lane's own baseline for three windows in a row, a running test of
@@ -114,6 +156,15 @@ keeping the previous setting"). At a settled setting the scheduler holds
 ("Write latency rose; holding") and next checks whether fewer files are as
 fast. Latency alone never reduces the number of files, and one slow write
 (an antivirus scan, a cloud file being downloaded) does not move the median.
+
+**Small files skip the size reservation.** With pre-allocation on, the
+destination's size is reserved before writing only when the file is larger
+than one copy buffer (512 KiB on network and cloud routes, 4 MiB otherwise,
+or your chosen buffer size). A smaller file is written by a single write, so
+reserving its size first was one extra request per file to a network share
+with nothing gained. Larger files are reserved as before. Pre-allocation was
+never a free-space check (its result is ignored), so a full destination is
+reported by the write itself, as before.
 
 ## Learning and reliability
 
@@ -128,11 +179,14 @@ under-filled windows, probes additional workers, and rolls back a slower probe. 
 also tests fewer workers after an unsuccessful increase and backs off when a retry
 is observed. Sharing violations use a bounded retry and are excluded from the
 tuner’s slowdown signal. After a retry or an unsuccessful probe it holds the setting
-for four readings; repeated unsuccessful upward probes double that, up to 64 readings. Successful slow I/O does not impose a hidden speed cap. Limits protect
+for four readings; repeated unsuccessful upward probes, and repeated bouts of retries,
+double that, up to 64 readings. Successful slow I/O does not impose a hidden speed cap. Limits protect
 resources; they do not guarantee a mathematical optimum. Short jobs may finish before enough evidence is available to tune.
 
 Proven concurrency settings are stored by ordered endpoint identity, copy/move
-direction and average-file-size bucket; with two lanes, each lane stores its own. Mapped shares and local volume identity
+direction and average-file-size bucket; with two lanes, each lane stores its own, and
+the small-file lane's files-per-second settings are stored apart from settings learned
+from bytes per second (older small-file records for a route are not reused and expire). Mapped shares and local volume identity
 help distinguish routes. Records expire after 30 days, are capped at 64 routes, and
 are rechecked on reuse. Paths and account names are hashed in the learning record;
 credentials and file contents are never stored there. Bandwidth-capped and manual

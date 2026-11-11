@@ -72,6 +72,14 @@ into `main`. See the [Beta notes](RELEASE_BETA.md).
   small ones. A sustained rise in write latency ends a test of more files
   early. Custom mode and chosen queue orders are unchanged. See
   [Transfer tuning](TRANSFER_TUNING.md#how-the-scheduler-decides).
+- Many small files to or from a network share or cloud drive copy with more
+  files at once. The small-file lane is now judged on files per second
+  instead of bytes per second, starts with 16 files on such routes, tries
+  more before it tries fewer, and may grow to 32 while the file ceiling is
+  still the default 16 (a ceiling you changed is kept). Repeated bouts of
+  I/O retries hold the reduced setting longer each time. Files that fit in
+  one copy buffer are no longer pre-allocated, which saves one request per
+  small file on a network share.
 
 ---
 
