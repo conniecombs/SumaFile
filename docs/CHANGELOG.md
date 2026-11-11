@@ -62,6 +62,16 @@ into `main`. See the [Beta notes](RELEASE_BETA.md).
 - Show hidden files now lists SumaFile's own transfer artifacts (partial
   files, ownership records and replacement backups) instead of always
   dropping them; they stay hidden while hidden files are hidden.
+- Automatic transfer tuning decides sooner and with more to go on. The first
+  number of simultaneous files depends on the drives (one or two for a hard
+  disk, more between solid-state drives, in between for a network share).
+  Speed is read in windows of one to two seconds instead of pairs of five
+  seconds, so a decision takes about three to five seconds on a steady
+  transfer. Files under 1 MiB and larger files are scheduled in two lanes
+  that share the file ceiling, so a few huge files no longer slow a batch of
+  small ones. A sustained rise in write latency ends a test of more files
+  early. Custom mode and chosen queue orders are unchanged. See
+  [Transfer tuning](TRANSFER_TUNING.md#how-the-scheduler-decides).
 
 ---
 

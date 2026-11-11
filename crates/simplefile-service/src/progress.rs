@@ -377,6 +377,7 @@ fn transfer_with_policy_blocking(
         last_running_emit: StdMutex::new(Instant::now()),
         retry_count: None,
         rate_limit: None,
+        write_latency: None,
     };
     // The first event precedes every volume probe and destination scan.
     progress.emit_now(0, 0, "Preparing transfer...".to_string(), "running", None);
@@ -550,7 +551,7 @@ fn transfer_with_policy_blocking(
             operation_id: &operation_id,
             network: plans.iter().any(|plan| plan.network),
             resume_existing: false,
-            policy: session.controller.policy.clone(),
+            policy: session.policy().clone(),
         };
         let result =
             parallel::copy_selection(&roots, files, &ctx, &mut completed_bytes, &mut session);
@@ -1405,6 +1406,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -1458,6 +1460,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -1856,6 +1859,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
 
         progress.emit_with_total(1, 100, "first".to_string(), "running", None);

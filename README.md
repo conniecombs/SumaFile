@@ -372,6 +372,11 @@ rename.
   rate. Successful cloud reads, NAS writes, metadata gaps and durability flushes
   cannot impose a hidden limit. Native streams charge actual payload bytes,
   including short reads and small files, rather than reserving full buffers at EOF.
+- Automatic modes start from the kind of drives involved (fewer files at once for
+  a hard disk, more between solid-state drives), schedule small and large files
+  in two lanes that share the file limit, and treat a sustained rise in write
+  latency as an early sign of a saturated drive (unreleased Beta branch; see
+  [Transfer tuning](docs/TRANSFER_TUNING.md#how-the-scheduler-decides)).
 - Automatic modes compare sustained aggregate throughput while work is queued.
   They can test more/fewer workers and back off after actual I/O failures. A quiet
   window alone is not a failure. Settings learned by the former latency-based

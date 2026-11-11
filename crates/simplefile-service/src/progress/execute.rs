@@ -439,10 +439,12 @@ fn copy_file_overlapped_with_hash(
                             break;
                         }
                     }
+                    let write_started = ctx.progress.write_started(read);
                     if let Err(error) = dst_file.write_all(&buf[..read]) {
                         write_result = Err(Failure::io("Write temporary destination", dst, error));
                         break;
                     }
+                    ctx.progress.write_finished(write_started, read);
                     let _ = free_tx.send(buf);
                     copied = copied.saturating_add(read as u64);
                     if copied >= next_emit_at {
@@ -509,6 +511,7 @@ pub(crate) fn copy_file_multistream(
     streams: usize,
 ) -> Result<u64, Failure> {
     use std::os::windows::fs::FileExt;
+    use sumafile_transfer::tuning::LatencyHistogram;
 
     let stream_count = streams.clamp(1, 16);
     preallocate_file(dst_file, file_len);
@@ -519,6 +522,7 @@ pub(crate) fn copy_file_multistream(
     let (done_tx, done_rx) = mpsc::sync_channel::<Result<u64, Failure>>(stream_count);
     let cancel = ctx.progress.cancel;
     let rate_limit = ctx.progress.rate_limit;
+    let write_latency = ctx.progress.write_latency;
 
     let chunk_align = (buffer_size as u64).max(64 * 1024);
     let raw_stripe = file_len.div_ceil(stream_count as u64);
@@ -608,6 +612,9 @@ pub(crate) fn copy_file_multistream(
                             }
                         }
                     }
+                    let write_started = write_latency
+                        .filter(|_| LatencyHistogram::times(read_total))
+                        .map(|_| std::time::Instant::now());
                     let mut written_total = 0usize;
                     while written_total < read_total {
                         match dst_handle.seek_write(
@@ -636,6 +643,9 @@ pub(crate) fn copy_file_multistream(
                                 return;
                             }
                         }
+                    }
+                    if let (Some(histogram), Some(started)) = (write_latency, write_started) {
+                        histogram.record(started.elapsed(), read_total);
                     }
                     offset += read_total as u64;
                     stripe_copied += read_total as u64;
@@ -828,9 +838,11 @@ fn copy_file_stream_with_hash(
         if let Some(hasher) = hasher.as_deref_mut() {
             hasher.update(&buffer[..read]);
         }
+        let write_started = ctx.progress.write_started(read);
         writer
             .write_all(&buffer[..read])
             .map_err(|e| Failure::io("Write temporary destination", dst, e))?;
+        ctx.progress.write_finished(write_started, read);
         copied += read as u64;
         if copied >= next_emit_at {
             ctx.progress.emit(

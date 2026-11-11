@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
+use sumafile_transfer::tuning::{lane_index, LaneReport};
 
 /// Up to this many tasks are gathered before the first dispatch so the adaptive
 /// controller can classify the workload, but never for longer than
@@ -872,6 +873,38 @@ pub(crate) fn copy_files_streaming_using(
 
 type CompletionSink<'a> = dyn FnMut(&FileTask, &SourceVersion) -> Result<(), String> + 'a;
 
+/// Files in flight and their copied bytes, per lane.
+fn lane_load(active: &BTreeMap<usize, ActiveFile>, two_lanes: bool) -> ([usize; 2], [u64; 2]) {
+    let mut files = [0usize; 2];
+    let mut bytes = [0u64; 2];
+    for file in active.values() {
+        let lane = lane_index(two_lanes, file.total);
+        files[lane] += 1;
+        bytes[lane] = bytes[lane].saturating_add(file.current);
+    }
+    (files, bytes)
+}
+
+/// Tell the session what is waiting in each lane that has not been classified
+/// yet, so the lane gets its starting point before its first file is sent.
+fn open_lanes(
+    session: &mut Session<'_>,
+    open: &mut [bool; 2],
+    ready: &[VecDeque<usize>; 2],
+    tasks: &BTreeMap<usize, FileTask>,
+    buffer_size: usize,
+    moved: &[u64; 2],
+) {
+    for lane in 0..2 {
+        if open[lane] || ready[lane].is_empty() {
+            continue;
+        }
+        let bytes = ready[lane].iter().map(|index| tasks[index].size).sum();
+        session.workload(lane, bytes, ready[lane].len(), buffer_size, moved[lane]);
+        open[lane] = true;
+    }
+}
+
 fn copy_files_streaming_with_sink(
     next_task: &mut (dyn FnMut() -> Result<Option<FileTask>, String> + Send),
     ctx: &ProgressContext<'_>,
@@ -880,16 +913,23 @@ fn copy_files_streaming_with_sink(
     copy: &CopyVersionedFunction<'_>,
     mut completed_sink: Option<&mut CompletionSink<'_>>,
 ) -> CopyResult {
-    let backlog_limit = session.controller.policy.backlog_limit();
-    let order_by = session.controller.policy.order_by;
+    session.begin();
+    // Small and large files are queued and limited separately ("lanes") when
+    // the policy leaves the order to the scheduler; otherwise everything is
+    // lane 0 and the single queue below behaves as it always has.
+    let two_lanes = session.two_lanes();
+    let backlog_limit = session.policy().backlog_limit();
+    let order_by = session.policy().order_by;
     let channel_cap = backlog_limit.clamp(64, 4096);
-    let max_hl_attempts = session.controller.policy.high_level_retry_limit().max(1) as usize;
+    let max_hl_attempts = session.policy().high_level_retry_limit().max(1) as usize;
     let worker_cancel = Arc::new(AtomicBool::new(false));
-    let retry_count = AtomicU64::new(0);
+    let retry_counts = [AtomicU64::new(0), AtomicU64::new(0)];
     let mut result = CopyResult::new();
     let mut tasks = BTreeMap::<usize, FileTask>::new();
     let mut next_index = 0usize;
-    let mut ready_queue = VecDeque::with_capacity(PRIME_COUNT);
+    let mut ready = [VecDeque::with_capacity(PRIME_COUNT), VecDeque::new()];
+    // Bytes of finished files per lane; `result.bytes` stays the job's total.
+    let mut lane_done = [0u64; 2];
     let mut producer_done = false;
     let (scan_tx, scan_rx) = mpsc::sync_channel::<Result<FileTask, String>>(channel_cap);
     let (event_tx, event_rx) = mpsc::sync_channel::<Message>(channel_cap);
@@ -898,7 +938,8 @@ fn copy_files_streaming_with_sink(
     let operation_type = ctx.operation_type;
     // Created before the scope: worker threads borrow the receiver for the
     // whole scope, so it must outlive it.
-    let (work_tx, work_rx) = mpsc::sync_channel::<(usize, FileTask, super::tuning::Policy)>(32);
+    let (work_tx, work_rx) =
+        mpsc::sync_channel::<(usize, usize, FileTask, super::tuning::Policy)>(32);
     let work_rx = Mutex::new(work_rx);
 
     std::thread::scope(|scope| {
@@ -949,8 +990,8 @@ fn copy_files_streaming_with_sink(
                 Ok(Ok(task)) => {
                     let idx = next_index;
                     next_index += 1;
+                    ready[lane_index(two_lanes, task.size)].push_back(idx);
                     tasks.insert(idx, task);
-                    ready_queue.push_back(idx);
                 }
                 Ok(Err(error)) => {
                     result.scan_error = Some(error);
@@ -985,15 +1026,19 @@ fn copy_files_streaming_with_sink(
         {
             result.retained_tasks_peak = tasks.len();
         }
-        sort_ready_queue(&mut ready_queue, &tasks, order_by);
+        // A chosen order means one lane, so only lane 0 is ever sorted.
+        sort_ready_queue(&mut ready[0], &tasks, order_by);
 
         let all_network = tasks.values().all(|t| t.network);
-        let buffer_size = session.controller.policy.buffer_bytes(all_network);
-        session.workload(
-            tasks.values().map(|t| t.size).sum(),
-            tasks.len(),
+        let buffer_size = session.policy().buffer_bytes(all_network);
+        let mut lane_open = [false; 2];
+        open_lanes(
+            session,
+            &mut lane_open,
+            &ready,
+            &tasks,
             buffer_size,
-            offset,
+            &lane_done,
         );
         let worker_count = if producer_done {
             tasks.len().min(32)
@@ -1005,8 +1050,8 @@ fn copy_files_streaming_with_sink(
         let mut file_hl_attempts = BTreeMap::<usize, usize>::new();
         let mut first_snapshot = true;
         let mut last_display = Instant::now();
-        let mut last_retries = 0;
-        if let Some(&first_idx) = ready_queue.front() {
+        let mut last_retries = [0u64; 2];
+        if let Some(&first_idx) = ready.iter().filter_map(VecDeque::front).min() {
             if let Some(first) = tasks.get(&first_idx) {
                 ctx.emit_now(
                     offset,
@@ -1022,9 +1067,10 @@ fn copy_files_streaming_with_sink(
             let work_rx = &work_rx;
             let tx = event_tx.clone();
             let cancel = &worker_cancel;
-            let retries = &retry_count;
+            let retries = &retry_counts;
             let limiter = session.limiter.clone();
             let memory = session.memory.clone();
+            let latency = [session.latency(0), session.latency(1)];
             scope.spawn(move || {
                 let last_worker_emit = std::cell::Cell::new(
                     Instant::now()
@@ -1035,7 +1081,7 @@ fn copy_files_streaming_with_sink(
                     // Drop the receiver guard before doing I/O; keeping it in a
                     // while-let scrutinee would serialize every worker.
                     let next_item = { work_rx.lock().expect("work queue lock poisoned").recv() };
-                    let Ok((index, task, policy)) = next_item else {
+                    let Ok((index, lane, task, policy)) = next_item else {
                         break;
                     };
                     let total_bytes = Arc::new(AtomicU64::new(task.size));
@@ -1065,8 +1111,11 @@ fn copy_files_streaming_with_sink(
                         total_files: &total_files,
                         completed_files: &completed_files,
                         last_running_emit: Mutex::new(Instant::now()),
-                        retry_count: Some(retries),
+                        retry_count: Some(&retries[lane]),
                         rate_limit: Some(&limiter),
+                        // A custom limit is never tuned, so nothing is timed.
+                        write_latency: (policy.mode != super::tuning::Mode::Manual)
+                            .then_some(&*latency[lane]),
                     };
                     let context = CopyContext {
                         progress: &progress,
@@ -1100,103 +1149,108 @@ fn copy_files_streaming_with_sink(
         }
         drop(event_tx);
 
-        let mut handle_event =
-            |message: Message,
-             active: &mut BTreeMap<usize, ActiveFile>,
-             result: &mut CopyResult,
-             deferred_retries: &mut VecDeque<(usize, Failure)>,
-             file_hl_attempts: &mut BTreeMap<usize, usize>,
-             ready_empty: bool,
-             producer_done: bool,
-             last_display: &Instant,
-             tasks: &mut BTreeMap<usize, FileTask>| {
-                match message {
-                    Message::ScanAvailable => {}
-                    Message::Progress(index, update) => {
-                        if let Some(file) = active.get_mut(&index) {
-                            file.current = file.current.max(update.current);
-                        }
-                        if update.status == "finalizing"
-                            && (last_display.elapsed() >= Duration::from_millis(200)
-                                || (active.len() == 1 && producer_done && ready_empty))
-                        {
-                            let current = offset
-                                .saturating_add(result.bytes)
-                                .saturating_add(active.values().map(|f| f.current).sum::<u64>());
-                            ctx.finalizing(current, update.current_item);
-                        }
+        let mut handle_event = |message: Message,
+                                active: &mut BTreeMap<usize, ActiveFile>,
+                                result: &mut CopyResult,
+                                deferred_retries: &mut VecDeque<(usize, Failure)>,
+                                file_hl_attempts: &mut BTreeMap<usize, usize>,
+                                ready_empty: bool,
+                                producer_done: bool,
+                                last_display: &Instant,
+                                tasks: &mut BTreeMap<usize, FileTask>,
+                                lane_done: &mut [u64; 2]| {
+            match message {
+                Message::ScanAvailable => {}
+                Message::Progress(index, update) => {
+                    if let Some(file) = active.get_mut(&index) {
+                        file.current = file.current.max(update.current);
                     }
-                    Message::Finished(index, bytes, status) => {
-                        active.remove(&index);
-                        match status {
-                            Ok(FileOutcome::Copied {
-                                version,
-                                destination,
-                            }) => {
-                                result.bytes = result.bytes.saturating_add(bytes);
-                                let Some(task) = tasks.remove(&index) else {
-                                    return;
-                                };
-                                if let Some(sink) = completed_sink.as_deref_mut() {
-                                    if let Err(error) = sink(&task, &version) {
-                                        result.failed.push((
-                                            index,
-                                            TaskFailure {
-                                                source: task.source.clone(),
-                                                destination: destination.clone(),
-                                                failure: Failure::from(error),
-                                            },
-                                        ));
-                                    }
-                                }
-                                if task.top_level {
-                                    result.completed.push(index);
-                                    if destination != task.destination {
-                                        result.destinations.insert(index, destination);
-                                    }
-                                    result.completed_tasks.insert(index, task);
-                                }
-                                file_hl_attempts.remove(&index);
-                                ctx.completed_files.fetch_add(1, Ordering::Relaxed);
+                    if update.status == "finalizing"
+                        && (last_display.elapsed() >= Duration::from_millis(200)
+                            || (active.len() == 1 && producer_done && ready_empty))
+                    {
+                        let current = offset
+                            .saturating_add(result.bytes)
+                            .saturating_add(active.values().map(|f| f.current).sum::<u64>());
+                        ctx.finalizing(current, update.current_item);
+                    }
+                }
+                Message::Finished(index, bytes, status) => {
+                    let lane = active
+                        .remove(&index)
+                        .map(|file| lane_index(two_lanes, file.total));
+                    match status {
+                        Ok(FileOutcome::Copied {
+                            version,
+                            destination,
+                        }) => {
+                            result.bytes = result.bytes.saturating_add(bytes);
+                            if let Some(lane) = lane {
+                                lane_done[lane] = lane_done[lane].saturating_add(bytes);
                             }
-                            Ok(FileOutcome::Skipped) => {
-                                if let Some(task) = tasks.remove(&index) {
-                                    result.skipped.push((index, task));
-                                }
-                                file_hl_attempts.remove(&index);
-                                ctx.completed_files.fetch_add(1, Ordering::Relaxed);
-                            }
-                            Err(error) => {
-                                if error.is_cancelled() {
-                                    worker_cancel.store(true, Ordering::Relaxed);
-                                    return;
-                                }
-                                let attempts = file_hl_attempts.entry(index).or_insert(0);
-                                *attempts += 1;
-                                if *attempts < max_hl_attempts
-                                    && !worker_cancel.load(Ordering::Relaxed)
-                                    && error.kind.is_retryable()
-                                {
-                                    deferred_retries.push_back((index, error));
-                                } else if let Some(task) = tasks.remove(&index) {
-                                    file_hl_attempts.remove(&index);
+                            let Some(task) = tasks.remove(&index) else {
+                                return;
+                            };
+                            if let Some(sink) = completed_sink.as_deref_mut() {
+                                if let Err(error) = sink(&task, &version) {
                                     result.failed.push((
                                         index,
                                         TaskFailure {
                                             source: task.source.clone(),
-                                            destination: task.destination.clone(),
-                                            failure: error,
+                                            destination: destination.clone(),
+                                            failure: Failure::from(error),
                                         },
                                     ));
                                 }
                             }
+                            if task.top_level {
+                                result.completed.push(index);
+                                if destination != task.destination {
+                                    result.destinations.insert(index, destination);
+                                }
+                                result.completed_tasks.insert(index, task);
+                            }
+                            file_hl_attempts.remove(&index);
+                            ctx.completed_files.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Ok(FileOutcome::Skipped) => {
+                            if let Some(task) = tasks.remove(&index) {
+                                result.skipped.push((index, task));
+                            }
+                            file_hl_attempts.remove(&index);
+                            ctx.completed_files.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(error) => {
+                            if error.is_cancelled() {
+                                worker_cancel.store(true, Ordering::Relaxed);
+                                return;
+                            }
+                            let attempts = file_hl_attempts.entry(index).or_insert(0);
+                            *attempts += 1;
+                            if *attempts < max_hl_attempts
+                                && !worker_cancel.load(Ordering::Relaxed)
+                                && error.kind.is_retryable()
+                            {
+                                deferred_retries.push_back((index, error));
+                            } else if let Some(task) = tasks.remove(&index) {
+                                file_hl_attempts.remove(&index);
+                                result.failed.push((
+                                    index,
+                                    TaskFailure {
+                                        source: task.source.clone(),
+                                        destination: task.destination.clone(),
+                                        failure: error,
+                                    },
+                                ));
+                            }
                         }
                     }
                 }
-            };
+            }
+        };
 
         while !producer_done
-            || !ready_queue.is_empty()
+            || ready.iter().any(|queue| !queue.is_empty())
             || !active.is_empty()
             || (!worker_cancel.load(Ordering::Relaxed) && !deferred_retries.is_empty())
         {
@@ -1207,8 +1261,7 @@ fn copy_files_streaming_with_sink(
             let mut added_from_scan = false;
             while !producer_done
                 && !worker_cancel.load(Ordering::Relaxed)
-                && ready_queue
-                    .len()
+                && (ready[0].len() + ready[1].len())
                     .saturating_add(active.len())
                     .saturating_add(deferred_retries.len())
                     < backlog_limit
@@ -1217,8 +1270,8 @@ fn copy_files_streaming_with_sink(
                     Ok(Ok(task)) => {
                         let idx = next_index;
                         next_index += 1;
+                        ready[lane_index(two_lanes, task.size)].push_back(idx);
                         tasks.insert(idx, task);
-                        ready_queue.push_back(idx);
                         added_from_scan = true;
                     }
                     Ok(Err(error)) => {
@@ -1239,27 +1292,45 @@ fn copy_files_streaming_with_sink(
                 result.retained_tasks_peak = result.retained_tasks_peak.max(tasks.len());
             }
             if added_from_scan {
-                sort_ready_queue(&mut ready_queue, &tasks, order_by);
+                sort_ready_queue(&mut ready[0], &tasks, order_by);
             }
 
             if (producer_done || deferred_retries.len() >= backlog_limit)
-                && ready_queue.is_empty()
+                && ready.iter().all(VecDeque::is_empty)
                 && active.is_empty()
                 && !worker_cancel.load(Ordering::Relaxed)
                 && !deferred_retries.is_empty()
             {
                 for (retry_index, _prev_err) in deferred_retries.drain(..) {
-                    ready_queue.push_back(retry_index);
+                    ready[lane_index(two_lanes, tasks[&retry_index].size)].push_back(retry_index);
                 }
-                sort_ready_queue(&mut ready_queue, &tasks, order_by);
+                sort_ready_queue(&mut ready[0], &tasks, order_by);
             }
+            open_lanes(
+                session,
+                &mut lane_open,
+                &ready,
+                &tasks,
+                buffer_size,
+                &lane_done,
+            );
 
-            while !worker_cancel.load(Ordering::Relaxed)
-                && active.len() < session.controller.concurrency
-            {
-                let Some(next_idx) = ready_queue.pop_front() else {
+            // Each lane fills up to its own limit and the job as a whole to the
+            // policy limit. Among lanes with room, the file that has waited
+            // longest goes first, so neither lane can starve the other.
+            let (mut lane_active, _) = lane_load(&active, two_lanes);
+            while !worker_cancel.load(Ordering::Relaxed) && active.len() < session.total_limit() {
+                let Some((_, lane)) = (0..2)
+                    .filter(|&lane| lane_active[lane] < session.concurrency(lane))
+                    .filter_map(|lane| ready[lane].front().map(|&index| (index, lane)))
+                    .min()
+                else {
                     break;
                 };
+                let Some(next_idx) = ready[lane].pop_front() else {
+                    break;
+                };
+                lane_active[lane] += 1;
                 let task = tasks[&next_idx].clone();
                 active.insert(
                     next_idx,
@@ -1270,17 +1341,22 @@ fn copy_files_streaming_with_sink(
                     },
                 );
                 if work_tx
-                    .send((next_idx, task, session.controller.policy.clone()))
+                    .send((next_idx, lane, task, session.policy().clone()))
                     .is_err()
                 {
                     break;
                 }
             }
 
+            let room_for_more = if two_lanes {
+                session.total_limit()
+            } else {
+                session.concurrency(0)
+            };
             if !producer_done
                 && !worker_cancel.load(Ordering::Relaxed)
-                && ready_queue.is_empty()
-                && active.len() < session.controller.concurrency
+                && ready.iter().all(VecDeque::is_empty)
+                && active.len() < room_for_more
             {
                 need_scan_wake.store(true, Ordering::Release);
                 if let Ok(scanned) = scan_rx.try_recv() {
@@ -1289,9 +1365,9 @@ fn copy_files_streaming_with_sink(
                         Ok(task) => {
                             let idx = next_index;
                             next_index += 1;
+                            ready[lane_index(two_lanes, task.size)].push_back(idx);
                             tasks.insert(idx, task);
-                            ready_queue.push_back(idx);
-                            sort_ready_queue(&mut ready_queue, &tasks, order_by);
+                            sort_ready_queue(&mut ready[0], &tasks, order_by);
                             continue;
                         }
                         Err(error) => {
@@ -1303,7 +1379,9 @@ fn copy_files_streaming_with_sink(
                 }
             }
             if active.is_empty()
-                && ((producer_done && ready_queue.is_empty() && deferred_retries.is_empty())
+                && ((producer_done
+                    && ready.iter().all(VecDeque::is_empty)
+                    && deferred_retries.is_empty())
                     || worker_cancel.load(Ordering::Relaxed))
             {
                 break;
@@ -1313,7 +1391,10 @@ fn copy_files_streaming_with_sink(
                 first_snapshot = false;
             }
             // A drained queue is not evidence that a lower setting is faster.
-            let saturated = active.len() >= session.controller.concurrency;
+            let (lane_active, _) = lane_load(&active, two_lanes);
+            let saturated = [0, 1].map(|lane| lane_active[lane] >= session.concurrency(lane));
+            let demand = [0, 1].map(|lane| lane_active[lane] > 0 || !ready[lane].is_empty());
+            let ready_empty = ready.iter().all(VecDeque::is_empty);
             match event_rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(first_msg) => {
                     handle_event(
@@ -1322,10 +1403,11 @@ fn copy_files_streaming_with_sink(
                         &mut result,
                         &mut deferred_retries,
                         &mut file_hl_attempts,
-                        ready_queue.is_empty(),
+                        ready_empty,
                         producer_done,
                         &last_display,
                         &mut tasks,
+                        &mut lane_done,
                     );
                     while let Ok(msg) = event_rx.try_recv() {
                         handle_event(
@@ -1334,10 +1416,11 @@ fn copy_files_streaming_with_sink(
                             &mut result,
                             &mut deferred_retries,
                             &mut file_hl_attempts,
-                            ready_queue.is_empty(),
+                            ready_empty,
                             producer_done,
                             &last_display,
                             &mut tasks,
+                            &mut lane_done,
                         );
                     }
                 }
@@ -1352,9 +1435,19 @@ fn copy_files_streaming_with_sink(
             let current = offset
                 .saturating_add(result.bytes)
                 .saturating_add(active.values().map(|f| f.current).sum::<u64>());
-            let retries = retry_count.load(Ordering::Relaxed);
-            session.observe(current, saturated, retries - last_retries);
-            last_retries = retries;
+            let (_, lane_in_flight) = lane_load(&active, two_lanes);
+            let reports = [0, 1].map(|lane| {
+                let retries = retry_counts[lane].load(Ordering::Relaxed);
+                let report = LaneReport {
+                    bytes: lane_done[lane].saturating_add(lane_in_flight[lane]),
+                    saturated: saturated[lane],
+                    demand: demand[lane],
+                    retries: retries - last_retries[lane],
+                };
+                last_retries[lane] = retries;
+                report
+            });
+            session.observe(reports);
             if last_display.elapsed() >= Duration::from_millis(200) || active.is_empty() {
                 ctx.emit(
                     current,
@@ -1376,7 +1469,10 @@ fn copy_files_streaming_with_sink(
             result.cancelled = true;
         }
     });
-    session.observe(offset.saturating_add(result.bytes), false, 0);
+    session.observe(lane_done.map(|bytes| LaneReport {
+        bytes,
+        ..LaneReport::default()
+    }));
     session.display(Vec::new(), true);
     result
 }
@@ -1422,6 +1518,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
         let mut session = Session::new(
             "bounded-policy-test",
@@ -1534,6 +1631,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
         let snapshots = Mutex::new(Vec::new());
         let emit = |update| snapshots.lock().unwrap().push(update);
@@ -1648,6 +1746,7 @@ mod tests {
                 last_running_emit: Mutex::new(Instant::now()),
                 retry_count: None,
                 rate_limit: None,
+                write_latency: None,
             };
             let snapshots = Mutex::new(Vec::new());
             let emit = |update| snapshots.lock().unwrap().push(update);
@@ -1779,6 +1878,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
         let policy = || Policy {
             mode: Mode::Manual,
@@ -1880,6 +1980,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
         let active_policy = Policy {
             mode: Mode::Automatic,
@@ -1989,6 +2090,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
         let policy = || Policy::default();
         let mut session = Session::new(
@@ -2102,6 +2204,7 @@ mod tests {
                 last_running_emit: Mutex::new(Instant::now()),
                 retry_count: None,
                 rate_limit: None,
+                write_latency: None,
             };
             let policy = || Policy {
                 mode: Mode::Manual,
@@ -2170,6 +2273,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
         let ctx = CopyContext {
             progress: &progress,
