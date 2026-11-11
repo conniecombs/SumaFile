@@ -96,6 +96,18 @@ token-created PR events do not start another workflow automatically. Interrupted
 publication can recover its branch/PR and missing CI dispatch. No PAT or AI
 service key is needed. Unknown fixes are intentionally not guessed.
 
+Runs started with the workflow token also never raise `workflow_run`, so the
+merge gate cannot follow that dispatched CI the usual way. Instead, a
+successful dispatched CI run on a `connie/maintenance/` branch ends with a
+`merge-gate` job (only `actions: write`) that dispatches the trusted merge
+workflow from main with its own run id. The merge workflow re-reads that run,
+waits for it to complete and applies the same policy as for `workflow_run`.
+The PR's own `pull_request` CI run is held at *approval required* because the
+PR came from the workflow token; that alone makes GitHub report the PR as
+`unstable`. The merge policy accepts `unstable` only when every other check
+suite and commit status on the exact head succeeded and the sole outstanding
+runs are those approval-held CI runs.
+
 CI runs repository guards, maintenance tests, strict Rust checks, security audit,
 backend build, WinUI unit/XAML/UI/hash checks, and the complete installer workflow
 for dependency and maintenance PRs. That installer workflow includes package
