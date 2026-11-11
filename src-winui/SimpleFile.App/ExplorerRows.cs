@@ -20,7 +20,14 @@ public sealed class FileRow : IInspectionEntryPresentation
     public ulong Size { get; set; }
     public string Extension { get; set; } = "";
     public string ExtensionText { get; set; } = "";
-    public string GitText { get; set; } = "";
+    /// <summary>The row's plugin decoration text (the status column and the secondary text), or empty.</summary>
+    public string DecorationText { get; set; } = "";
+    /// <summary>The decoration's theme brush key as the plugin gave it; drawn through <see cref="DecorationBrushKeys"/>.</summary>
+    public string DecorationBrushKey { get; set; } = "";
+    /// <summary>The decoration's tooltip, or empty.</summary>
+    public string DecorationTooltip { get; set; } = "";
+    /// <summary>Every plugin that decorates this row, for the <c>hasDecoration</c> of <c>when</c> expressions.</summary>
+    public IReadOnlySet<string> DecorationPlugins { get; set; } = NoDecorationPlugins;
     public string SymlinkText { get; set; } = "";
     public string PathText { get; set; } = "";
     public string ParentText { get; set; } = "";
@@ -28,6 +35,8 @@ public sealed class FileRow : IInspectionEntryPresentation
     public string TagName { get; set; } = "";
     public PaneId Pane { get; set; } = PaneId.Primary;
     public bool IsHidden { get; set; }
+    private static readonly IReadOnlySet<string> NoDecorationPlugins = new HashSet<string>(StringComparer.Ordinal);
+
     public string AutomationName => IsDir ? $"Folder {Name}" : $"File {Name}";
 
     public string ColumnText(string columnId)
@@ -40,7 +49,7 @@ public sealed class FileRow : IInspectionEntryPresentation
             "date" or "modified" => ModifiedText,
             "type" => TypeText,
             "extension" => ExtensionText,
-            "git" => GitText,
+            "git" => DecorationText,
             "symlink" => SymlinkText,
             "path" => PathText,
             "parent" => ParentText,
@@ -64,7 +73,6 @@ public sealed class FileRow : IInspectionEntryPresentation
             Size = entry.Size,
             Extension = entry.Extension ?? "",
             ExtensionText = EntryPresentation.ColumnText(entry, "extension"),
-            GitText = entry.GitStatus ?? "",
             SymlinkText = entry.SymlinkTarget ?? "",
             PathText = entry.Path,
             ParentText = EntryPresentation.ColumnText(entry, "parent"),
@@ -72,48 +80,6 @@ public sealed class FileRow : IInspectionEntryPresentation
             TagName = tag?.Name ?? "",
             Pane = pane,
             IsHidden = EntryPresentation.IsHiddenFromUser(entry),
-        };
-    }
-}
-
-public sealed class GitChangeRow
-{
-    public string Path { get; set; } = "";
-    public string AbsolutePath { get; set; } = "";
-    public string? OriginalPath { get; set; }
-    public string StatusText { get; set; } = "";
-    public string DetailText { get; set; } = "";
-    public string StageText { get; set; } = "";
-    public bool CanStage { get; set; }
-    public bool CanUnstage { get; set; }
-    public bool CanDiscard { get; set; }
-    public bool CanDiff { get; set; }
-
-    public static GitChangeRow From(GitFileStatus status)
-    {
-        var detail = status.OriginalPath is { Length: > 0 }
-            ? $"from {status.OriginalPath}"
-            : status.AbsolutePath;
-        return new GitChangeRow
-        {
-            Path = status.Path,
-            AbsolutePath = status.AbsolutePath,
-            OriginalPath = status.OriginalPath,
-            StatusText = status.Status,
-            DetailText = detail,
-            StageText = status.Conflicted
-                ? "conflict"
-                : status.Staged && status.Unstaged
-                    ? "staged + unstaged"
-                    : status.Staged
-                        ? "staged"
-                        : status.Untracked
-                            ? "untracked"
-                            : "unstaged",
-            CanStage = status.Untracked || status.Unstaged || status.Conflicted,
-            CanUnstage = status.Staged,
-            CanDiscard = status.Untracked || status.Unstaged || status.Staged || status.Conflicted,
-            CanDiff = !status.Untracked,
         };
     }
 }
@@ -211,44 +177,5 @@ public sealed class QuickAccessRow
                 _ => homePath,
             };
         }
-    }
-}
-
-public sealed class RemoteProfileSidebarRow
-{
-    public string ProfileId { get; set; } = "";
-    public string Name { get; set; } = "";
-    public string Protocol { get; set; } = "";
-    public string Host { get; set; } = "";
-    public string Description { get; set; } = "";
-
-    /// <summary>Plain FTP the user confirmed: passwords and files travel unencrypted.</summary>
-    public bool IsInsecure { get; set; }
-
-    public Visibility InsecureBadgeVisibility => IsInsecure ? Visibility.Visible : Visibility.Collapsed;
-
-    public static RemoteProfileSidebarRow From(RemoteProfile profile)
-    {
-        ArgumentNullException.ThrowIfNull(profile);
-        return new RemoteProfileSidebarRow
-        {
-            ProfileId = profile.Id,
-            Name = string.IsNullOrWhiteSpace(profile.Name) ? profile.Host : profile.Name,
-            Protocol = profile.Protocol.ToUpperInvariant(),
-            Host = profile.Host,
-            Description = FormatDescription(profile),
-            IsInsecure = RemoteManagerViewModel.IsInsecureProfile(profile),
-        };
-    }
-
-    private static string FormatDescription(RemoteProfile profile)
-    {
-        var protocol = string.IsNullOrWhiteSpace(profile.Protocol)
-            ? "remote"
-            : profile.Protocol.ToLowerInvariant();
-        var userPrefix = string.IsNullOrWhiteSpace(profile.Username) ? "" : profile.Username + "@";
-        var port = profile.Port > 0 ? ":" + profile.Port.ToString(CultureInfo.InvariantCulture) : "";
-        var root = string.IsNullOrWhiteSpace(profile.RootPath) ? "/" : profile.RootPath;
-        return $"{protocol}://{userPrefix}{profile.Host}{port}{root}";
     }
 }

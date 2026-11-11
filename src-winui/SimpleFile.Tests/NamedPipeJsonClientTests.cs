@@ -658,215 +658,6 @@ public class NamedPipeJsonClientTests
     }
 
     [Fact]
-    public async Task RemoteProfileMethods_UseContractNamesAndNeverReturnSecret()
-    {
-        var (server, client) = await FakeIpcServer.ConnectAsync();
-        await using var serverLifetime = server;
-        await using var clientLifetime = client;
-
-        var input = new RemoteProfileInput
-        {
-            Name = "Production SFTP",
-            Protocol = "sftp",
-            Host = "files.example.com",
-            Port = 22,
-            Username = "deploy",
-            RootPath = "var/www",
-            AuthKind = "password",
-            PassiveMode = true,
-            PrivateKeyPath = @"C:\Users\raz00\.ssh\id_ed25519",
-        };
-
-        var save = client.RemoteSaveProfileAsync(input, "not-returned");
-        var saveRequest = await server.ReadRequestAsync();
-        Assert.Equal(Protocol.RemoteSaveProfileMethod, saveRequest.Method);
-        var saveParams = Assert.IsType<JsonElement>(saveRequest.Params);
-        Assert.Equal("not-returned", saveParams.GetProperty("secret").GetString());
-        var profileParams = saveParams.GetProperty("profile");
-        Assert.Equal("Production SFTP", profileParams.GetProperty("name").GetString());
-        Assert.Equal(@"C:\Users\raz00\.ssh\id_ed25519", profileParams.GetProperty("private_key_path").GetString());
-        Assert.Equal("auth_kind", profileParams.EnumerateObject().Single(property => property.Name == "auth_kind").Name);
-        Assert.Equal("private_key_path", profileParams.EnumerateObject().Single(property => property.Name == "private_key_path").Name);
-        Assert.False(profileParams.TryGetProperty("authKind", out _));
-        Assert.False(profileParams.TryGetProperty("privateKeyPath", out _));
-
-        await server.SendResultAsync(saveRequest.Id, new RemoteProfile
-        {
-            Id = "profile-1",
-            Name = "Production SFTP",
-            Protocol = "sftp",
-            Host = "files.example.com",
-            Port = 22,
-            Username = "deploy",
-            RootPath = "/var/www",
-            AuthKind = "password",
-            PassiveMode = true,
-            CredentialTarget = "SumaFile.Remote.profile-1",
-            PrivateKeyPath = @"C:\Users\raz00\.ssh\id_ed25519",
-        });
-        var saved = await save;
-        Assert.Equal("profile-1", saved.Id);
-        Assert.Equal("SumaFile.Remote.profile-1", saved.CredentialTarget);
-        Assert.Equal(@"C:\Users\raz00\.ssh\id_ed25519", saved.PrivateKeyPath);
-
-        var list = client.RemoteListProfilesAsync();
-        var listRequest = await server.ReadRequestAsync();
-        Assert.Equal(Protocol.RemoteListProfilesMethod, listRequest.Method);
-        await server.SendResultAsync(listRequest.Id, new[] { saved });
-        var profiles = await list;
-        Assert.Single(profiles);
-        Assert.Equal("Production SFTP", profiles[0].Name);
-    }
-
-    [Fact]
-    public async Task RemoteSessionMethods_UseContractNamesAndDirectoryListingShape()
-    {
-        var (server, client) = await FakeIpcServer.ConnectAsync();
-        await using var serverLifetime = server;
-        await using var clientLifetime = client;
-
-        var connect = client.RemoteConnectAsync("profile-1", "not-returned");
-        var connectRequest = await server.ReadRequestAsync();
-        Assert.Equal(Protocol.RemoteConnectMethod, connectRequest.Method);
-        var connectParams = Assert.IsType<JsonElement>(connectRequest.Params);
-        Assert.Equal("profile-1", connectParams.GetProperty("profileId").GetString());
-        Assert.Equal("not-returned", connectParams.GetProperty("secret").GetString());
-        await server.SendResultAsync(connectRequest.Id, new RemoteSession
-        {
-            SessionId = "remote-session-1",
-            ProfileId = "profile-1",
-            Protocol = "sftp",
-            RootPath = "/",
-        });
-        var session = await connect;
-        Assert.Equal("remote-session-1", session.SessionId);
-
-        var list = client.RemoteListDirectoryAsync(session.SessionId, "/");
-        var listRequest = await server.ReadRequestAsync();
-        Assert.Equal(Protocol.RemoteListDirectoryMethod, listRequest.Method);
-        var listParams = Assert.IsType<JsonElement>(listRequest.Params);
-        Assert.Equal("remote-session-1", listParams.GetProperty("remoteSessionId").GetString());
-        Assert.Equal("/", listParams.GetProperty("path").GetString());
-        await server.SendResultAsync(listRequest.Id, new DirectoryListing
-        {
-            Path = "/",
-            Parent = null,
-            IsNetwork = true,
-            Entries =
-            [
-                new FileEntry
-                {
-                    Name = "release",
-                    Path = "/release",
-                    IsDir = true,
-                    Modified = "2026-09-21T00:00:00Z",
-                },
-            ],
-        });
-        var listing = await list;
-        Assert.True(listing.IsNetwork);
-        Assert.Equal("release", listing.Entries[0].Name);
-
-        var disconnect = client.RemoteDisconnectAsync(session.SessionId);
-        var disconnectRequest = await server.ReadRequestAsync();
-        Assert.Equal(Protocol.RemoteDisconnectMethod, disconnectRequest.Method);
-        var disconnectParams = Assert.IsType<JsonElement>(disconnectRequest.Params);
-        Assert.Equal("remote-session-1", disconnectParams.GetProperty("remoteSessionId").GetString());
-        await server.SendResultAsync(disconnectRequest.Id, null);
-        await disconnect;
-    }
-
-    [Fact]
-    public async Task RemoteMutationMethods_UseContractNamesAndCasing()
-    {
-        var (server, client) = await FakeIpcServer.ConnectAsync();
-        await using var serverLifetime = server;
-        await using var clientLifetime = client;
-
-        var create = client.RemoteCreateDirectoryAsync("remote-session-1", "/", "incoming");
-        var createRequest = await server.ReadRequestAsync();
-        Assert.Equal(Protocol.RemoteCreateDirectoryMethod, createRequest.Method);
-        var createParams = Assert.IsType<JsonElement>(createRequest.Params);
-        Assert.Equal("remote-session-1", createParams.GetProperty("remoteSessionId").GetString());
-        Assert.Equal("/", createParams.GetProperty("path").GetString());
-        Assert.Equal("incoming", createParams.GetProperty("name").GetString());
-        await server.SendResultAsync(createRequest.Id, new FileEntry
-        {
-            Name = "incoming",
-            Path = "/incoming",
-            IsDir = true,
-            Modified = "2026-09-21T00:00:00Z",
-        });
-        var created = await create;
-        Assert.True(created.IsDir);
-        Assert.Equal("/incoming", created.Path);
-
-        var rename = client.RemoteRenameEntryAsync("remote-session-1", "/incoming", "archive");
-        var renameRequest = await server.ReadRequestAsync();
-        Assert.Equal(Protocol.RemoteRenameEntryMethod, renameRequest.Method);
-        var renameParams = Assert.IsType<JsonElement>(renameRequest.Params);
-        Assert.Equal("remote-session-1", renameParams.GetProperty("remoteSessionId").GetString());
-        Assert.Equal("/incoming", renameParams.GetProperty("path").GetString());
-        Assert.Equal("archive", renameParams.GetProperty("newName").GetString());
-        await server.SendResultAsync(renameRequest.Id, new FileEntry
-        {
-            Name = "archive",
-            Path = "/archive",
-            IsDir = true,
-            Modified = "2026-09-21T00:00:00Z",
-        });
-        var renamed = await rename;
-        Assert.Equal("archive", renamed.Name);
-        Assert.Equal("/archive", renamed.Path);
-
-        var delete = client.RemoteDeleteEntriesAsync("remote-session-1", ["/archive"]);
-        var deleteRequest = await server.ReadRequestAsync();
-        Assert.Equal(Protocol.RemoteDeleteEntriesMethod, deleteRequest.Method);
-        var deleteParams = Assert.IsType<JsonElement>(deleteRequest.Params);
-        Assert.Equal("remote-session-1", deleteParams.GetProperty("remoteSessionId").GetString());
-        Assert.Equal("/archive", deleteParams.GetProperty("paths")[0].GetString());
-        await server.SendResultAsync(deleteRequest.Id, new[] { "/archive" });
-        var deleted = await delete;
-        Assert.Equal(["/archive"], deleted);
-    }
-
-    [Fact]
-    public async Task RemoteTransferMethods_UseContractNamesAndCasing()
-    {
-        var (server, client) = await FakeIpcServer.ConnectAsync();
-        await using var serverLifetime = server;
-        await using var clientLifetime = client;
-
-        var download = client.RemoteDownloadFileAsync("remote-session-1", "/release/app.txt", @"C:\Temp\app.txt");
-        var downloadRequest = await server.ReadRequestAsync();
-        Assert.Equal(Protocol.RemoteDownloadFileMethod, downloadRequest.Method);
-        var downloadParams = Assert.IsType<JsonElement>(downloadRequest.Params);
-        Assert.Equal("remote-session-1", downloadParams.GetProperty("remoteSessionId").GetString());
-        Assert.Equal("/release/app.txt", downloadParams.GetProperty("remotePath").GetString());
-        Assert.Equal(@"C:\Temp\app.txt", downloadParams.GetProperty("localPath").GetString());
-        await server.SendResultAsync(downloadRequest.Id, @"C:\Temp\app.txt");
-        Assert.Equal(@"C:\Temp\app.txt", await download);
-
-        var upload = client.RemoteUploadFileAsync("remote-session-1", @"C:\Temp\app.txt", "/incoming/app.txt");
-        var uploadRequest = await server.ReadRequestAsync();
-        Assert.Equal(Protocol.RemoteUploadFileMethod, uploadRequest.Method);
-        var uploadParams = Assert.IsType<JsonElement>(uploadRequest.Params);
-        Assert.Equal("remote-session-1", uploadParams.GetProperty("remoteSessionId").GetString());
-        Assert.Equal(@"C:\Temp\app.txt", uploadParams.GetProperty("localPath").GetString());
-        Assert.Equal("/incoming/app.txt", uploadParams.GetProperty("remotePath").GetString());
-        await server.SendResultAsync(uploadRequest.Id, new FileEntry
-        {
-            Name = "app.txt",
-            Path = "/incoming/app.txt",
-            Modified = "2026-09-21T00:00:00Z",
-            Size = 11,
-        });
-        var uploaded = await upload;
-        Assert.Equal("app.txt", uploaded.Name);
-        Assert.Equal("/incoming/app.txt", uploaded.Path);
-    }
-
-    [Fact]
     public async Task InspectionMethods_UseContractNamesAndCasing()
     {
         var (server, client) = await FakeIpcServer.ConnectAsync();
@@ -971,12 +762,13 @@ public class NamedPipeJsonClientTests
         });
         Assert.False((await capabilities).Formats[0].CanCreate);
 
-        var extract = client.ExtractArchiveAsync(@"C:\pack.zip", @"C:\out");
+        var extract = client.ExtractArchiveAsync(@"C:\pack.zip", @"C:\out", operationId: "archive-1");
         var extractRequest = await server.ReadRequestAsync();
         Assert.Equal(Protocol.ExtractArchiveMethod, extractRequest.Method);
         var extractParams = Assert.IsType<JsonElement>(extractRequest.Params);
         Assert.Equal(@"C:\pack.zip", extractParams.GetProperty("archivePath").GetString());
         Assert.Equal(@"C:\out", extractParams.GetProperty("destination").GetString());
+        Assert.Equal("archive-1", extractParams.GetProperty("operationId").GetString());
         await server.SendResultAsync(extractRequest.Id, null);
         await extract;
 
@@ -1115,5 +907,142 @@ public class NamedPipeJsonClientTests
         Assert.Equal(Protocol.ShowMainWindowMethod, showRequest.Method);
         await server.SendResultAsync(showRequest.Id, null);
         await show;
+    }
+
+    private static CancellationToken TestToken() => new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token;
+
+    [Fact]
+    public async Task InboundRequest_DispatchesToHandlerAndReplies()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        string? received = null;
+        using var sub = client.OnRequest("host.log", (p, _) =>
+        {
+            received = p.GetProperty("message").GetString();
+            return Task.FromResult<object?>(new { ok = true });
+        });
+
+        await server.SendRequestAsync(7, "host.log", new { message = "hi" }, ct);
+        var response = await server.ReadResponseAsync(ct);
+
+        Assert.Equal("hi", received);
+        Assert.Equal(7, response.GetProperty("id").GetInt32());
+        Assert.Equal("2.0", response.GetProperty("jsonrpc").GetString());
+        Assert.True(response.GetProperty("result").GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
+    public async Task InboundRequest_UnknownMethod_RepliesMethodNotFound()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        await server.SendRequestAsync(3, "host.nope", new { }, ct);
+        var response = await server.ReadResponseAsync(ct);
+
+        Assert.Equal(3, response.GetProperty("id").GetInt32());
+        var error = response.GetProperty("error");
+        Assert.Equal(Protocol.ErrMethodNotFound, error.GetProperty("code").GetInt32());
+        Assert.Equal("Unknown host method 'host.nope'.", error.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task InboundRequest_HandlerThrowsIpcException_RepliesWithItsCode()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        using var sub = client.OnRequest("host.fail", (_, _) => throw new IpcException(-32001, "nope"));
+
+        await server.SendRequestAsync(4, "host.fail", new { }, ct);
+        var response = await server.ReadResponseAsync(ct);
+
+        var error = response.GetProperty("error");
+        Assert.Equal(-32001, error.GetProperty("code").GetInt32());
+        Assert.Equal("nope", error.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task InboundRequest_HandlerThrows_RepliesInternalError()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        using var sub = client.OnRequest("host.boom", (_, _) => throw new InvalidOperationException("kaput"));
+
+        await server.SendRequestAsync(5, "host.boom", new { }, ct);
+        var response = await server.ReadResponseAsync(ct);
+
+        var error = response.GetProperty("error");
+        Assert.Equal(Protocol.ErrInternal, error.GetProperty("code").GetInt32());
+        Assert.Equal("kaput", error.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task Notification_WithoutId_StillDispatchesToOn()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = client.On<JsonElement>("evt.ping", p => tcs.TrySetResult(p.GetProperty("v").GetString()!));
+
+        await server.SendNotificationAsync("evt.ping", new { v = "x" }, ct);
+
+        Assert.Equal("x", await tcs.Task.WaitAsync(ct));
+    }
+
+    [Fact]
+    public async Task InboundRequest_DoesNotBlockConcurrentOutboundCall()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        var gate = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = client.OnRequest("host.slow", (_, _) => gate.Task);
+
+        await server.SendRequestAsync(9, "host.slow", new { }, ct);
+
+        var health = client.HealthAsync(ct);
+        var healthRequest = await server.ReadRequestAsync(ct);
+        await server.SendResultAsync(healthRequest.Id, new HealthResult { Ok = true, ProtocolVersion = 1, AppVersion = "1" });
+        Assert.True((await health.WaitAsync(ct)).Ok);
+
+        gate.SetResult(new { done = true });
+        var response = await server.ReadResponseAsync(ct);
+        Assert.Equal(9, response.GetProperty("id").GetInt32());
+        Assert.True(response.GetProperty("result").GetProperty("done").GetBoolean());
+    }
+
+    [Fact]
+    public async Task InboundRequest_NullResult_ReplyContainsExplicitNullResult()
+    {
+        var (server, client) = await FakeIpcServer.ConnectAsync();
+        await using var serverLifetime = server;
+        await using var clientLifetime = client;
+        var ct = TestToken();
+
+        using var sub = client.OnRequest("host.log", (_, _) => Task.FromResult<object?>(null));
+
+        await server.SendRequestAsync(11, "host.log", new { }, ct);
+        var response = await server.ReadResponseAsync(ct);
+
+        Assert.Equal(11, response.GetProperty("id").GetInt32());
+        Assert.True(response.TryGetProperty("result", out var result));
+        Assert.Equal(JsonValueKind.Null, result.ValueKind);
     }
 }

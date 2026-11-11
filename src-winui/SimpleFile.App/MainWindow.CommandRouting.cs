@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using SimpleFile.Core;
+using SimpleFile.PluginHost;
 
 namespace SimpleFile.App;
 
@@ -11,6 +12,12 @@ public sealed partial class MainWindow
     {
         if (_workspace is null)
         {
+            return;
+        }
+
+        if (PluginManager.TryParseHostCommandId(id, out _, out _))
+        {
+            await RunPluginCommandAsync(id);
             return;
         }
 
@@ -57,7 +64,6 @@ public sealed partial class MainWindow
             ["shortcut-for-selected"] = PromptAndCreateShortcutForSelection,
             ["create-archive"] = CreateArchiveAsync,
             ["terminal"] = OpenTerminalInActivePathAsync,
-            ["ftp-sftp-manager"] = () => RunSyncCommand(() => ShowRemoteManagerWindow()),
             ["powershell-admin"] = OpenPowershellAdminAsync,
             ["preview"] = () => RunSyncCommand(() => OnTogglePreview(this, new RoutedEventArgs())),
             ["toggle-hidden"] = ToggleHiddenFilesAsync,
@@ -105,16 +111,6 @@ public sealed partial class MainWindow
             ["customize-toolbar"] = () => _fileOperationDialogs.ShowSettingsAsync("Toolbar"),
             ["toggle-toolbar-labels"] = ToggleToolbarLabelsAsync,
             ["keyboard-help"] = ShowKeyboardHelpAsync,
-            ["git-panel"] = OpenGitPanelAsync,
-            ["git-refresh"] = () => RefreshGitPanelAsync(),
-            ["git-fetch"] = GitFetchAsync,
-            ["git-pull"] = GitPullAsync,
-            ["git-push"] = GitPushAsync,
-            ["git-commit"] = PromptGitCommitAsync,
-            ["git-stage-selected"] = GitStageSelectedAsync,
-            ["git-unstage-selected"] = GitUnstageSelectedAsync,
-            ["git-discard-selected"] = GitDiscardSelectedAsync,
-            ["git-diff-selected"] = GitDiffSelectedAsync,
         };
     }
 

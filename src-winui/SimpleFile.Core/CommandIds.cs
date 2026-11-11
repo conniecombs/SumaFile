@@ -34,7 +34,6 @@ public static class CommandIds
     public const string NewShortcut = "new-shortcut";
     public const string CreateArchive = "create-archive";
     public const string Terminal = "terminal";
-    public const string FtpSftpManager = "ftp-sftp-manager";
     public const string Preview = "preview";
     public const string ToggleHidden = "toggle-hidden";
     public const string ToggleSideMenu = "toggle-side-menu";
@@ -80,14 +79,4 @@ public static class CommandIds
     public const string Settings = "settings";
     public const string CommandPalette = "command-palette";
     public const string KeyboardHelp = "keyboard-help";
-    public const string GitPanel = "git-panel";
-    public const string GitRefresh = "git-refresh";
-    public const string GitFetch = "git-fetch";
-    public const string GitPull = "git-pull";
-    public const string GitPush = "git-push";
-    public const string GitCommit = "git-commit";
-    public const string GitStageSelected = "git-stage-selected";
-    public const string GitUnstageSelected = "git-unstage-selected";
-    public const string GitDiscardSelected = "git-discard-selected";
-    public const string GitDiffSelected = "git-diff-selected";
 }

@@ -26,7 +26,9 @@ pub struct FileEntry {
     /// Symlink target path (None if not a symlink)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symlink_target: Option<String>,
-    /// Git status (e.g. "modified", "untracked", "added", "deleted")
+    /// Retired: always `None`. Git status moved to the `com.sumafile.git`
+    /// plugin's row decorations in phase 4; the field stays so the v1 wire
+    /// format and the binary listing frame keep their shape.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_status: Option<String>,
 }
@@ -237,60 +239,6 @@ pub struct DuplicateCheckResult {
     pub skipped_files: u64,
     pub errors: Vec<String>,
     pub total_reclaimable_bytes: u64,
-}
-
-// ============================================================================
-// Git Types
-// ============================================================================
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct GitStatus {
-    pub is_repo: bool,
-    pub branch: Option<String>,
-    pub modified: u32,
-    pub staged: u32,
-    pub untracked: u32,
-    pub ahead: u32,
-    pub behind: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct GitFileStatus {
-    pub path: String,
-    pub absolute_path: String,
-    pub original_path: Option<String>,
-    pub status: String,
-    pub index_status: String,
-    pub worktree_status: String,
-    pub staged: bool,
-    pub unstaged: bool,
-    pub untracked: bool,
-    pub conflicted: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct GitRepositoryStatus {
-    pub is_repo: bool,
-    pub root: Option<String>,
-    pub branch: Option<String>,
-    pub upstream: Option<String>,
-    pub head: Option<String>,
-    pub ahead: u32,
-    pub behind: u32,
-    pub staged: u32,
-    pub unstaged: u32,
-    pub untracked: u32,
-    pub conflicted: u32,
-    pub changes: Vec<GitFileStatus>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct GitCommandResult {
-    pub command: String,
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
-    pub summary: String,
 }
 
 // ============================================================================

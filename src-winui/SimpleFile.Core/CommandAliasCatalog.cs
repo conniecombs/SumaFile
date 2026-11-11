@@ -40,16 +40,6 @@ public static class CommandAliasCatalog
         ["ctx-empty-recycle-bin"] = "empty-recycle-bin",
         ["ctx-info"] = "properties",
         ["ctx-folder-info"] = "folder-properties",
-        ["ctx-git-panel"] = "git-panel",
-        ["ctx-git-diff"] = "git-diff-selected",
-        ["ctx-git-stage"] = "git-stage-selected",
-        ["ctx-git-unstage"] = "git-unstage-selected",
-        ["ctx-git-discard"] = "git-discard-selected",
-        ["ctx-git-refresh"] = "git-refresh",
-        ["ctx-git-fetch"] = "git-fetch",
-        ["ctx-git-pull"] = "git-pull",
-        ["ctx-git-push"] = "git-push",
-        ["ctx-git-commit"] = "git-commit",
     };
 
     public static string Normalize(string id)

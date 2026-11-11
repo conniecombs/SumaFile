@@ -1,0 +1,29 @@
+[package]
+name = "sumafile-sevenzip-backend"
+version = "1.0.0"
+description = "Backend of the first-party SumaFile 7-Zip plugin: drives the bundled 7za.exe"
+authors = ["SumaFile Team"]
+license = "MIT"
+repository = "https://github.com/conniecombs/SumaFile"
+edition = "2021"
+publish = false
+
+[lib]
+name = "sumafile_sevenzip_backend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sumafile-sevenzip-backend"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = "0.1"
+serde_json = "1"
+sumafile-plugin = { path = "../../../crates/sumafile-plugin" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+simplefile-ipc = { path = "../../../crates/simplefile-ipc" }
+sumafile-plugin = { path = "../../../crates/sumafile-plugin", features = ["test-support"] }
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }

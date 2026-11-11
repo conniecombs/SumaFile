@@ -2,26 +2,40 @@ use crate::models::{ArchiveEntry, ArchiveInfo, DirectoryListing, FileEntry};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use super::engine::{ArchiveEngine, EngineFormat};
 use super::path::{
-    archive_entry_relative_path, archive_entry_relative_path_from_name, archive_format_for_path,
-    build_virtual_archive_path, normal_components, split_archive_path, zip_entry_relative_path,
-    ArchiveFormat,
+    archive_entry_relative_path_from_name, archive_kind_for_path, build_virtual_archive_path,
+    normal_components, split_archive_path, ArchiveFormat, ArchiveKind,
 };
 
 pub fn list_archive(path: String) -> Result<ArchiveInfo, String> {
-    match archive_format_for_path(Path::new(&path)) {
-        Some(ArchiveFormat::Zip) => list_zip_archive(&path),
-        Some(ArchiveFormat::Tar) => list_tar_archive(&path, None),
-        Some(ArchiveFormat::TarGz) => list_tar_archive(&path, Some("gz")),
-        Some(ArchiveFormat::Rar) => list_rar_archive(&path),
-        Some(ArchiveFormat::SevenZip) => list_seven_zip_archive(&path),
-        None => Err(format!(
+    match archive_kind_for_path(Path::new(&path)) {
+        Some(kind) => list_archive_of_kind(&path, &kind),
+        None => Err(unsupported_archive_error(Path::new(&path))),
+    }
+}
+
+/// The error for an archive nothing serves: the plugin note for a format
+/// only an absent plugin serves, otherwise "Unsupported archive format".
+pub(super) fn unsupported_archive_error(archive: &Path) -> String {
+    match super::placeholders::unavailable_note_for_path(archive) {
+        Some(note) => note.to_string(),
+        None => format!(
             "Unsupported archive format: {}",
-            Path::new(&path)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-        )),
+            archive.extension().and_then(|e| e.to_str()).unwrap_or("")
+        ),
+    }
+}
+
+fn list_archive_of_kind(path: &str, kind: &ArchiveKind) -> Result<ArchiveInfo, String> {
+    match kind {
+        ArchiveKind::BuiltIn(ArchiveFormat::Zip) => list_zip_archive(path),
+        ArchiveKind::BuiltIn(ArchiveFormat::Tar) => list_tar_archive(path, None),
+        ArchiveKind::BuiltIn(ArchiveFormat::TarGz) => list_tar_archive(path, Some("gz")),
+        ArchiveKind::BuiltIn(ArchiveFormat::Rar) => list_rar_archive(path),
+        ArchiveKind::Engine { engine, format } => {
+            list_engine_archive(path, engine.as_ref(), format)
+        }
     }
 }
 
@@ -43,7 +57,7 @@ fn list_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
                 continue;
             }
         };
-        if listing_entry_relative_path(ArchiveFormat::Zip, &entry_path).is_err() {
+        if built_in_entry_relative_path(ArchiveFormat::Zip, &entry_path).is_err() {
             unsafe_entries.push(entry_path);
             continue;
         }
@@ -92,7 +106,7 @@ pub(super) fn collect_tar_entries_seekable<R: std::io::Read + std::io::Seek>(
             .to_string_lossy()
             .to_string();
         let size = entry.size();
-        if listing_entry_relative_path(format, &path_str).is_err() {
+        if built_in_entry_relative_path(format, &path_str).is_err() {
             unsafe_entries.push(path_str);
             continue;
         }
@@ -129,7 +143,7 @@ fn list_tar_archive(path: &str, compression: Option<&str>) -> Result<ArchiveInfo
                     .to_string_lossy()
                     .to_string();
                 let size = entry.size();
-                if listing_entry_relative_path(ArchiveFormat::TarGz, &path_str).is_err() {
+                if built_in_entry_relative_path(ArchiveFormat::TarGz, &path_str).is_err() {
                     unsafe_entries.push(path_str);
                     continue;
                 }
@@ -181,7 +195,7 @@ fn list_rar_archive(path: &str) -> Result<ArchiveInfo, String> {
     for entry_result in archive {
         let entry = entry_result.map_err(|e| format!("Failed to read RAR entry: {e}"))?;
         let filename_str = entry.filename.to_string_lossy().to_string();
-        if listing_entry_relative_path(ArchiveFormat::Rar, &filename_str).is_err() {
+        if built_in_entry_relative_path(ArchiveFormat::Rar, &filename_str).is_err() {
             unsafe_entries.push(filename_str);
             continue;
         }
@@ -209,14 +223,24 @@ fn list_rar_archive(path: &str) -> Result<ArchiveInfo, String> {
     })
 }
 
-fn list_seven_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
-    let seven_zip_entries = super::seven_zip::list_seven_zip_entries(path)?;
+fn list_engine_archive(
+    path: &str,
+    engine: &dyn ArchiveEngine,
+    format: &EngineFormat,
+) -> Result<ArchiveInfo, String> {
+    if !format.can_list {
+        return Err(format!(
+            "{} cannot list {} archives",
+            engine.name(),
+            format.extension
+        ));
+    }
     let mut entries = Vec::new();
     let mut unsafe_entries = Vec::new();
     let mut total_size = 0u64;
 
-    for entry in seven_zip_entries {
-        if listing_entry_relative_path(ArchiveFormat::SevenZip, &entry.path).is_err() {
+    for entry in engine.list_entries(Path::new(path))? {
+        if archive_entry_relative_path_from_name(&entry.path, engine.name()).is_err() {
             unsafe_entries.push(entry.path);
             continue;
         }
@@ -234,7 +258,7 @@ fn list_seven_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
     let compressed_size = std::fs::metadata(path).map_or(0, |m| m.len());
     Ok(ArchiveInfo {
         path: path.to_string(),
-        format: "7z".to_string(),
+        format: super::engine::format_label(format),
         entries,
         unsafe_entries,
         total_size,
@@ -242,18 +266,24 @@ fn list_seven_zip_archive(path: &str) -> Result<ArchiveInfo, String> {
     })
 }
 
+/// The pane listing of an archive file or a folder inside one; `None` for
+/// any other path. An archive file whose format only an absent plugin
+/// serves fails with the plugin note, as does any path inside it.
 pub fn list_archive_directory(path: &str) -> Result<Option<DirectoryListing>, String> {
     let Some(parsed) = split_archive_path(path)? else {
+        if let Some(note) = super::placeholders::unavailable_archive_note(path) {
+            return Err(note.to_string());
+        }
         return Ok(None);
     };
 
     let archive_path_string = parsed.archive_path.to_string_lossy().to_string();
-    let archive_info = list_archive(archive_path_string.clone())?;
+    let archive_info = list_archive_of_kind(&archive_path_string, &parsed.kind)?;
     let current_parts = normal_components(&parsed.inner_path);
     let mut entries: BTreeMap<String, FileEntry> = BTreeMap::new();
 
     for entry in archive_info.entries {
-        let Ok(relative_path) = listing_entry_relative_path(parsed.format, &entry.path) else {
+        let Ok(relative_path) = listing_entry_relative_path(&parsed.kind, &entry.path) else {
             continue;
         };
         let entry_parts = normal_components(&relative_path);
@@ -352,15 +382,15 @@ fn file_entry_for_archive_child(
     }
 }
 
-fn listing_entry_relative_path(format: ArchiveFormat, entry_path: &str) -> Result<PathBuf, String> {
-    match format {
-        ArchiveFormat::Zip => zip_entry_relative_path(entry_path),
-        ArchiveFormat::Tar | ArchiveFormat::TarGz => {
-            archive_entry_relative_path(Path::new(entry_path), "Tar")
-        }
-        ArchiveFormat::Rar => archive_entry_relative_path(Path::new(entry_path), "RAR"),
-        ArchiveFormat::SevenZip => archive_entry_relative_path_from_name(entry_path, "7-Zip"),
-    }
+fn listing_entry_relative_path(kind: &ArchiveKind, entry_path: &str) -> Result<PathBuf, String> {
+    archive_entry_relative_path_from_name(entry_path, &kind.entry_type())
+}
+
+fn built_in_entry_relative_path(
+    format: ArchiveFormat,
+    entry_path: &str,
+) -> Result<PathBuf, String> {
+    listing_entry_relative_path(&ArchiveKind::BuiltIn(format), entry_path)
 }
 
 fn archive_entry_name(entry_path: &str) -> String {

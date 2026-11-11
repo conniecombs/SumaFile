@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
@@ -12,7 +13,6 @@ public sealed partial class SettingsWindow
     private const string RepositoryUrl = "https://github.com/conniecombs/SumaFile";
     private FileOperationService? _fileOps;
     private bool _checkedUpdateIsInstallable;
-    private RemoteManagerWindow? _settingsRemoteManagerWindow;
 
     // No settings field stores this yet, so it lasts for the session (across Settings reopenings).
     private static DateTimeOffset? s_lastUpdateCheck;
@@ -65,6 +65,40 @@ public sealed partial class SettingsWindow
             CurrentVersionText.Text = "Version unavailable";
             AboutVersionText.Text = "Version unavailable";
             UpdateStatusText.Text = $"Unable to load version: {exception.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Lists the plugin archive formats under the built-in ones: "{format} archives: {owner} plugin" for each
+    /// format a plugin engine serves, and the note of each first-party format no engine serves.
+    /// </summary>
+    private async Task LoadArchiveSupportAsync(FileOperationService fileOps, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var capabilities = await fileOps.GetArchiveCapabilitiesAsync(cancellationToken).ConfigureAwait(true);
+            var lines = new List<string>();
+            foreach (var row in capabilities.Formats)
+            {
+                var engine = row.Engine ?? "";
+                if (engine.StartsWith("plugin:", StringComparison.Ordinal))
+                {
+                    lines.Add($"{row.Format} archives: {engine["plugin:".Length..]} plugin");
+                }
+                else if (engine == "unavailable" && !string.IsNullOrWhiteSpace(row.Note))
+                {
+                    lines.Add(row.Note);
+                }
+            }
+
+            ArchivePluginFormatsText.Text = string.Join(Environment.NewLine, lines);
+            ArchivePluginFormatsText.Visibility = lines.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The built-in line above still holds; plugin formats are simply not listed.
+            ArchivePluginFormatsText.Text = "";
+            ArchivePluginFormatsText.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -189,31 +223,5 @@ public sealed partial class SettingsWindow
                 link.IsEnabled = true;
             }
         }
-    }
-
-    private void OnOpenRemoteManagerClicked(object sender, RoutedEventArgs e)
-    {
-        if (_fileOps is null)
-        {
-            ToolsStatusText.Text = "SumaFile's file service is not ready yet.";
-            return;
-        }
-
-        if (_settingsRemoteManagerWindow is { IsClosed: false } existing)
-        {
-            existing.Activate();
-            return;
-        }
-
-        _settingsRemoteManagerWindow = new RemoteManagerWindow(new RemoteManagerViewModel(_fileOps));
-        _settingsRemoteManagerWindow.Closed += (closedSender, _) =>
-        {
-            if (ReferenceEquals(_settingsRemoteManagerWindow, closedSender))
-            {
-                _settingsRemoteManagerWindow = null;
-            }
-        };
-        _settingsRemoteManagerWindow.Activate();
-        ToolsStatusText.Text = "FTP/SFTP manager opened.";
     }
 }

@@ -66,48 +66,141 @@ pub(super) struct CopyMoveJob {
     pub(super) is_copy: bool,
 }
 
-pub(super) struct RemoteTransferJob {
-    pub id: Option<Value>,
-    pub provider: crate::remote::session::SharedRemoteProvider,
-    pub request: crate::remote::transfer::RemoteTransferRequest,
-    pub cancel: Arc<AtomicBool>,
+pub(super) struct ArchiveOperationJob {
+    pub(super) id: Option<Value>,
+    pub(super) operation_id: String,
+    pub(super) operation: crate::dispatch::ArchiveOperation,
+    pub(super) cancel: Arc<AtomicBool>,
 }
 
-pub(super) fn spawn_remote_transfer(
+/// Run a tracked `extract_archive` or `create_archive` on the Transfer lane.
+/// It emits `operation-progress`: `running` (0/0) first, then one event per
+/// engine progress (engine bytes, no file counts), then `completed`,
+/// `cancelled` or `error`. The reply is `null`, or the cancelled message
+/// after a cancel.
+pub(super) fn spawn_archive_operation(
     writer: OutboundSink,
     registry: Arc<OperationRegistry>,
     scheduler: BlockingScheduler,
     events: EventSink,
     cache: SessionCache,
-    job: RemoteTransferJob,
+    job: ArchiveOperationJob,
 ) {
+    use crate::dispatch::ArchiveOperation;
+    use simplefile_core::archive::{EngineContext, EngineProgress, CANCELLED_MESSAGE};
+
+    let ArchiveOperationJob {
+        id,
+        operation_id,
+        operation,
+        cancel,
+    } = job;
     tokio::spawn(async move {
-        let operation_id = job.request.operation_id.clone();
-        let destination_for_cache = job.request.destination.clone();
-        let sources_for_cache = job.request.sources.clone();
-        let cancel = job.cancel.clone();
-        let id = job.id;
+        let (operation_type, item, invalidate) = match &operation {
+            ArchiveOperation::Extract {
+                archive_path,
+                destination,
+            } => ("extract-archive", archive_path.clone(), destination.clone()),
+            ArchiveOperation::Create { archive_path, .. } => {
+                ("create-archive", archive_path.clone(), archive_path.clone())
+            }
+        };
+        let update = |status: &str, current, total, current_item: String, error| ProgressUpdate {
+            operation_id: operation_id.clone(),
+            operation_type: operation_type.to_string(),
+            current,
+            total,
+            current_files: 0,
+            total_files: 0,
+            current_item,
+            status: status.to_string(),
+            error,
+        };
+        events
+            .emit_progress_async(&update("running", 0, 0, item.clone(), None))
+            .await;
+
+        let last = Arc::new(std::sync::Mutex::new((0u64, 0u64)));
+        let task_last = Arc::clone(&last);
+        let task_events = events.clone();
+        let task_cancel = Arc::clone(&cancel);
+        let task_update = {
+            let operation_id = operation_id.clone();
+            let item = item.clone();
+            move |progress: EngineProgress| ProgressUpdate {
+                operation_id: operation_id.clone(),
+                operation_type: operation_type.to_string(),
+                current: progress.current,
+                total: progress.total,
+                current_files: 0,
+                total_files: 0,
+                current_item: progress.current_item.unwrap_or_else(|| item.clone()),
+                status: "running".to_string(),
+                error: None,
+            }
+        };
+        let task_operation_id = operation_id.clone();
         let result = scheduler
             .run_transfer(move || {
-                job.provider.with(|provider| {
-                    crate::remote::transfer::transfer_entries_with_tuning(
-                        provider,
-                        &job.request,
-                        &job.cancel,
-                        &|update| events.emit_progress(&update),
-                        &|update| events.emit("transfer-tuning", &update),
-                    )
-                })
+                let progress = |progress: EngineProgress| {
+                    if let Ok(mut last) = task_last.lock() {
+                        *last = (progress.current, progress.total);
+                    }
+                    task_events.emit_progress(&task_update(progress));
+                };
+                let ctx = EngineContext {
+                    operation_id: Some(&task_operation_id),
+                    cancel: &task_cancel,
+                    progress: &progress,
+                };
+                match operation {
+                    ArchiveOperation::Extract {
+                        archive_path,
+                        destination,
+                    } => simplefile_core::archive::extract_archive_with(
+                        archive_path,
+                        destination,
+                        &ctx,
+                    ),
+                    ArchiveOperation::Create {
+                        paths,
+                        archive_path,
+                        format,
+                    } => simplefile_core::archive::create_archive_with(
+                        paths,
+                        archive_path,
+                        format,
+                        &ctx,
+                    ),
+                }
             })
             .await;
-        cache.invalidate_path(&destination_for_cache);
-        cache.invalidate_paths(&sources_for_cache);
-        let response = scheduled_result_response(
-            id,
-            result,
-            "remote transfer",
-            "failed to serialize remote transfer results",
-        );
+        cache.invalidate_path(&invalidate);
+
+        let (current, total) = last.lock().map(|last| *last).unwrap_or((0, 0));
+        let cancelled = cancel.load(Ordering::SeqCst);
+        let (final_update, response) = match result {
+            Ok(Ok(())) => (
+                update("completed", total.max(current), total, item, None),
+                JsonRpcResponse::result(id, Value::Null),
+            ),
+            Ok(Err(message)) if cancelled || message == CANCELLED_MESSAGE => (
+                update("cancelled", current, total, item, None),
+                JsonRpcResponse::application_error(id, CANCELLED_MESSAGE.to_string()),
+            ),
+            Ok(Err(message)) => (
+                update("error", current, total, item, Some(message.clone())),
+                JsonRpcResponse::application_error(id, message),
+            ),
+            Err(error) => {
+                let message = format!("archive task failed: {error}");
+                (
+                    update("error", current, total, item, Some(message.clone())),
+                    JsonRpcResponse::application_error(id, message),
+                )
+            }
+        };
+        events.emit_progress_async(&final_update).await;
         let _ = write_json(&writer, &response).await;
         registry.remove_token(&operation_id, &cancel).await;
     });

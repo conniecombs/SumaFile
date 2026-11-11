@@ -1,0 +1,30 @@
+<ContentDialog
+    x:Class="SimpleFile.App.PluginConsentDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Enable plugin?"
+    PrimaryButtonText="Enable"
+    CloseButtonText="Keep disabled"
+    DefaultButton="Close">
+    <StackPanel MaxWidth="460" Spacing="12">
+        <StackPanel Spacing="2">
+            <TextBlock x:Name="PluginName" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <TextBlock
+                x:Name="PublisherAndVersion"
+                FontSize="12"
+                Foreground="{ThemeResource SfTextMutedBrush}"
+                TextWrapping="Wrap" />
+        </StackPanel>
+        <TextBlock x:Name="SignatureLine" TextWrapping="Wrap" />
+        <StackPanel Spacing="4">
+            <TextBlock FontWeight="SemiBold" Text="Permissions" />
+            <TextBlock x:Name="PermissionsList" TextWrapping="Wrap" />
+        </StackPanel>
+        <TextBlock x:Name="BackendLine" TextWrapping="Wrap" />
+        <TextBlock
+            FontSize="12"
+            Foreground="{ThemeResource SfTextMutedBrush}"
+            Text="Plugins run with your permissions. Enable only plugins you trust. You can change this later in Settings."
+            TextWrapping="Wrap" />
+    </StackPanel>
+</ContentDialog>

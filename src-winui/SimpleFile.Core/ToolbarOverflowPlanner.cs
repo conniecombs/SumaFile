@@ -25,7 +25,6 @@ public static class ToolbarOverflowPlanner
         New,
         "disk-cleanup",
         "duplicate-checker",
-        "ftp-sftp-manager",
         "operation-history",
         "move-to-pane",
         "copy-to-pane",

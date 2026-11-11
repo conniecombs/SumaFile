@@ -88,7 +88,9 @@ const cargoMatches = new Map([
 const displayConstMatch = coreLib.match(
   /pub const APP_DISPLAY_VERSION:\s*&str\s*=\s*"([^"]+)"/,
 );
-const readmeBadgeMatch = readme.match(/img\.shields\.io\/badge\/version-([^-]+)-/);
+// The badge text up to the colour. shields.io writes a dash in the text as "--" and an underscore as "__".
+const readmeBadgeRaw = readme.match(/img\.shields\.io\/badge\/version-(.+?)-2563eb\)/);
+const readmeBadgeMatch = readmeBadgeRaw && [readmeBadgeRaw[0], readmeBadgeRaw[1].replaceAll('--', '-').replaceAll('__', '_')];
 if (!propsMatch) {
   fail('Could not read Version from Directory.Build.props.');
 } else {
@@ -109,6 +111,9 @@ if (!displayMatch || !displayConstMatch) {
 }
 if (!displayMatch || !readmeBadgeMatch) {
   fail('Could not read InformationalVersion and README version badge.');
+} else if (decodeURIComponent(readmeBadgeMatch[1]) === 'Beta') {
+  // The Beta branch shows no version number: its badge says "Beta" until the merge into main sets the real version
+  // (scripts/release-version.mjs then writes the number into the badge).
 } else if (displayMatch[1] !== decodeURIComponent(readmeBadgeMatch[1])) {
   fail(
     `Display version mismatch: InformationalVersion=${displayMatch[1]} README badge=${decodeURIComponent(readmeBadgeMatch[1])}`,

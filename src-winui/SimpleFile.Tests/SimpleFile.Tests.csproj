@@ -16,5 +16,97 @@
   <ItemGroup>
     <ProjectReference Include="..\SimpleFile.Ipc\SimpleFile.Ipc.csproj" />
     <ProjectReference Include="..\SimpleFile.Core\SimpleFile.Core.csproj" />
+    <ProjectReference Include="..\SimpleFile.PluginSdk\SimpleFile.PluginSdk.csproj" />
+    <ProjectReference Include="..\SimpleFile.PluginHost\SimpleFile.PluginHost.csproj" />
+    <!-- The remote plugin's WinUI-free model (net10.0-windows): its view model and backend client tests. -->
+    <ProjectReference Include="..\..\plugins\remote\ui\SumaFile.Remote.Model\SumaFile.Remote.Model.csproj" />
+    <!-- The Git plugin's WinUI-free model (net10.0-windows): its view model, controller, decoration provider and client tests. -->
+    <ProjectReference Include="..\..\plugins\git\ui\SumaFile.Git.Model\SumaFile.Git.Model.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Hello targets 19041 (it builds WinUI code); the test project only needs it built, never referenced. -->
+    <ProjectReference Include="Fixtures\HelloPlugin\SimpleFile.Tests.Fixtures.HelloPlugin.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" />
+    <!-- The plugin template's UI half: built with the tests, never referenced (TemplatePluginTests loads it through the host). -->
+    <ProjectReference Include="..\..\templates\sumafile-plugin\ui\Example.Plugin\Example.Plugin.csproj" ReferenceOutputAssembly="false" SkipGetTargetFrameworkProperties="true" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Fixtures\HelloPlugin\**" />
+    <None Remove="Fixtures\HelloPlugin\**" />
+    <Content Remove="Fixtures\HelloPlugin\**" />
+    <EmbeddedResource Remove="Fixtures\HelloPlugin\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Fixtures\PluginSdkSurface.v1.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="CopyHelloFixture" AfterTargets="Build">
+    <MSBuild Projects="Fixtures\HelloPlugin\SimpleFile.Tests.Fixtures.HelloPlugin.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_HelloPluginTargetPath" />
+    </MSBuild>
+    <Error Condition="!Exists('@(_HelloPluginTargetPath)')" Text="Hello fixture plugin output not found at @(_HelloPluginTargetPath)." />
+    <PropertyGroup>
+      <HelloOut>%(_HelloPluginTargetPath.RootDir)%(_HelloPluginTargetPath.Directory)</HelloOut>
+      <HelloDest>$(OutDir)Fixtures\plugins\com.sumafile.hello\</HelloDest>
+    </PropertyGroup>
+    <ItemGroup>
+      <HelloFile Include="$(HelloOut)SimpleFile.Tests.Fixtures.HelloPlugin.dll;$(HelloOut)SimpleFile.Tests.Fixtures.HelloPlugin.deps.json;$(HelloOut)plugin.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(HelloFile)" DestinationFolder="$(HelloDest)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\target\debug\hello-plugin-backend.exe" DestinationFolder="$(HelloDest)" SkipUnchangedFiles="true" Condition="Exists('$(MSBuildThisFileDirectory)..\..\target\debug\hello-plugin-backend.exe')" />
+  </Target>
+  <!--
+    The plugin template's UI build output (its assembly, .deps.json and plugin.json) for TemplatePluginTests, which
+    run it against a fake backend, so no backend executable is copied. Only into this test output: the template is
+    never staged into the payload or the app's plugins folder. Nothing is copied when the assembly is missing; the
+    test then skips with TemplatePluginTests.NotBuiltMessage.
+  -->
+  <Target Name="CopyTemplatePlugin" AfterTargets="Build">
+    <MSBuild Projects="..\..\templates\sumafile-plugin\ui\Example.Plugin\Example.Plugin.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_TemplatePluginTargetPath" />
+    </MSBuild>
+    <PropertyGroup>
+      <TemplateOut>%(_TemplatePluginTargetPath.RootDir)%(_TemplatePluginTargetPath.Directory)</TemplateOut>
+      <TemplateDest>$(OutDir)Fixtures\template\com.example.template\</TemplateDest>
+    </PropertyGroup>
+    <ItemGroup>
+      <TemplateFile Include="$(TemplateOut)Example.Plugin.dll;$(TemplateOut)Example.Plugin.deps.json;$(TemplateOut)plugin.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(TemplateFile)" DestinationFolder="$(TemplateDest)" SkipUnchangedFiles="true" Condition="Exists('$(TemplateOut)Example.Plugin.dll')" />
+  </Target>
+  <!--
+    The remote plugin as scripts/build-plugins.ps1 stages it, its bundled.json (which lists the remote plugin's hash; the
+    7-Zip entry is simply absent from this root) and the loopback SFTP test server that scripts/build-fixture-plugin.ps1
+    builds. Each is copied only when it exists: Remote/RemoteBackendHarness names the scripts when one is missing.
+    A staged remote plugin replaces the fixture's copy whole, so a file a rebuild dropped does not linger.
+  -->
+  <Target Name="CopyRemotePluginFixture" AfterTargets="Build">
+    <PropertyGroup>
+      <_RepoTarget>$(MSBuildThisFileDirectory)..\..\target\</_RepoTarget>
+      <RemoteFixtureDest>$(OutDir)Fixtures\remote\</RemoteFixtureDest>
+    </PropertyGroup>
+    <ItemGroup>
+      <RemotePluginFile Include="$(_RepoTarget)plugins\com.sumafile.remote\**" />
+    </ItemGroup>
+    <RemoveDir Directories="$(RemoteFixtureDest)plugins\com.sumafile.remote" Condition="Exists('$(_RepoTarget)plugins\com.sumafile.remote')" />
+    <Copy SourceFiles="@(RemotePluginFile)" DestinationFiles="@(RemotePluginFile->'$(RemoteFixtureDest)plugins\com.sumafile.remote\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(_RepoTarget)plugins\bundled.json" DestinationFolder="$(RemoteFixtureDest)plugins\" SkipUnchangedFiles="true" Condition="Exists('$(_RepoTarget)plugins\bundled.json')" />
+    <Copy SourceFiles="$(_RepoTarget)debug\sumafile-remote-test-server.exe" DestinationFolder="$(RemoteFixtureDest)" SkipUnchangedFiles="true" Condition="Exists('$(_RepoTarget)debug\sumafile-remote-test-server.exe')" />
+  </Target>
+  <!--
+    The Git plugin as scripts/build-plugins.ps1 stages it and its bundled.json (which lists the Git plugin's hash; the
+    other bundled entries are simply absent from this root). Each is copied only when it exists: the Git backend tests
+    skip with Git/GitBackendHarness's NotStagedMessage when it is missing. A staged Git plugin replaces the fixture's
+    copy whole, so a file a rebuild dropped does not linger.
+  -->
+  <Target Name="CopyGitPluginFixture" AfterTargets="Build">
+    <PropertyGroup>
+      <_RepoTarget>$(MSBuildThisFileDirectory)..\..\target\</_RepoTarget>
+      <GitFixtureDest>$(OutDir)Fixtures\git\</GitFixtureDest>
+    </PropertyGroup>
+    <ItemGroup>
+      <GitPluginFile Include="$(_RepoTarget)plugins\com.sumafile.git\**" />
+    </ItemGroup>
+    <RemoveDir Directories="$(GitFixtureDest)plugins\com.sumafile.git" Condition="Exists('$(_RepoTarget)plugins\com.sumafile.git')" />
+    <Copy SourceFiles="@(GitPluginFile)" DestinationFiles="@(GitPluginFile->'$(GitFixtureDest)plugins\com.sumafile.git\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(_RepoTarget)plugins\bundled.json" DestinationFolder="$(GitFixtureDest)plugins\" SkipUnchangedFiles="true" Condition="Exists('$(_RepoTarget)plugins\bundled.json')" />
+  </Target>
 </Project>

@@ -158,6 +158,7 @@ internal sealed class WorkspaceNavigationController
             state.ListingInProgress = true;
             state.Path = path;
             state.Entries = [];
+            state.Decorations = PaneDecorations.Empty;
             state.SelectedPath = null;
             workspace.SetErrorMessageCore(null);
             workspace.SetFileOpenUnsupportedCore(false);
@@ -167,6 +168,8 @@ internal sealed class WorkspaceNavigationController
         }
 
         workspace.NotifyChanged();
+        var published = false;
+        var generation = 0;
 
         try
         {
@@ -201,8 +204,19 @@ internal sealed class WorkspaceNavigationController
                 return;
             }
 
+            // The decorations are asked before the publish and waited for at most the coordinator's budget, so the
+            // listing appears with them; the progressive chunks above never wait. Late results apply when they arrive.
+            generation = workspace.RowDecorations.Generation;
+            var decorations = await DecorateListingAsync(workspace, target, state, token, listing, listing.Path)
+                .ConfigureAwait(false);
+
             lock (workspace.Gate)
             {
+                if (token != state.NavigationToken)
+                {
+                    return;
+                }
+
                 state.Path = listing.Path;
                 state.Entries = [.. listing.Entries];
                 state.PathIsNetwork = listing.IsNetwork || workspace.DrivesController.IsNetworkFsPath(listing.Path);
@@ -213,6 +227,8 @@ internal sealed class WorkspaceNavigationController
                 workspace.PlacesController.RecordRecent(listing.Path);
                 workspace.SetPhotoFolderActiveCore(
                     MediaFolder.IsMediaFolder(listing.Entries, workspace.Settings.PhotoFolderImageThreshold));
+                PublishDecorationsLocked(state, decorations);
+                published = true;
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -250,7 +266,74 @@ internal sealed class WorkspaceNavigationController
                 }
 
                 workspace.NotifyChanged();
+                RedecorateIfGenerationChanged(workspace, target, published, generation);
             }
+        }
+    }
+
+    /// <summary>
+    /// Asks the decorating plugins about a listing that is about to be published, under a new request number. A
+    /// result that arrives after the budget goes through <see cref="ExplorerWorkspace.ApplyLateDecorations"/>.
+    /// </summary>
+    private static async Task<(long Request, PaneDecorations Decorations)> DecorateListingAsync(
+        ExplorerWorkspace workspace,
+        PaneId target,
+        ExplorerPane state,
+        int token,
+        DirectoryListing listing,
+        string folderPath)
+    {
+        long request;
+        bool isNetwork;
+        CancellationToken cancellation;
+        lock (workspace.Gate)
+        {
+            if (token != state.NavigationToken)
+            {
+                // A newer navigation owns the pane: its publish check drops this listing, so ask nothing and leave
+                // the newer navigation's decoration request alone.
+                return (0, PaneDecorations.Empty);
+            }
+
+            request = state.NextDecorationRequest();
+            cancellation = state.DecorationCancellation;
+            isNetwork = listing.IsNetwork || workspace.DrivesController.IsNetworkFsPath(folderPath);
+        }
+
+        var decorations = await workspace.RowDecorations.DecorateAsync(
+                folderPath,
+                isNetwork,
+                listing.Entries.Select(entry => entry.Path).ToList(),
+                late => workspace.ApplyLateDecorations(target, token, request, folderPath, late),
+                cancellation)
+            .ConfigureAwait(false);
+        return (request, decorations);
+    }
+
+    // Under the gate, with the listing: the result is kept unless the same request's late merge already landed. A
+    // same-folder publish (the re-list after a rename, delete or create) keeps each pending plugin's shown part, as an
+    // invalidation does, so a slow provider does not blank the badges and folder flags until its late merge. A
+    // navigation cleared the pane's decorations when it started, and KeepingPendingFrom keeps nothing of another
+    // folder, so a publish for a new folder is applied as it is.
+    private static void PublishDecorationsLocked(ExplorerPane state, (long Request, PaneDecorations Decorations) result)
+    {
+        if (ExplorerWorkspace.ShouldApplyDecorationsLocked(state, result.Request, late: false))
+        {
+            state.Decorations = result.Decorations.KeepingPendingFrom(state.Decorations);
+            state.AppliedDecorationRequest = result.Request;
+            state.AppliedDecorationLate = false;
+        }
+
+        state.BumpContentVersion();
+    }
+
+    // A listing whose decorations were asked before startup became ready, or before the decorating plugins changed,
+    // is decorated again as soon as it is published, without listing it again.
+    private static void RedecorateIfGenerationChanged(ExplorerWorkspace workspace, PaneId target, bool published, int generation)
+    {
+        if (published && workspace.RowDecorations.Generation != generation)
+        {
+            workspace.StartDecorationRefresh(target);
         }
     }
 
@@ -265,6 +348,62 @@ internal sealed class WorkspaceNavigationController
             cancellationToken.ThrowIfCancellationRequested();
             await RefreshAsync(workspace, pane, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Re-lists the visible panes whose path is, or is inside, a file ending with one of
+    /// <paramref name="extensions"/>: the archives whose engine was just registered or unregistered.
+    /// </summary>
+    public async Task RefreshArchivePanesAsync(
+        ExplorerWorkspace workspace,
+        IReadOnlyCollection<string> extensions,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(workspace);
+        ArgumentNullException.ThrowIfNull(extensions);
+        var normalized = extensions
+            .Where(extension => !string.IsNullOrWhiteSpace(extension))
+            .Select(extension => extension.Trim())
+            .Select(extension => extension.StartsWith('.') ? extension : "." + extension)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalized.Length == 0)
+        {
+            return;
+        }
+
+        List<PaneId> panes = [];
+        if (PaneIsInsideArchive(workspace.Primary.Path, normalized))
+        {
+            panes.Add(PaneId.Primary);
+        }
+
+        if (workspace.DualPaneEnabled && PaneIsInsideArchive(workspace.Secondary.Path, normalized))
+        {
+            panes.Add(PaneId.Secondary);
+        }
+
+        foreach (var pane in panes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await RefreshAsync(workspace, pane, engineChanged: true, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // True when one of the path's segments (the archive file itself, or an ancestor of the pane's folder inside
+    // it) ends with one of the extensions.
+    private static bool PaneIsInsideArchive(string? panePath, IReadOnlyList<string> extensions)
+    {
+        if (string.IsNullOrWhiteSpace(panePath))
+        {
+            return false;
+        }
+
+        return panePath
+            .Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries)
+            .Any(segment => extensions.Any(extension =>
+                segment.Length > extension.Length
+                && segment.EndsWith(extension, StringComparison.OrdinalIgnoreCase)));
     }
 
     public IReadOnlyList<PaneId> AffectedVisiblePanes(
@@ -407,10 +546,22 @@ internal sealed class WorkspaceNavigationController
             : NavigatePaneAsync(workspace, pane, parent, HistoryMode.Push, activate: workspace.DualPaneEnabled, cancellationToken);
     }
 
-    public async Task RefreshAsync(
+    public Task RefreshAsync(
         ExplorerWorkspace workspace,
         PaneId pane,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        RefreshAsync(workspace, pane, engineChanged: false, cancellationToken);
+
+    /// <param name="engineChanged">
+    /// The pane is inside an archive whose plugin engine came or went. The re-list then stands in for navigating
+    /// to the folder again: a failure drops the rows the gone engine had listed, and a success clears the error
+    /// (the plugin note) an earlier listing of the folder left.
+    /// </param>
+    private async Task RefreshAsync(
+        ExplorerWorkspace workspace,
+        PaneId pane,
+        bool engineChanged,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         var target = workspace.Normalize(pane);
@@ -424,13 +575,14 @@ internal sealed class WorkspaceNavigationController
         using var foregroundScope = workspace.ForegroundScheduler.BeginForegroundScope(ForegroundActivityKind.Navigation);
         var selected = state.SelectedPath;
         var token = state.NextNavigationToken();
-        state.InvalidateGitProbe();
 
         lock (workspace.Gate)
         {
             state.ListingInProgress = true;
         }
 
+        var published = false;
+        var generation = 0;
         try
         {
             var refresh = await workspace.Navigator.RefreshAsync(state, path, token, cancellationToken)
@@ -445,6 +597,16 @@ internal sealed class WorkspaceNavigationController
             {
                 return;
             }
+
+            generation = workspace.RowDecorations.Generation;
+            var decorations = await DecorateListingAsync(
+                    workspace,
+                    target,
+                    state,
+                    token,
+                    listing,
+                    string.IsNullOrEmpty(listing.Path) ? path : listing.Path)
+                .ConfigureAwait(false);
 
             lock (workspace.Gate)
             {
@@ -467,6 +629,13 @@ internal sealed class WorkspaceNavigationController
                     && state.Entries.Any(entry => PathRules.PathsEqual(entry.Path, selected))
                         ? selected
                         : null;
+                if (engineChanged)
+                {
+                    workspace.SetErrorMessageCore(null);
+                }
+
+                PublishDecorationsLocked(state, decorations);
+                published = true;
             }
 
             workspace.NotifyChanged();
@@ -478,6 +647,12 @@ internal sealed class WorkspaceNavigationController
                 if (PathRules.PathsEqual(state.Path, path))
                 {
                     workspace.SetErrorMessageCore(exception.Message);
+                    if (engineChanged && token == state.NavigationToken)
+                    {
+                        state.Entries = [];
+                        state.SelectedPath = null;
+                        state.SyncActiveTab();
+                    }
                 }
             }
 
@@ -493,6 +668,7 @@ internal sealed class WorkspaceNavigationController
                 }
 
                 workspace.NotifyChanged();
+                RedecorateIfGenerationChanged(workspace, target, published, generation);
             }
         }
     }
@@ -638,14 +814,5 @@ internal sealed class WorkspaceNavigationController
             .ConfigureAwait(false);
     }
 
-    public static bool IsSupportedArchivePath(string path)
-    {
-        var name = PathRules.Basename(path).ToLowerInvariant();
-        return name.EndsWith(".tar.gz", StringComparison.Ordinal)
-            || name.EndsWith(".tgz", StringComparison.Ordinal)
-            || name.EndsWith(".7z", StringComparison.Ordinal)
-            || name.EndsWith(".zip", StringComparison.Ordinal)
-            || name.EndsWith(".tar", StringComparison.Ordinal)
-            || name.EndsWith(".rar", StringComparison.Ordinal);
-    }
+    public static bool IsSupportedArchivePath(string path) => ArchivePaths.IsBrowsableArchive(path);
 }

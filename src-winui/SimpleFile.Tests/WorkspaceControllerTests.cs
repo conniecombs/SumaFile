@@ -162,90 +162,110 @@ public class WorkspaceControllerTests
     }
 
     [Fact]
-    public async Task PaneEnrichment_OutsideARepositorySkipsGitStatusAndProbesOnce()
+    public async Task ApplyWorkspaceProfile_SavesTheUiSettingsOnTheCallersContext()
     {
-        var ipc = new GitProbeIpc();
-        var pane = new ExplorerPane(PaneId.Primary)
+        // #78/#84: WorkspaceSettingsStore.SaveAsync normalizes Settings (the toolbar layout's lists among them) before its
+        // first await, and the UI thread owns Settings. So applying a profile from the UI thread must reach that save on
+        // the UI thread, even when every settings read and write before it completes asynchronously.
+        var ipc = new ConfigurableIpc();
+        var workspace = new ExplorerWorkspace(FakeExplorerBackend.Typical(), new FileOperationService(ipc));
+        await workspace.InitializeAsync();
+        var settingsGate = new object();
+        var themeWriteThreads = new System.Collections.Concurrent.ConcurrentQueue<int>();
+        ipc.GetDbSettingHandler = async (key, ct) =>
         {
-            Path = @"C:\Users\test\Downloads",
-            Entries = [new FileEntry { Name = "a.txt", Path = @"C:\Users\test\Downloads\a.txt", GitStatus = "modified" }],
+            await Task.Delay(5, ct).ConfigureAwait(false);
+            lock (settingsGate)
+            {
+                return ipc.Settings.TryGetValue(key, out var value) ? value : null;
+            }
         };
-        var controller = new PaneEnrichmentController();
-        var fileOps = new FileOperationService(ipc);
-
-        var changed = await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
-        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
-
-        Assert.True(changed);
-        Assert.Equal(0, ipc.FileStatusCalls);
-        Assert.Equal(1, ipc.ProbeCalls);
-        Assert.Null(pane.GitRepositoryRoot);
-        Assert.Null(pane.Entries[0].GitStatus);
-    }
-
-    [Fact]
-    public async Task PaneEnrichment_InvalidatedProbeAsksGitAgainWhenARepositoryAppears()
-    {
-        var ipc = new GitProbeIpc();
-        var pane = new ExplorerPane(PaneId.Primary)
+        ipc.SetDbSettingHandler = async (key, value, ct) =>
         {
-            Path = @"C:\src\new",
-            Entries = [new FileEntry { Name = "a.txt", Path = @"C:\src\new\a.txt" }],
+            if (key == "theme")
+            {
+                themeWriteThreads.Enqueue(Environment.CurrentManagedThreadId);
+            }
+
+            await Task.Delay(5, ct).ConfigureAwait(false);
+            lock (settingsGate)
+            {
+                ipc.Settings[key] = value;
+            }
         };
-        var controller = new PaneEnrichmentController();
-        var fileOps = new FileOperationService(ipc);
 
-        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
-        Assert.Null(pane.GitRepositoryRoot);
+        using var ui = new SingleThreadContext();
+        await ui.RunAsync(() => workspace.ApplyWorkspaceProfileAsync(WorkspaceProfileTemplates.DeveloperId))
+            .WaitAsync(TimeSpan.FromSeconds(10));
 
-        ipc.Repositories.Add(@"C:\src\new");
-        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
-        Assert.Equal(1, ipc.ProbeCalls);
-
-        pane.InvalidateGitProbe();
-        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
-
-        Assert.Equal(2, ipc.ProbeCalls);
-        Assert.Equal(@"C:\src\new", pane.GitRepositoryRoot);
-        Assert.Equal(1, ipc.FileStatusCalls);
+        Assert.Equal(WorkspaceProfileTemplates.DeveloperId, workspace.ActiveProfileId);
+        Assert.Equal(ui.ThreadId, Assert.Single(themeWriteThreads));
     }
 
-    [Fact]
-    public async Task PaneEnrichment_InsideARepositoryReusesTheProbedRootForSubfolders()
+    /// <summary>One dedicated thread with its own synchronization context, so awaits resume on it as on a dispatcher.</summary>
+    private sealed class SingleThreadContext : IDisposable
     {
-        var ipc = new GitProbeIpc();
-        ipc.Repositories.Add(@"C:\src\app");
-        var pane = new ExplorerPane(PaneId.Primary) { Path = @"C:\src\app" };
-        var controller = new PaneEnrichmentController();
-        var fileOps = new FileOperationService(ipc);
+        private readonly System.Collections.Concurrent.BlockingCollection<(SendOrPostCallback Callback, object? State)> _queue = new();
+        private readonly Thread _thread;
 
-        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
-        pane.Path = @"C:\src\app\lib";
-        pane.NextNavigationToken();
-        await controller.ApplyGitStatusesAsync(pane, fileOps, enableGitIntegration: true);
-
-        Assert.Equal(@"C:\src\app", pane.GitRepositoryRoot);
-        Assert.Equal(1, ipc.ProbeCalls);
-        Assert.Equal(2, ipc.FileStatusCalls);
-    }
-
-    private sealed class GitProbeIpc : NullIpc
-    {
-        public List<string> Repositories { get; } = [];
-        public int ProbeCalls { get; private set; }
-        public int FileStatusCalls { get; private set; }
-
-        public override Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default)
+        public SingleThreadContext()
         {
-            ProbeCalls++;
-            var root = Repositories.FirstOrDefault(repo => PathRules.PathContains(repo, path));
-            return Task.FromResult(new GitRepositoryStatus { IsRepo = root is not null, Root = root });
+            _thread = new Thread(() =>
+            {
+                SynchronizationContext.SetSynchronizationContext(new Context(this));
+                foreach (var (callback, state) in _queue.GetConsumingEnumerable())
+                {
+                    callback(state);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "Fake UI thread",
+            };
+            _thread.Start();
         }
 
-        public override Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)
+        public int ThreadId => _thread.ManagedThreadId;
+
+        public Task RunAsync(Func<Task> work)
         {
-            FileStatusCalls++;
-            return Task.FromResult(Array.Empty<FileEntry>());
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Post(async _ =>
+            {
+                try
+                {
+                    await work();
+                    completion.TrySetResult();
+                }
+                catch (Exception exception)
+                {
+                    completion.TrySetException(exception);
+                }
+            }, null);
+            return completion.Task;
+        }
+
+        public void Dispose() => _queue.CompleteAdding();
+
+        private void Post(SendOrPostCallback callback, object? state)
+        {
+            try
+            {
+                _queue.Add((callback, state));
+            }
+            catch (InvalidOperationException)
+            {
+                // Disposed: nothing runs any more.
+            }
+        }
+
+        private sealed class Context(SingleThreadContext owner) : SynchronizationContext
+        {
+            public override void Post(SendOrPostCallback d, object? state) => owner.Post(d, state);
+
+            public override void Send(SendOrPostCallback d, object? state) => throw new NotSupportedException();
+
+            public override SynchronizationContext CreateCopy() => this;
         }
     }
 }

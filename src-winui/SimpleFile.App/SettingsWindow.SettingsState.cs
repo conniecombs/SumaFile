@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using System.Text.Json;
 using SimpleFile.Core;
+using SimpleFile.PluginHost;
 using Windows.Storage.Pickers;
 
 namespace SimpleFile.App;
@@ -52,10 +53,18 @@ public sealed partial class SettingsWindow
         settings.ShowRecentLocations = ShowRecentSwitch.IsOn;
         settings.ShowSmartFolders = ShowSmartFoldersSwitch.IsOn;
         settings.ShowTags = ShowTagsSwitch.IsOn;
-        settings.EnableGitIntegration = EnableGitSwitch.IsOn;
         settings.ShowFolderSizes = ShowFolderSizesSwitch.IsOn;
         settings.ShortcutOverrides = CurrentShortcutOverrides();
-        settings.CommandSurface = CurrentCommandSurfaceLayout();
+        var surface = CurrentCommandSurfaceLayout();
+        if (!_toolbarOffersReset && settings.CommandSurface is { } current)
+        {
+            // Carries the current layout's offers, so saving never offers again an item the user removed. An offer a
+            // plugin made while Settings was open also keeps its item, which the editor's rows never had. After Reset
+            // the offers are dropped on purpose, and the enabled plugins offer their items again.
+            surface.MergeOffersFrom(current, _toolbarBaseline);
+        }
+
+        settings.CommandSurface = surface;
         settings.ThumbnailCacheMaxMb = EnableThumbnailCacheSwitch.IsOn ? (uint)Math.Round(CacheSizeSlider.Value) : 0;
         settings.ThumbnailCachePath = ThumbnailCachePathBox.Text.Trim();
     }
@@ -63,13 +72,16 @@ public sealed partial class SettingsWindow
     public async Task LoadSettingsAsync(
         FileOperationService fileOps,
         UiSettings settings,
+        PluginManager? plugins,
         CancellationToken cancellationToken = default)
     {
         _fileOps = fileOps;
+        AttachPlugins(plugins);
         ApplySettingsSnapshot(settings);
         _loadedSettingsJson = JsonSerializer.Serialize(settings);
         _loadedStateJson = CurrentStateJson();
         await LoadVersionAsync(fileOps, cancellationToken).ConfigureAwait(true);
+        await LoadArchiveSupportAsync(fileOps, cancellationToken).ConfigureAwait(true);
     }
 
     private string? _loadedSettingsJson;
@@ -126,9 +138,9 @@ public sealed partial class SettingsWindow
         ShowSmartFoldersSwitch.IsOn = settings.ShowSmartFolders;
         ShowTagsSwitch.IsOn = settings.ShowTags;
 
-        EnableGitSwitch.IsOn = settings.EnableGitIntegration;
         ShowFolderSizesSwitch.IsOn = settings.ShowFolderSizes;
         ApplyShortcutOverrides(settings.ShortcutOverrides);
+        _toolbarOffersReset = false;
         ApplyCommandSurfaceLayout(CloneCommandSurfaceLayout(settings.CommandSurface));
 
         var cacheMaxMb = settings.ThumbnailCacheMaxMb;
@@ -148,6 +160,7 @@ public sealed partial class SettingsWindow
             PrimaryToolbar = layout.PrimaryToolbar
                 .Select(item => item.IsSeparator ? CommandSurfaceItem.Separator() : CommandSurfaceItem.Command(item.Id))
                 .ToList(),
+            OfferedPrimaryItems = [.. layout.OfferedPrimaryItems],
         };
     }
 

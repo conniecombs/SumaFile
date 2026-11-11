@@ -1,0 +1,18 @@
+{
+  "id": "com.example.template",
+  "name": "Example plugin",
+  "version": "0.1.0",
+  "publisher": { "name": "Example Publisher" },
+  "sdkVersion": "1.0.0",
+  "ui": { "assembly": "Example.Plugin.dll", "entryType": "Example.Plugin.ExamplePlugin" },
+  "backend": { "executable": "example-plugin-backend.exe", "args": [], "activateOn": "first-call", "acceptsMultipleClients": false },
+  "permissions": ["backend-process"],
+  "contributions": {
+    "commands": [
+      { "id": "echo", "label": "Example: echo the greeting", "group": "Example" }
+    ]
+  },
+  "settings": [
+    { "key": "greeting", "type": "string", "label": "Greeting", "description": "The text the Example: echo the greeting command sends to the backend.", "default": "Hello from the example plugin", "group": "General" }
+  ]
+}

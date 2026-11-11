@@ -19,6 +19,10 @@ public sealed class ContextMenuEntry
     public IReadOnlyList<ContextMenuEntry> Children { get; init; } = [];
 }
 
+public sealed record PluginContextMenuGroup(string PluginId, string Label, IReadOnlyList<PluginContextMenuItem> Items);
+
+public sealed record PluginContextMenuItem(string HostCommandId, string Label, string When);
+
 public sealed class ContextMenuRequest
 {
     public int SelectionCount { get; init; }
@@ -40,9 +44,13 @@ public sealed class ContextMenuRequest
     public IReadOnlyList<string> ToolbarActionOrder { get; init; } = [];
     public string ToolbarDisplayMode { get; init; } = ToolbarActionCatalog.IconOnlyDisplayMode;
     public bool InRecycleBin { get; init; }
-    public bool GitEnabled { get; init; }
-    public bool InGitRepository { get; init; }
-    public bool SelectionHasGitStatus { get; init; }
+    public IReadOnlyList<PluginContextMenuGroup> PluginMenus { get; init; } = [];
+
+    /// <summary>Flags set on the current folder, formatted <c>pluginId:flag</c>.</summary>
+    public IReadOnlySet<string> FolderFlags { get; init; } = new HashSet<string>();
+
+    /// <summary>Ids of plugins that decorate the current selection.</summary>
+    public IReadOnlySet<string> SelectionDecorationPlugins { get; init; } = new HashSet<string>();
 }
 
 /// <summary>
@@ -81,8 +89,8 @@ public static class ContextMenuBuilder
             return BuildBackgroundMenu(request, canCompare, canCompareFolders);
         }
 
-        var entries = new List<ContextMenuEntry>
-        {
+        List<ContextMenuEntry> entries =
+        [
             Item("ctx-open", "Open", request.SelectionCount != 1, "Enter"),
             OpenWithMenu(request),
             Item("ctx-open-tab", "Open in new tab", request.SelectionCount != 1 || !request.SelectedIsDirectory, "Ctrl+Enter"),
@@ -109,18 +117,18 @@ public static class ContextMenuBuilder
             Divider(),
             ToolsMenu(request, canCompare, canCompareFolders),
             ArchiveMenu(request, canUnpack, extractFolder),
-            GitMenu(request),
+            .. PluginMenus(request),
             Divider(),
             Item("ctx-info", "Properties", request.SelectionCount != 1, "Alt+Enter"),
-        };
+        ];
 
         return VisibleEntries(entries);
     }
 
     /// <summary>
     /// The menu for a right-click on blank pane space (nothing selected): create items,
-    /// paste into the current folder, refresh, the folder-level tool and Git groups, and
-    /// the current folder's properties.
+    /// paste into the current folder, refresh, the folder-level tool group, the plugin
+    /// groups, and the current folder's properties.
     /// </summary>
     private static IReadOnlyList<ContextMenuEntry> BuildBackgroundMenu(
         ContextMenuRequest request,
@@ -136,7 +144,7 @@ public static class ContextMenuBuilder
             Item("ctx-refresh", "Refresh", false, "F5"),
             Divider(),
             ToolsMenu(request, canCompare, canCompareFolders),
-            GitMenu(request),
+            .. PluginMenus(request),
             Divider(),
             Item("ctx-folder-info", "Properties"),
         ]);
@@ -159,7 +167,6 @@ public static class ContextMenuBuilder
             IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-tools-menu"),
             Children =
             [
-                Item("overflow-ftp-sftp-manager", "FTP/SFTP manager...", showIcon: false),
                 Item("overflow-operation-history", "Operation history...", showIcon: false),
                 Item("ctx-cleanup", "Large files and duplicates here...", showIcon: false),
                 Item("ctx-terminal", "Open terminal here", false, "Ctrl+`", showIcon: false),
@@ -257,11 +264,6 @@ public static class ContextMenuBuilder
                 default:
                     if (ToolbarActionCatalog.Find(id) is { CommandId: not null } action)
                     {
-                        if (string.Equals(action.Group, "Git", StringComparison.Ordinal) && !request.GitEnabled)
-                        {
-                            break;
-                        }
-
                         items.Add(Item($"overflow-{id}", ToolbarOverflowLabel(action, request), shortcut: action.Shortcut, iconGlyph: action.IconGlyph));
                     }
 
@@ -409,35 +411,25 @@ public static class ContextMenuBuilder
         };
     }
 
-    private static ContextMenuEntry GitMenu(ContextMenuRequest request)
+    private static IEnumerable<ContextMenuEntry> PluginMenus(ContextMenuRequest request)
     {
-        if (!request.GitEnabled || !request.InGitRepository)
+        foreach (var group in request.PluginMenus)
         {
-            return Item("ctx-git-menu", "Git", hidden: true);
+            var children = group.Items
+                .Select(item => Item(
+                    item.HostCommandId,
+                    item.Label,
+                    hidden: !PluginMenuWhen.Evaluate(item.When, group.PluginId, request),
+                    showIcon: false))
+                .ToList();
+            yield return new ContextMenuEntry
+            {
+                Id = $"ctx-plugin-menu:{group.PluginId}",
+                Label = group.Label,
+                Hidden = children.All(child => child.Hidden),
+                Children = children,
+            };
         }
-
-        var hasSelection = request.SelectionCount > 0;
-        return new ContextMenuEntry
-        {
-            Id = "ctx-git-menu",
-            Label = "Git",
-            IconGlyph = ContextMenuIconCatalog.GlyphFor("ctx-git-menu"),
-            Children =
-            [
-                Item("ctx-git-panel", "Show Git workbench", showIcon: false),
-                Item("ctx-git-refresh", "Refresh status", !request.InGitRepository, showIcon: false),
-                Divider(),
-                Item("ctx-git-diff", "Show diff", request.SelectionCount != 1 || !request.SelectionHasGitStatus, showIcon: false),
-                Item("ctx-git-stage", "Stage selected", !hasSelection || !request.SelectionHasGitStatus, showIcon: false),
-                Item("ctx-git-unstage", "Unstage selected", !hasSelection || !request.SelectionHasGitStatus, showIcon: false),
-                Item("ctx-git-discard", "Discard selected changes", !hasSelection || !request.SelectionHasGitStatus, showIcon: false),
-                Divider(),
-                Item("ctx-git-fetch", "Fetch", !request.InGitRepository, showIcon: false),
-                Item("ctx-git-pull", "Pull", !request.InGitRepository, showIcon: false),
-                Item("ctx-git-push", "Push", !request.InGitRepository, showIcon: false),
-                Item("ctx-git-commit", "Commit", !request.InGitRepository, showIcon: false),
-            ],
-        };
     }
 
     private static ContextMenuEntry SendToMenu(ContextMenuRequest request, bool hasOtherPane)

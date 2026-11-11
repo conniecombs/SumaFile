@@ -40,27 +40,6 @@ public class UiAuditSprint3Tests
 
         var transfer = Read("MainWindow.Transfer.cs");
         Assert.Contains("RunWithProgressAsync(", Slice(transfer, "private async Task ExtractSelectedArchiveAsync(string mode)", "private async Task<string?> PickFolderAsync("));
-
-        var remote = Read("RemoteManagerWindow.xaml.cs");
-        Assert.Contains("RunWithProgressAsync(", Slice(remote, "private async void OnConnectClicked(", "private async void OnDisconnectClicked("));
-    }
-
-    // P3: git buttons stayed enabled while a command ran and cancellation was silent.
-    [Fact]
-    public void GitCommands_MarkTheWorkbenchBusyAndReportCancellation()
-    {
-        var model = Read("GitWorkbenchViewModel.cs");
-        var git = Read("MainWindow.Git.cs");
-
-        Assert.Contains("public void SetCommandRunning(bool running)", model);
-        foreach (var runner in new[] { "RunGitRepositoryCommandAsync", "RunGitPathsCommandAsync" })
-        {
-            var body = Slice(git, $"private async Task {runner}(", "finally");
-            Assert.Contains("SetCommandRunning(true)", body);
-        }
-
-        Assert.True(Regex.Matches(git, @"SetCommandRunning\(false\)").Count >= 2);
-        Assert.Contains("was cancelled", git);
     }
 
     // T14 / S16 / P10: icon-only controls must carry an accessible name.
@@ -94,11 +73,10 @@ public class UiAuditSprint3Tests
         Assert.True(missing.Count == 0, "Controls without AutomationProperties.Name:\n" + string.Join("\n", missing));
     }
 
-    // S15: status-bar Git/Preview buttons gave no state feedback.
+    // S15: status-bar toggle buttons gave no state feedback. (The Git toggle moved to the Git plugin's toolbar item.)
     [Fact]
     public void StatusBarToggles_ExposeTheirState()
     {
-        Assert.Contains("SetToggleChromeState(GitToggleButton", Read("MainWindow.Git.cs"));
         Assert.Contains("SetToggleChromeState(PreviewToggleButton", Read("MainWindow.Commands.cs"));
     }
 

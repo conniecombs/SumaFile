@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- WinUI-free, so SimpleFile.Tests can reference it; the 19041 UI assembly SumaFile.Git builds on it. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>SumaFile.Git.Model</RootNamespace>
+    <AssemblyName>SumaFile.Git.Model</AssemblyName>
+    <Description>Git plugin model: backend DTOs, the backend client, the workbench view model and controller, and the row decoration provider</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Compile-only (spec §12): the SDK comes from the host at run time. -->
+    <ProjectReference Include="..\..\..\..\src-winui\SimpleFile.PluginSdk\SimpleFile.PluginSdk.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+</Project>

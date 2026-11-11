@@ -306,6 +306,8 @@ All eight commands (`get_all_tags`, `create_tag`, `update_tag`, `delete_tag`, `g
 
 ### `git.rs` — Core (PR 9)
 
+> Superseded in phase 4: `git.rs` left the core for `plugins/git/backend` (the bundled plugin `com.sumafile.git`). The history below stays.
+
 | Function | Class | Extract |
 | --- | --- | --- |
 | `get_git_status` / `get_git_file_statuses` | Wrapper+Core | no Tauri types; `CREATE_NO_WINDOW` |
@@ -361,7 +363,7 @@ Matches architecture PRs 3–10. Each row is one future PR’s filesystem work.
 | 6 | `fs_ops.rs` (except `select_directory`), `progress.rs`, `search.rs`, `watcher.rs`, `cleanup.rs` | core | wrappers + `select_directory` dialog stays |
 | 7 | `preview.rs` domain | core | wrappers that call `Host` / opener |
 | 8 | `db.rs`, `tags.rs`, `smart_folders.rs` | core | `DbState` Tauri adapter + `init_db` in `run()` |
-| 9 | `drives.rs`, `git.rs`, `terminal.rs`, `checksum.rs`, `compare.rs`, `metadata.rs`, `open_with.rs` | core | thin commands |
+| 9 | `drives.rs`, `git.rs`, `terminal.rs`, `checksum.rs`, `compare.rs`, `metadata.rs`, `open_with.rs` | core | thin commands. Superseded in phase 4: `git.rs` left the core for `plugins/git/backend` |
 | 10 | none (new crate) | `crates/simplefile-service` | Tauri still ships |
 | 19 | updater download/minisign logic | core `updater.rs` | Tauri plugin wrappers until Gate 7 |
 

@@ -35,14 +35,11 @@ public class OmnibarIntentParserTests
     }
 
     [Fact]
-    public void FilterCommands_RespectsGitAvailability()
+    public void FilterCommands_ListsNoCoreGitCommands()
     {
-        Assert.DoesNotContain(
-            OmnibarIntentParser.FilterCommands("git", includeGit: false),
-            command => command.Group == "Git");
-        Assert.Contains(
-            OmnibarIntentParser.FilterCommands("git", includeGit: true),
-            command => command.Id == "git-panel");
+        // Git commands come from the Git plugin (plugin:com.sumafile.git:*) and stay listed while it is turned off.
+        Assert.DoesNotContain(OmnibarIntentParser.FilterCommands("git"), command => command.Id.StartsWith("git-", StringComparison.Ordinal));
+        Assert.Contains(OmnibarIntentParser.FilterCommands("settings"), command => command.Id == "settings");
     }
 
     [Fact]

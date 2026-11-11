@@ -1,0 +1,24 @@
+{
+  "id": "com.sumafile.sevenzip",
+  "name": "7-Zip archives",
+  "version": "1.0.0",
+  "publisher": { "name": "SumaFile Team", "url": "https://github.com/conniecombs/SumaFile" },
+  "sdkVersion": "1.0.0",
+  "backend": { "executable": "sumafile-sevenzip-backend.exe", "args": [], "activateOn": "startup", "acceptsMultipleClients": true },
+  "permissions": ["backend-process"],
+  "contributions": {
+    "archiveFormats": [
+      { "extension": ".7z", "canList": true, "canExtract": true, "canCreate": true, "canModify": true, "engineName": "7-Zip" }
+    ]
+  },
+  "settings": [
+    {
+      "key": "binaryOverride",
+      "type": "path",
+      "label": "7-Zip executable override",
+      "description": "A 7za.exe, 7z.exe or 7zz.exe file, or a folder that holds one, used instead of the bundled 7-Zip. Leave empty to use the bundled copy.",
+      "default": "",
+      "group": "Advanced"
+    }
+  ]
+}

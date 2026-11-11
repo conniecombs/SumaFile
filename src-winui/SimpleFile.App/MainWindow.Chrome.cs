@@ -326,7 +326,6 @@ public sealed partial class MainWindow
         }
 
         FolderTreeEmptyText.Visibility = _workspace.FolderTreeRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        RemoteProfilesEmptyText.Visibility = RemoteProfiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         BookmarksEmptyText.Visibility = _workspace.Bookmarks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         RecentsEmptyText.Visibility = _workspace.RecentPaths.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         SmartFoldersEmptyText.Visibility = _workspace.SmartFolders.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -344,8 +343,6 @@ public sealed partial class MainWindow
         var settings = _workspace.Settings;
         QuickAccessSection.Visibility = SidebarSectionVisibility.QuickAccess(settings) ? Visibility.Visible : Visibility.Collapsed;
         FolderTreeSection.Visibility = SidebarSectionVisibility.FolderTree(settings, _workspace.FolderTreeRows.Count) ? Visibility.Visible : Visibility.Collapsed;
-        RemoteProfilesSection.Visibility = Visibility.Visible;
-        RemoteProfileList.Visibility = RemoteProfiles.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         BookmarksSection.Visibility = SidebarSectionVisibility.Bookmarks(settings) ? Visibility.Visible : Visibility.Collapsed;
         RecentSection.Visibility = SidebarSectionVisibility.Recent(settings, _workspace.RecentPaths.Count) ? Visibility.Visible : Visibility.Collapsed;
         SmartFoldersSection.Visibility = SidebarSectionVisibility.SmartFolders(settings, _workspace.SmartFolders.Count, _search?.IsActive == true)
@@ -359,6 +356,7 @@ public sealed partial class MainWindow
         DriveList.Visibility = _myPcCollapsed ? Visibility.Collapsed : Visibility.Visible;
         TagsEmptyText.Visibility = _tagsCollapsed || _workspace.AllTags.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
         TagsList.Visibility = _tagsCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        ApplyPluginSectionCollapse();
     }
 
     private void ApplySidebarLayout()
@@ -390,6 +388,8 @@ public sealed partial class MainWindow
         }
 
         UpdateSidebarToggleButton(PrimarySidebarToggleButton, settings.SidebarVisible);
+        // Showing the sidebar is one of the moments a plugin section's body may load.
+        ActivateVisiblePluginSections();
     }
 
     private static void UpdateSidebarToggleButton(Button button, bool sidebarVisible)
@@ -829,7 +829,19 @@ public sealed partial class MainWindow
         {
             tag = tags.FirstOrDefault();
         }
-        return FileRow.From(entry, cut, tag, pane);
+
+        var row = FileRow.From(entry, cut, tag, pane);
+        // The pane's plugin decorations, merged by the coordinator; a row no plugin decorates keeps the empty defaults.
+        var decorations = _workspace?.Pane(pane).Decorations ?? PaneDecorations.Empty;
+        if (decorations.For(entry.Path) is { } decoration)
+        {
+            row.DecorationText = decoration.Text;
+            row.DecorationBrushKey = decoration.BrushKey ?? "";
+            row.DecorationTooltip = decoration.Tooltip ?? "";
+            row.DecorationPlugins = decorations.PluginsFor([entry.Path]);
+        }
+
+        return row;
     }
 
     private FileRow SearchRowFrom(SearchResult result, PaneId pane)
@@ -924,7 +936,10 @@ public sealed partial class MainWindow
         && left.SizeText == right.SizeText
         && left.TypeText == right.TypeText
         && left.ExtensionText == right.ExtensionText
-        && left.GitText == right.GitText
+        && left.DecorationText == right.DecorationText
+        && left.DecorationBrushKey == right.DecorationBrushKey
+        && left.DecorationTooltip == right.DecorationTooltip
+        && left.DecorationPlugins.SetEquals(right.DecorationPlugins)
         && left.SymlinkText == right.SymlinkText
         && left.IsHidden == right.IsHidden
         && left.PathText == right.PathText

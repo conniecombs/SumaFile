@@ -27,11 +27,29 @@ pub(crate) struct ProgressContext<'a> {
     pub(crate) last_running_emit: StdMutex<Instant>,
     pub(crate) retry_count: Option<&'a AtomicU64>,
     pub(crate) rate_limit: Option<&'a super::resources::RateLimit>,
+    /// Where the adaptive scheduler collects write latency, when it is tuning.
+    pub(crate) write_latency: Option<&'a sumafile_transfer::tuning::LatencyHistogram>,
 }
 
 impl ProgressContext<'_> {
     pub(crate) fn check_cancelled(&self) -> Result<(), String> {
         check_cancelled(self.cancel)
+    }
+
+    /// Call before a destination write of `bytes`; pass the result to
+    /// [`Self::write_finished`]. Reads the clock only when the scheduler is
+    /// listening and the write is large enough to say something about the
+    /// device, so small files and untuned copies pay nothing.
+    pub(crate) fn write_started(&self, bytes: usize) -> Option<Instant> {
+        (self.write_latency.is_some() && sumafile_transfer::tuning::LatencyHistogram::times(bytes))
+            .then(Instant::now)
+    }
+
+    /// Record how long a successful write took: one relaxed counter increment.
+    pub(crate) fn write_finished(&self, started: Option<Instant>, bytes: usize) {
+        if let (Some(histogram), Some(started)) = (self.write_latency, started) {
+            histogram.record(started.elapsed(), bytes);
+        }
     }
 
     pub(crate) fn emit(

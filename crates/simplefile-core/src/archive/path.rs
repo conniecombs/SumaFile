@@ -1,7 +1,10 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use super::engine::{ArchiveEngine, EngineFormat};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ArchiveFormat {
@@ -9,7 +12,6 @@ pub(super) enum ArchiveFormat {
     Tar,
     TarGz,
     Rar,
-    SevenZip,
 }
 
 impl ArchiveFormat {
@@ -19,7 +21,51 @@ impl ArchiveFormat {
             ArchiveFormat::Tar => "tar",
             ArchiveFormat::TarGz => "tar.gz",
             ArchiveFormat::Rar => "rar",
-            ArchiveFormat::SevenZip => "7z",
+        }
+    }
+}
+
+/// How an archive is served: by one of the core's own formats, or by a
+/// registered engine for the extension it claimed.
+#[derive(Clone)]
+pub(super) enum ArchiveKind {
+    BuiltIn(ArchiveFormat),
+    Engine {
+        engine: Arc<dyn ArchiveEngine>,
+        format: EngineFormat,
+    },
+}
+
+impl std::fmt::Debug for ArchiveKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BuiltIn(format) => f.debug_tuple("BuiltIn").field(format).finish(),
+            Self::Engine { engine, format } => f
+                .debug_struct("Engine")
+                .field("engine", &engine.name())
+                .field("extension", &format.extension)
+                .finish(),
+        }
+    }
+}
+
+impl ArchiveKind {
+    /// The format label reported in listings and error text (`zip`, `tar`,
+    /// or an engine extension without its dot, such as `7z`).
+    pub(super) fn label(&self) -> String {
+        match self {
+            Self::BuiltIn(format) => format.label().to_string(),
+            Self::Engine { format, .. } => super::engine::format_label(format),
+        }
+    }
+
+    /// The archive type unsafe-entry-name messages start with.
+    pub(super) fn entry_type(&self) -> String {
+        match self {
+            Self::BuiltIn(ArchiveFormat::Zip) => "Zip".to_string(),
+            Self::BuiltIn(ArchiveFormat::Tar | ArchiveFormat::TarGz) => "Tar".to_string(),
+            Self::BuiltIn(ArchiveFormat::Rar) => "RAR".to_string(),
+            Self::Engine { engine, .. } => engine.name().to_string(),
         }
     }
 }
@@ -28,7 +74,16 @@ impl ArchiveFormat {
 pub struct ArchivePath {
     pub(super) archive_path: PathBuf,
     pub(super) inner_path: PathBuf,
-    pub(super) format: ArchiveFormat,
+    pub(super) kind: ArchiveKind,
+}
+
+/// A built-in format first; otherwise the registered engine, if any.
+pub(super) fn archive_kind_for_path(path: &Path) -> Option<ArchiveKind> {
+    if let Some(format) = archive_format_for_path(path) {
+        return Some(ArchiveKind::BuiltIn(format));
+    }
+    super::engine::engine_for_path(path)
+        .map(|(engine, format)| ArchiveKind::Engine { engine, format })
 }
 
 pub(super) fn archive_format_for_path(path: &Path) -> Option<ArchiveFormat> {
@@ -45,19 +100,29 @@ pub(super) fn archive_format_for_path(path: &Path) -> Option<ArchiveFormat> {
         Some("zip") => Some(ArchiveFormat::Zip),
         Some("tar") => Some(ArchiveFormat::Tar),
         Some("rar") => Some(ArchiveFormat::Rar),
-        Some("7z") => Some(ArchiveFormat::SevenZip),
         _ => None,
     }
 }
 
+/// Split `path` at the first archive file along it. A path inside a file
+/// whose format only an absent plugin serves (`x.7z\docs`) fails with the
+/// plugin note; that file itself is no archive (`Ok(None)`), so it can
+/// still be copied, renamed or deleted.
 pub fn split_archive_path(path: &str) -> Result<Option<ArchivePath>, String> {
     let input = PathBuf::from(path);
     let mut archive_path = PathBuf::new();
     let mut inner_path = PathBuf::new();
-    let mut found_format = None;
+    let mut found_kind: Option<ArchiveKind> = None;
+    let mut unavailable_note: Option<&'static str> = None;
 
     for component in input.components() {
-        if let Some(format) = found_format {
+        if let Some(note) = unavailable_note {
+            if !matches!(component, Component::CurDir) {
+                return Err(note.to_string());
+            }
+            continue;
+        }
+        if found_kind.is_some() {
             match component {
                 Component::Normal(part) => inner_path.push(part),
                 Component::CurDir => {}
@@ -65,25 +130,27 @@ pub fn split_archive_path(path: &str) -> Result<Option<ArchivePath>, String> {
                     return Err(format!("Archive entry has unsafe path: {path}"));
                 }
             }
-            found_format = Some(format);
             continue;
         }
 
         archive_path.push(component.as_os_str());
         if archive_path.is_file() {
-            found_format = archive_format_for_path(&archive_path);
+            found_kind = archive_kind_for_path(&archive_path);
+            if found_kind.is_none() {
+                unavailable_note = super::placeholders::unavailable_note_for_path(&archive_path);
+            }
         }
     }
 
-    Ok(found_format.map(|format| ArchivePath {
+    Ok(found_kind.map(|kind| ArchivePath {
         archive_path,
         inner_path,
-        format,
+        kind,
     }))
 }
 
-/// True for an archive file or any path inside one, decided from the path
-/// components alone (no archive is opened).
+/// True for an archive file or any path inside one, a built-in format or an
+/// extension a registered engine serves. No archive is opened to decide.
 pub fn is_archive_path(path: &str) -> bool {
     split_archive_path(path).ok().flatten().is_some()
 }
@@ -417,6 +484,35 @@ pub(super) fn unique_temp_archive_path(path: &Path) -> Result<PathBuf, String> {
         .to_string_lossy();
     for i in 0..10_000u32 {
         let candidate = parent.join(format!(".{}.simplefile-new-{}-{}", name, unique_nonce(), i));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("Could not create a unique temporary archive path".to_string())
+}
+
+/// A free temp path beside `archive` for an engine to create a new archive
+/// at: `.{stem}.simplefile-new-{nonce}-{i}{extension}`, where `stem` is the
+/// file name without `extension`. Keeping the extension lets an engine that
+/// picks its format from the name write the right one.
+pub(super) fn unique_engine_temp_path(archive: &Path, extension: &str) -> Result<PathBuf, String> {
+    let parent = archive.parent().unwrap_or_else(|| Path::new("."));
+    let name = archive
+        .file_name()
+        .ok_or_else(|| format!("Cannot get archive file name for {}", archive.display()))?
+        .to_string_lossy()
+        .into_owned();
+    let stem = if name.len() > extension.len()
+        && name.to_lowercase().ends_with(&extension.to_lowercase())
+        && name.is_char_boundary(name.len() - extension.len())
+    {
+        &name[..name.len() - extension.len()]
+    } else {
+        name.as_str()
+    };
+    let nonce = unique_nonce();
+    for i in 0..10_000u32 {
+        let candidate = parent.join(format!(".{stem}.simplefile-new-{nonce}-{i}{extension}"));
         if !candidate.exists() {
             return Ok(candidate);
         }

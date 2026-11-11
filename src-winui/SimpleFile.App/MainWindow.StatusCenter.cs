@@ -19,6 +19,10 @@ public sealed class StatusCenterTaskRow
     public Visibility ProgressVisibility { get; init; } = Visibility.Collapsed;
     public Visibility UndoVisibility { get; init; } = Visibility.Collapsed;
     public ICommand? UndoCommand { get; init; }
+
+    /// <summary>Text of the row's action button: Undo for a transfer, Restart for a stopped plugin.</summary>
+    public string ActionLabel { get; init; } = "Undo";
+    public string ActionAutomationName { get; init; } = "Undo this transfer";
 }
 
 /// <summary>Minimal command for buttons inside the Status Center row template.</summary>
@@ -120,7 +124,7 @@ public sealed partial class MainWindow
 
     private IReadOnlyList<StatusCenterTaskRow> StatusCenterRows(StatusCenterSnapshot snapshot)
     {
-        var rows = new List<StatusCenterTaskRow>();
+        var rows = new List<StatusCenterTaskRow>(PluginStatusRows());
         if (_transfer is not null)
         {
             rows.AddRange(_transfer.Operations
@@ -223,8 +227,8 @@ public sealed partial class MainWindow
                             Padding="8,2"
                             MinHeight="0"
                             FontSize="12"
-                            Content="Undo"
-                            AutomationProperties.Name="Undo this transfer"
+                            Content="{Binding ActionLabel}"
+                            AutomationProperties.Name="{Binding ActionAutomationName}"
                             Command="{Binding UndoCommand}"
                             Visibility="{Binding UndoVisibility}" />
                     </StackPanel>

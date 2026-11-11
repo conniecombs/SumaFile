@@ -1,0 +1,7 @@
+{
+  "algorithm": "ed25519",
+  "files": {
+    "payload.txt": "9146dd4e6cdcbf12ee74e4637c6d40e75258f36916d6a35cbb537930f34c41c2"
+  },
+  "signature": "GOSmzfMLef1ZYLOfGLL0L6d0xF3vryDt5zfsirNQ29wa+0tcmoOw6det7sOjbORiiFX4IDmh8P6Kqqr6hbMeAQ=="
+}

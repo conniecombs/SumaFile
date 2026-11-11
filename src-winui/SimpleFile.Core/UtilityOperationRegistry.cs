@@ -1,7 +1,7 @@
 namespace SimpleFile.Core;
 
 /// <summary>
-/// Tracks cancellable "utility" operations (Quick Look, Properties, checksums, Git commands,
+/// Tracks cancellable "utility" operations (Quick Look, Properties, checksums,
 /// scans, Settings) by kind. Starting an operation cancels only a previous operation of the same
 /// kind, so unrelated actions no longer cancel each other; <see cref="CancelAll"/> is for session
 /// teardown.

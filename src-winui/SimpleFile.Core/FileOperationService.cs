@@ -528,36 +528,6 @@ public sealed class FileOperationService : ISettingsBackend
         }
     }
 
-    public Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default) => _ipc.GitPullAsync(path, ct);
-
-    public Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)
-        => _ipc.GetGitFileStatusesAsync(path, ct);
-
-    public Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default)
-        => _ipc.GetGitRepositoryStatusAsync(path, ct);
-
-    public Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default)
-        => _ipc.GitStagePathsAsync(path, paths, ct);
-
-    public Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default)
-        => _ipc.GitUnstagePathsAsync(path, paths, ct);
-
-    public Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default)
-        => _ipc.GitDiscardPathsAsync(path, paths, ct);
-
-    public Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default)
-        => _ipc.GitDiffPathAsync(path, filePath, ct);
-
-    public Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default)
-        => _ipc.GitCommitAsync(path, message, ct);
-
-    public Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default)
-        => _ipc.GitFetchAsync(path, ct);
-
-    public Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default) => _ipc.GitPushAsync(path, ct);
-
-    public Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default) => _ipc.GetGitStatusAsync(path, ct);
-
     // Open a file in the default application.
     public async Task OpenFileAsync(string path, CancellationToken ct = default)
     {
@@ -587,7 +557,7 @@ public sealed class FileOperationService : ISettingsBackend
 
     public async Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
     {
-        await _ipc.ExtractArchiveAsync(archivePath, destination, ct).ConfigureAwait(false);
+        await _ipc.ExtractArchiveAsync(archivePath, destination, operationId: null, ct).ConfigureAwait(false);
     }
 
     public async Task CreateArchiveAsync(
@@ -596,7 +566,85 @@ public sealed class FileOperationService : ISettingsBackend
         string format,
         CancellationToken ct = default)
     {
-        await _ipc.CreateArchiveAsync(paths, archivePath, format, ct).ConfigureAwait(false);
+        await _ipc.CreateArchiveAsync(paths, archivePath, format, operationId: null, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>The protocol's <c>cancel.cancelledMessage</c>: the exact reply text of a cancelled archive operation.</summary>
+    internal const string ArchiveCancelledMessage = "Archive operation cancelled";
+
+    /// <summary>
+    /// Extracts with an <c>archive-</c> operation id, so the service reports <c>operation-progress</c> for it and
+    /// <c>cancel_operation</c> can stop it. Cancelling <paramref name="ct"/> sends one cancel and keeps awaiting the
+    /// reply, so the call ends only once the service has stopped; it then throws <see cref="OperationCanceledException"/>.
+    /// </summary>
+    public Task ExtractArchiveTrackedAsync(
+        string archivePath,
+        string destination,
+        IProgress<ProgressUpdate> progress,
+        Action<string>? operationStarted,
+        CancellationToken ct)
+        => RunTrackedArchiveOperationAsync(
+            (ipc, operationId) => ipc.ExtractArchiveAsync(archivePath, destination, operationId, CancellationToken.None),
+            progress,
+            operationStarted,
+            ct);
+
+    /// <summary>Creates an archive as a tracked operation; see <see cref="ExtractArchiveTrackedAsync"/>.</summary>
+    public Task CreateArchiveTrackedAsync(
+        string[] paths,
+        string archivePath,
+        string format,
+        IProgress<ProgressUpdate> progress,
+        Action<string>? operationStarted,
+        CancellationToken ct)
+        => RunTrackedArchiveOperationAsync(
+            (ipc, operationId) => ipc.CreateArchiveAsync(paths, archivePath, format, operationId, CancellationToken.None),
+            progress,
+            operationStarted,
+            ct);
+
+    private async Task RunTrackedArchiveOperationAsync(
+        Func<ISimpleFileIpc, string, Task> invoke,
+        IProgress<ProgressUpdate> progress,
+        Action<string>? operationStarted,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(progress);
+        var ipc = _ipc;
+        var operationId = $"archive-{Guid.NewGuid():N}";
+        ct.ThrowIfCancellationRequested();
+        operationStarted?.Invoke(operationId);
+        using var subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
+        {
+            if (string.Equals(update.OperationId, operationId, StringComparison.Ordinal))
+            {
+                progress.Report(update);
+            }
+        });
+
+        // Send first and register the cancel after, so the service always sees the operation before its cancel.
+        // The request itself is never cancelled: the reply is awaited until the service has stopped the engine.
+        var request = invoke(ipc, operationId);
+        var cancelSent = 0;
+        using var registration = ct.Register(() =>
+        {
+            if (Interlocked.Exchange(ref cancelSent, 1) == 0)
+            {
+                _ = CancelOperationBestEffortAsync(ipc, operationId);
+            }
+        });
+        try
+        {
+            await request.ConfigureAwait(false);
+        }
+        catch (IpcException exception) when (
+            ct.IsCancellationRequested
+            || string.Equals(exception.Message, ArchiveCancelledMessage, StringComparison.Ordinal))
+        {
+            throw new OperationCanceledException(ArchiveCancelledMessage, exception, ct);
+        }
+
+        ct.ThrowIfCancellationRequested();
     }
 
     public Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default)
@@ -660,98 +708,6 @@ public sealed class FileOperationService : ISettingsBackend
     }
 
     public Task SetSettingAsync(string key, string value, CancellationToken ct = default) => _ipc.SetDbSettingAsync(key, value, ct);
-
-    public Task<RemoteProfile[]> RemoteListProfilesAsync(CancellationToken ct = default) =>
-        _ipc.RemoteListProfilesAsync(ct);
-
-    public async Task<RemoteTransferOutcome> RemoteTransferEntriesAsync(
-        string remoteSessionId, string direction, string[] sources, string destination,
-        string conflictAction, IProgress<ProgressUpdate>? progress, CancellationToken ct = default,
-        IProgress<TuningUpdate>? tuning = null)
-    {
-        var ipc = _ipc;
-        var operationId = GenerateOperationId();
-        using var tuningSubscription = ipc.On<TuningUpdate>(Protocol.TransferTuningEvent, update =>
-        {
-            if (update.OperationId == operationId) tuning?.Report(update);
-        });
-        using var subscription = ipc.On<ProgressUpdate>(Protocol.OperationProgressEvent, update =>
-        {
-            if (update.OperationId == operationId) progress?.Report(update);
-        });
-        ct.ThrowIfCancellationRequested();
-        // Send the request before registering cancellation, so the service sees
-        // the operation before its cancel message. Keep awaiting the final result
-        // after cancellation, including partial successes and staging cleanup.
-        var transfer = ipc.RemoteTransferEntriesAsync(remoteSessionId, direction, sources,
-            destination, conflictAction, operationId, CancellationToken.None);
-        using var registration = ct.Register(() => _ = CancelOperationBestEffortAsync(ipc, operationId));
-        return await transfer.ConfigureAwait(false);
-    }
-
-    public Task<RemoteProfile> RemoteSaveProfileAsync(
-        RemoteProfileInput profile,
-        string? secret = null,
-        CancellationToken ct = default) =>
-        _ipc.RemoteSaveProfileAsync(profile, secret, ct);
-
-    public Task RemoteDeleteProfileAsync(string profileId, CancellationToken ct = default) =>
-        _ipc.RemoteDeleteProfileAsync(profileId, ct);
-
-    public Task<RemoteConnectionTestResult> RemoteTestProfileAsync(
-        RemoteProfileInput profile,
-        string? secret = null,
-        CancellationToken ct = default) =>
-        _ipc.RemoteTestProfileAsync(profile, secret, ct);
-
-    public Task<RemoteSession> RemoteConnectAsync(
-        string profileId,
-        string? secret = null,
-        CancellationToken ct = default) =>
-        _ipc.RemoteConnectAsync(profileId, secret, ct);
-
-    public Task RemoteDisconnectAsync(string remoteSessionId, CancellationToken ct = default) =>
-        _ipc.RemoteDisconnectAsync(remoteSessionId, ct);
-
-    public Task<DirectoryListing> RemoteListDirectoryAsync(
-        string remoteSessionId,
-        string path,
-        CancellationToken ct = default) =>
-        _ipc.RemoteListDirectoryAsync(remoteSessionId, path, ct);
-
-    public Task<FileEntry> RemoteCreateDirectoryAsync(
-        string remoteSessionId,
-        string path,
-        string name,
-        CancellationToken ct = default) =>
-        _ipc.RemoteCreateDirectoryAsync(remoteSessionId, path, name, ct);
-
-    public Task<FileEntry> RemoteRenameEntryAsync(
-        string remoteSessionId,
-        string path,
-        string newName,
-        CancellationToken ct = default) =>
-        _ipc.RemoteRenameEntryAsync(remoteSessionId, path, newName, ct);
-
-    public Task<string[]> RemoteDeleteEntriesAsync(
-        string remoteSessionId,
-        string[] paths,
-        CancellationToken ct = default) =>
-        _ipc.RemoteDeleteEntriesAsync(remoteSessionId, paths, ct);
-
-    public Task<string> RemoteDownloadFileAsync(
-        string remoteSessionId,
-        string remotePath,
-        string localPath,
-        CancellationToken ct = default) =>
-        _ipc.RemoteDownloadFileAsync(remoteSessionId, remotePath, localPath, ct);
-
-    public Task<FileEntry> RemoteUploadFileAsync(
-        string remoteSessionId,
-        string localPath,
-        string remotePath,
-        CancellationToken ct = default) =>
-        _ipc.RemoteUploadFileAsync(remoteSessionId, localPath, remotePath, ct);
 
     public Task<string> GetAppVersionAsync(CancellationToken ct = default) => _ipc.GetAppVersionAsync(ct);
 

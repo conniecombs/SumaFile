@@ -61,7 +61,6 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal(@"C:\Work", saved.Layout.Primary.Path);
         Assert.NotNull(saved.Chrome);
         Assert.False(saved.Chrome!.KeepFoldersOnTop);
-        Assert.False(saved.Chrome.EnableGitIntegration);
         Assert.True(saved.Chrome.ProgressQueueVisible);
         Assert.False(saved.Chrome.PreviewVisible);
         Assert.Equal(UiSettings.PreviewMaxWidth, saved.Chrome.PreviewWidth);
@@ -138,7 +137,6 @@ public class WorkspaceSettingsStoreTests
             StartLocation = "custom",
             CustomPath = @"D:\Work",
             OpenInNewTab = true,
-            EnableGitIntegration = false,
             ProgressQueueVisible = true,
             ShowFolderSizes = true,
             PreviewVisible = false,
@@ -225,7 +223,6 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal("custom", state.Settings.StartLocation);
         Assert.Equal(@"D:\Work", state.Settings.CustomPath);
         Assert.True(state.Settings.OpenInNewTab);
-        Assert.False(state.Settings.EnableGitIntegration);
         Assert.True(state.Settings.ProgressQueueVisible);
         Assert.True(state.Settings.ShowFolderSizes);
         Assert.False(state.Settings.PreviewVisible);
@@ -384,4 +381,218 @@ public class WorkspaceSettingsStoreTests
         Assert.Equal(410, state.Settings.SecondaryColumnWidths["name"]);
     }
 
+    [Fact]
+    public async Task PluginSectionCollapse_RoundTripsThroughWorkspaceSettings()
+    {
+        var ipc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(ipc);
+        var settings = UiSettings.CreateDefault();
+        Assert.Empty(settings.CollapsedPluginSidebarSections);
+        settings.CollapsedPluginSidebarSections = ["com.a.b:s", "", "com.a.b:s", "com.c.d:t"];
+
+        await WorkspaceSettingsStore.SaveAsync(
+            fileOps,
+            settings,
+            new ColumnLayout(),
+            new ColumnLayout(),
+            showHidden: false,
+            bookmarks: [],
+            recentPaths: [],
+            CancellationToken.None);
+        var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+
+        Assert.Equal(["com.a.b:s", "com.c.d:t"], state.Settings.CollapsedPluginSidebarSections);
+        Assert.Equal(["com.a.b:s", "com.c.d:t"], JsonSerializer.Deserialize<string[]>(ipc.Settings["sidebar.pluginSectionsCollapsed"])!);
+        Assert.Contains("sidebar.pluginSectionsCollapsed", ipc.LastGetDbSettingsKeys);
+
+        // A missing or malformed value restores an empty list.
+        ipc.Settings["sidebar.pluginSectionsCollapsed"] = "{not json";
+        Assert.Empty((await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None)).Settings.CollapsedPluginSidebarSections);
+        ipc.Settings.Remove("sidebar.pluginSectionsCollapsed");
+        Assert.Empty((await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None)).Settings.CollapsedPluginSidebarSections);
+    }
+
+    [Fact]
+    public async Task PanelSizes_RoundTripAndClamp()
+    {
+        var ipc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(ipc);
+        var defaults = UiSettings.CreateDefault();
+        Assert.Equal(320, defaults.PluginPanelBottomHeight);
+        Assert.Equal(360, defaults.PluginPanelRightWidth);
+
+        var settings = UiSettings.CreateDefault();
+        settings.PluginPanelBottomHeight = 412.5;
+        settings.PluginPanelRightWidth = 444;
+        await WorkspaceSettingsStore.SaveAsync(
+            fileOps,
+            settings,
+            new ColumnLayout(),
+            new ColumnLayout(),
+            showHidden: false,
+            bookmarks: [],
+            recentPaths: [],
+            CancellationToken.None);
+        var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+
+        Assert.Equal(412.5, state.Settings.PluginPanelBottomHeight);
+        Assert.Equal(444, state.Settings.PluginPanelRightWidth);
+        Assert.Equal("412.5", ipc.Settings["pluginPanel.bottomHeight"]);
+        Assert.Equal("444", ipc.Settings["pluginPanel.rightWidth"]);
+        Assert.Contains("pluginPanel.bottomHeight", ipc.LastGetDbSettingsKeys);
+        Assert.Contains("pluginPanel.rightWidth", ipc.LastGetDbSettingsKeys);
+
+        // Below the minimum clamps up; a value that is not a number restores the default.
+        ipc.Settings["pluginPanel.bottomHeight"] = "12";
+        ipc.Settings["pluginPanel.rightWidth"] = "wide";
+        state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+        Assert.Equal(PluginPanelLayout.BottomMinHeight, state.Settings.PluginPanelBottomHeight);
+        Assert.Equal(PluginPanelLayout.RightDefaultWidth, state.Settings.PluginPanelRightWidth);
+
+        // A save clamps too, so a stored value is always one a later load accepts.
+        settings.PluginPanelBottomHeight = double.NaN;
+        settings.PluginPanelRightWidth = 1;
+        await WorkspaceSettingsStore.SaveAsync(
+            fileOps,
+            settings,
+            new ColumnLayout(),
+            new ColumnLayout(),
+            showHidden: false,
+            bookmarks: [],
+            recentPaths: [],
+            CancellationToken.None);
+        Assert.Equal(PluginPanelLayout.BottomDefaultHeight, settings.PluginPanelBottomHeight);
+        Assert.Equal(PluginPanelLayout.RightMinWidth, settings.PluginPanelRightWidth);
+        Assert.Equal("320", ipc.Settings["pluginPanel.bottomHeight"]);
+        Assert.Equal("260", ipc.Settings["pluginPanel.rightWidth"]);
+
+        ipc.Settings.Remove("pluginPanel.bottomHeight");
+        ipc.Settings.Remove("pluginPanel.rightWidth");
+        state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+        Assert.Equal(PluginPanelLayout.BottomDefaultHeight, state.Settings.PluginPanelBottomHeight);
+        Assert.Equal(PluginPanelLayout.RightDefaultWidth, state.Settings.PluginPanelRightWidth);
+    }
+
+    /// <summary>
+    /// A settings store that records every write and runs <see cref="DuringFirstWrite"/> inside the first one, as a
+    /// UI-thread change racing a save on the thread pool would.
+    /// </summary>
+    private sealed class RacingSettingsBackend : ISettingsBackend
+    {
+        public Dictionary<string, string> Written { get; } = new(StringComparer.Ordinal);
+
+        public Action? DuringFirstWrite { get; set; }
+
+        public Task<string?> GetSettingAsync(string key, CancellationToken ct = default) =>
+            Task.FromResult(Written.TryGetValue(key, out var value) ? value : null);
+
+        public Task<IReadOnlyDictionary<string, string?>> GetSettingsAsync(IReadOnlyList<string> keys, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyDictionary<string, string?>>(keys.ToDictionary(
+                key => key,
+                key => Written.TryGetValue(key, out var value) ? value : null,
+                StringComparer.Ordinal));
+
+        public async Task SetSettingAsync(string key, string value, CancellationToken ct = default)
+        {
+            // Every write completes asynchronously, as a real IPC call does.
+            await Task.Yield();
+            if (DuringFirstWrite is { } change)
+            {
+                DuringFirstWrite = null;
+                change();
+            }
+
+            Written[key] = value;
+        }
+    }
+
+    /// <summary>A settings store that records every key read and written.</summary>
+    private sealed class RecordingSettingsBackend : ISettingsBackend
+    {
+        public Dictionary<string, string> Values { get; } = new(StringComparer.Ordinal);
+
+        public List<string> ReadKeys { get; } = [];
+
+        public List<string> WrittenKeys { get; } = [];
+
+        public Task<string?> GetSettingAsync(string key, CancellationToken ct = default)
+        {
+            ReadKeys.Add(key);
+            return Task.FromResult(Values.TryGetValue(key, out var value) ? value : null);
+        }
+
+        public Task<IReadOnlyDictionary<string, string?>> GetSettingsAsync(IReadOnlyList<string> keys, CancellationToken ct = default)
+        {
+            ReadKeys.AddRange(keys);
+            return Task.FromResult<IReadOnlyDictionary<string, string?>>(keys.ToDictionary(
+                key => key,
+                key => Values.TryGetValue(key, out var value) ? value : null,
+                StringComparer.Ordinal));
+        }
+
+        public Task SetSettingAsync(string key, string value, CancellationToken ct = default)
+        {
+            WrittenKeys.Add(key);
+            Values[key] = value;
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task SaveAsync_NoLongerWritesEnableGitIntegration()
+    {
+        // The Git plugin's "enabled" setting migrates from this key (settings[].migrateFrom), so
+        // core must leave the user's last stored value alone: never read it, never write it.
+        var backend = new RecordingSettingsBackend();
+        backend.Values["enableGitIntegration"] = "false";
+
+        await WorkspaceSettingsStore.SaveAsync(
+            backend,
+            UiSettings.CreateDefault(),
+            new ColumnLayout(),
+            new ColumnLayout(),
+            showHidden: false,
+            bookmarks: [],
+            recentPaths: [],
+            CancellationToken.None);
+        await WorkspaceSettingsStore.LoadAsync(backend, CancellationToken.None);
+
+        Assert.NotEmpty(backend.WrittenKeys);
+        Assert.NotEmpty(backend.ReadKeys);
+        Assert.DoesNotContain("enableGitIntegration", backend.WrittenKeys, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("enableGitIntegration", backend.ReadKeys, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("false", backend.Values["enableGitIntegration"]);
+    }
+
+    [Fact]
+    public async Task SaveAsync_ListsChangedDuringTheSave_SaveTheCallTimeValuesAndKeepTheChange()
+    {
+        var settings = UiSettings.CreateDefault();
+        settings.CollapsedPluginSidebarSections = ["com.a.b:s"];
+        var callTimeLayout = settings.CommandSurface.ToJson();
+        var backend = new RacingSettingsBackend
+        {
+            DuringFirstWrite = () =>
+            {
+                // A section toggle (copy-on-write) and a plugin's toolbar offer land while the save runs.
+                settings.CollapsedPluginSidebarSections = [.. settings.CollapsedPluginSidebarSections, "com.c.d:t"];
+                settings.CommandSurface.EnsurePrimaryItem("plugin:a:b");
+            },
+        };
+
+        await WorkspaceSettingsStore.SaveAsync(
+            backend,
+            settings,
+            new ColumnLayout(),
+            new ColumnLayout(),
+            showHidden: false,
+            bookmarks: [],
+            recentPaths: [],
+            CancellationToken.None);
+
+        Assert.Equal(["com.a.b:s"], JsonSerializer.Deserialize<string[]>(backend.Written["sidebar.pluginSectionsCollapsed"])!);
+        Assert.Equal(callTimeLayout, backend.Written[CommandSurfaceLayout.SettingsKey]);
+        Assert.Equal(["com.a.b:s", "com.c.d:t"], settings.CollapsedPluginSidebarSections);
+        Assert.Contains("plugin:a:b", settings.CommandSurface.OfferedPrimaryItems);
+    }
 }

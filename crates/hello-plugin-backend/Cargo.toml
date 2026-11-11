@@ -1,0 +1,25 @@
+[package]
+name = "hello-plugin-backend"
+version = "0.1.0"
+description = "Fixture backend for the SumaFile Hello test plugin"
+authors = ["SumaFile Team"]
+license = "MIT"
+repository = "https://github.com/conniecombs/SumaFile"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "hello-plugin-backend"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = "0.1"
+serde_json = "1"
+sumafile-plugin = { path = "../sumafile-plugin" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+simplefile-ipc = { path = "../simplefile-ipc" }
+sumafile-plugin = { path = "../sumafile-plugin", features = ["test-support"] }
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }

@@ -26,6 +26,9 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
     public string? ServicePath { get; private set; }
     public int ReconnectCount { get; private set; }
 
+    /// <summary>The running service's process id, or null before a start and after a stop. The UI smoke kills it.</summary>
+    public int? ServiceProcessId => _service?.Id;
+
     public string? CachedHomeDir => HomeDir;
     public IReadOnlyList<DriveInfo>? CachedDrives => Drives;
     public ISimpleFileIpc? Client => _client;

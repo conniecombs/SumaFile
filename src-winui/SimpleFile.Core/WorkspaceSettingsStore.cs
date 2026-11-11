@@ -14,6 +14,9 @@ internal static class WorkspaceSettingsStore
 {
     private const string BookmarksSettingsKey = "places.bookmarks";
     private const string RecentPathsSettingsKey = "places.recents";
+    private const string PluginSectionsCollapsedSettingsKey = "sidebar.pluginSectionsCollapsed";
+    private const string PluginPanelBottomHeightSettingsKey = "pluginPanel.bottomHeight";
+    private const string PluginPanelRightWidthSettingsKey = "pluginPanel.rightWidth";
     private static readonly string[] LoadSettingKeys =
     [
         "theme",
@@ -26,7 +29,6 @@ internal static class WorkspaceSettingsStore
         "customPath",
         "lastPath",
         "openInNewTab",
-        "enableGitIntegration",
         "progressQueue.visible",
         "showFolderSizes",
         "previewVisible",
@@ -54,6 +56,9 @@ internal static class WorkspaceSettingsStore
         "sidebar.quickAccessCollapsed",
         "sidebar.myPcCollapsed",
         "sidebar.tagsCollapsed",
+        PluginSectionsCollapsedSettingsKey,
+        PluginPanelBottomHeightSettingsKey,
+        PluginPanelRightWidthSettingsKey,
         "thumbnailCacheMaxMb",
         "thumbnailCachePath",
         BookmarksSettingsKey,
@@ -81,7 +86,6 @@ internal static class WorkspaceSettingsStore
         settings.CustomPath = ReadSetting(values, "customPath") ?? "";
         settings.LastPath = ReadSetting(values, "lastPath") ?? "";
         settings.OpenInNewTab = ReadBoolSetting(values, "openInNewTab", false);
-        settings.EnableGitIntegration = ReadBoolSetting(values, "enableGitIntegration", true);
         settings.ProgressQueueVisible = ReadBoolSetting(values, "progressQueue.visible", false);
         settings.ShowFolderSizes = ReadBoolSetting(values, "showFolderSizes", false);
         settings.PreviewVisible = ReadBoolSetting(values, "previewVisible", true);
@@ -118,6 +122,11 @@ internal static class WorkspaceSettingsStore
         settings.QuickAccessCollapsed = ReadBoolSetting(values, "sidebar.quickAccessCollapsed", false);
         settings.MyPcCollapsed = ReadBoolSetting(values, "sidebar.myPcCollapsed", false);
         settings.TagsCollapsed = ReadBoolSetting(values, "sidebar.tagsCollapsed", false);
+        settings.CollapsedPluginSidebarSections = ReadStringList(values, PluginSectionsCollapsedSettingsKey);
+        settings.PluginPanelBottomHeight = UiSettings.NormalizePluginPanelBottomHeight(
+            ReadDoubleSetting(values, PluginPanelBottomHeightSettingsKey, PluginPanelLayout.BottomDefaultHeight));
+        settings.PluginPanelRightWidth = UiSettings.NormalizePluginPanelRightWidth(
+            ReadDoubleSetting(values, PluginPanelRightWidthSettingsKey, PluginPanelLayout.RightDefaultWidth));
         settings.ThumbnailCacheMaxMb = ReadUIntSetting(values, "thumbnailCacheMaxMb", 500);
         settings.ThumbnailCachePath = ReadSetting(values, "thumbnailCachePath") ?? "";
         var bookmarks = ReadBookmarks(values);
@@ -132,6 +141,15 @@ internal static class WorkspaceSettingsStore
         };
     }
 
+    /// <summary>
+    /// Saves <paramref name="settings"/>. Every value it writes is computed on the caller's thread before the first
+    /// await: the normalized settings, the JSON of the toolbar layout and the folder-view settings, the shortcut
+    /// overrides, the plugin section keys, the bookmarks and the recents. A change the UI thread makes while the writes
+    /// run (a section toggle swapping in a new list, a plugin offering a toolbar item) is therefore neither lost nor
+    /// read half-way, and no list property of <paramref name="settings"/> is assigned after an await. That holds only
+    /// when the caller runs on the UI thread, which owns <paramref name="settings"/>: every caller in the App does, and a
+    /// Core path that reaches it (the profile apply) keeps the caller's context up to here.
+    /// </summary>
     public static async Task SaveAsync(
         ISettingsBackend fileOps,
         UiSettings settings,
@@ -155,72 +173,69 @@ internal static class WorkspaceSettingsStore
         settings.ColumnWidths = primaryColumns.SnapshotWidths();
         settings.SecondaryColumnWidths = secondaryColumns.SnapshotWidths();
         settings.FolderViewSettings.Normalize();
-        await fileOps.SetSettingAsync("theme", settings.Theme, cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("defaultView", settings.DefaultView, cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("defaultIconSize", settings.DefaultIconSize.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("showHidden", settings.ShowHidden ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("confirmDelete", settings.ConfirmDelete ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("keepFoldersOnTop", settings.KeepFoldersOnTop ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("startLocation", settings.StartLocation, cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("customPath", settings.CustomPath, cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("openInNewTab", settings.OpenInNewTab ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("enableGitIntegration", settings.EnableGitIntegration ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("progressQueue.visible", settings.ProgressQueueVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("showFolderSizes", settings.ShowFolderSizes ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("previewVisible", settings.PreviewVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("preview.pinned", settings.PreviewPinned ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("preview.autoCollapse", settings.PreviewAutoCollapse ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("preview.width", settings.PreviewWidth.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("preview.renderHtml", settings.PreviewRenderHtml ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("preview.videoPlayback", settings.PreviewVideoPlaybackEnabled ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("dualPane.primaryPercent", settings.DualPanePrimaryPercent.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("dualPane.primaryWidth", settings.DualPanePrimaryWidth.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("columnPreset", settings.ColumnPreset, cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("columnPreset.secondary", settings.SecondaryColumnPreset, cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync(
-            "columnWidths",
-            JsonSerializer.Serialize(new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal)
+        settings.ShortcutOverrides = KeyboardShortcutMap.NormalizeOverrides(settings.ShortcutOverrides);
+        settings.CommandSurface.Normalize();
+        settings.CollapsedPluginSidebarSections = UiSettings.NormalizePluginSectionKeys(settings.CollapsedPluginSidebarSections);
+        settings.PluginPanelBottomHeight = UiSettings.NormalizePluginPanelBottomHeight(settings.PluginPanelBottomHeight);
+        settings.PluginPanelRightWidth = UiSettings.NormalizePluginPanelRightWidth(settings.PluginPanelRightWidth);
+
+        (string Key, string Value)[] values =
+        [
+            ("theme", settings.Theme),
+            ("defaultView", settings.DefaultView),
+            ("defaultIconSize", settings.DefaultIconSize.ToString(CultureInfo.InvariantCulture)),
+            ("showHidden", settings.ShowHidden ? "true" : "false"),
+            ("confirmDelete", settings.ConfirmDelete ? "true" : "false"),
+            ("keepFoldersOnTop", settings.KeepFoldersOnTop ? "true" : "false"),
+            ("startLocation", settings.StartLocation),
+            ("customPath", settings.CustomPath),
+            ("openInNewTab", settings.OpenInNewTab ? "true" : "false"),
+            ("progressQueue.visible", settings.ProgressQueueVisible ? "true" : "false"),
+            ("showFolderSizes", settings.ShowFolderSizes ? "true" : "false"),
+            ("previewVisible", settings.PreviewVisible ? "true" : "false"),
+            ("preview.pinned", settings.PreviewPinned ? "true" : "false"),
+            ("preview.autoCollapse", settings.PreviewAutoCollapse ? "true" : "false"),
+            ("preview.width", settings.PreviewWidth.ToString(CultureInfo.InvariantCulture)),
+            ("preview.renderHtml", settings.PreviewRenderHtml ? "true" : "false"),
+            ("preview.videoPlayback", settings.PreviewVideoPlaybackEnabled ? "true" : "false"),
+            ("dualPane.primaryPercent", settings.DualPanePrimaryPercent.ToString(CultureInfo.InvariantCulture)),
+            ("dualPane.primaryWidth", settings.DualPanePrimaryWidth.ToString(CultureInfo.InvariantCulture)),
+            ("columnPreset", settings.ColumnPreset),
+            ("columnPreset.secondary", settings.SecondaryColumnPreset),
+            ("columnWidths", JsonSerializer.Serialize(new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal)
             {
                 ["primary"] = settings.ColumnWidths,
                 ["secondary"] = settings.SecondaryColumnWidths,
-            }),
-            cancellationToken).ConfigureAwait(false);
-        settings.ShortcutOverrides = KeyboardShortcutMap.NormalizeOverrides(settings.ShortcutOverrides);
-        await fileOps.SetSettingAsync(
-            KeyboardShortcutMap.SettingsKey,
-            KeyboardShortcutMap.WriteOverridesJson(settings.ShortcutOverrides),
-            cancellationToken).ConfigureAwait(false);
-        settings.CommandSurface.Normalize();
-        await fileOps.SetSettingAsync(
-            CommandSurfaceLayout.SettingsKey,
-            settings.CommandSurface.ToJson(),
-            cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync(
-            FolderViewSettingsDocument.SettingsKey,
-            settings.FolderViewSettings.ToJson(),
-            cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.showQuickAccess", settings.ShowQuickAccess ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.showFolders", settings.ShowFolderTree ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.showBookmarks", settings.ShowBookmarks ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.showRecent", settings.ShowRecentLocations ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.showSmartFolders", settings.ShowSmartFolders ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.showTags", settings.ShowTags ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.visible", settings.SidebarVisible ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.width", settings.SidebarWidth.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.quickAccessCollapsed", settings.QuickAccessCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.myPcCollapsed", settings.MyPcCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("sidebar.tagsCollapsed", settings.TagsCollapsed ? "true" : "false", cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("thumbnailCacheMaxMb", settings.ThumbnailCacheMaxMb.ToString(CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("thumbnailCachePath", settings.ThumbnailCachePath, cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync("lastPath", settings.LastPath, cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync(
-            BookmarksSettingsKey,
-            JsonSerializer.Serialize(bookmarks),
-            cancellationToken).ConfigureAwait(false);
-        await fileOps.SetSettingAsync(
-            RecentPathsSettingsKey,
-            JsonSerializer.Serialize(recentPaths),
-            cancellationToken).ConfigureAwait(false);
+            })),
+            (KeyboardShortcutMap.SettingsKey, KeyboardShortcutMap.WriteOverridesJson(settings.ShortcutOverrides)),
+            (CommandSurfaceLayout.SettingsKey, settings.CommandSurface.ToJson()),
+            (FolderViewSettingsDocument.SettingsKey, settings.FolderViewSettings.ToJson()),
+            ("sidebar.showQuickAccess", settings.ShowQuickAccess ? "true" : "false"),
+            ("sidebar.showFolders", settings.ShowFolderTree ? "true" : "false"),
+            ("sidebar.showBookmarks", settings.ShowBookmarks ? "true" : "false"),
+            ("sidebar.showRecent", settings.ShowRecentLocations ? "true" : "false"),
+            ("sidebar.showSmartFolders", settings.ShowSmartFolders ? "true" : "false"),
+            ("sidebar.showTags", settings.ShowTags ? "true" : "false"),
+            ("sidebar.visible", settings.SidebarVisible ? "true" : "false"),
+            ("sidebar.width", settings.SidebarWidth.ToString(CultureInfo.InvariantCulture)),
+            ("sidebar.quickAccessCollapsed", settings.QuickAccessCollapsed ? "true" : "false"),
+            ("sidebar.myPcCollapsed", settings.MyPcCollapsed ? "true" : "false"),
+            ("sidebar.tagsCollapsed", settings.TagsCollapsed ? "true" : "false"),
+            (PluginSectionsCollapsedSettingsKey, JsonSerializer.Serialize(settings.CollapsedPluginSidebarSections)),
+            (PluginPanelBottomHeightSettingsKey, settings.PluginPanelBottomHeight.ToString(CultureInfo.InvariantCulture)),
+            (PluginPanelRightWidthSettingsKey, settings.PluginPanelRightWidth.ToString(CultureInfo.InvariantCulture)),
+            ("thumbnailCacheMaxMb", settings.ThumbnailCacheMaxMb.ToString(CultureInfo.InvariantCulture)),
+            ("thumbnailCachePath", settings.ThumbnailCachePath),
+            ("lastPath", settings.LastPath),
+            (BookmarksSettingsKey, JsonSerializer.Serialize(bookmarks)),
+            (RecentPathsSettingsKey, JsonSerializer.Serialize(recentPaths)),
+        ];
+
+        // Only now the writes: nothing below reads settings again.
+        foreach (var (key, value) in values)
+        {
+            await fileOps.SetSettingAsync(key, value, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private readonly record struct PaneColumnPresets(string Primary, string Secondary);
@@ -356,6 +371,25 @@ internal static class WorkspaceSettingsStore
             return result;
         }
         catch
+        {
+            return [];
+        }
+    }
+
+    /// <summary>A JSON array of strings, normalized; empty when missing or malformed.</summary>
+    private static List<string> ReadStringList(IReadOnlyDictionary<string, string?> values, string key)
+    {
+        var raw = ReadSetting(values, key);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return [];
+        }
+
+        try
+        {
+            return UiSettings.NormalizePluginSectionKeys(JsonSerializer.Deserialize<List<string?>>(raw));
+        }
+        catch (JsonException)
         {
             return [];
         }

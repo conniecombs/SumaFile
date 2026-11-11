@@ -1,5 +1,7 @@
 namespace SimpleFile.Ipc;
 
+public delegate Task<object?> InboundRequestHandler(System.Text.Json.JsonElement @params, CancellationToken ct);
+
 public interface ISimpleFileIpc : IAsyncDisposable
 {
     bool IsConnected { get; }
@@ -16,6 +18,8 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task InvokeAsync(string method, object? args, CancellationToken cancellationToken = default);
 
     IDisposable On<T>(string eventName, Action<T> handler);
+
+    IDisposable OnRequest(string method, InboundRequestHandler handler);
 
     Task<DirectoryListing> ListDirectoryAsync(
         string path,
@@ -42,19 +46,6 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<string?> GetDbSettingAsync(string key, CancellationToken ct = default);
     Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default);
     Task SetDbSettingAsync(string key, string value, CancellationToken ct = default);
-    Task<RemoteProfile[]> RemoteListProfilesAsync(CancellationToken ct = default);
-    Task<RemoteProfile> RemoteSaveProfileAsync(RemoteProfileInput profile, string? secret = null, CancellationToken ct = default);
-    Task RemoteDeleteProfileAsync(string profileId, CancellationToken ct = default);
-    Task<RemoteConnectionTestResult> RemoteTestProfileAsync(RemoteProfileInput profile, string? secret = null, CancellationToken ct = default);
-    Task<RemoteSession> RemoteConnectAsync(string profileId, string? secret = null, CancellationToken ct = default);
-    Task RemoteDisconnectAsync(string remoteSessionId, CancellationToken ct = default);
-    Task<DirectoryListing> RemoteListDirectoryAsync(string remoteSessionId, string path, CancellationToken ct = default);
-    Task<FileEntry> RemoteCreateDirectoryAsync(string remoteSessionId, string path, string name, CancellationToken ct = default);
-    Task<FileEntry> RemoteRenameEntryAsync(string remoteSessionId, string path, string newName, CancellationToken ct = default);
-    Task<string[]> RemoteDeleteEntriesAsync(string remoteSessionId, string[] paths, CancellationToken ct = default);
-    Task<RemoteTransferOutcome> RemoteTransferEntriesAsync(string remoteSessionId, string direction, string[] sources, string destination, string conflictAction, string operationId, CancellationToken ct = default);
-    Task<string> RemoteDownloadFileAsync(string remoteSessionId, string remotePath, string localPath, CancellationToken ct = default);
-    Task<FileEntry> RemoteUploadFileAsync(string remoteSessionId, string localPath, string remotePath, CancellationToken ct = default);
 
     Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default);
     Task<string> CreateFileAsync(string path, string name, CancellationToken ct = default);
@@ -82,8 +73,8 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task OpenExternalUrlAsync(string url, CancellationToken ct = default);
     Task<ArchiveInfo> ListArchiveAsync(string path, CancellationToken ct = default);
     Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default);
-    Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default);
-    Task CreateArchiveAsync(string[] paths, string archivePath, string format, CancellationToken ct = default);
+    Task ExtractArchiveAsync(string archivePath, string destination, string? operationId = null, CancellationToken ct = default);
+    Task CreateArchiveAsync(string[] paths, string archivePath, string format, string? operationId = null, CancellationToken ct = default);
     Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default);
     Task<byte[]> GenerateThumbnailAsync(string path, uint size, CancellationToken ct = default);
     Task<ThumbnailResult[]> GenerateThumbnailsAsync(string[] paths, uint size, CancellationToken ct = default);
@@ -129,15 +120,4 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task InstallUpdateAsync(CancellationToken ct = default);
     Task OpenTerminalAsync(string path, CancellationToken ct = default);
     Task OpenPowershellAdminAsync(string path, CancellationToken ct = default);
-    Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default);
-    Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default);
-    Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default);
-    Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default);
-    Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default);
-    Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default);
-    Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default);
-    Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default);
-    Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default);
-    Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default);
-    Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default);
 }

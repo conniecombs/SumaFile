@@ -1,0 +1,26 @@
+[package]
+name = "sumafile-transfer"
+version = "1.0.0"
+description = "Local-file transfer primitives shared by the SumaFile service and first-party plugin backends"
+authors = ["SumaFile Team"]
+license = "MIT"
+repository = "https://github.com/conniecombs/SumaFile"
+edition = "2021"
+publish = false
+
+[lib]
+name = "sumafile_transfer"
+path = "src/lib.rs"
+
+[features]
+# Exposes `test_io`, the delayed-I/O wrappers the engines' tests drive.
+test-support = []
+
+[dependencies]
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

@@ -58,20 +58,42 @@ internal sealed class DualPaneTabController
             return Task.CompletedTask;
         }
 
-        if (workspace.Normalize(pane) == PaneId.Primary)
+        var swapped = workspace.Normalize(pane) == PaneId.Primary;
+        if (swapped)
         {
-            SwapFilePanes(workspace);
+            SwapPaneContents(workspace);
         }
 
         workspace.SetDualPaneEnabledCore(false);
         workspace.SetActivePaneCore(PaneId.Primary);
         workspace.NotifyChanged();
+        if (swapped)
+        {
+            // Only the primary pane is shown now; see SwapFilePanes.
+            workspace.StartDecorationRefresh(PaneId.Primary);
+        }
+
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Swaps the panes' contents. The swap starts new navigation tokens, so a late decoration merge either pane was
+    /// waiting for is dropped; both panes are therefore decorated again, without listing them again, or a slow plugin's
+    /// pending part would stay as it was at the swap.
+    /// </summary>
     public void SwapFilePanes(ExplorerWorkspace workspace)
     {
         ArgumentNullException.ThrowIfNull(workspace);
+        SwapPaneContents(workspace);
+        workspace.StartDecorationRefresh(PaneId.Primary);
+        if (workspace.DualPaneEnabled)
+        {
+            workspace.StartDecorationRefresh(PaneId.Secondary);
+        }
+    }
+
+    private static void SwapPaneContents(ExplorerWorkspace workspace)
+    {
         lock (workspace.Gate)
         {
             workspace.Primary.NextNavigationToken();

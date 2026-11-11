@@ -2,7 +2,6 @@ use serde::Deserialize;
 use serde_json::Value;
 use simplefile_core::dir_list::{ListDirectoryOptions, ListingMode};
 use simplefile_core::models::SearchOptions;
-use simplefile_core::remote::RemoteProfileInput;
 use simplefile_ipc::rpc::{JsonRpcRequest, JsonRpcResponse};
 use simplefile_ipc::ERR_INVALID_PARAMS;
 
@@ -90,25 +89,6 @@ pub(super) type ShortcutParams = simplefile_core::file_ops::ShortcutRequest;
 #[derive(Debug, Deserialize)]
 pub(super) struct PathsParams {
     pub(super) paths: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct GitPathsParams {
-    pub(super) path: String,
-    pub(super) paths: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct GitDiffPathParams {
-    pub(super) path: String,
-    #[serde(rename = "filePath")]
-    pub(super) file_path: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct GitCommitParams {
-    pub(super) path: String,
-    pub(super) message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -228,84 +208,6 @@ pub(super) struct SettingValueParams {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct RemoteProfileParams {
-    pub(super) profile: RemoteProfileInput,
-    #[serde(default)]
-    pub(super) secret: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct RemoteProfileIdParams {
-    #[serde(rename = "profileId")]
-    pub(super) profile_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct RemoteConnectParams {
-    #[serde(rename = "profileId")]
-    pub(super) profile_id: String,
-    #[serde(default)]
-    pub(super) secret: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct RemoteSessionIdParams {
-    #[serde(rename = "remoteSessionId")]
-    pub(super) remote_session_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct RemoteListDirectoryParams {
-    #[serde(rename = "remoteSessionId")]
-    pub(super) remote_session_id: String,
-    pub(super) path: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct RemoteCreateDirectoryParams {
-    #[serde(rename = "remoteSessionId")]
-    pub(super) remote_session_id: String,
-    pub(super) path: String,
-    pub(super) name: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct RemoteRenameEntryParams {
-    #[serde(rename = "remoteSessionId")]
-    pub(super) remote_session_id: String,
-    pub(super) path: String,
-    #[serde(rename = "newName")]
-    pub(super) new_name: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct RemoteDeleteEntriesParams {
-    #[serde(rename = "remoteSessionId")]
-    pub(super) remote_session_id: String,
-    pub(super) paths: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct RemoteDownloadFileParams {
-    #[serde(rename = "remoteSessionId")]
-    pub(super) remote_session_id: String,
-    #[serde(rename = "remotePath")]
-    pub(super) remote_path: String,
-    #[serde(rename = "localPath")]
-    pub(super) local_path: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct RemoteUploadFileParams {
-    #[serde(rename = "remoteSessionId")]
-    pub(super) remote_session_id: String,
-    #[serde(rename = "localPath")]
-    pub(super) local_path: String,
-    #[serde(rename = "remotePath")]
-    pub(super) remote_path: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub(super) struct OpenWithParams {
     pub(super) path: String,
     pub(super) application: String,
@@ -324,6 +226,34 @@ pub(super) struct ExtractArchiveParams {
     #[serde(rename = "archivePath")]
     pub(super) archive_path: String,
     pub(super) destination: String,
+    /// Present for a tracked extract: progress, cancel and a Transfers row.
+    #[serde(rename = "operationId", default)]
+    pub(super) operation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ArchiveEngineFormat {
+    pub(super) extension: String,
+    pub(super) can_list: bool,
+    pub(super) can_extract: bool,
+    pub(super) can_create: bool,
+    pub(super) can_modify: bool,
+    pub(super) engine_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RegisterArchiveEngineParams {
+    pub(super) plugin_id: String,
+    pub(super) pipe_name: String,
+    pub(super) formats: Vec<ArchiveEngineFormat>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PluginIdParams {
+    pub(super) plugin_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -332,6 +262,9 @@ pub(super) struct CreateArchiveParams {
     #[serde(rename = "archivePath")]
     pub(super) archive_path: String,
     pub(super) format: String,
+    /// Present for a tracked create: progress, cancel and a Transfers row.
+    #[serde(rename = "operationId", default)]
+    pub(super) operation_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

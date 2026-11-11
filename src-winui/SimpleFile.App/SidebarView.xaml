@@ -205,104 +205,6 @@
                             </ListView>
                         </StackPanel>
 
-                        <StackPanel x:Name="RemoteProfilesSection" Spacing="2">
-                            <Grid Margin="4,0,0,4">
-                                <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Connections" />
-                                <Button
-                                    Style="{StaticResource SfSidebarIconButtonStyle}"
-                                    AutomationProperties.Name="Manage connections"
-                                    Click="OnManageRemoteProfiles"
-                                    ToolTipService.ToolTip="Manage connections">
-                                    <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="11" Glyph="&#xE713;" />
-                                </Button>
-                            </Grid>
-                            <TextBlock
-                                x:Name="RemoteProfilesEmptyText"
-                                Style="{StaticResource SfEmptyHintStyle}"
-                                TextWrapping="Wrap"
-                                Text="No connections. Open the manager to add one." />
-                            <ListView
-                                x:Name="RemoteProfileList"
-                                Style="{StaticResource SfSidebarListStyle}"
-                                IsItemClickEnabled="True"
-                                ItemClick="OnRemoteProfileClick"
-                                SelectionMode="None">
-                                <ListView.ItemContainerStyle>
-                                    <Style BasedOn="{StaticResource SfNavListItemStyle}" TargetType="ListViewItem" />
-                                </ListView.ItemContainerStyle>
-                                <ListView.ItemTemplate>
-                                    <DataTemplate x:DataType="local:RemoteProfileSidebarRow">
-                                        <Grid Padding="2,1" ColumnSpacing="8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <FontIcon
-                                                VerticalAlignment="Top"
-                                                Margin="0,2,0,0"
-                                                FontFamily="{StaticResource SfIconFont}"
-                                                FontSize="13"
-                                                Foreground="{ThemeResource SfTextMutedBrush}"
-                                                Glyph="&#xE968;" />
-                                            <StackPanel Grid.Column="1" Spacing="2">
-                                                <TextBlock
-                                                    VerticalAlignment="Center"
-                                                    Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                                    Text="{x:Bind Name}"
-                                                    TextTrimming="CharacterEllipsis"
-                                                    TextWrapping="NoWrap" />
-                                                <TextBlock
-                                                    FontSize="11"
-                                                    Foreground="{ThemeResource SfTextMutedBrush}"
-                                                    Text="{x:Bind Description}"
-                                                    TextTrimming="CharacterEllipsis"
-                                                    TextWrapping="NoWrap" />
-                                            </StackPanel>
-                                            <StackPanel
-                                                Grid.Column="2"
-                                                VerticalAlignment="Top"
-                                                Orientation="Horizontal"
-                                                Spacing="4">
-                                                <Border
-                                                    Padding="5,1"
-                                                    Background="{ThemeResource SfAccentSoftBrush}"
-                                                    BorderThickness="0"
-                                                    CornerRadius="4">
-                                                    <TextBlock
-                                                        FontSize="10"
-                                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
-                                                        Text="{x:Bind Protocol}" />
-                                                </Border>
-                                                <Border
-                                                    Padding="5,0"
-                                                    BorderBrush="{ThemeResource SystemFillColorCriticalBrush}"
-                                                    BorderThickness="1"
-                                                    CornerRadius="4"
-                                                    ToolTipService.ToolTip="Plain FTP: passwords and files are sent without encryption"
-                                                    Visibility="{x:Bind InsecureBadgeVisibility}">
-                                                    <TextBlock
-                                                        FontSize="10"
-                                                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                                                        Text="Insecure" />
-                                                </Border>
-                                            </StackPanel>
-                                            <FontIcon
-                                                Grid.Column="3"
-                                                VerticalAlignment="Center"
-                                                AutomationProperties.AccessibilityView="Raw"
-                                                FontFamily="{StaticResource SfIconFont}"
-                                                FontSize="11"
-                                                Foreground="{ThemeResource SfTextMutedBrush}"
-                                                Glyph="&#xE8A7;"
-                                                ToolTipService.ToolTip="Opens in the connections window" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListView.ItemTemplate>
-                            </ListView>
-                        </StackPanel>
-
                         <StackPanel x:Name="FolderTreeSection" Spacing="2">
                             <Grid Margin="4,0,0,4">
                                 <TextBlock Style="{StaticResource SfSidebarHeaderStyle}" Text="Folders" />
@@ -581,6 +483,9 @@
                                 </ListView.ItemTemplate>
                             </ListView>
                         </StackPanel>
+
+                        <!-- Plugin sections render below the built-in ones (spec 7), built in code by MainWindow.PluginSidebar. -->
+                        <StackPanel x:Name="PluginSectionsHost" Spacing="10" />
                     </StackPanel>
                 </ScrollViewer>
             </Grid>

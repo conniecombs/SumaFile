@@ -4,4 +4,12 @@ members = [
   "crates/simplefile-core",
   "crates/simplefile-ipc",
   "crates/simplefile-service",
+  "crates/sumafile-plugin",
+  "crates/sumafile-transfer",
+  "crates/hello-plugin-backend",
+  "plugins/sevenzip/backend",
+  "plugins/remote/backend",
+  "plugins/remote/test-server",
+  "plugins/git/backend",
+  "templates/sumafile-plugin/backend",
 ]

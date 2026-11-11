@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
-**Contract:** [`inventory.md`](inventory.md) (97 commands / emitted events / Svelte workflows)
+**Contract:** the live service method count is in `ipc/schema/v1/commands.json`; [`inventory.md`](inventory.md) is the historical Tauri inventory (74 commands / emitted events / Svelte workflows)
 **Hosts:** WinUI 3 + `simplefile-service` is the shipping app. Svelte/Tauri UI and packaging glue have been retired.
 
 This is the **retirement lock**. Required `OPEN` rows are none. `MANUAL` rows stay as human smoke coverage. Retired `src-tauri/` domain now lives solely in `crates/simplefile-core`.
@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 97-command schema vs Rust/C#
+npm run check:ipc-schema      # 75-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (97)
+## 2. IPC commands (75)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -135,26 +135,18 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `list_archive` | Archive viewer | `ArchiveViewerDialog` | `ArchivePaths` tests | Open a zip / 7z / rar | `MANUAL` |
-| `get_archive_capabilities` | Creatable/extractable archive formats | Create archive dialog | IPC + source-shape guard | Tools tab / create dialog | `PASS` |
-| `extract_archive` | Extract here / folder / to | Context extract + dialog | IPC | Extract zip / 7z / rar | `MANUAL` |
-| `create_archive` | zip/7z/tar/tar.gz | Create archive dialog | IPC; RAR create rejected | Compress selection | `MANUAL` |
+| `list_archive` | Archive viewer; `.7z` through the SumaFile 7-Zip plugin, and the plugin note without it | `ArchiveViewerDialog` | `ArchivePaths` tests; `sevenzip_plugin.rs` | Open a zip / 7z / rar | `MANUAL` |
+| `get_archive_capabilities` | Creatable/extractable archive formats; `.7z` is `plugin:com.sumafile.sevenzip` once registered, otherwise an `unavailable` row with the plugin note | Create archive dialog | IPC + source-shape guard; core capability tests; `sevenzip_plugin.rs` | Tools tab / create dialog | `PASS` |
+| `extract_archive` | Extract here / folder / to; with `operationId` it reports `operation-progress` and `cancel_operation` stops it | Context extract + dialog; plugin formats as a Transfers row with progress and Cancel (`ExtractArchiveTrackedAsync`) | IPC; session, `hello_plugin.rs` and `sevenzip_plugin.rs` progress and cancel tests; `FileOperationServiceTests` tracked tests | Extract zip / 7z / rar | `MANUAL` |
+| `create_archive` | zip/tar/tar.gz, and 7z through the SumaFile 7-Zip plugin; with `operationId` it reports `operation-progress` and `cancel_operation` stops it | Create archive dialog; plugin formats as a Transfers row with progress and Cancel (`CreateArchiveTrackedAsync`) | IPC; RAR create rejected; `sevenzip_plugin.rs` create, progress and cancel tests; `FileOperationServiceTests` tracked tests | Compress selection | `MANUAL` |
+| `register_archive_engine` `unregister_archive_engine` | Plugin archive engines (extensions served by a plugin backend) | `ArchiveEngineRegistrar` | `crates/simplefile-service/tests/plugin_archive.rs`, `hello_plugin.rs` + dispatch tests | — | `PASS` |
 
-### 2.5 Git, terminals, tags, settings, updater
+### 2.5 Terminals, tags, settings, updater
+
+The eleven Git methods (`get_git_status`, `get_git_repository_status`, `get_git_file_statuses`, `git_stage_paths`, `git_unstage_paths`, `git_discard_paths`, `git_diff_path`, `git_commit`, `git_fetch`, `git_pull`, `git_push`) left the core IPC surface in plugin system phase 4; the service answers them `ERR_METHOD_NOT_FOUND` (`removed_git_methods_return_method_not_found`). See §2.7.
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `get_git_status` | Legacy repo status | Schema `compatOnly`; no live App/Core caller | Schema/client | — | `WAIVED` | Live UI uses repository/file status methods |
-| `get_git_repository_status` | Repo summary + changes | Git workbench | Schema/client/source-shape | Open Git workbench in a repo | `PASS` |
-| `get_git_file_statuses` | Git column | `ApplyGitStatusesAsync` + `FileRow.GitText` | Workspace + FileRow | Enable Git; open a repo | `PASS` |
-| `git_stage_paths` | Stage changed paths | Git workbench/context menu | Schema/client/source-shape | Stage a changed file | `MANUAL` |
-| `git_unstage_paths` | Unstage paths | Git workbench/context menu | Schema/client/source-shape | Unstage a staged file | `MANUAL` |
-| `git_discard_paths` | Discard selected changes | Git workbench/context menu confirmation | Schema/client/source-shape | Discard a scratch change | `MANUAL` |
-| `git_diff_path` | Show file diff | Workbench diff preview | Schema/client/source-shape | Preview diff for a changed file | `MANUAL` |
-| `git_commit` | Commit staged changes | Workbench commit prompt | Schema/client/source-shape | Commit staged scratch change | `MANUAL` |
-| `git_fetch` | Fetch remotes | Git workbench/context menu | Schema/client/source-shape | Fetch in a repo | `MANUAL` |
-| `git_pull` | Pull current repo | Git workbench/context menu/command palette | Catalog test | Git pull in a repo | `MANUAL` |
-| `git_push` | Push current repo | Git workbench/context menu/command palette | Catalog test | Git push | `MANUAL` |
 | `open_terminal` | F4 / context | IPC | — | F4 | `MANUAL` |
 | `open_powershell_admin` | Context | IPC | Context menu ID | Elevate PS | `MANUAL` |
 | `get_all_tags` | Color labels | Tag picker | Workspace seed | Set label | `MANUAL` |
@@ -173,23 +165,37 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `check_for_update` | Check updates | Settings Updates | Rust signed-metadata tests + schema | Check for updates | `PASS` |
 | `install_update` | Install + restart handshake | Settings install | Rust verify path + FileOperationService progress tests | Signed build smoke | `PASS` |
 
-### 2.6 FTP/SFTP manager
+### 2.6 FTP/SFTP (plugin `com.sumafile.remote`)
+
+FTP, FTPS and SFTP left the core IPC surface in plugin system phase 3: the 13 `remote_*` methods are gone, and the bundled plugin `com.sumafile.remote` serves its own methods over the plugin pipe. Its method, event and error table is [`plugins/remote/protocol.json`](../../plugins/remote/protocol.json). The rows below track the feature by coverage level.
 
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
-| `remote_list_profiles` | Saved remote profile list | `RemoteManagerViewModel.LoadProfilesAsync` | Remote manager tests + service dispatch tests | Open FTP/SFTP manager | `PASS` |
-| `remote_save_profile` | Save remote profile metadata without secret material | IPC/profile persistence | Rust profile tests + named-pipe client tests | Save a profile | `PASS` |
-| `remote_delete_profile` | Delete remote profile metadata | IPC/profile persistence | Rust profile tests + named-pipe client tests | Delete a profile | `PASS` |
-| `remote_test_profile` | Validate profile fields before connect | IPC validation result | Service dispatch tests | Test profile settings | `PASS` |
-| `remote_connect` | Create an opaque remote session | Remote manager connect path | Fake-provider service tests + named-pipe client tests | Connect to a configured FTP/SFTP profile | `MANUAL` |
-| `remote_disconnect` | Close an opaque remote session | Remote manager disconnect path | Fake-provider service tests + named-pipe client tests | Disconnect from a configured FTP/SFTP profile | `MANUAL` |
-| `remote_list_directory` | List a directory through an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Browse a configured FTP/SFTP profile | `MANUAL` |
-| `remote_create_directory` | Create a directory in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Create a remote folder | `MANUAL` |
-| `remote_rename_entry` | Rename a file or directory in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Rename a remote item | `MANUAL` |
-| `remote_delete_entries` | Delete files or directories in an active remote session | Remote manager remote list | Fake-provider service tests + named-pipe client tests | Delete selected remote items | `MANUAL` |
-| `remote_download_file` | Download a remote file into a chosen local folder | Remote manager download action | Fake-provider service tests + named-pipe client tests | Download selected remote files | `MANUAL` |
-| `remote_transfer_entries` | Stream files and folders with conflict policy, cancellation, and per-item results | Remote manager transfer controls | Remote transfer tests | Transfer files and folders | `MANUAL` |
-| `remote_upload_file` | Upload local files into the active remote directory | Remote manager upload action | Fake-provider service tests + named-pipe client tests | Upload local files | `MANUAL` |
+| `remote.sftp-password` | Profiles, connect, browse, create, rename, delete, upload, download and cancel over SFTP with password auth | Plugin manager window, Connections sidebar section and Transfers rows | Remote backend handler and process tests (`plugins/remote/backend/tests/handler.rs`, `transfers.rs`, `process.rs`); `RemotePluginBackendTests` (real host, real backend, SFTP test server); the `remote` UI smoke | — | `PASS` |
+| `remote.legacy-import` | 1.0.4 profiles and saved passwords after the upgrade | Connections section lists the imported profiles; Connect needs no password | `plugins/remote/backend/tests/legacy_import.rs`; `backend_process_imports_a_1_0_4_profile_and_connects_with_its_saved_password`; `UpgradedProfile_IsImportedAndConnectsThroughTheRealHost`; UI smoke step 2 | — | `PASS` |
+| `remote.ftp` | Plain FTP after the unencrypted-connection consent, and anonymous login | Plugin manager window | Only the ported `ftp.rs` tests: retry classification, list parsing, streaming against the scripted server | Connect, browse, create, rename, delete, upload and download against a real FTP server | `MANUAL` |
+| `remote.ftps` | FTPS (explicit TLS) | Plugin manager window | Only the shared `ftp.rs` tests | The same steps against a real FTPS server whose certificate the system trusts | `MANUAL` |
+| `remote.sftp-key` | SFTP private-key auth, with and without a saved passphrase | Plugin profile dialog | None; the test server accepts passwords only | Connect with a key file; with a saved passphrase, reconnect without retyping it | `MANUAL` |
+| `remote.sftp-agent` | SFTP agent auth | Plugin profile dialog | None | Connect through a running OpenSSH agent or Pageant | `MANUAL` |
+
+### 2.7 Git (plugin `com.sumafile.git`)
+
+Git left the core in plugin system phase 4: `crates/simplefile-core/src/git.rs`, the eleven `git_*` / `get_git_*` service methods, the core palette commands and context-menu group, the `GitPanel` workbench and the `EnableGitIntegration` setting are gone. The bundled plugin `com.sumafile.git` serves its own methods over the plugin pipe (backend `plugins/git/backend`, UI `plugins/git/ui/SumaFile.Git`); its method and error table is [`plugins/git/protocol.json`](../../plugins/git/protocol.json). `FileEntry.git_status` stays in the v1 wire format and binary frame, always absent. The rows below track the feature by coverage level.
+
+| ID | Feature | WinUI verification | Automated | Manual | Status |
+| --- | --- | --- | --- | --- | --- |
+| `git.decorations` | Status column and row text inside a repository; `inRepository` folder flag for menus and the toolbar | Plugin row decoration provider (`activateOn: startup`) | `plugins/git/backend/tests/handler.rs`, `repo.rs` (`decorations_mark_changed_children_with_native_paths`, `missing_git_reports_git_not_found_without_spawning`); `GitDecorationProviderTests`; `RowDecorationCoordinatorTests`; `GitPluginBackendTests` (`Decorations_ThroughTheRealHost_MarkTheChangedChildren`, `Decorations_OutsideARepository_AreEmpty`); the `git` UI smoke steps 3 and 4 | Open a repo with changes; the Status column shows them | `PASS` |
+| `git.workbench` | Stage, unstage, discard (with confirmation), diff and commit | Plugin panel `workbench` (bottom or detached `PluginPanelWindow`) | `GitWorkbenchControllerTests`, `GitWorkbenchViewModelTests`, `GitTextTests`; `repo.rs` (`discard_removes_only_the_selected_untracked_paths`, `file_commands_treat_names_literally`); `GitPluginBackendTests` (`StageCommitAndDiff_ThroughTheRealHost_ChangeTheRepository`); the `git` UI smoke steps 4-6 | Open the workbench; stage, diff, commit a scratch change | `MANUAL` |
+| `git.sync` | Fetch, pull and push as Transfers rows with Cancel | Plugin commands and Transfers rows | `plugins/git/backend/tests/process.rs`; `repo.rs` (`fetch_pull_push_against_a_local_bare_remote`, `pull_with_diverged_branches_fails_with_gits_message`, `cancelled_fetch_kills_git_and_its_children`); `run.rs` (`spawn_in_job_assigns_the_job_before_the_process_runs`); `handler.rs` (`failed_pull_fails_its_row_with_gits_message`); `GitWorkbenchControllerTests` (cancel); `GitPluginBackendTests` (`FetchCancelledFromItsRow_StopsGitAndFailsTheRow`); the `git` UI smoke step 5 | Fetch, pull and push against a real remote | `MANUAL` |
+| `git.commands` | The ten `plugin:com.sumafile.git:git-*` commands, the Git context-menu group (`when` expressions) and the primary toolbar toggle | Command palette, omnibar, context menu, toolbar | `GitPluginManifestTests`; `PluginContributionAdapterTests`; the `git` UI smoke steps 1, 3, 6 and 7, and its `none` mode | Right-click a changed file in a repo | `PASS` |
+| `git.disable` | Settings > Plugins > Git > `enabled` (migrated from `enableGitIntegration`): off clears decorations, the menu group and the toggle, and hides the workbench; commands stay listed and refuse | Plugin settings | `Commands_WhenDisabled_NotifyTheDisabledMessageAndRunNothing`, `GetAsync_EnabledFalse_ReturnsNothingAndCallsNoBackend`, `GetAsync_TurnedOff_HidesAShownWorkbenchOnce`; `PluginManagerTests` migration tests; `GitPluginBackendTests` (`DisablingThePlugin_StopsTheBackendProcess`); the `git` UI smoke step 2 | Turn Git off; nothing Git is drawn and the commands refuse | `PASS` |
+
+Automation. Besides the Rust tests of Task 12 (`plugins/git/backend/tests/repo.rs`, `handler.rs`, `process.rs` and the `run.rs` unit tests) and the real-host tests of Task 14 (`GitPluginBackendTests`, with `GitBackendHarness`), the `git` scenario of `npm run smoke:winui-ui` (`src-winui/SimpleFile.App/MainWindow.UiSmoke.Git.cs`, fixture made by `scripts/smoke-winui-ui.ps1` under `SUMAFILE_SMOKE_GIT`) drives the bundled plugin in the real App against a local repository, a bare origin and a peer clone, and checks each change with the git command line:
+
+- `-PluginsDir` mode: bundled trust, the ten commands and the offered toolbar toggle; the `enableGitIntegration` migration, the turned-off message and the Settings > Plugins switch; decorations in a repository and none outside it; the bottom workbench from its toggle; stage, unstage, diff, discard, fetch (a `Fetching repo` row), the fast-forward pull, commit and push; detach, dock, resize and Disable with the commit dialog open; the toolbar item kept through a save while disabled, and a removed one kept removed. `service-reconnect` requires the Git backend to survive a service restart.
+- `-NoPlugins` mode: no Git command, toolbar action, panel element, menu entry, Settings text, decoration or backend process, and no decoration provider.
+
+The WinUI CI job runs the `-PluginsDir` smoke, `npm run check:winui-startup-budget`, then the `-NoPlugins` smoke.
 
 ---
 
@@ -225,7 +231,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `nav.history` | Back/forward per pane | History stack | `ExplorerWorkspaceTests` | Alt+Left/Right | `PASS` |
 | `nav.up` | Parent; no-op on root | `GoUpAsync` | `GoUp` test | Alt+Up at `C:\` | `PASS` |
 | `nav.open-folder` | Double-click / Enter folder | `OpenEntryAsync` | Workspace tests | Open folder | `PASS` |
-| `nav.open-archive-folder` | Zip as folder | `IsSupportedArchivePath` | `OpenArchiveFile_NavigatesIntoArchive` | Open zip | `PASS` |
+| `nav.open-archive-folder` | Zip as folder; a plugin format (7z) only while its engine is registered | `IsSupportedArchivePath` (`ArchivePaths.IsBrowsableArchive`) | `OpenArchiveFile_NavigatesIntoArchive`; `ArchiveEngineNavigationTests` | Open zip | `PASS` |
 | `nav.dual-pane` | F6; first enable copies path | `ToggleDualPaneAsync` | `DualPaneAndTabsTests` | F6 twice | `PASS` |
 | `nav.pane-activate` | Click / Alt+1/2 / Ctrl+Shift+Left/Right | `ActivatePane` | Dual-pane tests | Switch panes | `PASS` |
 | `nav.pane-tab` | Tab switches panes when not in text | `OnRootPreviewKeyDown` | — | Tab in dual | `MANUAL` |
@@ -253,7 +259,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `list.columns-default` | Name, Size, Modified, Type | Header + `FileRowView` | `ColumnLayout` tests | — | `PASS` |
 | `list.columns-resize` | Drag header thumbs | `ColumnLayout.Resize` | Clamp/preset tests | Drag thumbs | `PASS` |
 | `list.columns-presets` | details/media/developer/photo | `ColumnLayout.ApplyPreset` | `ColumnLayout` tests | Settings column preset | `PASS` |
-| `list.extra-columns` | items/git/extension/path/parent/symlink | FileRow git/extension/tag | ColumnLayout + FileRow | Enable git column | `PASS` |
+| `list.extra-columns` | items/status (column id `git`)/extension/path/parent/symlink | FileRow decoration/extension/tag | ColumnLayout + FileRow | Enable the Status column | `PASS` |
 | `list.multi-select` | Ctrl/Shift multi | `ListView` Multiple | — | Ctrl-click range | `MANUAL` |
 | `list.marquee` | Rubber-band | `MarqueeSelection` + ListView multi-select | `ParityFeaturesTests` | Drag-select rows | `PASS` |
 | `list.typeahead` | Type-to-select | `MatchTypeAhead` on list keys | `ParityFeaturesTests` | Type letters in a list | `PASS` |
@@ -347,19 +353,19 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `folder-metrics` | Metrics | Dialog | Catalog | — | `MANUAL` |
 | `disk-cleanup` | Cleanup | Dialog | Catalog | — | `MANUAL` |
 | `duplicate-checker` | Duplicates | Dialog | Catalog | — | `MANUAL` |
-| `ftp-sftp-manager` | FTP/SFTP manager | Manager command shell | Catalog + remote manager tests | Open manager | `MANUAL` |
+| `plugin:com.sumafile.remote:ftp-sftp-manager` | FTP/SFTP manager (plugin command; palette and toolbar overflow) | Plugin command routed through `PluginManager` | `RemotePluginBackendTests`; the `remote` UI smoke | Open manager | `MANUAL` |
 | `settings` | Settings | Dialog | Catalog | Ctrl+Shift+S | `MANUAL` |
 | `customize-toolbar` `toggle-toolbar-labels` | Toolbar customization | Pane More toolbar submenu + Settings Toolbar page | Catalog + context menu tests | More > Toolbar | `PASS` |
 | `command-palette` | Open command palette | Handler | Catalog test | Ctrl+Shift+P | `PASS` |
 | `keyboard-help` | F1 | Dialog | Catalog + shortcut map | F1 | `PASS` |
-| `git-panel` `git-refresh` `git-fetch` `git-pull` `git-push` `git-commit` `git-stage-selected` `git-unstage-selected` `git-discard-selected` `git-diff-selected` | Palette | Git workbench + IPC | Catalog + source-shape | Open workbench; stage, diff, commit, sync | `MANUAL` |
+| `git-panel` `git-refresh` `git-fetch` `git-pull` `git-push` `git-commit` `git-stage-selected` `git-unstage-selected` `git-discard-selected` `git-diff-selected` | Palette | Moved to the Git plugin in phase 4 as `plugin:com.sumafile.git:<id>` (§2.7) | `GitPluginManifestTests`; `AppCommandCatalogTests` (no core `git-*`) | See §2.7 | `PASS` |
 | `ctx-open` | Context Open | `ContextMenuBuilder` | `DesktopPolishTests` | Right-click | `PASS` |
 | `ctx-open-tab` `ctx-open-other-pane` | Context folder navigation | `ContextMenuBuilder` + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-open-with` `ctx-open-with-app-` `ctx-open-with-choose` | Open With | Builder | Same | — | `PASS` |
 | `ctx-preview` | Quick Look | Builder | Same | — | `PASS` |
 | `ctx-send-to-menu` `ctx-tools-menu` `ctx-archive-menu` | Grouped context menu sections | Builder | Context menu tests | Right-click file/folder | `PASS` |
 | `ctx-toolbar-menu` `ctx-toggle-toolbar-labels` `ctx-customize-toolbar` | Pane More toolbar shortcuts | Builder + handlers | Context menu tests | More > Toolbar | `PASS` |
-| `overflow-tools-menu` | Pane More Tools submenu (FTP/SFTP, history, cleanup, terminal) | Builder | Context menu tests | More > Tools | `PASS` |
+| `overflow-tools-menu` | Pane More Tools submenu (history, cleanup, terminal) | Builder | Context menu tests | More > Tools | `PASS` |
 | `ctx-compare` | Compare | Builder | Same | Two files | `PASS` |
 | `ctx-view-archive` | View archive contents | Builder + handler | `DesktopPolishTests` | Right-click archive | `PASS` |
 | `ctx-terminal` | Terminal | Builder | Same | — | `PASS` |
@@ -375,6 +381,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-copy-path` | Copy full path | Builder + handler | Context menu tests | Paste path in Notepad | `PASS` |
 | `ctx-bookmark` | Bookmark selected folder | Builder + handler | Context menu tests | Right-click folder | `PASS` |
 | `ctx-copy-to-pane` `ctx-move-to-pane` | Other pane | Builder | Same | Dual pane | `PASS` |
+| `ctx-plugin-menu` | Plugin context menu groups (`ctx-plugin-menu:<pluginId>`) | Builder | `ContextMenuBuilderTests` | Right-click with the Hello fixture enabled | `PASS` |
 | `ctx-close-dual-pane` | Close right pane | Builder + handler | `DesktopPolishTests` | F6 or pane menu | `PASS` |
 | `ctx-close-left-pane` | Close left pane | Builder + handler | `DesktopPolishTests` | Dual pane | `PASS` |
 | `ctx-pack` `ctx-unpack` | Pack/unpack | Builder | Same | — | `PASS` |
@@ -386,7 +393,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `ctx-folder-info` | Current folder properties (blank-space menu) | Builder + alias to `folder-properties` | `ContextMenuBuilderTests` | Right-click blank space | `PASS` |
 | `ctx-restore` | Restore Recycle Bin item | Recycle context menu | Context menu tests | Restore | `PASS` |
 | `ctx-empty-recycle-bin` | Empty Recycle Bin | Recycle context / more menu | Context menu tests | Empty Bin | `PASS` |
-| `ctx-git-menu` `ctx-git-panel` `ctx-git-refresh` `ctx-git-diff` `ctx-git-stage` `ctx-git-unstage` `ctx-git-discard` `ctx-git-fetch` `ctx-git-pull` `ctx-git-push` `ctx-git-commit` | Git context menu | `ContextMenuBuilder` + Git workbench handlers | Context menu tests | Right-click changed file in repo | `PASS` |
+| `ctx-git-menu` `ctx-git-panel` `ctx-git-refresh` `ctx-git-diff` `ctx-git-stage` `ctx-git-unstage` `ctx-git-discard` `ctx-git-fetch` `ctx-git-pull` `ctx-git-push` `ctx-git-commit` | Git context menu | Retired in phase 4: the Git plugin's context-menu group (`ctx-plugin-menu:com.sumafile.git`) replaces it (§2.7) | `ContextMenuBuilderTests` (no `ctx-git-*`); `GitPluginManifestTests` | Right-click changed file in repo | `PASS` |
 | `keys.path.focus` | Ctrl+L / Alt+D | Accelerators | `KeyboardShortcutMap` | Focus path | `PASS` |
 | `keys.nav` | Alt+arrows, Backspace, F5 | Accelerators | Shortcut map | — | `PASS` |
 | `keys.file` | F2 Del Shift+Del Ctrl+C/X/V/N | Accelerators | Shortcut map | — | `PASS` |
@@ -413,7 +420,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `set.keepFoldersOnTop` | Folders on top vs mixed sort | Settings Behavior | `EntryPresentationTests` | Toggle; sort by name | `PASS` |
 | `set.startLocation` | home/last/custom | Settings Navigation | `ResolveStartPath` | — | `PASS` |
 | `set.openInNewTab` | Open in tab | `OpenPathAsync` opens a tab | Workspace | Toggle; open folder | `PASS` |
-| `set.enableGit` | Git integration | `ApplyGitStatusesAsync` + `RefreshGitUiVisibility` | Workspace + source-shape | Disable Git; panel/actions disappear and no status calls run | `PASS` |
+| `set.enableGit` | Git integration | Moved in phase 4: Settings > Plugins > Git > `enabled`, migrated from `enableGitIntegration` (§2.7 `git.disable`); core no longer reads or writes the key | `SaveAsync_NoLongerWritesEnableGitIntegration`; §2.7 tests | Disable Git; panel/actions disappear and no status calls run | `PASS` |
 | `set.showFolderSizes` | Folder sizes | `FillFolderSizesAsync` | Workspace | Enable folder sizes | `PASS` |
 | `set.columnPreset` | Column preset | `ApplyPreset` | `ColumnLayout` | Change preset | `PASS` |
 | `persist.workspace` | Tabs/dual/sort | `workspace-layout` | Restore test | Relaunch | `PASS` |
@@ -435,7 +442,7 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 97 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 75 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |
@@ -466,6 +473,7 @@ Use a clean folder with mixed files (txt, png, zip), a git repo, and a large fol
 14. F4 terminal; F1 help; Ctrl+Shift+P command palette.
 15. Watcher: create a file in Explorer; list refreshes.
 16. Close app; confirm `simplefile-service` exits.
+17. FTP/SFTP plugin (`com.sumafile.remote`), the four `MANUAL` rows of §2.6: `remote.ftp` (plain FTP after the consent, and anonymous login, against a real FTP server), `remote.ftps` (the same steps against a real FTPS server), `remote.sftp-key` (connect with a private key file; with a saved passphrase, reconnect without retyping it) and `remote.sftp-agent` (connect through a running OpenSSH agent or Pageant).
 
 ---
 

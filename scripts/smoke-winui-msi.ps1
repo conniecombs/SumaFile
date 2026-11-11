@@ -2,6 +2,9 @@ $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $bundleDir = Join-Path $root "dist\winui"
+
+# Assert-BundledPlugins: the bundled plugin folders and bundled.json in the extracted image.
+. (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
 $msi = Get-ChildItem -Path $bundleDir -Filter "SumaFile_*_x64-winui.msi" -File |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
@@ -18,6 +21,30 @@ $extractDir = Join-Path $smokeRoot "extract"
 New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
 
 $process = $null
+$extractedExeDir = $null
+
+# The extracted app must never touch the user's data: it scans only the extracted plugins folder, keeps approvals,
+# plugin data, the plugin log, metadata.db and app data under $smokeRoot, so the bundled remote plugin imports no
+# real profiles and seeds nothing into the real settings. It starts the bundled Git backend, so git gets an empty
+# global config under $smokeRoot and no system config: a developer's core.hooksPath, commit.gpgsign or
+# init.defaultBranch can never run, prompt or change a result.
+$smokeAppDataDir = Join-Path $smokeRoot "app-data"
+$smokeGitConfig = Join-Path $smokeRoot "gitconfig"
+[System.IO.File]::WriteAllText($smokeGitConfig, "")
+$smokeEnvironment = [ordered]@{
+    SUMAFILE_PLUGIN_ROOTS = $null
+    SUMAFILE_PLUGIN_APPROVALS_PATH = Join-Path $smokeRoot "plugin-approvals.json"
+    SUMAFILE_PLUGIN_DATA_ROOT = Join-Path $smokeRoot "plugins-data"
+    SUMAFILE_PLUGIN_LOG_PATH = Join-Path $smokeRoot "plugins.log"
+    SIMPLEFILE_METADATA_DB = Join-Path $smokeAppDataDir "metadata.db"
+    SIMPLEFILE_APP_DATA_DIR = $smokeAppDataDir
+    GIT_CONFIG_GLOBAL = $smokeGitConfig
+    GIT_CONFIG_NOSYSTEM = "1"
+}
+$previousEnvironment = @{}
+foreach ($name in $smokeEnvironment.Keys) {
+    $previousEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, "Process")
+}
 
 try {
     $msiArgs = @("/a", $msi.FullName, "/qn", "TARGETDIR=$extractDir")
@@ -41,6 +68,18 @@ try {
     Write-Host "Extracted $($msi.Name) to $extractDir."
     Write-Host "Extracted executable version: $($exe.VersionInfo.ProductVersion)."
 
+    Assert-BundledPlugins -Root (Join-Path $exe.DirectoryName "plugins")
+    if (Test-Path -LiteralPath (Join-Path $exe.DirectoryName "tools\7zip")) {
+        throw "WinUI MSI extraction must not contain tools\7zip; 7-Zip ships as the bundled plugin."
+    }
+    Write-Host "Extracted MSI carries the bundled plugins."
+
+    $extractedExeDir = $exe.DirectoryName
+    New-Item -ItemType Directory -Force -Path $smokeAppDataDir | Out-Null
+    $smokeEnvironment["SUMAFILE_PLUGIN_ROOTS"] = Join-Path $extractedExeDir "plugins"
+    foreach ($name in $smokeEnvironment.Keys) {
+        [System.Environment]::SetEnvironmentVariable($name, $smokeEnvironment[$name], "Process")
+    }
     $process = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -PassThru
     $windowProcess = $null
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
@@ -76,6 +115,22 @@ finally {
             }
             Write-Host "Closed WinUI MSI smoke-test process $($process.Id). CloseMainWindow sent: $closed."
         }
+    }
+
+    foreach ($name in $smokeEnvironment.Keys) {
+        [System.Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+    }
+
+    # The host's kill-on-close job ends plugin backends with the app; stop any that still run from the extracted
+    # folder before removing it.
+    if ($extractedExeDir) {
+        $extractedPlugins = Join-Path $extractedExeDir "plugins"
+        Get-Process -Name "sumafile-*-backend" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -and $_.Path.StartsWith($extractedPlugins, [System.StringComparison]::OrdinalIgnoreCase) } |
+            ForEach-Object {
+                Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+                $_.WaitForExit(5000) | Out-Null
+            }
     }
 
     Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue

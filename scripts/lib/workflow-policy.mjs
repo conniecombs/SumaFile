@@ -79,7 +79,13 @@ export function validateWorkflows(workflows, dependabot) {
     [/scripts\/check-winui-release-hash\.ps1/, 'behavioral release hashing check'],
     [/^npm run smoke:winui-ui\b/, 'real application UI smoke'],
     [/^node scripts\/check-winui-packaging\.mjs$/, 'packaging checks'],
+    [/^npm run pack:sdk\s*$/, 'plugin SDK pack (dry run)'],
   ]) command('ci.yml', 'winui', pattern, description);
+  // Phase 5: the SDK is packed after the tests that pin its surface and documentation.
+  const winuiRuns = runs(ci?.jobs?.winui);
+  const packSdk = winuiRuns.findIndex(line => /^npm run pack:sdk\s*$/.test(line));
+  check(packSdk < 0 || packSdk > winuiRuns.findIndex(line => /^npm run check:winui\s*$/.test(line)),
+    'ci.yml/winui: pack the plugin SDK after the WinUI tests');
   const reports = action(ci?.jobs?.winui, 'actions/upload-artifact');
   check(reports?.if === 'always()' && reports?.with?.path?.includes('report.json'), 'CI: retain runtime evidence on failure');
   needs('ci.yml', 'required', ['quality', 'repo-checks', 'security', 'build', 'winui', 'installer']);
@@ -114,6 +120,10 @@ export function validateWorkflows(workflows, dependabot) {
     check(action(current, 'actions/checkout')?.with?.['fetch-depth'] === 0, `${file}: upgrade smoke requires full history`);
     command(file, id, /build-winui-release\.ps1.*-RequireInstaller/, 'installer build');
     command(file, id, /choco install wixtoolset\b/, 'WiX bootstrap');
+    // scripts/lib/wix-msi.ps1's Resolve-WixBin, which refuses WiX older than 3.14.1, not a copy without that gate.
+    command(file, id, /^\. \.\/scripts\/lib\/wix-msi\.ps1$/, 'shared WiX resolver (scripts/lib/wix-msi.ps1)');
+    check(!steps(current).some(step => /function Resolve-WixBin\b/.test(step.run ?? '')), `${file}/${id}: use the shared Resolve-WixBin`);
+    command(file, id, /^npm run smoke:winui-msi-lifecycle\s*$/, 'MSI lifecycle smoke');
     command(file, id, /choco install nsis\b/, 'NSIS bootstrap');
     command(file, id, /^npm run smoke:winui-file-ops\s*$/, 'packaged file operations');
     command(file, id, /^npm run smoke:winui-upgrade\s*$/, 'published-version upgrade smoke');

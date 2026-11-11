@@ -1,8 +1,29 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const crates = ['simplefile-core', 'simplefile-ipc', 'simplefile-service'];
-export const nugetLocks = ['App', 'Core', 'Ipc', 'Tests'].map(name => `src-winui/SimpleFile.${name}/packages.lock.json`);
+// sumafile-plugin versions on its own, but its packaged manifest requires the simplefile-ipc released with the app.
+const pluginCrate = 'crates/sumafile-plugin/Cargo.toml';
+const ipcRequirement = /^(simplefile-ipc\s*=\s*\{[^}\n]*\bversion\s*=\s*")([^"]+)(")/m;
+// A src-winui project referenced by another project: NuGet writes "SimpleFile.<Name>": "[<version>, )" into the lock
+// file of every project that reaches it, and versions it with the app (src-winui/Directory.Build.props). The plugin
+// projects (SumaFile.*, Example.*) version on their own and are never rewritten.
+const projectReference = /("SimpleFile\.[A-Za-z]+": "\[)([^,\]]+)(, \)")/g;
+const skippedFolders = new Set(['.git', 'bin', 'obj', 'node_modules', 'target', 'dist', 'test-results']);
+
+/** Every packages.lock.json in the repository (App, Tests, PluginHost, the plugins, the template, the Hello fixture), sorted. */
+export function findNugetLocks(root) {
+  const found = [];
+  const walk = relative => {
+    for (const entry of readdirSync(resolve(root, relative || '.'), { withFileTypes: true })) {
+      const child = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isDirectory() && !entry.name.startsWith('.') && !skippedFolders.has(entry.name)) walk(child);
+      else if (entry.isFile() && entry.name === 'packages.lock.json') found.push(child);
+    }
+  };
+  walk('');
+  return found.sort();
+}
 export function parseVersion(input) {
   const display = input.replace(/^v/, '');
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*))?$/.exec(display);
@@ -26,6 +47,15 @@ export function readReleaseVersion(root) {
   if (/<assemblyIdentity version="([^"]+)"/.exec(manifest)?.[1] !== `${version.numeric}.0`) throw new Error('Windows manifest version differs from WinUI');
   const nsis = readFileSync(resolve(root, 'packaging/winui/sumafile-winui.nsi'), 'utf8');
   if (/!define NUMERIC_VERSION "([^"]+)"/.exec(nsis)?.[1] !== version.numeric) throw new Error('NSIS fallback version differs from WinUI');
+  const requirement = ipcRequirement.exec(readFileSync(resolve(root, pluginCrate), 'utf8'))?.[2];
+  if (requirement !== version.numeric) throw new Error(`sumafile-plugin requires simplefile-ipc ${requirement}, not ${version.numeric}`);
+  for (const file of findNugetLocks(root)) {
+    for (const [, prefix, locked] of readFileSync(resolve(root, file), 'utf8').matchAll(projectReference)) {
+      if (locked !== version.numeric) {
+        throw new Error(`${file}: ${prefix.slice(1, prefix.indexOf('"', 1))} is ${locked}, not ${version.numeric}; restore it or run release:prepare`);
+      }
+    }
+  }
   return version;
 }
 
@@ -46,6 +76,10 @@ export function planReleaseVersion(root, input) {
     if (original !== updated) changes.set(file, updated);
   };
   for (const crate of crates) edit(`crates/${crate}/Cargo.toml`, source => source.replace(/^version\s*=\s*"[^"]+"/m, `version = "${next.numeric}"`));
+  edit(pluginCrate, source => {
+    if (!ipcRequirement.test(source)) throw new Error(`${pluginCrate} has no versioned simplefile-ipc dependency`);
+    return source.replace(ipcRequirement, `$1${next.numeric}$3`);
+  });
   edit('Cargo.lock', source => {
     for (const crate of crates) {
       const pattern = new RegExp(`(name = "${crate}"\\r?\\nversion = ")[^"]+(")`);
@@ -60,10 +94,11 @@ export function planReleaseVersion(root, input) {
   edit('crates/simplefile-core/src/lib.rs', source => source.replace(/(APP_DISPLAY_VERSION:\s*&str\s*=\s*")[^"]+(")/, `$1${next.display}$2`));
   edit('src-winui/SimpleFile.App/app.manifest', source => source.replace(/(<assemblyIdentity version=")[^"]+(")/, `$1${next.numeric}.0$2`));
   edit('packaging/winui/sumafile-winui.nsi', source => source.replace(/(!define NUMERIC_VERSION ")[^"]+(")/, `$1${next.numeric}$2`));
-  for (const file of nugetLocks) edit(file, source => source.replace(
-    /("SimpleFile\.(?:Core|Ipc|App|Tests)": "\[)[\d.]+(, \)")/g, `$1${next.numeric}$2`));
+  for (const file of findNugetLocks(root)) edit(file, source => source.replace(projectReference, `$1${next.numeric}$3`));
   edit('README.md', source => source
-    .replace(/(img\.shields\.io\/badge\/version-)[^-]+(?:-[^-]+)*(?=-2563eb\))/, `$1${encodeURIComponent(next.display).replaceAll('-', '%2D')}`)
+    // shields.io splits a static badge on single dashes: a dash in the text is written "--" and an underscore "__"
+    // ("%2D" gives "404 badge not found").
+    .replace(/(img\.shields\.io\/badge\/version-).+?(?=-2563eb\))/, `$1${encodeURIComponent(next.display).replaceAll('-', '--').replaceAll('_', '__')}`)
     .replace(/(\| Product version \| `)[^`]+(` \|)/, `$1${next.display}$2`)
     .replaceAll(`SumaFile_${current.display}_`, `SumaFile_${next.display}_`)
     .replace(`SumaFile ${current.display} is Windows-only.`, `SumaFile ${next.display} is Windows-only.`));

@@ -105,8 +105,8 @@ public sealed partial class CreateArchiveDialog : ContentDialog
 
     private static ArchiveFormatCapability[] DefaultCreateFormats() =>
     [
+        // The built-in formats only: 7z needs its plugin, so it is offered only when the service reports it.
         new() { Format = "zip", Extension = ".zip", CanCreate = true },
-        new() { Format = "7z", Extension = ".7z", CanCreate = true },
         new() { Format = "tar", Extension = ".tar", CanCreate = true },
         new() { Format = "tar.gz", Extension = ".tar.gz", CanCreate = true },
     ];

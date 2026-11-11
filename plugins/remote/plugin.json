@@ -1,0 +1,26 @@
+{
+  "id": "com.sumafile.remote",
+  "name": "FTP/SFTP connections",
+  "version": "1.0.0",
+  "publisher": { "name": "SumaFile Team", "url": "https://github.com/conniecombs/SumaFile" },
+  "sdkVersion": "1.0.0",
+  "ui": { "assembly": "SumaFile.Remote.dll", "entryType": "SumaFile.Remote.RemotePlugin" },
+  "backend": { "executable": "sumafile-remote-backend.exe", "args": [], "activateOn": "first-call", "acceptsMultipleClients": false },
+  "permissions": ["network", "credentials", "backend-process"],
+  "contributions": {
+    "commands": [ { "id": "ftp-sftp-manager", "label": "FTP/SFTP manager", "group": "Tools" } ],
+    "toolbar": [ { "command": "ftp-sftp-manager", "label": "FTP/SFTP manager", "glyph": "", "placement": "overflow" } ],
+    "sidebar": [ { "id": "connections", "title": "Connections", "provider": "connections", "command": "ftp-sftp-manager" } ],
+    "settingsPage": { "provider": "remote-settings" }
+  },
+  "settings": [
+    { "key": "bandwidthMib", "type": "integer", "label": "Bandwidth limit (MB/s, 0 = unlimited)", "default": 0, "group": "Transfers" },
+    { "key": "checkMode", "type": "enum", "label": "Decide a file is already up to date by", "options": ["size_and_mod_time","size_only","checksum","ignore_times"], "default": "size_and_mod_time", "group": "Transfers" },
+    { "key": "inplace", "type": "boolean", "label": "Write downloads directly to the destination instead of a temporary file", "default": false, "group": "Transfers" },
+    { "key": "preallocate", "type": "boolean", "label": "Pre-allocate local download space", "default": true, "group": "Transfers" },
+    { "key": "flushOnClose", "type": "boolean", "label": "Flush local downloads to disk before finishing each file", "default": true, "group": "Transfers" },
+    { "key": "lowLevelRetries", "type": "integer", "label": "Retry a failing file up to", "default": 10, "group": "Transfers" },
+    { "key": "highLevelRetries", "type": "integer", "label": "Retry rounds per failed file", "default": 3, "group": "Transfers" },
+    { "key": "retrySleepMs", "type": "integer", "label": "Wait before retrying (milliseconds)", "default": 1000, "group": "Transfers" }
+  ]
+}

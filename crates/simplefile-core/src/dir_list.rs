@@ -268,8 +268,13 @@ pub fn list_directory_capturing_raw(
     };
 
     // Routing only needs to know whether this is an archive path; parsing the
-    // archive here meant every archive listing was parsed twice.
-    if crate::recycle_bin::is_recycle_bin_path(&path) || crate::archive::is_archive_path(&path) {
+    // archive here meant every archive listing was parsed twice. A path the
+    // plugin note covers (an unserved `.7z`, or a folder inside one) is no
+    // archive path, but the archive listing is what reports the note.
+    if crate::recycle_bin::is_recycle_bin_path(&path)
+        || crate::archive::is_archive_path(&path)
+        || crate::archive::unavailable_archive_note(&path).is_some()
+    {
         let listing = list_directory_with_options(path, options, on_chunk)?;
         return Ok((listing, None));
     }

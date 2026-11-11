@@ -18,7 +18,11 @@ $distRoot = Join-Path $root "dist\winui"
 $payloadDir = Join-Path $distRoot "payload"
 $iconPath = Join-Path $root "packaging\winui\icon.ico"
 $appProject = Join-Path $root "src-winui\SimpleFile.App\SimpleFile.App.csproj"
-$sevenZipBundleDir = Join-Path $root "third_party\7zip\win-x64"
+
+# Install-BundledPlugins and Assert-BundledPlugins stage and check payload\plugins and its bundled.json.
+. (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
+# Resolve-WixBin and New-WinUIMsi build the MSI (WiX v3 with WixUtilExtension).
+. (Join-Path $PSScriptRoot "lib\wix-msi.ps1")
 
 function Write-Step {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -157,24 +161,20 @@ function Assert-Payload {
         }
     }
 
-    foreach ($required in @("7za.exe", "7za.dll", "7zxa.dll", "License.txt")) {
-        $path = Join-Path (Join-Path $Directory "tools\7zip") $required
-        if (-not (Test-Path -LiteralPath $path)) {
-            throw "WinUI payload is missing bundled 7-Zip file $required under $Directory\tools\7zip."
-        }
-    }
-}
-
-function Copy-BundledArchiveTools {
-    param([Parameter(Mandatory = $true)][string]$Destination)
-
-    if (-not (Test-Path -LiteralPath $sevenZipBundleDir)) {
-        throw "Bundled 7-Zip directory is missing: $sevenZipBundleDir"
+    # 7-Zip ships as the bundled plugin; the payload must not bring back 1.0.4's tools\7zip.
+    $legacySevenZip = Join-Path $Directory "tools\7zip"
+    if (Test-Path -LiteralPath $legacySevenZip) {
+        throw "WinUI payload must not contain $legacySevenZip; 7-Zip ships as the bundled plugin in plugins\com.sumafile.sevenzip."
     }
 
-    $destinationDir = Join-Path $Destination "tools\7zip"
-    New-Item -ItemType Directory -Force -Path $destinationDir | Out-Null
-    Copy-Item -Path (Join-Path $sevenZipBundleDir "*") -Destination $destinationDir -Recurse -Force
+    Assert-BundledPlugins -Root (Join-Path $Directory "plugins")
+
+    # Plugin data, approvals, the plugin log and user-installed plugins are the app's own files in its install folder;
+    # a payload that carried them would ship one machine's state to every user.
+    $appOwned = @(Get-AppOwnedPluginItems -InstallDir $Directory)
+    if ($appOwned.Count -gt 0) {
+        throw "WinUI payload must not contain app-owned plugin files: $($appOwned -join ', ')"
+    }
 }
 
 function Get-Sha256Hash {
@@ -238,7 +238,7 @@ function Get-LikelyWinUILockHolder {
     }
 
     $forward = $resolved.Replace('\', '/')
-    $processNames = @("SumaFile.exe", "SimpleFile.App.exe", "SimpleFile.exe", "simplefile-service.exe")
+    $processNames = @("SumaFile.exe", "SimpleFile.App.exe", "SimpleFile.exe", "simplefile-service.exe", "sumafile-sevenzip-backend.exe", "sumafile-remote-backend.exe", "sumafile-git-backend.exe")
     $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
     if (-not $processes) {
         return @()
@@ -325,7 +325,7 @@ function New-WinUIPayload {
     }
 
     Copy-Item -LiteralPath $ServiceExe -Destination (Join-Path $Destination "simplefile-service.exe") -Force
-    Copy-BundledArchiveTools -Destination $Destination
+    Install-BundledPlugins -Root (Join-Path $Destination "plugins") -Configuration Release
     Assert-Payload $Destination
 }
 
@@ -352,11 +352,19 @@ New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
 
 if (-not $SkipChecks) {
     Invoke-Native npm @("run", "check:winui-packaging")
+    # check:winui runs the C# tests, whose fixtures the test project copies after its build: the Hello plugin and
+    # the SFTP test server (build-fixture-plugin.ps1), and the staged remote and Git plugins with their bundled.json
+    # (build-plugins.ps1, Debug). The CI winui job runs the same two scripts before check:winui.
+    Invoke-Native powershell @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\build-fixture-plugin.ps1")
+    Invoke-Native powershell @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\build-plugins.ps1", "-Configuration", "Debug")
     Invoke-Native npm @("run", "check:winui")
 }
 
 Write-Step "Build simplefile-service"
 Invoke-Native cargo @("build", "-p", "simplefile-service", "--locked", "--release")
+Invoke-Native cargo @("build", "-p", "sumafile-sevenzip-backend", "--locked", "--release")
+Invoke-Native cargo @("build", "-p", "sumafile-remote-backend", "--locked", "--release")
+Invoke-Native cargo @("build", "-p", "sumafile-git-backend", "--locked", "--release")
 
 $serviceExe = Find-ServiceExecutable
 if (-not $serviceExe) {
@@ -375,6 +383,26 @@ Invoke-Native dotnet @(
 $publishDir = Find-PublishDirectory
 if (-not $publishDir) {
     throw "dotnet publish did not produce SumaFile.exe under src-winui\\SimpleFile.App\\bin\\**\\publish."
+}
+
+# The App publish does not build plugin projects; Install-BundledPlugins stages each plugin UI from bin\Release.
+# The list must name exactly the UI projects of the staging table, so no bundled UI is staged from an old build.
+$pluginUiProjects = @(
+    "plugins\remote\ui\SumaFile.Remote\SumaFile.Remote.csproj",
+    "plugins\git\ui\SumaFile.Git\SumaFile.Git.csproj"
+)
+$stagedUiProjects = @($script:BundledPluginIds | Where-Object { $script:BundledPluginUiProjects[$_] } |
+    ForEach-Object { $script:BundledPluginUiProjects[$_].Project })
+if (($pluginUiProjects -join "|") -cne ($stagedUiProjects -join "|")) {
+    throw "The release build's plugin UI projects [$($pluginUiProjects -join ', ')] differ from the staging table's [$($stagedUiProjects -join ', ')]."
+}
+foreach ($pluginUiProject in $pluginUiProjects) {
+    Write-Step "Build the plugin UI $(Split-Path -Leaf $pluginUiProject)"
+    Invoke-Native dotnet @(
+        "build", (Join-Path $root $pluginUiProject),
+        "-c", "Release",
+        "--nologo"
+    )
 }
 
 New-WinUIPayload -PublishDir $publishDir -ServiceExe $serviceExe -Destination $payloadDir
@@ -419,26 +447,15 @@ if (-not $SkipInstaller) {
         Write-Warning $message
     }
 
-    $candle = Resolve-Tool "candle.exe" @(
-        "C:\Program Files (x86)\WiX Toolset v3.14\bin",
-        "C:\Program Files (x86)\WiX Toolset v3.11\bin",
-        "C:\Program Files\WiX Toolset v3.14\bin"
-    )
-    $light = $null
-    $heat = $null
-    if ($candle) {
-        $wixBin = Split-Path -Parent $candle
-        $light = Join-Path $wixBin "light.exe"
-        $heat = Join-Path $wixBin "heat.exe"
-    }
-
-    if ($candle -and (Test-Path -LiteralPath $light) -and (Test-Path -LiteralPath $heat)) {
+    # WiX v3 with WixUtilExtension (Product.wxs purges the app-owned plugin items on uninstall); New-WinUIMsi in
+    # scripts\lib\wix-msi.ps1 is shared with the MSI lifecycle smoke.
+    $wixBin = Resolve-WixBin
+    if ($wixBin) {
         Write-Step "Build WiX WinUI MSI"
         $wixOut = Join-Path $distRoot "wix"
         New-Item -ItemType Directory -Force -Path $wixOut | Out-Null
         $harvested = Join-Path $wixOut "harvested.wxs"
-        $productWxs = Join-Path $root "packaging\winui\Product.wxs"
-        Invoke-Native $heat @(
+        Invoke-Native (Join-Path $wixBin "heat.exe") @(
             "dir", $payloadDir,
             "-nologo",
             "-cg", "SimpleFileWinUIFiles",
@@ -450,34 +467,14 @@ if (-not $SkipInstaller) {
             "-var", "var.PayloadDir",
             "-out", $harvested
         )
-        Invoke-Native $candle @(
-            "-nologo",
-            "-dProductVersion=$numericVersion",
-            "-dPayloadDir=$payloadDir",
-            "-dIconFile=$iconPath",
-            "-out", (Join-Path $wixOut "\"),
-            $productWxs,
-            $harvested
-        )
         $msiBuildPath = Join-Path $distRoot (
             "{0}.tmp-{1}.msi" -f
                 [System.IO.Path]::GetFileNameWithoutExtension($msiPath),
                 [System.Guid]::NewGuid().ToString("N")
         )
-        # The per-user LocalAppData payload and Windows App SDK localized MUI files
-        # trip WiX ICEs that do not apply to this generated installer shape.
         try {
-            Invoke-Native $light @(
-                "-nologo",
-                "-spdb",
-                "-sice:ICE03",
-                "-sice:ICE38",
-                "-sice:ICE64",
-                "-sice:ICE91",
-                "-out", $msiBuildPath,
-                (Join-Path $wixOut "Product.wixobj"),
-                (Join-Path $wixOut "harvested.wixobj")
-            )
+            New-WinUIMsi -WixBin $wixBin -PayloadDir $payloadDir -HarvestedWxs $harvested -IconPath $iconPath `
+                -ProductVersion $numericVersion -WorkDir $wixOut -MsiPath $msiBuildPath
             if (Test-Path -LiteralPath $msiPath) {
                 try {
                     Remove-PathWithRetry -Path $msiPath -Context "existing WinUI MSI"
@@ -496,7 +493,7 @@ if (-not $SkipInstaller) {
         $builtMsi = Test-Path -LiteralPath $msiPath
     }
     else {
-        $message = "WiX v3 candle/heat/light was not found; skipped WinUI MSI."
+        $message = "WiX v3.14.1 or later (candle/heat/light with WixUtilExtension.dll) was not found; skipped WinUI MSI."
         if ($RequireInstaller) { throw $message }
         Write-Warning $message
     }

@@ -108,11 +108,11 @@ const schemaMethods = new Set(
   Object.keys(commands.methods || {}).filter((name) => !name.startsWith('ipc.')),
 );
 
-if (handlers.size !== 97) {
-  fail(`expected 97 domain handlers, found ${handlers.size}`);
+if (handlers.size !== 75) {
+  fail(`expected 75 domain handlers, found ${handlers.size}`);
 }
-if (commands.domainMethodCount !== 97) {
-  fail(`commands.json domainMethodCount must be 97, found ${commands.domainMethodCount}`);
+if (commands.domainMethodCount !== 75) {
+  fail(`commands.json domainMethodCount must be 75, found ${commands.domainMethodCount}`);
 }
 if (protocol.protocolVersion !== 1 || commands.protocolVersion !== 1) {
   fail('schema protocolVersion must be 1');
@@ -181,7 +181,6 @@ const compatOnlyMethods = {
   copy_entry: { replacement: 'copy_with_progress', legacy: true, caller: 'CopyEntryAsync' },
   move_entry: { replacement: 'move_with_progress', legacy: true, caller: 'MoveEntryAsync' },
   cancel_count_items: { replacement: 'cancel_folder_item_count', caller: 'CancelCountItemsAsync' },
-  get_git_status: { replacement: 'get_git_file_statuses', caller: 'GetGitStatusAsync' },
   show_main_window: { replacement: 'WinUI AppWindow.Show/Activate', hostOwned: true, caller: 'ShowMainWindowAsync' },
 };
 for (const [methodName, expected] of Object.entries(compatOnlyMethods)) {
@@ -352,4 +351,236 @@ if (!process.exitCode) {
   console.log(
     `Checked IPC v1 schema: ${schemaMethods.size} domain methods, ${requiredEmitted.length} emitted events, ${requiredGoldens.length} goldens.`,
   );
+}
+
+// Plugin protocol (ipc/schema/plugin/v1): the host methods and SDK version must match both sides.
+const pluginProtocolPath = join(repoRoot, 'ipc', 'schema', 'plugin', 'v1', 'protocol.json');
+const pluginProtocol = existsSync(pluginProtocolPath)
+  ? JSON.parse(readFileSync(pluginProtocolPath, 'utf8'))
+  : null;
+if (!pluginProtocol) {
+  fail('missing ipc/schema/plugin/v1/protocol.json');
+} else {
+  const hostMethods = Array.isArray(pluginProtocol.hostMethods) ? pluginProtocol.hostMethods : [];
+  if (hostMethods.length === 0) {
+    fail('plugin protocol hostMethods must be a non-empty array');
+  }
+  const hostMethodSources = [
+    'src-winui/SimpleFile.PluginHost/Backend/PluginHostMethods.cs',
+    'crates/sumafile-plugin/src/host.rs',
+  ];
+  for (const sourcePath of hostMethodSources) {
+    const source = readRepo(sourcePath);
+    for (const method of hostMethods) {
+      // The exact quoted name: "host.progress_begin returned ..." does not count.
+      if (!source.includes(`"${method}"`)) {
+        fail(`plugin host method ${method} is not a string literal in ${sourcePath}`);
+      }
+    }
+  }
+  const sdkVersion = readRepo('src-winui/SimpleFile.PluginSdk/PluginSdk.cs').match(
+    /public const string Version\s*=\s*"([^"]+)"/,
+  )?.[1];
+  if (!sdkVersion) {
+    fail('could not find PluginSdk.Version in src-winui/SimpleFile.PluginSdk/PluginSdk.cs');
+  } else if (pluginProtocol.sdkVersion !== sdkVersion) {
+    fail(`plugin protocol sdkVersion ${pluginProtocol.sdkVersion} does not match PluginSdk.Version ${sdkVersion}`);
+  }
+  if (pluginProtocol.handshake?.method !== 'plugin.handshake') {
+    fail('plugin protocol handshake.method must be plugin.handshake');
+  }
+  if (pluginProtocol.cancel?.method !== 'cancel') {
+    fail('plugin protocol cancel.method must be cancel');
+  }
+
+  // Archive engine methods: an object keyed by method name. The service sends every one and
+  // the Hello fixture backend serves every one.
+  const engineMethodTable = pluginProtocol.archiveEngineMethods;
+  const engineMethods =
+    engineMethodTable && typeof engineMethodTable === 'object' && !Array.isArray(engineMethodTable)
+      ? Object.keys(engineMethodTable)
+      : [];
+  if (engineMethods.length === 0) {
+    fail('plugin protocol archiveEngineMethods must be a non-empty object keyed by method name');
+  }
+  const deadlines = pluginProtocol.deadlines ?? {};
+  for (const method of engineMethods) {
+    const entry = engineMethodTable[method];
+    if (!entry?.params || typeof entry.params !== 'object') {
+      fail(`plugin archive engine method ${method} needs a params object`);
+    }
+    if (!('result' in (entry ?? {}))) {
+      fail(`plugin archive engine method ${method} needs a result`);
+    }
+    if (!entry?.deadline || !(entry.deadline in deadlines)) {
+      fail(`plugin archive engine method ${method} names an unknown deadline ${entry?.deadline}`);
+    }
+  }
+  const engineMethodSources = [
+    'crates/simplefile-service/src/plugin_archive/mod.rs',
+    'crates/hello-plugin-backend/src/main.rs',
+    'plugins/sevenzip/backend/src/handler.rs',
+  ];
+  for (const sourcePath of engineMethodSources) {
+    const source = readRepo(sourcePath);
+    for (const method of engineMethods) {
+      if (!source.includes(`"${method}"`)) {
+        fail(`plugin archive engine method ${method} is not a string literal in ${sourcePath}`);
+      }
+    }
+  }
+
+  // Notifications: archive.progress is produced by the helper crate and consumed by the service.
+  const progressNotification = 'archive.progress';
+  if (!pluginProtocol.notifications?.[progressNotification]) {
+    fail(`plugin protocol notifications must document ${progressNotification}`);
+  }
+  for (const sourcePath of [
+    'crates/sumafile-plugin/src/host.rs',
+    'crates/simplefile-service/src/plugin_archive/connection.rs',
+  ]) {
+    if (!readRepo(sourcePath).includes(`"${progressNotification}"`)) {
+      fail(`plugin notification ${progressNotification} is not a string literal in ${sourcePath}`);
+    }
+  }
+
+  // The cancelled message is matched by exact text on every side.
+  const cancelledMessage = pluginProtocol.cancel?.cancelledMessage;
+  if (typeof cancelledMessage !== 'string' || cancelledMessage.length === 0) {
+    fail('plugin protocol cancel.cancelledMessage must be a non-empty string');
+  } else {
+    const cancelledMessageSources = [
+      'crates/simplefile-core/src/archive/engine.rs',
+      'crates/sumafile-plugin/src/lib.rs',
+      'src-winui/SimpleFile.Core/FileOperationService.cs',
+    ];
+    for (const sourcePath of cancelledMessageSources) {
+      if (!readRepo(sourcePath).includes(`"${cancelledMessage}"`)) {
+        fail(`plugin cancel.cancelledMessage "${cancelledMessage}" is not a string literal in ${sourcePath}`);
+      }
+    }
+  }
+
+  // SDK version constants on both Rust sides.
+  const rustSdkVersions = [
+    ['crates/sumafile-plugin/src/lib.rs', /pub const SDK_VERSION: &str = "([^"]+)"/, 'SDK_VERSION'],
+    [
+      'crates/simplefile-service/src/plugin_archive/mod.rs',
+      /pub const PLUGIN_SDK_VERSION: &str = "([^"]+)"/,
+      'PLUGIN_SDK_VERSION',
+    ],
+  ];
+  for (const [sourcePath, pattern, name] of rustSdkVersions) {
+    const version = readRepo(sourcePath).match(pattern)?.[1];
+    if (!version) {
+      fail(`could not find ${name} in ${sourcePath}`);
+    } else if (version !== pluginProtocol.sdkVersion) {
+      fail(`${name} ${version} in ${sourcePath} does not match plugin protocol sdkVersion ${pluginProtocol.sdkVersion}`);
+    }
+  }
+
+  if (!process.exitCode) {
+    console.log(
+      `Checked plugin protocol v1: ${hostMethods.length} host methods, ${engineMethods.length} archive engine methods, SDK ${pluginProtocol.sdkVersion}.`,
+    );
+  }
+}
+
+// Plugin-owned protocols (plugins/<name>/protocol.json): each plugin's methods and events must be
+// string literals in every file of its literalSources (the backend's handler, and the C# client once it
+// exists), and each documented error text must start a string literal in every source that produces it.
+// `events` is optional; a plugin that declares it must document at least one.
+const pluginProtocols = [
+  {
+    dir: 'plugins/remote',
+    id: 'com.sumafile.remote',
+    label: 'remote',
+    literalSources: [
+      'plugins/remote/backend/src/handler.rs',
+      'plugins/remote/ui/SumaFile.Remote.Model/RemoteProtocol.cs',
+    ],
+  },
+  {
+    dir: 'plugins/git',
+    id: 'com.sumafile.git',
+    label: 'git',
+    literalSources: ['plugins/git/backend/src/handler.rs', 'plugins/git/ui/SumaFile.Git.Model/GitProtocol.cs'],
+  },
+];
+
+const objectKeys = (value) =>
+  value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : [];
+
+for (const { dir, id, label, literalSources } of pluginProtocols) {
+  const protocolFile = `${dir}/protocol.json`;
+  const protocolPath = join(repoRoot, protocolFile);
+  const protocol = existsSync(protocolPath) ? JSON.parse(readFileSync(protocolPath, 'utf8')) : null;
+  if (!protocol) {
+    fail(`missing ${protocolFile}`);
+    continue;
+  }
+  const exitCodeBefore = process.exitCode;
+  process.exitCode = undefined;
+  if (protocol.plugin !== id) {
+    fail(`${protocolFile} plugin must be ${id}`);
+  }
+  const methods = objectKeys(protocol.methods);
+  const events = objectKeys(protocol.events);
+  const errors = objectKeys(protocol.errors);
+  if (methods.length === 0) {
+    fail(`${protocolFile} methods must be a non-empty object keyed by method name`);
+  }
+  if ('events' in protocol && events.length === 0) {
+    fail(`${protocolFile} events must be a non-empty object keyed by event name`);
+  }
+  for (const method of methods) {
+    const entry = protocol.methods[method];
+    if (!entry || !('params' in entry) || !('result' in entry)) {
+      fail(`${label} plugin method ${method} needs params and result`);
+    }
+    for (const event of [entry?.emits, entry?.progressEvent].filter(Boolean)) {
+      if (!events.includes(event)) {
+        fail(`${label} plugin method ${method} names an undocumented event ${event}`);
+      }
+    }
+  }
+  for (const sourcePath of literalSources) {
+    if (!existsSync(join(repoRoot, sourcePath))) {
+      fail(`${label} plugin literal source ${sourcePath} is missing`);
+      continue;
+    }
+    const source = readRepo(sourcePath);
+    for (const name of [...methods, ...events]) {
+      if (!source.includes(`"${name}"`)) {
+        fail(`${label} plugin method or event ${name} is not a string literal in ${sourcePath}`);
+      }
+    }
+  }
+  for (const key of errors) {
+    const entry = protocol.errors[key];
+    const text = typeof entry?.text === 'string' ? entry.text : '';
+    const sources = Array.isArray(entry?.sources) ? entry.sources : [];
+    if (text.length === 0 || sources.length === 0) {
+      fail(`${label} plugin error ${key} needs a text and at least one source`);
+      continue;
+    }
+    // The backend builds these texts with format!, so the literal starts with the text before
+    // its first <placeholder>: "remote session not found: {session_id}" matches
+    // "remote session not found: <id>".
+    const placeholder = text.indexOf('<');
+    const prefix = placeholder === -1 ? text : text.slice(0, placeholder);
+    for (const sourcePath of sources) {
+      if (!existsSync(join(repoRoot, sourcePath))) {
+        fail(`${label} plugin error ${key} names a missing source ${sourcePath}`);
+      } else if (!readRepo(sourcePath).includes(`"${prefix}`)) {
+        fail(`${label} plugin error ${key} text "${prefix}" does not start a string literal in ${sourcePath}`);
+      }
+    }
+  }
+  if (!process.exitCode) {
+    console.log(
+      `Checked ${label} plugin protocol: ${methods.length} methods, ${events.length} events, ${errors.length} error texts.`,
+    );
+  }
+  process.exitCode = process.exitCode || exitCodeBefore;
 }

@@ -91,6 +91,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-trait"
+version = "0.1.92"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -627,6 +638,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-plugin-backend"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sumafile-plugin",
+ "tokio",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -934,6 +955,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-plugin-backend"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "simplefile-ipc",
+ "sumafile-plugin",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1196,9 +1229,9 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.38.2"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
@@ -1981,9 +2014,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.40.2"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags",
  "fallible-iterator",
@@ -2372,6 +2405,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
+
+[[package]]
 name = "signature"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2408,6 +2451,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2",
+ "sumafile-transfer",
  "tar",
  "trash",
  "unrar",
@@ -2435,14 +2479,11 @@ dependencies = [
  "log",
  "notify",
  "opener",
- "russh",
- "russh-sftp",
  "serde",
  "serde_json",
- "sha2",
  "simplefile-core",
  "simplefile-ipc",
- "suppaftp",
+ "sumafile-transfer",
  "tokio",
  "windows-sys 0.61.2",
 ]
@@ -2572,6 +2613,94 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "sumafile-git-backend"
+version = "1.0.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
+ "simplefile-ipc",
+ "sumafile-plugin",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sumafile-plugin"
+version = "1.0.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "simplefile-ipc",
+ "tokio",
+]
+
+[[package]]
+name = "sumafile-remote-backend"
+version = "1.0.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "getrandom 0.4.3",
+ "log",
+ "rusqlite",
+ "russh",
+ "russh-sftp",
+ "serde",
+ "serde_json",
+ "sha2",
+ "simplefile-ipc",
+ "sumafile-plugin",
+ "sumafile-remote-test-server",
+ "sumafile-transfer",
+ "suppaftp",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sumafile-remote-test-server"
+version = "1.0.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "rusqlite",
+ "russh",
+ "russh-sftp",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "sumafile-sevenzip-backend"
+version = "1.0.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "simplefile-ipc",
+ "sumafile-plugin",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "sumafile-transfer"
+version = "1.0.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "sha2",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "suppaftp"
 version = "12.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2695,6 +2824,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

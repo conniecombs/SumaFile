@@ -2,13 +2,6 @@ mod async_ops;
 mod handlers;
 mod params;
 
-use crate::remote::provider::DefaultRemoteProviderFactory;
-#[cfg(test)]
-use crate::remote::secrets::MemoryRemoteSecretStore;
-use crate::remote::secrets::RemoteSecretStore;
-#[cfg(not(test))]
-use crate::remote::secrets::WindowsRemoteSecretStore;
-use crate::remote::session::RemoteSessionRegistry;
 use crate::session_cache::SessionCache;
 use serde_json::Value;
 use simplefile_core::dir_list::ListDirectoryOptions;
@@ -33,8 +26,6 @@ pub struct SessionState {
     pub folder_size_cancel: Arc<AtomicBool>,
     pub folder_item_count_cancel: Arc<AtomicBool>,
     pub count_items_cancel: Arc<AtomicBool>,
-    pub remote_sessions: RemoteSessionRegistry,
-    pub remote_secrets: Arc<dyn RemoteSecretStore>,
     pub cache: SessionCache,
 }
 
@@ -51,8 +42,6 @@ impl Default for SessionState {
             folder_size_cancel: Arc::new(AtomicBool::new(false)),
             folder_item_count_cancel: Arc::new(AtomicBool::new(false)),
             count_items_cancel: Arc::new(AtomicBool::new(false)),
-            remote_sessions: RemoteSessionRegistry::new(DefaultRemoteProviderFactory),
-            remote_secrets: default_remote_secret_store(),
             cache: SessionCache::new(),
         }
     }
@@ -72,52 +61,13 @@ impl std::fmt::Debug for SessionState {
     }
 }
 
-impl SessionState {
-    #[cfg(test)]
-    pub(crate) fn with_remote_provider_factory(
-        factory: impl crate::remote::provider::RemoteProviderFactory + 'static,
-    ) -> Self {
-        Self {
-            remote_sessions: RemoteSessionRegistry::new(factory),
-            ..Self::default()
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_remote_provider_factory_and_secret_store<S>(
-        factory: impl crate::remote::provider::RemoteProviderFactory + 'static,
-        remote_secrets: Arc<S>,
-    ) -> Self
-    where
-        S: RemoteSecretStore + 'static,
-    {
-        Self {
-            remote_sessions: RemoteSessionRegistry::new(factory),
-            remote_secrets,
-            ..Self::default()
-        }
-    }
-}
-
-fn default_remote_secret_store() -> Arc<dyn RemoteSecretStore> {
-    #[cfg(test)]
-    {
-        Arc::new(MemoryRemoteSecretStore::default())
-    }
-
-    #[cfg(not(test))]
-    {
-        Arc::new(WindowsRemoteSecretStore)
-    }
-}
-
 /// Which scheduler lane a blocking handler runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BlockingLane {
-    /// Short blocking calls: metadata, previews, git, remote listings.
+    /// Short blocking calls: metadata and previews.
     General,
-    /// Whole-file work that can run for minutes: copies, archives, remote
-    /// file transfers. Uses the transfer lane so it never starves listings.
+    /// Whole-file work that can run for minutes: copies and archives. Uses
+    /// the transfer lane so it never starves listings.
     Transfer,
 }
 
@@ -158,6 +108,21 @@ impl std::fmt::Debug for BlockingJob {
     }
 }
 
+/// A tracked archive extract or create: it reports `operation-progress` and
+/// `cancel_operation` stops it.
+#[derive(Debug)]
+pub(crate) enum ArchiveOperation {
+    Extract {
+        archive_path: String,
+        destination: String,
+    },
+    Create {
+        paths: Vec<String>,
+        archive_path: String,
+        format: String,
+    },
+}
+
 #[derive(Debug)]
 pub(crate) enum Dispatch {
     Reply(JsonRpcResponse),
@@ -165,11 +130,6 @@ pub(crate) enum Dispatch {
     Blocking {
         id: Option<Value>,
         job: BlockingJob,
-    },
-    RemoteTransfer {
-        id: Option<Value>,
-        provider: crate::remote::session::SharedRemoteProvider,
-        request: crate::remote::transfer::RemoteTransferRequest,
     },
     ListDirectory {
         id: Option<Value>,
@@ -187,6 +147,12 @@ pub(crate) enum Dispatch {
     CancelOperation {
         id: Option<Value>,
         operation_id: String,
+    },
+    /// `extract_archive` or `create_archive` with an `operationId`.
+    ArchiveOperation {
+        id: Option<Value>,
+        operation_id: String,
+        operation: ArchiveOperation,
     },
     SearchFiles {
         id: Option<Value>,

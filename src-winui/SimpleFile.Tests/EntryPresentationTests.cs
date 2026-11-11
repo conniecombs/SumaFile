@@ -118,33 +118,19 @@ public class EntryPresentationTests
             GitStatus = "modified",
         };
         Assert.Equal(".txt", EntryPresentation.ColumnText(file, "extension"));
-        Assert.Equal("modified", EntryPresentation.ColumnText(file, "git"));
+        // The retired FileEntry.GitStatus is never shown: the status column draws the plugin decoration.
+        Assert.Equal("", EntryPresentation.ColumnText(file, ColumnLayout.DecorationColumnId));
         Assert.Equal(@"C:\Projects\App\notes.txt", EntryPresentation.ColumnText(file, "path"));
     }
 
-    [Theory]
-    [InlineData("added", "SfGitAddedBrush")]
-    [InlineData("staged", "SfGitAddedBrush")]
-    [InlineData("modified", "SfGitModifiedBrush")]
-    [InlineData("Git: modified", "SfGitModifiedBrush")]
-    [InlineData("untracked", "SfGitUntrackedBrush")]
-    [InlineData("deleted", "SfGitDeletedBrush")]
-    [InlineData("conflict", "SfGitDeletedBrush")]
-    [InlineData("", "SfTextMutedBrush")]
-    [InlineData(null, "SfTextMutedBrush")]
-    public void GitStatusBrushKey_MapsSemanticStatusColors(string? status, string expectedBrushKey)
-    {
-        Assert.Equal(expectedBrushKey, EntryPresentation.GitStatusBrushKey(status));
-    }
-
     [Fact]
-    public void ContentSecondaryText_AvoidsRepeatingFullFilePathAndFormatsGitAndSymlink()
+    public void ContentSecondaryText_AvoidsRepeatingFullFilePathAndFormatsDecorationAndSymlink()
     {
         Assert.Equal(
-            "Git: modified  •  → D:\\Target\\notes.txt",
+            "modified  •  → D:\\Target\\notes.txt",
             EntryPresentation.ContentSecondaryText(
                 parentText: @"C:\Projects\App",
-                gitText: "modified",
+                decorationText: "modified",
                 symlinkText: @"D:\Target\notes.txt",
                 extensionText: ".txt"));
 
@@ -152,8 +138,27 @@ public class EntryPresentationTests
             @"C:\Projects\App",
             EntryPresentation.ContentSecondaryText(
                 parentText: @"C:\Projects\App",
-                gitText: "",
+                decorationText: "",
                 symlinkText: "",
                 extensionText: ".txt"));
+    }
+
+    [Fact]
+    public void ContentSecondaryText_ShowsTheDecorationTextAsIs()
+    {
+        // The host adds no "Git:" prefix: the plugin's text is the whole label.
+        Assert.Equal(
+            "M",
+            EntryPresentation.ContentSecondaryText(parentText: null, decorationText: "  M ", symlinkText: null));
+        Assert.Equal(
+            "Git: modified",
+            EntryPresentation.ContentSecondaryText(parentText: null, decorationText: "Git: modified", symlinkText: null));
+        Assert.Equal(
+            @"staged  •  C:\Projects",
+            EntryPresentation.ContentSecondaryText(
+                parentText: @"C:\Projects",
+                decorationText: "staged",
+                symlinkText: null,
+                includeParent: true));
     }
 }

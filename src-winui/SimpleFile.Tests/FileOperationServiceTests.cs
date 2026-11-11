@@ -926,6 +926,8 @@ public class FileOperationServiceTests
         bool capabilitiesRequested = false;
         (string Archive, string Destination)? extracted = null;
         (string[] Paths, string Archive, string Format)? created = null;
+        string? extractOperationId = "unset";
+        string? createOperationId = "unset";
         var stub = new ConfigurableIpc
         {
             ListArchiveHandler = (path, ct) =>
@@ -959,14 +961,16 @@ public class FileOperationServiceTests
                     ],
                 });
             },
-            ExtractArchiveHandler = (archive, destination, ct) =>
+            ExtractArchiveHandler = (archive, destination, operationId, ct) =>
             {
                 extracted = (archive, destination);
+                extractOperationId = operationId;
                 return Task.CompletedTask;
             },
-            CreateArchiveHandler = (paths, archive, format, ct) =>
+            CreateArchiveHandler = (paths, archive, format, operationId, ct) =>
             {
                 created = (paths, archive, format);
+                createOperationId = operationId;
                 return Task.CompletedTask;
             },
         };
@@ -982,10 +986,187 @@ public class FileOperationServiceTests
         Assert.True(capabilitiesRequested);
         Assert.Equal("zip", capabilities.Formats[0].Format);
         Assert.Equal((@"C:\pack.zip", @"C:\out"), extracted);
+        Assert.Null(extractOperationId);
+        Assert.Null(createOperationId);
         Assert.NotNull(created);
         Assert.Equal([@"C:\a.txt", @"C:\b.txt"], created.Value.Paths);
         Assert.Equal(@"C:\pack.zip", created.Value.Archive);
         Assert.Equal("zip", created.Value.Format);
+    }
+
+    [Fact]
+    public async Task ExtractArchiveTrackedAsync_SendsOperationIdAndReportsMatchingProgress()
+    {
+        string? sentOperationId = null;
+        string? startedOperationId = null;
+        var sentToken = new CancellationToken(canceled: true);
+        (string Archive, string Destination)? extracted = null;
+        var reported = new List<ProgressUpdate>();
+        var stub = new ConfigurableIpc();
+        stub.ExtractArchiveHandler = (archive, destination, operationId, ct) =>
+        {
+            extracted = (archive, destination);
+            sentOperationId = operationId;
+            sentToken = ct;
+            stub.Emit(Protocol.OperationProgressEvent, new ProgressUpdate
+            {
+                OperationId = "archive-someone-else",
+                OperationType = "extract-archive",
+                Current = 1,
+                Total = 2,
+                Status = "running",
+            });
+            stub.Emit(Protocol.OperationProgressEvent, new ProgressUpdate
+            {
+                OperationId = operationId!,
+                OperationType = "extract-archive",
+                Current = 50,
+                Total = 100,
+                Status = "running",
+            });
+            return Task.CompletedTask;
+        };
+        var service = new FileOperationService(stub);
+
+        await service.ExtractArchiveTrackedAsync(
+            @"C:\pack.7z",
+            @"C:\out",
+            new InlineProgress<ProgressUpdate>(reported.Add),
+            id => startedOperationId = id,
+            CancellationToken.None);
+
+        Assert.Equal((@"C:\pack.7z", @"C:\out"), extracted);
+        Assert.NotNull(sentOperationId);
+        Assert.Matches("^archive-[0-9a-f]{32}$", sentOperationId);
+        Assert.Equal(sentOperationId, startedOperationId);
+        Assert.False(sentToken.CanBeCanceled);
+        var update = Assert.Single(reported);
+        Assert.Equal(sentOperationId, update.OperationId);
+        Assert.Equal(50UL, update.Current);
+        Assert.Null(stub.LastCancelledOperationId);
+        Assert.Equal(0, stub.SubscriptionCount(Protocol.OperationProgressEvent));
+    }
+
+    [Fact]
+    public async Task ExtractArchiveTrackedAsync_CancelSendsCancelOperationOnceAndThrowsCanceled()
+    {
+        var requestSent = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new List<string>();
+        var stub = new ConfigurableIpc
+        {
+            ExtractArchiveHandler = (archive, destination, operationId, ct) =>
+            {
+                requestSent.TrySetResult(operationId!);
+                return reply.Task;
+            },
+            CancelOperationHandler = (operationId, ct) =>
+            {
+                lock (cancelled)
+                {
+                    cancelled.Add(operationId);
+                }
+
+                // The service fails the request with the protocol's cancelled message.
+                reply.TrySetException(new IpcException(-32000, FileOperationService.ArchiveCancelledMessage));
+                return Task.CompletedTask;
+            },
+        };
+        var service = new FileOperationService(stub);
+        using var cts = new CancellationTokenSource();
+
+        var run = service.ExtractArchiveTrackedAsync(
+            @"C:\pack.7z",
+            @"C:\out",
+            new InlineProgress<ProgressUpdate>(_ => { }),
+            null,
+            cts.Token);
+        var operationId = await requestSent.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+        cts.Cancel();
+
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(cts.Token, exception.CancellationToken);
+        Assert.Equal([operationId], cancelled);
+        Assert.Equal("Archive operation cancelled", FileOperationService.ArchiveCancelledMessage);
+    }
+
+    [Fact]
+    public async Task ExtractArchiveTrackedAsync_CancelledReplyWithoutCancelThrowsCanceled()
+    {
+        var stub = new ConfigurableIpc
+        {
+            ExtractArchiveHandler = (archive, destination, operationId, ct) =>
+                Task.FromException(new IpcException(-32000, FileOperationService.ArchiveCancelledMessage)),
+        };
+        var service = new FileOperationService(stub);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.ExtractArchiveTrackedAsync(
+            @"C:\pack.7z",
+            @"C:\out",
+            new InlineProgress<ProgressUpdate>(_ => { }),
+            null,
+            CancellationToken.None));
+        Assert.Null(stub.LastCancelledOperationId);
+    }
+
+    [Fact]
+    public async Task ExtractArchiveTrackedAsync_OtherFailuresKeepTheirMessage()
+    {
+        var stub = new ConfigurableIpc
+        {
+            ExtractArchiveHandler = (archive, destination, operationId, ct) =>
+                Task.FromException(new IpcException(-32000, "7-Zip support requires the SumaFile 7-Zip plugin.")),
+        };
+        var service = new FileOperationService(stub);
+
+        var exception = await Assert.ThrowsAsync<IpcException>(() => service.ExtractArchiveTrackedAsync(
+            @"C:\pack.7z",
+            @"C:\out",
+            new InlineProgress<ProgressUpdate>(_ => { }),
+            null,
+            CancellationToken.None));
+        Assert.Equal("7-Zip support requires the SumaFile 7-Zip plugin.", exception.Message);
+        Assert.Equal(0, stub.SubscriptionCount(Protocol.OperationProgressEvent));
+    }
+
+    [Fact]
+    public async Task CreateArchiveTrackedAsync_SendsOperationIdAndFormat()
+    {
+        (string[] Paths, string Archive, string Format, string? OperationId)? created = null;
+        string? startedOperationId = null;
+        var reported = new List<ProgressUpdate>();
+        var stub = new ConfigurableIpc();
+        stub.CreateArchiveHandler = (paths, archive, format, operationId, ct) =>
+        {
+            created = (paths, archive, format, operationId);
+            stub.Emit(Protocol.OperationProgressEvent, new ProgressUpdate
+            {
+                OperationId = operationId!,
+                OperationType = "create-archive",
+                Current = 3,
+                Total = 4,
+                Status = "running",
+            });
+            return Task.CompletedTask;
+        };
+        var service = new FileOperationService(stub);
+
+        await service.CreateArchiveTrackedAsync(
+            [@"C:\a.txt", @"C:\b.txt"],
+            @"C:\pack.7z",
+            "7z",
+            new InlineProgress<ProgressUpdate>(reported.Add),
+            id => startedOperationId = id,
+            CancellationToken.None);
+
+        Assert.NotNull(created);
+        Assert.Equal([@"C:\a.txt", @"C:\b.txt"], created.Value.Paths);
+        Assert.Equal(@"C:\pack.7z", created.Value.Archive);
+        Assert.Equal("7z", created.Value.Format);
+        Assert.Matches("^archive-[0-9a-f]{32}$", created.Value.OperationId);
+        Assert.Equal(created.Value.OperationId, startedOperationId);
+        Assert.Equal(created.Value.OperationId, Assert.Single(reported).OperationId);
     }
 
     [Fact]

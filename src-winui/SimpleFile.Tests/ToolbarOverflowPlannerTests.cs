@@ -23,7 +23,6 @@ public class ToolbarOverflowPlannerTests
             [ToolbarOverflowPlanner.New] = 32,
             ["disk-cleanup"] = 32,
             ["duplicate-checker"] = 32,
-            ["ftp-sftp-manager"] = 32,
             ["operation-history"] = 32,
             ["move-to-pane"] = 32,
             ["copy-to-pane"] = 32,
@@ -39,7 +38,6 @@ public class ToolbarOverflowPlannerTests
                 ToolbarOverflowPlanner.New,
                 "disk-cleanup",
                 "duplicate-checker",
-                "ftp-sftp-manager",
                 "operation-history",
                 "move-to-pane",
                 "copy-to-pane",
@@ -50,7 +48,7 @@ public class ToolbarOverflowPlannerTests
         var wide = ToolbarOverflowPlanner.OverflowIds(1200, reserved, widths, ToolbarOverflowPlanner.PrimaryHideOrder);
         Assert.Empty(wide);
 
-        var medium = ToolbarOverflowPlanner.OverflowIds(700, reserved, widths, ToolbarOverflowPlanner.PrimaryHideOrder);
+        var medium = ToolbarOverflowPlanner.OverflowIds(660, reserved, widths, ToolbarOverflowPlanner.PrimaryHideOrder);
         Assert.Contains(ToolbarOverflowPlanner.Settings, medium);
         Assert.DoesNotContain(ToolbarOverflowPlanner.New, medium);
 

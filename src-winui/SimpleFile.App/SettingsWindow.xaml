@@ -51,6 +51,8 @@
                 <NavigationViewItem Content="Shortcuts" Tag="Shortcuts" />
                 <NavigationViewItem Content="Toolbar" Tag="Toolbar" />
                 <NavigationViewItem Content="Tools" Tag="Tools" />
+                <!-- One child item per plugin, added in SettingsWindow.Plugins.cs; the item itself shows the overview. -->
+                <NavigationViewItem x:Name="PluginsNavItem" Content="Plugins" Tag="Plugins" />
                 <NavigationViewItem Content="Updates" Tag="Updates" />
                 <NavigationViewItem Content="About" Tag="About" />
             </NavigationView.MenuItems>
@@ -192,15 +194,6 @@
                             Foreground="{ThemeResource SfTextMutedBrush}"
                             TextWrapping="Wrap"
                             Visibility="Collapsed" />
-                    </StackPanel>
-
-                    <StackPanel x:Name="DeveloperSettingsGroup" Spacing="8">
-                        <TextBlock Text="Developer" FontWeight="SemiBold" />
-                        <ToggleSwitch x:Name="EnableGitSwitch" Header="Git integration" />
-                        <TextBlock
-                            Foreground="{ThemeResource SfTextMutedBrush}"
-                            Text="Shows Git status for files inside repositories and enables the Git workbench."
-                            TextWrapping="Wrap" />
                     </StackPanel>
                 </StackPanel>
 
@@ -548,21 +541,29 @@
                 <StackPanel x:Name="ToolsPanel" Spacing="16" Visibility="Collapsed">
                     <TextBlock Text="Tools" FontSize="18" FontWeight="SemiBold" />
                     <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
-                        <TextBlock Text="FTP/SFTP connections" FontWeight="SemiBold" />
-                        <TextBlock Text="Create saved FTP, FTPS, and SFTP profiles, manage credentials, and browse remote folders." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
-                        <Button
-                            x:Name="SettingsRemoteManagerButton"
-                            HorizontalAlignment="Left"
-                            Content="Open FTP/SFTP manager"
-                            Click="OnOpenRemoteManagerClicked" />
-                        <TextBlock x:Name="ToolsStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <StackPanel Spacing="8" Background="{ThemeResource SfBgSecondaryBrush}" Padding="12" CornerRadius="4">
                         <TextBlock Text="Archive support" FontWeight="SemiBold" />
-                        <TextBlock Text="ZIP, TAR, TAR.GZ, 7z, and RAR extraction are handled by SumaFile. RAR creation is not supported." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
+                        <TextBlock Text="ZIP, TAR and TAR.GZ are built in. RAR archives can be listed and extracted but not created." Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" />
+                        <TextBlock x:Name="ArchivePluginFormatsText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
                     </StackPanel>
                 </StackPanel>
                 
+                <StackPanel x:Name="PluginsPanel" Spacing="16" Visibility="Collapsed">
+                    <TextBlock Text="Plugins" FontSize="18" FontWeight="SemiBold" />
+                    <!-- The overview: shown for the Plugins item itself. -->
+                    <StackPanel x:Name="PluginsOverview" Spacing="16">
+                        <TextBlock Text="Plugins add commands, menus and settings. Each plugin has its own page under Plugins; plugin settings save as soon as you change them." TextWrapping="Wrap" Foreground="{ThemeResource SfTextMutedBrush}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="InstallPluginButton" Content="Install from file…" Click="OnInstallPluginClicked" />
+                            <Button x:Name="RescanPluginsButton" Content="Rescan" Click="OnRescanPluginsClicked" />
+                            <Button Content="Open plugins folder" Click="OnOpenPluginsFolderClicked" />
+                        </StackPanel>
+                        <TextBlock x:Name="PluginsStatusText" Foreground="{ThemeResource SfTextMutedBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
+                        <StackPanel x:Name="PluginsOverviewList" Spacing="8" />
+                    </StackPanel>
+                    <!-- One page per plugin; only the page of the selected plugin's item is visible. -->
+                    <StackPanel x:Name="PluginsList" Spacing="12" />
+                </StackPanel>
+
                 <StackPanel x:Name="UpdatesPanel" Spacing="16" Visibility="Collapsed">
                     <TextBlock Text="Updates" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock x:Name="CurrentVersionText" Text="Version" />

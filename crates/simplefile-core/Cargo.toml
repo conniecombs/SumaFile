@@ -10,7 +10,7 @@ edition = "2021"
 [dependencies]
 chrono = "0.4"
 log = "0.4"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 trash = "5"
 getrandom = "0.4"
@@ -22,6 +22,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 md-5 = "0.11"
 sha1 = "0.11"
 sha2 = "0.11"
+sumafile-transfer = { path = "../sumafile-transfer" }
 serde_json = "1"
 tar = "0.4"
 unrar = "0.5"

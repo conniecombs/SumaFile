@@ -1,0 +1,1 @@
+{"id":"signed-plugin","name":"Signed fixture","version":"1.0.0","sdkVersion":"1.0.0","publisher":{"name":"SumaFile tests","publicKey":"5L87/VH1oTkTMo2mRMKxt2DjBTs1osId5Of+E8NrXXg="},"description":"Signed by scripts/sign-plugin.mjs with a throwaway key; only the public key is kept. Every file is one line, so a Windows checkout hashes the same bytes.","contributions":{}}

@@ -14,6 +14,7 @@ using SimpleFile.Ipc;
 using Windows.Graphics;
 using Windows.System;
 using Windows.UI;
+using DispatcherQueuePriority = Microsoft.UI.Dispatching.DispatcherQueuePriority;
 
 namespace SimpleFile.App;
 
@@ -48,7 +49,6 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _transferPromptGate = new(1, 1);
     private int _watchRequestToken;
     private TransferProgressWindow? _transferProgressWindow;
-    private RemoteManagerWindow? _remoteManagerWindow;
     private CancellationTokenSource? _archiveCts;
     private readonly UtilityOperationRegistry _utilityOperations = new();
     private bool _applyingWorkspace;
@@ -75,20 +75,11 @@ public sealed partial class MainWindow : Window
     private Flyout? _pathSuggestFlyout;
     private ListView? _pathSuggestList;
     private PaneId _pathSuggestPane;
-    private GitRepositoryStatus? _gitStatus;
-    private readonly GitWorkbenchViewModel _gitWorkbenchModel = new();
-    private GitWorkbenchWindow? _gitWorkbenchWindow;
-    private CancellationTokenSource? _gitCts;
-    private CancellationTokenSource? _gitDiffCts;
-    private string? _gitStatusPath;
-    private bool _gitPanelOpen;
-    private bool _closingGitWorkbenchWindowForDock;
 
     public ObservableCollection<FileRow> PrimaryFiles { get; } = [];
     public ObservableCollection<FileRow> SecondaryFiles { get; } = [];
     public ObservableCollection<DriveRow> Drives { get; } = [];
     public ObservableCollection<QuickAccessRow> QuickAccess { get; } = [];
-    public ObservableCollection<RemoteProfileSidebarRow> RemoteProfiles { get; } = [];
 
     public MainWindow()
     {
@@ -162,9 +153,11 @@ public sealed partial class MainWindow : Window
             RefreshView,
             ApplyTheme,
             ApplyKeyboardShortcuts,
-            ApplyCommandSurfaceLayout,
+            ApplySettingsCommandSurfaceLayout,
             ClearRecentHistoryAsync,
-            action => DispatcherQueue.TryEnqueue(() => action()));
+            action => DispatcherQueue.TryEnqueue(() => action()),
+            () => _plugins,
+            EnqueueArchiveTransfer);
 
         RootGrid.ActualThemeChanged += OnRootActualThemeChanged;
         Title = "SumaFile";
@@ -184,12 +177,9 @@ public sealed partial class MainWindow : Window
         SecondaryFileList.ItemsSource = SecondaryFiles;
         PrimaryDetailsFileList.ItemsSource = PrimaryFiles;
         SecondaryDetailsFileList.ItemsSource = SecondaryFiles;
-        GitWorkbench.Start(_gitWorkbenchModel);
-        AttachGitWorkbenchView(GitWorkbench);
         AttachPaneActivationHandlers();
         DriveList.ItemsSource = Drives;
         QuickAccessList.ItemsSource = QuickAccess;
-        RemoteProfileList.ItemsSource = RemoteProfiles;
         Closed += OnClosed;
         Activated += OnActivated;
     }
@@ -204,6 +194,14 @@ public sealed partial class MainWindow : Window
     {
         var timer = new StartupTimer("MainWindow.Connect");
         timer.Mark("begin");
+        // On the thread pool while the file service starts: reads and judges every plugin (manifests, bundled.json, the
+        // approvals file, signatures), so the plugins-* span below (spec §5.2's 50 ms budget) reads and hashes nothing.
+        var pluginScan = PreparePluginScan();
+        // Carry-over (h): while the file service starts, the UI thread is idle; warm the first-use JIT of the
+        // contribution render so the plugins-* span below does not pay it. Normal priority, queued before the first
+        // await, so it runs before the backend-started continuation: at Low priority it only ran after ready (measured
+        // in the phase 4 Task 4 report), when it can no longer help.
+        DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Normal, () => WarmPluginRendering());
         try
         {
             SetStatusText("Starting SumaFile's file service...");
@@ -220,6 +218,7 @@ public sealed partial class MainWindow : Window
                 journal = new OperationJournal(System.IO.Path.Combine(smokeRoot, "operations.jsonl"));
 #endif
             var fileOps = new FileOperationService(client, journal);
+            await InitializePluginsAsync(fileOps, timer, pluginScan);
             _workspace = new ExplorerWorkspace(_backend, fileOps);
             AppServices.Configure(_workspace);
             _search = AppServices.GetRequired<SearchViewModel>();
@@ -232,18 +231,23 @@ public sealed partial class MainWindow : Window
             _fileChangeSubscription = client.On<FileChangeEvent>(Protocol.FileChangeEvent, OnFileChange);
             await _workspace.InitializeAsync(deferInitialNavigation: true);
             timer.Mark("workspace-initialized");
+            OnPluginWorkspaceInitialized();
+            // Not awaited: startup must not wait on the service for this. Engines that register later raise
+            // Changed, which refreshes again.
+            _ = RefreshArchiveCapabilitiesAsync();
             ApplyKeyboardShortcuts();
             await LoadOpenWithPreferencesAsync(fileOps, CancellationToken.None);
             timer.Mark("open-with-preferences");
             ApplyTheme(_workspace.Settings.Theme);
             SyncSidebarCollapseStateFromSettings();
-            await RefreshRemoteProfilesForSidebarAsync(CancellationToken.None);
-            timer.Mark("remote-profiles");
             ApplyPreviewVisibility();
             ApplyColumnWidths();
             SyncFromWorkspace();
             timer.Mark("first-sync");
             timer.Mark("ready");
+            // Startup is ready: plugin sidebar sections may now load their bodies, at low priority (like the
+            // consent prompts). Before the smoke check, so the UI smoke runs with the same rule.
+            QueuePluginSectionActivation();
 #if DEBUG
             if (await RunUiSmokeIfRequestedAsync()) return;
 #endif
@@ -282,6 +286,7 @@ public sealed partial class MainWindow : Window
         var cts = new CancellationTokenSource();
         _startupNavigationCts = cts;
         _ = RunDeferredStartupNavigationAsync(workspace, cts);
+        QueuePluginConsentPrompts();
     }
 
     private async Task RunDeferredStartupNavigationAsync(ExplorerWorkspace workspace, CancellationTokenSource cts)
@@ -399,6 +404,20 @@ public sealed partial class MainWindow : Window
             if (backend.Client is not null)
             {
                 _workspace.FileOps?.ReplaceIpc(backend.Client);
+                // The restarted service has no plugin engines yet: drop them from ArchivePaths now, so the panes
+                // inside those archives show the note, and the Changed raised when re-registration ends sees
+                // the engines come back and re-lists them. Without this, ArchivePaths would keep the engines
+                // from before the restart and that later refresh would see no change. Not awaited; refreshes
+                // run one at a time, so a re-registration that wins the race only makes this one a no-op.
+                _ = RefreshArchiveCapabilitiesAsync();
+                // The restarted service knows no plugin archive engines. Not awaited: against a stuck service the
+                // attempts take about 50 s, and the refreshes and the message below must not wait for them. The
+                // Changed it raises when done refreshes the archive capabilities.
+                if (_plugins is not null)
+                {
+                    _ = ObserveAsync(_plugins.ReregisterArchiveEnginesAsync(_pluginCts?.Token ?? CancellationToken.None));
+                }
+
                 _fileChangeSubscription = backend.Client.On<FileChangeEvent>(Protocol.FileChangeEvent, OnFileChange);
             }
 
@@ -422,6 +441,7 @@ public sealed partial class MainWindow : Window
     private void OnWorkspaceChanged(object? sender, EventArgs e)
     {
         DispatcherQueue.TryEnqueue(QueueWorkspaceSync);
+        RefreshPluginWorkspace();
     }
 
     private void DispatchToUi(Action action)
@@ -589,6 +609,9 @@ public sealed partial class MainWindow : Window
 
         _toolbar?.SyncFromWorkspace();
         ApplyCommandSurfaceLayout();
+        // Every sync, which follows every decoration change too: plugin toolbar `when` reads the active pane's
+        // selection and decorations, which change without changing the overflow set.
+        ApplyPrimaryOverflowVisibility(_primaryToolbarOverflow);
         ApplyToolbarState();
 
         SetExpandGlyph(QuickAccessCollapseButton, _quickAccessCollapsed);
@@ -617,7 +640,6 @@ public sealed partial class MainWindow : Window
         SyncOmnibarFromWorkspace();
         UpdateSearchCancelButtons();
         UpdateDualPaneButton(_toolbar?.IsDualPaneEnabled ?? _workspace.DualPaneEnabled);
-        RefreshGitUiVisibility();
 
         if (!_editingPrimaryPath)
         {
@@ -1317,11 +1339,6 @@ public sealed partial class MainWindow : Window
         Interlocked.Increment(ref _viewIconSizeSaveToken);
         _folderRefreshCts?.Cancel();
         _folderRefreshCts = null;
-        _gitCts?.Cancel();
-        _gitCts = null;
-        _gitDiffCts?.Cancel();
-        _gitDiffCts = null;
-        CloseGitWorkbenchWindow(forDock: false);
         _previewPresenter.CancelPending();
         CancelNetworkReconnectPrompt();
         _fileOperationDialogs.CloseSettingsWindow();
@@ -1329,7 +1346,8 @@ public sealed partial class MainWindow : Window
         CancelArchiveOperation();
         _transfer?.Reset();
         CloseTransferProgressWindow();
-        CloseRemoteManagerWindow();
+        // Plugin windows close with the main window, before the awaits below (the plugin teardown then finds none).
+        ClosePluginWindows();
         _search?.ClearState(notifyHost: false);
         _paneSizeColumnRefreshTimer?.Stop();
         _paneSizeColumnRefreshTimer = null;
@@ -1401,6 +1419,9 @@ public sealed partial class MainWindow : Window
             _toolbar = null;
             _workspace = null;
         }
+
+        // Before the service goes: plugin settings go through it, and backends must die with the window.
+        await DisposePluginsAsync();
 
         if (_backend is not null)
         {

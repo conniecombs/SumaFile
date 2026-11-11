@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
+using SimpleFile.PluginHost;
 
 namespace SimpleFile.App;
 
@@ -30,6 +31,8 @@ internal sealed partial class FileOperationDialogService
     private readonly Action _applyCommandSurfaceLayout;
     private readonly Func<CancellationToken, Task> _clearRecentHistoryAsync;
     private readonly Action<Action> _dispatchToUi;
+    private readonly Func<PluginManager?> _plugins;
+    private readonly Func<ArchiveTransferRequest, TransferOperationViewModel?> _enqueueArchiveTransfer;
 
     public FileOperationDialogService(
         Func<ExplorerWorkspace?> workspace,
@@ -53,7 +56,9 @@ internal sealed partial class FileOperationDialogService
         Action applyKeyboardShortcuts,
         Action applyCommandSurfaceLayout,
         Func<CancellationToken, Task> clearRecentHistoryAsync,
-        Action<Action> dispatchToUi)
+        Action<Action> dispatchToUi,
+        Func<PluginManager?> plugins,
+        Func<ArchiveTransferRequest, TransferOperationViewModel?> enqueueArchiveTransfer)
     {
         _workspace = workspace;
         _xamlRoot = xamlRoot;
@@ -77,6 +82,8 @@ internal sealed partial class FileOperationDialogService
         _applyCommandSurfaceLayout = applyCommandSurfaceLayout;
         _clearRecentHistoryAsync = clearRecentHistoryAsync;
         _dispatchToUi = dispatchToUi;
+        _plugins = plugins;
+        _enqueueArchiveTransfer = enqueueArchiveTransfer;
     }
 
     public Task PromptAndCreateFileAsync(PaneId pane)
@@ -571,6 +578,11 @@ internal sealed partial class FileOperationDialogService
         }
     }
 
+#if DEBUG
+    /// <summary>The open Settings window, for the UI smoke.</summary>
+    internal SettingsWindow? OpenSettingsWindow => _settingsWindow is { IsClosed: false } open ? open : null;
+#endif
+
     public void CloseSettingsWindow()
     {
         if (_settingsWindow is { IsClosed: false } open)
@@ -608,7 +620,7 @@ internal sealed partial class FileOperationDialogService
         {
             try
             {
-                await settingsWindow.LoadSettingsAsync(fileOps, workspace.Settings, utilityCts.Token);
+                await settingsWindow.LoadSettingsAsync(fileOps, workspace.Settings, _plugins(), utilityCts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -762,10 +774,27 @@ internal sealed partial class FileOperationDialogService
                 return;
             }
 
+            var archivePath = Path.Combine(dialog.TargetDirectory, dialog.ArchiveName);
+            if (ArchivePaths.IsEngineArchive(archivePath))
+            {
+                // Plugin formats run as a Transfers row with progress and Cancel; the built-ins keep the dialog.
+                var paths = dialog.SelectedPaths;
+                var format = dialog.ArchiveFormat;
+                var row = _enqueueArchiveTransfer(new ArchiveTransferRequest(
+                    $"Creating {Path.GetFileName(archivePath)}",
+                    archivePath,
+                    (progress, operationStarted, token) => fileOps.CreateArchiveTrackedAsync(
+                        paths, archivePath, format, progress, operationStarted, token),
+                    [dialog.TargetDirectory, archivePath]));
+                if (row is not null)
+                {
+                    return;
+                }
+            }
+
             var archiveCts = _beginArchiveOperation();
             try
             {
-                var archivePath = Path.Combine(dialog.TargetDirectory, dialog.ArchiveName);
                 await DialogHost.RunWithProgressAsync(
                     _xamlRoot(),
                     "Create archive",
@@ -1055,6 +1084,23 @@ internal sealed partial class FileOperationDialogService
             if (!ReferenceEquals(_workspace(), workspace))
             {
                 return;
+            }
+
+            var destination = dialog.Destination;
+            if (ArchivePaths.IsEngineArchive(info.Path))
+            {
+                // Plugin formats run as a Transfers row with progress and Cancel; the built-ins keep the dialog.
+                var archivePath = info.Path;
+                var row = _enqueueArchiveTransfer(new ArchiveTransferRequest(
+                    $"Extracting {Path.GetFileName(archivePath)}",
+                    destination,
+                    (progress, operationStarted, token) => fileOps.ExtractArchiveTrackedAsync(
+                        archivePath, destination, progress, operationStarted, token),
+                    [destination]));
+                if (row is not null)
+                {
+                    return;
+                }
             }
 
             var archiveCts = _beginArchiveOperation();

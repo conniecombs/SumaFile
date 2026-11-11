@@ -28,6 +28,8 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual IDisposable On<T>(string eventName, Action<T> handler) => throw NotConfigured();
 
+    public virtual IDisposable OnRequest(string method, InboundRequestHandler handler) => throw new NotSupportedException();
+
     public virtual Task<DirectoryListing> ListDirectoryAsync(
         string path,
         Action<DirectoryListingChunk>? onChunk = null,
@@ -57,63 +59,6 @@ internal abstract class NullIpc : ISimpleFileIpc
     public virtual Task<Dictionary<string, string?>> GetDbSettingsAsync(string[] keys, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task SetDbSettingAsync(string key, string value, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<RemoteProfile[]> RemoteListProfilesAsync(CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<RemoteProfile> RemoteSaveProfileAsync(
-        RemoteProfileInput profile,
-        string? secret = null,
-        CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task RemoteDeleteProfileAsync(string profileId, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<RemoteConnectionTestResult> RemoteTestProfileAsync(
-        RemoteProfileInput profile,
-        string? secret = null,
-        CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<RemoteSession> RemoteConnectAsync(
-        string profileId,
-        string? secret = null,
-        CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task RemoteDisconnectAsync(string remoteSessionId, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<DirectoryListing> RemoteListDirectoryAsync(
-        string remoteSessionId,
-        string path,
-        CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<FileEntry> RemoteCreateDirectoryAsync(
-        string remoteSessionId,
-        string path,
-        string name,
-        CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<FileEntry> RemoteRenameEntryAsync(
-        string remoteSessionId,
-        string path,
-        string newName,
-        CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<string[]> RemoteDeleteEntriesAsync(
-        string remoteSessionId,
-        string[] paths,
-        CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<RemoteTransferOutcome> RemoteTransferEntriesAsync(string remoteSessionId, string direction, string[] sources, string destination, string conflictAction, string operationId, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<string> RemoteDownloadFileAsync(
-        string remoteSessionId,
-        string remotePath,
-        string localPath,
-        CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<FileEntry> RemoteUploadFileAsync(
-        string remoteSessionId,
-        string localPath,
-        string remotePath,
-        CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default) => throw NotConfigured();
 
@@ -168,12 +113,17 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task ExtractArchiveAsync(
+        string archivePath,
+        string destination,
+        string? operationId = null,
+        CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task CreateArchiveAsync(
         string[] paths,
         string archivePath,
         string format,
+        string? operationId = null,
         CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default) => throw NotConfigured();
@@ -295,28 +245,6 @@ internal abstract class NullIpc : ISimpleFileIpc
     public virtual Task OpenTerminalAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task OpenPowershellAdminAsync(string path, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default) => throw NotConfigured();
-
-    public virtual Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
 

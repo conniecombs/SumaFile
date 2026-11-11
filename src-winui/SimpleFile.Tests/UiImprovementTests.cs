@@ -109,17 +109,91 @@ public class UiImprovementTests
     }
 
     [Fact]
-    public void ApplyingChromeLayout_LeavesGitAndFoldersOnTopSettingsAlone()
+    public void SavedLayout_WithTheRetiredGitFlag_StillLoadsAndApplies()
     {
-        var settings = new UiSettings { KeepFoldersOnTop = true, EnableGitIntegration = true };
-        var columns = new ColumnLayout();
-        var layout = WorkspaceChromeLayout.Capture(settings, columns, columns);
-        layout.KeepFoldersOnTop = false;
-        layout.EnableGitIntegration = false;
+        // A layout stored before phase 4 carries "enableGitIntegration"; it is ignored when read.
+        const string stored = """
+            {
+              "version": 1,
+              "layouts": [
+                {
+                  "id": "old",
+                  "name": "Old layout",
+                  "createdAt": "2026-01-01T00:00:00+00:00",
+                  "updatedAt": "2026-01-01T00:00:00+00:00",
+                  "layout": {},
+                  "chrome": {
+                    "keepFoldersOnTop": false,
+                    "enableGitIntegration": false,
+                    "sidebarVisible": false,
+                    "previewVisible": false,
+                    "columnPreset": "details"
+                  }
+                }
+              ]
+            }
+            """;
+        var document = SavedWorkspaceLayoutsDocument.FromJson(stored);
+        var layout = Assert.Single(document.Layouts);
+        Assert.Equal("Old layout", layout.Name);
+        Assert.NotNull(layout.Chrome);
 
-        layout.Apply(settings, new ColumnLayout(), new ColumnLayout());
+        var settings = new UiSettings { KeepFoldersOnTop = true, SidebarVisible = true, PreviewVisible = true };
+        layout.Chrome!.Apply(settings, new ColumnLayout(), new ColumnLayout());
 
+        // Applying a layout changes chrome but leaves folders-on-top alone, as before.
+        Assert.False(settings.SidebarVisible);
+        Assert.False(settings.PreviewVisible);
+        Assert.Equal("details", settings.ColumnPreset);
         Assert.True(settings.KeepFoldersOnTop);
-        Assert.True(settings.EnableGitIntegration);
+
+        // Neither a re-saved document nor a fresh capture writes the retired flag.
+        Assert.DoesNotContain("enableGitIntegration", document.ToJson(), StringComparison.OrdinalIgnoreCase);
+        var columns = new ColumnLayout();
+        var captured = System.Text.Json.JsonSerializer.Serialize(WorkspaceChromeLayout.Capture(settings, columns, columns));
+        Assert.DoesNotContain("enableGitIntegration", captured, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuiltInProfiles_CarryNoGitFlag()
+    {
+        var profiles = WorkspaceProfileTemplates.All(@"C:\Users\Test");
+        Assert.NotEmpty(profiles);
+        foreach (var profile in profiles)
+        {
+            Assert.DoesNotContain(
+                "enableGitIntegration",
+                WorkspaceProfileExportDocument.ToJson(profile),
+                StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public void PluginSectionCollapse_RoundTripsThroughASavedLayout()
+    {
+        var settings = new UiSettings { CollapsedPluginSidebarSections = ["com.a.b:s"] };
+        var columns = new ColumnLayout();
+        var saved = WorkspaceChromeLayout.Capture(settings, columns, columns);
+        var json = System.Text.Json.JsonSerializer.Serialize(saved);
+        Assert.Contains("\"pluginSectionsCollapsed\":[\"com.a.b:s\"]", json, StringComparison.Ordinal);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<WorkspaceChromeLayout>(json)!;
+        var applied = new UiSettings();
+        restored.Apply(applied, new ColumnLayout(), new ColumnLayout());
+        Assert.Equal(["com.a.b:s"], applied.CollapsedPluginSidebarSections);
+
+        // The capture is a copy: collapsing another section later does not change the saved layout.
+        settings.CollapsedPluginSidebarSections.Add("com.c.d:t");
+        Assert.Equal(["com.a.b:s"], saved.CollapsedPluginSidebarSections);
+
+        // A layout saved before the field existed restores an empty list.
+        var legacy = System.Text.Json.JsonSerializer.Deserialize<WorkspaceChromeLayout>("""{ "tagsCollapsed": true }""")!;
+        var legacyApplied = new UiSettings { CollapsedPluginSidebarSections = ["com.a.b:s"] };
+        legacy.Apply(legacyApplied, new ColumnLayout(), new ColumnLayout());
+        Assert.Empty(legacyApplied.CollapsedPluginSidebarSections);
+
+        // Normalize drops empty and duplicate keys.
+        var messy = new WorkspaceChromeLayout { CollapsedPluginSidebarSections = ["com.a.b:s", "", "  ", "com.a.b:s", "com.c.d:t"] };
+        messy.Normalize();
+        Assert.Equal(["com.a.b:s", "com.c.d:t"], messy.CollapsedPluginSidebarSections);
     }
 }

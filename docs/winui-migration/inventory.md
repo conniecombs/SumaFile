@@ -55,6 +55,8 @@ The WinUI replacement must preserve that split:
 
 Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI host must keep those names or provide an explicit mapping.
 
+This is the historical Tauri inventory (74 commands). The live WinUI service contract is `ipc/schema/v1/commands.json`: 75 domain methods after plugin system phase 4. Phase 3 moved the 13 `remote_*` FTP/SFTP methods into the bundled plugin `com.sumafile.remote` (`plugins/remote/protocol.json`), and phase 4 moved the 11 Git methods into the bundled plugin `com.sumafile.git` (`plugins/git/protocol.json`). The parity record is [`parity-gate.md`](parity-gate.md).
+
 `list_directory` is the only command that also streams: the frontend creates a Tauri `Channel<DirectoryListingChunk>` and passes it as `onChunk`. Chunks arrive before the final `DirectoryListing` return.
 
 ### 2.1 Filesystem and listing
@@ -128,7 +130,7 @@ Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI
 | `extract_archive` | `archive` | `{ archivePath, destination }` | `void` | Extract here / folder / to… |
 | `create_archive` | `archive` | `{ paths, archivePath, format }` | `void` | Compress… |
 
-Formats that must remain: `zip`, `7z`, `tar`, `tar.gz` / `tgz`, `rar`. RAR is list/extract only. Archive paths can also be navigated as virtual folders through `list_directory` / create helpers.
+Formats that must remain: `zip`, `7z`, `tar`, `tar.gz` / `tgz`, `rar`. RAR is list/extract only. `7z` is served by the first-party SumaFile 7-Zip plugin (`com.sumafile.sevenzip`) through a registered archive engine; without it `get_archive_capabilities` reports `.7z` as `unavailable` with the note "7-Zip support requires the SumaFile 7-Zip plugin.", and listing, browsing, extracting or creating `.7z` fails with that note. Archive paths can also be navigated as virtual folders through `list_directory` / create helpers, for plugin formats too.
 
 ### 2.5 Git, terminals, tags, settings, updater
 
@@ -463,7 +465,7 @@ Keep these as the IPC service. Only the Tauri glue (`#[tauri::command]`, `AppHan
 | `watcher.rs` | `notify` watcher + debounce | `app.emit("file-change")` | Medium |
 | `preview.rs` | Preview, thumbs, open, reveal, URL | `tauri_plugin_opener` | Medium |
 | `search.rs` | Name/glob/content search + cancel registry | `search-results-batch`, `search-complete` | Medium |
-| `archive.rs` | zip/7z/tar/tgz list/create/extract, RAR list/extract, in-archive VFS, capabilities | Bundled 7-Zip payload for `.7z` | Light |
+| `archive.rs` | zip/tar/tgz list/create/extract, RAR list/extract, in-archive VFS, capabilities, plugin engines (`.7z` through the SumaFile 7-Zip plugin) | 7-Zip plugin folder `plugins\com.sumafile.sevenzip` with the bundled `7za.exe` | Light |
 | `git.rs` | repository status, file statuses, diff, stage, unstage, discard, commit, fetch, pull, push | `CREATE_NO_WINDOW` on Windows | None |
 | `terminal.rs` | PowerShell / elevated PowerShell | Process spawn | None |
 | `checksum.rs` | MD5/SHA1/SHA256 | None | None |
@@ -654,7 +656,7 @@ Secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Any 
 
 These are real current-code facts, not extra features:
 
-1. `show_main_window`, `get_git_status`, `cancel_count_items`, `copy_entry`, `move_entry`, `onOperationComplete`, and `onOperationError` are part of the compatibility contract and are marked in schema as host-owned, legacy, or typed-not-emitted where applicable. Keep them unless a later protocol version removes them.
+1. `show_main_window`, `get_git_status`, `cancel_count_items`, `copy_entry`, `move_entry`, `onOperationComplete`, and `onOperationError` are part of the compatibility contract and are marked in schema as host-owned, legacy, or typed-not-emitted where applicable. Keep them unless a later protocol version removes them. (`get_git_status` went in plugin system phase 4 with the other ten Git methods, which moved to the `com.sumafile.git` plugin protocol; `FileEntry.git_status` stays in the wire format, always absent.)
 2. `search-complete` and `update-chunk` **are** emitted. Wire them in WinUI even if the Svelte UI currently ignores the wrappers.
 3. `operation-complete` / `operation-error` are **not** emitted. Do not invent them unless both sides agree.
 4. `list_directory` streaming is a Channel, not an event.

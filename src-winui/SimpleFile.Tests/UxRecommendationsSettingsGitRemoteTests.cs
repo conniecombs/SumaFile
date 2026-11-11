@@ -90,16 +90,15 @@ public class UxRecommendationsSettingsGitRemoteTests
     }
 
     [Fact]
-    public void Settings_GroupsGitUnderDeveloperAndOpensTransferOptions()
+    public void Settings_OpensTransferOptionsAndLeavesGitToThePlugin()
     {
         var xaml = Read("SettingsWindow.xaml");
         var tools = Read("SettingsWindow.Tools.cs");
         var behavior = Slice(xaml, "x:Name=\"BehaviorPanel\"", "x:Name=\"StoragePanel\"");
 
-        var developer = Slice(behavior, "x:Name=\"DeveloperSettingsGroup\"", "</StackPanel>");
-        Assert.Contains("<TextBlock Text=\"Developer\" FontWeight=\"SemiBold\" />", developer);
-        Assert.Contains("<ToggleSwitch x:Name=\"EnableGitSwitch\" Header=\"Git integration\" />", developer);
-        Assert.Contains("Shows Git status for files inside repositories and enables the Git workbench.", developer);
+        // Git's on/off switch is the Git plugin's "enabled" setting (Settings > Plugins > Git) since phase 4.
+        Assert.DoesNotContain("DeveloperSettingsGroup", xaml);
+        Assert.DoesNotContain("EnableGitSwitch", xaml);
 
         var transfers = Slice(behavior, "x:Name=\"TransfersSettingsGroup\"", "</StackPanel>");
         Assert.Contains("Transfer options", transfers);
@@ -131,41 +130,6 @@ public class UxRecommendationsSettingsGitRemoteTests
     }
 
     [Fact]
-    public void GitDiscard_ListsPathsAndWarnsAboutUntrackedFiles()
-    {
-        var git = Read("MainWindow.Git.cs");
-        var text = Slice(git, "internal static string GitDiscardConfirmationText(", "private async Task<bool> ConfirmGitDiscardAsync(");
-        var confirm = Slice(git, "private async Task<bool> ConfirmGitDiscardAsync(IReadOnlyList<GitChangeRow> rows)", "return await DialogHost.ShowAsync(dialog)");
-
-        Assert.Contains("const int listed = 5;", text);
-        Assert.Contains("$\"and {rows.Count - listed} more\"", text);
-        Assert.Contains("\"This cannot be undone.\"", text);
-        Assert.Contains("\"1 untracked file will be deleted from disk, not moved to the Recycle Bin.\"", text);
-        Assert.Contains("untracked files will be deleted from disk, not moved to the Recycle Bin.", text);
-        Assert.Contains("DefaultButton = ContentDialogButton.Close", confirm);
-        Assert.Contains("ConfirmGitDiscardAsync(SelectedGitDiscardRows(selectedPaths))", git);
-
-        var workbench = Read("GitWorkbenchView.xaml");
-        var diff = workbench.IndexOf("Click=\"OnDiffClicked\"", StringComparison.Ordinal);
-        var discard = workbench.IndexOf("Click=\"OnDiscardClicked\"", StringComparison.Ordinal);
-        Assert.True(diff > 0 && discard > diff, "Discard sits after the other actions.");
-        var discardButton = Slice(workbench, "x:Name=\"DiscardButton\"", "</Button>");
-        Assert.Contains("Foreground=\"{ThemeResource SystemFillColorCriticalBrush}\"", discardButton);
-        Assert.Contains("AutomationProperties.Name=", discardButton);
-    }
-
-    [Fact]
-    public void GitStatusButton_AppearsOnlyInsideARepository()
-    {
-        var git = Read("MainWindow.Git.cs");
-        var visibility = Slice(git, "private void RefreshGitUiVisibility()", "private bool? ActivePaneInGitRepository()");
-
-        Assert.Contains("ActivePaneInGitRepository()", visibility);
-        Assert.Contains("enabled && (inRepository == true || _gitPanelOpen)", visibility);
-        Assert.Contains("pane.GitRepositoryRoot", git);
-    }
-
-    [Fact]
     public void PreviewHeader_UsesSegmentedSourceRenderedAndPosterPlayControls()
     {
         var pane = Read("PreviewPaneView.xaml");
@@ -184,63 +148,19 @@ public class UxRecommendationsSettingsGitRemoteTests
         Assert.Contains("\"Unpin preview\" : \"Pin preview open\"", code);
     }
 
+    // The manager window, its consent and host-key dialogs, the insecure-profile rule and the host-key prefixes moved to
+    // the remote plugin with core FTP/SFTP (RemotePluginSourceShapeTests, RemoteProfileRowTests). The plain wording of the
+    // backend's plain-FTP refusal is pinned here, where the old core text was.
     [Fact]
-    public void RemoteManager_AsksForPlainFtpConsentAndTrustsHostKeysExplicitly()
+    public void RemoteBackendMessages_UsePlainWordingForPlainFtpConsent()
     {
-        var code = Read("RemoteManagerWindow.xaml.cs");
-        var xaml = Read("RemoteManagerWindow.xaml");
-
-        Assert.Contains("\"Connect without encryption. Passwords and files are sent in plain text.\"", code);
-        Assert.Contains("\"Confirm the unencrypted connection to save this profile\"", code);
-        Assert.Contains("dialog.IsPrimaryButtonEnabled = !needsConsent;", code);
-        Assert.DoesNotContain("Allow plain FTP", code);
-        var connection = Slice(code, "\"Connection\",", "rootBox),");
-        Assert.True(
-            connection.IndexOf("protocolBox,", StringComparison.Ordinal) < connection.IndexOf("insecureBox,", StringComparison.Ordinal),
-            "Plain-FTP consent sits directly under Protocol.");
-        Assert.DoesNotContain("credentialBox,\n                    ftpOptionsPanel", code);
-        Assert.Contains("DefaultPortFor(", code);
-
-        Assert.Contains("Title = \"Trust this server?\"", code);
-        Assert.Contains("PrimaryButtonText = \"Trust and connect\"", code);
-        Assert.Contains("Title = \"Server key changed\"", code);
-        Assert.Contains("PrimaryButtonText = \"Replace trusted key\"", code);
-        Assert.Contains("TrustFingerprintAndConnectAsync(fingerprint, token)", code);
-        var mismatch = Slice(code, "Title = \"Server key changed\"", "if (await DialogHost.ShowAsync(dialog)");
-        Assert.Contains("DefaultButton = ContentDialogButton.Close", mismatch);
-
-        Assert.Contains("Text=\"Insecure\"", xaml);
-        Assert.Contains("InsecureBadgeVisibility(Protocol, InsecurePlainFtp)", xaml);
-        Assert.Contains("Content=\"Transfer options...\"", xaml);
-        Assert.Contains("Replace (keeps a backup until the transfer finishes)", xaml);
-        Assert.DoesNotContain("Text=\"Reload\"", xaml);
-    }
-
-    [Fact]
-    public void RustRemoteMessages_UsePlainWordingAndStableHostKeyPrefixes()
-    {
-        var crates = Path.Combine(UiAuditSprint3Tests.FindRepoRoot(), "..", "crates");
-        var profiles = File.ReadAllText(Path.Combine(crates, "simplefile-core", "src", "remote", "profiles.rs"));
-        var ftp = File.ReadAllText(Path.Combine(crates, "simplefile-service", "src", "remote", "ftp.rs"));
-        var sftp = File.ReadAllText(Path.Combine(crates, "simplefile-service", "src", "remote", "sftp.rs"));
+        var backend = Path.Combine(UiAuditSprint3Tests.FindRepoRoot(), "..", "plugins", "remote", "backend", "src");
+        var profiles = File.ReadAllText(Path.Combine(backend, "profiles.rs"));
+        var ftp = File.ReadAllText(Path.Combine(backend, "ftp.rs"));
 
         Assert.Contains("\"Confirm the unencrypted connection to use plain FTP\"", profiles);
         Assert.Contains("\"Confirm the unencrypted connection to use plain FTP\"", ftp);
         Assert.DoesNotContain("insecure_plain_ftp acknowledgement", profiles + ftp);
-        Assert.Contains("\"" + RemoteManagerViewModel.UntrustedFingerprintPrefix + ".", sftp);
-        Assert.Contains("\"" + RemoteManagerViewModel.FingerprintMismatchPrefix + ".", sftp);
-        Assert.Contains("Expected {expected}, got {fingerprint}", sftp);
-    }
-
-    [Theory]
-    [InlineData("ftp", true, true)]
-    [InlineData("FTP", true, true)]
-    [InlineData("ftp", false, false)]
-    [InlineData("ftps", true, false)]
-    [InlineData("sftp", true, false)]
-    public void RemoteProfiles_AreInsecureOnlyForConfirmedPlainFtp(string protocol, bool insecure, bool expected)
-    {
-        Assert.Equal(expected, RemoteManagerViewModel.IsInsecureProfile(protocol, insecure));
     }
 
     [Fact]

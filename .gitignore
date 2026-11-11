@@ -50,6 +50,8 @@ $RECYCLE.BIN/
 # Local release/update signing secrets. Never commit updater private keys.
 /.secrets/
 *.key
+# Plugin signing keys (scripts/sign-plugin.mjs keygen writes signing-key.pem).
+*.pem
 .env
 .env.*
 *-v1.backup
@@ -82,3 +84,6 @@ crashdump/
 
 # Claude Code agent worktrees (local scratch)
 .claude/worktrees/
+
+# Superpowers scratch
+.superpowers/

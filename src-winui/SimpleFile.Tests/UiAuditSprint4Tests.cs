@@ -94,7 +94,7 @@ public class CommandIdConsistencyTests
         {
             new ContextMenuRequest(),
             new ContextMenuRequest { SelectionCount = 1, SelectedIsDirectory = false, AllSelectedAreFiles = true, SelectedIsArchive = true, ArchiveExtractFolderName = "pack", DualPaneEnabled = true, OtherPaneHasPath = true, HasClipboard = true },
-            new ContextMenuRequest { SelectionCount = 2, AllSelectedAreFiles = true, GitEnabled = true, InGitRepository = true },
+            new ContextMenuRequest { SelectionCount = 2, AllSelectedAreFiles = true },
             new ContextMenuRequest { SelectionCount = 1, SelectedIsDirectory = true, InRecycleBin = true },
         };
         var unresolved = new SortedSet<string>(StringComparer.Ordinal);

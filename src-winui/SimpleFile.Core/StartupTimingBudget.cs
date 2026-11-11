@@ -28,8 +28,19 @@ public sealed record StartupPerformanceReport(
     IReadOnlyList<string> Violations,
     IReadOnlyList<StartupTimingEvent> SessionEvents);
 
+/// <summary>A budgeted span of startup and the stages that split it, in order; their deltas add up to the span.</summary>
+public sealed record StartupStageSpan(double TotalMilliseconds, IReadOnlyList<StartupTimingEvent> Stages);
+
 public static partial class StartupTimingBudget
 {
+    private const string PluginDiscoveredStage = "MainWindow.Connect.plugins-discovered";
+
+    /// <summary>
+    /// Most plugin discovery may add to startup (spec §5.2), over the whole <see cref="PluginDiscoverySpan"/>; the
+    /// stage is optional.
+    /// </summary>
+    public const double PluginDiscoveryMaxSpanMs = 50;
+
     private static readonly StartupPerformanceBudget DefaultBudget = new();
 
     public static StartupPerformanceReport Evaluate(
@@ -51,9 +62,55 @@ public static partial class StartupTimingBudget
         CheckMaximum(sessionEvents, "MainWindow.Connect.workspace-initialized", budget.MaxWorkspaceInitializedMilliseconds, violations);
         CheckMaximum(sessionEvents, "MainWindow.Connect.first-sync", budget.MaxFirstSyncMilliseconds, violations);
         CheckMaximum(sessionEvents, "MainWindow.Connect.ready", budget.MaxReadyMilliseconds, violations);
+        CheckPluginDiscovery(sessionEvents, violations);
         CheckDeferredDriveRefresh(sessionEvents, budget.MinStartupDriveRefreshMilliseconds, violations);
 
         return new StartupPerformanceReport(violations.Count == 0, violations, sessionEvents);
+    }
+
+    /// <summary>
+    /// The plugin discovery span of a session: <c>MainWindow.Connect.plugins-discovered</c> and the
+    /// <c>MainWindow.Connect.plugins-*</c> sub-stages written just before it. Each delta runs from the previous
+    /// <c>MainWindow.Connect</c> stage, so the span runs from the stage before the first of them (backend-started) to
+    /// plugins-discovered however the App splits it, and a log from before the split budgets plugins-discovered alone.
+    /// Lines of other scopes are skipped. Null when the session has no plugins-discovered stage.
+    /// </summary>
+    public static StartupStageSpan? PluginDiscoverySpan(IReadOnlyList<StartupTimingEvent> sessionEvents)
+    {
+        ArgumentNullException.ThrowIfNull(sessionEvents);
+        var end = -1;
+        for (var index = sessionEvents.Count - 1; index >= 0; index--)
+        {
+            if (string.Equals(sessionEvents[index].Stage, PluginDiscoveredStage, StringComparison.Ordinal))
+            {
+                end = index;
+                break;
+            }
+        }
+
+        if (end < 0)
+        {
+            return null;
+        }
+
+        var stages = new List<StartupTimingEvent>();
+        for (var index = end; index >= 0; index--)
+        {
+            var entry = sessionEvents[index];
+            if (!string.Equals(entry.Scope, "MainWindow.Connect", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!entry.Marker.StartsWith("plugins-", StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            stages.Insert(0, entry);
+        }
+
+        return new StartupStageSpan(stages.Sum(stage => stage.DeltaMilliseconds), stages);
     }
 
     public static StartupTimingEvent? ParseLine(string line)
@@ -121,6 +178,18 @@ public static partial class StartupTimingBudget
         if (entry.TotalMilliseconds > maximumMilliseconds)
         {
             violations.Add($"{stage} took {entry.TotalMilliseconds:N1} ms; budget is {maximumMilliseconds:N0} ms");
+        }
+    }
+
+    /// <summary>Flags a plugin discovery span over its budget; a session without one is not a violation.</summary>
+    private static void CheckPluginDiscovery(IReadOnlyList<StartupTimingEvent> events, List<string> violations)
+    {
+        if (PluginDiscoverySpan(events) is { } span && span.TotalMilliseconds > PluginDiscoveryMaxSpanMs)
+        {
+            var stages = span.Stages.Count == 1 ? "1 stage" : $"{span.Stages.Count} stages";
+            violations.Add(string.Create(
+                CultureInfo.InvariantCulture,
+                $"{PluginDiscoveredStage} took {span.TotalMilliseconds:0.0} ms over {stages}; budget is {PluginDiscoveryMaxSpanMs:0} ms"));
         }
     }
 

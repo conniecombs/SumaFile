@@ -8,7 +8,6 @@ internal sealed class ConfigurableIpc : NullIpc
 
     public Dictionary<string, string> Settings { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, FileEntry> EntryInfo { get; } = new(StringComparer.OrdinalIgnoreCase);
-    public Dictionary<string, FileEntry[]> GitFileStatuses { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, ulong> FolderSizes { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, ulong> FolderItemCounts { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, FolderMetrics> FolderMetrics { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -40,8 +39,8 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<string, string, CancellationToken, Task<FileComparison>>? CompareFilesHandler { get; set; }
     public Func<string, CancellationToken, Task<ArchiveInfo>>? ListArchiveHandler { get; set; }
     public Func<CancellationToken, Task<ArchiveCapabilities>>? GetArchiveCapabilitiesHandler { get; set; }
-    public Func<string, string, CancellationToken, Task>? ExtractArchiveHandler { get; set; }
-    public Func<string[], string, string, CancellationToken, Task>? CreateArchiveHandler { get; set; }
+    public Func<string, string, string?, CancellationToken, Task>? ExtractArchiveHandler { get; set; }
+    public Func<string[], string, string, string?, CancellationToken, Task>? CreateArchiveHandler { get; set; }
     public Func<string, ulong?, string?, CancellationToken, Task<CleanupResult>>? DiskCleanupHandler { get; set; }
     public Func<string?, CancellationToken, Task>? CancelDiskCleanupHandler { get; set; }
     public Func<string, DuplicateScanOptions?, string?, CancellationToken, Task<DuplicateCheckResult>>? DuplicateCheckHandler { get; set; }
@@ -57,7 +56,6 @@ internal sealed class ConfigurableIpc : NullIpc
     public Func<CancellationToken, Task>? CancelFolderMetricsHandler { get; set; }
     public Func<CancellationToken, Task<SmartFolder[]>>? LoadSmartFoldersHandler { get; set; }
 
-    public int GitStatusCalls { get; private set; }
     public int MoveWithProgressCalls { get; private set; }
     public int GetDbSettingCalls { get; private set; }
     public int GetDbSettingsCalls { get; private set; }
@@ -287,15 +285,20 @@ internal sealed class ConfigurableIpc : NullIpc
     public override Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)
         => GetArchiveCapabilitiesHandler?.Invoke(ct) ?? throw NotConfigured();
 
-    public override Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
-        => ExtractArchiveHandler?.Invoke(archivePath, destination, ct) ?? throw NotConfigured();
+    public override Task ExtractArchiveAsync(
+        string archivePath,
+        string destination,
+        string? operationId = null,
+        CancellationToken ct = default)
+        => ExtractArchiveHandler?.Invoke(archivePath, destination, operationId, ct) ?? throw NotConfigured();
 
     public override Task CreateArchiveAsync(
         string[] paths,
         string archivePath,
         string format,
+        string? operationId = null,
         CancellationToken ct = default)
-        => CreateArchiveHandler?.Invoke(paths, archivePath, format, ct) ?? throw NotConfigured();
+        => CreateArchiveHandler?.Invoke(paths, archivePath, format, operationId, ct) ?? throw NotConfigured();
 
     public override Task<CleanupResult> DiskCleanupAsync(
         string directory,
@@ -352,12 +355,6 @@ internal sealed class ConfigurableIpc : NullIpc
 
         OpenedFiles.Add(path);
         return Task.CompletedTask;
-    }
-
-    public override Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)
-    {
-        GitStatusCalls += 1;
-        return Task.FromResult(GitFileStatuses.TryGetValue(path, out var statuses) ? statuses : []);
     }
 
     public override Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)

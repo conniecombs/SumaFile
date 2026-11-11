@@ -254,8 +254,7 @@ public static class WorkspaceProfileTemplates
                 Chrome(
                     columnPreset: "default",
                     sidebarVisible: true,
-                    previewVisible: true,
-                    enableGitIntegration: false),
+                    previewVisible: true),
                 now),
             Profile(
                 DeveloperId,
@@ -265,7 +264,6 @@ public static class WorkspaceProfileTemplates
                     columnPreset: "developer",
                     sidebarVisible: true,
                     previewVisible: true,
-                    enableGitIntegration: true,
                     keepFoldersOnTop: true),
                 now),
             Profile(
@@ -276,8 +274,7 @@ public static class WorkspaceProfileTemplates
                     columnPreset: "photo",
                     sidebarVisible: true,
                     previewVisible: true,
-                    previewWidth: 420,
-                    enableGitIntegration: false),
+                    previewWidth: 420),
                 now),
             Profile(
                 TransferId,
@@ -287,7 +284,6 @@ public static class WorkspaceProfileTemplates
                     columnPreset: "details",
                     sidebarVisible: true,
                     previewVisible: false,
-                    enableGitIntegration: false,
                     progressQueueVisible: true),
                 now),
             Profile(
@@ -297,8 +293,7 @@ public static class WorkspaceProfileTemplates
                 Chrome(
                     columnPreset: "default",
                     sidebarVisible: false,
-                    previewVisible: false,
-                    enableGitIntegration: false),
+                    previewVisible: false),
                 now),
         ];
     }
@@ -390,7 +385,6 @@ public static class WorkspaceProfileTemplates
         string columnPreset,
         bool sidebarVisible,
         bool previewVisible,
-        bool enableGitIntegration,
         bool keepFoldersOnTop = true,
         bool progressQueueVisible = false,
         double previewWidth = UiSettings.PreviewDefaultWidth)
@@ -400,7 +394,6 @@ public static class WorkspaceProfileTemplates
         return new WorkspaceChromeLayout
         {
             KeepFoldersOnTop = keepFoldersOnTop,
-            EnableGitIntegration = enableGitIntegration,
             ProgressQueueVisible = progressQueueVisible,
             PreviewVisible = previewVisible,
             PreviewWidth = previewWidth,

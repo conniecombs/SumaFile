@@ -1,0 +1,25 @@
+[package]
+name = "sumafile-plugin"
+version = "1.0.0"
+description = "Helper crate for SumaFile plugin backends served over a named pipe"
+authors = ["SumaFile Team"]
+license = "MIT"
+repository = "https://github.com/conniecombs/SumaFile"
+edition = "2021"
+rust-version = "1.98.0"
+readme = "README.md"
+keywords = ["sumafile", "plugin", "json-rpc", "named-pipe", "file-manager"]
+categories = ["api-bindings", "asynchronous", "os::windows-apis"]
+
+[features]
+test-support = []
+
+[dependencies]
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+simplefile-ipc = { path = "../simplefile-ipc", version = "1.0.4" }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

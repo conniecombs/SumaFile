@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      WinUI-free: the plain Windows TFM and no package. A plugin that builds WinUI elements in code targets
+      net10.0-windows10.0.19041.0 and takes Microsoft.WindowsAppSDK and Microsoft.Windows.SDK.BuildTools compile-only
+      (ExcludeAssets="runtime", PrivateAssets="all"), as plugins/git/ui/SumaFile.Git does.
+    -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>Example.Plugin</RootNamespace>
+    <AssemblyName>Example.Plugin</AssemblyName>
+    <Description>UI half of the SumaFile plugin template (com.example.template)</Description>
+    <IsPackable>false</IsPackable>
+    <!-- Writes the .deps.json SumaFile's PluginLoadContext resolves the plugin's own dependencies from. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      Compile-only: SumaFile loads its own copy of the SDK at run time, so none ships in the plugin folder.
+      Outside the SumaFile repository, once the SDK is published, replace this with
+      <PackageReference Include="SumaFile.PluginSdk" Version="1.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
+    -->
+    <ProjectReference Include="..\..\..\..\src-winui\SimpleFile.PluginSdk\SimpleFile.PluginSdk.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\plugin.json" Link="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

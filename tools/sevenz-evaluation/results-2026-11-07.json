@@ -1,0 +1,355 @@
+{
+  "benchmarks": [
+    {
+      "corpus": "many-small",
+      "file_count": 1000,
+      "input_bytes": 4789000,
+      "samples": [
+        {
+          "cli_bytes": 9380,
+          "cli_create_ms": 61.5943,
+          "cli_extract_ms": 146.2927,
+          "cli_list_ms": 11.7229,
+          "iteration": 1,
+          "rust_bytes": 8381,
+          "rust_create_ms": 360.8643,
+          "rust_extract_ms": 150.26610000000002,
+          "rust_list_ms": 0.4707
+        },
+        {
+          "cli_bytes": 9380,
+          "cli_create_ms": 62.2867,
+          "cli_extract_ms": 149.38219999999998,
+          "cli_list_ms": 12.2512,
+          "iteration": 2,
+          "rust_bytes": 8355,
+          "rust_create_ms": 383.5229,
+          "rust_extract_ms": 130.3796,
+          "rust_list_ms": 0.6402
+        },
+        {
+          "cli_bytes": 9380,
+          "cli_create_ms": 65.40899999999999,
+          "cli_extract_ms": 156.8042,
+          "cli_list_ms": 12.1683,
+          "iteration": 3,
+          "rust_bytes": 8385,
+          "rust_create_ms": 323.5541,
+          "rust_extract_ms": 136.8837,
+          "rust_list_ms": 0.4813
+        }
+      ]
+    },
+    {
+      "corpus": "text-32m",
+      "file_count": 1,
+      "input_bytes": 33554510,
+      "samples": [
+        {
+          "cli_bytes": 1594242,
+          "cli_create_ms": 5457.854,
+          "cli_extract_ms": 91.3403,
+          "cli_list_ms": 11.4354,
+          "iteration": 1,
+          "rust_bytes": 1501218,
+          "rust_create_ms": 14012.3324,
+          "rust_extract_ms": 134.33800000000002,
+          "rust_list_ms": 0.13019999999999998
+        },
+        {
+          "cli_bytes": 1594242,
+          "cli_create_ms": 5412.2846,
+          "cli_extract_ms": 91.3604,
+          "cli_list_ms": 12.011000000000001,
+          "iteration": 2,
+          "rust_bytes": 1501220,
+          "rust_create_ms": 14390.953,
+          "rust_extract_ms": 128.4343,
+          "rust_list_ms": 0.1079
+        },
+        {
+          "cli_bytes": 1594242,
+          "cli_create_ms": 5333.4169999999995,
+          "cli_extract_ms": 91.4117,
+          "cli_list_ms": 11.5586,
+          "iteration": 3,
+          "rust_bytes": 1501218,
+          "rust_create_ms": 12597.010300000002,
+          "rust_extract_ms": 119.5826,
+          "rust_list_ms": 0.114
+        }
+      ]
+    },
+    {
+      "corpus": "random-32m",
+      "file_count": 1,
+      "input_bytes": 33554432,
+      "samples": [
+        {
+          "cli_bytes": 33556698,
+          "cli_create_ms": 1381.6773,
+          "cli_extract_ms": 43.2418,
+          "cli_list_ms": 11.6504,
+          "iteration": 1,
+          "rust_bytes": 33556207,
+          "rust_create_ms": 10567.540599999998,
+          "rust_extract_ms": 49.9197,
+          "rust_list_ms": 0.111
+        },
+        {
+          "cli_bytes": 33556698,
+          "cli_create_ms": 1455.1039,
+          "cli_extract_ms": 41.277800000000006,
+          "cli_list_ms": 12.7396,
+          "iteration": 2,
+          "rust_bytes": 33556208,
+          "rust_create_ms": 10571.6347,
+          "rust_extract_ms": 49.4859,
+          "rust_list_ms": 0.12449999999999999
+        },
+        {
+          "cli_bytes": 33556698,
+          "cli_create_ms": 1401.7405,
+          "cli_extract_ms": 41.3807,
+          "cli_list_ms": 11.4065,
+          "iteration": 3,
+          "rust_bytes": 33556207,
+          "rust_create_ms": 10864.7502,
+          "rust_extract_ms": 49.4991,
+          "rust_list_ms": 0.115
+        }
+      ]
+    }
+  ],
+  "candidate_chunk_bytes": 33554432,
+  "candidate_compression_threads": 8,
+  "candidate_preset": 6,
+  "candidate_version": "0.25.0",
+  "compatibility": {
+    "codecs": [
+      {
+        "case": "lzma2-solid",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "lzma2-non-solid",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "lzma",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "copy",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "bzip2",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "ppmd",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "deflate",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "deflate64",
+        "rust_extract": {
+          "error": "UnsupportedCompressionMethod(\"DEFLATE64\")",
+          "passed": false
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "error": "UnsupportedCompressionMethod(\"DEFLATE64\")",
+          "passed": false
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "bcj-lzma2",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "bcj2-lzma2",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "delta-lzma2",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "arm64-lzma2",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      },
+      {
+        "case": "riscv-lzma2",
+        "rust_extract": {
+          "passed": true
+        },
+        "rust_listing": {
+          "passed": true
+        },
+        "rust_selective_read": {
+          "passed": true
+        },
+        "sumafile": {
+          "passed": true
+        }
+      }
+    ],
+    "password_behavior": [
+      {
+        "case": "encrypted-content",
+        "rust_lists_without_password": true,
+        "rust_rejects_extract_without_password": true,
+        "sumafile_lists_without_password": true,
+        "sumafile_rejects_extract_without_password": true
+      },
+      {
+        "case": "encrypted-header",
+        "rust_lists_without_password": false,
+        "rust_rejects_extract_without_password": true,
+        "sumafile_lists_without_password": false,
+        "sumafile_rejects_extract_without_password": true
+      }
+    ],
+    "rust_creation_cross_read": {
+      "passed": true
+    }
+  },
+  "compatibility_passed": false,
+  "iterations": 3,
+  "logical_processors": 32,
+  "reference": "<repo>\\third_party\\7zip\\win-x64\\7za.exe",
+  "reference_version": "7-Zip (a) 26.03 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-09-03",
+  "release_mode": true,
+  "scope": "Generated fixtures; engine benchmarks, not an integrated replacement"
+}

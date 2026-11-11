@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>SimpleFile.PluginSdk</RootNamespace>
+    <!-- Every public type and member is documented: CS1591 is an error under TreatWarningsAsErrors. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!--
+      The assembly identity is the SDK contract version, PluginSdk.Version (major.minor.0.0), not the app's version:
+      the host hands every plugin its own copy of this assembly through the default load context, which refuses a
+      reference to a higher assembly version than it holds. So a plugin built against SDK 1.x loads in a 1.y host only
+      when x <= y: an older or equal minor binds, a patch never matters, and a newer minor could not bind. The host's
+      manifest check enforces the same rule (PluginManifestReader.IsSdkCompatible), so such a plugin is listed as
+      IncompatibleSdk instead of failing to load. Bump this with the minor of PluginSdk.Version. The file version
+      still follows the app (Directory.Build.props).
+    -->
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+  </PropertyGroup>
+  <!--
+    Packed as SumaFile.PluginSdk (spec §12): `npm run pack:sdk` writes target/packages/SumaFile.PluginSdk.<version>.nupkg.
+    Nothing is published. The package version is the SDK contract version, PluginSdk.Version, not the app's version;
+    PluginSdkPackageTests pins the two together.
+    The package id and version apply only while `dotnet pack` runs (_IsPacking): NuGet lock files name a project
+    reference by its package id and version, so unconditional ones would rewrite the lock file of every project that
+    references the SDK.
+  -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId Condition="'$(_IsPacking)' == 'true'">SumaFile.PluginSdk</PackageId>
+    <PackageVersion Condition="'$(_IsPacking)' == 'true'">1.0.0</PackageVersion>
+    <Authors>SumaFile Team</Authors>
+    <Description>Contracts for SumaFile plugins: the interfaces a plugin's UI assembly implements and the host services it receives. WinUI-free; UI objects cross as object.</Description>
+    <PackageTags>sumafile;plugin;sdk;winui;file-manager</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/conniecombs/SumaFile</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/conniecombs/SumaFile</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

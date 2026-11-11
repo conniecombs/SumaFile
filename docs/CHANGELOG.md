@@ -8,6 +8,52 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Beta: the plugin system
+
+The Beta branch. It has no version number yet; it gets one when it is merged
+into `main`. See the [Beta notes](RELEASE_BETA.md).
+
+- A plugin system: a plugin is a folder with a `plugin.json` manifest, an
+  optional C# UI half that SumaFile loads into its own process, and an
+  optional backend process that talks to SumaFile over a named pipe. The
+  WinUI plugin host renders commands, context menus, toolbar buttons, sidebar
+  sections, panels, file row decorations, declarative settings, settings
+  pages and archive formats from the manifest before any plugin code runs.
+  Settings -> Plugins lists every plugin, with Install from file (`.sfplugin`
+  packages), Rescan and Open plugins folder, and gives each plugin its own
+  page under Plugins for its switch, settings and Remove.
+- SumaFile asks before it enables a plugin it did not ship (**Enable
+  plugin?**) and asks again when the plugin's `plugin.json`, its signature
+  state or its folder changes, and after Install from file or Remove. There
+  is no sandbox; see [Security](SECURITY.md#plugins).
+- Optional Ed25519 signatures (`signature.json`): the plugin card shows
+  "Signed · key <fingerprint>". A signature proves that the files are
+  unchanged since they were signed with the key in the plugin's own
+  `plugin.json`, not who the publisher is. A file in the folder that
+  `signature.json` does not list makes the signature invalid.
+- Git, FTP/FTPS/SFTP and 7-Zip moved out of the core product into three
+  first-party plugins that install with SumaFile and are trusted without a
+  prompt: `com.sumafile.git`, `com.sumafile.remote` and
+  `com.sumafile.sevenzip`. A default install keeps the 1.0.4 features. FTP/SFTP
+  profiles are imported, read-only, from the 1.0.4 `metadata.db`, and saved
+  passwords stay in Windows Credential Manager under `SumaFile.Remote.`.
+- The file service's IPC schema drops the 13 remote and 11 Git methods and
+  adds `register_archive_engine` and `unregister_archive_engine`: 97 domain
+  methods become 75.
+- Every plugin file stays in SumaFile's installation folder: `plugins\`,
+  `plugins-data\` (each backend's data and temporary files),
+  `plugin-approvals.json` and `plugins.log`. Upgrades keep them. Uninstall
+  removes them, including user-installed plugins and the FTP/SFTP profiles
+  in `plugins-data\com.sumafile.remote`; saved passwords and passphrases
+  stay in Windows Credential Manager (`SumaFile.Remote.*`).
+- Third-party readiness: the author guide [PLUGINS.md](PLUGINS.md), the
+  template in `templates/sumafile-plugin`, the signing tool
+  `scripts/sign-plugin.mjs`, and dry-run packages of the SDK
+  (`SumaFile.PluginSdk`, `npm run pack:sdk`) and the Rust helper crate
+  (`sumafile-plugin`, `npm run pack:crates`). Nothing is published yet.
+
+### Other changes
+
 - "Write directly to the destination" now applies to folder copies, replaced
   files and remote downloads, not only to new single files. Folders are
   created under their final names and replaced files are overwritten in
@@ -16,6 +62,24 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - Show hidden files now lists SumaFile's own transfer artifacts (partial
   files, ownership records and replacement backups) instead of always
   dropping them; they stay hidden while hidden files are hidden.
+- Automatic transfer tuning decides sooner and with more to go on. The first
+  number of simultaneous files depends on the drives (one or two for a hard
+  disk, more between solid-state drives, in between for a network share).
+  Speed is read in windows of one to two seconds instead of pairs of five
+  seconds, so a decision takes about three to five seconds on a steady
+  transfer. Files under 1 MiB and larger files are scheduled in two lanes
+  that share the file ceiling, so a few huge files no longer slow a batch of
+  small ones. A sustained rise in write latency ends a test of more files
+  early. Custom mode and chosen queue orders are unchanged. See
+  [Transfer tuning](TRANSFER_TUNING.md#how-the-scheduler-decides).
+- Many small files to or from a network share or cloud drive copy with more
+  files at once. The small-file lane is now judged on files per second
+  instead of bytes per second, starts with 16 files on such routes, tries
+  more before it tries fewer, and may grow to 32 while the file ceiling is
+  still the default 16 (a ceiling you changed is kept). Repeated bouts of
+  I/O retries hold the reduced setting longer each time. Files that fit in
+  one copy buffer are no longer pre-allocated, which saves one request per
+  small file on a network share.
 
 ---
 

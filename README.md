@@ -3,7 +3,7 @@
 [![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
 [![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
 [![Installer Smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
-![Version](https://img.shields.io/badge/version-1.0.4-2563eb)
+![Version](https://img.shields.io/badge/version-Beta-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%7C%20Windows%2011-0078D4?logo=windows)
 ![UI](https://img.shields.io/badge/UI-WinUI%203-5b8def)
 ![Backend](https://img.shields.io/badge/backend-Rust%20IPC-b7410e?logo=rust)
@@ -12,8 +12,8 @@
 SumaFile is a native Windows file manager for people who work across several
 folders at once and need more than a basic file list. It pairs a WinUI 3 desktop
 shell with a Rust filesystem service so browsing, transfers, search, previews,
-archives, checksums, Git status, remote FTP/SFTP profiles, and cleanup tools can
-stay responsive in one local-first app.
+archives, checksums, cleanup tools and, through bundled plugins, Git status and
+remote FTP/SFTP profiles can stay responsive in one local-first app.
 
 **Repository topics:** `windows`, `file-manager`, `winui-3`, `rust`,
 `named-pipe-ipc`, `dual-pane`, `tabs`, `file-preview`, `advanced-rename`,
@@ -29,6 +29,7 @@ stay responsive in one local-first app.
 - [Use SumaFile](#use-sumafile)
 - [Feature Reference](#feature-reference)
 - [Settings and State](#settings-and-state)
+- [Plugins](#plugins)
 - [Transfer tuning](docs/TRANSFER_TUNING.md)
 - [Development](#development)
 - [Architecture](#architecture)
@@ -75,12 +76,19 @@ All visible files and paths belong to its generated test workspace.
 | UI | Unpackaged WinUI 3 desktop app |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
 | Release artifacts | NSIS setup, MSI, portable ZIP, updater manifest |
-| Storage scope | Local folders, local drives, removable media, mapped network shares, archives, FTP/FTPS/SFTP profile browser |
+| Storage scope | Local folders, local drives, removable media, mapped network shares, archives, and an FTP/FTPS/SFTP profile browser from the bundled FTP/SFTP plugin |
 | License | [MIT](LICENSE) |
 
 The active application is the WinUI host under `src-winui/` plus the Rust crates
 under `crates/`. Historical migration notes remain in `docs/winui-migration/`,
 but the Svelte/Tauri surface is not the shipping UI for this branch.
+
+This README describes the **Beta** branch. Its plugin system, and the move
+of Git, FTP/SFTP and 7-Zip into three bundled plugins, are new in the Beta:
+the latest stable release, 1.0.4, has those features built into SumaFile
+itself. See [Plugins](#plugins), the
+[Beta notes](docs/RELEASE_BETA.md) and the
+[changelog](docs/CHANGELOG.md).
 
 ## What changed in 1.0.4
 
@@ -95,6 +103,15 @@ labels, the sidebar, profiles and connections each have one name everywhere.
 See the [v1.0.4 release notes](docs/RELEASE_1.0.4.md) for the changes since
 v1.0.3, upgrade instructions and known limitations.
 
+## What changed in the Beta
+
+Git, FTP/SFTP and 7-Zip are now three plugins that ship with SumaFile, on a new
+plugin system that third parties can build on. Settings -> Plugins has an
+overview and one page per plugin. Uninstalling now also removes plugin data,
+including FTP/SFTP profiles. See the
+[Beta notes](docs/RELEASE_BETA.md). The Beta has no version number of its own yet: it gets one when it is
+merged into `main`.
+
 ## Highlights
 
 | Need | SumaFile capability |
@@ -105,8 +122,8 @@ v1.0.3, upgrade instructions and known limitations.
 | Inspect before opening | Persistent preview pane, Quick Look, metadata, checksums, properties, and compare |
 | Organize messy folders | Tags, bookmarks, recents, smart folders, duplicate finder, cleanup, and Advanced Rename |
 | Work with archives | Create, list, view, extract, pack, and unpack supported archives |
-| Handle developer folders | Git status column, dockable Git workbench, terminal launch, and Open With preferences |
-| Reach remote servers | FTP, FTPS, and SFTP profile manager with test, browse, upload, download, rename, and delete actions |
+| Handle developer folders | Git status column and dockable Git workbench (bundled Git plugin), terminal launch, and Open With preferences |
+| Reach remote servers | FTP, FTPS, and SFTP profile manager from the bundled FTP/SFTP plugin, with test, browse, upload, download, rename, and delete actions |
 | Stay Windows-native | Drive labels, network-share status, shell icons, Windows installers, and Windows shortcuts |
 
 ## Install
@@ -125,12 +142,26 @@ Requirements:
 
 - Windows 10 version 2004 or newer, or Windows 11
 - x64 Windows
-- Bundled 7-Zip console tooling for `.7z` workflows
+- Git for Windows with `git.exe` on `PATH`, for Git status and the Git workbench
 - Built-in RAR listing and extraction; RAR creation is not supported
+
+`.7z` support (with the bundled 7-Zip), FTP/FTPS/SFTP connections and Git
+come with SumaFile. In 1.0.4 they are part of the app; in the Beta they
+are three bundled plugins that install with SumaFile: `com.sumafile.sevenzip`, `com.sumafile.remote` and
+`com.sumafile.git`.
 
 After installing, open Settings -> Updates to check published releases. Builds
 with trusted updater metadata can download and launch the NSIS setup from inside
 the app. Builds without complete trusted metadata fall back to the release page.
+
+Uninstalling (Windows Settings -> Apps, or removing the MSI) deletes the
+installation folder. In the Beta that includes every plugin file
+SumaFile keeps there: plugins you installed, `plugins-data` (with the FTP/SFTP
+connection profiles), `plugin-approvals.json` and `plugins.log`; an upgrade or
+reinstall keeps them. Saved FTP/SFTP passwords and passphrases stay in Windows
+Credential Manager under `SumaFile.Remote.*` targets: delete the connections in
+SumaFile before uninstalling, or remove those entries in Credential Manager.
+Settings in `%APPDATA%\com.simplefile.desktop` are not removed.
 
 ## Use SumaFile
 
@@ -147,9 +178,10 @@ the app. Builds without complete trusted metadata fall back to the release page.
    folder's Properties. Right-click an item for Create
    shortcut, which pre-fills the shortcut target. Unavailable commands stay
    visible but greyed out.
-7. Open More (⋯) -> Tools -> FTP/SFTP manager when you need a saved FTP, FTPS,
-   or SFTP connection. Saved connections are also listed under Connections in
-   the sidebar.
+7. Run FTP/SFTP manager from the command palette or the toolbar overflow when
+   you need a saved FTP, FTPS, or SFTP connection. The bundled FTP/SFTP plugin
+   provides it, and lists saved connections under Connections, below the
+   built-in sidebar sections.
 8. Save repeatable pane/tab/column setups from the Profiles button on the
    toolbar.
 
@@ -240,7 +272,7 @@ Inspection tools include:
 | TAR | `.tar` | Built in |
 | TAR.GZ | `.tar.gz`, `.tgz` | Built in |
 | RAR | `.rar` | Built-in list/extract only |
-| 7-Zip | `.7z` | Bundled 7-Zip console tool |
+| 7-Zip | `.7z` | SumaFile 7-Zip plugin (`com.sumafile.sevenzip`), installed with SumaFile |
 
 Archive commands can list contents, view archives, extract here, extract to a
 folder, extract to a chosen destination, create archives, pack selections into a
@@ -265,11 +297,18 @@ links and special entries that could escape the destination.
 
 ### Git and Developer Tools
 
-- Developer column preset with Git status labels
+- Git comes from the bundled Git plugin (`com.sumafile.git`), which needs Git
+  for Windows with `git.exe` on `PATH`
+- Developer column preset with a Status column of Git status labels
 - Dockable Git workbench with branch/upstream summary, changed paths, resizable
-  diff preview, stage, unstage, discard, fetch, pull, push, and commit actions
-- Settings -> Behavior can completely disable Git integration, hiding Git UI
-  and preventing Git status/command calls
+  diff preview, stage, unstage, discard, fetch, pull, push, and commit actions;
+  fetch, pull and push run as Transfers rows with Cancel
+- Settings -> Plugins -> Git can completely disable Git integration, hiding Git
+  UI and preventing Git status/command calls; the Git commands stay listed and
+  explain that Git is turned off
+- Git hooks and filters still run for your own stage, commit, fetch, pull and
+  push, as they do with the git command line; the read-only views (the Status
+  column, the workbench's status and the diff preview) run none
 - Open terminal here with ``Ctrl+` ``
 - Elevated PowerShell launch
 - Open With menu and chooser
@@ -278,6 +317,12 @@ links and special entries that could escape the destination.
 
 ### FTP/SFTP Manager
 
+FTP, FTPS and SFTP come from the bundled plugin `com.sumafile.remote` ("FTP/SFTP
+connections"), which installs and is trusted with SumaFile. It contributes the
+FTP/SFTP manager window and command, the Connections sidebar section (below the
+built-in sections) and its own page under Settings -> Plugins. Without the
+plugin, SumaFile shows no FTP/SFTP UI.
+
 - Saved FTP, FTPS, and SFTP profiles
 - Password, anonymous, SSH agent, and private-key authentication modes
 - Optional Windows Credential Manager storage for passwords and passphrases
@@ -285,9 +330,10 @@ links and special entries that could escape the destination.
 - Remote folder browsing with create folder, upload, download, rename, delete,
   refresh, and disconnect actions
 - Recursive folder uploads and downloads, including empty folders
-- Streamed transfers with byte progress, cancellation, per-item outcomes, and
-  retry of incomplete selections; existing files are preserved until transfer
-  completion using temporary files and replacement backups
+- Streamed transfers with byte progress, per-item outcomes, and retry of
+  incomplete selections; existing files are preserved until transfer
+  completion using temporary files and replacement backups. Each transfer is
+  also a row in the Transfers window, with Cancel
 - File conflict choices: report, skip, replace, or keep both. Existing folders
   merge; the selected policy applies to files inside them. When retrying a
   partially completed folder, choose skip to keep files already transferred
@@ -296,15 +342,28 @@ links and special entries that could escape the destination.
 - Symbolic links are reported as unsupported during folder transfers
 - Plain FTP requires an explicit insecure-connection acknowledgement and is
   marked Insecure in the manager and under Connections in the sidebar
+- Remote transfer settings (bandwidth limit, up-to-date check, direct writes,
+  pre-allocation, flushing and retries) are the plugin's settings, under
+  Settings -> Plugins -> FTP/SFTP connections and in the manager's Transfer
+  options dialog
+
+The plugin's backend keeps profiles in
+`<install folder>\plugins-data\com.sumafile.remote\remote-profiles.db`: every
+plugin file, its data included, stays in SumaFile's installation folder.
+On first use after an upgrade from 1.0.4 it imports, read-only, the profiles the
+1.0.4 service saved in its `metadata.db`; saved passwords and passphrases stay
+in Windows Credential Manager under their `SumaFile.Remote.` targets and keep
+working without being entered again. Remote sessions end with the plugin's
+backend, not with the file service.
 
 ### Transfer speed and automatic retries
 
 Filesystem file/folder copies and moves (including mounted cloud drives, mapped
 shares, removable drives, and cross-volume moves) share the same transfer engine.
-Native FTP, FTPS, and SFTP uploads/downloads use the same user bandwidth limiter
-and retry policy, including single-file compatibility commands. Native remote
-sessions support one file stream; the selected file count is an upper limit.
-Same-volume moves can use a direct rename.
+FTP, FTPS, and SFTP uploads/downloads in the FTP/SFTP plugin use the same
+staging and retry code with the plugin's own settings (Settings -> Plugins).
+Remote sessions copy one file at a time. Same-volume moves can use a direct
+rename.
 
 - **Custom** keeps the selected concurrency, subject to the chosen buffer budget,
   shared process resource bounds and provider capabilities. Slow I/O and errors
@@ -313,6 +372,11 @@ Same-volume moves can use a direct rename.
   rate. Successful cloud reads, NAS writes, metadata gaps and durability flushes
   cannot impose a hidden limit. Native streams charge actual payload bytes,
   including short reads and small files, rather than reserving full buffers at EOF.
+- Automatic modes start from the kind of drives involved (fewer files at once for
+  a hard disk, more between solid-state drives), schedule small and large files
+  in two lanes that share the file limit, and treat a sustained rise in write
+  latency as an early sign of a saturated drive (unreleased Beta branch; see
+  [Transfer tuning](docs/TRANSFER_TUNING.md#how-the-scheduler-decides)).
 - Automatic modes compare sustained aggregate throughput while work is queued.
   They can test more/fewer workers and back off after actual I/O failures. A quiet
   window alone is not a failure. Settings learned by the former latency-based
@@ -324,14 +388,15 @@ Same-volume moves can use a direct rename.
   files continue within their configured limits. Permission, conflict, missing-file,
   invalid-data, authentication, and certificate/host-key errors fail promptly.
 - Empty and partially written operation-owned filesystem temporary files resume
-  correctly. Native remote retries reconnect and restart the incomplete staged
+  correctly. FTP/SFTP plugin retries reconnect and restart the incomplete staged
   file from byte zero. Completed files are retained; failed moves retain sources.
   The first error is preserved alongside any later failure. Buffered writes and
   durability checks still complete before a filesystem destination is promoted.
 - **Write directly to the destination** (Advanced transfer options) skips the
   hidden temporary files. New files and folders are created under their final
-  names, replaced files are overwritten in place, and remote downloads behave
-  the same. A cancelled or failed transfer then leaves partial files and
+  names, and replaced files are overwritten in place; the FTP/SFTP plugin's
+  own "Write downloads directly to the destination" setting does the same for
+  remote downloads. A cancelled or failed transfer then leaves partial files and
   folders behind instead of the untouched original.
 - SumaFile does not read or control pCloud Drive's cache occupancy. Its buffer
   budget is RAM, and temporary files are on the destination. A synchronous OS
@@ -346,19 +411,20 @@ Settings is organized into:
 | --- | --- |
 | Appearance | Theme (Windows default, Dark, Light), default display style, default icon size, default file list columns, hidden files |
 | Navigation | Start location (Home folder, Restore last session, Custom folder), new-tab behavior, sidebar sections, recent history |
-| Behavior | Recycle Bin prompt, folders on top, folder sizes, rendered previews, video playback, preview collapse, transfer options, and a Developer group for Git integration |
+| Behavior | Recycle Bin prompt, folders on top, folder sizes, rendered previews, video playback, preview collapse, and transfer options |
 | Storage & cache | Thumbnail cache enablement, cache size, and cache location |
 | Shortcuts | Searchable shortcut list with edit, reset, import, and export |
 | Toolbar | Button labels, command order, separators, removed commands, and reset |
-| Tools | FTP/SFTP connections (opens the FTP/SFTP manager) and archive support summary |
+| Tools | Archive support summary |
+| Plugins | Installed plugins with their state, Install from file, Rescan, Open plugins folder, and each plugin's enable switch, settings and page, such as the FTP/SFTP plugin's page (opens the FTP/SFTP manager) below its declared settings and the Git plugin's on/off setting; see [Plugins](#plugins) |
 | Updates | Version, update check, install action |
 | About | Product, version, repository, and build metadata |
 
 Startup can open Home, the last used workspace, or a custom path. Last-used
 state persists panes, active pane, tabs, view mode, icon size, sort, and filter
 context. Named profiles are separate snapshots available from the Profiles
-button on the toolbar; applying a profile does not change the Git or
-folders-on-top settings.
+button on the toolbar; applying a profile does not change the folders-on-top
+setting or the Git plugin's settings.
 
 Persistent compatibility data stays at:
 
@@ -377,6 +443,85 @@ Runtime diagnostics are written under:
 %LOCALAPPDATA%\SumaFile\startup.log
 %LOCALAPPDATA%\SumaFile\operations.jsonl
 ```
+
+## Plugins
+
+The plugin system is new in the Beta; the latest stable release, 1.0.4,
+does not have it.
+
+Plugins add commands, menus, toolbar buttons, sidebar sections, panels, file
+row decorations, settings and archive formats to SumaFile. Three plugins install
+with SumaFile and are trusted without a prompt, because the release lists them
+in `plugins\bundled.json`:
+
+| Plugin | Id | Adds |
+| --- | --- | --- |
+| 7-Zip archives | `com.sumafile.sevenzip` | `.7z` browsing, extraction, creation and in-place changes, with the bundled 7-Zip |
+| FTP/SFTP connections | `com.sumafile.remote` | The FTP/SFTP manager, the Connections sidebar section and the remote transfer settings |
+| Git | `com.sumafile.git` | Git status in file rows, Git menu items, the Git toolbar button and the Git workbench panel (needs Git for Windows) |
+
+A bundled plugin can be disabled in Settings -> Plugins, but not removed.
+
+Settings -> Plugins is an overview: it lists every plugin SumaFile found with
+its state, and each plugin has its own page under Plugins in the Settings
+navigation (also reached with the plugin's **Open** button). A plugin that
+needs your attention, such as one waiting for approval, carries a mark there.
+
+On the overview:
+
+- **Install from file…** installs a `.sfplugin` package (a zip of a plugin
+  folder) into the plugins folder. A package that would replace a bundled
+  plugin is refused.
+- **Rescan** reads the plugins folder again, for example after you copied a
+  plugin folder into it.
+- **Open plugins folder** opens `<install folder>\plugins`.
+
+On a plugin's own page:
+
+- Its publisher, version, state and signature state.
+- An **Enabled** switch, or **Review…** while it waits for your approval.
+- Its declared settings, and its own settings page if it has one. Settings save
+  as soon as you change them. Settings search covers every plugin's declared
+  settings and opens the page of the plugin that matches.
+- **Remove** appears only on plugins you installed. It asks first, then deletes
+  the plugin's folder and its stored approval; the plugin's settings and its
+  `plugins-data` folder are kept (uninstalling SumaFile deletes `plugins-data`).
+
+**Consent.** Plugins run with your permissions; there is no sandbox. The first
+time SumaFile finds a plugin it did not ship, it asks **Enable plugin?** and
+shows the plugin's name, publisher, version, signature state (Signed · key
+<fingerprint>, Unsigned or Invalid signature), the permissions it declares and
+whether it runs a background process. **Keep disabled** leaves it off until you
+choose **Review…**. SumaFile asks again when the plugin's `plugin.json`, its
+signature state or its folder changes, and after you install it from a file or
+remove it.
+
+**Signatures.** "Signed · key <fingerprint>" means the plugin's files are
+unchanged since they were signed with that key. It does not identify the
+publisher: the key comes from the plugin's own `plugin.json`. A file in the
+plugin's folder that its `signature.json` does not list makes the signature
+invalid. SumaFile checks signatures when it scans the plugins folder (at
+startup and on Rescan), not each time a plugin loads.
+
+**Where plugin files live.** Every plugin file stays in SumaFile's
+installation folder:
+
+```text
+<install folder>\plugins\<plugin id>\        the plugins, bundled and installed
+<install folder>\plugins-data\<plugin id>\   each plugin backend's data and temporary files
+<install folder>\plugin-approvals.json       your Enable and Disable decisions
+<install folder>\plugins.log                 plugin errors and log lines
+```
+
+Upgrades and reinstalls keep them; uninstalling SumaFile deletes them (see
+[Install](#install)). Saved FTP/SFTP passwords are not in these files: they
+stay in Windows Credential Manager.
+
+A plugin whose background process stops is listed as Stopped, and the status
+center offers Restart. `plugins.log` has the details.
+
+To write a plugin, start from the guide, [docs/PLUGINS.md](docs/PLUGINS.md),
+and the template in `templates/sumafile-plugin`.
 
 ## Keyboard Shortcuts
 
@@ -434,7 +579,7 @@ Press `F1` or `Ctrl+/` in SumaFile for the live shortcut list.
 | Windows SDK | 10.0.19041+ | WinUI target platform |
 | NSIS | Optional | NSIS setup executable |
 | WiX v3 | Optional | MSI package |
-| Bundled 7-Zip files | In repo | `.7z` archive operations and packaged payload checks |
+| Bundled 7-Zip files | In repo (`third_party/7zip/win-x64`) | Staged into the 7-Zip plugin folder for `.7z` archive operations and packaged payload checks |
 
 ### Run Locally
 
@@ -459,9 +604,14 @@ Useful local-only overrides:
 | `SIMPLEFILE_SERVICE_PATH` | Use a specific `simplefile-service.exe` |
 | `SIMPLEFILE_APP_DATA_DIR` | Redirect app data for fixtures or tests |
 | `SIMPLEFILE_METADATA_DB` | Point settings/tags to a specific metadata database |
-| `SIMPLEFILE_7Z` | Development override for a specific 7-Zip executable |
+| Settings -> Plugins -> 7-Zip archives -> 7-Zip executable override | Use a specific 7-Zip executable (a file, or a folder holding `7zz.exe`, `7z.exe` or `7za.exe`) instead of the plugin's bundled `7za.exe` |
+| `SUMAFILE_PLUGIN_ROOTS` | Semicolon-separated plugin roots that replace `<install folder>\plugins` (development and smokes; see [docs/PLUGINS.md](docs/PLUGINS.md)) |
+| `SUMAFILE_PLUGIN_DATA_ROOT`, `SUMAFILE_PLUGIN_APPROVALS_PATH`, `SUMAFILE_PLUGIN_LOG_PATH` | Redirect the plugin data folders, the approvals file and `plugins.log` (smokes) |
 | `SIMPLEFILE_UPDATE_MANIFEST_PATH` | Test updater metadata from a local file |
 | `SIMPLEFILE_UPDATE_MANIFEST_JSON` | Test updater metadata from inline JSON |
+
+`SIMPLEFILE_7Z` is no longer read. While it is set and the override is empty,
+the 7-Zip plugin's backend logs a one-time warning that names the setting.
 
 ### Common Commands
 
@@ -501,12 +651,12 @@ SumaFile.exe
         | length-prefixed named-pipe JSON-RPC
         v
 simplefile-service.exe
-  dispatcher, watcher, search, progress, cancellation, remote providers
+  dispatcher, watcher, search, progress, cancellation, plugin archive engines
         |
         v
 simplefile-core
   file ops, archive, preview data, metadata, checksum, compare,
-  drives, tags, smart folders, Git, updater, remote profiles, shell helpers
+  drives, tags, smart folders, updater, shell helpers
 ```
 
 Important contracts:
@@ -531,9 +681,9 @@ SumaFile/
 |   |-- SimpleFile.Ipc/       Named-pipe JSON-RPC client and generated bindings
 |   `-- SimpleFile.Tests/     xUnit tests for WinUI/core/IPC behavior
 |-- crates/
-|   |-- simplefile-core/      Filesystem, archive, preview, metadata, Git, remote profile logic
+|   |-- simplefile-core/      Filesystem, archive, preview, metadata logic
 |   |-- simplefile-ipc/       Protocol constants, framing, schema tests
-|   `-- simplefile-service/   Rust named-pipe service process and remote providers
+|   `-- simplefile-service/   Rust named-pipe service process
 |-- ipc/schema/v1/            JSON-RPC command, type, event, and golden files
 |-- packaging/winui/          NSIS, WiX, and Windows assets
 |-- scripts/                  Checks, release scripts, smoke tests, codegen
@@ -623,7 +773,7 @@ Before creating a release tag:
 
 1. Confirm the version fields above match.
 2. Run `npm run check:release`.
-3. Run the WinUI smoke commands required by `docs/RELEASE_1.0.4.md`.
+3. Run the WinUI smoke commands required by `docs/RELEASE_1.0.4.md`, and for the Beta by `docs/RELEASE_BETA.md`.
 4. Confirm the Installer Smoke workflow succeeds on the release commit.
 5. Merge the version bump, then tag the merged commit or start a new Release run from the updated `main`.
 
@@ -638,10 +788,12 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Near-term priorities and branch scope |
 | [docs/FEATURE_OPPORTUNITIES.md](docs/FEATURE_OPPORTUNITIES.md) | Candidate product gaps and recently closed gaps |
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Contributor workflow and expectations |
+| [docs/PLUGINS.md](docs/PLUGINS.md) | Writing SumaFile plugins: `plugin.json`, contributions, the SDK, the backend protocol, signing and packaging |
 | [docs/CI_MAINTENANCE.md](docs/CI_MAINTENANCE.md) | Pinned toolchains, bounded repair, update PRs, merge gates, and separate activation steps |
 | [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
 | [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
 | [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | Signed updater releases |
+| [docs/RELEASE_BETA.md](docs/RELEASE_BETA.md) | The Beta: the plugin system, what changed for Git, FTP/SFTP and 7-Zip, upgrading and known limitations |
 | [docs/RELEASE_1.0.4.md](docs/RELEASE_1.0.4.md) | Changes since v1.0.3, upgrade instructions and release checklist |
 | [docs/RELEASE_1.0.3.md](docs/RELEASE_1.0.3.md) | Changes since v1.0.2, upgrade instructions and release checklist |
 | [docs/RELEASE_1.0.2.md](docs/RELEASE_1.0.2.md) | Complete 1.0.1 → 1.0.2 release notes, upgrade guidance and checklist |
@@ -653,8 +805,11 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 
 ## Security
 
-- Do not commit updater private keys, signing keys, `.env` files, local secrets,
-  personal settings exports, or logs containing private paths.
+- Do not commit updater private keys, signing keys (including plugin signing
+  keys, `*.pem`), `.env` files, local secrets, personal settings exports, or
+  logs containing private paths.
+- Plugins run with your permissions and without a sandbox; see
+  [Plugins in docs/SECURITY.md](docs/SECURITY.md#plugins).
 - Gitignored sensitive locations include `.secrets/`, `*.key`, `.env`, and
   `.env.*`.
 - Archive extraction validates destination paths before writing.
@@ -670,8 +825,8 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 - RAR archives can be listed and extracted, but RAR creation and in-place RAR
   rewrites are not supported.
 - Account-backed storage integrations are intentionally out of scope for this
-  branch. FTP/FTPS/SFTP profiles are available in the separate Tools manager,
-  not mounted into the main panes.
+  branch. FTP/FTPS/SFTP profiles are available in the FTP/SFTP plugin's
+  separate manager window, not mounted into the main panes.
 - Rendered Markdown task-list checkboxes are read-only preview controls; editing
   task state requires editing the Markdown source.
 - Some Windows-reserved shortcuts may not be assignable; shortcut remapping,
@@ -705,3 +860,5 @@ Copyright (c) 2024-2026 conniecombs.
 Third-party libraries remain governed by their own license terms. Bundled 7-Zip
 console files are distributed with their upstream license in
 [`third_party/7zip/win-x64/License.txt`](third_party/7zip/win-x64/License.txt).
+An installed SumaFile ships that `License.txt` beside the 7-Zip files in
+`plugins\com.sumafile.sevenzip`.

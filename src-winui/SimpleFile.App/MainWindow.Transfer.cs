@@ -1161,6 +1161,22 @@ public sealed partial class MainWindow
                 destination = picked;
             }
 
+            if (ArchivePaths.IsEngineArchive(info.Path))
+            {
+                // Plugin formats run as a Transfers row with progress and Cancel; the built-ins keep the dialog.
+                var archivePath = info.Path;
+                var extractDestination = destination;
+                if (EnqueueArchiveTransfer(new ArchiveTransferRequest(
+                    $"Extracting {row.Name}",
+                    extractDestination,
+                    (progress, operationStarted, token) => fileOps.ExtractArchiveTrackedAsync(
+                        archivePath, extractDestination, progress, operationStarted, token),
+                    [extractDestination])) is not null)
+                {
+                    return;
+                }
+            }
+
             await DialogHost.RunWithProgressAsync(
                 Content.XamlRoot,
                 "Extract archive",
@@ -1549,7 +1565,8 @@ public sealed partial class MainWindow
         return columns.EffectiveForPaneWidth(
             paneWidth,
             _workspace?.DualPaneEnabled == true,
-            IsGitIntegrationEnabled);
+            // The status column shows only when a plugin decorates rows.
+            decorationsAvailable: _workspace?.RowDecorations.HasProviders == true);
     }
 
     private static void ClearDetailsItemWidths(ListView list)

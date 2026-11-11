@@ -64,6 +64,12 @@ jobs:
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo test --locked --all-features
 
+      # A dry run: both crates are packaged from the clean checkout and built from their packaged sources against a
+      # temporary local registry. Nothing is published. `npm run pack:crates` is the local form (with --allow-dirty).
+      - name: Package the plugin crates (dry run)
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: cargo package --locked -p simplefile-ipc -p sumafile-plugin
+
   repo-checks:
     name: Repo checks
     runs-on: ubuntu-22.04
@@ -171,8 +177,22 @@ jobs:
       - name: Build Rust IPC service
         run: cargo build -p simplefile-service --locked --release
 
+      - name: Build the Hello fixture plugin
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-fixture-plugin.ps1
+
+      - name: Build and stage the bundled plugins
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-plugins.ps1
+
+      - name: Test plugin staging
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-plugin-staging.ps1
+
       - name: Run WinUI tests
         run: npm run check:winui
+
+      # A dry run: packs SumaFile.PluginSdk (the SDK, its XML documentation and README) into target\packages. Nothing is
+      # published.
+      - name: Pack the plugin SDK (dry run)
+        run: npm run pack:sdk
 
       - name: Build WinUI application and XAML
         run: npm run build:winui
@@ -180,8 +200,24 @@ jobs:
       - name: Verify release artifact hashing
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-winui-release-hash.ps1
 
-      - name: Smoke WinUI rendering, layout, and cancellation
-        run: npm run smoke:winui-ui -- -Counts 10000
+      - name: Smoke WinUI rendering, layout, cancellation, and the Hello plugin
+        run: npm run smoke:winui-ui -- -Counts 10000 -PluginsDir target\fixture-plugins\com.sumafile.hello
+
+      # Directly after the -PluginsDir smoke and before the -NoPlugins one, so it reads the session that had plugins.
+      - name: Check the WinUI startup budget
+        run: npm run check:winui-startup-budget -- --expect-plugins
+
+      # A passing smoke deletes its run folder and leaves test-results\ui-smoke\last-passed-report.json and its polish
+      # screenshots in test-results\ui-smoke\last-passed\, which the next smoke clears and replaces, so the plugin
+      # run's copies are kept under their own names for the upload below.
+      - name: Keep the plugin smoke report
+        run: |
+          Copy-Item -LiteralPath test-results\ui-smoke\last-passed-report.json -Destination test-results\ui-smoke\plugins-passed-report.json
+          New-Item -ItemType Directory -Force -Path test-results\ui-smoke\plugins-passed | Out-Null
+          Copy-Item -Path test-results\ui-smoke\last-passed\*.png -Destination test-results\ui-smoke\plugins-passed -Force
+
+      - name: Smoke WinUI rendering, layout, and cancellation without plugins
+        run: npm run smoke:winui-ui -- -Counts 10000 -SkipBuild -NoPlugins
 
       - name: Upload WinUI runtime reports
         if: always()
@@ -189,6 +225,10 @@ jobs:
         with:
           name: sumafile-winui-runtime
           path: |
+            test-results/ui-smoke/last-passed-report.json
+            test-results/ui-smoke/plugins-passed-report.json
+            test-results/ui-smoke/last-passed/*.png
+            test-results/ui-smoke/plugins-passed/*.png
             test-results/ui-smoke/**/report.json
             test-results/ui-smoke/**/progress.json
             test-results/ui-smoke/**/workspace-polish.png

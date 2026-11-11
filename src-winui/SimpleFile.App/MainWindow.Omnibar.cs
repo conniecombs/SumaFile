@@ -202,7 +202,7 @@ public sealed partial class MainWindow
 
     private async Task ExecuteOmnibarCommandAsync(string query)
     {
-        var matches = OmnibarIntentParser.FilterCommands(query, IsGitIntegrationEnabled);
+        var matches = OmnibarIntentParser.FilterCommands(query);
         var command = matches.FirstOrDefault(candidate =>
                 string.Equals(candidate.Id, query, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(candidate.Label, query, StringComparison.OrdinalIgnoreCase))

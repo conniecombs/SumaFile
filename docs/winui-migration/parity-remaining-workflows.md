@@ -93,14 +93,14 @@ Seeded on first load if DB tags table is empty:
 | `install_update` | void | With update-chunk events |
 | `open_terminal` | void | |
 | `open_powershell_admin` | void | |
-| `get_git_status` | `GitStatus` | |
-| `get_git_repository_status` | `GitRepositoryStatus` | Feeds the dockable/detachable Git workbench |
-| `get_git_file_statuses` | `FileEntry[]` | Git column enrichment when enabled |
-| `git_stage_paths` | `GitCommandResult` | Workbench/context menu action |
-| `git_unstage_paths` | `GitCommandResult` | Workbench/context menu action |
-| `git_discard_paths` | `GitCommandResult` | Workbench/context menu action with confirmation |
-| `git_diff_path` | `string` | Resizable workbench diff preview |
-| `git_commit` | `GitCommandResult` | Workbench commit prompt |
-| `git_fetch` | `GitCommandResult` | Workbench/context menu action |
-| `git_pull` | `GitCommandResult` | Workbench/context menu/command palette action |
-| `git_push` | `GitCommandResult` | Workbench/context menu/command palette action |
+| `get_git_status` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) |  |
+| `get_git_repository_status` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) | Feeds the dockable/detachable Git workbench |
+| `get_git_file_statuses` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) | Git column enrichment when enabled |
+| `git_stage_paths` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) | Workbench/context menu action |
+| `git_unstage_paths` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) | Workbench/context menu action |
+| `git_discard_paths` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) | Workbench/context menu action with confirmation |
+| `git_diff_path` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) | Resizable workbench diff preview |
+| `git_commit` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) | Workbench commit prompt |
+| `git_fetch` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) | Workbench/context menu action |
+| `git_pull` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) | Workbench/context menu/command palette action |
+| `git_push` | Moved to the Git plugin in phase 4 (`plugins/git/protocol.json`) | Workbench/context menu/command palette action |

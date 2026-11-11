@@ -2,13 +2,15 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::create::{create_seven_zip_archive, create_tar_archive, create_zip_archive};
+use super::create::{create_tar_archive, create_zip_archive};
 use super::extract::{
     extract_archive_entry_to_directory, extract_archive_to_directory, ExtractLimits,
 };
+use super::mutate_engine::{self, EngineArchive, NewEntry};
 use super::path::{
     build_virtual_archive_path, create_dir_all, replace_archive, same_archive_path,
-    split_archive_path, unique_temp_archive_path, unique_work_dir, ArchiveFormat, ArchivePath,
+    split_archive_path, unique_temp_archive_path, unique_work_dir, ArchiveFormat, ArchiveKind,
+    ArchivePath,
 };
 
 pub fn should_handle_transfer(source: &str, destination: &str) -> Result<bool, String> {
@@ -34,8 +36,16 @@ pub fn copy_entry_resolved(
                 &destination_parsed.archive_path,
             ) =>
         {
+            if EngineArchive::of(&destination_parsed).is_some() {
+                return mutate_engine::copy_into(
+                    &source,
+                    Some(&source_parsed),
+                    &destination_parsed,
+                    &conflict_action,
+                );
+            }
             let result =
-                mutate_archive(&source_parsed.archive_path, source_parsed.format, |root| {
+                mutate_archive(&source_parsed.archive_path, &source_parsed.kind, |root| {
                     let source_path = root.join(&source_parsed.inner_path);
                     let dest_dir = root.join(&destination_parsed.inner_path);
                     copy_with_conflict(&source_path, &dest_dir, &conflict_action)
@@ -43,12 +53,20 @@ pub fn copy_entry_resolved(
             Ok(result.unwrap_or_else(|| format!("SKIPPED:{source}")))
         }
         (source_parsed, Some(destination_parsed)) => {
-            ensure_archive_can_modify(destination_parsed.format)?;
+            ensure_archive_can_modify(&destination_parsed.kind)?;
+            if EngineArchive::of(&destination_parsed).is_some() {
+                return mutate_engine::copy_into(
+                    &source,
+                    source_parsed.as_ref(),
+                    &destination_parsed,
+                    &conflict_action,
+                );
+            }
             let materialized = materialize_transfer_source(&source, source_parsed.as_ref())?;
             let mut materialized = materialized;
             let result = mutate_archive(
                 &destination_parsed.archive_path,
-                destination_parsed.format,
+                &destination_parsed.kind,
                 |root| {
                     let dest_dir = root.join(&destination_parsed.inner_path);
                     copy_with_conflict(&materialized.path, &dest_dir, &conflict_action)
@@ -75,10 +93,10 @@ pub fn move_entry_resolved(
     let destination_archive = split_archive_path(&destination)?;
 
     if let Some(source_parsed) = &source_archive {
-        ensure_archive_can_modify(source_parsed.format)?;
+        ensure_archive_can_modify(&source_parsed.kind)?;
     }
     if let Some(destination_parsed) = &destination_archive {
-        ensure_archive_can_modify(destination_parsed.format)?;
+        ensure_archive_can_modify(&destination_parsed.kind)?;
     }
 
     match (source_archive, destination_archive) {
@@ -88,8 +106,16 @@ pub fn move_entry_resolved(
                 &destination_parsed.archive_path,
             ) =>
         {
+            if EngineArchive::of(&destination_parsed).is_some() {
+                return mutate_engine::move_within(
+                    &source,
+                    &source_parsed,
+                    &destination_parsed,
+                    &conflict_action,
+                );
+            }
             let result =
-                mutate_archive(&source_parsed.archive_path, source_parsed.format, |root| {
+                mutate_archive(&source_parsed.archive_path, &source_parsed.kind, |root| {
                     let source_path = root.join(&source_parsed.inner_path);
                     let dest_dir = root.join(&destination_parsed.inner_path);
                     move_with_conflict(&source_path, &dest_dir, &conflict_action)
@@ -141,12 +167,66 @@ pub fn delete_archive_entry(path: &str) -> Result<(), String> {
     delete_archive_entry_parsed(&parsed)
 }
 
+/// Delete archive entries, grouped by archive. An engine archive gets one
+/// `engine.delete` with every inner path of its group, and a path missing
+/// from the fresh listing fails its group before the engine is called.
+/// Built-in archives keep one delete per path. Returns the error messages;
+/// empty means everything was deleted.
+pub fn delete_archive_entries(paths: &[String]) -> Vec<String> {
+    let mut errors = Vec::new();
+    let mut groups: Vec<(ArchivePath, Vec<(String, PathBuf)>)> = Vec::new();
+    for path in paths {
+        let parsed = match split_archive_path(path) {
+            Ok(Some(parsed)) if !parsed.inner_path.as_os_str().is_empty() => parsed,
+            Ok(_) => {
+                errors.push(format!("Path is not an archive entry: {path}"));
+                continue;
+            }
+            Err(error) => {
+                errors.push(error);
+                continue;
+            }
+        };
+        let entry = (path.clone(), parsed.inner_path.clone());
+        match groups
+            .iter_mut()
+            .find(|(first, _)| same_archive_path(&first.archive_path, &parsed.archive_path))
+        {
+            Some((_, entries)) => entries.push(entry),
+            None => groups.push((parsed, vec![entry])),
+        }
+    }
+
+    for (parsed, entries) in groups {
+        if EngineArchive::of(&parsed).is_some() {
+            if let Err(error) = mutate_engine::delete_entries(&parsed, &entries) {
+                errors.push(error);
+            }
+            continue;
+        }
+        for (_, inner_path) in entries {
+            let entry = ArchivePath {
+                archive_path: parsed.archive_path.clone(),
+                inner_path,
+                kind: parsed.kind.clone(),
+            };
+            if let Err(error) = delete_archive_entry_parsed(&entry) {
+                errors.push(error);
+            }
+        }
+    }
+    errors
+}
+
 pub fn create_archive_directory(path: String, name: String) -> Result<String, String> {
     crate::utils::validate_name(&name)?;
     let parsed = split_archive_path(&path)?
         .ok_or_else(|| format!("Path is not inside an archive: {path}"))?;
-    ensure_archive_can_modify(parsed.format)?;
-    let result = mutate_archive(&parsed.archive_path, parsed.format, |root| {
+    ensure_archive_can_modify(&parsed.kind)?;
+    if EngineArchive::of(&parsed).is_some() {
+        return mutate_engine::create_entry(&parsed, &name, NewEntry::Directory);
+    }
+    let result = mutate_archive(&parsed.archive_path, &parsed.kind, |root| {
         let dir_path = root.join(&parsed.inner_path).join(&name);
         if dir_path.exists() {
             return Err(format!("Directory already exists: {name}"));
@@ -161,8 +241,11 @@ pub fn create_archive_file(path: String, name: String) -> Result<String, String>
     crate::utils::validate_name(&name)?;
     let parsed = split_archive_path(&path)?
         .ok_or_else(|| format!("Path is not inside an archive: {path}"))?;
-    ensure_archive_can_modify(parsed.format)?;
-    let result = mutate_archive(&parsed.archive_path, parsed.format, |root| {
+    ensure_archive_can_modify(&parsed.kind)?;
+    if EngineArchive::of(&parsed).is_some() {
+        return mutate_engine::create_entry(&parsed, &name, NewEntry::File);
+    }
+    let result = mutate_archive(&parsed.archive_path, &parsed.kind, |root| {
         let file_path = root.join(&parsed.inner_path).join(&name);
         if let Some(parent) = file_path.parent() {
             create_dir_all(parent)?;
@@ -188,8 +271,11 @@ pub fn rename_archive_entry(path: String, new_name: String) -> Result<String, St
     let parsed = split_archive_path(&path)?
         .filter(|parsed| !parsed.inner_path.as_os_str().is_empty())
         .ok_or_else(|| format!("Path is not an archive entry: {path}"))?;
-    ensure_archive_can_modify(parsed.format)?;
-    let result = mutate_archive(&parsed.archive_path, parsed.format, |root| {
+    ensure_archive_can_modify(&parsed.kind)?;
+    if EngineArchive::of(&parsed).is_some() {
+        return mutate_engine::rename_entry(&parsed, &path, &new_name);
+    }
+    let result = mutate_archive(&parsed.archive_path, &parsed.kind, |root| {
         let source_path = root.join(&parsed.inner_path);
         if !source_path.exists() {
             return Err(format!("Archive entry not found: {path}"));
@@ -240,18 +326,18 @@ pub(super) fn materialize_archive_entry_to_temp_with_limits(
 }
 
 /// Deletes `unique_work_dir` on drop unless `take()` transfers ownership.
-struct WorkRootGuard {
+pub(super) struct WorkRootGuard {
     root: Option<PathBuf>,
 }
 
 impl WorkRootGuard {
-    fn create(label: &str) -> Result<Self, String> {
+    pub(super) fn create(label: &str) -> Result<Self, String> {
         Ok(Self {
             root: Some(unique_work_dir(label)?),
         })
     }
 
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         self.root.as_ref().expect("work root still owned")
     }
 
@@ -269,8 +355,12 @@ impl Drop for WorkRootGuard {
 }
 
 fn delete_archive_entry_parsed(parsed: &ArchivePath) -> Result<(), String> {
-    ensure_archive_can_modify(parsed.format)?;
-    mutate_archive(&parsed.archive_path, parsed.format, |root| {
+    ensure_archive_can_modify(&parsed.kind)?;
+    if EngineArchive::of(parsed).is_some() {
+        let path = build_virtual_archive_path(&parsed.archive_path, &parsed.inner_path);
+        return mutate_engine::delete_entries(parsed, &[(path, parsed.inner_path.clone())]);
+    }
+    mutate_archive(&parsed.archive_path, &parsed.kind, |root| {
         let path = root.join(&parsed.inner_path);
         remove_local_path(&path)?;
         Ok(None)
@@ -403,20 +493,20 @@ pub(super) fn copy_archive_entry_to_local_with_limits(
 
 fn mutate_archive<F>(
     archive_path: &Path,
-    format: ArchiveFormat,
+    kind: &ArchiveKind,
     mut mutate: F,
 ) -> Result<Option<String>, String>
 where
     F: FnMut(&Path) -> Result<Option<PathBuf>, String>,
 {
-    ensure_archive_can_modify(format)?;
-    ensure_archive_mutation_can_preserve_entries(archive_path, format)?;
+    ensure_archive_can_modify(kind)?;
+    ensure_archive_mutation_can_preserve_entries(archive_path, kind)?;
     let work_root = unique_work_dir("mutate")?;
     let new_archive = unique_temp_archive_path(archive_path)?;
     let result = (|| {
         extract_archive_to_directory(archive_path, &work_root)?;
         let final_path = mutate(&work_root)?;
-        rebuild_archive_from_directory(archive_path, format, &work_root, &new_archive)?;
+        rebuild_archive_from_directory(archive_path, kind, &work_root, &new_archive)?;
         replace_archive(archive_path, &new_archive)?;
         Ok(final_path.map(|path| {
             let relative = path.strip_prefix(&work_root).unwrap_or(&path);
@@ -432,11 +522,15 @@ where
 
 fn ensure_archive_mutation_can_preserve_entries(
     archive_path: &Path,
-    format: ArchiveFormat,
+    kind: &ArchiveKind,
 ) -> Result<(), String> {
-    match format {
-        ArchiveFormat::Tar => ensure_tar_mutation_can_preserve_entries(archive_path, None),
-        ArchiveFormat::TarGz => ensure_tar_mutation_can_preserve_entries(archive_path, Some("gz")),
+    match kind {
+        ArchiveKind::BuiltIn(ArchiveFormat::Tar) => {
+            ensure_tar_mutation_can_preserve_entries(archive_path, None)
+        }
+        ArchiveKind::BuiltIn(ArchiveFormat::TarGz) => {
+            ensure_tar_mutation_can_preserve_entries(archive_path, Some("gz"))
+        }
         _ => Ok(()),
     }
 }
@@ -480,15 +574,17 @@ fn ensure_tar_mutation_can_preserve_entries(
     }
 }
 
-fn ensure_archive_can_modify(format: ArchiveFormat) -> Result<(), String> {
-    if format == ArchiveFormat::Rar {
-        return Err(
+fn ensure_archive_can_modify(kind: &ArchiveKind) -> Result<(), String> {
+    match kind {
+        ArchiveKind::BuiltIn(ArchiveFormat::Rar) => Err(
             "RAR archives can be listed and extracted, but SumaFile does not rewrite RAR archives."
                 .to_string(),
-        );
+        ),
+        ArchiveKind::BuiltIn(_) => Ok(()),
+        ArchiveKind::Engine { engine, format } => {
+            mutate_engine::ensure_engine_can_modify(engine.name(), format)
+        }
     }
-
-    Ok(())
 }
 
 fn copy_with_conflict(
@@ -565,7 +661,10 @@ fn resolve_transfer_destination(
     }
 }
 
-fn copy_path_to_destination(source_path: &Path, final_dest: &Path) -> Result<(), String> {
+pub(super) fn copy_path_to_destination(
+    source_path: &Path,
+    final_dest: &Path,
+) -> Result<(), String> {
     if same_archive_path(source_path, final_dest) {
         return Ok(());
     }
@@ -669,12 +768,24 @@ fn unique_destination_path(dest_dir: &Path, file_name: &OsStr) -> PathBuf {
 
 fn rebuild_archive_from_directory(
     original_archive_path: &Path,
-    format: ArchiveFormat,
+    kind: &ArchiveKind,
     work_root: &Path,
     new_archive_path: &Path,
 ) -> Result<(), String> {
     let child_paths = archive_root_children(work_root)?;
     let archive_path = new_archive_path.to_string_lossy().to_string();
+    let format = match kind {
+        ArchiveKind::BuiltIn(format) => *format,
+        // Engine archives change in place through their engine and never
+        // reach a rebuild.
+        ArchiveKind::Engine { engine, format } => {
+            return Err(format!(
+                "{} cannot rebuild {} archives",
+                engine.name(),
+                format.extension
+            ));
+        }
+    };
     match format {
         ArchiveFormat::Zip => create_zip_archive(&child_paths, &archive_path),
         ArchiveFormat::Tar => create_tar_archive(&child_paths, &archive_path, None),
@@ -683,18 +794,11 @@ fn rebuild_archive_from_directory(
             "RAR archives can be listed and extracted, but SumaFile does not rewrite RAR archives."
                 .to_string(),
         ),
-        ArchiveFormat::SevenZip => {
-            if child_paths.is_empty() {
-                return Err("7-Zip archives cannot be rewritten with no entries".to_string());
-            }
-            let binary = super::seven_zip::require_seven_zip_binary()?;
-            create_seven_zip_archive(&child_paths, &archive_path, &binary)
-        }
     }
     .map_err(|e| {
         format!(
             "Failed to rebuild {} archive {}: {}",
-            format.label(),
+            kind.label(),
             original_archive_path.display(),
             e
         )

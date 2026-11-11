@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- The plugin's WinUI assembly. Its UI is built in code (spec §5.3: compiled XAML from a plugin folder fails). -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>SumaFile.Git</RootNamespace>
+    <AssemblyName>SumaFile.Git</AssemblyName>
+    <Description>Git plugin UI: the workbench panel, its diff splitter and the commit and discard dialogs</Description>
+    <IsPackable>false</IsPackable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Compile-only (spec §12): the SDK comes from the host at run time. -->
+    <ProjectReference Include="..\..\..\..\src-winui\SimpleFile.PluginSdk\SimpleFile.PluginSdk.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+    <!-- The WinUI-free model ships beside this assembly in the plugin folder. -->
+    <ProjectReference Include="..\SumaFile.Git.Model\SumaFile.Git.Model.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Compile-only (spec §5.1): WinUI comes from the host through PluginLoadContext's shared prefixes. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

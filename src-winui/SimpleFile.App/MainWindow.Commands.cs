@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
+using SimpleFile.PluginHost;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -222,8 +223,7 @@ public sealed partial class MainWindow
 
     private void RefreshCommandPalette(string query)
     {
-        _paletteCommands = [.. AppCommandCatalog.WithEffectiveShortcuts(AppCommandCatalog.Filter(query), _workspace?.Settings.ShortcutOverrides)
-            .Where(command => !string.Equals(command.Group, "Git", StringComparison.Ordinal) || IsGitIntegrationEnabled)];
+        _paletteCommands = [.. AppCommandCatalog.WithEffectiveShortcuts(AppCommandCatalog.Filter(query), _workspace?.Settings.ShortcutOverrides)];
         CommandPaletteList.ItemsSource = _paletteCommands;
         if (_paletteCommands.Count > 0)
         {
@@ -875,16 +875,23 @@ public sealed partial class MainWindow
         return list.SelectedItems.OfType<FileRow>().LastOrDefault() ?? list.SelectedItem as FileRow;
     }
 
+    /// <summary>
+    /// The request menus and <c>when</c> expressions are built from. Its plugin facts come from the decorations the active
+    /// pane already has; building it never asks a provider. <paramref name="forWhenOnly"/> skips the shell queries
+    /// (the Windows clipboard and Open with) that no <c>when</c> expression reads, for the toolbar's evaluation.
+    /// </summary>
     private ContextMenuRequest BuildContextMenuRequest(
         IReadOnlyList<FileRow> selected,
-        IReadOnlyCollection<string>? overflowedToolbarIds = null)
+        IReadOnlyCollection<string>? overflowedToolbarIds = null,
+        bool forWhenOnly = false)
     {
         var selectedFile = selected.Count == 1 && !selected[0].IsDir ? selected[0] : null;
         var otherPanePath = _workspace?.OtherPanePath();
+        var decorations = _workspace?.Active.Decorations ?? PaneDecorations.Empty;
         return new ContextMenuRequest
         {
             SelectionCount = selected.Count,
-            HasClipboard = _workspace?.Clipboard.HasItems == true || HasWindowsFileClipboardContent(),
+            HasClipboard = _workspace?.Clipboard.HasItems == true || (!forWhenOnly && HasWindowsFileClipboardContent()),
             DualPaneEnabled = _workspace?.DualPaneEnabled == true,
             MenuPane = _workspace?.ActivePane ?? PaneId.Primary,
             OtherPaneHasPath = otherPanePath is not null,
@@ -897,14 +904,14 @@ public sealed partial class MainWindow
             SelectedIsArchive = selected.Count == 1 && !selected[0].IsDir && ArchivePaths.IsArchiveFile(selected[0].Path),
             ArchiveExtractFolderName = selected.Count == 1 ? ArchivePaths.ExtractFolderName(selected[0].Name) : null,
             SelectedExtension = selectedFile?.Extension,
-            OpenWithApplications = selectedFile is null ? [] : OpenWithApplicationsForPath(selectedFile.Path),
+            OpenWithApplications = selectedFile is null || forWhenOnly ? [] : OpenWithApplicationsForPath(selectedFile.Path),
             OverflowedToolbarIds = overflowedToolbarIds ?? [],
             ToolbarActionOrder = CurrentPrimaryToolbarActionOrder(),
             ToolbarDisplayMode = (_workspace?.Settings.CommandSurface ?? CommandSurfaceLayout.CreateDefault()).ToolbarDisplayMode,
             InRecycleBin = PathRules.IsRecycleBinPath(_workspace?.Active.Path),
-            GitEnabled = IsGitIntegrationEnabled,
-            InGitRepository = _gitStatus?.IsRepo == true || selected.Any(row => !string.IsNullOrWhiteSpace(row.GitText)),
-            SelectionHasGitStatus = selected.Any(row => !string.IsNullOrWhiteSpace(row.GitText)),
+            PluginMenus = _pluginMenus,
+            FolderFlags = decorations.FolderFlags,
+            SelectionDecorationPlugins = decorations.PluginsFor(selected.Select(row => row.Path)),
         };
     }
 
@@ -986,6 +993,12 @@ public sealed partial class MainWindow
 
     private async Task RunContextCommandAsync(string id, string? commandParameter = null)
     {
+        if (PluginManager.TryParseHostCommandId(id, out _, out _))
+        {
+            await RunPluginCommandAsync(id);
+            return;
+        }
+
         if (id == "ctx-paste" && !string.IsNullOrWhiteSpace(commandParameter))
         {
             await PasteFromClipboard(commandParameter);

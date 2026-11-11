@@ -6,17 +6,18 @@ mod parallel;
 mod plan;
 mod registry;
 mod reporting;
-mod resources;
 mod tuning;
 
-pub(crate) use parallel::{ActiveFile, ConflictAction, TuningUpdate};
-pub use registry::OperationRegistry;
-pub(crate) use resources::Permit as TransferPermit;
-pub(crate) use resources::PooledBuffer;
-pub(crate) use resources::RateLimit;
+// Moved to the leaf crate `sumafile-transfer`; re-exported under the old names.
+use sumafile_transfer::resources;
+
+pub(crate) use parallel::ConflictAction;
 #[cfg(test)]
-pub(crate) use tuning::Mode;
-pub(crate) use tuning::{CheckMode, OrderBy, Policy};
+pub(crate) use parallel::TuningUpdate;
+pub use registry::OperationRegistry;
+pub(crate) use tuning::policy_for_operation;
+#[cfg(test)]
+pub(crate) use tuning::Policy;
 
 #[cfg(test)]
 pub(crate) use plan::prepare_transfer_inputs;
@@ -36,7 +37,6 @@ use plan::{
 use serde::Serialize;
 use simplefile_core::models::ProgressUpdate;
 use simplefile_core::path_conflict::{is_already_exists_error, rename_exclusive};
-use simplefile_core::utils::generate_operation_id;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -121,9 +121,7 @@ pub struct TransferItem {
     pub action: String,
 }
 
-pub fn generate_transfer_operation_id() -> String {
-    generate_operation_id()
-}
+pub use sumafile_transfer::ids::generate_transfer_operation_id;
 
 /// Compatibility RPCs share the transfer engine instead of bypassing recovery.
 pub(crate) fn transfer_single_compat(
@@ -209,7 +207,7 @@ pub(crate) fn transfer_with_tuning_blocking(
         cancel,
         emit,
         emit_tuning,
-        &|| tuning::Policy::for_operation(&policy_id),
+        &|| policy_for_operation(&policy_id),
     )
 }
 
@@ -233,7 +231,7 @@ pub(crate) fn transfer_items_with_tuning_blocking(
         cancel,
         emit,
         emit_tuning,
-        &|| tuning::Policy::for_operation(&policy_id),
+        &|| policy_for_operation(&policy_id),
     )
 }
 
@@ -379,6 +377,7 @@ fn transfer_with_policy_blocking(
         last_running_emit: StdMutex::new(Instant::now()),
         retry_count: None,
         rate_limit: None,
+        write_latency: None,
     };
     // The first event precedes every volume probe and destination scan.
     progress.emit_now(0, 0, "Preparing transfer...".to_string(), "running", None);
@@ -552,7 +551,7 @@ fn transfer_with_policy_blocking(
             operation_id: &operation_id,
             network: plans.iter().any(|plan| plan.network),
             resume_existing: false,
-            policy: session.controller.policy.clone(),
+            policy: session.policy().clone(),
         };
         let result =
             parallel::copy_selection(&roots, files, &ctx, &mut completed_bytes, &mut session);
@@ -1407,6 +1406,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -1460,6 +1460,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
         let ctx = CopyContext {
             progress: &progress,
@@ -1858,6 +1859,7 @@ mod tests {
             last_running_emit: Mutex::new(Instant::now()),
             retry_count: None,
             rate_limit: None,
+            write_latency: None,
         };
 
         progress.emit_with_total(1, 100, "first".to_string(), "running", None);

@@ -58,156 +58,6 @@ async fn call(client: &mut tokio::io::DuplexStream, method: &str, id: u64, param
     serde_json::from_slice(&response).unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_transfer_accepts_health_and_cancel_while_streaming_and_cleans_partial_file() {
-    remote_transfer_cancellation(false).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn remote_transfer_disconnect_cancels_worker_and_cleans_partial_file() {
-    remote_transfer_cancellation(true).await;
-}
-
-async fn remote_transfer_cancellation(disconnect: bool) {
-    use crate::remote::provider::{RemoteProvider, RemoteProviderFactory};
-    use simplefile_core::models::{DirectoryListing, FileEntry};
-    struct SlowProvider;
-    impl RemoteProvider for SlowProvider {
-        fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
-            Ok(DirectoryListing {
-                path: path.into(),
-                parent: None,
-                is_network: true,
-                entries: vec![FileEntry {
-                    name: "slow.bin".into(),
-                    path: "/slow.bin".into(),
-                    is_dir: false,
-                    is_symlink: false,
-                    is_hidden: false,
-                    is_system: false,
-                    size: 1000000,
-                    modified: "".into(),
-                    extension: "bin".into(),
-                    permissions: None,
-                    symlink_target: None,
-                    git_status: None,
-                }],
-            })
-        }
-        fn create_directory(&mut self, _: &str, _: &str) -> Result<FileEntry, String> {
-            unreachable!()
-        }
-        fn rename_entry(&mut self, _: &str, _: &str) -> Result<FileEntry, String> {
-            unreachable!()
-        }
-        fn delete_entries(&mut self, _: &[String]) -> Result<Vec<String>, String> {
-            unreachable!()
-        }
-        fn download(
-            &mut self,
-            _: &str,
-            destination: &mut dyn std::io::Write,
-        ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
-            for _ in 0..1000 {
-                destination
-                    .write_all(&[1; 1024])
-                    .map_err(|e| e.to_string())?;
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            Ok(1024000)
-        }
-        fn upload(
-            &mut self,
-            _: &str,
-            _: &mut dyn std::io::Read,
-        ) -> Result<u64, crate::remote::provider::RemoteTransferError> {
-            unreachable!()
-        }
-    }
-    struct Factory;
-    impl RemoteProviderFactory for Factory {
-        fn connect(
-            &self,
-            _: &simplefile_core::remote::RemoteProfile,
-            _: Option<&crate::remote::secrets::RemoteSecret>,
-        ) -> Result<Box<dyn RemoteProvider>, String> {
-            Ok(Box::new(SlowProvider))
-        }
-    }
-    let destination = std::env::temp_dir().join(crate::progress::generate_transfer_operation_id());
-    std::fs::create_dir(&destination).unwrap();
-    let mut state = SessionState::with_remote_provider_factory(Factory);
-    state.handshake_done = true;
-    let profile = serde_json::from_value(json!({ "id":"test", "name":"test", "protocol":"sftp", "host":"localhost", "port":22,
-        "username":"test", "root_path":"/", "auth_kind":"password", "insecure_plain_ftp":false, "passive_mode":true })).unwrap();
-    let session = state
-        .remote_sessions
-        .connect_profile(profile, None)
-        .unwrap();
-    let (mut client, server) = duplex(64 * 1024);
-    let (reader, writer) = tokio::io::split(server);
-    let serving = tokio::spawn(serve_connection(reader, writer, state));
-    send_request(&mut client, "remote_transfer_entries", 1, json!({ "remoteSessionId":session.session_id, "direction":"download",
-        "sources":["/slow.bin"], "destination":destination.to_string_lossy(), "conflictAction":"replace", "operationId":"remote-cancel-test" })).await;
-    // Wait until the transfer has started, then exercise the same IPC reader.
-    let notification: Value =
-        serde_json::from_slice(&read_frame(&mut client).await.unwrap()).unwrap();
-    assert_eq!(notification["method"], "operation-progress");
-    if disconnect {
-        // Wait for the owned partial, so cleanup cannot pass before I/O starts.
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
-            while std::fs::read_dir(&destination).unwrap().count() == 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
-        drop(client);
-        serving.await.unwrap().unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
-            while std::fs::read_dir(&destination).unwrap().count() != 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
-        std::fs::remove_dir(&destination).unwrap();
-        return;
-    }
-    send_request(&mut client, HEALTH_METHOD, 2, json!({})).await;
-    send_request(
-        &mut client,
-        "cancel_operation",
-        3,
-        json!({ "operationId":"remote-cancel-test" }),
-    )
-    .await;
-    let responses = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        let mut replies = std::collections::HashMap::new();
-        while replies.len() < 3 {
-            let reply: Value =
-                serde_json::from_slice(&read_frame(&mut client).await.unwrap()).unwrap();
-            if let Some(id) = reply["id"].as_u64() {
-                replies.insert(id, reply);
-            }
-        }
-        replies
-    })
-    .await
-    .unwrap();
-    assert!(responses[&2].get("error").is_none());
-    assert_eq!(responses[&3]["result"], true);
-    assert_eq!(responses[&1]["result"]["cancelled"], true);
-    assert_eq!(
-        responses[&1]["result"]["retry_sources"],
-        json!(["/slow.bin"])
-    );
-    assert_eq!(std::fs::read_dir(&destination).unwrap().count(), 0);
-    drop(client);
-    serving.await.unwrap().unwrap();
-    std::fs::remove_dir(&destination).unwrap();
-}
-
 #[tokio::test]
 async fn writer_loop_batches_ready_frames() {
     let writer = RecordingWriter::default();
@@ -592,80 +442,6 @@ async fn malformed_json_frame_gets_parse_error_and_session_continues() {
     assert_eq!(server.await.unwrap(), Ok(()));
 }
 
-/// A remote handshake that stalls must not stall the pipe: health (and
-/// cancels) have to be answered while the connect attempt is in flight.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn slow_remote_test_profile_does_not_block_other_requests() {
-    use crate::remote::provider::{RemoteProvider, RemoteProviderFactory};
-    struct StallingFactory;
-    impl RemoteProviderFactory for StallingFactory {
-        fn connect(
-            &self,
-            _: &simplefile_core::remote::RemoteProfile,
-            _: Option<&crate::remote::secrets::RemoteSecret>,
-        ) -> Result<Box<dyn RemoteProvider>, String> {
-            std::thread::sleep(std::time::Duration::from_millis(1500));
-            Err("host unreachable".to_string())
-        }
-    }
-
-    let (mut client, server) = duplex(64 * 1024);
-    let (server_read, server_write) = tokio::io::split(server);
-    let mut state = SessionState::with_remote_provider_factory(StallingFactory);
-    state.expected_token = Some("dev".to_string());
-    let _server = tokio::spawn(serve_connection(server_read, server_write, state));
-    let _ = call(
-        &mut client,
-        HANDSHAKE_METHOD,
-        1,
-        json!({ "protocolVersion": PROTOCOL_VERSION, "clientName": "test", "authToken": "dev" }),
-    )
-    .await;
-
-    let started = tokio::time::Instant::now();
-    send_request(
-        &mut client,
-        "remote_test_profile",
-        2,
-        json!({
-            "profile": {
-                "id": null,
-                "name": "stalling",
-                "protocol": "sftp",
-                "host": "203.0.113.1",
-                "port": 22,
-                "username": "user",
-                "root_path": "/",
-                "auth_kind": "anonymous",
-                "insecure_plain_ftp": false,
-                "passive_mode": true,
-                "credential_target": null,
-                "private_key_path": null,
-                "trusted_host_fingerprint": "SHA256:abc"
-            }
-        }),
-    )
-    .await;
-    send_request(&mut client, HEALTH_METHOD, 3, json!({})).await;
-
-    let first: Value = serde_json::from_slice(&read_frame(&mut client).await.unwrap()).unwrap();
-    let health_latency = started.elapsed();
-    assert_eq!(
-        first["id"],
-        json!(3),
-        "health must be answered before the stalled remote handshake: {first}"
-    );
-    assert!(
-        health_latency < std::time::Duration::from_millis(1000),
-        "{health_latency:?}"
-    );
-
-    let second = read_response_with_id(&mut client, 2, std::time::Duration::from_secs(5))
-        .await
-        .expect("remote_test_profile still replies after the stall");
-    assert!(second.get("result").is_some(), "{second}");
-}
-
 /// An unauthenticated client must not be able to make the service allocate
 /// an 80 MiB frame; before the handshake only small frames are accepted.
 #[tokio::test]
@@ -688,4 +464,111 @@ async fn oversized_frame_before_handshake_closes_the_session() {
         .unwrap();
     let error = outcome.expect_err("oversized pre-handshake frame is an error");
     assert!(error.contains("too large"), "{error}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn extract_archive_with_operation_id_emits_running_then_completed_for_zip() {
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("zip_progress");
+    std::fs::write(dir.join("a.txt"), b"alpha").unwrap();
+    let archive = dir.join("pack.zip");
+    simplefile_core::archive::create_archive(
+        vec![dir.join("a.txt").to_string_lossy().into_owned()],
+        archive.to_string_lossy().into_owned(),
+        "zip".to_string(),
+    )
+    .unwrap();
+    let destination = dir.join("out");
+
+    send_request(
+        &mut client,
+        "extract_archive",
+        2,
+        json!({
+            "archivePath": archive.to_string_lossy(),
+            "destination": destination.to_string_lossy(),
+            "operationId": "zip-op"
+        }),
+    )
+    .await;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut events = Vec::new();
+    let response = loop {
+        let payload = tokio::time::timeout_at(deadline, read_frame(&mut client))
+            .await
+            .expect("extract_archive never replied")
+            .unwrap();
+        let message: Value = serde_json::from_slice(&payload).unwrap();
+        if message["method"] == "operation-progress" {
+            events.push(message["params"].clone());
+        } else if message.get("id") == Some(&json!(2)) {
+            break message;
+        }
+    };
+    let extracted = std::fs::read(destination.join("a.txt"));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(response["result"], Value::Null, "{response}");
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(extracted.unwrap(), b"alpha");
+    assert!(events.len() >= 2, "{events:?}");
+    assert!(events
+        .iter()
+        .all(|event| event["operation_id"] == "zip-op"
+            && event["operation_type"] == "extract-archive"));
+    assert_eq!(events[0]["status"], "running");
+    assert_eq!(events[0]["current"], 0);
+    assert_eq!(events[0]["total"], 0);
+    assert_eq!(events.last().unwrap()["status"], "completed");
+}
+
+/// No service lib test registers `.7z`, so nothing serves it here: a pane
+/// listing of the file or of a folder inside it reports the plugin note,
+/// with the options `PaneNavigator` sends and without any.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_directory_on_an_unserved_7z_reports_the_plugin_note() {
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("unserved_7z");
+    let archive = dir.join("x.7z");
+    std::fs::write(&archive, b"not read without an engine").unwrap();
+    let archive_path = archive.to_string_lossy().into_owned();
+    let pane_options = json!({
+        "mode": "light",
+        "finalEntries": false,
+        "sortBy": "name",
+        "sortAscending": true,
+        "includeHidden": true
+    });
+
+    let mut id = 1;
+    let mut errors = Vec::new();
+    for path in [archive_path.clone(), format!("{archive_path}\\docs")] {
+        for with_options in [true, false] {
+            id += 1;
+            let mut params = if with_options {
+                pane_options.clone()
+            } else {
+                json!({})
+            };
+            params["path"] = json!(path);
+            send_request(&mut client, "list_directory", id, params).await;
+            let response =
+                read_response_with_id(&mut client, id, std::time::Duration::from_secs(10))
+                    .await
+                    .unwrap_or_else(|| panic!("list_directory {path} never replied"));
+            errors.push((
+                format!("{path} with options {with_options}"),
+                response["error"]["message"].clone(),
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+
+    for (described, message) in errors {
+        assert_eq!(
+            message,
+            json!("7-Zip support requires the SumaFile 7-Zip plugin."),
+            "{described}"
+        );
+    }
 }

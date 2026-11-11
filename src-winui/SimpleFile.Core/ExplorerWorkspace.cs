@@ -28,9 +28,13 @@ public sealed partial class ExplorerWorkspace
     private readonly WorkspaceSelectionController _selection = new();
     private readonly object _gate = new();
 
-    public ExplorerWorkspace(IExplorerBackend backend, FileOperationService? fileOps = null)
+    public ExplorerWorkspace(
+        IExplorerBackend backend,
+        FileOperationService? fileOps = null,
+        RowDecorationCoordinator? rowDecorations = null)
     {
         _backend = backend;
+        RowDecorations = rowDecorations ?? new RowDecorationCoordinator();
         _navigator = new PaneNavigator(_backend, _gate, RaiseChanged);
         FileOps = fileOps;
         _profiles = new WorkspaceProfileService(
@@ -52,6 +56,8 @@ public sealed partial class ExplorerWorkspace
     public event EventHandler? Changed;
 
     public FileOperationService? FileOps { get; }
+    /// <summary>Asks the decorating plugins about each folder sync; see <see cref="InvalidateDecorationsAsync()"/>.</summary>
+    public RowDecorationCoordinator RowDecorations { get; }
     public ClipboardState Clipboard { get; }
     public UndoStack Undo { get; }
     /// <summary>Primary pane column layout. Prefer <see cref="ColumnsFor"/> for pane-specific access.</summary>

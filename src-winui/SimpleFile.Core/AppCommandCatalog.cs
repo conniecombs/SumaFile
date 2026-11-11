@@ -21,7 +21,7 @@ public sealed class AppCommand
 /// </summary>
 public static class AppCommandCatalog
 {
-    public static readonly IReadOnlyList<AppCommand> All =
+    public static readonly IReadOnlyList<AppCommand> BuiltIn =
     [
         new("go-home", "Go home", "Navigation", "Alt+Home"),
         new("go-recycle-bin", "Go to Recycle Bin", "Navigation"),
@@ -52,7 +52,6 @@ public static class AppCommandCatalog
         new("shortcut-for-selected", "Create shortcut to selection", "File"),
         new("create-archive", "Create archive", "Archive"),
         new("terminal", "Open terminal", "Tools", "Ctrl+`"),
-        new("ftp-sftp-manager", "FTP/SFTP manager", "Tools"),
         new("preview", "Show or hide preview pane", "View"),
         new("toggle-hidden", "Show or hide hidden files", "View", "Ctrl+H"),
         new("toggle-side-menu", "Show or hide sidebar", "View"),
@@ -97,17 +96,22 @@ public static class AppCommandCatalog
         new("settings", "Open settings", "App", "Ctrl+,"),
         new("command-palette", "Open command palette", "App", "Ctrl+Shift+P"),
         new("keyboard-help", "Show keyboard shortcuts", "App", "F1"),
-        new("git-panel", "Git: show workbench", "Git"),
-        new("git-refresh", "Git: refresh status", "Git"),
-        new("git-fetch", "Git: fetch", "Git"),
-        new("git-pull", "Git: pull", "Git"),
-        new("git-push", "Git: push", "Git"),
-        new("git-commit", "Git: commit staged changes", "Git"),
-        new("git-stage-selected", "Git: stage selected paths", "Git"),
-        new("git-unstage-selected", "Git: unstage selected paths", "Git"),
-        new("git-discard-selected", "Git: discard selected changes", "Git"),
-        new("git-diff-selected", "Git: show selected diff", "Git"),
     ];
+
+    private static volatile IReadOnlyList<AppCommand> _all = BuiltIn;
+
+    /// <summary>Built-in commands followed by the commands enabled plugins contribute.</summary>
+    public static IReadOnlyList<AppCommand> All => _all;
+
+    public static event EventHandler? Changed;
+
+    /// <summary>Replaces the plugin-contributed commands; an empty list restores the built-in set.</summary>
+    public static void SetPluginCommands(IReadOnlyList<AppCommand> commands)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        _all = commands.Count == 0 ? BuiltIn : [.. BuiltIn, .. commands];
+        Changed?.Invoke(null, EventArgs.Empty);
+    }
 
     /// <summary>
     /// Returns the commands with their displayed shortcut taken from the effective keyboard map

@@ -37,6 +37,11 @@ public sealed class FileEntry
     [JsonPropertyName("symlink_target")]
     public string? SymlinkTarget { get; set; }
 
+    /// <summary>
+    /// Retired: the service always leaves it null. Git status moved to the
+    /// <c>com.sumafile.git</c> plugin's row decorations in phase 4; the property
+    /// stays so the v1 wire format and the binary listing frame keep their shape.
+    /// </summary>
     [JsonPropertyName("git_status")]
     public string? GitStatus { get; set; }
 
@@ -656,72 +661,6 @@ public sealed class SmartFolder
     [JsonPropertyName("search_options")] public SearchOptions SearchOptions { get; set; } = new();
 }
 
-public sealed class RemoteProfile
-{
-    [JsonPropertyName("id")] public string Id { get; set; } = "";
-    [JsonPropertyName("name")] public string Name { get; set; } = "";
-    [JsonPropertyName("protocol")] public string Protocol { get; set; } = "";
-    [JsonPropertyName("host")] public string Host { get; set; } = "";
-    [JsonPropertyName("port")] public int Port { get; set; }
-    [JsonPropertyName("username")] public string Username { get; set; } = "";
-    [JsonPropertyName("root_path")] public string RootPath { get; set; } = "/";
-    [JsonPropertyName("auth_kind")] public string AuthKind { get; set; } = "";
-    [JsonPropertyName("insecure_plain_ftp")] public bool InsecurePlainFtp { get; set; }
-    [JsonPropertyName("passive_mode")] public bool PassiveMode { get; set; }
-    [JsonPropertyName("credential_target")] public string? CredentialTarget { get; set; }
-    [JsonPropertyName("private_key_path")] public string? PrivateKeyPath { get; set; }
-    [JsonPropertyName("trusted_host_fingerprint")] public string? TrustedHostFingerprint { get; set; }
-}
-
-public sealed class RemoteProfileInput
-{
-    [JsonPropertyName("id")] public string? Id { get; set; }
-    [JsonPropertyName("name")] public string Name { get; set; } = "";
-    [JsonPropertyName("protocol")] public string Protocol { get; set; } = "";
-    [JsonPropertyName("host")] public string Host { get; set; } = "";
-    [JsonPropertyName("port")] public int Port { get; set; }
-    [JsonPropertyName("username")] public string Username { get; set; } = "";
-    [JsonPropertyName("root_path")] public string RootPath { get; set; } = "/";
-    [JsonPropertyName("auth_kind")] public string AuthKind { get; set; } = "";
-    [JsonPropertyName("insecure_plain_ftp")] public bool InsecurePlainFtp { get; set; }
-    [JsonPropertyName("passive_mode")] public bool PassiveMode { get; set; } = true;
-    [JsonPropertyName("credential_target")] public string? CredentialTarget { get; set; }
-    [JsonPropertyName("private_key_path")] public string? PrivateKeyPath { get; set; }
-    [JsonPropertyName("trusted_host_fingerprint")] public string? TrustedHostFingerprint { get; set; }
-}
-
-public sealed class RemoteConnectionTestResult
-{
-    [JsonPropertyName("ok")] public bool Ok { get; set; }
-    [JsonPropertyName("message")] public string Message { get; set; } = "";
-    [JsonPropertyName("capabilities")] public string[] Capabilities { get; set; } = [];
-}
-
-public sealed class RemoteTransferItem
-{
-    [JsonPropertyName("source")] public string Source { get; set; } = "";
-    [JsonPropertyName("destination")] public string Destination { get; set; } = "";
-    [JsonPropertyName("is_dir")] public bool IsDir { get; set; }
-    [JsonPropertyName("status")] public string Status { get; set; } = "";
-    [JsonPropertyName("bytes")] public ulong Bytes { get; set; }
-    [JsonPropertyName("error")] public string? Error { get; set; }
-}
-
-public sealed class RemoteTransferOutcome
-{
-    [JsonPropertyName("items")] public RemoteTransferItem[] Items { get; set; } = [];
-    [JsonPropertyName("retry_sources")] public string[] RetrySources { get; set; } = [];
-    [JsonPropertyName("cancelled")] public bool Cancelled { get; set; }
-}
-
-public sealed class RemoteSession
-{
-    [JsonPropertyName("session_id")] public string SessionId { get; set; } = "";
-    [JsonPropertyName("profile_id")] public string ProfileId { get; set; } = "";
-    [JsonPropertyName("protocol")] public string Protocol { get; set; } = "";
-    [JsonPropertyName("root_path")] public string RootPath { get; set; } = "/";
-}
-
 public sealed class CleanupFile
 {
     [JsonPropertyName("path")] public string Path { get; set; } = "";
@@ -799,54 +738,4 @@ public sealed class UpdateInfo
     [JsonPropertyName("url")] public string? Url { get; set; }
     [JsonPropertyName("sha256")] public string? Sha256 { get; set; }
     [JsonPropertyName("size")] public ulong? Size { get; set; }
-}
-
-public sealed class GitStatus
-{
-    [JsonPropertyName("is_repo")] public bool IsRepo { get; set; }
-    [JsonPropertyName("branch")] public string? Branch { get; set; }
-    [JsonPropertyName("modified")] public int Modified { get; set; }
-    [JsonPropertyName("staged")] public int Staged { get; set; }
-    [JsonPropertyName("untracked")] public int Untracked { get; set; }
-    [JsonPropertyName("ahead")] public int Ahead { get; set; }
-    [JsonPropertyName("behind")] public int Behind { get; set; }
-}
-
-public sealed class GitFileStatus
-{
-    [JsonPropertyName("path")] public string Path { get; set; } = "";
-    [JsonPropertyName("absolute_path")] public string AbsolutePath { get; set; } = "";
-    [JsonPropertyName("original_path")] public string? OriginalPath { get; set; }
-    [JsonPropertyName("status")] public string Status { get; set; } = "";
-    [JsonPropertyName("index_status")] public string IndexStatus { get; set; } = "";
-    [JsonPropertyName("worktree_status")] public string WorktreeStatus { get; set; } = "";
-    [JsonPropertyName("staged")] public bool Staged { get; set; }
-    [JsonPropertyName("unstaged")] public bool Unstaged { get; set; }
-    [JsonPropertyName("untracked")] public bool Untracked { get; set; }
-    [JsonPropertyName("conflicted")] public bool Conflicted { get; set; }
-}
-
-public sealed class GitRepositoryStatus
-{
-    [JsonPropertyName("is_repo")] public bool IsRepo { get; set; }
-    [JsonPropertyName("root")] public string? Root { get; set; }
-    [JsonPropertyName("branch")] public string? Branch { get; set; }
-    [JsonPropertyName("upstream")] public string? Upstream { get; set; }
-    [JsonPropertyName("head")] public string? Head { get; set; }
-    [JsonPropertyName("ahead")] public int Ahead { get; set; }
-    [JsonPropertyName("behind")] public int Behind { get; set; }
-    [JsonPropertyName("staged")] public int Staged { get; set; }
-    [JsonPropertyName("unstaged")] public int Unstaged { get; set; }
-    [JsonPropertyName("untracked")] public int Untracked { get; set; }
-    [JsonPropertyName("conflicted")] public int Conflicted { get; set; }
-    [JsonPropertyName("changes")] public List<GitFileStatus> Changes { get; set; } = [];
-}
-
-public sealed class GitCommandResult
-{
-    [JsonPropertyName("command")] public string Command { get; set; } = "";
-    [JsonPropertyName("exit_code")] public int ExitCode { get; set; }
-    [JsonPropertyName("stdout")] public string Stdout { get; set; } = "";
-    [JsonPropertyName("stderr")] public string Stderr { get; set; } = "";
-    [JsonPropertyName("summary")] public string Summary { get; set; } = "";
 }

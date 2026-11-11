@@ -18,9 +18,11 @@ internal sealed class FakeIpcServer : IAsyncDisposable
 
     public string PipeName { get; }
 
-    public static FakeIpcServer Create()
+    public static FakeIpcServer Create() => Create("SumaFile.Test." + Guid.NewGuid().ToString("N"));
+
+    public static FakeIpcServer Create(string pipeName)
     {
-        var name = "SumaFile.Test." + Guid.NewGuid().ToString("N");
+        var name = pipeName;
         var pipe = new NamedPipeServerStream(
             name,
             PipeDirection.InOut,
@@ -104,6 +106,26 @@ internal sealed class FakeIpcServer : IAsyncDisposable
                 @params,
             },
             cancellationToken);
+    }
+
+    public Task SendRequestAsync(int id, string method, object? @params, CancellationToken ct = default)
+    {
+        return WriteAsync(
+            new
+            {
+                jsonrpc = Protocol.JsonRpc,
+                id,
+                method,
+                @params,
+            },
+            ct);
+    }
+
+    public async Task<JsonElement> ReadResponseAsync(CancellationToken ct = default)
+    {
+        var payload = await ReadFrameAsync(ct).ConfigureAwait(false);
+        using var document = JsonDocument.Parse(payload);
+        return document.RootElement.Clone();
     }
 
     public Task SendBinaryFrameAsync(byte[] payload, CancellationToken cancellationToken = default)

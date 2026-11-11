@@ -23,9 +23,6 @@ public sealed partial class SidebarView : UserControl
     public Button RefreshDrives => RefreshDrivesButton;
     public Button MyPcCollapse => MyPcCollapseButton;
     public ListView DriveItems => DriveList;
-    public StackPanel RemoteProfilesSectionRoot => RemoteProfilesSection;
-    public TextBlock RemoteProfilesEmpty => RemoteProfilesEmptyText;
-    public ListView RemoteProfiles => RemoteProfileList;
     public StackPanel FolderTreeSectionRoot => FolderTreeSection;
     public TextBlock FolderTreeEmpty => FolderTreeEmptyText;
     public ListView FolderTree => FolderTreeList;
@@ -43,6 +40,7 @@ public sealed partial class SidebarView : UserControl
     public Button TagsCollapse => TagsCollapseButton;
     public TextBlock TagsEmpty => TagsEmptyText;
     public ListView Tags => TagsList;
+    public StackPanel PluginSections => PluginSectionsHost;
 
     public event RoutedEventHandler? SidebarLeft;
     public event RoutedEventHandler? SidebarRight;
@@ -52,8 +50,6 @@ public sealed partial class SidebarView : UserControl
     public event RoutedEventHandler? RefreshDrivesClick;
     public event RoutedEventHandler? ToggleMyPc;
     public event ItemClickEventHandler? DriveClick;
-    public event RoutedEventHandler? ManageRemoteProfiles;
-    public event ItemClickEventHandler? RemoteProfileClick;
     public event RoutedEventHandler? RefreshFolderTree;
     public event ItemClickEventHandler? FolderTreeClick;
     public event RoutedEventHandler? FolderTreeToggle;
@@ -83,10 +79,6 @@ public sealed partial class SidebarView : UserControl
     private void OnToggleMyPc(object sender, RoutedEventArgs e) => ToggleMyPc?.Invoke(sender, e);
 
     private void OnDriveClick(object sender, ItemClickEventArgs e) => DriveClick?.Invoke(sender, e);
-
-    private void OnManageRemoteProfiles(object sender, RoutedEventArgs e) => ManageRemoteProfiles?.Invoke(sender, e);
-
-    private void OnRemoteProfileClick(object sender, ItemClickEventArgs e) => RemoteProfileClick?.Invoke(sender, e);
 
     private void OnRefreshFolderTree(object sender, RoutedEventArgs e) => RefreshFolderTree?.Invoke(sender, e);
 

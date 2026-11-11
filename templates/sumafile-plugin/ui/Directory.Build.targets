@@ -1,0 +1,7 @@
+<Project>
+  <!-- In the SumaFile repository: src-winui's offline NuGet cache fallback and .NET runtime pack fallback. -->
+  <PropertyGroup>
+    <_SumaFileBuildTargets>$(MSBuildThisFileDirectory)..\..\..\src-winui\Directory.Build.targets</_SumaFileBuildTargets>
+  </PropertyGroup>
+  <Import Project="$(_SumaFileBuildTargets)" Condition="Exists('$(_SumaFileBuildTargets)')" />
+</Project>

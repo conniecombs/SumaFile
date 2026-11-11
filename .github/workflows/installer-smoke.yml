@@ -51,32 +51,16 @@ jobs:
       - name: Install WiX Toolset (MSI)
         shell: pwsh
         run: |
-          function Resolve-WixBin {
-            $command = Get-Command candle.exe -ErrorAction SilentlyContinue
-            if ($command) { return $command.Source | Split-Path -Parent }
-
-            $candidates = @(
-              'C:\Program Files (x86)\WiX Toolset v3.14\bin',
-              'C:\Program Files (x86)\WiX Toolset v3.11\bin',
-              'C:\Program Files\WiX Toolset v3.14\bin'
-            )
-            $candidate = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-            if ($candidate) { return $candidate }
-
-            $found = Get-ChildItem -Path 'C:\Program Files (x86)', 'C:\Program Files' -Filter 'candle.exe' -Recurse -ErrorAction SilentlyContinue |
-              Select-Object -First 1
-            if ($found) { return $found.DirectoryName }
-
-            return $null
-          }
-
+          # The release build's own resolver: WiX 3.14.1 or later with WixUtilExtension (Product.wxs needs both), so
+          # an older WiX on the runner never skips the bootstrap.
+          . ./scripts/lib/wix-msi.ps1
           $wixBin = Resolve-WixBin
           if (-not $wixBin) {
             choco install wixtoolset -y --no-progress
             $wixBin = Resolve-WixBin
           }
           if (-not $wixBin) {
-            throw 'WiX bin directory not found after install.'
+            throw 'WiX 3.14.1 or later (candle, light, heat and WixUtilExtension.dll) not found after install.'
           }
           echo "$wixBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           Write-Host "WiX on PATH: $wixBin"
@@ -134,6 +118,9 @@ jobs:
       - name: Smoke WinUI NSIS install, launch, and uninstall
         run: npm run smoke:winui-installer
 
+      - name: Smoke WinUI MSI install, upgrade, and uninstall
+        run: npm run smoke:winui-msi-lifecycle
+
       - name: Smoke WinUI NSIS upgrade from latest published release
         run: npm run smoke:winui-upgrade
         env:
@@ -152,6 +139,8 @@ jobs:
             dist/winui/SumaFile_*_x64-winui-setup.exe
             dist/winui/SumaFile_*_x64-winui.msi
             dist/winui/latest-winui.json
+            test-results/ui-smoke/last-passed-report.json
+            test-results/ui-smoke/last-passed/*.png
             test-results/ui-smoke/**/report.json
             test-results/ui-smoke/**/progress.json
           if-no-files-found: warn

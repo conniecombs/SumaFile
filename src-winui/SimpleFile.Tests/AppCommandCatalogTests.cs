@@ -10,13 +10,13 @@ using DriveInfo = SimpleFile.Ipc.DriveInfo;
 
 namespace SimpleFile.Tests;
 
+[Collection("Plugin catalogs")]
 public class AppCommandCatalogTests
 {
     [Fact]
     public void CommandPalette_ContainsWinUiIdsAndFilters()
     {
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "go-home");
-        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-pull");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "keyboard-help");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "view-tiles");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "icon-size-extra-large");
@@ -45,10 +45,11 @@ public class AppCommandCatalogTests
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "new-shortcut");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "customize-toolbar");
         Assert.Contains(AppCommandCatalog.All, command => command.Id == "toggle-toolbar-labels");
-        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-panel");
-        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-stage-selected");
-        Assert.Contains(AppCommandCatalog.All, command => command.Id == "git-discard-selected");
-        Assert.Contains(AppCommandCatalog.All, command => command.Id == "ftp-sftp-manager");
+        // Git is the Git plugin's (plugin:com.sumafile.git:*) since phase 4, not core's.
+        Assert.DoesNotContain(AppCommandCatalog.All, command => command.Id.StartsWith("git-", StringComparison.Ordinal));
+        Assert.DoesNotContain(AppCommandCatalog.BuiltIn, command => command.Group == "Git");
+        // FTP/SFTP is the remote plugin's command (plugin:com.sumafile.remote:ftp-sftp-manager), not a core one.
+        Assert.DoesNotContain(AppCommandCatalog.All, command => command.Id == "ftp-sftp-manager");
         Assert.Equal("Go home", AppCommandCatalog.Find("go-home")?.Label);
         Assert.Equal("Alt+Enter", AppCommandCatalog.Find("properties")?.Shortcut);
         Assert.Equal("Large files and duplicates", AppCommandCatalog.Find("disk-cleanup")?.Label);
@@ -58,7 +59,7 @@ public class AppCommandCatalogTests
         Assert.Equal("Filter this folder", AppCommandCatalog.Find("filter")?.Label);
         Assert.Equal("Set label", AppCommandCatalog.Find("color-label")?.Label);
         Assert.Equal("Show or hide sidebar", AppCommandCatalog.Find("toggle-side-menu")?.Label);
-        Assert.Equal("FTP/SFTP manager", AppCommandCatalog.Find("ftp-sftp-manager")?.Label);
+        Assert.Null(AppCommandCatalog.Find("ftp-sftp-manager"));
         Assert.Equal("Show transfers", AppCommandCatalog.Find("transfers")?.Label);
         Assert.Equal("Open or close second pane", AppCommandCatalog.Find("dual-pane")?.Label);
         Assert.Equal("Manage workspace profiles", AppCommandCatalog.Find("profile-manage")?.Label);
@@ -69,11 +70,7 @@ public class AppCommandCatalogTests
         Assert.Equal("Delete permanently", AppCommandCatalog.Find("delete-permanent")?.Label);
         Assert.Equal("Clear label filter", AppCommandCatalog.Find("clear-tag-filter")?.Label);
         Assert.Equal(AppCommandCatalog.All.Count, AppCommandCatalog.Filter("").Count);
-        var git = AppCommandCatalog.Filter("git");
-        Assert.Equal(10, git.Count);
-        Assert.All(git, command => Assert.StartsWith("git-", command.Id, StringComparison.Ordinal));
-        Assert.Equal("ftp-sftp-manager", Assert.Single(AppCommandCatalog.Filter("ftp")).Id);
-        Assert.Equal("ftp-sftp-manager", Assert.Single(AppCommandCatalog.Filter("sftp")).Id);
+        Assert.Empty(AppCommandCatalog.Filter("sftp"));
         Assert.Equal(5, AppCommandCatalog.Filter("icon size").Count);
         Assert.Equal(7, AppCommandCatalog.Filter("profile").Count);
         Assert.Equal("toggle-side-menu", Assert.Single(AppCommandCatalog.Filter("sidebar")).Id);
@@ -95,12 +92,49 @@ public class AppCommandCatalogTests
     [InlineData("ctx-toggle-toolbar-labels", "toggle-toolbar-labels")]
     [InlineData("ctx-restore", "restore-selected")]
     [InlineData("ctx-empty-recycle-bin", "empty-recycle-bin")]
-    [InlineData("ctx-git-stage", "git-stage-selected")]
-    [InlineData("ctx-git-discard", "git-discard-selected")]
-    [InlineData("ctx-git-panel", "git-panel")]
     [InlineData("view:details", "view:details")]
     public void CommandAliases_NormalizeSharedRouterIds(string id, string expected)
     {
         Assert.Equal(expected, CommandAliasCatalog.Normalize(id));
+    }
+
+    [Fact]
+    public void SetPluginCommands_AppendsAndRaisesChanged()
+    {
+        var raised = 0;
+        void Handler(object? sender, EventArgs e) => raised++;
+        AppCommandCatalog.Changed += Handler;
+        try
+        {
+            AppCommandCatalog.SetPluginCommands([new AppCommand("plugin:com.a:greet", "Greet", "Hello")]);
+
+            Assert.Equal(1, raised);
+            Assert.Equal("plugin:com.a:greet", AppCommandCatalog.All[^1].Id);
+            Assert.Equal(AppCommandCatalog.BuiltIn.Count + 1, AppCommandCatalog.All.Count);
+            Assert.NotNull(AppCommandCatalog.Find("plugin:com.a:greet"));
+            Assert.Contains(AppCommandCatalog.Filter("greet"), command => command.Id == "plugin:com.a:greet");
+        }
+        finally
+        {
+            AppCommandCatalog.Changed -= Handler;
+            AppCommandCatalog.SetPluginCommands([]);
+        }
+    }
+
+    [Fact]
+    public void SetPluginCommands_Empty_RestoresBuiltIn()
+    {
+        try
+        {
+            AppCommandCatalog.SetPluginCommands([new AppCommand("plugin:com.a:greet", "Greet", "Hello")]);
+            AppCommandCatalog.SetPluginCommands([]);
+
+            Assert.Equal(AppCommandCatalog.BuiltIn, AppCommandCatalog.All);
+            Assert.Null(AppCommandCatalog.Find("plugin:com.a:greet"));
+        }
+        finally
+        {
+            AppCommandCatalog.SetPluginCommands([]);
+        }
     }
 }

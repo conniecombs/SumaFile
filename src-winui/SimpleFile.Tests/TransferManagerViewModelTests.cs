@@ -240,6 +240,135 @@ public class TransferManagerViewModelTests
         await operation.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task EnqueueExternal_RunsAtOnceWithItsOwnTitleAndLeavesTransferSlotsFree()
+    {
+        var manager = new TransferManagerViewModel { MaxConcurrentTransfers = 1 };
+        var started = new ConcurrentQueue<string>();
+        var externalRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var transferRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var external = manager.EnqueueExternal("Hashing files", "Hello fixture", Runner("external", started, externalRelease));
+        var transfer = manager.Enqueue([@"C:\src\one.txt"], @"D:\one", move: false, Runner("transfer", started, transferRelease));
+
+        await WaitUntilAsync(() => Started(started, "external") && Started(started, "transfer"));
+        Assert.Equal("Hashing files", external.Title);
+        Assert.Equal("Hello fixture", external.RouteText);
+        Assert.Equal(TransferOperationStatus.Running, external.Status);
+        Assert.Equal(TransferOperationStatus.Running, transfer.Status);
+        Assert.Same(external, manager.Operations[1]);
+
+        externalRelease.SetResult();
+        transferRelease.SetResult();
+        Assert.Equal(TransferOperationStatus.Completed, await external.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        await transfer.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ApplyExternalProgress_ShowsCountsAndDetailInsteadOfBytes()
+    {
+        var manager = new TransferManagerViewModel();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var external = manager.EnqueueExternal("Hashing files", "Hello fixture", Runner("external", new(), release));
+
+        external.ApplyExternalProgress(3, 12, "photo.jpg");
+
+        Assert.False(external.IsIndeterminate);
+        Assert.Equal(25, external.ProgressPercent);
+        Assert.Equal("25%", external.PercentText);
+        Assert.Equal("3 of 12", external.SummaryText);
+        Assert.Equal("photo.jpg", external.CurrentItemText);
+
+        external.ApplyExternalProgress(0, 0, null);
+        Assert.True(external.IsIndeterminate);
+
+        release.SetResult();
+        await external.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ExternalRow_ApplyProgress_ShowsBytePercent()
+    {
+        var manager = new TransferManagerViewModel();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var external = manager.EnqueueExternal("Extracting pack.7z", @"C:\out", Runner("external", new(), release));
+
+        external.ApplyProgress(new ProgressUpdate
+        {
+            OperationId = "archive-0123",
+            OperationType = "extract-archive",
+            Current = 50,
+            Total = 100,
+            CurrentItem = @"C:\pack.7z",
+            Status = "running",
+        });
+
+        Assert.Equal("archive-0123", external.OperationId);
+        Assert.False(external.IsIndeterminate);
+        Assert.Equal(50, external.ProgressPercent);
+        Assert.Equal("50%", external.PercentText);
+        Assert.Equal("Extracting pack.7z", external.Title);
+        Assert.Equal(@"C:\out", external.RouteText);
+
+        // A different operation's progress never moves this row.
+        external.ApplyProgress(new ProgressUpdate
+        {
+            OperationId = "archive-other",
+            Current = 90,
+            Total = 100,
+            Status = "running",
+        });
+        Assert.Equal(50, external.ProgressPercent);
+
+        release.SetResult();
+        await external.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Cancel_ExternalOperationCancelsItsRunner()
+    {
+        var manager = new TransferManagerViewModel();
+        var external = manager.EnqueueExternal(
+            "Hashing files",
+            "Hello fixture",
+            Runner("external", new(), new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)));
+
+        manager.Cancel(external);
+
+        Assert.Equal(TransferOperationStatus.Cancelled, await external.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task ExternalOperation_OffersNoPerTaskOptions()
+    {
+        var manager = new TransferManagerViewModel();
+        var externalRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var localRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new ConcurrentQueue<string>();
+        var external = manager.EnqueueExternal("Uploading report.txt", "FTP/SFTP", Runner("external", started, externalRelease));
+        var local = manager.Enqueue([@"C:\src\one.txt"], @"D:\one", move: false, Runner("local", started, localRelease));
+        await WaitUntilAsync(() => Started(started, "external") && Started(started, "local"));
+
+        // A plugin or archive-engine row never reads the local engine's per-task overrides.
+        Assert.True(external.CanCancel);
+        Assert.False(external.CanChangeOptions);
+        Assert.True(local.CanCancel);
+        Assert.True(local.CanChangeOptions);
+
+        var raised = new List<string?>();
+        local.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        manager.Cancel(local);
+        Assert.False(local.CanChangeOptions);
+        Assert.Contains(nameof(TransferOperationViewModel.CanCancel), raised);
+        Assert.Contains(nameof(TransferOperationViewModel.CanChangeOptions), raised);
+
+        externalRelease.SetResult();
+        localRelease.SetResult();
+        await external.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
+        await local.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(external.CanChangeOptions);
+    }
+
     private static TransferOperationRunner Runner(
         string name,
         ConcurrentQueue<string> started,

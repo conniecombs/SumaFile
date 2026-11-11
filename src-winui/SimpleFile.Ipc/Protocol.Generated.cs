@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 97;
+    public const int DomainMethodCount = 75;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -61,31 +61,11 @@ public static partial class Protocol
     public const string GetArchiveCapabilitiesMethod = "get_archive_capabilities";
     public const string ExtractArchiveMethod = "extract_archive";
     public const string CreateArchiveMethod = "create_archive";
+    public const string RegisterArchiveEngineMethod = "register_archive_engine";
+    public const string UnregisterArchiveEngineMethod = "unregister_archive_engine";
     public const string GetDbSettingMethod = "get_db_setting";
     public const string GetDbSettingsMethod = "get_db_settings";
     public const string SetDbSettingMethod = "set_db_setting";
-    public const string RemoteListProfilesMethod = "remote_list_profiles";
-    public const string RemoteSaveProfileMethod = "remote_save_profile";
-    public const string RemoteDeleteProfileMethod = "remote_delete_profile";
-    public const string RemoteTestProfileMethod = "remote_test_profile";
-    public const string RemoteConnectMethod = "remote_connect";
-    public const string RemoteDisconnectMethod = "remote_disconnect";
-    public const string RemoteListDirectoryMethod = "remote_list_directory";
-    public const string RemoteCreateDirectoryMethod = "remote_create_directory";
-    public const string RemoteRenameEntryMethod = "remote_rename_entry";
-    public const string RemoteDeleteEntriesMethod = "remote_delete_entries";
-    public const string RemoteTransferEntriesMethod = "remote_transfer_entries";
-    public const string RemoteDownloadFileMethod = "remote_download_file";
-    public const string RemoteUploadFileMethod = "remote_upload_file";
-    public const string GetGitRepositoryStatusMethod = "get_git_repository_status";
-    public const string GitStagePathsMethod = "git_stage_paths";
-    public const string GitUnstagePathsMethod = "git_unstage_paths";
-    public const string GitDiscardPathsMethod = "git_discard_paths";
-    public const string GitDiffPathMethod = "git_diff_path";
-    public const string GitCommitMethod = "git_commit";
-    public const string GitFetchMethod = "git_fetch";
-    public const string GitPullMethod = "git_pull";
-    public const string GitPushMethod = "git_push";
     public const string OpenTerminalMethod = "open_terminal";
     public const string OpenPowershellAdminMethod = "open_powershell_admin";
     public const string SearchFilesMethod = "search_files";
@@ -99,7 +79,6 @@ public static partial class Protocol
     public const string CancelDiskCleanupMethod = "cancel_disk_cleanup";
     public const string DuplicateCheckMethod = "duplicate_check";
     public const string CancelDuplicateCheckMethod = "cancel_duplicate_check";
-    public const string GetGitStatusMethod = "get_git_status";
     public const string ComputeChecksumMethod = "compute_checksum";
     public const string GetImageMetadataMethod = "get_image_metadata";
     public const string GetFileMetadataMethod = "get_file_metadata";
@@ -108,7 +87,6 @@ public static partial class Protocol
     public const string CheckForUpdateMethod = "check_for_update";
     public const string InstallUpdateMethod = "install_update";
     public const string ShowMainWindowMethod = "show_main_window";
-    public const string GetGitFileStatusesMethod = "get_git_file_statuses";
     public const string GetAllTagsMethod = "get_all_tags";
     public const string CreateTagMethod = "create_tag";
     public const string UpdateTagMethod = "update_tag";
@@ -169,31 +147,11 @@ public static partial class Protocol
         "get_archive_capabilities",
         "extract_archive",
         "create_archive",
+        "register_archive_engine",
+        "unregister_archive_engine",
         "get_db_setting",
         "get_db_settings",
         "set_db_setting",
-        "remote_list_profiles",
-        "remote_save_profile",
-        "remote_delete_profile",
-        "remote_test_profile",
-        "remote_connect",
-        "remote_disconnect",
-        "remote_list_directory",
-        "remote_create_directory",
-        "remote_rename_entry",
-        "remote_delete_entries",
-        "remote_transfer_entries",
-        "remote_download_file",
-        "remote_upload_file",
-        "get_git_repository_status",
-        "git_stage_paths",
-        "git_unstage_paths",
-        "git_discard_paths",
-        "git_diff_path",
-        "git_commit",
-        "git_fetch",
-        "git_pull",
-        "git_push",
         "open_terminal",
         "open_powershell_admin",
         "search_files",
@@ -207,7 +165,6 @@ public static partial class Protocol
         "cancel_disk_cleanup",
         "duplicate_check",
         "cancel_duplicate_check",
-        "get_git_status",
         "compute_checksum",
         "get_image_metadata",
         "get_file_metadata",
@@ -216,7 +173,6 @@ public static partial class Protocol
         "check_for_update",
         "install_update",
         "show_main_window",
-        "get_git_file_statuses",
         "get_all_tags",
         "create_tag",
         "update_tag",

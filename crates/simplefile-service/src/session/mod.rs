@@ -84,26 +84,6 @@ where
                 Dispatch::Blocking { id, job } => {
                     jobs::spawn_blocking_reply(writer.clone(), scheduler.clone(), id, job);
                 }
-                Dispatch::RemoteTransfer {
-                    id,
-                    provider,
-                    request,
-                } => {
-                    let cancel = operations.register(&request.operation_id).await;
-                    jobs::spawn_remote_transfer(
-                        writer.clone(),
-                        operations.clone(),
-                        scheduler.clone(),
-                        events.clone(),
-                        cache.clone(),
-                        jobs::RemoteTransferJob {
-                            id,
-                            provider,
-                            request,
-                            cancel,
-                        },
-                    );
-                }
                 Dispatch::ListDirectory { id, path, options } => {
                     spawn_list_directory(
                         writer.clone(),
@@ -154,6 +134,28 @@ where
                             op_id,
                             cancel,
                             is_copy: false,
+                        },
+                    );
+                }
+                Dispatch::ArchiveOperation {
+                    id,
+                    operation_id,
+                    operation,
+                } => {
+                    // Registered before spawning, so a cancel_operation that
+                    // follows the start request finds the token.
+                    let cancel = operations.register(&operation_id).await;
+                    jobs::spawn_archive_operation(
+                        writer.clone(),
+                        operations.clone(),
+                        scheduler.clone(),
+                        events.clone(),
+                        cache.clone(),
+                        jobs::ArchiveOperationJob {
+                            id,
+                            operation_id,
+                            operation,
+                            cancel,
                         },
                     );
                 }

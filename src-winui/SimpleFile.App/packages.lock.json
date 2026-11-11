@@ -35,6 +35,11 @@
           "Microsoft.Win32.SystemEvents": "10.0.11"
         }
       },
+      "BouncyCastle.Cryptography": {
+        "type": "Transitive",
+        "resolved": "2.7.0",
+        "contentHash": "U+12df8UEWHgBi04YVf/Lgi2dy3SItlIYvHjjEVa/BngCQIzDCDRBk50DDByCfDvSbe5pRNFr3b7UrVK2kMcLw=="
+      },
       "CommunityToolkit.Mvvm": {
         "type": "Transitive",
         "resolved": "8.4.0",
@@ -223,6 +228,18 @@
         }
       },
       "simplefile.ipc": {
+        "type": "Project"
+      },
+      "simplefile.pluginhost": {
+        "type": "Project",
+        "dependencies": {
+          "BouncyCastle.Cryptography": "[2.7.0, )",
+          "SimpleFile.Core": "[1.0.4, )",
+          "SimpleFile.Ipc": "[1.0.4, )",
+          "SimpleFile.PluginSdk": "[1.0.4, )"
+        }
+      },
+      "simplefile.pluginsdk": {
         "type": "Project"
       }
     },

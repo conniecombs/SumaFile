@@ -50,45 +50,6 @@ public sealed partial class NamedPipeJsonClient
     public Task SetDbSettingAsync(string key, string value, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.SetDbSettingMethod, new { key, value }, ct);
 
-    public Task<RemoteProfile[]> RemoteListProfilesAsync(CancellationToken ct = default)
-        => InvokeAsync<RemoteProfile[]>(Protocol.RemoteListProfilesMethod, new { }, ct);
-
-    public Task<RemoteProfile> RemoteSaveProfileAsync(RemoteProfileInput profile, string? secret = null, CancellationToken ct = default)
-        => InvokeAsync<RemoteProfile>(Protocol.RemoteSaveProfileMethod, new { profile, secret }, ct);
-
-    public Task RemoteDeleteProfileAsync(string profileId, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.RemoteDeleteProfileMethod, new { profileId }, ct);
-
-    public Task<RemoteConnectionTestResult> RemoteTestProfileAsync(RemoteProfileInput profile, string? secret = null, CancellationToken ct = default)
-        => InvokeAsync<RemoteConnectionTestResult>(Protocol.RemoteTestProfileMethod, new { profile, secret }, ct);
-
-    public Task<RemoteSession> RemoteConnectAsync(string profileId, string? secret = null, CancellationToken ct = default)
-        => InvokeAsync<RemoteSession>(Protocol.RemoteConnectMethod, new { profileId, secret }, ct);
-
-    public Task RemoteDisconnectAsync(string remoteSessionId, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.RemoteDisconnectMethod, new { remoteSessionId }, ct);
-
-    public Task<DirectoryListing> RemoteListDirectoryAsync(string remoteSessionId, string path, CancellationToken ct = default)
-        => InvokeAsync<DirectoryListing>(Protocol.RemoteListDirectoryMethod, new { remoteSessionId, path }, ct);
-
-    public Task<FileEntry> RemoteCreateDirectoryAsync(string remoteSessionId, string path, string name, CancellationToken ct = default)
-        => InvokeAsync<FileEntry>(Protocol.RemoteCreateDirectoryMethod, new { remoteSessionId, path, name }, ct);
-
-    public Task<FileEntry> RemoteRenameEntryAsync(string remoteSessionId, string path, string newName, CancellationToken ct = default)
-        => InvokeAsync<FileEntry>(Protocol.RemoteRenameEntryMethod, new { remoteSessionId, path, newName }, ct);
-
-    public Task<string[]> RemoteDeleteEntriesAsync(string remoteSessionId, string[] paths, CancellationToken ct = default)
-        => InvokeAsync<string[]>(Protocol.RemoteDeleteEntriesMethod, new { remoteSessionId, paths }, ct);
-
-    public Task<RemoteTransferOutcome> RemoteTransferEntriesAsync(string remoteSessionId, string direction, string[] sources, string destination, string conflictAction, string operationId, CancellationToken ct = default)
-        => InvokeAsync<RemoteTransferOutcome>(Protocol.RemoteTransferEntriesMethod, new { remoteSessionId, direction, sources, destination, conflictAction, operationId }, ct);
-
-    public Task<string> RemoteDownloadFileAsync(string remoteSessionId, string remotePath, string localPath, CancellationToken ct = default)
-        => InvokeAsync<string>(Protocol.RemoteDownloadFileMethod, new { remoteSessionId, remotePath, localPath }, ct);
-
-    public Task<FileEntry> RemoteUploadFileAsync(string remoteSessionId, string localPath, string remotePath, CancellationToken ct = default)
-        => InvokeAsync<FileEntry>(Protocol.RemoteUploadFileMethod, new { remoteSessionId, localPath, remotePath }, ct);
-
     public Task<string> CreateDirectoryAsync(string path, string name, CancellationToken ct = default)
         => InvokeAsync<string>(Protocol.CreateDirectoryMethod, new { path, name }, ct);
 
@@ -146,11 +107,11 @@ public sealed partial class NamedPipeJsonClient
     public Task<ArchiveCapabilities> GetArchiveCapabilitiesAsync(CancellationToken ct = default)
         => InvokeAsync<ArchiveCapabilities>(Protocol.GetArchiveCapabilitiesMethod, new { }, ct);
 
-    public Task ExtractArchiveAsync(string archivePath, string destination, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.ExtractArchiveMethod, new { archivePath, destination }, ct);
+    public Task ExtractArchiveAsync(string archivePath, string destination, string? operationId = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.ExtractArchiveMethod, new { archivePath, destination, operationId }, ct);
 
-    public Task CreateArchiveAsync(string[] paths, string archivePath, string format, CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.CreateArchiveMethod, new { paths, archivePath, format }, ct);
+    public Task CreateArchiveAsync(string[] paths, string archivePath, string format, string? operationId = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CreateArchiveMethod, new { paths, archivePath, format, operationId }, ct);
 
     public Task<FilePreview> ReadFilePreviewAsync(string path, ulong? maxSize = null, CancellationToken ct = default)
         => InvokeAsync<FilePreview>(Protocol.ReadFilePreviewMethod, new { path, maxSize }, ct);
@@ -283,37 +244,4 @@ public sealed partial class NamedPipeJsonClient
 
     public Task OpenPowershellAdminAsync(string path, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.OpenPowershellAdminMethod, new { path }, ct);
-
-    public Task<GitStatus> GetGitStatusAsync(string path, CancellationToken ct = default)
-        => InvokeAsync<GitStatus>(Protocol.GetGitStatusMethod, new { path }, ct);
-
-    public Task<GitRepositoryStatus> GetGitRepositoryStatusAsync(string path, CancellationToken ct = default)
-        => InvokeAsync<GitRepositoryStatus>(Protocol.GetGitRepositoryStatusMethod, new { path }, ct);
-
-    public Task<FileEntry[]> GetGitFileStatusesAsync(string path, CancellationToken ct = default)
-        => InvokeAsync<FileEntry[]>(Protocol.GetGitFileStatusesMethod, new { path }, ct);
-
-    public Task<GitCommandResult> GitStagePathsAsync(string path, string[] paths, CancellationToken ct = default)
-        => InvokeAsync<GitCommandResult>(Protocol.GitStagePathsMethod, new { path, paths }, ct);
-
-    public Task<GitCommandResult> GitUnstagePathsAsync(string path, string[] paths, CancellationToken ct = default)
-        => InvokeAsync<GitCommandResult>(Protocol.GitUnstagePathsMethod, new { path, paths }, ct);
-
-    public Task<GitCommandResult> GitDiscardPathsAsync(string path, string[] paths, CancellationToken ct = default)
-        => InvokeAsync<GitCommandResult>(Protocol.GitDiscardPathsMethod, new { path, paths }, ct);
-
-    public Task<string> GitDiffPathAsync(string path, string filePath, CancellationToken ct = default)
-        => InvokeAsync<string>(Protocol.GitDiffPathMethod, new { path, filePath }, ct);
-
-    public Task<GitCommandResult> GitCommitAsync(string path, string message, CancellationToken ct = default)
-        => InvokeAsync<GitCommandResult>(Protocol.GitCommitMethod, new { path, message }, ct);
-
-    public Task<GitCommandResult> GitFetchAsync(string path, CancellationToken ct = default)
-        => InvokeAsync<GitCommandResult>(Protocol.GitFetchMethod, new { path }, ct);
-
-    public Task<GitCommandResult> GitPullAsync(string path, CancellationToken ct = default)
-        => InvokeAsync<GitCommandResult>(Protocol.GitPullMethod, new { path }, ct);
-
-    public Task<GitCommandResult> GitPushAsync(string path, CancellationToken ct = default)
-        => InvokeAsync<GitCommandResult>(Protocol.GitPushMethod, new { path }, ct);
 }

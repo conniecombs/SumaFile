@@ -7,6 +7,21 @@ $servicePath = Join-Path $payloadDir "simplefile-service.exe"
 $expectedTitle = "SumaFile"
 $timeoutSeconds = 25
 $startupTimingLog = Join-Path $env:LOCALAPPDATA "SumaFile\startup-timing.log"
+$payloadPluginsDir = Join-Path $payloadDir "plugins"
+$sevenZipPluginId = "com.sumafile.sevenzip"
+$sevenZipRegisteredLine = "[$sevenZipPluginId] [info] Archive engines registered: .7z"
+$remotePluginId = "com.sumafile.remote"
+# Written at discovery (Task 3), so it does not depend on whether the user's sidebar shows the Connections section.
+$remoteDiscoveredLine = "[$remotePluginId] [info] Discovered: Enabled"
+$gitPluginId = "com.sumafile.git"
+$gitDiscoveredLine = "[$gitPluginId] [info] Discovered: Enabled"
+# activateOn: startup, so the app starts it once startup is ready, from the payload's plugin folder.
+$gitBackendName = "sumafile-git-backend"
+$gitBackendPath = Join-Path $payloadPluginsDir "$gitPluginId\$gitBackendName.exe"
+$pluginRegistrationTimeoutSeconds = 20
+
+# Get-AppOwnedPluginItems and the pre-release plugin location checks.
+. (Join-Path $PSScriptRoot "lib\plugin-staging.ps1")
 
 if (-not (Test-Path -LiteralPath $exePath)) {
     throw "WinUI payload executable not found at $exePath. Run 'npm run build:winui:release' first."
@@ -19,6 +34,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $payloadDir "resources.pri"))) {
 }
 if (-not (Test-Path -LiteralPath (Join-Path $payloadDir "MainWindow.xbf"))) {
     throw "WinUI payload is missing MainWindow.xbf."
+}
+if (-not (Test-Path -LiteralPath (Join-Path $payloadPluginsDir "bundled.json"))) {
+    throw "WinUI payload is missing plugins\bundled.json."
+}
+# The payload is the install folder of this run; it must start, and stay, free of app-owned plugin files.
+$payloadAppOwned = @(Get-AppOwnedPluginItems -InstallDir $payloadDir)
+if ($payloadAppOwned.Count -gt 0) {
+    throw "WinUI payload already contains app-owned plugin files before the startup smoke: $($payloadAppOwned -join ', '). Rebuild the payload."
 }
 
 $startupTimingOffset = 0
@@ -67,10 +90,50 @@ function Get-NewStartupTimingLines {
     return $text -split "`r?`n" | Where-Object { $_ }
 }
 
-$process = Start-Process -FilePath $exePath -WorkingDirectory $payloadDir -PassThru
+# Prove bundled trust: scan only the payload's plugins folder, and keep approvals in a disposable file that must stay
+# free of the bundled plugins. The install root is the payload's plugins folder, so its bundled.json applies.
+$approvalsDir = Join-Path ([System.IO.Path]::GetTempPath()) ("sumafile-startup-smoke-" + [System.Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $approvalsDir | Out-Null
+$approvalsPath = Join-Path $approvalsDir "plugin-approvals.json"
+# Never the user's data, and nothing written into the payload, which is this run's install folder: plugin backends
+# write under a disposable data root, the plugin log is a fresh disposable file (so this smoke reads it from the
+# start), and the service and the remote backend read and seed a disposable metadata.db, so the remote plugin
+# imports no real profiles and writes no plugin.com.sumafile.remote.* keys into the real settings.
+# startup-timing.log is the app's own and stays in %LOCALAPPDATA%\SumaFile, where this smoke reads it.
+$pluginsLog = Join-Path $approvalsDir "plugins.log"
+$smokeAppDataDir = Join-Path $approvalsDir "app-data"
+New-Item -ItemType Directory -Force -Path $smokeAppDataDir | Out-Null
+# The app starts the bundled Git backend, so git is isolated from the developer's config: an empty global config and
+# no system config, so a core.hooksPath, commit.gpgsign or init.defaultBranch there can never run, prompt or change a
+# result.
+$smokeGitConfig = Join-Path $approvalsDir "gitconfig"
+[System.IO.File]::WriteAllText($smokeGitConfig, "")
+$smokeEnvironment = [ordered]@{
+    SUMAFILE_PLUGIN_ROOTS = $payloadPluginsDir
+    SUMAFILE_PLUGIN_APPROVALS_PATH = $approvalsPath
+    SUMAFILE_PLUGIN_DATA_ROOT = Join-Path $approvalsDir "plugins-data"
+    SUMAFILE_PLUGIN_LOG_PATH = $pluginsLog
+    SIMPLEFILE_METADATA_DB = Join-Path $smokeAppDataDir "metadata.db"
+    SIMPLEFILE_APP_DATA_DIR = $smokeAppDataDir
+    GIT_CONFIG_GLOBAL = $smokeGitConfig
+    GIT_CONFIG_NOSYSTEM = "1"
+}
+$previousEnvironment = @{}
+foreach ($name in $smokeEnvironment.Keys) {
+    $previousEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, "Process")
+}
+$process = $null
 $windowProcess = $null
+$smokeCompleted = $false
+# The app never reads, writes or deletes the pre-release plugin locations under %LOCALAPPDATA%\SumaFile.
+$legacyPluginLocations = Get-LegacyPluginLocationSnapshot
 
 try {
+    foreach ($name in $smokeEnvironment.Keys) {
+        [System.Environment]::SetEnvironmentVariable($name, $smokeEnvironment[$name], "Process")
+    }
+    $process = Start-Process -FilePath $exePath -WorkingDirectory $payloadDir -PassThru
+
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
 
     do {
@@ -119,17 +182,160 @@ try {
     }
 
     Write-Host "WinUI startup smoke passed: PID $($windowProcess.Id), title '$($windowProcess.MainWindowTitle)', backend ready."
+
+    # The bundled 7-Zip plugin must be trusted through bundled.json, start, and register .7z with the service.
+    $registered = $false
+    $registrationDeadline = (Get-Date).AddSeconds($pluginRegistrationTimeoutSeconds)
+    do {
+        $pluginLines = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0)
+        if ($pluginLines | Where-Object { $_.Contains($sevenZipRegisteredLine) }) {
+            $registered = $true
+            break
+        }
+
+        if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+            throw "WinUI process exited before the bundled 7-Zip plugin registered its archive engine."
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $registrationDeadline)
+
+    if (-not $registered) {
+        $recent = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0 | Select-Object -Last 10) -join [Environment]::NewLine
+        throw "$pluginsLog did not record '$sevenZipRegisteredLine' within $pluginRegistrationTimeoutSeconds seconds. Last plugins.log lines:$([Environment]::NewLine)$recent"
+    }
+
+    if (Test-Path -LiteralPath $approvalsPath) {
+        $approvals = [System.IO.File]::ReadAllText($approvalsPath)
+        if ($approvals.Contains($sevenZipPluginId)) {
+            throw "The bundled 7-Zip plugin was written to the approval store at ${approvalsPath}; it must be trusted through bundled.json alone."
+        }
+    }
+
+    Write-Host "Bundled 7-Zip plugin trusted and registered."
+
+    # The bundled remote plugin must be discovered from the payload and Enabled through bundled.json alone.
+    $remoteDiscovered = $false
+    $remoteDeadline = (Get-Date).AddSeconds($pluginRegistrationTimeoutSeconds)
+    do {
+        $pluginLines = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0)
+        if ($pluginLines | Where-Object { $_.Contains($remoteDiscoveredLine) }) {
+            $remoteDiscovered = $true
+            break
+        }
+
+        if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+            throw "WinUI process exited before plugins.log recorded the bundled remote plugin as Enabled."
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $remoteDeadline)
+
+    if (-not $remoteDiscovered) {
+        $recent = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0 | Where-Object { $_.Contains("[$remotePluginId]") } | Select-Object -Last 10) -join [Environment]::NewLine
+        throw "$pluginsLog did not record '$remoteDiscoveredLine' within $pluginRegistrationTimeoutSeconds seconds. Last $remotePluginId lines:$([Environment]::NewLine)$recent"
+    }
+
+    if (Test-Path -LiteralPath $approvalsPath) {
+        $approvals = [System.IO.File]::ReadAllText($approvalsPath)
+        if ($approvals.Contains($remotePluginId)) {
+            throw "The bundled remote plugin was written to the approval store at ${approvalsPath}; it must be trusted through bundled.json alone."
+        }
+    }
+
+    Write-Host "Bundled remote plugin trusted."
+
+    # The bundled Git plugin must be discovered from the payload, Enabled through bundled.json alone, and its backend
+    # (activateOn: startup) must run from the payload's plugin folder.
+    $gitDiscovered = $false
+    $gitBackendRunning = $false
+    $gitDeadline = (Get-Date).AddSeconds($pluginRegistrationTimeoutSeconds)
+    do {
+        if (-not $gitDiscovered) {
+            $pluginLines = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0)
+            $gitDiscovered = [bool]($pluginLines | Where-Object { $_.Contains($gitDiscoveredLine) })
+        }
+        if (-not $gitBackendRunning) {
+            $gitBackendRunning = [bool](@(Get-Process -Name $gitBackendName -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Path -and [string]::Equals($_.Path, $gitBackendPath, [System.StringComparison]::OrdinalIgnoreCase) }).Count)
+        }
+        if ($gitDiscovered -and $gitBackendRunning) {
+            break
+        }
+
+        if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+            throw "WinUI process exited before the bundled Git plugin was Enabled with its backend running."
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $gitDeadline)
+
+    if (-not $gitDiscovered) {
+        $recent = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0 | Where-Object { $_.Contains("[$gitPluginId]") } | Select-Object -Last 10) -join [Environment]::NewLine
+        throw "$pluginsLog did not record '$gitDiscoveredLine' within $pluginRegistrationTimeoutSeconds seconds. Last $gitPluginId lines:$([Environment]::NewLine)$recent"
+    }
+    if (-not $gitBackendRunning) {
+        $recent = @(Get-NewStartupTimingLines -Path $pluginsLog -Offset 0 | Where-Object { $_.Contains("[$gitPluginId]") } | Select-Object -Last 10) -join [Environment]::NewLine
+        throw "The bundled Git plugin's backend $gitBackendPath was not running within $pluginRegistrationTimeoutSeconds seconds. Last $gitPluginId lines:$([Environment]::NewLine)$recent"
+    }
+
+    if (Test-Path -LiteralPath $approvalsPath) {
+        $approvals = [System.IO.File]::ReadAllText($approvalsPath)
+        if ($approvals.Contains($gitPluginId)) {
+            throw "The bundled Git plugin was written to the approval store at ${approvalsPath}; it must be trusted through bundled.json alone."
+        }
+    }
+
+    Write-Host "Bundled Git plugin trusted."
+    $smokeCompleted = $true
 }
 finally {
+    foreach ($name in $smokeEnvironment.Keys) {
+        [System.Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+    }
+
     Get-Process -Name "simplefile-service" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    $startedProcess = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
+    $startedProcess = if ($process) { Get-Process -Id $process.Id -ErrorAction SilentlyContinue } else { $null }
     if ($startedProcess) {
         $closed = $startedProcess.CloseMainWindow()
         Start-Sleep -Seconds 2
         $startedProcess = Get-Process -Id $startedProcess.Id -ErrorAction SilentlyContinue
         if ($startedProcess) {
             Stop-Process -Id $startedProcess.Id -Force
+            # Stop-Process returns before the process is gone; the backend checks below must see it exited.
+            if (-not $startedProcess.WaitForExit(5000)) {
+                Write-Warning "WinUI smoke-test process $($startedProcess.Id) had not exited 5 s after Stop-Process."
+            }
         }
         Write-Host "Closed WinUI smoke-test process $($process.Id). CloseMainWindow sent: $closed."
+    }
+
+    # The host's kill-on-close job ends the backend with the app; stop any payload backend that is still running,
+    # by its path under the payload. The remote backend starts on first call, for example when the sidebar shows the
+    # Connections section; the Git backend starts with the app.
+    $backends = @(Get-Process -Name "sumafile-sevenzip-backend", "sumafile-remote-backend", $gitBackendName -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($payloadPluginsDir, [System.StringComparison]::OrdinalIgnoreCase) })
+    $backends | Stop-Process -Force -ErrorAction SilentlyContinue
+    # Wait, so the backends release their files in the disposable data root and leave nothing half-written behind
+    # before the checks below and the clean-up run.
+    foreach ($backend in $backends) {
+        try { [void]$backend.WaitForExit(5000) } catch { }
+    }
+
+    # Checked once every process is gone. A failure here fails a smoke that otherwise passed; after an earlier
+    # failure it is only reported, so the first error stays the one thrown.
+    $afterRunFailures = @()
+    $payloadAppOwned = @(Get-AppOwnedPluginItems -InstallDir $payloadDir)
+    if ($payloadAppOwned.Count -gt 0) {
+        $afterRunFailures += "The startup smoke left app-owned plugin files in the payload ${payloadDir}: $($payloadAppOwned -join ', ')"
+    }
+    try {
+        Assert-LegacyPluginLocationsUnchanged -Before $legacyPluginLocations
+    } catch {
+        $afterRunFailures += $_.Exception.Message
+    }
+
+    Remove-Item -LiteralPath $approvalsDir -Recurse -Force -ErrorAction SilentlyContinue
+
+    if ($afterRunFailures.Count -gt 0) {
+        if ($smokeCompleted) { throw ($afterRunFailures -join [Environment]::NewLine) }
+        foreach ($failure in $afterRunFailures) { Write-Warning $failure }
     }
 }

@@ -82,68 +82,56 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
-    public void FtpSftpManager_HasCommandRouteAndWindowShell()
+    public void RemoteUi_LivesOnlyInTheRemotePlugin()
     {
         var root = FindRepoRoot();
         var appRoot = Path.Combine(root, "SimpleFile.App");
+
+        Assert.False(File.Exists(Path.Combine(appRoot, "RemoteManagerWindow.xaml")));
+        Assert.False(File.Exists(Path.Combine(appRoot, "RemoteManagerWindow.xaml.cs")));
+        Assert.False(File.Exists(Path.Combine(appRoot, "MainWindow.Remote.cs")));
+        Assert.False(File.Exists(Path.Combine(root, "SimpleFile.Core", "RemoteManagerViewModel.cs")));
+
         var commandRouting = File.ReadAllText(Path.Combine(appRoot, "MainWindow.CommandRouting.cs"));
-        var mainWindow = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
-        var mainWindowControls = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Controls.cs"));
-        var mainWindowEvents = File.ReadAllText(Path.Combine(appRoot, "MainWindow.FileListEvents.cs"));
-        var mainWindowRemote = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Remote.cs"));
+        Assert.DoesNotContain("ftp-sftp-manager", commandRouting);
+
         var sidebar = File.ReadAllText(Path.Combine(appRoot, "SidebarView.xaml"));
-        var sidebarCode = File.ReadAllText(Path.Combine(appRoot, "SidebarView.xaml.cs"));
-        var windowXamlPath = Path.Combine(appRoot, "RemoteManagerWindow.xaml");
-        var windowCodePath = Path.Combine(appRoot, "RemoteManagerWindow.xaml.cs");
+        Assert.DoesNotContain("Connections", sidebar);
+        Assert.DoesNotContain("RemoteProfile", sidebar);
 
-        Assert.Contains("[\"ftp-sftp-manager\"] = () => RunSyncCommand(() => ShowRemoteManagerWindow())", commandRouting);
-        Assert.Contains("private RemoteManagerWindow? _remoteManagerWindow;", mainWindow);
-        Assert.Contains("public ObservableCollection<RemoteProfileSidebarRow> RemoteProfiles", mainWindow);
-        Assert.Contains("RemoteProfileList.ItemsSource = RemoteProfiles", mainWindow);
-        Assert.Contains("RefreshRemoteProfilesForSidebarAsync", mainWindow);
-        Assert.Contains("ShowRemoteManagerWindow(row.ProfileId)", mainWindowEvents);
-        Assert.Contains("SidebarPanel.RemoteProfileClick += OnRemoteProfileClick;", mainWindowControls);
-        Assert.Contains("private void ShowRemoteManagerWindow(string? profileId = null)", mainWindowRemote);
-        Assert.True(File.Exists(windowXamlPath));
-        Assert.True(File.Exists(windowCodePath));
+        Assert.DoesNotContain("SettingsRemoteManagerButton", File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml")));
 
-        Assert.Contains("x:Name=\"RemoteProfilesSection\"", sidebar);
-        Assert.Contains("Text=\"Connections\"", sidebar);
-        Assert.Contains("x:Name=\"RemoteProfileList\"", sidebar);
-        Assert.Contains("ItemClick=\"OnRemoteProfileClick\"", sidebar);
-        Assert.Contains("public StackPanel RemoteProfilesSectionRoot => RemoteProfilesSection;", sidebarCode);
-        Assert.Contains("public ListView RemoteProfiles => RemoteProfileList;", sidebarCode);
-        Assert.Contains("public event ItemClickEventHandler? RemoteProfileClick;", sidebarCode);
-        var windowXaml = File.ReadAllText(windowXamlPath);
-        var windowCode = File.ReadAllText(windowCodePath);
-        Assert.Contains("x:Name=\"RemoteProfileList\"", windowXaml);
-        Assert.Contains("x:Name=\"LocalPathBox\"", windowXaml);
-        Assert.Contains("x:Name=\"LocalEntryList\"", windowXaml);
-        Assert.Contains("ItemClick=\"OnLocalEntryItemClick\"", windowXaml);
-        Assert.Contains("x:Name=\"RemoteEntryList\"", windowXaml);
-        Assert.Contains("ItemClick=\"OnRemoteEntryItemClick\"", windowXaml);
-        Assert.Contains("x:Name=\"RemoteTransferList\"", windowXaml);
-        Assert.Contains("Download selected remote files and folders to local pane", windowXaml);
-        Assert.Contains("Upload selected local files to remote pane", windowXaml);
-        Assert.Contains("RemoteManagerViewModel", windowCode);
-        Assert.Contains("LoadProfilesAsync", windowCode);
-        Assert.Contains("NavigateLocalPathAsync", windowCode);
-        Assert.Contains("NavigateLocalEntryAsync", windowCode);
-        Assert.Contains("UploadLocalEntriesToRemoteAsync", windowCode);
-        Assert.Contains("DownloadRemoteEntriesToLocalAsync", windowCode);
-        Assert.Contains("NavigateRemoteEntryAsync", windowCode);
-        Assert.Contains("SaveSecretCheckBox", windowCode);
-        Assert.Contains("Windows Credential Manager", windowCode);
-        Assert.Contains("Pick private key", windowCode);
-        Assert.Contains("ProfileDialogScrollViewer", windowCode);
-        Assert.Contains("Connection", windowCode);
-        Assert.Contains("Authentication", windowCode);
-        Assert.Contains("Advanced", windowCode);
-        Assert.Contains("ApplyProfileDialogVisibility", windowCode);
-        Assert.Contains("authBox.SelectionChanged", windowCode);
-        Assert.Contains("protocolBox.SelectionChanged", windowCode);
-        Assert.Contains("SettingsRemoteManagerButton", File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml")));
+        var transferOptions = File.ReadAllText(Path.Combine(appRoot, "TransferOptionsDialog.cs"));
+        var showAsync = Regex.Match(transferOptions, @"public static async Task ShowAsync\(XamlRoot root, ISettingsBackend backend[^)]*\)");
+        Assert.True(showAsync.Success, "TransferOptionsDialog.ShowAsync(XamlRoot, ISettingsBackend, ...) was not found");
+        Assert.DoesNotContain("remote", showAsync.Value, StringComparison.OrdinalIgnoreCase);
+
+        var protocol = File.ReadAllText(Path.Combine(root, "SimpleFile.Ipc", "Protocol.Generated.cs"));
+        Assert.DoesNotContain("\"remote_", protocol);
+
+        // No App, Core or Ipc source names the removed core remote surface.
+        var sources = new[] { "SimpleFile.App", "SimpleFile.Core", "SimpleFile.Ipc" }
+            .SelectMany(project => Directory.EnumerateFiles(Path.Combine(root, project), "*.*", SearchOption.AllDirectories))
+            .Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".xaml", StringComparison.OrdinalIgnoreCase))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
+                && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase));
+        foreach (var path in sources)
+        {
+            var text = File.ReadAllText(path);
+            foreach (var name in new[] { "RemoteManagerWindow", "remote_list_profiles", "ShowRemoteManagerWindow" })
+            {
+                Assert.False(
+                    text.Contains(name, StringComparison.Ordinal)
+                        && !IsRemotePluginSmoke(path, name),
+                    $"{Path.GetRelativePath(root, path)} still contains {name}");
+            }
+        }
     }
+
+    // The UI smoke checks the plugin's own window type by its full name, SumaFile.Remote.Views.RemoteManagerWindow.
+    private static bool IsRemotePluginSmoke(string path, string name) =>
+        name == "RemoteManagerWindow"
+        && Path.GetFileName(path) == "MainWindow.UiSmoke.Remote.cs";
 
     [Fact]
     public void MainWindow_DefersColumnEnrichmentUntilIdle()
@@ -496,52 +484,52 @@ public class WinUiSourceShapeTests
     }
 
     [Fact]
-    public void GitIntegration_UsesDockableWorkbenchAndCompleteDisableSwitch()
+    public void GitUi_LivesOnlyInTheGitPlugin()
     {
+        // Phase 4 moved Git to the com.sumafile.git plugin. Its "complete disable" is
+        // pinned by behaviour tests (GitWorkbenchControllerTests and the Task 16 smoke),
+        // not by core source shape.
         var root = FindRepoRoot();
-        var appRoot = Path.Combine(root, "SimpleFile.App");
-        var coreRoot = Path.Combine(root, "SimpleFile.Core");
-        var ipcRoot = Path.Combine(root, "SimpleFile.Ipc");
-        var mainWindowXaml = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml"));
-        var mainWindowCode = ReadMainWindowSource(appRoot);
-        var workbenchXaml = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchView.xaml"));
-        var workbenchCode = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchView.xaml.cs"));
-        var workbenchModel = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchViewModel.cs"));
-        var workbenchWindow = File.ReadAllText(Path.Combine(appRoot, "GitWorkbenchWindow.xaml.cs"));
-        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml"));
-        var workspace = ReadExplorerWorkspaceSource(coreRoot);
-        var ipc = File.ReadAllText(Path.Combine(ipcRoot, "ISimpleFileIpc.cs"));
+        string[] forbidden =
+        [
+            "GitWorkbench",
+            "EnableGitIntegration",
+            "GitText",
+            "ctx-git-",
+            "\"git-panel\"",
+            "GitRepositoryStatus",
+            "GetGitRepositoryStatusAsync",
+        ];
+        var offenders = new List<string>();
+        foreach (var project in new[] { "SimpleFile.App", "SimpleFile.Core", "SimpleFile.Ipc" })
+        {
+            var projectRoot = Path.Combine(root, project);
+            foreach (var file in Directory.EnumerateFiles(projectRoot, "*.*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(projectRoot, file);
+                var firstSegment = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0];
+                if (firstSegment is "bin" or "obj"
+                    || file.EndsWith(".Generated.cs", StringComparison.Ordinal)
+                    || !(file.EndsWith(".cs", StringComparison.Ordinal) || file.EndsWith(".xaml", StringComparison.Ordinal)))
+                {
+                    continue;
+                }
 
-        Assert.Contains("GitPanel", mainWindowXaml);
-        Assert.Contains("GitToggleButton", mainWindowXaml);
-        Assert.Contains("GitWorkbench", mainWindowXaml);
-        Assert.Contains("GitWorkbenchViewModel", mainWindowCode);
-        Assert.Contains("GitWorkbenchWindow", mainWindowCode);
-        Assert.Contains("DetachGitWorkbenchAsync", mainWindowCode);
-        Assert.Contains("DockGitWorkbenchAsync", mainWindowCode);
-        Assert.Contains("PreviewSelectedGitDiffAsync", mainWindowCode);
-        Assert.Contains("CloseGitWorkbenchWindow", mainWindowCode);
-        Assert.Contains("SetHostMode(detached: true)", mainWindowCode);
-        Assert.Contains("SetHostMode(detached: false)", mainWindowCode);
-        Assert.Contains("SecondaryWindowChrome.Apply(this, \"Git Workbench\", 1180, 740)", workbenchWindow);
-        Assert.Contains("presenter.IsResizable = true;", File.ReadAllText(Path.Combine(appRoot, "SecondaryWindowChrome.cs")));
-        Assert.Contains("DiffPreviewColumn", workbenchXaml);
-        Assert.Contains("Resize Git diff preview", workbenchXaml);
-        Assert.Contains("HostActionText", workbenchXaml);
-        Assert.Contains("SelectedChanges", workbenchCode);
-        Assert.Contains("CanDiff", workbenchModel);
-        Assert.Contains("SetDiffLoading", workbenchModel);
-        Assert.DoesNotContain("ShowGitDiffDialogAsync", mainWindowCode);
-        Assert.Contains("OnGitStageRequested", mainWindowCode);
-        Assert.Contains("GitStageSelectedAsync", mainWindowCode);
-        Assert.Contains("GetGitRepositoryStatusAsync", mainWindowCode);
-        Assert.Contains("EnsureGitIntegrationEnabled", mainWindowCode);
-        Assert.Contains("Git integration is disabled in Settings.", mainWindowCode);
-        Assert.Contains("command.Group, \"Git\"", mainWindowCode);
-        Assert.Contains("ClearGitStatuses()", workspace);
-        Assert.Contains("EnableGitSwitch", settingsXaml);
-        Assert.Contains("Task<GitCommandResult> GitStagePathsAsync", ipc);
-        Assert.Contains("Task<GitCommandResult> GitPullAsync", ipc);
+                var text = File.ReadAllText(file);
+                offenders.AddRange(forbidden
+                    .Where(token => text.Contains(token, StringComparison.Ordinal))
+                    .Select(token => $"{project}/{relative.Replace('\\', '/')}: {token}"));
+            }
+        }
+
+        Assert.True(offenders.Count == 0, "Core still carries Git UI:\n" + string.Join("\n", offenders));
+
+        var mainWindowXaml = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml"));
+        Assert.DoesNotContain("GitPanel", mainWindowXaml);
+        Assert.DoesNotContain("GitToggleButton", mainWindowXaml);
+        Assert.True(
+            File.Exists(Path.Combine(root, "..", "plugins", "git", "ui", "SumaFile.Git", "Views", "GitWorkbenchPanel.cs")),
+            "The Git workbench must live in the Git plugin.");
     }
 
     [Fact]
@@ -592,6 +580,143 @@ public class WinUiSourceShapeTests
         Assert.Contains("SetArchiveFormats", dialogCode);
         Assert.Contains("capabilities.Where(format => format.CanCreate)", dialogCode);
         Assert.Contains("GetArchiveCapabilitiesAsync", dialogService);
+        // 7z is offered only when the service reports a plugin engine that can create it.
+        Assert.DoesNotContain("Format = \"7z\"", dialogCode);
+    }
+
+    [Fact]
+    public void SettingsArchiveSupport_IsBuiltFromCapabilities()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var settingsXaml = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.xaml"));
+        var tools = File.ReadAllText(Path.Combine(appRoot, "SettingsWindow.Tools.cs"));
+
+        Assert.DoesNotContain("7z, and RAR extraction are handled by SumaFile", settingsXaml);
+        Assert.Contains("ZIP, TAR and TAR.GZ are built in. RAR archives can be listed and extracted but not created.", settingsXaml);
+        Assert.Contains("x:Name=\"ArchivePluginFormatsText\"", settingsXaml);
+        Assert.Contains("GetArchiveCapabilitiesAsync", tools);
+        Assert.Contains("ArchivePluginFormatsText.Text", tools);
+        Assert.Contains("archives: {", tools);
+        Assert.Contains("\"unavailable\"", tools);
+    }
+
+    [Fact]
+    public void MainWindow_RefreshesArchiveCapabilitiesOnPluginChangesAndReconnect()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var plugins = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Plugins.cs"));
+        var transfers = File.ReadAllText(Path.Combine(appRoot, "MainWindow.ArchiveTransfers.cs"));
+        var mainWindow = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+
+        var changedStart = plugins.IndexOf("private void OnPluginsChanged(", StringComparison.Ordinal);
+        Assert.True(changedStart >= 0, "OnPluginsChanged not found");
+        var changedEnd = plugins.IndexOf("\n    private ", changedStart + 1, StringComparison.Ordinal);
+        var changedBody = changedEnd < 0 ? plugins[changedStart..] : plugins[changedStart..changedEnd];
+        Assert.Contains("RefreshArchiveCapabilitiesAsync()", changedBody);
+
+        Assert.Contains("private async Task RefreshArchiveCapabilitiesAsync()", transfers);
+        Assert.Contains("GetArchiveCapabilitiesAsync(", transfers);
+        Assert.Contains("ArchivePaths.SetEngineFormats(", transfers);
+        Assert.Contains("RefreshArchivePanesAsync(", transfers);
+        Assert.Contains("AppendPluginLog(", transfers);
+
+        // At startup, once the workspace has loaded.
+        var connectStart = mainWindow.IndexOf("private async Task ConnectAsync(", StringComparison.Ordinal);
+        Assert.True(connectStart >= 0, "ConnectAsync not found");
+        var connectEnd = mainWindow.IndexOf("\n    private ", connectStart + 1, StringComparison.Ordinal);
+        var connect = connectEnd < 0 ? mainWindow[connectStart..] : mainWindow[connectStart..connectEnd];
+        var initialized = connect.IndexOf("OnPluginWorkspaceInitialized();", StringComparison.Ordinal);
+        Assert.True(initialized >= 0, "OnPluginWorkspaceInitialized call not found");
+        Assert.True(
+            connect.IndexOf("RefreshArchiveCapabilitiesAsync()", initialized, StringComparison.Ordinal) > initialized,
+            "the startup refresh must follow OnPluginWorkspaceInitialized");
+
+        // On reconnect, right after the IPC swap and before the pane refresh.
+        var start = mainWindow.IndexOf("private async Task ReconnectBackendAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ReconnectBackendAsync not found");
+        var end = mainWindow.IndexOf("\n    private ", start + 1, StringComparison.Ordinal);
+        var body = end < 0 ? mainWindow[start..] : mainWindow[start..end];
+        var replaceIpc = body.IndexOf("ReplaceIpc(", StringComparison.Ordinal);
+        var refresh = body.IndexOf("RefreshArchiveCapabilitiesAsync()", StringComparison.Ordinal);
+        var panes = body.IndexOf("RefreshAffectedPanesAsync(", StringComparison.Ordinal);
+        Assert.True(replaceIpc >= 0 && replaceIpc < refresh, "the capability refresh must follow ReplaceIpc");
+        Assert.True(refresh < panes, "the capability refresh must precede RefreshAffectedPanesAsync");
+    }
+
+    [Fact]
+    public void PluginFormatArchiveOperations_UseTransfersRows()
+    {
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var dialogs = File.ReadAllText(Path.Combine(appRoot, "FileOperationDialogService.cs"));
+        var transfer = File.ReadAllText(Path.Combine(appRoot, "MainWindow.Transfer.cs"));
+        var archiveTransfers = File.ReadAllText(Path.Combine(appRoot, "MainWindow.ArchiveTransfers.cs"));
+        var mainWindow = File.ReadAllText(Path.Combine(appRoot, "MainWindow.xaml.cs"));
+
+        static string Body(string source, string signature)
+        {
+            var start = source.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(start >= 0, $"{signature} not found");
+            var end = source.IndexOf("\n    private ", start + 1, StringComparison.Ordinal);
+            var publicEnd = source.IndexOf("\n    public ", start + 1, StringComparison.Ordinal);
+            if (publicEnd >= 0 && (end < 0 || publicEnd < end))
+            {
+                end = publicEnd;
+            }
+
+            return end < 0 ? source[start..] : source[start..end];
+        }
+
+        static void AssertEngineRouteBeforeModal(string body, string trackedCall, string modalCall, string where)
+        {
+            var engineCheck = body.IndexOf("ArchivePaths.IsEngineArchive(", StringComparison.Ordinal);
+            var enqueue = body.IndexOf("nqueueArchiveTransfer(", StringComparison.Ordinal);
+            var tracked = body.IndexOf(trackedCall, StringComparison.Ordinal);
+            var modal = body.IndexOf(modalCall, StringComparison.Ordinal);
+            Assert.True(engineCheck >= 0, $"{where} does not check ArchivePaths.IsEngineArchive");
+            Assert.True(enqueue > engineCheck, $"{where} does not enqueue a Transfers row for engine formats");
+            Assert.True(tracked > engineCheck, $"{where} does not use {trackedCall}");
+            Assert.True(modal >= 0, $"{where} lost the modal path for built-in formats");
+        }
+
+        // The dialog service takes the delegate and routes engine formats through it.
+        Assert.Contains("Func<ArchiveTransferRequest, TransferOperationViewModel?> enqueueArchiveTransfer", dialogs);
+        AssertEngineRouteBeforeModal(
+            Body(dialogs, "public async Task CreateArchiveAsync("),
+            "CreateArchiveTrackedAsync(",
+            "fileOps.CreateArchiveAsync(",
+            "CreateArchiveAsync");
+        AssertEngineRouteBeforeModal(
+            Body(dialogs, "private async Task ShowExtractDialogAsync("),
+            "ExtractArchiveTrackedAsync(",
+            "fileOps.ExtractArchiveAsync(",
+            "ShowExtractDialogAsync");
+        Assert.Contains("$\"Creating {", dialogs);
+        Assert.Contains("$\"Extracting {", dialogs);
+
+        // The context-menu extract does the same.
+        AssertEngineRouteBeforeModal(
+            Body(transfer, "private async Task ExtractSelectedArchiveAsync("),
+            "ExtractArchiveTrackedAsync(",
+            "fileOps.ExtractArchiveAsync(",
+            "ExtractSelectedArchiveAsync");
+
+        // The row: an external Transfers row with byte progress, the operation id and a pane refresh on success.
+        Assert.Contains("internal sealed record ArchiveTransferRequest(", archiveTransfers);
+        var enqueueBody = Body(archiveTransfers, "internal TransferOperationViewModel? EnqueueArchiveTransfer(");
+        Assert.Contains(".EnqueueExternal(", enqueueBody);
+        Assert.Contains("new Progress<ProgressUpdate>(", enqueueBody);
+        Assert.Contains(".ApplyProgress", enqueueBody);
+        Assert.Contains(".SetOperationId(", enqueueBody);
+        Assert.Contains("RefreshAffectedPanesAsync(", enqueueBody);
+
+        // MainWindow passes the delegate to the dialog service.
+        var ctor = mainWindow.IndexOf("new FileOperationDialogService(", StringComparison.Ordinal);
+        Assert.True(ctor >= 0, "FileOperationDialogService construction not found");
+        var ctorEnd = mainWindow.IndexOf(");", ctor, StringComparison.Ordinal);
+        Assert.Contains("EnqueueArchiveTransfer", mainWindow[ctor..ctorEnd]);
     }
 
     [Fact]
@@ -886,6 +1011,881 @@ public class WinUiSourceShapeTests
     }
 
 
+    [Fact]
+    public void TaskOptionsButton_IsBoundToCanChangeOptions()
+    {
+        var root = FindRepoRoot();
+        var xaml = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "TransferProgressWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "TransferProgressWindow.xaml.cs"));
+
+        var button = Regex.Match(xaml, "<Button[^>]*Click=\"OnTaskOptionsClicked\"[^>]*/>", RegexOptions.Singleline);
+        Assert.True(button.Success, "The per-task Options button is missing.");
+        Assert.Contains("IsEnabled=\"{Binding CanChangeOptions}\"", button.Value);
+        Assert.DoesNotContain("IsEnabled=\"{Binding CanCancel}\"", button.Value);
+
+        // A plugin or archive-engine row has no per-task overrides, so the click does nothing for it.
+        var handler = MethodBody(code, "void OnTaskOptionsClicked(");
+        Assert.Contains("IsExternal", handler);
+        Assert.True(
+            handler.IndexOf("IsExternal", StringComparison.Ordinal) < handler.IndexOf("TransferOptionsDialog.ShowAsync(", StringComparison.Ordinal),
+            "OnTaskOptionsClicked must return for an external row before it opens the dialog.");
+    }
+
+    [Fact]
+    public void OnClosed_ClosesPluginWindowsBeforeTheSessionCleanup()
+    {
+        var root = FindRepoRoot();
+        var mainWindow = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var onClosed = MethodBody(mainWindow, "async void OnClosed(object sender, WindowEventArgs args)");
+
+        var close = onClosed.IndexOf("ClosePluginWindows();", StringComparison.Ordinal);
+        var cleanup = onClosed.IndexOf("await CleanupSessionAsync(", StringComparison.Ordinal);
+        Assert.True(close >= 0, "OnClosed does not close the plugin windows.");
+        Assert.True(cleanup >= 0, "OnClosed does not clean up the session.");
+        Assert.True(close < cleanup, "Plugin windows must close before the session cleanup awaits.");
+
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        Assert.Contains(".CloseAllNow()", MethodBody(plugins, "void ClosePluginWindows()"));
+        // WindowsFor hands the manager a new host for every runtime, never a sealed one.
+        Assert.Contains("new PluginWindowHost(", MethodBody(plugins, "IPluginWindowHost WindowsFor(string pluginId)"));
+    }
+
+    [Fact]
+    public void PluginWindowHost_AttachAfterTheSeal_ClosesTheWindow()
+    {
+        var root = FindRepoRoot();
+        var host = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginWindowHost.cs"));
+        Assert.Contains("PluginWindowSet<Window>", host);
+        Assert.Contains("\"A plugin window must be a Microsoft.UI.Xaml.Window.\"", host);
+
+        // Attach: a refused window (the host is sealed) closes at once, before any chrome, and is not tracked.
+        var attach = MethodBody(host, "public void Attach(object window, PluginWindowOptions options)");
+        var track = attach.IndexOf(".TryTrack(", StringComparison.Ordinal);
+        var chrome = attach.IndexOf("SecondaryWindowChrome.Apply(", StringComparison.Ordinal);
+        Assert.True(track >= 0 && chrome > track, "Attach must ask TryTrack before it applies the chrome.");
+        var refused = attach[track..chrome];
+        Assert.Contains("Close", refused);
+        Assert.Contains("return;", refused);
+
+        // CloseAllAsync and CloseAllNow seal first, on the calling thread, before anything is enqueued or closed.
+        var closeAll = MethodBody(host, "public Task CloseAllAsync()");
+        var seal = closeAll.IndexOf(".Seal()", StringComparison.Ordinal);
+        Assert.True(seal >= 0, "CloseAllAsync does not seal the host.");
+        Assert.True(seal < closeAll.IndexOf("TryEnqueue(", StringComparison.Ordinal), "CloseAllAsync must seal before TryEnqueue.");
+        Assert.True(closeAll.IndexOf("Close", seal, StringComparison.Ordinal) > seal);
+        Assert.DoesNotContain("Close", closeAll[..seal]);
+
+        var closeNow = MethodBody(host, "internal void CloseAllNow()");
+        var sealNow = closeNow.IndexOf(".Seal()", StringComparison.Ordinal);
+        Assert.True(sealNow >= 0, "CloseAllNow does not seal the host.");
+        Assert.DoesNotContain("Close", closeNow[..sealNow]);
+    }
+
+    [Fact]
+    public void PluginWindowHost_HidesOpenDialogsBeforeClosingAWindow()
+    {
+        // Carry-over (d): a dialog open on a plugin window holds the app-wide DialogHost gate. The host hides it before
+        // it closes the window, so Disable, rescan, load failure and main-window close all release the gate.
+        var root = FindRepoRoot();
+        var host = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginWindowHost.cs"));
+
+        var closeEach = MethodBody(host, "private void CloseEach(");
+        var hide = closeEach.IndexOf("DialogHost.HideDialogsOn(", StringComparison.Ordinal);
+        var close = closeEach.IndexOf("TryClose(", StringComparison.Ordinal);
+        Assert.True(hide >= 0, "CloseEach does not hide the window's open dialogs.");
+        Assert.True(close > hide, "CloseEach must hide the window's dialogs before it closes the window.");
+        Assert.Contains("XamlRoot", closeEach[hide..close]);
+        Assert.Contains("window.Content?.XamlRoot", host);
+        Assert.Contains("window.Close()", MethodBody(host, "private static void TryClose(Window window)"));
+
+        // CloseAllNow (the main window's OnClosed) goes through the same CloseEach.
+        Assert.Contains("CloseEach(", MethodBody(host, "internal void CloseAllNow()"));
+        Assert.Contains("CloseEach(", MethodBody(host, "public Task CloseAllAsync()"));
+    }
+
+    [Fact]
+    public void PluginWindowHost_HidesOpenDialogsWhenAWindowClosesOnItsOwn()
+    {
+        // Carry-over (d), user-initiated close: a plugin window closed by its title-bar X, Alt+F4 or the plugin's own
+        // Close() never goes through CloseEach, and WinUI does not complete a dialog's ShowAsync when its window
+        // closes. Attach's Closed handler hides the window's dialogs too, so the app-wide gate is released either way.
+        var root = FindRepoRoot();
+        var host = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginWindowHost.cs"));
+
+        var attach = MethodBody(host, "public void Attach(object window, PluginWindowOptions options)");
+        var closed = attach.IndexOf("pluginWindow.Closed +=", StringComparison.Ordinal);
+        Assert.True(closed >= 0, "Attach does not handle the plugin window's Closed event.");
+        var handler = attach[closed..];
+        var end = handler.IndexOf("};", StringComparison.Ordinal);
+        Assert.True(end > 0, "Attach's Closed handler must be a block lambda that hides the window's dialogs.");
+        handler = handler[..end];
+        Assert.Contains("DialogHost.HideDialogsOn(XamlRootOf(pluginWindow))", handler);
+        Assert.Contains("_windows.Remove(pluginWindow)", handler);
+    }
+
+    [Fact]
+    public void PluginWindowHost_NormalizesOptionsAndChecksTheThreadBeforeTracking()
+    {
+        // Parked #72/#92: Attach refuses a call off the UI thread before anything is tracked, and the chrome only ever
+        // sees options PluginWindowOptionsPolicy has checked (sizes clamped, a title present and cut to length).
+        var root = FindRepoRoot();
+        var host = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginWindowHost.cs"));
+        var attach = MethodBody(host, "public void Attach(object window, PluginWindowOptions options)");
+
+        var thread = attach.IndexOf("_queue.HasThreadAccess", StringComparison.Ordinal);
+        var refusal = attach.IndexOf("throw new InvalidOperationException(\"Attach must be called on the UI thread.\");", StringComparison.Ordinal);
+        var normalize = attach.IndexOf("PluginWindowOptionsPolicy.Normalize(options, ", StringComparison.Ordinal);
+        var track = attach.IndexOf("_windows.TryTrack(", StringComparison.Ordinal);
+        var chrome = attach.IndexOf("SecondaryWindowChrome.Apply(pluginWindow, normalized.Title, normalized.Width, normalized.Height);", StringComparison.Ordinal);
+        Assert.True(thread >= 0, "Attach does not check the thread.");
+        Assert.True(refusal > thread, "Attach must throw the UI-thread InvalidOperationException when off the UI thread.");
+        Assert.True(normalize > refusal, "Attach must normalize the options after the thread check.");
+        Assert.True(track > normalize, "Attach must check the thread and normalize the options before it tracks the window.");
+        Assert.True(chrome > track, "Attach must apply the chrome from the normalized options.");
+        Assert.DoesNotContain("options.Title", attach);
+        Assert.DoesNotContain("options.Width", attach);
+        Assert.DoesNotContain("options.Height", attach);
+
+        // The DIP-to-pixel conversion saturates, so no size or DPI scale can overflow the physical size.
+        var chromeSource = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "SecondaryWindowChrome.cs"));
+        var resize = MethodBody(chromeSource, "public static void Resize(Window window, int logicalWidth, int logicalHeight)");
+        Assert.Contains("PhysicalPixels(logicalWidth, scale)", resize);
+        Assert.Contains("PhysicalPixels(logicalHeight, scale)", resize);
+        Assert.Contains("Math.Clamp(Math.Round(logical * scale), 0, int.MaxValue)", chromeSource);
+    }
+
+    [Fact]
+    public void DialogHost_ShowAsync_CompletesWhenTheHostHidesTheDialog()
+    {
+        // WinUI may never complete ShowAsync for a dialog whose window closed; the gate must not wait on it.
+        var root = FindRepoRoot();
+        var host = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "DialogHost.cs"));
+
+        var show = MethodBody(host, "public static async Task<ContentDialogResult> ShowAsync(");
+        Assert.Contains("Task.WhenAny(", show);
+        Assert.Contains("Gate.Release()", show);
+        Assert.Contains("Interlocked.Decrement(ref _openCount)", show);
+        Assert.Contains("ContentDialogResult.None", show);
+
+        var hide = MethodBody(host, "internal static int HideDialogsOn(XamlRoot? root)");
+        Assert.Contains(".Hide()", hide);
+        Assert.Contains("TrySetResult(", hide);
+        AssertEveryHideIsGuarded(hide, "HideDialogsOn", ".Hide()", expected: 1);
+    }
+
+    [Fact]
+    public void DialogHost_RunWithProgress_GuardsEveryHide()
+    {
+        var root = FindRepoRoot();
+        var host = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "DialogHost.cs"));
+        var body = MethodBody(host, "public static async Task<T> RunWithProgressAsync<T>(");
+
+        AssertEveryHideIsGuarded(body, "RunWithProgressAsync", "dialog.Hide()", expected: 2);
+        Assert.Equal(2, CountOccurrences(body, "dialog.XamlRoot is null"));
+    }
+
+    /// <summary>
+    /// Every <paramref name="call"/> in <paramref name="body"/> sits inside a <c>try</c> block, and there are
+    /// <paramref name="expected"/> of them.
+    /// </summary>
+    internal static void AssertEveryHideIsGuarded(string body, string method, string call, int expected)
+    {
+        var found = 0;
+        for (var index = body.IndexOf(call, StringComparison.Ordinal); index >= 0; index = body.IndexOf(call, index + 1, StringComparison.Ordinal))
+        {
+            found++;
+            Assert.True(IsInsideTry(body, index), $"{method}: the {call} at offset {index} is not inside a try block.");
+        }
+
+        Assert.Equal(expected, found);
+    }
+
+    /// <summary>True when <paramref name="index"/> lies inside the braces of some <c>try</c> block of <paramref name="body"/>.</summary>
+    private static bool IsInsideTry(string body, int index)
+    {
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(body[..index], @"\btry\s*\{"))
+        {
+            var depth = 0;
+            for (var position = match.Index + match.Length - 1; position < index; position++)
+            {
+                if (body[position] == '{') depth++;
+                else if (body[position] == '}') depth--;
+            }
+
+            if (depth > 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [Fact]
+    public void InitializePlugins_RendersOnceInsideTheBudgetedSpan_ThenSubscribesAndStartsBackends()
+    {
+        // Spec §5.2: the plugins-* startup span holds the manager, the hand-over of the prepared scan and one contribution
+        // render. Changed is subscribed only after that render (the scan's own Changed would queue a second one into the
+        // span), and startup backends start only after the mark and the subscription (no launch competes with the span,
+        // and no Changed of theirs is missed).
+        var root = FindRepoRoot();
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        var body = MethodBody(plugins, "private async Task InitializePluginsAsync(");
+
+        int At(string text)
+        {
+            var index = body.IndexOf(text, StringComparison.Ordinal);
+            Assert.True(index >= 0, $"InitializePluginsAsync has no '{text}'.");
+            return index;
+        }
+
+        string[] ordered =
+        [
+            "timer.Lap(\"plugins-begin\")",
+            "new PluginManager(",
+            "timer.Lap(\"plugins-manager-built\")",
+            "await pending.Scan",
+            "timer.Lap(\"plugins-scan-awaited\")",
+            "DiscoverAsync(prepared, startBackends: false,",
+            "timer.Lap(\"plugins-evaluated\")",
+            "ApplyPluginContributions();",
+            "timer.Mark(\"plugins-discovered\"",
+            "manager.Changed += OnPluginsChanged;",
+            "manager.StartStartupBackends();",
+            "[info] Discovered: ",
+        ];
+        var positions = ordered.Select(At).ToList();
+        for (var index = 1; index < ordered.Length; index++)
+        {
+            Assert.True(positions[index - 1] < positions[index], $"'{ordered[index - 1]}' must come before '{ordered[index]}'.");
+        }
+
+        Assert.Equal(1, CountOccurrences(body, "ApplyPluginContributions();"));
+        Assert.Equal(1, CountOccurrences(plugins, "Changed += OnPluginsChanged"));
+        Assert.Equal(1, CountOccurrences(plugins, "StartStartupBackends()"));
+        // Sub-stages are laps: their file writes happen with the closing mark, outside the span they split.
+        Assert.Equal(1, CountOccurrences(body, "timer.Mark("));
+    }
+
+    [Fact]
+    public void ActivateVisiblePluginSections_OnlyQueuesBodyLoads()
+    {
+        // Carry-over #82: a body load runs plugin code, so it never runs inline inside a host layout pass.
+        var root = FindRepoRoot();
+        var sidebar = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginSidebar.cs"));
+        var body = MethodBody(sidebar, "private void ActivateVisiblePluginSections(");
+
+        Assert.Contains("_pluginBodyLoads.Request(PluginSidebarLayout.BodyLoadKey(", body);
+        Assert.Equal(1, CountOccurrences(body, "LoadPluginSectionBodyAsync("));
+        Assert.Equal(1, CountOccurrences(body, "() => LoadPluginSectionBodyAsync("));
+    }
+
+    [Fact]
+    public void PluginWorkspaceView_NavigateAsync_AlwaysQueues()
+    {
+        // A plugin calling NavigateAsync from the UI thread must not re-enter a workspace sync inline.
+        var root = FindRepoRoot();
+        var view = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginWorkspaceView.cs"));
+        var body = MethodBody(view, "public Task NavigateAsync(");
+
+        Assert.Contains("PluginUiDispatch.EnqueueAsync(", body);
+        Assert.DoesNotContain("RunAsync(", body);
+    }
+
+    [Fact]
+    public void TogglePluginSection_ReplacesTheCollapsedListInsteadOfMutatingIt()
+    {
+        // A settings save on the thread pool reads the list; the toggle swaps in a new one instead of editing it.
+        var root = FindRepoRoot();
+        var sidebar = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginSidebar.cs"));
+        var body = MethodBody(sidebar, "private void TogglePluginSection(");
+
+        Assert.Contains("CollapsedPluginSidebarSections = [", body);
+        Assert.DoesNotMatch(@"CollapsedPluginSidebarSections\s*\.\s*(Add|Remove)\(", body);
+        Assert.DoesNotMatch(@"\b(collapsed|list)\s*\.\s*(Add|Remove)\(", body);
+    }
+
+    [Fact]
+    public void ConnectAsync_WarmsPluginRenderingBeforeAwaitingTheService()
+    {
+        // Carry-over (h): the first contribution render's JIT runs while the file service starts. Normal priority,
+        // queued before the first await, so it runs before the backend-started continuation (at Low it ran only after
+        // ready; see the phase 4 Task 4 report).
+        var root = FindRepoRoot();
+        var window = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var body = MethodBody(window, "private async Task ConnectAsync(");
+        var prepare = body.IndexOf("PreparePluginScan()", StringComparison.Ordinal);
+        var started = body.IndexOf("timer.Mark(\"backend-started\"", StringComparison.Ordinal);
+        Assert.True(prepare >= 0 && started > prepare, "PreparePluginScan() must come before the backend-started mark.");
+
+        var between = body[prepare..started];
+        var enqueue = between.IndexOf("TryEnqueue(DispatcherQueuePriority.Normal,", StringComparison.Ordinal);
+        Assert.True(enqueue >= 0, "No normal-priority TryEnqueue between PreparePluginScan() and backend-started.");
+        var call = between.IndexOf(';', enqueue);
+        Assert.Contains("WarmPluginRendering(", between[enqueue..call]);
+        Assert.True(
+            between.IndexOf("await ", StringComparison.Ordinal) < 0
+            || between.IndexOf("await ", StringComparison.Ordinal) > enqueue,
+            "The warm-up must be queued before the first await.");
+
+        var plugins = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
+        var warm = MethodBody(plugins, "private void WarmPluginRendering(");
+        Assert.DoesNotContain("PluginSectionsHost", warm);
+        Assert.DoesNotContain("_plugins", warm);
+        Assert.DoesNotContain("_pluginSectionViews", warm);
+    }
+
+    [Fact]
+    public void PrimaryToolbar_RendersOnlyTheVisibleItems()
+    {
+        // A saved toolbar keeps an absent plugin's item; only the catalog-known items are drawn.
+        var root = FindRepoRoot();
+        var surface = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.CommandSurface.cs"));
+        var body = MethodBody(surface, "private void ApplyCommandSurfaceLayout(");
+
+        Assert.Contains("in layout.VisibleItems()", body);
+        Assert.DoesNotContain("layout.PrimaryToolbar", body);
+    }
+
+    [Fact]
+    public void SettingsToolbarEditor_CarriesTheOfferedItems()
+    {
+        var root = FindRepoRoot();
+        var settings = ReadSettingsWindowSource(Path.Combine(root, "SimpleFile.App"));
+
+        Assert.Contains("OfferedPrimaryItems =", MethodBody(settings, "private CommandSurfaceLayout CurrentCommandSurfaceLayout("));
+        Assert.Contains("OfferedPrimaryItems =", MethodBody(settings, "private static CommandSurfaceLayout CloneCommandSurfaceLayout("));
+
+        // Save merges through the Core rule, against the layout the editor loaded, so an offer made while Settings was
+        // open keeps its item (CommandSurfaceLayoutTests.MergeOffersFrom_*).
+        Assert.Contains("_toolbarBaseline = CloneCommandSurfaceLayout(", MethodBody(settings, "private void ApplyCommandSurfaceLayout("));
+        var applyTo = MethodBody(settings, "public void ApplyTo(UiSettings settings)");
+        Assert.Contains(".MergeOffersFrom(current, _toolbarBaseline)", applyTo);
+        Assert.DoesNotContain(".. current.OfferedPrimaryItems", applyTo);
+    }
+
+    [Fact]
+    public void RowDecorationCoordinator_StartsEverySourceCallOnTheThreadPool()
+    {
+        // Carry-over #82: a provider's first activation must never run inline inside a host pass, so every call into
+        // the decoration source starts on the thread pool.
+        var root = FindRepoRoot();
+        var coordinator = File.ReadAllText(Path.Combine(root, "SimpleFile.Core", "RowDecorationCoordinator.cs"));
+        var calls = Regex.Matches(coordinator, @"\.DecorateAsync\(");
+
+        Assert.NotEmpty(calls);
+        foreach (Match call in calls)
+        {
+            var lineStart = coordinator.LastIndexOf('\n', call.Index) + 1;
+            var before = coordinator[lineStart..call.Index];
+            Assert.Matches(@"Task\.Run\(\s*\(\)\s*=>\s*\w+$", before);
+        }
+    }
+
+    [Fact]
+    public void SyncPluginPanels_BuildsNoElement()
+    {
+        // Spec §5.2: the contribution render inside the plugins-* span only records the wanted panels. A panel's chrome
+        // and body are built when it is shown, never by the sync.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        var body = MethodBody(panels, "private void SyncPluginPanels(IReadOnlyList<PluginRecord> enabled)");
+
+        Assert.DoesNotContain("new ", body);
+        Assert.DoesNotContain("CreatePanelAsync", body);
+        Assert.DoesNotContain("PluginPanelWindow", body);
+        Assert.Contains("PluginPanelLayout.StillWanted(", body);
+
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        Assert.Contains("SyncPluginPanels(enabled);", MethodBody(plugins, "private void ApplyPluginContributions("));
+        Assert.Contains("ClearPluginPanels();", MethodBody(plugins, "private async Task DisposePluginsAsync("));
+        Assert.Contains("PanelsFor = ", MethodBody(plugins, "private async Task InitializePluginsAsync("));
+    }
+
+    [Fact]
+    public void PluginPanelRegions_AreDeclaredInMainWindowXaml()
+    {
+        // Spec §7: the panel host is two regions of MainWindow.xaml, below and to the right of the panes.
+        var root = FindRepoRoot();
+        var xaml = System.Xml.Linq.XDocument.Load(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml"));
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        System.Xml.Linq.XElement Named(string name) =>
+            xaml.Descendants().SingleOrDefault(element => (string?)element.Attribute(x + "Name") == name)
+            ?? throw new Xunit.Sdk.XunitException($"MainWindow.xaml has no element named {name}.");
+
+        var shell = Named("FilePaneShell");
+        var shellRows = shell.Elements().Single(element => element.Name.LocalName == "Grid.RowDefinitions").Elements().ToList();
+        // Toolbar, panes and the bottom region; the core GitPanel row went with core Git in phase 4.
+        Assert.Equal(3, shellRows.Count);
+        Assert.Equal("Auto", (string?)shellRows[2].Attribute("Height"));
+
+        var bottom = Named("PluginPanelBottomRegion");
+        Assert.Same(shell, bottom.Parent);
+        Assert.Equal("2", (string?)bottom.Attribute("Grid.Row"));
+        Assert.Equal("Collapsed", (string?)bottom.Attribute("Visibility"));
+        var bottomGrip = bottom.Descendants().Single(element => element.Name.LocalName == "RowResizeGrip");
+        Assert.Equal("PluginPanel.BottomGrip", (string?)bottomGrip.Attribute("AutomationProperties.AutomationId"));
+
+        var wrapper = Named("PanesAndPanelGrid");
+        Assert.Same(shell, wrapper.Parent);
+        var columns = wrapper.Elements().Single(element => element.Name.LocalName == "Grid.ColumnDefinitions").Elements()
+            .Select(column => (string?)column.Attribute("Width")).ToList();
+        Assert.Equal(["*", "0", "0"], columns);
+        Assert.Same(wrapper, Named("PanesGrid").Parent);
+        var rightGrip = Named("PluginPanelRightGrip");
+        Assert.Equal("PaneResizeGrip", rightGrip.Name.LocalName);
+        Assert.Equal("PluginPanel.RightGrip", (string?)rightGrip.Attribute("AutomationProperties.AutomationId"));
+        Assert.Equal("1", (string?)rightGrip.Attribute("Grid.Column"));
+        var right = Named("PluginPanelRightRegion");
+        Assert.Same(wrapper, right.Parent);
+        Assert.Equal("2", (string?)right.Attribute("Grid.Column"));
+    }
+
+    [Fact]
+    public void PanelCommands_ShowFromCommandsAndToggleFromTheToolbar()
+    {
+        // A panel's command shows it from the palette, a menu or RunAppCommandAsync, and its toolbar button toggles it.
+        // The plugin's ICommandHandler never receives a panel command.
+        var root = FindRepoRoot();
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        var run = MethodBody(plugins, "private Task RunPluginCommandAsync(string hostCommandId)");
+        var forCommand = run.IndexOf("PluginPanelLayout.ForCommand(", StringComparison.Ordinal);
+        var show = run.IndexOf("ShowPluginPanelAsync(", StringComparison.Ordinal);
+        var command = run.IndexOf("RunCommandAsync(", StringComparison.Ordinal);
+        Assert.True(forCommand >= 0, "RunPluginCommandAsync does not consult PluginPanelLayout.ForCommand.");
+        Assert.True(show > forCommand, "RunPluginCommandAsync does not show the panel its command names.");
+        Assert.True(command > show, "RunPluginCommandAsync must consult the panels before it runs the plugin's command.");
+        Assert.Contains("return;", run[show..command]);
+
+        var surface = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.CommandSurface.cs"));
+        var click = MethodBody(surface, "private async void OnGeneratedToolbarCommandClick(");
+        Assert.Contains("PluginPanelLayout.ForCommand(", click);
+        Assert.Contains("TogglePluginPanelAsync(", click);
+        Assert.Contains("RefreshPluginPanelToggleButtons();", MethodBody(surface, "private void ApplyPrimaryToolbarCommandVisibility("));
+
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        Assert.Contains("ApplyPluginPanelToggleChrome(", MethodBody(panels, "private void RefreshPluginPanelToggleButtons("));
+        Assert.Contains("SetToggleChromeState(", MethodBody(panels, "private void ApplyPluginPanelToggleChrome("));
+    }
+
+    [Fact]
+    public void PanelToggleChrome_SurvivesEveryToolbarBuildAndChromeRefresh()
+    {
+        // ConfigureToolbarButton runs for every new toolbar button (a rebuild) and every chrome refresh, and resets the
+        // name, tooltip and background. It must end by drawing a panel's button as its toggle again, or "Hide <title>"
+        // is lost on any toolbar rebuild whose overflow set is unchanged.
+        var root = FindRepoRoot();
+        var surface = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.CommandSurface.cs"));
+        var configure = MethodBody(surface, "private void ConfigureToolbarButton(Button button, ToolbarAction action, bool showLabels)");
+        var toggle = configure.IndexOf("ApplyPluginPanelToggleChrome(button, ", StringComparison.Ordinal);
+        Assert.True(toggle >= 0, "ConfigureToolbarButton does not redraw a panel's toggle chrome.");
+        Assert.True(toggle > configure.LastIndexOf("AutomationProperties.SetName(button, ", StringComparison.Ordinal),
+            "The panel toggle chrome must be drawn after the action label's name.");
+        Assert.True(toggle > configure.LastIndexOf("ToolTipService.SetToolTip(button, ", StringComparison.Ordinal),
+            "The panel toggle chrome must be drawn after the action label's tooltip.");
+
+        // Both ApplyCommandSurfaceLayout branches reach ConfigureToolbarButton.
+        Assert.Contains("ConfigureToolbarButton(", MethodBody(surface, "private void RefreshPrimaryToolbarActionChrome(bool showLabels)"));
+        Assert.Contains("ConfigureToolbarButton(generated, ", MethodBody(surface, "private FrameworkElement? ToolbarElementFor("));
+
+        // Hello puts its panel toggle on the primary toolbar, so the UI smoke drives this path for real.
+        using var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllText(
+            Path.Combine(root, "SimpleFile.Tests", "Fixtures", "HelloPlugin", "plugin.json")));
+        Assert.Contains(manifest.RootElement.GetProperty("contributions").GetProperty("toolbar").EnumerateArray(), entry =>
+            entry.GetProperty("command").GetString() == "toggle-panel" && entry.GetProperty("placement").GetString() == "primary");
+    }
+
+    [Fact]
+    public void PanelBodies_LoadOncePerPresentation()
+    {
+        // Spec §7: a panel's body is created once per presentation. The queue only drops a request while the key waits,
+        // so a show during a running load must see the load marked on the chrome, and the load itself must not run or
+        // place a second body for a presentation that already has one.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        var show = MethodBody(panels, "internal Task ShowPluginPanelAsync(string pluginId, string panelId)");
+        var showGuard = show.IndexOf("PluginPanelLayout.NeedsBodyLoad(", StringComparison.Ordinal);
+        Assert.True(showGuard >= 0, "ShowPluginPanelAsync does not ask PluginPanelLayout.NeedsBodyLoad.");
+        Assert.True(showGuard < show.IndexOf("_pluginBodyLoads.Request(", StringComparison.Ordinal));
+        Assert.Contains("chrome.LoadingPresentation", show[showGuard..]);
+
+        var load = MethodBody(panels, "private async Task LoadPluginPanelBodyAsync(");
+        var loadGuard = load.IndexOf("PluginPanelLayout.NeedsBodyLoad(", StringComparison.Ordinal);
+        var mark = load.IndexOf("chrome.LoadingPresentation = presentation;", StringComparison.Ordinal);
+        var create = load.IndexOf(".CreatePanelAsync(", StringComparison.Ordinal);
+        Assert.True(loadGuard >= 0 && loadGuard < mark && mark < create,
+            "LoadPluginPanelBodyAsync must check NeedsBodyLoad, then mark the load on the chrome, before CreatePanelAsync.");
+        Assert.Contains("finally", load[create..]);
+        Assert.Contains("chrome.LoadingPresentation = null;", load[create..]);
+        var place = load.IndexOf("chrome.Body.Content = element;", StringComparison.Ordinal);
+        Assert.Contains("chrome.Body.Content is not null", load[create..place]);
+
+        var chrome = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginPanelWindow.cs"));
+        Assert.Contains("public int? LoadingPresentation { get; set; }", chrome);
+    }
+
+    [Fact]
+    public void PluginPanelWindow_IsTrackedByThePluginsWindowHost()
+    {
+        // Teardown (Disable, rescan, load failure) and the main window's OnClosed close a detached panel's window first,
+        // through the same window set and seal as plugin windows.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        Assert.Contains("PluginWindowHostFor(", panels);
+        Assert.Contains(".TrackHostWindow(", MethodBody(panels, "private Task DetachPluginPanelAsync("));
+
+        var host = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginWindowHost.cs"));
+        var track = MethodBody(host, "internal void TrackHostWindow(Window window)");
+        Assert.Contains("_windows.TryTrack(window)", track);
+        Assert.Contains("TryClose(window)", track);
+        Assert.Contains("DialogHost.HideDialogsOn(XamlRootOf(window))", track);
+        Assert.Contains("_windows.Remove(window)", track);
+        Assert.DoesNotContain("SecondaryWindowChrome", track);
+
+        var window = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginPanelWindow.cs"));
+        Assert.Contains("sealed class PluginPanelWindow : Window", window);
+        Assert.Contains("SecondaryWindowChrome.Apply(this, ", window);
+        Assert.Contains("PluginPanelLayout.WindowWidth, PluginPanelLayout.WindowHeight", window);
+    }
+
+    [Fact]
+    public void PanelBodies_LoadThroughTheQueueWithThePanelSlotKey()
+    {
+        // Carry-over #82: a panel's first activation never nests inside a host pass, so its body load is queued.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        var show = MethodBody(panels, "internal Task ShowPluginPanelAsync(string pluginId, string panelId)");
+
+        Assert.Contains("_pluginBodyLoads.Request(PluginPanelLayout.BodyLoadKey(", show);
+        Assert.DoesNotContain("CreatePanelAsync(", show);
+        Assert.Equal(1, CountOccurrences(show, "LoadPluginPanelBodyAsync("));
+        Assert.Equal(1, CountOccurrences(show, "() => LoadPluginPanelBodyAsync("));
+
+        foreach (var signature in new[] { "private Task DetachPluginPanelAsync(", "private Task DockPluginPanelAsync(" })
+        {
+            var body = MethodBody(panels, signature);
+            Assert.Contains("_pluginBodyLoads.Request(PluginPanelLayout.BodyLoadKey(", body);
+            Assert.DoesNotContain("CreatePanelAsync(", body);
+        }
+
+        // The one place the body is created; a failure shows in the body.
+        var load = MethodBody(panels, "private async Task LoadPluginPanelBodyAsync(");
+        Assert.Contains(".CreatePanelAsync(", load);
+        Assert.Contains("This panel could not be loaded: ", load);
+        Assert.Equal(1, CountOccurrences(panels, ".CreatePanelAsync("));
+    }
+
+    [Fact]
+    public void PluginPanelsService_QueuesShowAndHide()
+    {
+        // IPluginPanels is callable from any thread and never runs inline on the UI thread.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        Assert.Contains("class PluginPanelsService", panels);
+        Assert.Contains(": IPluginPanels", panels);
+
+        var show = MethodBody(panels, "public Task ShowAsync(string panelId, CancellationToken ct)");
+        Assert.Contains("PluginUiDispatch.EnqueueAsync", show);
+        Assert.DoesNotContain("RunAsync(", show);
+
+        var hide = MethodBody(panels, "public void Hide(string panelId)");
+        Assert.Contains("TryEnqueue(", hide);
+    }
+
+    [Fact]
+    public void BuildContextMenuRequest_FillsFolderFlagsAndSelectionDecorationPlugins()
+    {
+        // Menus read the decorations the active pane already has; building a menu never asks a provider.
+        var root = FindRepoRoot();
+        var commands = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Commands.cs"));
+        var body = MethodBody(commands, "private ContextMenuRequest BuildContextMenuRequest(");
+
+        Assert.Matches(@"FolderFlags\s*=\s*decorations\.FolderFlags", body);
+        Assert.Matches(@"SelectionDecorationPlugins\s*=\s*decorations\.PluginsFor\(", body);
+        Assert.Contains(".Decorations", body);
+        Assert.DoesNotContain("GetRowDecorationsAsync(", body);
+        Assert.DoesNotContain(".DecorateAsync(", body);
+        Assert.DoesNotContain("InvalidateDecorationsAsync(", body);
+    }
+
+    [Fact]
+    public void FileRowView_RendersDecorationsThroughTheBrushAllowList()
+    {
+        // A plugin's brush key is a hint: it is drawn only through the allow-list, against the row's own theme.
+        var root = FindRepoRoot();
+        var view = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "FileRowView.xaml.cs"));
+        Assert.Contains("ThemeResourceLookup.Brush(this, DecorationBrushKeys.Normalize(", view);
+        Assert.Contains("Row.DecorationText", view);
+        Assert.Contains("DecorationTooltip", view);
+        Assert.DoesNotContain("GitText", view);
+        Assert.DoesNotContain("GitStatusBrushKey", view);
+
+        var rows = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "ExplorerRows.cs"));
+        Assert.Contains("\"git\" => DecorationText", rows);
+        foreach (var member in new[] { "DecorationText", "DecorationBrushKey", "DecorationTooltip", "DecorationPlugins" })
+        {
+            Assert.Matches($@"public [\w<>?]+ {member} \{{ get; set; \}}", rows);
+        }
+
+        var chrome = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Chrome.cs"));
+        var toRow = MethodBody(chrome, "private FileRow ToFileRow(FileEntry entry, PaneId pane)");
+        Assert.Contains(".Decorations", toRow);
+        var same = chrome[chrome.IndexOf("private static bool SameFileRow(", StringComparison.Ordinal)..];
+        same = same[..same.IndexOf(';')];
+        foreach (var member in new[] { "DecorationText", "DecorationBrushKey", "DecorationTooltip", "DecorationPlugins" })
+        {
+            Assert.Contains("left." + member, same);
+        }
+
+        // The status column shows only when a decoration provider exists, not with the legacy Git switch.
+        var transfer = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Transfer.cs"));
+        var effective = MethodBody(transfer, "private ColumnLayout EffectiveColumnsForPane(");
+        Assert.Contains("RowDecorations.HasProviders", effective);
+        Assert.DoesNotContain("IsGitIntegrationEnabled", effective);
+    }
+
+    [Fact]
+    public void ThemeDictionaries_DefineTheDecorationBrushes()
+    {
+        // Spec §5.1: the stable decoration keys exist in every theme dictionary, with the colours of the SfGit*Brush
+        // keys they replaced (removed with core Git in phase 4).
+        var root = FindRepoRoot();
+        var app = System.Xml.Linq.XDocument.Load(Path.Combine(root, "SimpleFile.App", "App.xaml"));
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var themes = app.Descendants()
+            .Where(element => element.Name.LocalName == "ResourceDictionary" && element.Attribute(x + "Key") is not null)
+            .ToList();
+        Assert.Equal(["Default", "Dark", "Light", "HighContrast"], themes.Select(theme => theme.Attribute(x + "Key")!.Value));
+        var expected = new Dictionary<string, string[]>
+        {
+            ["Default"] = ["#4EC9B0", "#E5C07B", "#79C0FF", "#F85149"],
+            ["Dark"] = ["#4EC9B0", "#E5C07B", "#79C0FF", "#F85149"],
+            ["Light"] = ["#1A7F37", "#9A6700", "#0969DA", "#CF222E"],
+            ["HighContrast"] = ["#FFFF00", "#FFFF00", "#FFFFFF", "#FFFF00"],
+        };
+        foreach (var theme in themes)
+        {
+            string? Color(string key) => theme.Elements()
+                .FirstOrDefault(element => element.Attribute(x + "Key")?.Value == key)?.Attribute("Color")?.Value;
+
+            var states = new[] { "Added", "Modified", "Untracked", "Deleted" };
+            var colours = expected[theme.Attribute(x + "Key")!.Value];
+            for (var i = 0; i < states.Length; i++)
+            {
+                Assert.Equal(colours[i], Color($"SfDecoration{states[i]}Brush"));
+            }
+
+            Assert.DoesNotContain(theme.Elements(), element => element.Attribute(x + "Key")?.Value.StartsWith("SfGit", StringComparison.Ordinal) == true);
+        }
+
+        var builder = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginSettingsPanelBuilder.cs"));
+        Assert.Contains("Brush(\"SfDecorationDeletedBrush\")", builder);
+        Assert.DoesNotContain("SfGitDeletedBrush", builder);
+    }
+
+    [Fact]
+    public void StartupReady_RedecoratesAfterMarkingReady()
+    {
+        // Carry-over (h): no decoration request precedes ready, and the folder shown at startup is still decorated.
+        var root = FindRepoRoot();
+        var appRoot = Path.Combine(root, "SimpleFile.App");
+        var callers = Directory.EnumerateFiles(appRoot, "*.cs")
+            .Where(path => File.ReadAllText(path).Contains("MarkStartupReady(", StringComparison.Ordinal))
+            .Select(Path.GetFileName)
+            .ToList();
+        Assert.Equal(["MainWindow.PluginSidebar.cs"], callers);
+
+        var sidebar = File.ReadAllText(Path.Combine(appRoot, "MainWindow.PluginSidebar.cs"));
+        Assert.Equal(1, CountOccurrences(sidebar, "MarkStartupReady("));
+        var body = MethodBody(sidebar, "private void QueuePluginSectionActivation(");
+        var queued = body.IndexOf("TryEnqueue(DispatcherQueuePriority.Low", StringComparison.Ordinal);
+        var mark = body.IndexOf(".RowDecorations.MarkStartupReady();", StringComparison.Ordinal);
+        var redecorate = body.IndexOf("ObserveAsync(", mark < 0 ? 0 : mark, StringComparison.Ordinal);
+        Assert.True(queued >= 0, "QueuePluginSectionActivation does not queue its callback at Low priority.");
+        Assert.True(mark > queued, "MarkStartupReady is not called inside the Low-priority callback.");
+        Assert.True(redecorate > mark, "No ObserveAsync follows MarkStartupReady.");
+        Assert.Contains(".InvalidateDecorationsAsync()", body[redecorate..]);
+    }
+
+    [Fact]
+    public void ApplyRowDecorationSource_OnlyQueues()
+    {
+        // Carry-over #82: setting the source runs inside ApplyPluginContributions, so it only queues thread-pool work.
+        var root = FindRepoRoot();
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        var body = MethodBody(plugins, "private void ApplyRowDecorationSource(");
+
+        Assert.Contains("SetSource(", body);
+        Assert.Contains("new PluginRowDecorationSource(", body);
+        Assert.Contains("PluginContributionAdapter.RowDecorationProviders(", body);
+        Assert.Contains("ObserveAsync(", body);
+        Assert.DoesNotContain("await", body);
+        Assert.DoesNotContain("GetRowDecorationsAsync(", body);
+        Assert.DoesNotContain(".DecorateAsync(", body);
+
+        Assert.Contains("ApplyRowDecorationSource();", MethodBody(plugins, "private void ApplyPluginContributions("));
+        Assert.Contains("ApplyRowDecorationSource();", MethodBody(plugins, "private void OnPluginWorkspaceInitialized("));
+        Assert.Contains("RowDecorations.SetSource(null)", MethodBody(plugins, "private async Task DisposePluginsAsync("));
+        var options = MethodBody(plugins, "private async Task InitializePluginsAsync(");
+        Assert.Matches(@"InvalidateDecorations\s*=\s*\w+\s*=>\s*_\s*=\s*ObserveAsync\(", options);
+    }
+
+    [Fact]
+    public void PluginSettingsCard_WritesThroughWriteSettingAsync()
+    {
+        // Review Focus 1: a declarative setting written from Settings > Plugins re-decorates at once.
+        var root = FindRepoRoot();
+        var settings = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "SettingsWindow.Plugins.cs"));
+        var build = settings.IndexOf("builder.Build(", StringComparison.Ordinal);
+        Assert.True(build >= 0, "SettingsWindow.Plugins.cs does not call builder.Build(.");
+        var call = settings[build..settings.IndexOf(");", build, StringComparison.Ordinal)];
+        Assert.Contains("WriteSettingAsync(record.Id,", call);
+        Assert.DoesNotContain("SetSettingAsync(", call);
+
+        var builder = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "PluginSettingsPanelBuilder.cs"));
+        Assert.Contains("public static string SettingAutomationId(string pluginId, string key) => $\"PluginSetting.{pluginId}.{key}\";", builder);
+        var control = MethodBody(builder, "private FrameworkElement SettingControl(");
+        Assert.Contains("SetAutomationId(", control);
+        Assert.Contains("SettingAutomationId(pluginId, spec.Key)", control);
+    }
+
+    [Fact]
+    public void InitializePlugins_StartsTheLegacyMigrationAfterTheMark()
+    {
+        // The migration writes settings; it stays out of the budgeted span and starts once the backends may start.
+        var root = FindRepoRoot();
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        var body = MethodBody(plugins, "private async Task InitializePluginsAsync(");
+        const string migration = "_ = ObserveAsync(manager.MigrateLegacySettingsAsync(cts.Token));";
+
+        Assert.Equal(1, CountOccurrences(plugins, "MigrateLegacySettingsAsync("));
+        var mark = body.IndexOf("timer.Mark(\"plugins-discovered\"", StringComparison.Ordinal);
+        var backends = body.IndexOf("manager.StartStartupBackends();", StringComparison.Ordinal);
+        var migrate = body.IndexOf(migration, StringComparison.Ordinal);
+        Assert.True(mark >= 0 && backends > mark, "StartStartupBackends must follow the plugins-discovered mark.");
+        Assert.True(migrate > backends, "The legacy settings migration must start right after StartStartupBackends.");
+    }
+
+    [Fact]
+    public void PrimaryToolbar_HidesPluginActionsWhoseWhenIsFalse()
+    {
+        // Toolbar `when` reads the same request as menus; a panel toggle stays visible while its panel is shown, and the
+        // visibility is applied again after every workspace sync (which follows every decoration change).
+        var root = FindRepoRoot();
+        var surface = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.CommandSurface.cs"));
+        var visibility = MethodBody(surface, "private void ApplyPrimaryToolbarCommandVisibility(");
+        Assert.Contains("PluginToolbarWhenAllows(", visibility);
+        var when = MethodBody(surface, "private bool PluginToolbarWhenAllows(");
+        Assert.Contains("PluginMenuWhen.Evaluate(", when);
+        Assert.Contains("BuildContextMenuRequest(", when);
+        Assert.Contains("IsPluginPanelShownForCommand(", when);
+
+        var window = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var sync = MethodBody(window, "private void SyncFromWorkspaceCore()");
+        Assert.True(
+            sync.IndexOf("ApplyCommandSurfaceLayout();", StringComparison.Ordinal)
+                < sync.IndexOf("ApplyPrimaryOverflowVisibility(_primaryToolbarOverflow);", StringComparison.Ordinal),
+            "SyncFromWorkspaceCore does not apply the toolbar visibility after the command surface.");
+    }
+
+    [Fact]
+    public void PublishShownPluginPanel_RecomputesTheToolbarVisibility()
+    {
+        // A panel toggle with a `when` stays visible while its panel is shown. Showing or hiding a panel must recompute
+        // that visibility at once, not only redraw the toggle chrome and wait for the next workspace sync.
+        var root = FindRepoRoot();
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        var body = MethodBody(panels, "private void PublishShownPluginPanel(");
+
+        var key = body.IndexOf("_shownPluginPanelStateKey =", StringComparison.Ordinal);
+        var apply = body.IndexOf("ApplyPrimaryOverflowVisibility(_primaryToolbarOverflow)", StringComparison.Ordinal);
+        Assert.True(key >= 0 && apply > key, "PublishShownPluginPanel must recompute the toolbar visibility after it publishes the state.");
+
+        // That pass redraws the toggles as well, so nothing is lost by not calling RefreshPluginPanelToggleButtons here.
+        var surface = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.CommandSurface.cs"));
+        Assert.Contains("RefreshPluginPanelToggleButtons();", MethodBody(surface, "private void ApplyPrimaryToolbarCommandVisibility("));
+        var window = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        Assert.Contains("ApplyPrimaryToolbarCommandVisibility(overflowed);", MethodBody(window, "private void ApplyPrimaryOverflowVisibility("));
+    }
+
+    [Fact]
+    public void ApplyWorkspaceProfile_KeepsTheCallersContextUpToTheSettingsSave()
+    {
+        // #78/#84: the save normalizes Settings on the caller's thread; the profile apply must not hop to the pool first.
+        var root = FindRepoRoot();
+        var layouts = File.ReadAllText(Path.Combine(root, "SimpleFile.Core", "WorkspaceControllers", "WorkspaceLayoutController.cs"));
+        var body = MethodBody(layouts, "public async Task ApplyWorkspaceProfileAsync(");
+
+        Assert.DoesNotContain("ConfigureAwait(false)", body);
+        Assert.Contains("await workspace.SaveUiSettingsAsync(cancellationToken);", body);
+    }
+
+    [Fact]
+    public void SettingsSave_ReappliesThePluginToolbarPlacementsBeforeItSaves()
+    {
+        // Spec §7: after a toolbar Reset the enabled plugins offer their items again. Settings hands MainWindow its
+        // layout through the apply callback, which re-applies the placements (without a save of its own) before the
+        // toolbar is rebuilt; the Settings save that follows writes them.
+        var root = FindRepoRoot();
+        var window = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var construct = window[window.IndexOf("new FileOperationDialogService(", StringComparison.Ordinal)..];
+        construct = construct[..construct.IndexOf(");", StringComparison.Ordinal)];
+        Assert.Contains("ApplySettingsCommandSurfaceLayout,", construct);
+        Assert.DoesNotContain("            ApplyCommandSurfaceLayout,", construct);
+
+        var plugins = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"));
+        var apply = MethodBody(plugins, "private void ApplySettingsCommandSurfaceLayout(");
+        var placements = apply.IndexOf("ApplyPluginToolbarPlacements(", StringComparison.Ordinal);
+        Assert.True(placements >= 0, "The Settings apply must re-apply the plugin toolbar placements.");
+        Assert.Contains("save: false", apply);
+        Assert.True(apply.IndexOf("ApplyCommandSurfaceLayout();", StringComparison.Ordinal) > placements);
+        Assert.Contains("if (added && save)", MethodBody(plugins, "private bool ApplyPluginToolbarPlacements("));
+
+        var dialogs = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "FileOperationDialogService.cs"));
+        var show = MethodBody(dialogs, "public async Task ShowSettingsAsync(");
+        var applied = show.IndexOf("_applyCommandSurfaceLayout();", StringComparison.Ordinal);
+        Assert.True(applied > show.IndexOf("settingsWindow.ApplyTo(workspace.Settings);", StringComparison.Ordinal));
+        Assert.True(show.IndexOf("await workspace.SaveUiSettingsAsync(", StringComparison.Ordinal) > applied);
+    }
+
+    [Fact]
+    public void PluginPanelGrips_EndTheDragWhenTheyLoseThePointer()
+    {
+        // As the column thumbs do (MainWindow.Columns.cs): Alt+Tab or a touch cancel ends the capture without a
+        // release, and the drag must not stay on.
+        var root = FindRepoRoot();
+        var xaml = System.Xml.Linq.XDocument.Load(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml"));
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        foreach (var name in new[] { "PluginPanelRightGrip", "PluginPanelBottomGrip" })
+        {
+            var grip = xaml.Descendants().Single(element => (string?)element.Attribute(x + "Name") == name);
+            Assert.Equal("OnPluginPanelGripReleased", (string?)grip.Attribute("PointerReleased"));
+            Assert.Equal("OnPluginPanelGripReleased", (string?)grip.Attribute("PointerCanceled"));
+            Assert.Equal("OnPluginPanelGripReleased", (string?)grip.Attribute("PointerCaptureLost"));
+        }
+
+        var panels = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.PluginPanels.cs"));
+        Assert.Contains("_pluginPanelGripDragging = false;", MethodBody(panels, "private async void OnPluginPanelGripReleased("));
+        var columns = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Columns.cs"));
+        Assert.Contains("thumb.PointerCaptureLost += OnColumnThumbReleased;", columns);
+    }
+
+    /// <summary>The body of the first method whose declaration contains <paramref name="signature"/>, braces included.</summary>
+    private static string MethodBody(string source, string signature)
+    {
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"'{signature}' was not found.");
+        var open = source.IndexOf('{', start);
+        var depth = 0;
+        for (var index = open; index < source.Length; index++)
+        {
+            if (source[index] == '{') depth++;
+            else if (source[index] == '}' && --depth == 0) return source[open..(index + 1)];
+        }
+
+        throw new InvalidOperationException($"'{signature}' has no closing brace.");
+    }
+
     private static string ReadExplorerWorkspaceSource(string coreRoot)
     {
         return string.Join(
@@ -893,6 +1893,126 @@ public class WinUiSourceShapeTests
             Directory.EnumerateFiles(coreRoot, "ExplorerWorkspace*.cs")
                 .OrderBy(Path.GetFileName)
                 .Select(File.ReadAllText));
+    }
+
+    [Fact]
+    public void PluginLocations_NeverResolveFromLocalAppData()
+    {
+        // User requirement 2026-11-09: every plugin file stays in the installation folder, and nothing falls back to
+        // %LOCALAPPDATA%\SumaFile.
+        var root = FindRepoRoot();
+        string[] sources =
+        [
+            Path.Combine(root, "SimpleFile.PluginHost", "Discovery", "PluginDiscovery.cs"),
+            Path.Combine(root, "SimpleFile.PluginHost", "Trust", "PluginApprovalStore.cs"),
+            Path.Combine(root, "SimpleFile.App", "MainWindow.Plugins.cs"),
+            Path.Combine(root, "SimpleFile.App", "SettingsWindow.Plugins.cs"),
+        ];
+
+        foreach (var source in sources)
+        {
+            var text = File.ReadAllText(source);
+            Assert.False(text.Contains("LocalApplicationData", StringComparison.Ordinal), $"{source} resolves LocalApplicationData");
+            Assert.False(text.Contains("UserRoot", StringComparison.Ordinal), $"{source} still names UserRoot");
+        }
+    }
+
+    [Fact]
+    public void PluginUiSources_NeverResolveTempOrUserFolders()
+    {
+        // Plugin UI code runs in SumaFile's process: a temp or user folder it resolved itself would be outside the
+        // installation folder. Backends get TMP and TEMP inside their data folder instead.
+        var pluginsFolder = Path.Combine(Path.GetDirectoryName(FindRepoRoot())!, "plugins");
+        var sources = Directory.GetDirectories(pluginsFolder)
+            .Select(plugin => Path.Combine(plugin, "ui"))
+            .Where(Directory.Exists)
+            .SelectMany(ui => Directory.EnumerateFiles(ui, "*.cs", SearchOption.AllDirectories))
+            .Where(file => !file.Split(Path.DirectorySeparatorChar).Any(segment =>
+                segment.Equals("bin", StringComparison.OrdinalIgnoreCase)
+                || segment.Equals("obj", StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        Assert.NotEmpty(sources);
+        foreach (var source in sources)
+        {
+            var text = File.ReadAllText(source);
+            foreach (var forbidden in new[] { "GetTempPath", "GetTempFileName", "SpecialFolder." })
+            {
+                Assert.False(text.Contains(forbidden, StringComparison.Ordinal), $"{source} uses {forbidden}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every plugin copy target replaces only the plugin folders it copies, so a file a rebuild dropped does not
+    /// linger. The Debug output's <c>plugins</c> folder also holds user-installed plugins and, beside it, the
+    /// app-owned files, so neither it nor anything else is ever removed whole.
+    /// </summary>
+    [Fact]
+    public void PluginCopyTargets_ReplaceOnlyTheirOwnFolders()
+    {
+        var root = FindRepoRoot();
+        var app = System.Xml.Linq.XDocument.Load(Path.Combine(root, "SimpleFile.App", "SimpleFile.App.csproj"));
+        var tests = System.Xml.Linq.XDocument.Load(Path.Combine(root, "SimpleFile.Tests", "SimpleFile.Tests.csproj"));
+
+        var bundled = CopyTargetSteps(app, "CopyBundledPlugins");
+        var bundledRemove = Assert.Single(bundled, step => step.Name == "RemoveDir");
+        Assert.Matches(@"^@\(\w+->'\$\(OutDir\)plugins\\%\(Filename\)%\(Extension\)'\)$", bundledRemove.Directories);
+        var folders = Assert.Single(
+            CopyTargetElements(app, "CopyBundledPlugins"),
+            element => element.Name.LocalName == bundledRemove.Directories[2..bundledRemove.Directories.IndexOf("->", StringComparison.Ordinal)]);
+        Assert.Equal(
+            "$([System.IO.Directory]::GetDirectories('$(BundledPluginsStagingDir)'))",
+            (string?)folders.Attribute("Include"));
+        AssertRemovesBeforeEveryCopy(bundled, "CopyBundledPlugins");
+
+        var remote = CopyTargetSteps(tests, "CopyRemotePluginFixture");
+        var remoteRemove = Assert.Single(remote, step => step.Name == "RemoveDir");
+        Assert.Equal(@"$(RemoteFixtureDest)plugins\com.sumafile.remote", remoteRemove.Directories);
+        Assert.Equal(@"Exists('$(_RepoTarget)plugins\com.sumafile.remote')", remoteRemove.Condition);
+        AssertRemovesBeforeEveryCopy(remote, "CopyRemotePluginFixture");
+
+        var git = CopyTargetSteps(tests, "CopyGitPluginFixture");
+        var gitRemove = Assert.Single(git, step => step.Name == "RemoveDir");
+        Assert.Equal(@"$(GitFixtureDest)plugins\com.sumafile.git", gitRemove.Directories);
+        Assert.Equal(@"Exists('$(_RepoTarget)plugins\com.sumafile.git')", gitRemove.Condition);
+        AssertRemovesBeforeEveryCopy(git, "CopyGitPluginFixture");
+
+        foreach (var step in bundled.Concat(remote).Concat(git).Where(step => step.Name == "RemoveDir"))
+        {
+            foreach (var whole in new[]
+            {
+                "$(OutDir)plugins", @"$(OutDir)plugins\", "$(OutDir)",
+                "$(RemoteFixtureDest)", @"$(RemoteFixtureDest)plugins", @"$(RemoteFixtureDest)plugins\",
+                "$(GitFixtureDest)", @"$(GitFixtureDest)plugins", @"$(GitFixtureDest)plugins\",
+            })
+            {
+                Assert.NotEqual(whole, step.Directories);
+            }
+        }
+    }
+
+    private static List<System.Xml.Linq.XElement> CopyTargetElements(System.Xml.Linq.XDocument project, string target) =>
+        project.Descendants()
+            .Single(element => element.Name.LocalName == "Target" && (string?)element.Attribute("Name") == target)
+            .Descendants()
+            .ToList();
+
+    private static List<(string Name, string Directories, string? Condition)> CopyTargetSteps(
+        System.Xml.Linq.XDocument project, string target) =>
+        project.Descendants()
+            .Single(element => element.Name.LocalName == "Target" && (string?)element.Attribute("Name") == target)
+            .Elements()
+            .Where(element => element.Name.LocalName is "RemoveDir" or "Copy")
+            .Select(element => (element.Name.LocalName, (string?)element.Attribute("Directories") ?? "", (string?)element.Attribute("Condition")))
+            .ToList();
+
+    private static void AssertRemovesBeforeEveryCopy(List<(string Name, string Directories, string? Condition)> steps, string target)
+    {
+        var firstCopy = steps.FindIndex(step => step.Name == "Copy");
+        var remove = steps.FindIndex(step => step.Name == "RemoveDir");
+        Assert.True(firstCopy >= 0, $"{target} copies nothing.");
+        Assert.True(remove >= 0 && remove < firstCopy, $"{target} must remove its folder before its first Copy.");
     }
 
     private static string FindRepoRoot()
@@ -910,6 +2030,28 @@ public class WinUiSourceShapeTests
         }
 
         throw new DirectoryNotFoundException("Could not locate src-winui source root.");
+    }
+
+    [Fact]
+    public void MainWindow_ReconnectDoesNotAwaitArchiveReregistration()
+    {
+        var root = FindRepoRoot();
+        var source = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.xaml.cs"));
+        var start = source.IndexOf("private async Task ReconnectBackendAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ReconnectBackendAsync not found");
+        var end = source.IndexOf("\n    private ", start + 1, StringComparison.Ordinal);
+        var body = end < 0 ? source[start..] : source[start..end];
+
+        Assert.Contains("ReregisterArchiveEnginesAsync(", body);
+        Assert.Matches(@"_\s*=\s*ObserveAsync\(\s*_plugins\.ReregisterArchiveEnginesAsync\(", body);
+        Assert.DoesNotMatch(@"\bawait\b[^;]*ReregisterArchiveEnginesAsync\(", body);
+
+        // Started right after the IPC swap, before the drive and pane refreshes (which never wait for it).
+        var replaceIpc = body.IndexOf("ReplaceIpc(", StringComparison.Ordinal);
+        var reregister = body.IndexOf("ReregisterArchiveEnginesAsync(", StringComparison.Ordinal);
+        var refreshDrives = body.IndexOf("RefreshDrivesAsync(", StringComparison.Ordinal);
+        Assert.True(replaceIpc >= 0 && replaceIpc < reregister, "re-registration must start after ReplaceIpc");
+        Assert.True(reregister < refreshDrives, "re-registration must start before the drive refresh");
     }
 
     private static string ReadMainWindowSource(string appRoot)
