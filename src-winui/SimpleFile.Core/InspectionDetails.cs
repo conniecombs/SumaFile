@@ -121,6 +121,35 @@ public static class InspectionDetails
         return rows;
     }
 
+    /// <summary>
+    /// The Properties dialog's content as titled groups: General, then Attributes once the entry's
+    /// details are known, then the file's metadata groups. The name is the dialog's heading.
+    /// </summary>
+    public static IReadOnlyList<InspectionDetailSection> PropertiesSections(
+        IInspectionEntryPresentation row, string currentPath, FileEntry? info, FileMetadata? metadata)
+    {
+        var sections = new List<InspectionDetailSection>();
+        AddSection(sections, "General", PropertiesRows(row, currentPath).Where(detail => detail.Label != "Name").ToList());
+        if (info is not null)
+        {
+            var flags = new List<string>();
+            if (info.IsHidden) flags.Add("Hidden");
+            if (info.IsSystem) flags.Add("System");
+            if (info.IsSymlink) flags.Add("Shortcut");
+            var attributes = new List<InspectionDetailRow>();
+            Add(attributes, "Attributes", flags.Count == 0 ? "Normal" : string.Join(", ", flags));
+            Add(attributes, "Permissions", info.Permissions);
+            AddSection(sections, "Attributes", attributes);
+        }
+
+        if (metadata is not null)
+        {
+            sections.AddRange(MetadataSections(metadata, includeSummary: !IsSummaryRedundantWithFields(metadata)));
+        }
+
+        return sections;
+    }
+
     public static IReadOnlyList<InspectionDetailRow> FolderMetricRows(FolderMetrics metrics)
     {
         var folderCount = metrics.Subdirectories.Count;

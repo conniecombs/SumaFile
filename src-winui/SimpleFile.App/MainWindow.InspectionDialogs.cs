@@ -348,73 +348,35 @@ public sealed partial class MainWindow
             return;
         }
 
-        var rows = new StackPanel { Spacing = 8, Width = 460 };
-        void AddRow(string label, string? value)
+        // A heading for the item, then one titled card per group, each a two-column label/value table.
+        var rows = new StackPanel { Spacing = 14, Width = 480 };
+        var heading = new StackPanel { Spacing = 2 };
+        heading.Children.Add(new TextBlock
         {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return;
-            }
+            Text = row.Name,
+            FontSize = 16,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            IsTextSelectionEnabled = true,
+        });
+        heading.Children.Add(new TextBlock { Text = row.TypeText, FontSize = 12, Foreground = Brush("SfTextMutedBrush") });
+        rows.Children.Add(heading);
 
-            rows.Children.Add(new TextBlock
-            {
-                Text = label,
-                FontSize = 11,
-                Opacity = 0.7,
-            });
-            rows.Children.Add(new TextBlock
-            {
-                Text = value,
-                TextWrapping = TextWrapping.Wrap,
-            });
-        }
-
-        foreach (var detail in InspectionDetails.PropertiesRows(row, workspace.Active.Path))
-        {
-            AddRow(detail.Label, detail.Value);
-        }
-
-        var checksumText = new TextBlock { TextWrapping = TextWrapping.Wrap, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"), FontSize = 12 };
-        var checksumButton = new Button { Content = "Compute checksums", HorizontalAlignment = HorizontalAlignment.Left };
-
+        FileEntry? info = null;
+        FileMetadata? metadata = null;
+        string? lookupError = null;
         var utilityCts = BeginUtilityOperation("Properties");
         try
         {
-            var info = await fileOps.GetEntryInfoAsync(row.Path, utilityCts.Token);
+            info = await fileOps.GetEntryInfoAsync(row.Path, utilityCts.Token);
             if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
             {
                 return;
             }
 
-            var attributes = new List<string>();
-            if (info.IsHidden)
-            {
-                attributes.Add("Hidden");
-            }
-
-            if (info.IsSystem)
-            {
-                attributes.Add("System");
-            }
-
-            if (info.IsSymlink)
-            {
-                attributes.Add("Shortcut");
-            }
-
-            AddRow("Attributes", attributes.Count == 0 ? "Normal" : string.Join(", ", attributes));
-            if (!string.IsNullOrEmpty(info.Permissions))
-            {
-                AddRow("Permissions", info.Permissions);
-            }
-
             try
             {
-                var metadata = await fileOps.GetFileMetadataAsync(row.Path, utilityCts.Token);
-                foreach (var detail in InspectionDetails.MetadataRows(metadata, includeSummary: true))
-                {
-                    AddRow(detail.Label, detail.Value);
-                }
+                metadata = await fileOps.GetFileMetadataAsync(row.Path, utilityCts.Token);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -427,39 +389,59 @@ public sealed partial class MainWindow
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            AddRow("Error", exception.Message);
+            lookupError = exception.Message;
         }
         finally
         {
             FinishUtilityOperation(utilityCts);
         }
 
-        checksumButton.Click += async (_, _) =>
+        foreach (var section in InspectionDetails.PropertiesSections(row, workspace.Active.Path, info, metadata))
         {
-            checksumButton.IsEnabled = false;
-            checksumText.Text = "Computing…";
-            var hashCts = BeginUtilityOperation("PropertiesChecksum");
-            try
-            {
-                var checksums = await fileOps.ComputeChecksumAsync(row.Path, hashCts.Token);
-                checksumText.Text = InspectionDetails.ChecksumsText(checksums);
-            }
-            catch (Exception exception)
-            {
-                checksumText.Text = exception.Message;
-            }
-            finally
-            {
-                FinishUtilityOperation(hashCts);
-                checksumButton.IsEnabled = true;
-            }
-        };
+            PropertiesTable(PropertiesSection(rows, section.Title), section.Rows);
+        }
 
-        // The service refuses checksums for directories, so only files get the button.
+        if (lookupError is not null)
+        {
+            PropertiesTable(PropertiesSection(rows, "Error"), [new InspectionDetailRow("Details", lookupError)]);
+        }
+
+        // The service refuses checksums for directories, so only files get the section.
         if (!row.IsDir)
         {
-            rows.Children.Add(checksumButton);
-            rows.Children.Add(checksumText);
+            var checksumText = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+                FontSize = 12,
+                IsTextSelectionEnabled = true,
+                Visibility = Visibility.Collapsed,
+            };
+            var checksumButton = new Button { Content = "Compute checksums", HorizontalAlignment = HorizontalAlignment.Left };
+            checksumButton.Click += async (_, _) =>
+            {
+                checksumButton.IsEnabled = false;
+                checksumText.Visibility = Visibility.Visible;
+                checksumText.Text = "Computing…";
+                var hashCts = BeginUtilityOperation("PropertiesChecksum");
+                try
+                {
+                    var checksums = await fileOps.ComputeChecksumAsync(row.Path, hashCts.Token);
+                    checksumText.Text = InspectionDetails.ChecksumsText(checksums);
+                }
+                catch (Exception exception)
+                {
+                    checksumText.Text = exception.Message;
+                }
+                finally
+                {
+                    FinishUtilityOperation(hashCts);
+                    checksumButton.IsEnabled = true;
+                }
+            };
+            var checksumSection = PropertiesSection(rows, "Checksums");
+            checksumSection.Children.Add(checksumButton);
+            checksumSection.Children.Add(checksumText);
         }
 
         if (!ReferenceEquals(_workspace, workspace))
@@ -472,7 +454,8 @@ public sealed partial class MainWindow
             Title = "Properties",
             Content = new ScrollViewer
             {
-                MaxHeight = 480,
+                MaxHeight = 520,
+                Padding = new Thickness(0, 0, 12, 0),
                 Content = rows,
             },
             CloseButtonText = "Close",
@@ -483,11 +466,9 @@ public sealed partial class MainWindow
         {
             // Folder metrics can take a while on large trees, so they load after the dialog
             // is visible and stop when it closes.
-            var metricsHost = new StackPanel { Spacing = 8 };
-            metricsHost.Children.Add(new TextBlock { Text = "Contents", FontSize = 11, Opacity = 0.7 });
-            var metricsStatus = new TextBlock { Text = "Calculating…", TextWrapping = TextWrapping.Wrap };
+            var metricsHost = PropertiesSection(rows, "Contents");
+            var metricsStatus = new TextBlock { Text = "Calculating…", TextWrapping = TextWrapping.Wrap, Foreground = Brush("SfTextMutedBrush") };
             metricsHost.Children.Add(metricsStatus);
-            rows.Children.Add(metricsHost);
 
             var metricsCts = BeginUtilityOperation("PropertiesFolderMetrics");
             dialog.Closed += (_, _) =>
@@ -507,6 +488,53 @@ public sealed partial class MainWindow
         await DialogHost.ShowAsync(dialog);
     }
 
+    /// <summary>Adds a titled card to the Properties dialog and returns the panel its content goes in.</summary>
+    private StackPanel PropertiesSection(StackPanel host, string title)
+    {
+        var body = new StackPanel { Spacing = 8 };
+        var section = new StackPanel { Spacing = 6 };
+        section.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = Brush("SfTextMutedBrush"),
+        });
+        section.Children.Add(new Border
+        {
+            Padding = new Thickness(12, 10, 12, 10),
+            CornerRadius = new CornerRadius(6),
+            BorderThickness = new Thickness(1),
+            BorderBrush = Brush("SfBorderBrush"),
+            Background = Brush("SfBgSecondaryBrush"),
+            Child = body,
+        });
+        host.Children.Add(section);
+        return body;
+    }
+
+    /// <summary>Lays label/value rows out as a two-column table: muted labels left, selectable values right.</summary>
+    private void PropertiesTable(StackPanel body, IReadOnlyList<InspectionDetailRow> details)
+    {
+        var table = new Grid { ColumnSpacing = 12, RowSpacing = 6 };
+        table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        foreach (var detail in details)
+        {
+            var index = table.RowDefinitions.Count;
+            table.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var label = new TextBlock { Text = detail.Label, FontSize = 12, Foreground = Brush("SfTextMutedBrush"), TextWrapping = TextWrapping.Wrap };
+            var value = new TextBlock { Text = detail.Value, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
+            Grid.SetRow(label, index);
+            Grid.SetRow(value, index);
+            Grid.SetColumn(value, 1);
+            table.Children.Add(label);
+            table.Children.Add(value);
+        }
+
+        body.Children.Add(table);
+    }
+
     private async Task LoadFolderMetricsIntoAsync(
         FileOperationService fileOps,
         string path,
@@ -523,11 +551,7 @@ public sealed partial class MainWindow
             }
 
             host.Children.Remove(status);
-            foreach (var detail in InspectionDetails.FolderMetricRows(metrics))
-            {
-                host.Children.Add(new TextBlock { Text = detail.Label, FontSize = 11, Opacity = 0.7 });
-                host.Children.Add(new TextBlock { Text = detail.Value, TextWrapping = TextWrapping.Wrap });
-            }
+            PropertiesTable(host, InspectionDetails.FolderMetricRows(metrics));
         }
         catch (OperationCanceledException)
         {

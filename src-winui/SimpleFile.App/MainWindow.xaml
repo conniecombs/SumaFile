@@ -217,13 +217,23 @@
                     BorderBrush="{ThemeResource SfBorderBrush}"
                     BorderThickness="0,1,0,0">
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
+                    <!-- Item count and selection sit beside the folder address, not at the far edge. -->
+                    <TextBlock
+                        x:Name="CountText"
+                        VerticalAlignment="Center"
+                        AutomationProperties.AutomationId="StatusBar.Count"
+                        FontSize="12"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource SfTextPrimaryBrush}" />
                     <TextBlock
                         x:Name="StatusText"
+                        Grid.Column="1"
+                        Margin="12,0,0,0"
                         VerticalAlignment="Center"
                         FontSize="12"
                         Foreground="{ThemeResource SfTextMutedBrush}"
@@ -231,7 +241,7 @@
                         TextTrimming="CharacterEllipsis" />
                     <Button
                         x:Name="StatusCenterButton"
-                        Grid.Column="1"
+                        Grid.Column="2"
                         Style="{StaticResource SfGhostButtonStyle}"
                         MinHeight="26"
                         Margin="8,0"
@@ -364,7 +374,7 @@
                     </Button>
                     <Button
                         x:Name="PreviewToggleButton"
-                        Grid.Column="2"
+                        Grid.Column="3"
                         Style="{StaticResource SfGhostButtonStyle}"
                         MinHeight="26"
                         Margin="8,0"
@@ -381,12 +391,6 @@
                             <TextBlock FontSize="12" Text="Preview" />
                         </StackPanel>
                     </Button>
-                    <TextBlock
-                        x:Name="CountText"
-                        Grid.Column="3"
-                        VerticalAlignment="Center"
-                        FontSize="12"
-                        Foreground="{ThemeResource SfTextMutedBrush}" />
                 </Grid>
             </Grid>
         </Grid>
