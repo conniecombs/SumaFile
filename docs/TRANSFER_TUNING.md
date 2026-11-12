@@ -61,7 +61,7 @@ Aggregate progress, tuning reason, errors, and cancellation remain visible.
 ## How the scheduler decides
 
 These four rules apply to the Automatic, Conservative and Maximum throughput
-modes on the **unreleased Beta branch**. Custom is unchanged: it uses your file
+modes from SumaFile 1.1.0. Custom is unchanged: it uses your file
 limit as one limit and measures nothing.
 
 **It starts from the hardware.** Before anything is measured, the first number

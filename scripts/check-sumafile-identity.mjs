@@ -17,7 +17,7 @@ const staleNeedles = [
 const allowedHistoricalPaths = [
   /^build_notes\//u,
   /^docs\/CHANGELOG\.md$/u,
-  /^docs\/RELEASE_1\.1\.0\.md$/u,
+  /^docs\/RELEASE_SIMPLEFILE_1\.1\.0\.md$/u,
   /^docs\/winui-migration\//u,
   /^scripts\/check-sumafile-identity\.mjs$/u,
 ];

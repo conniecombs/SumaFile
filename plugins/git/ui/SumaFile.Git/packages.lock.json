@@ -145,7 +145,7 @@
       "sumafile.git.model": {
         "type": "Project",
         "dependencies": {
-          "SimpleFile.PluginSdk": "[1.0.4, )"
+          "SimpleFile.PluginSdk": "[1.1.0, )"
         }
       }
     },

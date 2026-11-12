@@ -5,7 +5,7 @@
 **Shipping host:** WinUI 3 unpackaged app + Rust `simplefile-service` (named-pipe JSON-RPC)  
 **Parity gate:** [`parity-gate.md`](parity-gate.md) — required `OPEN` rows: none. Retirement completed.
 
-This audit searched the live tree for stale Svelte / Tauri / Vite / `frontend/` references, obsolete commands, dead scripts, unused Rust dependencies, old current-facing docs, and broken workflow assumptions. Historical records (`docs/CHANGELOG.md` past versions, `docs/RELEASE_1.1.0.md`, `build_notes/`) were left as written.
+This audit searched the live tree for stale Svelte / Tauri / Vite / `frontend/` references, obsolete commands, dead scripts, unused Rust dependencies, old current-facing docs, and broken workflow assumptions. Historical records (`docs/CHANGELOG.md` past versions, `docs/RELEASE_SIMPLEFILE_1.1.0.md`, `build_notes/`) were left as written.
 
 ---
 
@@ -51,7 +51,7 @@ Inspected with `rg` / `Get-Content` over `.yml`, `.json`, `.mjs`, `.ps1`, `.md`,
 | C# comments citing `frontend/src/...` | Provenance of the port, not live commands |
 | `events.json` `tauri://drag-*` | Host-only schema names, marked as such |
 | `docs/CHANGELOG.md` historical entries | Past release record |
-| `docs/RELEASE_1.1.0.md` | Notes for that shipped version |
+| `docs/RELEASE_SIMPLEFILE_1.1.0.md` | Notes for that shipped version |
 | `docs/RUST_MIGRATION_FEASIBILITY.md` | Already labeled historical (native Rust GUI, not this migration) |
 | `build_notes/` | Dated audit/hardening notes |
 | `Cargo.lock` `tauri*` crates | None remain |

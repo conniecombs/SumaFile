@@ -8,10 +8,14 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
-### Beta: the plugin system
+---
 
-The Beta branch. It has no version number yet; it gets one when it is merged
-into `main`. See the [Beta notes](RELEASE_BETA.md).
+## [1.1.0] - prepared 2026-11-12
+
+### The plugin system
+
+Developed as the Beta branch. See the
+[v1.1.0 release notes](RELEASE_1.1.0.md).
 
 - A plugin system: a plugin is a folder with a `plugin.json` manifest, an
   optional C# UI half that SumaFile loads into its own process, and an
@@ -305,7 +309,7 @@ application commits, dependency changes, upgrade instructions and limitations.
 - Added `src-tauri/tauri.local.conf.json` so local release bundles can be built
   without requiring updater signing secrets.
 - Added dedicated 1.1.0 release documentation in
-  [`RELEASE_1.1.0.md`](RELEASE_1.1.0.md).
+  [`RELEASE_SIMPLEFILE_1.1.0.md`](RELEASE_SIMPLEFILE_1.1.0.md).
 
 ### Changed
 - SimpleFile is now proprietary software. The former MIT license text was
