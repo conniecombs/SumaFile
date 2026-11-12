@@ -31,21 +31,44 @@ pub fn is_already_exists_error(error: &std::io::Error) -> bool {
         || matches!(error.raw_os_error(), Some(80 | 183))
 }
 
+/// A nul-terminated path for a raw Win32 call. Those calls stop at `MAX_PATH`
+/// unless the path is verbatim (`\\?\`), and this process is not marked
+/// long-path aware; `std::fs` converts long paths the same way, so a file it
+/// wrote can otherwise not be renamed. Short paths are passed through as given.
+#[cfg(windows)]
+fn wide_path(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::{Component, Prefix};
+
+    /// Shortest limit among the Win32 path calls (directory creation).
+    const LEGACY_LIMIT: usize = 248;
+    let plain = || -> Vec<u16> { path.as_os_str().encode_wide().chain(Some(0)).collect() };
+    if path.as_os_str().encode_wide().count() < LEGACY_LIMIT {
+        return plain();
+    }
+    let Ok(absolute) = std::path::absolute(path) else {
+        return plain();
+    };
+    let Some(Component::Prefix(prefix)) = absolute.components().next() else {
+        return plain();
+    };
+    let units = absolute.as_os_str().encode_wide();
+    let wide: Vec<u16> = match prefix.kind() {
+        Prefix::Disk(_) => r"\\?\".encode_utf16().chain(units).collect(),
+        // `\\server\share\..` becomes `\\?\UNC\server\share\..`.
+        Prefix::UNC(..) => r"\\?\UNC\".encode_utf16().chain(units.skip(2)).collect(),
+        // Already verbatim, or a device path.
+        _ => return plain(),
+    };
+    wide.into_iter().chain(Some(0)).collect()
+}
+
 #[cfg(windows)]
 pub fn rename_exclusive(source: &Path, destination: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
 
-    let src_wide: Vec<u16> = source
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    let dst_wide: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+    let src_wide = wide_path(source);
+    let dst_wide = wide_path(destination);
     // Flags = 0: omit MOVEFILE_REPLACE_EXISTING so Windows atomically refuses replacement.
     let ok = unsafe { MoveFileExW(src_wide.as_ptr(), dst_wide.as_ptr(), 0) };
     if ok != 0 {
@@ -137,6 +160,31 @@ mod tests {
         assert!(error.starts_with("CONFLICT: destination already exists:"));
 
         let _ = fs::remove_dir(path);
+    }
+
+    /// The staging name pushes many ordinary destinations past 260 characters;
+    /// the finalize rename has to work there like every other file call does.
+    #[test]
+    fn rename_exclusive_handles_paths_longer_than_max_path() {
+        let root = temp_path("long");
+        let mut dir = root.clone();
+        while dir.as_os_str().len() < 250 {
+            dir.push("nested-directory-name");
+        }
+        fs::create_dir_all(&dir).expect("create deep directory");
+        let staged = dir.join(".photo.jpg.0123456789abcdef.sumafile-partial");
+        let final_path = dir.join("photo.jpg");
+        fs::write(&staged, b"data").expect("write staged file");
+
+        rename_exclusive(&staged, &final_path).expect("rename beyond MAX_PATH");
+        assert_eq!(fs::read(&final_path).expect("read renamed"), b"data");
+
+        fs::write(&staged, b"second").expect("write staged file again");
+        let error = rename_exclusive(&staged, &final_path).expect_err("must not replace");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&final_path).expect("read kept"), b"data");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

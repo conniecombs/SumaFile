@@ -278,12 +278,9 @@ fn plans_for_items(
         let meta = std::fs::symlink_metadata(&source_path)
             .map_err(|error| format!("Failed to stat {}: {error}", source_path.display()))?;
         let file_type = meta.file_type();
-        if file_type.is_dir() && !file_type.is_symlink() {
-            return Err(format!(
-                "Retry items must be files; {} is a directory",
-                source_path.display()
-            ));
-        }
+        // A failed folder is walked again; what it already copied is
+        // recognised file by file, so only the missing part is transferred.
+        let is_dir = file_type.is_dir() && !file_type.is_symlink();
         if let Some(parent) = final_dest.parent() {
             if scanned_dirs.insert(parent.to_path_buf()) {
                 if !parent.is_dir() {
@@ -300,8 +297,8 @@ fn plans_for_items(
             source_path,
             final_dest,
             conflict: ConflictAction::parse(&item.action),
-            file_count: 1,
-            is_dir: false,
+            file_count: u64::from(!is_dir),
+            is_dir,
             is_symlink,
             byte_size: if file_type.is_file() { meta.len() } else { 0 },
         });
@@ -480,6 +477,7 @@ fn transfer_with_policy_blocking(
     );
 
     let is_move = operation_type == "move";
+    let retry = matches!(request, Request::Items(_));
     let mut completed_bytes = 0u64;
     let mut transferred: Vec<TransferResult> = Vec::with_capacity(plans.len());
     let mut files: Vec<FileTask> = Vec::new();
@@ -527,6 +525,7 @@ fn transfer_with_policy_blocking(
                 network: plan.network,
                 conflict: plan.conflict,
                 delete_source: is_move,
+                retry,
             });
         } else {
             files.push(FileTask {
@@ -539,6 +538,7 @@ fn transfer_with_policy_blocking(
                 symlink: plan.is_symlink,
                 top_level: true,
                 delete_source: is_move,
+                retry,
             });
         }
     }
@@ -1646,38 +1646,87 @@ mod tests {
     }
 
     #[test]
-    fn unpublished_nested_directories_use_one_outer_staging_root() {
-        let root = unique_temp_path("nested_owned_tree");
+    fn new_directories_are_never_built_in_a_hidden_staging_folder() {
+        let root = unique_temp_path("no_staged_dirs");
         let source = root.join("source");
         let destination = root.join("destination");
         fs::create_dir_all(source.join("one/two/three")).unwrap();
         fs::create_dir_all(&destination).unwrap();
-        let operation_id = "op_nested_owned_tree";
+        let file = source.join("one/two/three/file.bin");
+        fs::write(&file, vec![7u8; 64 * 1024]).unwrap();
         let final_destination = destination.join("source");
-        let staging = staging_path_for(&final_destination, operation_id).unwrap();
-        let staged_text = staging.to_string_lossy().to_string();
-        let saw_nested_tree = AtomicBool::new(false);
+        let staged_dirs = |dir: &std::path::Path| -> Vec<String> {
+            staging_artifacts_in(dir)
+                .into_iter()
+                .filter(|name| dir.join(name).is_dir())
+                .collect()
+        };
 
         transfer_with_progress_blocking(
             "copy",
             vec![source.to_string_lossy().to_string()],
             destination.to_string_lossy().to_string(),
-            operation_id.to_string(),
+            "op_no_staged_dirs".to_string(),
             "error".to_string(),
             Arc::new(AtomicBool::new(false)),
             &|update| {
-                if update.status == "finalizing" && update.current_item == staged_text {
-                    assert!(!final_destination.exists());
-                    assert!(staging.join("one/two/three").is_dir());
-                    saw_nested_tree.store(true, Ordering::Relaxed);
+                let staged = staged_dirs(&destination);
+                assert!(staged.is_empty(), "staged folder: {staged:?}");
+                if update.status == "finalizing" {
+                    assert!(final_destination.join("one/two/three").is_dir());
                 }
             },
         )
         .unwrap();
 
-        assert!(saw_nested_tree.load(Ordering::Relaxed));
-        assert!(final_destination.join("one/two/three").is_dir());
-        assert!(!staging.exists());
+        assert_eq!(
+            fs::read(final_destination.join("one/two/three/file.bin"))
+                .unwrap()
+                .len(),
+            64 * 1024
+        );
+        assert!(staging_artifacts_in(&destination).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A failure inside a new folder names the path the file was headed for,
+    /// so a targeted retry writes it where the user expects it.
+    #[test]
+    fn failure_inside_a_new_directory_reports_its_final_destination() {
+        let root = unique_temp_path("failure_final_destination");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(source.join("nested").join("good.txt"), b"good").unwrap();
+        // A name longer than the staging suffix leaves room for: the hidden
+        // partial file cannot be created, so this one file fails.
+        let long_name = format!("{}.txt", "n".repeat(240));
+        fs::write(source.join("nested").join(&long_name), b"long").unwrap();
+        let expected = destination.join("source").join("nested").join(&long_name);
+
+        let error = transfer_with_progress_blocking(
+            "copy",
+            vec![source.to_string_lossy().to_string()],
+            destination.to_string_lossy().to_string(),
+            "op_failure_final_destination".to_string(),
+            "error".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|_| {},
+        )
+        .expect_err("the over-long name cannot be staged");
+
+        let failed: Vec<_> = error
+            .outcome
+            .failed
+            .iter()
+            .map(|failure| failure.destination.clone())
+            .collect();
+        assert_eq!(failed, vec![expected.to_string_lossy().to_string()]);
+        assert_eq!(
+            fs::read(destination.join("source").join("nested").join("good.txt")).unwrap(),
+            b"good"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1725,53 +1774,189 @@ mod tests {
     }
 
     #[test]
-    fn directory_copy_cancel_before_promotion_preserves_source_and_cleans_staging() {
-        let operation = "copy";
-        let src_root = unique_temp_path("finalizing_cancel_src");
-        let dst_root = unique_temp_path("finalizing_cancel_dst");
-        let source = src_root.join("Movie");
-        let final_destination = dst_root.join("Movie");
-        fs::create_dir_all(&source).unwrap();
+    fn cancelled_directory_copy_keeps_the_files_already_copied() {
+        let src_root = unique_temp_path("cancel_keeps_src");
+        let dst_root = unique_temp_path("cancel_keeps_dst");
+        let source = src_root.join("Album");
+        let final_destination = dst_root.join("Album");
+        fs::create_dir_all(source.join("disc")).unwrap();
         fs::create_dir_all(&dst_root).unwrap();
-        fs::write(source.join("feature.mkv"), b"feature").unwrap();
-
-        let operation_id = "op_finalizing_cancel_test";
-        let staging = staging_path_for(&final_destination, operation_id).unwrap();
-        let final_destination_text = final_destination.to_string_lossy().to_string();
+        for index in 0..24u8 {
+            fs::write(
+                source.join("disc").join(format!("{index:02}.bin")),
+                vec![index; 64 * 1024],
+            )
+            .unwrap();
+        }
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_emit = cancel.clone();
-        let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
-        let updates_target = updates.clone();
+        let saw_cancelled = AtomicBool::new(false);
 
-        let result = transfer_with_progress_blocking(
-            operation,
-            vec![source.to_string_lossy().to_string()],
+        let result = super::transfer_with_policy_blocking(
+            "copy",
+            super::Request::Selection {
+                sources: vec![source.to_string_lossy().to_string()],
+                conflict_action: "error".to_string(),
+            },
             dst_root.to_string_lossy().to_string(),
-            operation_id.to_string(),
-            "keep-both".to_string(),
+            "op_cancel_keeps_test".to_string(),
             cancel,
             &|update| {
-                if update.status == "finalizing" && update.current_item == final_destination_text {
+                if update.current_files >= 1 {
                     cancel_for_emit.store(true, Ordering::Relaxed);
                 }
-                updates_target.lock().unwrap().push(update);
+                if update.status == "cancelled" {
+                    saw_cancelled.store(true, Ordering::Relaxed);
+                }
+            },
+            &|_| {},
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 1,
+                ..super::tuning::Policy::default()
             },
         )
         .expect_err("cancelled directory copy must return its terminal outcome");
 
         assert_eq!(result.outcome.status, "cancelled");
+        assert!(saw_cancelled.load(Ordering::Relaxed));
+        // The folder is incomplete, so it is still pending, not committed.
         assert!(result.outcome.committed.is_empty());
-        assert!(!final_destination.exists());
-        assert!(!staging.exists());
-        assert_eq!(fs::read(source.join("feature.mkv")).unwrap(), b"feature");
-        let updates = updates.lock().unwrap();
-        assert!(updates.iter().any(|update| {
-            update.status == "finalizing" && update.current_item == final_destination_text
-        }));
-        assert!(updates.iter().any(|update| update.status == "cancelled"));
+        let kept: Vec<_> = fs::read_dir(final_destination.join("disc"))
+            .expect("the partly copied folder stays under its final name")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!kept.is_empty(), "no copied file survived the cancellation");
+        for name in &kept {
+            // Whole files only: an interrupted partial is not left behind.
+            assert!(!name.contains("sumafile-partial"), "left over: {name}");
+            let index: u8 = name.trim_end_matches(".bin").parse().unwrap();
+            assert_eq!(
+                fs::read(final_destination.join("disc").join(name)).unwrap(),
+                vec![index; 64 * 1024]
+            );
+        }
+        assert!(staging_artifacts_in(&dst_root).is_empty());
+        assert_eq!(fs::read_dir(source.join("disc")).unwrap().count(), 24);
 
         let _ = fs::remove_dir_all(&src_root);
         let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    fn retry_items(
+        operation: &'static str,
+        items: Vec<super::TransferItem>,
+        destination: &std::path::Path,
+    ) -> Result<Vec<super::TransferResult>, super::TransferBatchError> {
+        super::transfer_with_policy_blocking(
+            operation,
+            super::Request::Items(items),
+            destination.to_string_lossy().into(),
+            super::generate_transfer_operation_id(),
+            Arc::new(AtomicBool::new(false)),
+            &|_| {},
+            &|_| {},
+            &super::tuning::Policy::default,
+        )
+    }
+
+    fn retry_item(source: &std::path::Path, destination: &std::path::Path) -> super::TransferItem {
+        super::TransferItem {
+            source: source.to_string_lossy().into(),
+            destination: destination.to_string_lossy().into(),
+            action: "error".into(),
+        }
+    }
+
+    /// A failed folder is retried together with failed files: the folder is
+    /// walked again and only what is missing at the destination is copied.
+    #[test]
+    fn retry_accepts_a_directory_and_copies_only_what_is_missing() {
+        let root = unique_temp_path("retry_directory");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(source.join("Folder").join("sub")).unwrap();
+        fs::create_dir_all(destination.join("Folder")).unwrap();
+        fs::write(source.join("Folder").join("a.txt"), b"already there").unwrap();
+        fs::write(source.join("Folder").join("b.txt"), b"missing").unwrap();
+        fs::write(source.join("Folder").join("sub").join("c.txt"), b"nested").unwrap();
+        fs::write(source.join("loose.txt"), b"loose").unwrap();
+        let copied = destination.join("Folder").join("a.txt");
+        fs::copy(source.join("Folder").join("a.txt"), &copied).unwrap();
+        simplefile_core::file_ops::preserve_basic_metadata(
+            &source.join("Folder").join("a.txt"),
+            &copied,
+        )
+        .unwrap();
+
+        retry_items(
+            "copy",
+            vec![
+                retry_item(&source.join("Folder"), &destination.join("Folder")),
+                retry_item(&source.join("loose.txt"), &destination.join("loose.txt")),
+            ],
+            &destination,
+        )
+        .expect("a directory among the retry items must not fail the retry");
+
+        assert_eq!(fs::read(&copied).unwrap(), b"already there");
+        assert_eq!(
+            fs::read(destination.join("Folder").join("b.txt")).unwrap(),
+            b"missing"
+        );
+        assert_eq!(
+            fs::read(destination.join("Folder").join("sub").join("c.txt")).unwrap(),
+            b"nested"
+        );
+        assert_eq!(fs::read(destination.join("loose.txt")).unwrap(), b"loose");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A move that copied a file but could not delete its source is finished
+    /// by the retry instead of colliding with its own copy.
+    #[test]
+    fn retry_finishes_a_move_whose_destination_already_holds_the_file() {
+        let root = unique_temp_path("retry_identical");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let file = source.join("file.bin");
+        fs::write(&file, vec![3u8; 4096]).unwrap();
+        let copied = destination.join("file.bin");
+        fs::copy(&file, &copied).unwrap();
+        simplefile_core::file_ops::preserve_basic_metadata(&file, &copied).unwrap();
+
+        let results = retry_items("move", vec![retry_item(&file, &copied)], &destination)
+            .expect("an identical destination is the retried file itself");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].destination, copied.to_string_lossy());
+        assert!(!file.exists(), "the retried move left its source behind");
+        assert_eq!(fs::read(&copied).unwrap(), vec![3u8; 4096]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn retry_still_reports_a_conflict_for_a_different_destination() {
+        let root = unique_temp_path("retry_conflict");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let file = source.join("file.txt");
+        fs::write(&file, b"new content").unwrap();
+        let existing = destination.join("file.txt");
+        fs::write(&existing, b"someone else's file").unwrap();
+
+        let error = retry_items("copy", vec![retry_item(&file, &existing)], &destination)
+            .expect_err("a different file at the destination is a conflict");
+
+        assert_eq!(error.outcome.failed.len(), 1);
+        assert!(error.outcome.failed[0].is_conflict());
+        assert_eq!(fs::read(&existing).unwrap(), b"someone else's file");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
