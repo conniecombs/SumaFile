@@ -230,6 +230,9 @@ public sealed partial class MainWindow
             SmokeAssert(upload.IsExternal && !upload.CanChangeOptions, $"{uploadTitle} offers per-task Options");
             var uploaded = Path.Combine(server.Root, "upload.txt");
             SmokeAssert(File.Exists(uploaded) && File.ReadAllText(uploaded) == "upload", $"{uploaded} does not read 'upload'");
+            // The manager stays busy until it has relisted the remote folder, and that relist clears the selection:
+            // a Download invoked before then is silently dropped.
+            await SmokeRemoteWaitRowsAsync(remoteList, [.. rootNames, "upload.txt"], "Remote.RemoteList after the upload", SmokeRemoteTransferWait);
 
             // 7. Download the punctuated file into remote-local.
             await SmokeSelectRowAsync(remoteList, SmokeRemoteLiteralFile);
@@ -239,6 +242,8 @@ public sealed partial class MainWindow
             SmokeAssert(download.Status == TransferOperationStatus.Completed, $"{downloadTitle} ended {download.Status}: {download.ErrorMessage}");
             var downloaded = Path.Combine(localRoot, SmokeRemoteLiteralFile);
             SmokeAssert(File.Exists(downloaded) && File.ReadAllText(downloaded) == "literal", $"{downloaded} does not read 'literal'");
+            // Likewise the local relist after a download: wait it out before the next transfer.
+            await SmokeRemoteWaitRowsAsync(localList, ["upload.txt", "download", SmokeRemoteLiteralFile], "Remote.LocalList after the download", SmokeRemoteTransferWait);
 
             // 8. Cancel a throttled download over an existing file from its Transfers row.
             var downloadFolder = Path.Combine(localRoot, "download");
