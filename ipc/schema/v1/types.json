@@ -69,7 +69,7 @@
     },
     "FolderMetrics": {
       "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["size", "item_count", "subdirectories"]
+      "fields": ["size", "item_count", "subdirectories", "total_files", "total_folders"]
     },
     "SearchResult": {
       "source": "crates/simplefile-core/src/models.rs",

@@ -230,6 +230,22 @@ public class InspectionDetailsTests
     }
 
     [Fact]
+    public void FolderMetricRows_CountsFilesAndFoldersThroughEverySubfolder()
+    {
+        var rows = InspectionDetails.FolderMetricRows(new FolderMetrics { Size = 2048, ItemCount = 3, TotalFiles = 1200, TotalFolders = 1 });
+
+        Assert.Equal(
+            [
+                new InspectionDetailRow("Files", "1,200 files"),
+                new InspectionDetailRow("Folders", "1 folder"),
+                new InspectionDetailRow("Total items", "1,201 items"),
+                new InspectionDetailRow("Total size", EntryPresentation.FormatFileSize(2048)),
+                new InspectionDetailRow("Directly inside", "3 items"),
+            ],
+            rows);
+    }
+
+    [Fact]
     public void PreviewRows_OmitsRedundantSizeWhenEqualToSelectionSize()
     {
         var preview = new FilePreview

@@ -150,14 +150,16 @@ public static class InspectionDetails
         return sections;
     }
 
+    /// <summary>A folder's totals, counted through every subfolder, then what sits directly inside it.</summary>
     public static IReadOnlyList<InspectionDetailRow> FolderMetricRows(FolderMetrics metrics)
     {
-        var folderCount = metrics.Subdirectories.Count;
         return
         [
-            new("Subfolders", CountWithNoun(folderCount, "folder", "folders")),
-            new("Total Items", CountWithNoun(metrics.ItemCount, "item", "items")),
-            new("Total Size", EntryPresentation.FormatFileSize(metrics.Size)),
+            new("Files", CountWithNoun(metrics.TotalFiles, "file", "files")),
+            new("Folders", CountWithNoun(metrics.TotalFolders, "folder", "folders")),
+            new("Total items", CountWithNoun(metrics.TotalFiles + metrics.TotalFolders, "item", "items")),
+            new("Total size", EntryPresentation.FormatFileSize(metrics.Size)),
+            new("Directly inside", CountWithNoun(metrics.ItemCount, "item", "items")),
         ];
     }
 

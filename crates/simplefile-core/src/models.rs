@@ -111,6 +111,12 @@ pub struct FolderMetrics {
     pub size: u64,
     pub item_count: u64,
     pub subdirectories: Vec<TreeNode>,
+    /// Files at every depth below the folder.
+    #[serde(default)]
+    pub total_files: u64,
+    /// Folders at every depth below the folder.
+    #[serde(default)]
+    pub total_folders: u64,
 }
 
 // ============================================================================

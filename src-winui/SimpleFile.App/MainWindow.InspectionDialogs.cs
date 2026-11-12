@@ -340,7 +340,7 @@ public sealed partial class MainWindow
         await ShowPropertiesForRowAsync(workspace, row);
     }
 
-    private async Task ShowPropertiesForRowAsync(ExplorerWorkspace workspace, FileRow row)
+    private async Task ShowPropertiesForRowAsync(ExplorerWorkspace workspace, FileRow row, bool measureNow = false)
     {
         var fileOps = workspace.FileOps;
         if (fileOps is null)
@@ -464,25 +464,45 @@ public sealed partial class MainWindow
 
         if (row.IsDir)
         {
-            // Folder metrics can take a while on large trees, so they load after the dialog
-            // is visible and stop when it closes.
+            // Walking a large tree can take a while, so the totals are counted on request (or at once
+            // when the Folder metrics command opened the dialog) and the walk stops when the dialog closes.
             var metricsHost = PropertiesSection(rows, "Contents");
-            var metricsStatus = new TextBlock { Text = "Calculating…", TextWrapping = TextWrapping.Wrap, Foreground = Brush("SfTextMutedBrush") };
+            var metricsStatus = new TextBlock
+            {
+                Text = "Counts every file and folder inside, including subfolders.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brush("SfTextMutedBrush"),
+            };
+            var metricsButton = new Button { Content = "Calculate totals", HorizontalAlignment = HorizontalAlignment.Left };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(metricsButton, "Properties.CalculateTotals");
+            metricsHost.Children.Add(metricsButton);
             metricsHost.Children.Add(metricsStatus);
 
-            var metricsCts = BeginUtilityOperation("PropertiesFolderMetrics");
+            CancellationTokenSource? metricsCts = null;
+            void Measure()
+            {
+                metricsButton.IsEnabled = false;
+                metricsStatus.Text = "Calculating…";
+                metricsCts = BeginUtilityOperation("PropertiesFolderMetrics");
+                _ = LoadFolderMetricsIntoAsync(fileOps, row.Path, metricsHost, metricsStatus, metricsButton, metricsCts);
+            }
+
+            metricsButton.Click += (_, _) => Measure();
             dialog.Closed += (_, _) =>
             {
                 try
                 {
-                    metricsCts.Cancel();
+                    metricsCts?.Cancel();
                 }
                 catch (ObjectDisposedException)
                 {
                     // The lookup already finished and the registry disposed its token source.
                 }
             };
-            _ = LoadFolderMetricsIntoAsync(fileOps, row.Path, metricsHost, metricsStatus, metricsCts);
+            if (measureNow)
+            {
+                Measure();
+            }
         }
 
         await DialogHost.ShowAsync(dialog);
@@ -540,6 +560,7 @@ public sealed partial class MainWindow
         string path,
         StackPanel host,
         TextBlock status,
+        Button button,
         CancellationTokenSource cts)
     {
         try
@@ -551,6 +572,7 @@ public sealed partial class MainWindow
             }
 
             host.Children.Remove(status);
+            host.Children.Remove(button);
             PropertiesTable(host, InspectionDetails.FolderMetricRows(metrics));
         }
         catch (OperationCanceledException)
@@ -558,7 +580,9 @@ public sealed partial class MainWindow
         }
         catch (Exception exception)
         {
+            // Leave the button so the count can be tried again.
             status.Text = exception.Message;
+            button.IsEnabled = true;
         }
         finally
         {
@@ -631,7 +655,7 @@ public sealed partial class MainWindow
         if (folders.Length == 1)
         {
             // One folder: Properties measures it (Quick Look no longer shows folder metrics).
-            await ShowPropertiesForRowAsync(workspace, folders[0]);
+            await ShowPropertiesForRowAsync(workspace, folders[0], measureNow: true);
             return;
         }
 
