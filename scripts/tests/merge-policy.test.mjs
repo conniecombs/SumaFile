@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { evaluateMerge, requiredJobs, safeDependencyFile } from '../lib/merge-policy.mjs';
+import { evaluateMerge, onlyApprovalPendingRunsBlock, requiredJobs, safeDependencyFile } from '../lib/merge-policy.mjs';
 
 const fixture = () => ({
   repository: 'owner/repo',
@@ -67,4 +67,45 @@ test('release version changes always require human review', () => {
   const input = maintenanceFixture();
   input.commit.commit.message = input.commit.commit.message.replace('SumaFile-Maintenance: toolchains', 'SumaFile-Maintenance: release');
   assert.equal(evaluateMerge(input).eligible, false);
+});
+
+function pendingFixture() {
+  const headSha = 'abc';
+  return {
+    assessedRunId: 2,
+    headSha,
+    runs: [
+      { id: 1, check_suite_id: 11, head_sha: headSha, path: '.github/workflows/ci.yml', name: 'CI', event: 'pull_request', status: 'completed', conclusion: 'action_required' },
+      { id: 2, check_suite_id: 12, head_sha: headSha, path: '.github/workflows/ci.yml', name: 'CI', event: 'workflow_dispatch', status: 'completed', conclusion: 'success' },
+    ],
+    suites: [
+      { id: 11, head_sha: headSha, status: 'completed', conclusion: 'action_required', latest_check_runs_count: 0 },
+      { id: 12, head_sha: headSha, status: 'completed', conclusion: 'success', latest_check_runs_count: 9 },
+      { id: 13, head_sha: headSha, status: 'queued', conclusion: null, latest_check_runs_count: 0 },
+    ],
+    statuses: [],
+  };
+}
+test('an approval-pending PR run is the only thing an unstable PR may be waiting on', () => {
+  assert.equal(onlyApprovalPendingRunsBlock(pendingFixture()), true);
+  for (const [name, change] of [
+    ['no held run', input => { input.runs = input.runs.filter(run => run.id !== 1); }],
+    ['a failed suite', input => { input.suites.push({ id: 14, head_sha: input.headSha, status: 'completed', conclusion: 'failure', latest_check_runs_count: 1 }); }],
+    ['a pending suite with runs', input => { input.suites.push({ id: 15, head_sha: input.headSha, status: 'in_progress', conclusion: null, latest_check_runs_count: 2 }); }],
+    ['a held run of another workflow', input => { input.runs[0].name = 'Other'; input.runs[0].path = '.github/workflows/other.yml'; }],
+    ['a held run from a push', input => { input.runs[0].event = 'push'; }],
+    ['a failing status', input => { input.statuses = [{ state: 'failure' }]; }],
+    ['a run of another SHA', input => { input.runs[0].head_sha = 'other'; }],
+  ]) {
+    const input = pendingFixture(); change(input);
+    assert.equal(onlyApprovalPendingRunsBlock(input), false, name);
+  }
+});
+test('an unstable PR merges only when approval-pending runs explain it', () => {
+  const input = maintenanceFixture();
+  input.pr.mergeable_state = 'unstable';
+  assert.equal(evaluateMerge(input).eligible, false);
+  assert.equal(evaluateMerge({ ...input, onlyApprovalPending: true }).eligible, true);
+  input.pr.mergeable_state = 'blocked';
+  assert.equal(evaluateMerge({ ...input, onlyApprovalPending: true }).eligible, false);
 });

@@ -258,3 +258,23 @@ jobs:
           REQUIRE_INSTALLER: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login == 'dependabot[bot]' || startsWith(github.head_ref, 'connie/maintenance/') }}
         run: |
           node -e 'const r = JSON.parse(process.env.RESULTS); for (const [name, job] of Object.entries(r)) { if (name === "installer" && process.env.REQUIRE_INSTALLER === "false" && job.result === "skipped") continue; if (job.result !== "success") throw new Error(`${name}: ${job.result}`); }'
+
+  # A maintenance proposal's CI is dispatched with the workflow token, and GitHub raises no workflow_run event for a
+  # run that token started, so the merge gate would never see it. This last job hands the run to the gate instead.
+  # It runs no checked-out code; the gate checks out the default branch and re-assesses the run once it completes.
+  merge-gate:
+    name: Hand the run to the merge gate
+    needs: [required]
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      startsWith(github.ref_name, 'connie/maintenance/') &&
+      needs.required.result == 'success'
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the trusted merge gate for this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run dependabot-automerge.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH" -f run_id="$GITHUB_RUN_ID"

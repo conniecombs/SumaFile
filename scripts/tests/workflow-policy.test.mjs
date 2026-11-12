@@ -74,3 +74,13 @@ test('the installer workflows resolve WiX with the build script\'s own Resolve-W
   assert.ok(validateWorkflows(lifecycle.workflows, lifecycle.dependabot).some(error => error.includes('MSI lifecycle smoke')));
   assert.deepEqual(validateWorkflows(workflows, dependabot), []);
 });
+test('the dispatched merge-gate handoff stays narrow and gated', () => {
+  const { workflows, dependabot } = source();
+  workflows['ci.yml'].jobs['merge-gate'].permissions = { actions: 'write', contents: 'write' };
+  workflows['ci.yml'].jobs['merge-gate'].if = "github.event_name == 'workflow_dispatch'";
+  delete workflows['dependabot-automerge.yml'].on.workflow_dispatch;
+  const errors = validateWorkflows(workflows, dependabot);
+  assert.ok(errors.some(error => error.includes('may only dispatch workflows')));
+  assert.ok(errors.some(error => error.includes('successful required gate')));
+  assert.ok(errors.some(error => error.includes('dispatched CI run id')));
+});

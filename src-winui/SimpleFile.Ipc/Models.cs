@@ -342,6 +342,14 @@ public sealed class FolderMetrics
 
     [JsonPropertyName("subdirectories")]
     public List<TreeNode> Subdirectories { get; set; } = [];
+
+    /// <summary>Files at every depth below the folder.</summary>
+    [JsonPropertyName("total_files")]
+    public ulong TotalFiles { get; set; }
+
+    /// <summary>Folders at every depth below the folder.</summary>
+    [JsonPropertyName("total_folders")]
+    public ulong TotalFolders { get; set; }
 }
 
 public sealed class RenameRequest

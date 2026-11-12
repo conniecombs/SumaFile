@@ -189,6 +189,63 @@ public class InspectionDetailsTests
     }
 
     [Fact]
+    public void PropertiesSections_GroupsGeneralAttributesAndMetadataUnderHeadings()
+    {
+        var row = new InspectionRow
+        {
+            Name = "song.mp3",
+            Path = @"C:\Music\song.mp3",
+            TypeText = "MP3 File",
+            SizeText = "4 MB",
+            ModifiedText = "9/7/2026 5:00 PM",
+        };
+        var info = new FileEntry { IsHidden = true, IsSymlink = true, Permissions = "rw-r--r--" };
+        var metadata = new FileMetadata
+        {
+            Kind = "audio",
+            Summary = "Audio track",
+            Fields = [["Artist", "Ada"], ["Bitrate", "320 kbps"]],
+        };
+
+        var sections = InspectionDetails.PropertiesSections(row, @"C:\Music", info, metadata);
+
+        Assert.Equal(["General", "Attributes", "Overview", "Track", "Audio"], sections.Select(section => section.Title));
+        // The dialog heading carries the name, so General does not repeat it.
+        Assert.Equal(["Type", "Location", "Path", "Size", "Modified"], sections[0].Rows.Select(detail => detail.Label));
+        Assert.Equal(
+            [new InspectionDetailRow("Attributes", "Hidden, Shortcut"), new InspectionDetailRow("Permissions", "rw-r--r--")],
+            sections[1].Rows);
+    }
+
+    [Fact]
+    public void PropertiesSections_WithoutEntryInfoOrMetadataShowsOnlyGeneral()
+    {
+        var row = new InspectionRow { Name = "Docs", Path = @"C:\Docs", TypeText = "Folder", IsDir = true };
+
+        var general = Assert.Single(InspectionDetails.PropertiesSections(row, @"C:\", info: null, metadata: null));
+        var plain = InspectionDetails.PropertiesSections(row, @"C:\", new FileEntry(), metadata: null);
+
+        Assert.Equal("General", general.Title);
+        Assert.Equal(new InspectionDetailRow("Attributes", "Normal"), Assert.Single(plain[1].Rows));
+    }
+
+    [Fact]
+    public void FolderMetricRows_CountsFilesAndFoldersThroughEverySubfolder()
+    {
+        var rows = InspectionDetails.FolderMetricRows(new FolderMetrics { Size = 2048, ItemCount = 3, TotalFiles = 1200, TotalFolders = 1 });
+
+        Assert.Equal(
+            [
+                new InspectionDetailRow("Files", "1,200 files"),
+                new InspectionDetailRow("Folders", "1 folder"),
+                new InspectionDetailRow("Total items", "1,201 items"),
+                new InspectionDetailRow("Total size", EntryPresentation.FormatFileSize(2048)),
+                new InspectionDetailRow("Directly inside", "3 items"),
+            ],
+            rows);
+    }
+
+    [Fact]
     public void PreviewRows_OmitsRedundantSizeWhenEqualToSelectionSize()
     {
         var preview = new FilePreview

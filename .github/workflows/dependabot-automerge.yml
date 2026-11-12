@@ -3,20 +3,28 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
+  # A CI run the workflow token dispatched (maintenance proposals) raises no workflow_run event, so its last job
+  # dispatches this gate with the run id. The gate re-reads that run and applies the same policy.
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Completed or finishing CI run to assess'
+        required: true
 permissions:
   contents: write
   pull-requests: write
   actions: read
   checks: read
 concurrency:
-  group: dependency-merge-${{ github.event.workflow_run.head_branch }}
+  group: dependency-merge-${{ github.event.workflow_run.head_branch || inputs.run_id }}
   cancel-in-progress: false
 jobs:
   automerge:
     runs-on: ubuntu-22.04
     if: >
-      github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'workflow_dispatch')
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'workflow_dispatch'))
     steps:
       - name: Checkout trusted policy
         uses: actions/checkout@v7

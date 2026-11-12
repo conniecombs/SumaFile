@@ -141,6 +141,13 @@ export function validateWorkflows(workflows, dependabot) {
   const merge = workflows['dependabot-automerge.yml'];
   check(list(merge?.on?.workflow_run?.workflows).includes('CI') && list(merge?.on?.workflow_run?.types).includes('completed'),
     'Dependency merging must follow completed CI');
+  // CI runs dispatched with the workflow token never raise workflow_run, so maintenance CI hands its run id over by dispatch.
+  check(merge?.on?.workflow_dispatch?.inputs?.run_id?.required === true, 'Dependency merging must accept a dispatched CI run id');
+  const handoff = workflows['ci.yml']?.jobs?.['merge-gate'];
+  check(list(handoff?.needs).includes('required') && /needs\.required\.result == 'success'/.test(handoff?.if ?? '')
+    && /connie\/maintenance\//.test(handoff?.if ?? ''), 'CI merge-gate handoff must follow a successful required gate on maintenance branches');
+  check(handoff?.permissions?.actions === 'write' && Object.keys(handoff?.permissions ?? {}).length === 1, 'CI merge-gate handoff may only dispatch workflows');
+  command('ci.yml', 'merge-gate', /gh workflow run dependabot-automerge\.yml .*-f run_id="\$GITHUB_RUN_ID"/, 'merge gate dispatch');
   check(merge?.permissions?.contents === 'write' && merge?.permissions?.['pull-requests'] === 'write', 'Dependency merging needs scoped write permissions');
   check(action(merge?.jobs?.automerge, 'actions/checkout')?.with?.ref === '${{ github.event.repository.default_branch }}',
     'Automerge must execute trusted default-branch policy');

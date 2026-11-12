@@ -48,6 +48,8 @@ pub fn get_folder_metrics(path: &str, cancel: &AtomicBool) -> Option<FolderMetri
         return Some(FolderMetrics {
             size: listing.entries.iter().map(|entry| entry.size).sum(),
             item_count: listing.entries.len() as u64,
+            total_files: listing.entries.iter().filter(|entry| !entry.is_dir).count() as u64,
+            total_folders: subdirectories.len() as u64,
             subdirectories,
         });
     }
@@ -91,6 +93,8 @@ fn calculate_size_recursive(path: &Path, cancel: &AtomicBool) -> Option<u64> {
 fn calculate_metrics_recursive(path: &Path, cancel: &AtomicBool) -> Option<FolderMetrics> {
     let mut size = 0u64;
     let mut item_count = 0u64;
+    let mut total_files = 0u64;
+    let mut total_folders = 0u64;
     let mut subdirectories: Vec<TreeNode> = Vec::new();
     let mut root_subdirectory_indexes: Vec<(PathBuf, usize)> = Vec::new();
     let mut stack = Vec::new();
@@ -114,9 +118,14 @@ fn calculate_metrics_recursive(path: &Path, cancel: &AtomicBool) -> Option<Folde
             });
             root_subdirectory_indexes.push((entry_path.clone(), index));
             stack.push(entry_path);
-        } else if ft.is_file() {
-            if let Ok(metadata) = entry.metadata() {
-                size += metadata.len();
+            total_folders += 1;
+        } else {
+            // Links and other non-directories count as files, but only regular files have a size to add.
+            total_files += 1;
+            if ft.is_file() {
+                if let Ok(metadata) = entry.metadata() {
+                    size += metadata.len();
+                }
             }
         }
     }
@@ -141,9 +150,13 @@ fn calculate_metrics_recursive(path: &Path, cancel: &AtomicBool) -> Option<Folde
                         subdirectories[index].has_children = true;
                     }
                     stack.push(entry.path());
-                } else if ft.is_file() {
-                    if let Ok(metadata) = entry.metadata() {
-                        size += metadata.len();
+                    total_folders += 1;
+                } else {
+                    total_files += 1;
+                    if ft.is_file() {
+                        if let Ok(metadata) = entry.metadata() {
+                            size += metadata.len();
+                        }
                     }
                 }
             }
@@ -155,6 +168,8 @@ fn calculate_metrics_recursive(path: &Path, cancel: &AtomicBool) -> Option<Folde
         size,
         item_count,
         subdirectories,
+        total_files,
+        total_folders,
     })
 }
 
@@ -195,6 +210,8 @@ mod tests {
 
         assert_eq!(14, metrics.size);
         assert_eq!(3, metrics.item_count);
+        assert_eq!(4, metrics.total_files);
+        assert_eq!(3, metrics.total_folders);
         assert_eq!(2, metrics.subdirectories.len());
         assert_eq!("Photos", metrics.subdirectories[0].name);
         assert!(metrics.subdirectories[0].has_children);

@@ -870,6 +870,8 @@ mod tests {
                 size: 5,
                 item_count: 1,
                 subdirectories: vec![],
+                total_files: 0,
+                total_folders: 0,
             },
         );
         cache.put_folder_metrics(
@@ -878,6 +880,8 @@ mod tests {
                 size: 5,
                 item_count: 1,
                 subdirectories: vec![],
+                total_files: 0,
+                total_folders: 0,
             },
         );
         cache.put_folder_metrics(
@@ -886,6 +890,8 @@ mod tests {
                 size: 0,
                 item_count: 0,
                 subdirectories: vec![],
+                total_files: 0,
+                total_folders: 0,
             },
         );
         cache.put_file_metadata(

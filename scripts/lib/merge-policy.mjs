@@ -44,7 +44,32 @@ export function safeDependencyFile(file) {
   return false;
 }
 
-export function evaluateMerge({ repository, pr, run, jobs, protection, commit, files, repairVerified = false }) {
+/**
+ * True when every check on the PR head passed except CI runs that GitHub holds for a maintainer's approval
+ * ("action_required"), which it starts for a pull_request event on a PR the workflow token opened. Those runs never
+ * execute, so they say nothing about the head; the assessed run is the full CI of the same SHA. Anything else that is
+ * not a success (a failed or pending suite of any app, or a failing commit status) keeps the PR blocked.
+ */
+export function onlyApprovalPendingRunsBlock({ assessedRunId, headSha, runs, suites, statuses }) {
+  const held = new Set();
+  for (const run of runs) {
+    if (run.head_sha !== headSha) return false;
+    if (run.id === assessedRunId) continue;
+    if (run.path === '.github/workflows/ci.yml' && run.name === 'CI' && run.event === 'pull_request'
+        && run.status === 'completed' && run.conclusion === 'action_required') {
+      held.add(run.check_suite_id);
+    }
+  }
+  if (!held.size) return false;
+  for (const suite of suites) {
+    if (suite.head_sha !== headSha) return false;
+    if (held.has(suite.id) || suite.latest_check_runs_count === 0) continue;
+    if (suite.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(suite.conclusion)) return false;
+  }
+  return statuses.every(status => status.state === 'success');
+}
+
+export function evaluateMerge({ repository, pr, run, jobs, protection, commit, files, repairVerified = false, onlyApprovalPending = false }) {
   const deny = reason => ({ eligible: false, reason });
   if (pr.state !== 'open' || pr.draft || pr.base.ref !== 'main' || pr.head.repo?.full_name !== repository) return deny('PR must be open, ready and from this repository into main');
   const maintenance = maintenanceMetadata(commit.commit.message);
@@ -60,7 +85,11 @@ export function evaluateMerge({ repository, pr, run, jobs, protection, commit, f
     const matches = jobs.filter(job => job.name === name);
     if (matches.length !== 1 || matches[0].conclusion !== 'success') return deny(`Required job is not successful: ${name}`);
   }
-  if (pr.mergeable !== true || pr.mergeable_state !== 'clean') return deny('PR must be mergeable and up to date with all required checks');
+  // "unstable" means a check outside the required ones is not green. It is accepted only when that check is a CI run
+  // waiting for approval on this PR (onlyApprovalPendingRunsBlock); the required checks still gate the merge itself.
+  if (pr.mergeable !== true || !(pr.mergeable_state === 'clean' || (pr.mergeable_state === 'unstable' && onlyApprovalPending))) {
+    return deny('PR must be mergeable and up to date with all required checks');
+  }
   if (maintenance) {
     if (maintenance.recipe === 'release') return deny('Release version decisions require human review');
     if (!pr.head.ref?.startsWith(`connie/maintenance/${maintenance.recipe}-`) || commit.parents?.length !== 1
