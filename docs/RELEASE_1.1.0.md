@@ -1,96 +1,113 @@
-# SimpleFile 1.1.0 Release Notes
+# SumaFile 1.1.0 Release Notes
 
-Release date: 2026-05-29
+Prepared November 12, 2026. This Windows x64 release introduces the plugin
+system and moves three built-in features into plugins that ship with
+SumaFile. A default install keeps the features of 1.0.4; how they are built,
+stored and removed has changed, so read "Upgrading" before you install 1.1.0
+over 1.0.4. It was developed as the Beta branch.
 
-> [!NOTE]
-> Licensing update (2026-09-02): the current SumaFile source repository is
-> licensed under the MIT License. The licensing language below records the
-> terms under which SimpleFile 1.1.0 was originally published.
-> This file is a historical SimpleFile 1.1.0 snapshot. Current SumaFile
-> release validation, packaging, and runtime behavior use the WinUI host plus
-> Rust IPC service documented in `README.md` and `docs/RELEASE_1.0.3.md`.
+These notes are not the SimpleFile 1.1.0 release of May 2026, which predates
+the SumaFile name; its notes are kept as
+[RELEASE_SIMPLEFILE_1.1.0.md](RELEASE_SIMPLEFILE_1.1.0.md).
 
-## Summary
+## What is new
 
-SimpleFile 1.1.0 is the first public release from the `SimpleFile-Windows`
-repository and supersedes the unreleased local `v1.0.4` tag. It combines the
-Svelte/Vite shell migration, release-readiness hardening, Windows installer
-smoke coverage, startup-location fixes, safer file-operation conflict behavior,
-and the new proprietary project license.
+- **Plugins.** A plugin is a folder with a `plugin.json` manifest, an optional
+  C# UI half and an optional backend process. Plugins add commands, context
+  menus, toolbar buttons, sidebar sections, side panels, row decorations,
+  settings pages and archive formats. See [Plugins](../README.md#plugins).
+- **Three bundled plugins** replace the built-in code and need no approval:
+  7-Zip archives (`com.sumafile.sevenzip`), FTP/SFTP connections
+  (`com.sumafile.remote`) and Git (`com.sumafile.git`). Each can be disabled,
+  none can be removed.
+- **Settings -> Plugins.** An overview of every plugin with Install from file,
+  Rescan and Open plugins folder, and one page per plugin under Plugins for its
+  Enabled switch, settings and Remove.
+- **Consent.** SumaFile asks before it enables a plugin it did not ship, and
+  asks again when the plugin's `plugin.json`, signature state or folder
+  changes, and after Install from file or Remove. A signed plugin shows
+  "Signed · key <fingerprint>": the signature proves its files are unchanged
+  since signing, not who published it. There is no sandbox.
+- **For plugin authors:** the guide [docs/PLUGINS.md](PLUGINS.md), the starter
+  [templates/sumafile-plugin](../templates/sumafile-plugin/README.md) and the
+  signing tool `scripts/sign-plugin.mjs`. The SDK package and the Rust helper
+  crate are not published yet.
 
-## Licensing at Release
+## What changed for existing features
 
-SimpleFile 1.1.0 was originally published as proprietary software. All rights are reserved
-by conniecombs. Access to the repository or a copy of the software does not
-grant permission to use, copy, modify, redistribute, sublicense, host, resell,
-or create derivative works without prior written permission.
+- **Git.** The toggle moved from the status bar to the toolbar and shows inside
+  a repository. Git menu items are hidden, not greyed, where they do not apply.
+  Fetch, pull and push are Transfers rows with Cancel. "Git integration" is now
+  the Git plugin's Enabled setting under Settings -> Plugins -> Git; a 1.0.4
+  setting of off is carried over. Read-only Git views run no hook, filter or
+  external diff a repository configures; your own stage, commit, fetch, pull
+  and push run them as the git command line does.
+- **FTP/SFTP.** Profiles and the manager come from the plugin. Profiles saved
+  by 1.0.4 are imported, read-only, on first use; saved passwords stay in
+  Windows Credential Manager.
+- **7-Zip.** `.7z` support and the bundled 7-Zip come from the plugin. The
+  executable override is under Settings -> Plugins -> 7-Zip archives.
+- **IPC.** The service's domain methods went from 97 to 75: the Git and remote
+  methods moved to the plugins' own protocols.
+- **Status bar.** The item count and the selection's count and size sit beside
+  the folder address at the bottom left.
+- **Properties.** Details are grouped under General, Attributes and the file's
+  metadata. For a folder, sizes and counts are no longer measured when the
+  dialog opens: **Calculate totals** counts every file and folder inside it,
+  including subfolders, and adds up their size.
 
-Third-party libraries and tools remain governed by their own license terms.
+## Upgrading
 
-## Installation
+Windows 10 version 2004 or later, or Windows 11, x64. Close SumaFile after
+active transfers finish. Choose the same installation format used for v1.0.4.
+Use the [Releases page](https://github.com/conniecombs/SumaFile/releases) for
+published files.
 
-Windows users should install the NSIS setup executable:
+| Artifact | Use |
+| --- | --- |
+| `SumaFile_1.1.0_x64-winui-setup.exe` | Per-user install or upgrade |
+| `SumaFile_1.1.0_x64-winui.msi` | Windows Installer deployment |
+| `SumaFile_1.1.0_x64-winui-portable.zip` | Extract the complete archive into a fresh folder and launch SumaFile.exe |
+| `SumaFile_1.1.0_x64-winui-setup.exe.sig` | Detached signature for the NSIS installer |
+| `latest-winui.json` | Signed updater manifest used by the application |
 
-```text
-SimpleFile_1.1.0_x64-setup.exe
-```
+Open About after upgrading and check for 1.1.0.
 
-The MSI is also produced for environments that prefer MSI-based deployment:
+- Plugins, their data (`plugins-data`, which holds the FTP/SFTP profiles), the
+  approvals file and `plugins.log` all live in the installation folder.
+  Upgrades keep them. **Uninstalling removes them**, including the FTP/SFTP
+  profiles, which 1.0.4 kept. Saved passwords stay in Credential Manager under
+  `SumaFile.Remote.*`.
+- Git for Windows with `git.exe` on `PATH` is needed for Git status and the
+  Git workbench, as before.
 
-```text
-SimpleFile_1.1.0_x64_en-US.msi
-```
+## Dogfood 10-Step Script
 
-The first release must be installed manually. Settings -> Updates can check for a newer version, but in-app install is disabled until installer signatures exist. Download later releases from GitHub.
+1. Install 1.1.0 over a disposable v1.0.4 installation.
+2. Open Settings -> Plugins: the overview lists 7-Zip archives, FTP/SFTP connections and Git as enabled, and each has its own page under Plugins.
+3. Browse a Git repository and a plain folder; badges, the Git menu group and the Git toolbar button appear only in the repository.
+4. Open the Git workbench, stage and unstage a file, view a diff, then fetch and cancel it from the Transfers window.
+5. Turn the Git plugin's Enabled setting off: badges, the menu group and the toolbar button go at once; turn it on again.
+6. Open the FTP/SFTP manager; profiles saved by 1.0.4 are listed and connect with their saved passwords.
+7. Create, browse and extract a `.7z` archive.
+8. Install the template plugin from a `.sfplugin` file: SumaFile asks before enabling it; Remove it again.
+9. Disable and enable each bundled plugin; its commands, menus and sidebar section leave and come back.
+10. Verify MSI, NSIS and portable startup and exercise both the latest-release upgrade and `npm run smoke:winui-upgrade-from-ref` against the v1.0.4 baseline; uninstall and check the installation folder is gone.
 
-## Major Changes
+## SimpleFile Data Import
 
-- Svelte/Vite frontend shell is now the release entry point.
-- File-list column resizing now matches Windows File Explorer behavior.
-- Start Location -> Custom Path now supports selecting and persisting a path.
-- Copy, cut, paste, drag/drop, and dual-pane transfers now flow through the
-  transfer manager with stable operation IDs and progress events.
-- Copy and move conflict paths are covered so existing destination files are not
-  silently overwritten.
-- Release build tooling now includes local unsigned bundle support plus release
-  executable, MSI, NSIS installer, and settings startup smoke tests.
-- Project metadata, README, updater configuration, support links, release docs,
-  and contribution terms now point at `conniecombs/SimpleFile-Windows`.
+No manual import is needed for normal SimpleFile-to-SumaFile use. SumaFile keeps the existing application data identifier, `com.simplefile.desktop`.
 
-## Validation
+## Known Limitations
 
-The local 1.1.0 release candidate was validated with:
+- The installer build and the installer smokes
+  (`npm run release:build`, the NSIS, MSI and upgrade smokes) and the
+  `-Counts 10000` UI smoke variants have not run for this build; run them on
+  the release commit.
+- Running Win2D from a plugin is not tested.
+- Settings search finds the controls of a plugin's custom settings page only
+  after that plugin's page has been opened once in the window.
+- The SDK package and the Rust helper crate for plugin authors are not
+  published yet.
 
-```powershell
-npm run check:release
-npm run smoke:settings
-npm run build:tauri:local
-npm run smoke:release
-npm run smoke:installer
-```
-
-`npm run check:release` includes Svelte checks/builds, legacy frontend checks,
-Tauri invoke parity checks, updater configuration checks, Rust formatting, Rust
-tests, Clippy with warnings denied, and Rust dependency audit.
-
-## Release Artifacts
-
-The GitHub release workflow builds:
-
-- Windows x64 NSIS setup executable
-- Windows x64 MSI installer
-- Signed Windows updater artifacts and `latest.json`
-
-The release workflow requires the GitHub secret `TAURI_SIGNING_PRIVATE_KEY`.
-If the signing key is password-protected, it also requires
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-
-## Known Operational Notes
-
-- The local `build:tauri:local` command intentionally disables updater artifact
-  signing through `src-tauri/tauri.local.conf.json`; it is for local packaging
-  validation only.
-- The real GitHub release workflow keeps updater signing enabled and fails if
-  the signing secret is missing.
-- Older Git tags and commits preserve the licensing terms that applied at the
-  time. The current SumaFile source repository is licensed under MIT.
+Checklist before tagging `v1.1.0`: run the repository, Rust, .NET, packaging and Windows UI checks on the release commit. Require a signed test release before claiming in-app updater installation is proven.
