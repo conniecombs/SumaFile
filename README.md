@@ -206,6 +206,8 @@ Settings in `%APPDATA%\com.simplefile.desktop` are not removed.
   refresh
 - Recycle Bin as a browsable location with restore, permanent delete, and empty
   actions
+- Status bar with the item count and the selection's count and size, shown
+  beside the folder address
 
 ### File Operations
 
@@ -244,7 +246,10 @@ Inspection tools include:
 - Pin preview open, or let unpinned preview collapse when empty or panes are
   cramped; automatic collapsing can be disabled in Settings -> Behavior
 - Quick Look for focused inspection
-- Properties dialog with path, type, size, timestamps, and attributes
+- Properties dialog grouped into General, Attributes, and the file's metadata,
+  with values you can select and copy
+- Calculate totals in a folder's Properties counts every file and folder
+  inside it, including subfolders, and adds up their size
 - Image dimensions and EXIF where available
 - Office/PDF/media metadata where available
 - MD5, SHA-1, and SHA-256 checksums
@@ -287,7 +292,8 @@ links and special entries that could escape the destination.
 - Labels for files and folders, shown under Labels in the sidebar
 - Bookmarks and recent locations
 - Smart folders
-- Folder metrics
+- Folder metrics: files, folders, total items and total size through every
+  subfolder
 - Duplicate finder
 - Advanced Rename with live preview and collision checks
 - Rename preview shows full Before/After names, highlights changes, and labels

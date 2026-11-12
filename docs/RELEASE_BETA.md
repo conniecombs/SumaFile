@@ -50,6 +50,12 @@ as the same version as the published 1.0.4.
   executable override is under Settings -> Plugins -> 7-Zip archives.
 - **IPC.** The service's domain methods went from 97 to 75: the Git and remote
   methods moved to the plugins' own protocols.
+- **Status bar.** The item count and the selection's count and size sit beside
+  the folder address at the bottom left.
+- **Properties.** Details are grouped under General, Attributes and the file's
+  metadata. For a folder, sizes and counts are no longer measured when the
+  dialog opens: **Calculate totals** counts every file and folder inside it,
+  including subfolders, and adds up their size.
 
 ## Upgrading
 
