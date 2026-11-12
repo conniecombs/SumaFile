@@ -632,7 +632,7 @@ answers.
 `plugin.handshake` is the first request on every connection. The host sends:
 
 ```json
-{ "jsonrpc": "2.0", "id": 1, "method": "plugin.handshake", "params": { "pluginId": "com.example.tool", "hostVersion": "1.0.4.0", "sdkVersion": "1.0.0" } }
+{ "jsonrpc": "2.0", "id": 1, "method": "plugin.handshake", "params": { "pluginId": "com.example.tool", "hostVersion": "1.1.0.0", "sdkVersion": "1.0.0" } }
 ```
 
 The file service sends the same params plus `"client": "simplefile-service"`, which tells a backend which connection
