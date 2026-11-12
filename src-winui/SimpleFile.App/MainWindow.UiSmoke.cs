@@ -499,9 +499,12 @@ public sealed partial class MainWindow
             await Task.Delay(10);
         }
 
+        // A row that arrives undecorated was published before the 600 ms provider answered; one held for the provider
+        // would arrive decorated. The elapsed time is only recorded: a cold navigation on a busy runner can itself
+        // take longer than the provider's delay, so a wall-clock bound would test the runner, not the listing.
         var listedMs = watch.Elapsed.TotalMilliseconds;
-        SmokeAssert(listedMs < 600, $"hello-slow's rows appeared after {listedMs:0} ms, expected under 600 ms");
-        SmokeAssert(listed.DecorationText.Length == 0, $"hello-slow's c.txt appeared already decorated ('{listed.DecorationText}')");
+        SmokeAssert(listed.DecorationText.Length == 0,
+            $"hello-slow's c.txt appeared already decorated after {listedMs:0} ms ('{listed.DecorationText}'): the listing waited for the provider");
         await navigation.WaitAsync(tenSeconds);
         await SmokeWaitWithinAsync(
             () => Task.FromResult(PrimaryFiles.Any(row => row.Name == "c.txt" && row.DecorationText == "hello")),
