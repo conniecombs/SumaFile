@@ -80,6 +80,25 @@ into `main`. See the [Beta notes](RELEASE_BETA.md).
   I/O retries hold the reduced setting longer each time. Files that fit in
   one copy buffer are no longer pre-allocated, which saves one request per
   small file on a network share.
+- The status bar's item count, with the selection's count and size, now sits
+  beside the folder address at the bottom left instead of at the far right.
+- Properties is grouped: the item's name and type as a heading, then General,
+  Attributes, the file's metadata groups (the ones the preview pane uses),
+  and Checksums for a file or Contents for a folder. Values can be selected
+  and copied.
+- A folder's Properties has a **Calculate totals** button that counts every
+  file and folder inside it, including subfolders: Files, Folders, Total
+  items and Total size, plus the number of items directly inside. Properties
+  no longer walks a folder as soon as it opens, so the size also waits for
+  the button; the Folder metrics command on one folder still measures at
+  once. The row that used to read "Total Items" counted only the top level
+  and is now "Directly inside". `get_folder_metrics` returns two new fields,
+  `total_files` and `total_folders`.
+- Maintenance pull requests can now reach the automatic merge check: their
+  CI run starts it directly when it passes, and a pull request whose only
+  outstanding check is its own approval-held CI run is no longer refused.
+  Branch protection on `main` is still required before anything merges. See
+  [CI maintenance](CI_MAINTENANCE.md).
 
 ---
 
