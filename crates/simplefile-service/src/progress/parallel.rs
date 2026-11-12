@@ -96,6 +96,9 @@ pub(crate) struct FileTask {
     /// Move: delete the verified source right after the file is published.
     /// Files inside staged trees are deleted after the tree is promoted instead.
     pub delete_source: bool,
+    /// A targeted retry: a destination that already holds the same file is this
+    /// operation's own earlier copy, not a conflict.
+    pub retry: bool,
 }
 
 /// A selected directory: walked by the checkers, published as a whole when its
@@ -107,6 +110,9 @@ pub(crate) struct RootTask {
     pub network: bool,
     pub conflict: ConflictAction,
     pub delete_source: bool,
+    /// A targeted retry: a destination that already holds the same file is this
+    /// operation's own earlier copy, not a conflict.
+    pub retry: bool,
 }
 
 /// One failed file or directory, with the destination it was headed for.
@@ -212,13 +218,6 @@ struct DirQueue {
 struct MarchState {
     created_dirs: Vec<(usize, PathBuf, PathBuf)>,
     source_dirs: Vec<(usize, usize, PathBuf, SourceVersion)>,
-    staged_dirs: Vec<(
-        usize,
-        usize,
-        PathBuf,
-        PathBuf,
-        crate::transfer_journal::StagingLease,
-    )>,
     dir_failures: Vec<TaskFailure>,
 }
 
@@ -255,10 +254,8 @@ pub(crate) fn copy_selection(
     let cancel = ctx.progress.cancel;
     let total_bytes = ctx.progress.total_bytes;
     let total_files = ctx.progress.total_files;
-    let operation_id = ctx.operation_id;
     let checker_count = ctx.policy.checkers_limit().clamp(1, 32);
     let channel_cap = ctx.policy.backlog_limit().clamp(64, 8192);
-    let inplace = ctx.policy.inplace;
 
     let mut manifests: Vec<Option<Arc<crate::transfer_manifest::DiskManifest>>> = Vec::new();
     let march_state = Mutex::new(MarchState::default());
@@ -280,37 +277,17 @@ pub(crate) fn copy_selection(
                     root.destination.display()
                 )));
             }
-            if inplace {
-                // Written under the final name from the start; a cancelled or
-                // failed transfer leaves the partially filled folder behind.
-                create_dir_exclusive(&root.destination)?;
-                march_state
-                    .lock()
-                    .expect("march state lock poisoned")
-                    .created_dirs
-                    .push((0, root.source.clone(), root.destination.clone()));
-                return Ok((root.destination.clone(), false));
-            }
-            let staged =
-                crate::transfer_staging::staging_path_for(&root.destination, operation_id)?;
-            create_dir_exclusive(&staged)?;
-            let lease = crate::transfer_journal::StagingLease::record_created(
-                &root.source.to_string_lossy(),
-                &root.destination,
-                &staged,
-            )?;
-            let mut state = march_state.lock().expect("march state lock poisoned");
-            state
+            // Folders are written under their final names from the start: no
+            // hidden staging tree. A cancelled or failed transfer keeps the
+            // files it already copied; each file is still staged and renamed
+            // on its own, so no half-written file is ever left under its name.
+            create_dir_exclusive(&root.destination)?;
+            march_state
+                .lock()
+                .expect("march state lock poisoned")
                 .created_dirs
-                .push((0, root.source.clone(), staged.clone()));
-            state.staged_dirs.push((
-                0,
-                root_index,
-                staged.clone(),
-                root.destination.clone(),
-                lease,
-            ));
-            Ok((staged, true))
+                .push((0, root.source.clone(), root.destination.clone()));
+            Ok((root.destination.clone(), false))
         })();
         match seed {
             Ok((destination, owned)) => {
@@ -362,7 +339,7 @@ pub(crate) fn copy_selection(
             let march_stop = &march_stop;
             let task_tx = task_tx.clone();
             march_scope.spawn(move || loop {
-                let (depth, root_index, src_dir, mut dst_dir, mut owned_tree, conflict) = {
+                let (depth, root_index, src_dir, dst_dir, owned_tree, conflict) = {
                     let mut q = dir_queue.0.lock().expect("dir queue lock poisoned");
                     loop {
                         if q.done || march_stop.load(Ordering::Acquire) {
@@ -408,42 +385,14 @@ pub(crate) fn copy_selection(
                                 "destination exists with a different type: {}",
                                 dst_dir.display()
                             )));
-                        } else if owned_tree || inplace {
-                            // The outer staging lease owns this entire unpublished
-                            // subtree, or the policy writes every folder under its
-                            // final name. Keep ordinary child names and one root lock.
+                        } else {
+                            // New subfolders get their final names as well.
                             create_dir_exclusive(&dst_dir)?;
                             march_state
                                 .lock()
                                 .expect("march state lock poisoned")
                                 .created_dirs
                                 .push((depth, src_dir.clone(), dst_dir.clone()));
-                        } else {
-                            // Build new subtrees privately. Their final names are
-                            // published only after every worker has joined.
-                            let final_dir = dst_dir.clone();
-                            dst_dir = crate::transfer_staging::staging_path_for(
-                                &final_dir,
-                                operation_id,
-                            )?;
-                            create_dir_exclusive(&dst_dir)?;
-                            let lease = crate::transfer_journal::StagingLease::record_created(
-                                &src_dir.to_string_lossy(),
-                                &final_dir,
-                                &dst_dir,
-                            )?;
-                            let mut state = march_state.lock().expect("march state lock poisoned");
-                            state
-                                .created_dirs
-                                .push((depth, src_dir.clone(), dst_dir.clone()));
-                            state.staged_dirs.push((
-                                depth,
-                                root_index,
-                                dst_dir.clone(),
-                                final_dir,
-                                lease,
-                            ));
-                            owned_tree = true;
                         }
                     }
                     let version =
@@ -509,6 +458,7 @@ pub(crate) fn copy_selection(
                                 symlink,
                                 top_level: false,
                                 delete_source: delete_source && !owned_tree,
+                                retry: root.retry,
                             };
                             if task_tx.send(Ok(task)).is_err() {
                                 return Ok(());
@@ -603,7 +553,6 @@ pub(crate) fn copy_selection(
     let mut state = march_state.into_inner().expect("march state lock poisoned");
     state.created_dirs.sort_by_key(|item| item.0);
     state.source_dirs.sort_by_key(|item| item.0);
-    state.staged_dirs.sort_by_key(|item| item.0);
     let dir_failures = std::mem::take(&mut state.dir_failures);
 
     let mut root_outcomes: Vec<RootOutcome> = root_errors
@@ -627,16 +576,8 @@ pub(crate) fn copy_selection(
     }
 
     if copy_res.cancelled {
-        // Workers are joined. Discard unpublished trees; sources are untouched.
-        let mut staged_dirs = state.staged_dirs;
-        while let Some((_, root_index, _, _, lease)) = staged_dirs.pop() {
-            if let Err(error) = lease.abort() {
-                let outcome = &mut root_outcomes[root_index];
-                if outcome.error.is_none() {
-                    outcome.error = Some(Failure::from(error));
-                }
-            }
-        }
+        // Workers are joined and their interrupted partial files are removed.
+        // Everything copied so far stays where it is; sources are untouched.
         return SelectionResult {
             copy: copy_res,
             roots: root_outcomes,
@@ -652,70 +593,13 @@ pub(crate) fn copy_selection(
             );
         }
     }
-    let mut staged_dirs = state.staged_dirs;
-    let mut announced = false;
-    for (depth, _, staged, final_dir, _) in &staged_dirs {
-        if *depth == 0 {
-            ctx.progress
-                .finalizing(*completed_bytes, staged.to_string_lossy().to_string());
-            ctx.progress
-                .finalizing(*completed_bytes, final_dir.to_string_lossy().to_string());
-            announced = true;
-        }
-    }
-    if !announced {
-        ctx.progress.finalizing(
-            *completed_bytes,
-            roots
-                .first()
-                .map(|root| root.destination.to_string_lossy().to_string())
-                .unwrap_or_default(),
-        );
-    }
-    while let Some((_, root_index, staged, final_dir, mut lease)) = staged_dirs.pop() {
-        if ctx.progress.check_cancelled().is_err() {
-            let _ = lease.abort();
-            let outcome = &mut root_outcomes[root_index];
-            if outcome.error.is_none() {
-                outcome.error = Some(Failure::cancelled());
-            }
-            continue;
-        }
-        let promote = crate::transfer_staging::promote_leased_with_policy(
-            &staged,
-            &final_dir,
-            false,
-            ctx.progress.cancel,
-            &ctx.policy,
-            &mut lease,
-            |delay, reason| {
-                if let Some(limiter) = ctx.progress.rate_limit {
-                    limiter.retrying(delay, reason);
-                }
-            },
-        );
-        match promote {
-            Ok(()) => {
-                if let Err(error) = lease.finish() {
-                    let outcome = &mut root_outcomes[root_index];
-                    if outcome.error.is_none() {
-                        outcome.error = Some(Failure::from(error));
-                    }
-                }
-            }
-            Err(error) => {
-                let cleanup = lease.abort();
-                let failure = match cleanup {
-                    Ok(()) => error,
-                    Err(extra) => Failure::with_kind(format!("{error}; {extra}"), error.kind),
-                };
-                let outcome = &mut root_outcomes[root_index];
-                if outcome.error.is_none() {
-                    outcome.error = Some(failure);
-                }
-            }
-        }
-    }
+    ctx.progress.finalizing(
+        *completed_bytes,
+        roots
+            .first()
+            .map(|root| root.destination.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    );
 
     SelectionResult {
         copy: copy_res,
@@ -757,6 +641,7 @@ pub(crate) fn copy_tree(
             ConflictAction::Error
         },
         delete_source: ctx.progress.operation_type == "move",
+        retry: false,
     };
     let mut result = copy_selection(&[root], Vec::new(), ctx, completed_bytes, session);
     if let Some(error) = result.copy.first_error() {
@@ -777,7 +662,19 @@ fn copy_task(
     context: &CopyContext<'_>,
     copied: &mut u64,
 ) -> Result<FileOutcome, Failure> {
-    if task.delete_source {
+    // A retried file whose destination already holds the same content (by the
+    // selected check mode) was transferred by the attempt that reported the
+    // failure: it is done, apart from a move's source that is still to delete.
+    let already_copied = task.retry
+        && !task.symlink
+        && path_exists_no_follow(&task.destination)
+        && crate::transfer_staging::existing_file_matches_source_with_mode(
+            &task.source,
+            &task.destination,
+            context.policy.check_mode,
+        )
+        .unwrap_or(false);
+    if task.delete_source && !already_copied {
         if let Some(renamed) =
             super::execute::move_by_rename(&task.source, &task.destination, task.conflict, context)
         {
@@ -791,7 +688,17 @@ fn copy_task(
             return Ok(outcome);
         }
     }
-    let outcome = if task.symlink {
+    let outcome = if already_copied {
+        let version = crate::transfer_staging::capture_source_version_for_path(&task.source)?;
+        *copied = copied.saturating_add(task.size);
+        context
+            .progress
+            .complete_file(*copied, task.source.to_string_lossy().into());
+        FileOutcome::Copied {
+            version,
+            destination: task.destination.clone(),
+        }
+    } else if task.symlink {
         copy_symlink_with_progress(
             &task.source,
             &task.destination,
@@ -1562,6 +1469,7 @@ mod tests {
                 symlink: false,
                 top_level: false,
                 delete_source: false,
+                retry: false,
             }))
         };
         let mut count = 0;
@@ -1631,6 +1539,7 @@ mod tests {
                     symlink: false,
                     top_level: true,
                     delete_source: false,
+                    retry: false,
                 }
             })
             .collect();
@@ -1746,6 +1655,7 @@ mod tests {
                         symlink: false,
                         top_level: true,
                         delete_source: false,
+                        retry: false,
                     }
                 })
                 .collect();
@@ -1877,6 +1787,7 @@ mod tests {
                     symlink: false,
                     top_level: true,
                     delete_source: false,
+                    retry: false,
                 }
             })
             .collect();
@@ -2090,6 +2001,7 @@ mod tests {
                     symlink: false,
                     top_level: true,
                     delete_source: false,
+                    retry: false,
                 }
             })
             .collect();
@@ -2197,6 +2109,7 @@ mod tests {
                         symlink: false,
                         top_level: true,
                         delete_source: false,
+                        retry: false,
                     }
                 })
                 .collect()

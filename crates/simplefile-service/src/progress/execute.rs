@@ -1104,7 +1104,12 @@ pub(crate) fn copy_file_with_progress_versioned(
                 }
             }
             if let Some(owner) = lease.take() {
-                owner.finish()?;
+                // The file is published. A record that cannot be removed right
+                // now is cleaned up when the folder is next visited; reporting
+                // the file as failed would only make a retry collide with it.
+                if let Err(error) = owner.finish() {
+                    log::warn!("{error}");
+                }
             }
             *completed_bytes += written;
             ctx.progress
@@ -1199,7 +1204,9 @@ pub(crate) fn copy_symlink_with_progress(
             )
         });
     }
-    lease.finish()?;
+    if let Err(error) = lease.finish() {
+        log::warn!("{error}");
+    }
     ctx.progress
         .complete_file(completed_bytes, src_path.to_string_lossy().to_string());
     Ok(FileOutcome::Copied {
