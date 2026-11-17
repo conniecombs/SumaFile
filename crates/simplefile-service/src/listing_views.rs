@@ -582,8 +582,9 @@ mod tests {
             0,
         );
         assert_eq!(r"C:\next", page.path);
+        // The view it left is the reloaded one, with the reload's spelling of the folder and its one entry.
         let left = left.expect("the folder the pane left");
-        assert_eq!((r"C:\work", 1), (left.path.as_str(), left.entries.len()));
+        assert_eq!((r"c:\WORK", 1), (left.path.as_str(), left.entries.len()));
 
         // An archive folder or the Recycle Bin is never handed to the cache.
         open_now(
