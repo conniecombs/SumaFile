@@ -246,6 +246,34 @@ public class InspectionDetailsTests
     }
 
     [Fact]
+    public void FolderComparison_ListsEachFolderWithRecursiveCountsAndATotal()
+    {
+        var comparison = InspectionDetails.FolderComparison(
+        [
+            new(@"C:\Work\Photos", new FolderMetrics { Size = 3072, ItemCount = 2, TotalFiles = 1200, TotalFolders = 14 }),
+            new(@"C:\Work\Notes\", new FolderMetrics { Size = 1024, ItemCount = 9, TotalFiles = 1, TotalFolders = 0 }),
+        ]);
+
+        Assert.Equal(
+            [
+                new FolderComparisonRow("Photos", @"C:\Work\Photos", "1,200", "14", EntryPresentation.FormatFileSize(3072)),
+                new FolderComparisonRow("Notes", @"C:\Work\Notes\", "1", "0", EntryPresentation.FormatFileSize(1024)),
+            ],
+            comparison.Rows);
+        // The totals add the recursive counts, never the top-level item count.
+        Assert.Equal(new FolderComparisonRow("Total", "2 folders", "1,201", "14", EntryPresentation.FormatFileSize(4096)), comparison.Total);
+    }
+
+    [Fact]
+    public void FolderComparison_NamesADriveRootByItsPath()
+    {
+        var comparison = InspectionDetails.FolderComparison([new(@"D:\", new FolderMetrics())]);
+
+        Assert.Equal(@"D:\", Assert.Single(comparison.Rows).Name);
+        Assert.Equal("1 folder", comparison.Total.Path);
+    }
+
+    [Fact]
     public void PreviewRows_OmitsRedundantSizeWhenEqualToSelectionSize()
     {
         var preview = new FilePreview

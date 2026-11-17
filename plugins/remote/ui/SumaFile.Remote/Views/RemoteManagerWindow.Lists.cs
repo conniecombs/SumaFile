@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Data;
 using SumaFile.Remote.Model;
 
 namespace SumaFile.Remote.Views;
@@ -91,8 +92,8 @@ internal sealed partial class RemoteManagerWindow
         var queue = DispatcherQueue;
         bool Enqueue(Action action) => queue.TryEnqueue(() => action());
         _snapshots.Add(new CoalescingSnapshot<RemoteProfile>(_viewModel.Profiles, Enqueue, ShowProfiles));
-        _snapshots.Add(new CoalescingSnapshot<RemoteFileEntry>(_viewModel.LocalEntries, Enqueue, entries => ShowRows(_localList, entries)));
-        _snapshots.Add(new CoalescingSnapshot<RemoteFileEntry>(_viewModel.RemoteEntries, Enqueue, entries => ShowRows(_remoteList, entries)));
+        _snapshots.Add(new CoalescingSnapshot<RemoteFileEntry>(_viewModel.LocalEntries, Enqueue, entries => ShowEntries(_localList, entries, StringComparer.OrdinalIgnoreCase)));
+        _snapshots.Add(new CoalescingSnapshot<RemoteFileEntry>(_viewModel.RemoteEntries, Enqueue, entries => ShowEntries(_remoteList, entries, StringComparer.Ordinal)));
         _snapshots.Add(new CoalescingSnapshot<RemoteTransferRecord>(_viewModel.Transfers, Enqueue, ShowTransfers));
 
         _profileList.SelectionChanged += OnProfileSelectionChanged;
@@ -141,6 +142,35 @@ internal sealed partial class RemoteManagerWindow
         try
         {
             list.ItemsSource = items;
+        }
+        finally
+        {
+            _syncingLists = syncing;
+        }
+    }
+
+    /// <summary>
+    /// Shows a new listing and selects again the entries that were selected, by path. A re-list after a transfer,
+    /// rename or refresh brings new entry objects, and replacing the items alone would drop the selection, leaving
+    /// the next Download or Upload nothing to act on. A listing of another folder shares no path, so it starts clear.
+    /// </summary>
+    private void ShowEntries(ListView list, IReadOnlyList<RemoteFileEntry> entries, StringComparer comparer)
+    {
+        if (IsClosed)
+        {
+            return;
+        }
+
+        var selected = SelectedModels<RemoteFileEntry>(list).Select(entry => entry.Path).ToArray();
+        ShowRows(list, entries);
+        var syncing = _syncingLists;
+        _syncingLists = true;
+        try
+        {
+            foreach (var range in RemoteSelection.Carry(selected, entries, comparer))
+            {
+                list.SelectRange(new ItemIndexRange(range.First, (uint)range.Length));
+            }
         }
         finally
         {

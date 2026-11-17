@@ -774,6 +774,28 @@ public class RemoteManagerViewModelTests
         Assert.Equal("Cancelled", Assert.Single(vm.Transfers).Status);
     }
 
+    [Fact]
+    public async Task TransferAskedForWhileAnotherRuns_SaysSoInsteadOfDoingNothing()
+    {
+        var finished = new TaskCompletionSource<RemoteTransferOutcome>();
+        var backend = new FakeRemoteBackend([new RemoteProfile { Id = "test" }])
+        {
+            Session = new RemoteSession { SessionId = "session", RootPath = "/" },
+            Listing = new RemoteDirectoryListing { Path = "/" }, TransferHandler = _ => finished.Task,
+        };
+        var vm = Create(backend);
+        await vm.LoadProfilesAsync(); await vm.ConnectSelectedProfileAsync();
+        var running = vm.UploadLocalFilesAsync([@"C:\a.bin"]);
+
+        await vm.UploadLocalFilesAsync([@"C:\b.bin"]);
+
+        Assert.Equal("Another operation is still running. Try again when it finishes.", vm.StatusText);
+        Assert.False(running.IsCompleted);
+        finished.SetResult(new RemoteTransferOutcome());
+        await running;
+        Assert.Empty(vm.Transfers);
+    }
+
     private const string BusyText = "Remote session is busy; wait for or cancel its transfer";
 
     [Fact]

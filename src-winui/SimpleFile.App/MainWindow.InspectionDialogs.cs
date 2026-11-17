@@ -670,29 +670,21 @@ public sealed partial class MainWindow
         var utilityCts = BeginUtilityOperation("ShowFolderMetricsAsync");
         try
         {
-            var lines = await DialogHost.RunWithProgressAsync(
+            var measured = await DialogHost.RunWithProgressAsync(
                 Content.XamlRoot,
                 "Folder metrics",
                 $"Measuring {paths.Length} folders…",
                 async (progress, token) =>
                 {
-                    var measured = new List<string>();
-                    ulong totalSize = 0;
-                    ulong totalCount = 0;
+                    var results = new List<KeyValuePair<string, FolderMetrics>>(paths.Length);
                     for (var index = 0; index < paths.Length; index++)
                     {
                         var path = paths[index];
                         progress.Report($"Measuring {index + 1} of {paths.Length}: {path}");
-                        var metrics = await fileOps.GetFolderMetricsAsync(path, token);
-                        measured.Add($"{path}{Environment.NewLine}{EntryPresentation.FormatFileSize(metrics.Size)} · {metrics.ItemCount} item(s)");
-                        totalSize += metrics.Size;
-                        totalCount += metrics.ItemCount;
+                        results.Add(new(path, await fileOps.GetFolderMetricsAsync(path, token)));
                     }
 
-                    measured.Add(paths.Length > 1
-                        ? $"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s) across {paths.Length} folders"
-                        : $"Total: {EntryPresentation.FormatFileSize(totalSize)} · {totalCount} item(s)");
-                    return measured;
+                    return results;
                 },
                 utilityCts.Token);
             if (!ReferenceEquals(_workspace, workspace) || utilityCts.IsCancellationRequested)
@@ -701,18 +693,31 @@ public sealed partial class MainWindow
             }
 
             SetStatusText("");
+            var content = new StackPanel { Spacing = 8, Width = 520 };
+            content.Children.Add(new TextBlock
+            {
+                Text = "Files and folders are counted through every subfolder.",
+                FontSize = 12,
+                Foreground = Brush("SfTextMutedBrush"),
+                TextWrapping = TextWrapping.Wrap,
+            });
+            content.Children.Add(new Border
+            {
+                Padding = new Thickness(12, 10, 12, 10),
+                CornerRadius = new CornerRadius(6),
+                BorderThickness = new Thickness(1),
+                BorderBrush = Brush("SfBorderBrush"),
+                Background = Brush("SfBgSecondaryBrush"),
+                Child = FolderComparisonGrid(InspectionDetails.FolderComparison(measured)),
+            });
             var dialog = new ContentDialog
             {
                 Title = "Folder metrics comparison",
                 Content = new ScrollViewer
                 {
-                    MaxHeight = 400,
-                    Content = new TextBlock
-                    {
-                        Text = string.Join(Environment.NewLine + Environment.NewLine, lines),
-                        TextWrapping = TextWrapping.Wrap,
-                        Width = 420,
-                    },
+                    MaxHeight = 440,
+                    Padding = new Thickness(0, 0, 12, 0),
+                    Content = content,
                 },
                 CloseButtonText = "Close",
                 XamlRoot = Content.XamlRoot,
@@ -730,6 +735,97 @@ public sealed partial class MainWindow
         {
             FinishUtilityOperation(utilityCts);
         }
+    }
+
+    /// <summary>
+    /// The comparison as a table: one row per folder (its name over its path), right-aligned Files, Folders and Size
+    /// columns, and the totals under a rule.
+    /// </summary>
+    private Grid FolderComparisonGrid(FolderComparisonTable comparison)
+    {
+        var table = new Grid { ColumnSpacing = 16, RowSpacing = 8 };
+        table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var column = 0; column < 3; column++)
+        {
+            table.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        }
+
+        void Place(FrameworkElement element, int row, int column)
+        {
+            Grid.SetRow(element, row);
+            Grid.SetColumn(element, column);
+            table.Children.Add(element);
+        }
+
+        TextBlock Cell(string text, bool header = false, bool strong = false) => new()
+        {
+            Text = text,
+            FontSize = header ? 12 : 14,
+            FontWeight = header || strong ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal,
+            Foreground = Brush(header ? "SfTextMutedBrush" : "SfTextPrimaryBrush"),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsTextSelectionEnabled = !header,
+        };
+
+        void AddRow(FolderComparisonRow line, bool total)
+        {
+            var row = table.RowDefinitions.Count;
+            table.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            if (total)
+            {
+                // The rule sits in the row gap above the totals.
+                var rule = new Border
+                {
+                    Height = 1,
+                    Margin = new Thickness(0, -5, 0, 0),
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Background = Brush("SfBorderBrush"),
+                };
+                Grid.SetColumnSpan(rule, 4);
+                Place(rule, row, 0);
+            }
+
+            var name = new StackPanel { Spacing = 1 };
+            name.Children.Add(new TextBlock
+            {
+                Text = line.Name,
+                FontWeight = total ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+            var path = new TextBlock
+            {
+                Text = line.Path,
+                FontSize = 11,
+                Foreground = Brush("SfTextMutedBrush"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            if (!total)
+            {
+                ToolTipService.SetToolTip(path, line.Path);
+            }
+
+            name.Children.Add(path);
+            Place(name, row, 0);
+            Place(Cell(line.Files, strong: total), row, 1);
+            Place(Cell(line.Folders, strong: total), row, 2);
+            Place(Cell(line.Size, strong: total), row, 3);
+        }
+
+        table.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var folderHeader = Cell("Folder", header: true);
+        folderHeader.HorizontalAlignment = HorizontalAlignment.Left;
+        Place(folderHeader, 0, 0);
+        Place(Cell("Files", header: true), 0, 1);
+        Place(Cell("Folders", header: true), 0, 2);
+        Place(Cell("Size", header: true), 0, 3);
+        foreach (var line in comparison.Rows)
+        {
+            AddRow(line, total: false);
+        }
+
+        AddRow(comparison.Total, total: true);
+        return table;
     }
 
     private async Task ShowOperationHistoryAsync()

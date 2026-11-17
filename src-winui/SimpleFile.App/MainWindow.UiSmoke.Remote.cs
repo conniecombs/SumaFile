@@ -223,6 +223,8 @@ public sealed partial class MainWindow
             SmokeInvoke(SmokeRemoteControl<Button>(root, "Remote.LocalGo"));
             await SmokeRemoteWaitRowsAsync(localList, ["upload.txt", "download"], "Remote.LocalList in remote-local");
             await SmokeSelectRowAsync(localList, "upload.txt");
+            // Selected before the upload: the remote relist that follows it must keep this selection for step 7.
+            await SmokeSelectRowAsync(remoteList, SmokeRemoteLiteralFile);
             var uploadTitle = "Uploading 1 item to 127.0.0.1:/";
             var upload = await SmokeRemoteTransferAsync(transfers, root, "Remote.Upload", uploadTitle);
             await SmokeAwaitRowAsync(upload, SmokeRemoteTransferWait, uploadTitle);
@@ -230,12 +232,14 @@ public sealed partial class MainWindow
             SmokeAssert(upload.IsExternal && !upload.CanChangeOptions, $"{uploadTitle} offers per-task Options");
             var uploaded = Path.Combine(server.Root, "upload.txt");
             SmokeAssert(File.Exists(uploaded) && File.ReadAllText(uploaded) == "upload", $"{uploaded} does not read 'upload'");
-            // The manager stays busy until it has relisted the remote folder, and that relist clears the selection:
-            // a Download invoked before then is silently dropped.
+            // The manager stays busy until it has relisted the remote folder. The relist brings new entries, and the
+            // row selected before the upload stays selected in it.
             await SmokeRemoteWaitRowsAsync(remoteList, [.. rootNames, "upload.txt"], "Remote.RemoteList after the upload", SmokeRemoteTransferWait);
+            await SmokeRemoteWaitAsync(
+                () => remoteList() is { SelectedItems.Count: 1 } list && SmokeRow(list, SmokeRemoteLiteralFile) is { IsSelected: true },
+                () => $"'{SmokeRemoteLiteralFile}' to stay selected over the relist, {remoteList()?.SelectedItems.Count} rows are selected");
 
-            // 7. Download the punctuated file into remote-local.
-            await SmokeSelectRowAsync(remoteList, SmokeRemoteLiteralFile);
+            // 7. Download the punctuated file into remote-local, on the selection the relist kept.
             var downloadTitle = "Downloading 1 item from 127.0.0.1";
             var download = await SmokeRemoteTransferAsync(transfers, root, "Remote.Download", downloadTitle);
             await SmokeAwaitRowAsync(download, SmokeRemoteTransferWait, downloadTitle);

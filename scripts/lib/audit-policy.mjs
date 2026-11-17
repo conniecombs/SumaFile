@@ -18,6 +18,8 @@ const ignoredAdvisories = [
   'RUSTSEC-2025-0098',
   'RUSTSEC-2025-0100',
   'RUSTSEC-2026-0190',
+  // chrono is unmaintained; no fixed upgrade exists, and russh-sftp, suppaftp and trash also depend on it.
+  'RUSTSEC-2026-0543',
 ];
 
 export const auditArgs = ['audit', '--deny', 'warnings'];
