@@ -20,7 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Compile-only (spec §5.1): WinUI comes from the host through PluginLoadContext's shared prefixes. -->
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" ExcludeAssets="runtime" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2957" ExcludeAssets="runtime" PrivateAssets="all" />
   </ItemGroup>
 </Project>
