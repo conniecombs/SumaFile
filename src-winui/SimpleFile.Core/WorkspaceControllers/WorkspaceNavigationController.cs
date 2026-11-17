@@ -158,6 +158,7 @@ internal sealed class WorkspaceNavigationController
             state.ListingInProgress = true;
             state.Path = path;
             state.Entries = [];
+            ListingViewController.DetachLocked(state);
             state.Decorations = PaneDecorations.Empty;
             state.SelectedPath = null;
             workspace.SetErrorMessageCore(null);
@@ -169,6 +170,7 @@ internal sealed class WorkspaceNavigationController
 
         workspace.NotifyChanged();
         var published = false;
+        var partial = false;
         var generation = 0;
 
         try
@@ -219,6 +221,8 @@ internal sealed class WorkspaceNavigationController
 
                 state.Path = listing.Path;
                 state.Entries = [.. listing.Entries];
+                // With a view, these are its first rows; the rest is read behind them once this is published.
+                partial = ListingViewController.InstallLocked(workspace, state, navigation.ViewRequest, navigation.ViewPage);
                 state.PathIsNetwork = listing.IsNetwork || workspace.DrivesController.IsNetworkFsPath(listing.Path);
                 workspace.ApplyFolderViewSettingsForPathLocked(target, listing.Path);
                 state.RecordHistory(listing.Path, historyMode);
@@ -262,11 +266,15 @@ internal sealed class WorkspaceNavigationController
                 lock (workspace.Gate)
                 {
                     state.IsNavigating = false;
-                    state.ListingInProgress = false;
+                    state.ListingInProgress = published && partial;
                 }
 
                 workspace.NotifyChanged();
                 RedecorateIfGenerationChanged(workspace, target, published, generation);
+                if (published && partial)
+                {
+                    workspace.ListingViewsController.StartFill(workspace, target);
+                }
             }
         }
     }
@@ -573,6 +581,14 @@ internal sealed class WorkspaceNavigationController
         }
 
         using var foregroundScope = workspace.ForegroundScheduler.BeginForegroundScope(ForegroundActivityKind.Navigation);
+        // A pane with a view asks the service what changed and applies only that. An archive whose engine came
+        // or went is listed again from scratch.
+        if (!engineChanged
+            && await workspace.ListingViewsController.TryRefreshAsync(workspace, target, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var selected = state.SelectedPath;
         var token = state.NextNavigationToken();
 
@@ -582,6 +598,7 @@ internal sealed class WorkspaceNavigationController
         }
 
         var published = false;
+        var partial = false;
         var generation = 0;
         try
         {
@@ -616,6 +633,7 @@ internal sealed class WorkspaceNavigationController
                 }
 
                 state.Entries = [.. listing.Entries];
+                partial = ListingViewController.InstallLocked(workspace, state, refresh.ViewRequest, refresh.ViewPage);
                 if (!string.IsNullOrEmpty(listing.Path))
                 {
                     state.Path = listing.Path;
@@ -625,8 +643,9 @@ internal sealed class WorkspaceNavigationController
                 state.SyncActiveTab();
                 workspace.SetPhotoFolderActiveCore(
                     MediaFolder.IsMediaFolder(listing.Entries, workspace.Settings.PhotoFolderImageThreshold));
+                // With only a view's first rows in hand, the selected row may be among the rows still to be read.
                 state.SelectedPath = selected is not null
-                    && state.Entries.Any(entry => PathRules.PathsEqual(entry.Path, selected))
+                    && (partial || state.Entries.Any(entry => PathRules.PathsEqual(entry.Path, selected)))
                         ? selected
                         : null;
                 if (engineChanged)
@@ -650,6 +669,8 @@ internal sealed class WorkspaceNavigationController
                     if (engineChanged && token == state.NavigationToken)
                     {
                         state.Entries = [];
+                        // The rows are gone, so they follow no view any more.
+                        ListingViewController.DetachLocked(state);
                         state.SelectedPath = null;
                         state.SyncActiveTab();
                     }
@@ -664,11 +685,15 @@ internal sealed class WorkspaceNavigationController
             {
                 lock (workspace.Gate)
                 {
-                    state.ListingInProgress = false;
+                    state.ListingInProgress = published && partial;
                 }
 
                 workspace.NotifyChanged();
                 RedecorateIfGenerationChanged(workspace, target, published, generation);
+                if (published && partial)
+                {
+                    workspace.ListingViewsController.StartFill(workspace, target);
+                }
             }
         }
     }

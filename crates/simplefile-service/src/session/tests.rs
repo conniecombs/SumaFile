@@ -572,3 +572,276 @@ async fn list_directory_on_an_unserved_7z_reports_the_plugin_note() {
         );
     }
 }
+
+/// Reads frames until one satisfies `wanted`, or the deadline passes.
+async fn read_message_where(
+    client: &mut tokio::io::DuplexStream,
+    timeout: std::time::Duration,
+    wanted: impl Fn(&Value) -> bool,
+) -> Option<Value> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        match tokio::time::timeout_at(deadline, read_frame(client)).await {
+            Ok(Ok(payload)) => {
+                let message: Value = serde_json::from_slice(&payload).unwrap();
+                if wanted(&message) {
+                    return Some(message);
+                }
+            }
+            _ => return None,
+        }
+    }
+}
+
+async fn call_skipping_notifications(
+    client: &mut tokio::io::DuplexStream,
+    method: &str,
+    id: u64,
+    params: Value,
+) -> Value {
+    send_request(client, method, id, params).await;
+    read_response_with_id(client, id, std::time::Duration::from_secs(20))
+        .await
+        .unwrap_or_else(|| panic!("{method} never replied"))
+}
+
+fn row_names(page: &Value) -> Vec<String> {
+    page["entries"]
+        .as_array()
+        .expect("a page has entries")
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn listing_view_pages_resorts_and_reports_a_refresh_as_a_delta() {
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("view");
+    for name in ["c.txt", "a.txt", "b.txt", ".hidden"] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    std::fs::create_dir(dir.join("Zed")).unwrap();
+    let path = dir.to_string_lossy().to_string();
+
+    let opened = call_skipping_notifications(
+        &mut client,
+        "open_listing_view",
+        2,
+        json!({ "viewId": "primary", "path": path, "includeHidden": false, "pageSize": 2 }),
+    )
+    .await;
+    let first = &opened["result"];
+    assert_eq!(
+        (4, 0, 1),
+        (
+            first["total"].as_u64().unwrap(),
+            first["offset"].as_u64().unwrap(),
+            first["revision"].as_u64().unwrap()
+        )
+    );
+    assert_eq!(vec!["Zed", "a.txt"], row_names(first));
+    // An ordinary folder's rows carry names only; the host rebuilds the paths.
+    assert_eq!("", first["entries"][1]["path"].as_str().unwrap());
+
+    let rest = call_skipping_notifications(
+        &mut client,
+        "get_listing_view_range",
+        3,
+        json!({ "viewId": "primary", "offset": 2, "count": 10 }),
+    )
+    .await;
+    assert_eq!(vec!["b.txt", "c.txt"], row_names(&rest["result"]));
+
+    // The same view and folder with another order: re-sorted, not enumerated again.
+    let resorted = call_skipping_notifications(
+        &mut client,
+        "open_listing_view",
+        4,
+        json!({ "viewId": "primary", "path": path, "includeHidden": false, "sortAscending": false, "pageSize": 2 }),
+    )
+    .await;
+    assert_eq!(vec!["Zed", "c.txt"], row_names(&resorted["result"]));
+    assert_eq!(2, resorted["result"]["revision"].as_u64().unwrap());
+
+    std::fs::write(dir.join("d.txt"), b"new").unwrap();
+    let refreshed = call_skipping_notifications(
+        &mut client,
+        "refresh_listing_view",
+        5,
+        json!({ "viewId": "primary" }),
+    )
+    .await;
+    let delta = &refreshed["result"];
+    assert!(!delta["reset"].as_bool().unwrap());
+    assert_eq!(
+        (2, 3, 5),
+        (
+            delta["base_revision"].as_u64().unwrap(),
+            delta["revision"].as_u64().unwrap(),
+            delta["total"].as_u64().unwrap()
+        )
+    );
+    let changes = delta["changes"].as_array().unwrap();
+    assert_eq!(1, changes.len());
+    // Descending: Zed, d.txt, c.txt, b.txt, a.txt.
+    assert_eq!(
+        ("insert", 1, "d.txt"),
+        (
+            changes[0]["kind"].as_str().unwrap(),
+            changes[0]["index"].as_u64().unwrap(),
+            changes[0]["entry"]["name"].as_str().unwrap()
+        )
+    );
+
+    let closed = call_skipping_notifications(
+        &mut client,
+        "close_listing_view",
+        6,
+        json!({ "viewId": "primary" }),
+    )
+    .await;
+    assert!(closed.get("error").is_none());
+    let gone = call_skipping_notifications(
+        &mut client,
+        "get_listing_view_range",
+        7,
+        json!({ "viewId": "primary", "offset": 0, "count": 1 }),
+    )
+    .await;
+    assert!(gone["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("not open"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn listing_view_of_a_watched_folder_reports_new_and_removed_files_as_deltas() {
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("view_watch");
+    std::fs::write(dir.join("a.txt"), b"x").unwrap();
+    let path = dir.to_string_lossy().to_string();
+
+    let opened = call_skipping_notifications(
+        &mut client,
+        "open_listing_view",
+        2,
+        json!({ "viewId": "primary", "path": path }),
+    )
+    .await;
+    assert_eq!(1, opened["result"]["total"].as_u64().unwrap());
+    let watching =
+        call_skipping_notifications(&mut client, "watch_directory", 3, json!({ "path": path }))
+            .await;
+    assert!(watching.get("error").is_none());
+
+    let is_delta = |message: &Value| {
+        message.get("method").and_then(Value::as_str) == Some("listing-view-changed")
+    };
+    std::fs::write(dir.join("b.txt"), b"new").unwrap();
+    let added = read_message_where(&mut client, std::time::Duration::from_secs(20), is_delta)
+        .await
+        .expect("a delta for the new file");
+    let params = &added["params"];
+    assert_eq!("primary", params["view_id"].as_str().unwrap());
+    let inserted = params["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["kind"] == "insert")
+        .expect("an insert change");
+    assert_eq!(
+        (1, "b.txt"),
+        (
+            inserted["index"].as_u64().unwrap(),
+            inserted["entry"]["name"].as_str().unwrap()
+        )
+    );
+
+    std::fs::remove_file(dir.join("a.txt")).unwrap();
+    let removed = read_message_where(&mut client, std::time::Duration::from_secs(20), |message| {
+        is_delta(message)
+            && message["params"]["changes"]
+                .as_array()
+                .is_some_and(|changes| changes.iter().any(|change| change["kind"] == "remove"))
+    })
+    .await
+    .expect("a delta for the removed file");
+    assert_eq!(1, removed["params"]["total"].as_u64().unwrap());
+
+    let page = call_skipping_notifications(
+        &mut client,
+        "get_listing_view_range",
+        4,
+        json!({ "viewId": "primary", "offset": 0, "count": 10 }),
+    )
+    .await;
+    assert_eq!(vec!["b.txt"], row_names(&page["result"]));
+    let _ = call_skipping_notifications(&mut client, "unwatch_directory", 5, json!({})).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A cached listing too old to trust blindly opens the view at once; the
+/// folder is then enumerated again and what differs arrives as a delta.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn listing_view_opens_from_an_unverified_cached_listing_and_then_corrects_it() {
+    let dir = scratch_dir("view_stale");
+    std::fs::write(dir.join("a.txt"), b"x").unwrap();
+    std::fs::write(dir.join("b.txt"), b"y").unwrap();
+    let path = dir.to_string_lossy().to_string();
+
+    let state = SessionState {
+        expected_token: Some("dev".to_string()),
+        ..SessionState::default()
+    };
+    // What the cache remembers of the folder: only a.txt.
+    let mut remembered = simplefile_core::dir_list::list_directory_collect(path.clone()).unwrap();
+    remembered.entries.retain(|entry| entry.name == "a.txt");
+    state
+        .cache
+        .put_unverified_directory_listing(&path, remembered);
+
+    let (mut client, server) = duplex(64 * 1024);
+    let (server_read, server_write) = tokio::io::split(server);
+    let _server = tokio::spawn(serve_connection(server_read, server_write, state));
+    let _ = call(
+        &mut client,
+        HANDSHAKE_METHOD,
+        1,
+        json!({ "protocolVersion": PROTOCOL_VERSION, "clientName": "test", "authToken": "dev" }),
+    )
+    .await;
+
+    send_request(
+        &mut client,
+        "open_listing_view",
+        2,
+        json!({ "viewId": "primary", "path": path }),
+    )
+    .await;
+    let mut opened = None;
+    let mut corrected = None;
+    while opened.is_none() || corrected.is_none() {
+        let message = read_message_where(&mut client, std::time::Duration::from_secs(20), |_| true)
+            .await
+            .expect("the page and then the correcting delta");
+        if message.get("id") == Some(&json!(2)) {
+            opened = Some(message);
+        } else if message.get("method").and_then(Value::as_str) == Some("listing-view-changed") {
+            corrected = Some(message);
+        }
+    }
+
+    assert_eq!(vec!["a.txt"], row_names(&opened.unwrap()["result"]));
+    let delta = &corrected.unwrap()["params"];
+    assert_eq!(2, delta["total"].as_u64().unwrap());
+    assert_eq!(
+        ("insert", "b.txt"),
+        (
+            delta["changes"][0]["kind"].as_str().unwrap(),
+            delta["changes"][0]["entry"]["name"].as_str().unwrap()
+        )
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 75;
+    public const int DomainMethodCount = 79;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -16,6 +16,7 @@ public static partial class Protocol
     public const byte BinaryFileChange = 6;
     public const byte BinaryThumbnailResult = 7;
     public const byte BinaryThumbnailsResult = 8;
+    public const byte BinaryListingViewPage = 9;
 
     public const string HandshakeMethod = "ipc.handshake";
     public const string HealthMethod = "ipc.health";
@@ -24,6 +25,10 @@ public static partial class Protocol
     public const string SelectDirectoryMethod = "select_directory";
     public const string ListDrivesMethod = "list_drives";
     public const string ListDirectoryMethod = "list_directory";
+    public const string OpenListingViewMethod = "open_listing_view";
+    public const string GetListingViewRangeMethod = "get_listing_view_range";
+    public const string RefreshListingViewMethod = "refresh_listing_view";
+    public const string CloseListingViewMethod = "close_listing_view";
     public const string ListSubdirectoriesMethod = "list_subdirectories";
     public const string CreateDirectoryMethod = "create_directory";
     public const string CreateFileMethod = "create_file";
@@ -102,6 +107,7 @@ public static partial class Protocol
     public const string SearchResultsBatchEvent = "search-results-batch";
     public const string SearchCompleteEvent = "search-complete";
     public const string UpdateChunkEvent = "update-chunk";
+    public const string ListingViewChangedEvent = "listing-view-changed";
     public const string ListDirectoryChunkEvent = "list_directory.chunk";
 
     public static IReadOnlyList<string> DomainMethods { get; } =
@@ -110,6 +116,10 @@ public static partial class Protocol
         "select_directory",
         "list_drives",
         "list_directory",
+        "open_listing_view",
+        "get_listing_view_range",
+        "refresh_listing_view",
+        "close_listing_view",
         "list_subdirectories",
         "create_directory",
         "create_file",
@@ -209,6 +219,7 @@ public static partial class Protocol
         ("search_files.result", BinarySearchResultsResult),
         ("generate_thumbnail.result", BinaryThumbnailResult),
         ("generate_thumbnails.result", BinaryThumbnailsResult),
+        ("open_listing_view.result", BinaryListingViewPage),
     ];
 
     public static IReadOnlyList<(string Name, byte Tag)> BinaryFrameEventTags { get; } =

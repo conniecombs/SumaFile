@@ -11,12 +11,12 @@ use serde_json::{json, Value};
 use simplefile_core::cleanup::{scan_disk_cleanup, scan_duplicate_check, DuplicateScanOptions};
 use simplefile_core::dir_list::ListDirectoryOptions;
 use simplefile_core::models::{
-    FileChangeEvent, ProgressUpdate, SearchOptions, SearchResult, ThumbnailResult,
+    FileChangeEvent, ListingViewDelta, ProgressUpdate, SearchOptions, SearchResult, ThumbnailResult,
 };
 use simplefile_ipc::rpc::{JsonRpcNotification, JsonRpcResponse};
 use simplefile_ipc::{
-    FILE_CHANGE, LIST_DIRECTORY_CHUNK, OPERATION_PROGRESS, SEARCH_COMPLETE, SEARCH_RESULTS_BATCH,
-    UPDATE_CHUNK,
+    FILE_CHANGE, LISTING_VIEW_CHANGED, LIST_DIRECTORY_CHUNK, OPERATION_PROGRESS, SEARCH_COMPLETE,
+    SEARCH_RESULTS_BATCH, UPDATE_CHUNK,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -282,6 +282,22 @@ impl EventSink {
             }
         }
         self.emit(FILE_CHANGE, change);
+    }
+
+    /// A listing view delta, from a plain thread (the watcher's).
+    pub(super) fn emit_listing_view_delta(&self, delta: &ListingViewDelta) {
+        self.emit(LISTING_VIEW_CHANGED, delta);
+    }
+
+    /// A listing view delta, from a runtime task: [`Self::emit`] sends with
+    /// a blocking call that panics on a runtime worker.
+    pub(super) async fn emit_listing_view_delta_async(&self, delta: &ListingViewDelta) {
+        if let Ok(params) = serde_json::to_value(delta) {
+            let notification = JsonRpcNotification::new(LISTING_VIEW_CHANGED, params);
+            if let Ok(payload) = encode_json_payload(&notification) {
+                let _ = self.outbound.enqueue_payload(payload).await;
+            }
+        }
     }
 
     fn emit_search_results_batch(&self, search_id: Option<&str>, batch: &[SearchResult]) {

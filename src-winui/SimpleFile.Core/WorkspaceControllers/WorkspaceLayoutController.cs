@@ -154,6 +154,7 @@ internal sealed class WorkspaceLayoutController
             state.ListingInProgress = true;
             state.Path = startPath;
             state.Entries = [];
+            ListingViewController.DetachLocked(state);
             state.SelectedPath = null;
             workspace.SetErrorMessageCore(null);
             workspace.SetFileOpenUnsupportedCore(false);
@@ -198,6 +199,7 @@ internal sealed class WorkspaceLayoutController
         state.ListingInProgress = true;
         state.Path = path;
         state.Entries = [];
+        ListingViewController.DetachLocked(state);
         state.SelectedPath = null;
         state.PathIsNetwork = workspace.DrivesController.IsNetworkFsPath(path);
         workspace.ApplyFolderViewSettingsForPathLocked(pane, path);

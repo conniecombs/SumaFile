@@ -194,6 +194,85 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
         }
     }
 
+    /// <summary>
+    /// Opens the service-held view of a folder (or, for the same view and folder, only re-sorts and re-filters
+    /// it) and returns its first page. <paramref name="onPreview"/> receives the folder's first entries while a
+    /// slow folder is still being enumerated; the rest is read in pages with
+    /// <see cref="GetListingViewRangeAsync"/>.
+    /// </summary>
+    public async Task<ListingViewPage> OpenListingViewAsync(
+        ListingViewRequest request,
+        Action<DirectoryListingChunk>? onPreview = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var requestId = AllocateId();
+        var subscription = onPreview is null
+            ? null
+            : On<DirectoryListingChunkNotification>(
+                Protocol.ListDirectoryChunkEvent,
+                notification =>
+                {
+                    if (notification.RequestId == requestId)
+                    {
+                        onPreview(NormalizeListingChunk(notification.ToChunk()));
+                    }
+                });
+        try
+        {
+            var page = await InvokeAllocatedAsync<ListingViewPage>(
+                    requestId,
+                    Protocol.OpenListingViewMethod,
+                    new OpenListingViewParams
+                    {
+                        ViewId = request.ViewId,
+                        Path = request.Path,
+                        SortBy = request.SortBy,
+                        SortAscending = request.SortAscending,
+                        FoldersFirst = request.FoldersFirst,
+                        IncludeHidden = request.IncludeHidden,
+                        Filter = string.IsNullOrWhiteSpace(request.Filter) ? null : request.Filter,
+                        Locale = string.IsNullOrWhiteSpace(request.Locale) ? null : request.Locale,
+                        PageSize = request.PageSize == 0 ? null : request.PageSize,
+                        Reload = request.Reload ? true : null,
+                        Reuse = request.Reuse ? true : null,
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+            NormalizeEntries(page.Path, page.Entries);
+            return page;
+        }
+        finally
+        {
+            subscription?.Dispose();
+        }
+    }
+
+    // A page of an ordinary folder carries names only: the paths and extensions are rebuilt here.
+    private async Task<ListingViewPage> InvokeListingViewPageAsync(
+        string method,
+        object args,
+        CancellationToken cancellationToken)
+    {
+        var page = await InvokeAllocatedAsync<ListingViewPage>(AllocateId(), method, args, cancellationToken)
+            .ConfigureAwait(false);
+        NormalizeEntries(page.Path, page.Entries);
+        return page;
+    }
+
+    /// <summary>Puts back the path and extension a listing view delta's entries leave out.</summary>
+    public static void NormalizeListingViewDelta(string folderPath, ListingViewDelta delta)
+    {
+        ArgumentNullException.ThrowIfNull(delta);
+        foreach (var change in delta.Changes)
+        {
+            if (change.Entry is { } entry)
+            {
+                NormalizeEntries(folderPath, [entry]);
+            }
+        }
+    }
+
     public async Task InvokeAsync(string method, object? args, CancellationToken cancellationToken = default)
     {
         _ = await InvokeAllocatedAsync<object?>(AllocateId(), method, args, cancellationToken)
@@ -446,7 +525,7 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
         NormalizeEntries(listing.Path, listing.Entries);
     }
 
-    private static void NormalizeEntries(string basePath, List<FileEntry> entries)
+    private static void NormalizeEntries(string basePath, IReadOnlyList<FileEntry> entries)
     {
         foreach (var entry in entries)
         {

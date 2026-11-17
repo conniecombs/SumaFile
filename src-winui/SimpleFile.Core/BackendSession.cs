@@ -6,7 +6,7 @@ using DriveInfo = SimpleFile.Ipc.DriveInfo;
 
 namespace SimpleFile.Core;
 
-public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
+public sealed class BackendSession : IExplorerBackend, IListingViewBackend, IAsyncDisposable
 {
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private Process? _service;
@@ -112,6 +112,41 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
         return UseClientAsync(
             client => client.ListDirectoryAsync(path, onChunk, cancellationToken, options),
             cancellationToken);
+    }
+
+    public IListingViewBackend? ListingViews => this;
+
+    public event Action<ListingViewDelta>? ListingViewChanged;
+
+    public Task<ListingViewPage> OpenListingViewAsync(
+        ListingViewRequest request,
+        Action<DirectoryListingChunk>? onPreview = null,
+        CancellationToken cancellationToken = default)
+    {
+        return UseClientAsync(
+            client => client.OpenListingViewAsync(request, onPreview, cancellationToken),
+            cancellationToken);
+    }
+
+    public Task<ListingViewPage> GetListingViewRangeAsync(
+        string viewId,
+        uint offset,
+        uint count,
+        CancellationToken cancellationToken = default)
+    {
+        return UseClientAsync(
+            client => client.GetListingViewRangeAsync(viewId, offset, count, cancellationToken),
+            cancellationToken);
+    }
+
+    public Task<ListingViewDelta> RefreshListingViewAsync(string viewId, CancellationToken cancellationToken = default)
+    {
+        return UseClientAsync(client => client.RefreshListingViewAsync(viewId, cancellationToken), cancellationToken);
+    }
+
+    public Task CloseListingViewAsync(string viewId, CancellationToken cancellationToken = default)
+    {
+        return UseClientAsync(client => client.CloseListingViewAsync(viewId, cancellationToken), cancellationToken);
     }
 
     public Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default)
@@ -251,6 +286,9 @@ public sealed class BackendSession : IExplorerBackend, IAsyncDisposable
                 .ConfigureAwait(false);
             timer.Mark("pipe-connected", PipeName);
             _client.Disconnected += OnClientDisconnected;
+            // A restarted service has no views: the subscription belongs to this client, and the workspace opens
+            // its views again when a page or refresh of the old ones fails.
+            _ = _client.On<ListingViewDelta>(Protocol.ListingViewChangedEvent, delta => ListingViewChanged?.Invoke(delta));
             Handshake = await _client.HandshakeAsync(_authToken, cancellationToken).ConfigureAwait(false);
             timer.Mark("handshake", $"methods={Handshake.MethodCount}");
             Health = await _client.HealthAsync(cancellationToken).ConfigureAwait(false);

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 const APP_VERSION: &str = simplefile_core::APP_DISPLAY_VERSION;
 
-pub(crate) use params::ProgressCopyMoveParams;
+pub(crate) use params::{OpenListingViewParams, ProgressCopyMoveParams};
 
 pub struct SessionState {
     pub handshake_done: bool,
@@ -135,6 +135,25 @@ pub(crate) enum Dispatch {
         id: Option<Value>,
         path: String,
         options: Option<ListDirectoryOptions>,
+    },
+    /// Open a pane's listing view, or re-sort the one it has.
+    OpenListingView {
+        id: Option<Value>,
+        params: OpenListingViewParams,
+    },
+    GetListingViewRange {
+        id: Option<Value>,
+        view_id: String,
+        offset: u32,
+        count: u32,
+    },
+    RefreshListingView {
+        id: Option<Value>,
+        view_id: String,
+    },
+    CloseListingView {
+        id: Option<Value>,
+        view_id: String,
     },
     CopyWithProgress {
         id: Option<Value>,

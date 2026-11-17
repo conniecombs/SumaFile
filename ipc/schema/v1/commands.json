@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 75,
+  "domainMethodCount": 79,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -44,6 +44,37 @@
       "notes": "When finalEntries is false, streamed chunks carry the entries and the final result may return entries: [].",
       "binaryFrameTags": { "chunk": 1, "result": 2 }
     },
+    "open_listing_view": {
+      "params": {
+        "viewId": "string",
+        "path": "string",
+        "sortBy": "string optional",
+        "sortAscending": "boolean optional",
+        "foldersFirst": "boolean optional",
+        "includeHidden": "boolean optional",
+        "filter": "string optional",
+        "locale": "string optional",
+        "pageSize": "number optional",
+        "reload": "boolean optional",
+        "reuse": "boolean optional"
+      },
+      "result": "ListingViewPage",
+      "streams": "list_directory.chunk",
+      "notes": "Opens (or, for the same viewId and path, re-sorts and re-filters without enumerating again) the service-held view of a folder and returns its first page. While a slow folder is still being enumerated, the first two list_directory.chunk notifications preview its first entries. reload=true enumerates again. reuse=true only re-sorts the view the pane already has of the folder (an error when it shows another one) and, unlike a navigation, does not supersede an open that is still under way.",
+      "binaryFrameTag": 9
+    },
+    "get_listing_view_range": {
+      "params": { "viewId": "string", "offset": "number", "count": "number" },
+      "result": "ListingViewPage",
+      "notes": "Rows offset..offset+count of the view in its current order. The page states the revision it was read at.",
+      "binaryFrameTag": 9
+    },
+    "refresh_listing_view": {
+      "params": { "viewId": "string" },
+      "result": "ListingViewDelta",
+      "notes": "Enumerates the view's folder again and returns only what changed; reset=true means the pages must be read again."
+    },
+    "close_listing_view": { "params": { "viewId": "string" }, "result": "null" },
     "list_subdirectories": { "params": { "path": "string" }, "result": "TreeNode[]" },
     "create_directory": { "params": { "path": "string", "name": "string" }, "result": "string" },
     "create_file": { "params": { "path": "string", "name": "string" }, "result": "string" },

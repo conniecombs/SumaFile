@@ -82,6 +82,16 @@ struct StampedValue<T> {
     value: T,
 }
 
+/// How far a cached directory listing can be trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListingFreshness {
+    /// Enumerated moments ago and the folder has not changed since.
+    Fresh,
+    /// The folder's own stamp still matches, but the listing is old enough
+    /// that a file may have changed in place.
+    Unverified,
+}
+
 /// A directory's own mtime does not change when a child's contents change in
 /// place, so a stamped listing can only be trusted for a short while.
 const DIRECTORY_LISTING_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10);
@@ -148,6 +158,14 @@ where
             guard.misses = guard.misses.saturating_add(1);
             None
         }
+    }
+
+    /// Whether `key` is cached, without counting a hit or touching its age.
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.inner
+            .lock()
+            .map(|guard| guard.map.contains_key(key))
+            .unwrap_or(false)
     }
 
     pub fn put(&self, key: K, value: V, estimated_bytes: usize) {
@@ -369,31 +387,73 @@ impl SessionCache {
         Some(Self::normalize_key(&parent))
     }
 
+    /// A cached listing that is certainly current: the folder's stamp still
+    /// matches and it was enumerated within [`DIRECTORY_LISTING_MAX_AGE`].
     pub fn get_directory_listing(&self, path: &str) -> Option<DirectoryListing> {
+        match self.lookup_directory_listing(path)? {
+            (listing, ListingFreshness::Fresh) => Some(listing),
+            // Kept for callers that can show it and then check it.
+            (_, ListingFreshness::Unverified) => None,
+        }
+    }
+
+    /// A cached listing and how far it can be trusted. A listing whose
+    /// folder stamp changed (an entry was added, removed or renamed) is
+    /// dropped. One whose stamp still matches but which is older than
+    /// [`DIRECTORY_LISTING_MAX_AGE`] comes back as
+    /// [`ListingFreshness::Unverified`]: the names are almost certainly
+    /// right, but a file may have changed in place, so the caller shows it
+    /// at once and enumerates again behind it.
+    pub fn lookup_directory_listing(
+        &self,
+        path: &str,
+    ) -> Option<(DirectoryListing, ListingFreshness)> {
         let key = Self::normalize_key(path);
         if key.is_empty() {
             return None;
         }
         let current_stamp = PathStamp::for_path(Path::new(path))?;
         let cached = self.directory_listings.get(&key)?;
+        if cached.stamp != current_stamp {
+            self.directory_listings.remove(&key);
+            if let Ok(mut stored) = self.listing_stored_at.lock() {
+                stored.remove(&key);
+            }
+            return None;
+        }
+
         let fresh = self
             .listing_stored_at
             .lock()
             .ok()
             .and_then(|stored| stored.get(&key).copied())
             .is_some_and(|stored| stored.elapsed() < DIRECTORY_LISTING_MAX_AGE);
-        if fresh && cached.stamp == current_stamp {
-            Some(cached.value)
+        let freshness = if fresh {
+            ListingFreshness::Fresh
         } else {
-            self.directory_listings.remove(&key);
-            if let Ok(mut stored) = self.listing_stored_at.lock() {
-                stored.remove(&key);
-            }
-            None
-        }
+            ListingFreshness::Unverified
+        };
+        Some((cached.value, freshness))
+    }
+
+    /// Whether a listing of `path` is cached at all, current or not.
+    pub fn has_directory_listing(&self, path: &str) -> bool {
+        self.directory_listings
+            .contains_key(&Self::normalize_key(path))
     }
 
     pub fn put_directory_listing(&self, path: &str, listing: DirectoryListing) {
+        self.store_directory_listing(path, listing, true);
+    }
+
+    /// Stores a listing that was not just enumerated (a closing view's
+    /// entries, kept current by change events but never re-read as a whole).
+    /// It is only ever served as [`ListingFreshness::Unverified`].
+    pub fn put_unverified_directory_listing(&self, path: &str, listing: DirectoryListing) {
+        self.store_directory_listing(path, listing, false);
+    }
+
+    fn store_directory_listing(&self, path: &str, listing: DirectoryListing, verified: bool) {
         if listing.is_network {
             return;
         }
@@ -405,7 +465,11 @@ impl SessionCache {
             return;
         };
         if let Ok(mut stored) = self.listing_stored_at.lock() {
-            stored.insert(key.clone(), std::time::Instant::now());
+            if verified {
+                stored.insert(key.clone(), std::time::Instant::now());
+            } else {
+                stored.remove(&key);
+            }
         }
         let estimated_bytes = estimate_directory_listing_bytes(&listing);
         self.directory_listings.put(

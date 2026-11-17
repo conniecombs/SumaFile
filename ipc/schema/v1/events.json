@@ -31,6 +31,11 @@
       "source": "crates/simplefile-service/src/session.rs",
       "notes": "Positional array [bytesDownloaded, totalBytes|null] matching UpdateChunkPayload."
     },
+    "listing-view-changed": {
+      "params": "ListingViewDelta",
+      "source": "crates/simplefile-service/src/listing_views.rs",
+      "notes": "A watched folder changed: the rows that moved in every open view of it, or reset=true."
+    },
     "list_directory.chunk": {
       "params": "DirectoryListingChunkNotification",
       "source": "replaces tauri::ipc::Channel on list_directory",

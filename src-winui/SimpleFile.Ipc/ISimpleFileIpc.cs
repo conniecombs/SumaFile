@@ -27,6 +27,23 @@ public interface ISimpleFileIpc : IAsyncDisposable
         CancellationToken cancellationToken = default,
         ListDirectoryOptions? options = null);
 
+    // Listing views are optional: a client that does not talk to a real service keeps these defaults, and the
+    // workspace then lists folders with ListDirectoryAsync as before.
+    Task<ListingViewPage> OpenListingViewAsync(
+        ListingViewRequest request,
+        Action<DirectoryListingChunk>? onPreview = null,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("This IPC client has no listing views.");
+
+    Task<ListingViewPage> GetListingViewRangeAsync(string viewId, uint offset, uint count, CancellationToken ct = default) =>
+        throw new NotSupportedException("This IPC client has no listing views.");
+
+    Task<ListingViewDelta> RefreshListingViewAsync(string viewId, CancellationToken ct = default) =>
+        throw new NotSupportedException("This IPC client has no listing views.");
+
+    Task CloseListingViewAsync(string viewId, CancellationToken ct = default) =>
+        throw new NotSupportedException("This IPC client has no listing views.");
+
     Task<HealthResult> HealthAsync(CancellationToken cancellationToken = default);
 
     Task<string> GetAppVersionAsync(CancellationToken cancellationToken = default);

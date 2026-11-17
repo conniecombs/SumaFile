@@ -1,7 +1,8 @@
 use super::params::{
     parse_params, parse_path_params, DiskCleanupParams, DuplicateCheckParams, ListDirectoryParams,
-    OperationIdParams, OptionalOperationIdParams, PathParams, ProgressCopyMoveParams,
-    SearchFilesParams, SearchIdParams, ThumbnailBatchParams, ThumbnailParams,
+    ListingViewIdParams, ListingViewRangeParams, OpenListingViewParams, OperationIdParams,
+    OptionalOperationIdParams, PathParams, ProgressCopyMoveParams, SearchFilesParams,
+    SearchIdParams, ThumbnailBatchParams, ThumbnailParams,
 };
 use super::{Dispatch, SessionState};
 use serde_json::Value;
@@ -25,6 +26,48 @@ pub(super) fn list_directory(request: &JsonRpcRequest) -> Dispatch {
                 options,
             }
         }
+        Err(response) => Dispatch::Reply(response),
+    }
+}
+
+pub(super) fn open_listing_view(request: &JsonRpcRequest) -> Dispatch {
+    match parse_params::<OpenListingViewParams>(request) {
+        Ok(params) => Dispatch::OpenListingView {
+            id: request.id.clone(),
+            params,
+        },
+        Err(response) => Dispatch::Reply(response),
+    }
+}
+
+pub(super) fn get_listing_view_range(request: &JsonRpcRequest) -> Dispatch {
+    match parse_params::<ListingViewRangeParams>(request) {
+        Ok(params) => Dispatch::GetListingViewRange {
+            id: request.id.clone(),
+            view_id: params.view_id,
+            offset: params.offset,
+            count: params.count,
+        },
+        Err(response) => Dispatch::Reply(response),
+    }
+}
+
+pub(super) fn refresh_listing_view(request: &JsonRpcRequest) -> Dispatch {
+    match parse_params::<ListingViewIdParams>(request) {
+        Ok(params) => Dispatch::RefreshListingView {
+            id: request.id.clone(),
+            view_id: params.view_id,
+        },
+        Err(response) => Dispatch::Reply(response),
+    }
+}
+
+pub(super) fn close_listing_view(request: &JsonRpcRequest) -> Dispatch {
+    match parse_params::<ListingViewIdParams>(request) {
+        Ok(params) => Dispatch::CloseListingView {
+            id: request.id.clone(),
+            view_id: params.view_id,
+        },
         Err(response) => Dispatch::Reply(response),
     }
 }

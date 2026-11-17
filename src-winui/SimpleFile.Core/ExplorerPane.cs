@@ -37,6 +37,36 @@ public sealed class ExplorerPane
     /// </summary>
     public PaneDecorations Decorations { get; set; } = PaneDecorations.Empty;
 
+    /// <summary>The name of this pane's view in the service: one view per pane, replaced on each navigation.</summary>
+    internal string ListingViewId { get; } = "pane-" + Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// The service-held view <see cref="Entries"/> are the first rows of, or null when the folder was listed whole
+    /// and the pane sorts and filters it itself. Set and read under the workspace gate.
+    /// </summary>
+    internal PaneListing? Listing { get; set; }
+
+    /// <summary>
+    /// The view of the folder shown failed (the service restarted, or a page could not be read): until the next
+    /// navigation the folder is listed whole instead. Under the workspace gate.
+    /// </summary>
+    internal bool ListingViewUnavailable { get; set; }
+
+    /// <summary>
+    /// Changes whenever the pane's rows are replaced as a whole (a navigation, a re-sort, a fallback), so a page
+    /// read for the rows before is dropped. Under the workspace gate.
+    /// </summary>
+    internal int ListingEpoch { get; set; }
+
+    /// <summary>
+    /// Row changes that arrived for this pane's view while a navigation had not yet published its rows; the publish
+    /// applies the ones that follow from its page. Under the workspace gate.
+    /// </summary>
+    internal List<ListingViewDelta> PendingListingDeltas { get; } = [];
+
+    /// <summary>The rows the folder shows: every row of the service's view, including those not read yet.</summary>
+    public int TotalEntryCount => Listing is { } listing ? Math.Max(listing.Total, Entries.Count) : Entries.Count;
+
     /// <summary>The decoration request whose result <see cref="Decorations"/> holds (under the workspace gate).</summary>
     internal long AppliedDecorationRequest { get; set; }
 
@@ -88,6 +118,12 @@ public sealed class ExplorerPane
     /// <summary>The decoration text of <paramref name="path"/>, which the status column shows and sorts by.</summary>
     internal string? DecorationTextFor(string path) => Decorations.For(path)?.Text;
 
+    /// <summary>
+    /// True while the pane measures folder sizes itself: the size column then sorts by sizes the service never
+    /// sees, so the pane sorts it. Set by the workspace under the gate.
+    /// </summary>
+    internal bool ListingSortsFolderSizes { get; set; }
+
     public bool CanGoBack => HistoryIndex > 0;
     public bool CanGoForward => HistoryIndex >= 0 && HistoryIndex < History.Count - 1;
     public bool CanGoUp => PathRules.GetParentPath(Path) is not null;
@@ -106,6 +142,24 @@ public sealed class ExplorerPane
         var version = ContentVersion;
         var normalizedFilter = filterQuery ?? "";
         var normalizedSortBy = sortBy ?? "name";
+
+        // The service already sorted and filtered these rows this way (or was just asked to): nothing to do here.
+        if (Listing is { } listing
+            && PaneListing.IsServiceSortColumn(normalizedSortBy, ListingSortsFolderSizes)
+            && listing.ShowsOrAwaits(new ListingViewRequest
+            {
+                ViewId = listing.ViewId,
+                Path = listing.Path,
+                SortBy = PaneListing.ServiceSortColumn(normalizedSortBy),
+                SortAscending = sortAscending,
+                FoldersFirst = keepFoldersOnTop,
+                IncludeHidden = showHidden,
+                Filter = normalizedFilter,
+                Locale = listing.Request.Locale,
+            }))
+        {
+            return entries;
+        }
 
         if (_cachedVisibleEntries is not null
             && ReferenceEquals(_cachedEntriesRef, entries)

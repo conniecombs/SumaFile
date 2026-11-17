@@ -354,8 +354,12 @@ mod tests {
         assert_ne!(k1, k2);
     }
 
+    // `cache_path` and `get` read the cache folder setting from the metadata
+    // database in the app data folder, which other tests redirect: without
+    // the lock these two created that database inside another test's folder.
     #[test]
     fn cache_path_has_subdirectories() {
+        let _lock = crate::test_support::env_lock().lock().unwrap();
         let key = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
         let path = cache_path(key);
         let _components: Vec<_> = path.components().collect();
@@ -391,6 +395,7 @@ mod tests {
 
     #[test]
     fn get_returns_none_on_miss() {
+        let _lock = crate::test_support::env_lock().lock().unwrap();
         let t = SystemTime::UNIX_EPOCH;
         let cached = get(r"C:\nonexistent-thumb-cache-test.jpg", t, 0, 128);
         assert!(cached.is_none());

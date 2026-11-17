@@ -27,6 +27,7 @@ public sealed partial class ExplorerWorkspace
     private readonly WorkspaceFileOpsController _fileOpsController = new();
     private readonly WorkspaceSelectionController _selection = new();
     private readonly object _gate = new();
+    private readonly ListingViewController _listingViews = new();
 
     public ExplorerWorkspace(
         IExplorerBackend backend,
@@ -35,7 +36,15 @@ public sealed partial class ExplorerWorkspace
     {
         _backend = backend;
         RowDecorations = rowDecorations ?? new RowDecorationCoordinator();
-        _navigator = new PaneNavigator(_backend, _gate, RaiseChanged);
+        _navigator = new PaneNavigator(_backend, _gate, RaiseChanged)
+        {
+            BuildViewRequest = (pane, path, reload) => ListingViewController.BuildRequest(this, pane.Id, path, reload),
+        };
+        if (_backend.ListingViews is { } listingViews)
+        {
+            listingViews.ListingViewChanged += delta => _listingViews.OnDelta(this, delta);
+        }
+
         FileOps = fileOps;
         _profiles = new WorkspaceProfileService(
             () => FileOps,
@@ -162,5 +171,12 @@ public sealed partial class ExplorerWorkspace
     internal FileOperationService RequireFileOps() =>
         FileOps ?? throw new InvalidOperationException("FileOperationService is required for file operations.");
 
-    private void RaiseChanged() => Changed?.Invoke(this, EventArgs.Empty);
+    internal ListingViewController ListingViewsController => _listingViews;
+
+    private void RaiseChanged()
+    {
+        // A changed sort, filter or hidden-file setting is sent to the service's view before the UI is told.
+        _listingViews.Reconcile(this);
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
 }
