@@ -866,7 +866,8 @@ public sealed class RemoteManagerViewModel : ObservableObject
     private async Task RunTransfersAsync(string direction, string[] sources, string destination, CancellationToken ct)
     {
         if (CurrentSession is null) { StatusText = "Connect to a remote profile first"; return; }
-        if (IsBusy) return;
+        // The window disables its transfer buttons while busy; a request from anywhere else is refused out loud.
+        if (IsBusy) { StatusText = "Another operation is still running. Try again when it finishes."; return; }
         sources = sources.Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(direction == "upload" ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
         if (sources.Length == 0) { StatusText = "Select files or folders to transfer"; return; }
