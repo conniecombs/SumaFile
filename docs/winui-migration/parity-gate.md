@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 75-command schema vs Rust/C#
+npm run check:ipc-schema      # 79-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (75)
+## 2. IPC commands (79)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -73,6 +73,10 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `select_directory` | Host picker | Settings / extract-to | `HOST_OWNED` test | Browse | `PASS` |
 | `list_drives` | This PC | Sidebar drive list | `ExplorerWorkspaceTests` | Offline badge | `PASS` |
 | `list_directory` | Listing + chunks | `list_directory.chunk` then result | `ExplorerWorkspaceTests` huge-folder / `RESULT_TOO_LARGE` | First paint on large folder | `PASS` |
+| `open_listing_view` | Pane listing: the service sorts and filters, first page back | `PaneNavigator` + `ListingViewController` | `ListingViewWorkspaceTests` / `ListingViewIpcTests` / service session tests | Open a large folder; change the sort | `PASS` |
+| `get_listing_view_range` | Rows after the first page | `ListingViewController.StartFill` | `ListingViewWorkspaceTests` / `ListingViewIpcTests` | Scroll to the end of a large folder | `PASS` |
+| `refresh_listing_view` | Refresh as a row delta | `ListingViewController.TryRefreshAsync` | `ListingViewWorkspaceTests` / service session tests | F5 after an external change | `PASS` |
+| `close_listing_view` | Drop a pane's view | IPC | `ListingViewIpcTests` / service session tests | — | `PASS` |
 | `list_subdirectories` | Sidebar tree children | `LoadTreeChildrenAsync` + Folders list | `ParityFeaturesTests` tree flatten | Expand a tree node | `PASS` |
 | `create_directory` | New folder | New menu template + rename + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+Shift+N | `PASS` |
 | `create_file` | New text/blank file | New menu template + selection + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+N | `PASS` |
@@ -204,6 +208,7 @@ The WinUI CI job runs the `-PluginsDir` smoke, `npm run check:winui-startup-budg
 | ID | Feature | WinUI verification | Automated | Manual | Status |
 | --- | --- | --- | --- | --- | --- |
 | `file-change` | Watcher refresh | MainWindow subscription | Client `On<T>` | External create/delete | `MANUAL` |
+| `listing-view-changed` | Row delta of a watched folder's views | `BackendSession` → `ListingViewController.OnDelta` | `ListingViewWorkspaceTests` / service session tests | Create a file in Explorer; one row appears, scroll and selection stay | `MANUAL` |
 | `operation-progress` | Copy/move/cleanup/dup | Progress panel | `FileOperationServiceTests` | Watch bar + cancel | `PASS` |
 | `transfer-tuning` | Transfer policy and active files | Transfer options and active file list | `TransferPolicyTests`, parallel worker tests, adaptive UI smoke | Change policy while copying | `PASS` |
 | `search-results-batch` | Incremental search | Search box batches | Client | Search streams rows | `MANUAL` |
@@ -442,7 +447,7 @@ The WinUI CI job runs the `-PluginsDir` smoke, `npm run check:winui-startup-budg
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 75 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 79 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |

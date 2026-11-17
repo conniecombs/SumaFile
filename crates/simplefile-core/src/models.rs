@@ -55,6 +55,68 @@ pub struct DirectoryListingChunk {
     pub is_network: bool,
 }
 
+/// A window of a listing view: the rows `offset..offset + entries.len()` of
+/// the `total` rows the view shows, as of `revision`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListingViewPage {
+    pub view_id: String,
+    pub path: String,
+    pub parent: Option<String>,
+    pub is_network: bool,
+    pub total: u32,
+    pub revision: u64,
+    pub offset: u32,
+    pub entries: Vec<FileEntry>,
+}
+
+/// One row change of a listing view. `kind` is `remove`, `insert` or
+/// `update`; `index` is the row, counted after the changes before this one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListingViewChange {
+    pub kind: String,
+    pub index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<FileEntry>,
+}
+
+impl ListingViewChange {
+    pub fn remove(index: u32) -> Self {
+        Self {
+            kind: "remove".to_string(),
+            index,
+            entry: None,
+        }
+    }
+
+    pub fn insert(index: u32, entry: FileEntry) -> Self {
+        Self {
+            kind: "insert".to_string(),
+            index,
+            entry: Some(entry),
+        }
+    }
+
+    pub fn update(index: u32, entry: FileEntry) -> Self {
+        Self {
+            kind: "update".to_string(),
+            index,
+            entry: Some(entry),
+        }
+    }
+}
+
+/// What changed in a listing view between `base_revision` and `revision`.
+/// `reset` means too much changed to list: the rows must be read again.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListingViewDelta {
+    pub view_id: String,
+    pub base_revision: u64,
+    pub revision: u64,
+    pub total: u32,
+    pub reset: bool,
+    pub changes: Vec<ListingViewChange>,
+}
+
 /// Progress update for long-running operations
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProgressUpdate {

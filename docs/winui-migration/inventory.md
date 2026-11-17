@@ -55,7 +55,7 @@ The WinUI replacement must preserve that split:
 
 Tauri converts Rust snake_case parameters to camelCase on the JS side. The WinUI host must keep those names or provide an explicit mapping.
 
-This is the historical Tauri inventory (74 commands). The live WinUI service contract is `ipc/schema/v1/commands.json`: 75 domain methods after plugin system phase 4. Phase 3 moved the 13 `remote_*` FTP/SFTP methods into the bundled plugin `com.sumafile.remote` (`plugins/remote/protocol.json`), and phase 4 moved the 11 Git methods into the bundled plugin `com.sumafile.git` (`plugins/git/protocol.json`). The parity record is [`parity-gate.md`](parity-gate.md).
+This is the historical Tauri inventory (74 commands). The live WinUI service contract is `ipc/schema/v1/commands.json`: 79 domain methods (75 after plugin system phase 4, plus the four listing view methods added in 1.1.1). Phase 3 moved the 13 `remote_*` FTP/SFTP methods into the bundled plugin `com.sumafile.remote` (`plugins/remote/protocol.json`), and phase 4 moved the 11 Git methods into the bundled plugin `com.sumafile.git` (`plugins/git/protocol.json`). The parity record is [`parity-gate.md`](parity-gate.md).
 
 `list_directory` is the only command that also streams: the frontend creates a Tauri `Channel<DirectoryListingChunk>` and passes it as `onChunk`. Chunks arrive before the final `DirectoryListing` return.
 

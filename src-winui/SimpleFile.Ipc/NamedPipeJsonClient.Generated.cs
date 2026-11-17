@@ -137,6 +137,15 @@ public sealed partial class NamedPipeJsonClient
     public Task<FileMetadata> GetFileMetadataAsync(string path, CancellationToken ct = default)
         => InvokeAsync<FileMetadata>(Protocol.GetFileMetadataMethod, new { path }, ct);
 
+    public Task<ListingViewPage> GetListingViewRangeAsync(string viewId, uint offset, uint count, CancellationToken ct = default)
+        => InvokeListingViewPageAsync(Protocol.GetListingViewRangeMethod, new { viewId, offset, count }, ct);
+
+    public Task<ListingViewDelta> RefreshListingViewAsync(string viewId, CancellationToken ct = default)
+        => InvokeAsync<ListingViewDelta>(Protocol.RefreshListingViewMethod, new { viewId }, ct);
+
+    public Task CloseListingViewAsync(string viewId, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CloseListingViewMethod, new { viewId }, ct);
+
     public Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default)
         => InvokeAsync<TreeNode[]>(Protocol.ListSubdirectoriesMethod, new { path }, ct);
 

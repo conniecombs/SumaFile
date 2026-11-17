@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 use simplefile_core::dir_list::{ListDirectoryOptions, ListingMode};
+use simplefile_core::listing_view::ListingViewOptions;
 use simplefile_core::models::SearchOptions;
 use simplefile_ipc::rpc::{JsonRpcRequest, JsonRpcResponse};
 use simplefile_ipc::ERR_INVALID_PARAMS;
@@ -76,6 +77,62 @@ impl ListDirectoryParams {
             }),
         )
     }
+}
+
+/// `open_listing_view`: the folder a pane shows and the order and filter it
+/// wants. Every option is optional; an omitted one is the view's default.
+#[derive(Debug, Deserialize)]
+pub(crate) struct OpenListingViewParams {
+    #[serde(rename = "viewId")]
+    pub(crate) view_id: String,
+    pub(crate) path: String,
+    #[serde(rename = "sortBy", default)]
+    pub(crate) sort_by: Option<String>,
+    #[serde(rename = "sortAscending", default)]
+    pub(crate) sort_ascending: Option<bool>,
+    #[serde(rename = "foldersFirst", default)]
+    pub(crate) folders_first: Option<bool>,
+    #[serde(rename = "includeHidden", default)]
+    pub(crate) include_hidden: Option<bool>,
+    #[serde(default)]
+    pub(crate) filter: Option<String>,
+    #[serde(default)]
+    pub(crate) locale: Option<String>,
+    #[serde(rename = "pageSize", default)]
+    pub(crate) page_size: Option<u32>,
+    /// Enumerate again even when the view already shows the folder.
+    #[serde(default)]
+    pub(crate) reload: Option<bool>,
+}
+
+impl OpenListingViewParams {
+    pub(crate) fn options(&self) -> ListingViewOptions {
+        let defaults = ListingViewOptions::default();
+        ListingViewOptions {
+            sort_by: self.sort_by.clone().unwrap_or(defaults.sort_by),
+            sort_ascending: self.sort_ascending.unwrap_or(defaults.sort_ascending),
+            folders_first: self.folders_first.unwrap_or(defaults.folders_first),
+            include_hidden: self.include_hidden.unwrap_or(defaults.include_hidden),
+            filter: self.filter.clone(),
+            locale: self.locale.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ListingViewIdParams {
+    #[serde(rename = "viewId")]
+    pub(super) view_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ListingViewRangeParams {
+    #[serde(rename = "viewId")]
+    pub(super) view_id: String,
+    #[serde(default)]
+    pub(super) offset: u32,
+    #[serde(default)]
+    pub(super) count: u32,
 }
 
 #[derive(Debug, Deserialize)]

@@ -1,9 +1,11 @@
 mod io;
 mod jobs;
+mod listing_jobs;
 
 use std::time::Instant;
 
 use crate::dispatch::{dispatch, Dispatch, SessionState};
+use crate::listing_views::ListingViews;
 use crate::progress::OperationRegistry;
 use crate::scheduler::BlockingScheduler;
 use crate::watcher::WatcherState;
@@ -43,6 +45,15 @@ where
     let binary_hot_frames = state.binary_hot_frames.clone();
     let cache = state.cache.clone();
     let events = EventSink::new(writer.clone(), binary_hot_frames.clone());
+    let views = ListingViews::default();
+    let listing = listing_jobs::ListingContext {
+        writer: writer.clone(),
+        scheduler: scheduler.clone(),
+        binary_hot_frames: binary_hot_frames.clone(),
+        cache: cache.clone(),
+        views: views.clone(),
+        events: events.clone(),
+    };
 
     let result = async {
         loop {
@@ -94,6 +105,25 @@ where
                         path,
                         options,
                     );
+                }
+                Dispatch::OpenListingView { id, params } => {
+                    listing_jobs::spawn_open_listing_view(listing.clone(), id, params);
+                }
+                Dispatch::GetListingViewRange {
+                    id,
+                    view_id,
+                    offset,
+                    count,
+                } => {
+                    listing_jobs::reply_listing_view_range(&listing, id, &view_id, offset, count)
+                        .await?;
+                }
+                Dispatch::RefreshListingView { id, view_id } => {
+                    listing_jobs::spawn_refresh_listing_view(listing.clone(), id, view_id);
+                }
+                Dispatch::CloseListingView { id, view_id } => {
+                    listing_jobs::close_listing_view(&listing, &view_id);
+                    write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
                 }
                 Dispatch::CopyWithProgress { id, params } => {
                     let op_id = params
@@ -191,10 +221,17 @@ where
                 Dispatch::WatchDirectory { id, path } => {
                     let events = events.clone();
                     let cache_for_watch = cache.clone();
+                    let views_for_watch = views.clone();
                     let result =
                         crate::watcher::watch_directory(path, &mut watcher_state, move |change| {
                             cache_for_watch.invalidate_path(&change.path);
                             events.emit_file_change(&change);
+                            listing_jobs::apply_file_change(
+                                &views_for_watch,
+                                &cache_for_watch,
+                                &events,
+                                &change.path,
+                            );
                         });
                     let response = match result {
                         Ok(()) => JsonRpcResponse::result(id, Value::Null),
@@ -358,6 +395,7 @@ where
     duplicate_scans.cancel_all().await;
     cleanup_scans.cancel_all().await;
     crate::watcher::unwatch_directory(&mut watcher_state);
+    views.clear();
     result
 }
 

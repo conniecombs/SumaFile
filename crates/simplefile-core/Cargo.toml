@@ -39,6 +39,7 @@ winapi = { version = "0.3", features = [
   "errhandlingapi",
   "fileapi",
   "handleapi",
+  "libloaderapi",
   "minwinbase",
   "minwindef",
   "shellapi",

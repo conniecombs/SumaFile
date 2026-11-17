@@ -46,6 +46,21 @@
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["path", "parent", "entries", "chunk_index", "done", "is_network"]
     },
+    "ListingViewPage": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["view_id", "path", "parent", "is_network", "total", "revision", "offset", "entries"],
+      "notes": "In an ordinary folder the entries omit path and extension, as light list_directory entries do. The binary frame carries the Hidden and System attributes, which the list_directory binary frames drop."
+    },
+    "ListingViewChange": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["kind", "index", "entry"],
+      "optional": ["entry"],
+      "notes": "kind is remove, insert or update. index is the row after the changes before this one in the same delta."
+    },
+    "ListingViewDelta": {
+      "source": "crates/simplefile-core/src/models.rs",
+      "fields": ["view_id", "base_revision", "revision", "total", "reset", "changes"]
+    },
     "ProgressUpdate": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["operation_id", "operation_type", "current", "total", "current_files", "total_files", "current_item", "status", "error"]

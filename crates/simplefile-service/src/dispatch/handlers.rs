@@ -130,6 +130,10 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
             Err(response) => Dispatch::Reply(response),
         },
         METHOD_LIST_DIRECTORY => async_ops::list_directory(request),
+        METHOD_OPEN_LISTING_VIEW => async_ops::open_listing_view(request),
+        METHOD_GET_LISTING_VIEW_RANGE => async_ops::get_listing_view_range(request),
+        METHOD_REFRESH_LISTING_VIEW => async_ops::refresh_listing_view(request),
+        METHOD_CLOSE_LISTING_VIEW => async_ops::close_listing_view(request),
         METHOD_SELECT_DIRECTORY => Dispatch::Reply(JsonRpcResponse::error(
             request.id.clone(),
             ERR_HOST_OWNED,

@@ -146,14 +146,23 @@ const binaryTags = [
     tag: methods.generate_thumbnails?.binaryFrameTag,
     name: 'generate_thumbnails.result',
   },
+  {
+    cs: 'BinaryListingViewPage',
+    rust: 'BINARY_LISTING_VIEW_PAGE',
+    tag: methods.open_listing_view?.binaryFrameTag,
+    name: 'open_listing_view.result',
+  },
 ];
+if (methods.get_listing_view_range?.binaryFrameTag !== methods.open_listing_view?.binaryFrameTag) {
+  fail('open_listing_view and get_listing_view_range must share one binary frame tag.');
+}
 for (const tag of binaryTags) {
   if (!Number.isInteger(tag.tag)) {
     fail(`missing binary frame tag for ${tag.name}.`);
   }
 }
 
-const manualClientMethods = new Set(['ipc.handshake', 'list_directory', 'search_files']);
+const manualClientMethods = new Set(['ipc.handshake', 'list_directory', 'search_files', 'open_listing_view']);
 // The host's plugin layer sends these itself; the typed client has no
 // wrapper for them yet.
 const intentionallyUnexposedClientMethods = new Set(['register_archive_engine', 'unregister_archive_engine']);
@@ -214,6 +223,9 @@ const wrappers = [
   { method: 'compute_checksum', signature: 'public Task<Checksums> ComputeChecksumAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<Checksums>(Protocol.ComputeChecksumMethod, new { path }, ct)' },
   { method: 'get_image_metadata', signature: 'public Task<ImageMetadata> GetImageMetadataAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<ImageMetadata>(Protocol.GetImageMetadataMethod, new { path }, ct)' },
   { method: 'get_file_metadata', signature: 'public Task<FileMetadata> GetFileMetadataAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<FileMetadata>(Protocol.GetFileMetadataMethod, new { path }, ct)' },
+  { method: 'get_listing_view_range', signature: 'public Task<ListingViewPage> GetListingViewRangeAsync(string viewId, uint offset, uint count, CancellationToken ct = default)', body: 'InvokeListingViewPageAsync(Protocol.GetListingViewRangeMethod, new { viewId, offset, count }, ct)' },
+  { method: 'refresh_listing_view', signature: 'public Task<ListingViewDelta> RefreshListingViewAsync(string viewId, CancellationToken ct = default)', body: 'InvokeAsync<ListingViewDelta>(Protocol.RefreshListingViewMethod, new { viewId }, ct)' },
+  { method: 'close_listing_view', signature: 'public Task CloseListingViewAsync(string viewId, CancellationToken ct = default)', body: 'InvokeAsync<object?>(Protocol.CloseListingViewMethod, new { viewId }, ct)' },
   { method: 'list_subdirectories', signature: 'public Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<TreeNode[]>(Protocol.ListSubdirectoriesMethod, new { path }, ct)' },
   { method: 'get_folder_metrics', signature: 'public Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<FolderMetrics>(Protocol.GetFolderMetricsMethod, new { path }, ct)' },
   { method: 'calculate_folder_size', signature: 'public Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default)', body: 'InvokeAsync<ulong>(Protocol.CalculateFolderSizeMethod, new { path }, ct)' },

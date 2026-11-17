@@ -1,12 +1,13 @@
 use serde_json::Value;
 use simplefile_core::models::{
-    DirectoryListing, DirectoryListingChunk, FileChangeEvent, FileEntry, ProgressUpdate,
-    SearchResult, ThumbnailResult,
+    DirectoryListing, DirectoryListingChunk, FileChangeEvent, FileEntry, ListingViewPage,
+    ProgressUpdate, SearchResult, ThumbnailResult,
 };
 use simplefile_ipc::{
-    BINARY_FILE_CHANGE, BINARY_FRAME_MAGIC, BINARY_FRAME_VERSION, BINARY_LIST_DIRECTORY_CHUNK,
-    BINARY_LIST_DIRECTORY_RESULT, BINARY_OPERATION_PROGRESS, BINARY_SEARCH_RESULTS_BATCH,
-    BINARY_SEARCH_RESULTS_RESULT, BINARY_THUMBNAILS_RESULT, BINARY_THUMBNAIL_RESULT,
+    BINARY_FILE_CHANGE, BINARY_FRAME_MAGIC, BINARY_FRAME_VERSION, BINARY_LISTING_VIEW_PAGE,
+    BINARY_LIST_DIRECTORY_CHUNK, BINARY_LIST_DIRECTORY_RESULT, BINARY_OPERATION_PROGRESS,
+    BINARY_SEARCH_RESULTS_BATCH, BINARY_SEARCH_RESULTS_RESULT, BINARY_THUMBNAILS_RESULT,
+    BINARY_THUMBNAIL_RESULT,
 };
 
 type EncodeResult<T> = Result<T, String>;
@@ -42,6 +43,39 @@ pub(crate) fn encode_directory_listing_result(
     writer.opt_string(listing.parent.as_deref())?;
     writer.entries(&listing.entries)?;
     writer.bool(listing.is_network);
+    Ok(writer.finish())
+}
+
+/// A listing view page. Unlike the list_directory frames, each entry carries
+/// its Hidden and System attributes (one flags byte), and no retired
+/// git_status field.
+pub(crate) fn encode_listing_view_page(
+    request_id: i32,
+    page: &ListingViewPage,
+) -> EncodeResult<Vec<u8>> {
+    let mut writer = BinaryWriter::new(BINARY_LISTING_VIEW_PAGE);
+    writer.i32(request_id);
+    writer.string(&page.view_id)?;
+    writer.string(&page.path)?;
+    writer.opt_string(page.parent.as_deref())?;
+    writer.bool(page.is_network);
+    writer.u32(page.total);
+    writer.u64(page.revision);
+    writer.u32(page.offset);
+    writer.len(page.entries.len())?;
+    for entry in &page.entries {
+        writer.string(&entry.name)?;
+        writer.string(&entry.path)?;
+        writer.bytes_raw(&[u8::from(entry.is_dir)
+            | u8::from(entry.is_symlink) << 1
+            | u8::from(entry.is_hidden) << 2
+            | u8::from(entry.is_system) << 3]);
+        writer.u64(entry.size);
+        writer.string(&entry.modified)?;
+        writer.string(&entry.extension)?;
+        writer.opt_string(entry.permissions.as_deref())?;
+        writer.opt_string(entry.symlink_target.as_deref())?;
+    }
     Ok(writer.finish())
 }
 
@@ -138,6 +172,10 @@ impl BinaryWriter {
         self.bytes
     }
 
+    fn bytes_raw(&mut self, value: &[u8]) {
+        self.bytes.extend_from_slice(value);
+    }
+
     fn bool(&mut self, value: bool) {
         self.bytes.push(u8::from(value));
     }
@@ -228,5 +266,69 @@ impl BinaryWriter {
             self.string(&result.match_type)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The same bytes are decoded in the host's ListingViewIpcTests
+    /// (BinaryPage_DecodesTheServicesGoldenFrame): the two sides agree on
+    /// the page frame byte for byte.
+    const GOLDEN_LISTING_VIEW_PAGE: &str = "5346423101090700000002000000763104000000433A5C7700010300000002010000000000000100000002000000010000006400000000090000000000000000010000006D00000000000005000000662E74787408000000583A5C662E747874060102000000000000000000000300000074787401020000007277010100000074";
+
+    fn entry(name: &str) -> FileEntry {
+        FileEntry {
+            name: name.to_string(),
+            path: String::new(),
+            is_dir: false,
+            is_symlink: false,
+            is_hidden: false,
+            is_system: false,
+            size: 0,
+            modified: String::new(),
+            extension: String::new(),
+            permissions: None,
+            symlink_target: None,
+            git_status: None,
+        }
+    }
+
+    #[test]
+    fn listing_view_page_frame_matches_the_golden_bytes() {
+        let page = ListingViewPage {
+            view_id: "v1".to_string(),
+            path: r"C:\w".to_string(),
+            parent: None,
+            is_network: true,
+            total: 3,
+            revision: 258,
+            offset: 1,
+            entries: vec![
+                FileEntry {
+                    is_dir: true,
+                    is_system: true,
+                    modified: "m".to_string(),
+                    ..entry("d")
+                },
+                FileEntry {
+                    path: r"X:\f.txt".to_string(),
+                    is_symlink: true,
+                    is_hidden: true,
+                    size: 513,
+                    extension: "txt".to_string(),
+                    permissions: Some("rw".to_string()),
+                    symlink_target: Some("t".to_string()),
+                    // Retired and never sent in a page.
+                    git_status: Some("M".to_string()),
+                    ..entry("f.txt")
+                },
+            ],
+        };
+
+        let frame = encode_listing_view_page(7, &page).expect("the page encodes");
+        let hex: String = frame.iter().map(|byte| format!("{byte:02X}")).collect();
+        assert_eq!(GOLDEN_LISTING_VIEW_PAGE, hex);
     }
 }
