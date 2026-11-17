@@ -8,6 +8,53 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+---
+
+## [1.1.1] - prepared 2026-11-17
+
+See the [v1.1.1 release notes](RELEASE_1.1.1.md).
+
+### Folder listings
+
+- The file service now keeps each pane's folder sorted and filtered (a
+  *listing view*). The app used to receive every entry of a folder, then sort
+  and filter the whole list itself on every change. Now it tells the service
+  the order, the filter and the hidden-file setting, and the service does the
+  work: changing the sort column, typing in the filter box or toggling hidden
+  files no longer re-sorts or re-filters anything in the app, and never
+  enumerates the folder again.
+- A folder opens with its first 512 rows already in order. The rest is read
+  behind them in pages and the complete list is published once, so the
+  scroll bar, Select all and type-ahead work on the whole folder as before.
+  The app does not show placeholder rows.
+- A file created, deleted, renamed or changed in a watched folder arrives as
+  the rows that moved, not as a new listing. The list keeps its scroll
+  position and its selection; before, most changes cleared and refilled it.
+  Refresh, and the refresh after a copy, move, rename or delete, also ask the
+  service what changed and apply only that.
+- Going back to a folder you visited opens it from the session cache at
+  once, however long ago that was. If the cached listing is older than ten
+  seconds the service enumerates the folder again behind the page already
+  shown and sends what differs. A folder you left keeps the changes it
+  received while it was open.
+- Names sort in the service the way they sorted in the app: by the Windows
+  culture's rules, ignoring case, using the ICU that ships with Windows.
+- Fixed: with "Show hidden files" off, files and folders that have the
+  Windows Hidden or System attribute but no leading dot were still listed.
+  The listing frames did not carry those attributes; the new page frame
+  does, so such entries are now hidden, and shown dimmed when hidden files
+  are on.
+- Sorting by a column the service does not know (Path, Items, the plugin
+  status column, and Size while folder sizes are shown) is still done by the
+  app, over the complete list.
+- IPC: four methods (`open_listing_view`, `get_listing_view_range`,
+  `refresh_listing_view`, `close_listing_view`), one event
+  (`listing-view-changed`) and one binary frame (tag 9, a listing view
+  page). The schema goes from 75 to 79 domain methods; no existing method
+  or type changed.
+
+### Other changes
+
 - FTP/SFTP manager: the local and remote lists keep your selection when they
   refresh after a transfer, rename, delete or Refresh. Before, the refresh
   cleared it, so a Download or Upload clicked next had nothing to act on. A

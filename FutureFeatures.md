@@ -8,6 +8,26 @@
 
 Windows already caches file reads in RAM, but SumaFile still repeats application work such as directory enumeration, metadata conversion, sorting, IPC serialization, thumbnail generation, and result-to-view-model conversion. A bounded, session-only cache removes that repeated work when users revisit folders, switch panes, search again, or toggle views.
 
+### Status (1.1.1)
+
+Part of this plan has shipped. The Rust service owns a bounded session cache
+(`crates/simplefile-service/src/session_cache.rs`) for directory listings,
+entry and file metadata, folder metrics, subdirectories and thumbnails, with
+invalidation from the watcher and from file operations. Since 1.1.1 it also
+holds a sorted, filtered *listing view* per pane
+(`crates/simplefile-core/src/listing_view.rs`): the app reads folders in pages,
+receives changes as row deltas, and a cached listing older than ten seconds is
+shown at once and then checked against the disk. That covers Phase 2, the
+first item of Phase 3, and Priority 3 of the roadmap below (paging and change
+deltas) as far as the wire goes.
+
+Still open: Phase 0 measurements, the thumbnail cache rewrite (Phase 1),
+search-result caching, batching metadata requests for the visible range,
+prefetch, the diagnostics panel, and the budget settings (Phase 4). The app
+also still reads the whole folder (in pages, behind the first one); leaving
+rows unread until they scroll into view needs a data-virtualized list in the
+WinUI app.
+
 ### Existing foundation
 
 SumaFile already has a RAM-resident thumbnail cache in `src-winui/SimpleFile.App/FileListThumbnailHost.cs`. It deduplicates in-flight thumbnail requests and limits the cache to 512 entries, but when the limit is exceeded it clears the entire cache. The broader implementation should preserve the good parts of that design while moving to budget-aware least-recently-used eviction.
