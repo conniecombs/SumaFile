@@ -6,6 +6,12 @@ public readonly record struct InspectionDetailRow(string Label, string Value);
 
 public readonly record struct InspectionDetailSection(string Title, IReadOnlyList<InspectionDetailRow> Rows);
 
+/// <summary>One line of the folder comparison: a folder (or the total) with its counts through every subfolder.</summary>
+public readonly record struct FolderComparisonRow(string Name, string Path, string Files, string Folders, string Size);
+
+/// <summary>The measured folders in the order given, and their sum.</summary>
+public sealed record FolderComparisonTable(IReadOnlyList<FolderComparisonRow> Rows, FolderComparisonRow Total);
+
 public interface IInspectionEntryPresentation
 {
     string Name { get; }
@@ -161,6 +167,38 @@ public static class InspectionDetails
             new("Total size", EntryPresentation.FormatFileSize(metrics.Size)),
             new("Directly inside", CountWithNoun(metrics.ItemCount, "item", "items")),
         ];
+    }
+
+    /// <summary>
+    /// The folder comparison: per folder, the files and folders at every depth and their size, then the totals.
+    /// </summary>
+    public static FolderComparisonTable FolderComparison(IReadOnlyList<KeyValuePair<string, FolderMetrics>> measured)
+    {
+        ArgumentNullException.ThrowIfNull(measured);
+        var rows = new List<FolderComparisonRow>(measured.Count);
+        ulong files = 0, folders = 0, size = 0;
+        foreach (var (path, metrics) in measured)
+        {
+            var name = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));
+            rows.Add(new FolderComparisonRow(
+                string.IsNullOrEmpty(name) ? path : name,
+                path,
+                metrics.TotalFiles.ToString("N0"),
+                metrics.TotalFolders.ToString("N0"),
+                EntryPresentation.FormatFileSize(metrics.Size)));
+            files += metrics.TotalFiles;
+            folders += metrics.TotalFolders;
+            size += metrics.Size;
+        }
+
+        return new FolderComparisonTable(
+            rows,
+            new FolderComparisonRow(
+                "Total",
+                CountWithNoun(measured.Count, "folder", "folders"),
+                files.ToString("N0"),
+                folders.ToString("N0"),
+                EntryPresentation.FormatFileSize(size)));
     }
 
     public static IReadOnlyList<InspectionDetailRow> PreviewRows(FilePreview preview, ulong? selectionSize = null)

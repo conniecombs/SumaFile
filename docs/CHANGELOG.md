@@ -8,6 +8,16 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+- FTP/SFTP manager: the local and remote lists keep your selection when they
+  refresh after a transfer, rename, delete or Refresh. Before, the refresh
+  cleared it, so a Download or Upload clicked next had nothing to act on. A
+  transfer asked for while another operation is running now says so in the
+  status line instead of doing nothing.
+- Folder metrics comparison (two or more folders selected) is a table: one
+  row per folder with Files, Folders and Size, and a Total row. Files and
+  folders are counted through every subfolder; the old text listed only the
+  number of items at each folder's top level.
+
 ---
 
 ## [1.1.0] - prepared 2026-11-12
