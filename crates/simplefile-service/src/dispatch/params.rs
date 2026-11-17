@@ -103,6 +103,10 @@ pub(crate) struct OpenListingViewParams {
     /// Enumerate again even when the view already shows the folder.
     #[serde(default)]
     pub(crate) reload: Option<bool>,
+    /// Only re-sort and re-filter the view the pane already has of this
+    /// folder: never enumerate, and fail when the view shows another folder.
+    #[serde(default)]
+    pub(crate) reuse: Option<bool>,
 }
 
 impl OpenListingViewParams {

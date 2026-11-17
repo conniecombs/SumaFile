@@ -235,6 +235,7 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
                         Locale = string.IsNullOrWhiteSpace(request.Locale) ? null : request.Locale,
                         PageSize = request.PageSize == 0 ? null : request.PageSize,
                         Reload = request.Reload ? true : null,
+                        Reuse = request.Reuse ? true : null,
                     },
                     cancellationToken)
                 .ConfigureAwait(false);

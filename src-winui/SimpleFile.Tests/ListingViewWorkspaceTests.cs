@@ -102,6 +102,8 @@ public class ListingViewWorkspaceTests
 
         Assert.Equal(["name", "size", "size"], backend.OpenRequests.Select(request => request.SortBy));
         Assert.Equal([true, true, false], backend.OpenRequests.Select(request => request.SortAscending));
+        // The navigation may enumerate; a re-sort only ever reuses the view the pane has.
+        Assert.Equal([false, true, true], backend.OpenRequests.Select(request => request.Reuse));
         Assert.Equal(1, backend.EnumerationCount);
         Assert.Equal(0, backend.ListDirectoryCalls);
         Assert.Null(workspace.Primary.Listing!.Pending);
@@ -299,6 +301,27 @@ public class ListingViewWorkspaceTests
 
         Assert.Equal(["a.txt", "b.txt"], Names(workspace));
         Assert.Equal(2ul, workspace.Primary.Listing!.Revision);
+    }
+
+    [Fact]
+    public async Task AReSortTheServiceRefuses_FallsBackToListingTheFolderWhole()
+    {
+        var (workspace, backend) = await OpenAsync(File("b.txt", 1), File("a.txt", 2));
+        // The service lost the view (it restarted): a re-sort of "the view shown" has nothing to work on.
+        await backend.CloseListingViewAsync(workspace.Primary.ListingViewId);
+
+        workspace.SetSort("size");
+
+        await UntilAsync(() => workspace.Primary.Listing is null && backend.ListDirectoryCalls > 0, "the fallback listing");
+        await SettledAsync(workspace);
+        Assert.Equal(["b.txt", "a.txt"], Names(workspace));
+        Assert.True(workspace.Primary.ListingViewUnavailable);
+
+        // The next navigation tries the view again.
+        await workspace.NavigatePaneAsync(PaneId.Primary, Work);
+        await SettledAsync(workspace);
+        Assert.NotNull(workspace.Primary.Listing);
+        Assert.Equal(["b.txt", "a.txt"], Names(workspace));
     }
 
     [Fact]

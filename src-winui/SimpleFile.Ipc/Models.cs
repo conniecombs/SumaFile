@@ -97,6 +97,28 @@ public sealed class ListingViewRequest
     /// <summary>Enumerate the folder again even when the view already shows it.</summary>
     public bool Reload { get; init; }
 
+    /// <summary>
+    /// Only re-sort and re-filter the view the pane already has of this folder. The service enumerates nothing and
+    /// fails when the view shows another folder; unlike a navigation, the request does not supersede an open that is
+    /// still under way.
+    /// </summary>
+    public bool Reuse { get; init; }
+
+    /// <summary>This request as one that only re-sorts the view the pane already has (<see cref="Reuse"/>).</summary>
+    public ListingViewRequest ForTheViewShown() => new()
+    {
+        ViewId = ViewId,
+        Path = Path,
+        SortBy = SortBy,
+        SortAscending = SortAscending,
+        FoldersFirst = FoldersFirst,
+        IncludeHidden = IncludeHidden,
+        Filter = Filter,
+        Locale = Locale,
+        PageSize = PageSize,
+        Reuse = true,
+    };
+
     /// <summary>True when both requests ask for the same rows in the same order.</summary>
     public bool SameViewAs(ListingViewRequest? other) =>
         other is not null

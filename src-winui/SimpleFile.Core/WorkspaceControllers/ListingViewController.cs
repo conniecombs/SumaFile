@@ -276,7 +276,9 @@ internal sealed class ListingViewController
 
         try
         {
-            var page = await views.OpenListingViewAsync(request).ConfigureAwait(false);
+            // Not a navigation: the service only re-sorts the view it holds, and leaves alone a navigation the
+            // pane may have started since (whose answer then replaces these rows anyway).
+            var page = await views.OpenListingViewAsync(request.ForTheViewShown()).ConfigureAwait(false);
             bool partial;
             lock (workspace.Gate)
             {

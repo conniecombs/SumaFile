@@ -123,7 +123,7 @@ pub struct ListingView {
     paths_follow_names: bool,
     slots: Vec<Option<Slot>>,
     free: Vec<u32>,
-    /// Slot of each entry by its case-folded name.
+    /// Slot of each entry by its identity: see [`Self::key_of`].
     by_name: HashMap<String, u32>,
     /// The visible slots in view order.
     order: Vec<u32>,
@@ -290,14 +290,37 @@ impl ListingView {
         }
     }
 
+    /// True for an ordinary folder, where a name is one entry and its path
+    /// is the folder path plus the name. False for the Recycle Bin and
+    /// archive folders: several entries may share a name there, so they are
+    /// told apart by path and only [`Self::replace_entries`] can change them.
+    pub fn follows_names(&self) -> bool {
+        self.paths_follow_names
+    }
+
     /// Records what one name in the folder is now: `Some` entry when it
     /// exists, `None` when it is gone. The delta lists the rows that moved;
     /// it has no changes (and the revision stays) when nothing visible did.
+    /// Only for a view that [`Self::follows_names`]; any other view is left
+    /// as it is.
     pub fn apply_entry(&mut self, name: &str, entry: Option<FileEntry>) -> ListingViewDelta {
         let base_revision = self.revision;
         let mut changes = Vec::new();
-        self.apply_entry_into(name, entry, &mut changes);
+        if self.paths_follow_names {
+            self.apply_keyed(fold_name(name), entry, &mut changes);
+        }
         self.finish_delta(base_revision, changes, false)
+    }
+
+    /// What tells two entries of the folder apart: the case-folded name in
+    /// an ordinary folder, the path where names may repeat (two deleted
+    /// files called `notes.txt` are two rows of the Recycle Bin).
+    fn key_of(&self, entry: &FileEntry) -> String {
+        if self.paths_follow_names {
+            fold_name(&entry.name)
+        } else {
+            fold_name(&entry.path)
+        }
     }
 
     /// Replaces the folder's entries with a fresh enumeration and reports the
@@ -306,7 +329,7 @@ impl ListingView {
         let base_revision = self.revision;
         let mut fresh: HashMap<String, FileEntry> = HashMap::with_capacity(entries.len());
         for entry in entries {
-            fresh.insert(fold_name(&entry.name), entry);
+            fresh.insert(self.key_of(&entry), entry);
         }
 
         let removed: Vec<String> = self
@@ -343,21 +366,18 @@ impl ListingView {
         // A fixed order, so the same difference always gives the same delta.
         let mut removed = removed;
         removed.sort();
-        upserts.sort_by(|left, right| left.name.cmp(&right.name));
+        upserts.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.path.cmp(&right.path))
+        });
         let mut changes = Vec::new();
         for key in removed {
-            let name = self
-                .by_name
-                .get(&key)
-                .and_then(|&slot| self.slots[slot as usize].as_ref())
-                .map(|slot| slot.entry.name.clone());
-            if let Some(name) = name {
-                self.apply_entry_into(&name, None, &mut changes);
-            }
+            self.apply_keyed(key, None, &mut changes);
         }
         for entry in upserts {
-            let name = entry.name.clone();
-            self.apply_entry_into(&name, Some(entry), &mut changes);
+            let key = self.key_of(&entry);
+            self.apply_keyed(key, Some(entry), &mut changes);
         }
         self.finish_delta(base_revision, changes, false)
     }
@@ -381,13 +401,12 @@ impl ListingView {
         }
     }
 
-    fn apply_entry_into(
+    fn apply_keyed(
         &mut self,
-        name: &str,
+        key: String,
         entry: Option<FileEntry>,
         changes: &mut Vec<ListingViewChange>,
     ) {
-        let key = fold_name(name);
         let existing = self.by_name.get(&key).copied();
         let old_index = existing
             .filter(|&slot| {
@@ -456,9 +475,9 @@ impl ListingView {
         self.rebuild_order();
     }
 
-    /// Stores `entry`, replacing an entry of the same name, and returns its slot.
+    /// Stores `entry`, replacing the entry with the same identity, and returns its slot.
     fn insert_slot(&mut self, entry: FileEntry) -> u32 {
-        let key = fold_name(&entry.name);
+        let key = self.key_of(&entry);
         let slot = Slot {
             name_key: self.collator.sort_key(&entry.name),
             column: self.column_key(&entry),
@@ -543,6 +562,7 @@ impl ListingView {
         column
             .then_with(|| left.name_key.cmp(&right.name_key))
             .then_with(|| left.entry.name.cmp(&right.entry.name))
+            .then_with(|| left.entry.path.cmp(&right.entry.path))
     }
 
     /// The entry as a page carries it. In an ordinary folder the path and the
@@ -844,6 +864,63 @@ mod tests {
         let row = &recycle.page(3, 1).entries[0];
         assert_eq!(r"C:\work\alpha.TXT", row.path);
         assert_eq!("TXT", row.extension);
+    }
+
+    /// Two deleted files with one name are two rows of the Recycle Bin.
+    #[test]
+    fn entries_that_share_a_name_stay_apart_where_paths_do_not_follow_names() {
+        let deleted = |token: &str, size: u64| FileEntry {
+            path: format!(r"C:\$Recycle.Bin\S-1\$R{token}.txt"),
+            ..entry("notes.txt", false, size)
+        };
+        let mut view = ListingView::new(
+            "primary",
+            listing(vec![
+                deleted("AAA", 1),
+                deleted("BBB", 2),
+                entry("other.txt", false, 3),
+            ]),
+            false,
+            ListingViewOptions::default(),
+        );
+        assert_eq!(3, view.total());
+        assert_eq!(vec!["notes.txt", "notes.txt", "other.txt"], names(&view));
+        let paths: Vec<String> = view
+            .page(0, 2)
+            .entries
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        assert_eq!(
+            vec![
+                r"C:\$Recycle.Bin\S-1\$RAAA.txt",
+                r"C:\$Recycle.Bin\S-1\$RBBB.txt"
+            ],
+            paths
+        );
+
+        // One of the two is restored: exactly its row goes.
+        let before = names(&view);
+        let delta = view.replace_entries(vec![deleted("BBB", 2), entry("other.txt", false, 3)]);
+        assert_eq!(
+            vec![("remove", 0)],
+            delta
+                .changes
+                .iter()
+                .map(|c| (c.kind.as_str(), c.index))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(names(&view), replay(before, &delta));
+        assert_eq!(
+            r"C:\$Recycle.Bin\S-1\$RBBB.txt",
+            view.page(0, 1).entries[0].path
+        );
+
+        // A change by name cannot say which of several entries it means.
+        assert!(!view.follows_names());
+        let ignored = view.apply_entry("notes.txt", None);
+        assert!(ignored.changes.is_empty());
+        assert_eq!(2, view.total());
     }
 
     #[test]

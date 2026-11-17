@@ -55,8 +55,9 @@ impl ListingViews {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Starts an open of `view_id` that will enumerate a folder. Every open
-    /// of the id that began earlier and has not finished is superseded.
+    /// Starts a navigation of `view_id`. Every open of the id that began
+    /// earlier and has not finished is superseded, whether this one goes on
+    /// to enumerate a folder or finds that the view already shows it.
     pub fn begin_open(&self, view_id: &str) -> OpenTicket {
         let mut registry = self.lock();
         registry.last_ticket += 1;
@@ -99,9 +100,19 @@ impl ListingViews {
         Some((page, left_behind))
     }
 
+    /// Ends a navigation that needed no enumeration (the view already showed
+    /// the folder). Opens it superseded stay superseded.
+    pub fn finish_open(&self, view_id: &str, ticket: OpenTicket) {
+        let mut registry = self.lock();
+        if registry.opening.get(view_id) == Some(&ticket.0) {
+            registry.opening.remove(view_id);
+        }
+    }
+
     /// Re-sorts and re-filters the view `view_id` when it already shows
     /// `path`, and returns its first page. `None` when there is no such view
-    /// of that folder: the caller enumerates and calls [`Self::open`].
+    /// of that folder. This alone supersedes nothing: a pane that only asks
+    /// for another order must not cancel the navigation it started since.
     pub fn reconfigure(
         &self,
         view_id: &str,
@@ -193,6 +204,12 @@ impl ListingViews {
             if same_folder(view.path(), path) {
                 changes.refresh.push(view_id.clone());
             } else if same_folder(view.path(), &folder) {
+                if !view.follows_names() {
+                    // Names may repeat there: only a fresh enumeration can
+                    // say which entry changed.
+                    changes.refresh.push(view_id.clone());
+                    continue;
+                }
                 let entry = current.get_or_insert_with(|| lookup(path)).clone();
                 let delta = view.apply_entry(&name, entry);
                 if !delta.changes.is_empty() || delta.reset {
@@ -270,6 +287,92 @@ mod tests {
                 page_rows,
             )
             .expect("no later open superseded this one")
+    }
+
+    /// A pane on folder A starts opening slow folder B, then goes back to A
+    /// before B finishes. A needs no enumeration, and B must still lose.
+    #[test]
+    fn going_back_to_the_folder_shown_supersedes_the_open_it_interrupted() {
+        let views = ListingViews::default();
+        open_now(
+            &views,
+            "primary",
+            listing(r"C:\a", &["a.txt"]),
+            true,
+            ListingViewOptions::default(),
+            0,
+        );
+        let slow = views.begin_open("primary");
+
+        let back = views.begin_open("primary");
+        let page = views
+            .reconfigure("primary", r"C:\a", ListingViewOptions::default(), 0)
+            .expect("the view still shows the folder");
+        views.finish_open("primary", back);
+        assert_eq!(r"C:\a", page.path);
+
+        assert!(views
+            .open(
+                "primary",
+                slow,
+                listing(r"C:\b", &["b.txt"]),
+                true,
+                ListingViewOptions::default(),
+                0
+            )
+            .is_none());
+        assert_eq!(Some(r"C:\a".to_string()), views.path_of("primary"));
+    }
+
+    /// Asking the view for another order is not a navigation: it leaves an
+    /// open that is under way alone.
+    #[test]
+    fn a_reconfiguration_alone_supersedes_nothing() {
+        let views = ListingViews::default();
+        open_now(
+            &views,
+            "primary",
+            listing(r"C:\a", &["a.txt"]),
+            true,
+            ListingViewOptions::default(),
+            0,
+        );
+        let navigation = views.begin_open("primary");
+
+        assert!(views
+            .reconfigure("primary", r"C:\a", ListingViewOptions::default(), 0)
+            .is_some());
+
+        let (page, _) = views
+            .open(
+                "primary",
+                navigation,
+                listing(r"C:\b", &["b.txt"]),
+                true,
+                ListingViewOptions::default(),
+                0,
+            )
+            .expect("the navigation was not superseded");
+        assert_eq!(r"C:\b", page.path);
+    }
+
+    #[test]
+    fn a_change_in_a_folder_whose_names_may_repeat_asks_for_a_refresh() {
+        let views = ListingViews::default();
+        open_now(
+            &views,
+            "primary",
+            listing(r"C:\bin", &["notes.txt"]),
+            false,
+            ListingViewOptions::default(),
+            0,
+        );
+
+        let changes =
+            views.apply_path_change(r"C:\bin\notes.txt", |_| panic!("not looked up by name"));
+
+        assert_eq!(vec!["primary".to_string()], changes.refresh);
+        assert!(changes.deltas.is_empty());
     }
 
     #[test]

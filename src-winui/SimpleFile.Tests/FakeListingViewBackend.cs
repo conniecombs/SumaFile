@@ -141,9 +141,13 @@ internal sealed class FakeListingViewBackend : IExplorerBackend, IListingViewBac
                 throw new IpcException(Protocol.ErrApplication, $"Path is not a directory: {request.Path}");
             }
 
-            if (!request.Reload
-                && _views.TryGetValue(request.ViewId, out var existing)
-                && PathRules.PathsEqual(existing.Path, request.Path))
+            var shown = _views.TryGetValue(request.ViewId, out var existing) && PathRules.PathsEqual(existing.Path, request.Path);
+            if (request.Reuse && !shown)
+            {
+                throw new IpcException(Protocol.ErrApplication, $"Listing view does not show {request.Path}: {request.ViewId}");
+            }
+
+            if (!request.Reload && shown && existing is not null)
             {
                 if (!existing.Request.SameViewAs(request))
                 {

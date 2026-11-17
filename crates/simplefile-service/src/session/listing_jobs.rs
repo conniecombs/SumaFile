@@ -89,20 +89,36 @@ async fn open_listing_view(
     let page_rows = params.page_size.unwrap_or(0);
     let reload = params.reload.unwrap_or(false);
 
-    // The pane already shows this folder: only the order or the filter changed.
+    // The pane only wants another order or filter of the folder it shows.
+    // That is not a navigation: it enumerates nothing and leaves an open
+    // that is under way alone, and it fails if the view has moved on.
+    if params.reuse.unwrap_or(false) {
+        let page = context
+            .views
+            .reconfigure(&params.view_id, &params.path, options, page_rows)
+            .ok_or_else(|| {
+                format!(
+                    "Listing view does not show {}: {}",
+                    params.path, params.view_id
+                )
+            })?;
+        return write_page(context, id, &page).await;
+    }
+
+    // A navigation. Every earlier open of this view that is still under way
+    // is superseded, whether this one enumerates or the view already shows
+    // the folder (the pane went back before a slower folder finished).
+    let ticket = context.views.begin_open(&params.view_id);
     if !reload {
         if let Some(page) =
             context
                 .views
                 .reconfigure(&params.view_id, &params.path, options.clone(), page_rows)
         {
+            context.views.finish_open(&params.view_id, ticket);
             return write_page(context, id, &page).await;
         }
     }
-
-    // From here the open replaces the pane's view. An earlier open of the
-    // same view that is still enumerating its folder is superseded.
-    let ticket = context.views.begin_open(&params.view_id);
 
     // A cached listing opens at once. One too old to trust blindly is shown
     // and then enumerated again behind the view; what differs arrives as a delta.

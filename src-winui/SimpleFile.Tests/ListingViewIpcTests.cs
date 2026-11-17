@@ -61,8 +61,10 @@ public class ListingViewIpcTests
         Assert.Equal("txt", parameters.GetProperty("filter").GetString());
         Assert.Equal("en-US", parameters.GetProperty("locale").GetString());
         Assert.Equal(512u, parameters.GetProperty("pageSize").GetUInt32());
-        // Not asked for: the service keeps the view it has when the folder is the same.
+        // Not asked for: the service keeps the view it has when the folder is the same, and a navigation is not
+        // limited to the view the pane has.
         Assert.False(parameters.TryGetProperty("reload", out var reload) && reload.ValueKind == JsonValueKind.True);
+        Assert.False(parameters.TryGetProperty("reuse", out var reuse) && reuse.ValueKind == JsonValueKind.True);
 
         // A slow folder previews its first entries on the open's request id before the page.
         await server.SendBinaryFrameAsync(BinaryFrameCodec.EncodeDirectoryListingChunk(

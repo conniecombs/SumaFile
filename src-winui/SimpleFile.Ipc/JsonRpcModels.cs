@@ -126,6 +126,9 @@ public sealed class OpenListingViewParams
 
     [JsonPropertyName("reload")]
     public bool? Reload { get; init; }
+
+    [JsonPropertyName("reuse")]
+    public bool? Reuse { get; init; }
 }
 
 public sealed class SelectDirectoryParams

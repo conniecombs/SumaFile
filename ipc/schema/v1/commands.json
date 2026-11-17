@@ -55,11 +55,12 @@
         "filter": "string optional",
         "locale": "string optional",
         "pageSize": "number optional",
-        "reload": "boolean optional"
+        "reload": "boolean optional",
+        "reuse": "boolean optional"
       },
       "result": "ListingViewPage",
       "streams": "list_directory.chunk",
-      "notes": "Opens (or, for the same viewId and path, re-sorts and re-filters without enumerating again) the service-held view of a folder and returns its first page. While a slow folder is still being enumerated, the first two list_directory.chunk notifications preview its first entries. reload=true enumerates again.",
+      "notes": "Opens (or, for the same viewId and path, re-sorts and re-filters without enumerating again) the service-held view of a folder and returns its first page. While a slow folder is still being enumerated, the first two list_directory.chunk notifications preview its first entries. reload=true enumerates again. reuse=true only re-sorts the view the pane already has of the folder (an error when it shows another one) and, unlike a navigation, does not supersede an open that is still under way.",
       "binaryFrameTag": 9
     },
     "get_listing_view_range": {
