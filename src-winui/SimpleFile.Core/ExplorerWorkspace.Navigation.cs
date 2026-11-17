@@ -108,6 +108,24 @@ public sealed partial class ExplorerWorkspace
         _navigation.OpenPathAsync(this, path, isDirectory, pane, cancellationToken);
 
     /// <summary>
+    /// True when <paramref name="pane"/> shows <paramref name="folderPath"/> through a view the service keeps
+    /// current: a change in that folder reaches the pane as the rows that moved, so it needs no refresh.
+    /// </summary>
+    public bool FollowsListingView(PaneId pane, string? folderPath)
+    {
+        if (string.IsNullOrEmpty(folderPath))
+        {
+            return false;
+        }
+
+        var state = PaneFor(pane);
+        lock (_gate)
+        {
+            return state.Listing is not null && PathRules.PathsEqual(state.Path, folderPath);
+        }
+    }
+
+    /// <summary>
     /// Decorates every shown pane whose listing is published again, without listing it again: after startup becomes
     /// ready, after the decorating plugins change, and when a plugin asks (<c>IPluginDecorations.Invalidate</c>, a
     /// setting write). A pane still listing is skipped, because its publish checks

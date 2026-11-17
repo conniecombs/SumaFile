@@ -95,6 +95,39 @@ public sealed class ListDirectoryParams
     public bool? IncludeHidden { get; init; }
 }
 
+public sealed class OpenListingViewParams
+{
+    [JsonPropertyName("viewId")]
+    public required string ViewId { get; init; }
+
+    [JsonPropertyName("path")]
+    public required string Path { get; init; }
+
+    [JsonPropertyName("sortBy")]
+    public string? SortBy { get; init; }
+
+    [JsonPropertyName("sortAscending")]
+    public bool? SortAscending { get; init; }
+
+    [JsonPropertyName("foldersFirst")]
+    public bool? FoldersFirst { get; init; }
+
+    [JsonPropertyName("includeHidden")]
+    public bool? IncludeHidden { get; init; }
+
+    [JsonPropertyName("filter")]
+    public string? Filter { get; init; }
+
+    [JsonPropertyName("locale")]
+    public string? Locale { get; init; }
+
+    [JsonPropertyName("pageSize")]
+    public uint? PageSize { get; init; }
+
+    [JsonPropertyName("reload")]
+    public bool? Reload { get; init; }
+}
+
 public sealed class SelectDirectoryParams
 {
     [JsonPropertyName("defaultPath")]

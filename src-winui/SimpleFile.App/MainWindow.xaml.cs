@@ -1270,7 +1270,8 @@ public sealed partial class MainWindow : Window
             var affectedPaths = FileChangeAffectedPaths(change.Path);
             FileListThumbnailHost.InvalidatePaths(affectedPaths);
             ShellIconLoader.InvalidatePath(change.Path);
-            if (_workspace.AffectedVisiblePanes(affectedPaths).Count == 0)
+            var affectedPanes = _workspace.AffectedVisiblePanes(affectedPaths);
+            if (affectedPanes.Count == 0)
             {
                 return;
             }
@@ -1279,6 +1280,15 @@ public sealed partial class MainWindow : Window
             SetStatusText(string.IsNullOrEmpty(name)
                 ? $"{change.Kind}: {change.Path}"
                 : $"{change.Kind}: {name}");
+
+            // A pane whose rows follow the service's view of the changed folder is told which rows moved by the
+            // view itself: listing the folder again would only repeat that.
+            var changedFolder = PathRules.GetParentPath(change.Path);
+            if (affectedPanes.All(pane => _workspace.FollowsListingView(pane, changedFolder)))
+            {
+                return;
+            }
+
             ScheduleInPlaceRefresh(affectedPaths);
         });
     }

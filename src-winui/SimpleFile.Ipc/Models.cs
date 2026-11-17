@@ -64,6 +64,123 @@ public sealed class DirectoryListing
     public bool IsNetwork { get; set; }
 }
 
+/// <summary>
+/// The folder a pane shows and the order and filter it wants from the service-held view of it
+/// (<c>open_listing_view</c>). The service sorts and filters; the pane reads the rows in pages.
+/// </summary>
+public sealed class ListingViewRequest
+{
+    /// <summary>The pane's view: opening it again replaces (or, for the same folder, re-sorts) the pane's view.</summary>
+    public required string ViewId { get; init; }
+
+    public required string Path { get; init; }
+
+    /// <summary><c>name</c>, <c>size</c>, <c>modified</c>, <c>extension</c> or <c>type</c>.</summary>
+    public string SortBy { get; init; } = "name";
+
+    public bool SortAscending { get; init; } = true;
+
+    public bool FoldersFirst { get; init; } = true;
+
+    /// <summary>False leaves out Hidden and System entries and names that start with a dot.</summary>
+    public bool IncludeHidden { get; init; } = true;
+
+    /// <summary>A case-insensitive substring of the name, or blank.</summary>
+    public string Filter { get; init; } = "";
+
+    /// <summary>The culture names sort in, for example <c>en-US</c>.</summary>
+    public string Locale { get; init; } = "";
+
+    /// <summary>The rows of the first page.</summary>
+    public uint PageSize { get; init; }
+
+    /// <summary>Enumerate the folder again even when the view already shows it.</summary>
+    public bool Reload { get; init; }
+
+    /// <summary>True when both requests ask for the same rows in the same order.</summary>
+    public bool SameViewAs(ListingViewRequest? other) =>
+        other is not null
+        && string.Equals(SortBy, other.SortBy, StringComparison.OrdinalIgnoreCase)
+        && SortAscending == other.SortAscending
+        && FoldersFirst == other.FoldersFirst
+        && IncludeHidden == other.IncludeHidden
+        && string.Equals(Filter.Trim(), other.Filter.Trim(), StringComparison.Ordinal)
+        && string.Equals(Locale, other.Locale, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>Rows <c>Offset..Offset + Entries.Count</c> of the <c>Total</c> rows a listing view shows, as of <c>Revision</c>.</summary>
+public sealed class ListingViewPage
+{
+    [JsonPropertyName("view_id")]
+    public string ViewId { get; set; } = "";
+
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = "";
+
+    [JsonPropertyName("parent")]
+    public string? Parent { get; set; }
+
+    [JsonPropertyName("is_network")]
+    public bool IsNetwork { get; set; }
+
+    [JsonPropertyName("total")]
+    public uint Total { get; set; }
+
+    [JsonPropertyName("revision")]
+    public ulong Revision { get; set; }
+
+    [JsonPropertyName("offset")]
+    public uint Offset { get; set; }
+
+    [JsonPropertyName("entries")]
+    public List<FileEntry> Entries { get; set; } = [];
+}
+
+/// <summary>
+/// One row change of a listing view. <c>Kind</c> is <c>remove</c>, <c>insert</c> or <c>update</c>;
+/// <c>Index</c> is the row, counted after the changes before this one in the same delta.
+/// </summary>
+public sealed class ListingViewChange
+{
+    public const string Remove = "remove";
+    public const string Insert = "insert";
+    public const string Update = "update";
+
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "";
+
+    [JsonPropertyName("index")]
+    public uint Index { get; set; }
+
+    [JsonPropertyName("entry")]
+    public FileEntry? Entry { get; set; }
+}
+
+/// <summary>
+/// What changed in a listing view between <c>BaseRevision</c> and <c>Revision</c>. <c>Reset</c> means
+/// too much changed to list: the rows must be read again.
+/// </summary>
+public sealed class ListingViewDelta
+{
+    [JsonPropertyName("view_id")]
+    public string ViewId { get; set; } = "";
+
+    [JsonPropertyName("base_revision")]
+    public ulong BaseRevision { get; set; }
+
+    [JsonPropertyName("revision")]
+    public ulong Revision { get; set; }
+
+    [JsonPropertyName("total")]
+    public uint Total { get; set; }
+
+    [JsonPropertyName("reset")]
+    public bool Reset { get; set; }
+
+    [JsonPropertyName("changes")]
+    public List<ListingViewChange> Changes { get; set; } = [];
+}
+
 public sealed class ListDirectoryOptions
 {
     [JsonPropertyName("mode")]

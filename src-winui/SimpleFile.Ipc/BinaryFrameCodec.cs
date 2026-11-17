@@ -49,6 +49,9 @@ public static class BinaryFrameCodec
             Protocol.BinaryThumbnailsResult => BinaryFrameMessage.Response(
                 reader.ReadInt32(),
                 ReadThumbnailResults(ref reader)),
+            Protocol.BinaryListingViewPage => BinaryFrameMessage.Response(
+                reader.ReadInt32(),
+                ReadListingViewPage(ref reader)),
             _ => throw new InvalidOperationException($"Unknown SumaFile binary frame tag {tag}."),
         };
 
@@ -135,6 +138,85 @@ public static class BinaryFrameCodec
         }
 
         return writer.ToArray();
+    }
+
+    /// <summary>
+    /// A listing view page. Each entry carries one flags byte (directory, symlink, Hidden, System): the
+    /// list_directory frames carry no Hidden or System attribute.
+    /// </summary>
+    public static byte[] EncodeListingViewPage(int requestId, ListingViewPage page)
+    {
+        var writer = new BinaryPayloadWriter(Protocol.BinaryListingViewPage);
+        writer.WriteInt32(requestId);
+        writer.WriteString(page.ViewId);
+        writer.WriteString(page.Path);
+        writer.WriteOptionalString(page.Parent);
+        writer.WriteBool(page.IsNetwork);
+        writer.WriteUInt32(page.Total);
+        writer.WriteUInt64(page.Revision);
+        writer.WriteUInt32(page.Offset);
+        writer.WriteCount(page.Entries.Count);
+        foreach (var entry in page.Entries)
+        {
+            writer.WriteString(entry.Name);
+            writer.WriteString(entry.Path);
+            writer.WriteByte((byte)(
+                (entry.IsDir ? EntryIsDir : 0)
+                | (entry.IsSymlink ? EntryIsSymlink : 0)
+                | (entry.IsHidden ? EntryIsHidden : 0)
+                | (entry.IsSystem ? EntryIsSystem : 0)));
+            writer.WriteUInt64(entry.Size);
+            writer.WriteString(entry.Modified);
+            writer.WriteString(entry.Extension);
+            writer.WriteOptionalString(entry.Permissions);
+            writer.WriteOptionalString(entry.SymlinkTarget);
+        }
+
+        return writer.ToArray();
+    }
+
+    private const byte EntryIsDir = 1;
+    private const byte EntryIsSymlink = 2;
+    private const byte EntryIsHidden = 4;
+    private const byte EntryIsSystem = 8;
+
+    private static ListingViewPage ReadListingViewPage(ref BinaryPayloadReader reader)
+    {
+        var page = new ListingViewPage
+        {
+            ViewId = reader.ReadString(),
+            Path = reader.ReadString(),
+            Parent = reader.ReadOptionalString(),
+            IsNetwork = reader.ReadBool(),
+            Total = reader.ReadUInt32(),
+            Revision = reader.ReadUInt64(),
+            Offset = reader.ReadUInt32(),
+        };
+        var count = reader.ReadCount();
+        var entries = new List<FileEntry>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var name = reader.ReadString();
+            var path = reader.ReadString();
+            var flags = reader.ReadByte();
+            entries.Add(new FileEntry
+            {
+                Name = name,
+                Path = path,
+                IsDir = (flags & EntryIsDir) != 0,
+                IsSymlink = (flags & EntryIsSymlink) != 0,
+                IsHidden = (flags & EntryIsHidden) != 0,
+                IsSystem = (flags & EntryIsSystem) != 0,
+                Size = reader.ReadUInt64(),
+                Modified = reader.ReadString(),
+                Extension = reader.ReadString(),
+                Permissions = reader.ReadOptionalString(),
+                SymlinkTarget = reader.ReadOptionalString(),
+            });
+        }
+
+        page.Entries = entries;
+        return page;
     }
 
     private static DirectoryListingChunkNotification ReadDirectoryListingChunkNotification(
@@ -336,6 +418,14 @@ public static class BinaryFrameCodec
             return value;
         }
 
+        public byte ReadByte()
+        {
+            Ensure(1);
+            var value = _remaining[0];
+            _remaining = _remaining[1..];
+            return value;
+        }
+
         public int ReadInt32()
         {
             Ensure(sizeof(int));
@@ -430,6 +520,8 @@ public static class BinaryFrameCodec
         public byte[] ToArray() => _bytes.ToArray();
 
         public void WriteBool(bool value) => _bytes.Add(value ? (byte)1 : (byte)0);
+
+        public void WriteByte(byte value) => _bytes.Add(value);
 
         public void WriteInt32(int value)
         {
