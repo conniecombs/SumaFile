@@ -51,6 +51,13 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_DRAFT: ${{ inputs.draft }}
 
+      # The files of a published release are what people installed and what the updater verifies: never replace them.
+      - name: Refuse a tag that is already published
+        run: node scripts/release-version.mjs --require-unpublished
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+
   checks:
     name: Release quality gates
     needs: validate

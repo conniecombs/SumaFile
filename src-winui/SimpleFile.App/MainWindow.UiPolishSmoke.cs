@@ -99,8 +99,8 @@ public sealed partial class MainWindow
         workspace.SetFileListView(PaneId.Secondary, "details");
         SyncFromWorkspace();
         await Task.Delay(200);
-        await SmokeCheckListAsync(SmokeDescendants<ListView>(PrimaryDetailsFileList).Single(), false);
-        await SmokeCheckListAsync(SmokeDescendants<ListView>(SecondaryDetailsFileList).Single(), false);
+        await SmokeCheckListAsync(await SmokeDetailsListAsync(PrimaryDetailsFileList), false);
+        await SmokeCheckListAsync(await SmokeDetailsListAsync(SecondaryDetailsFileList), false);
         await Task.Delay(350);
         SmokeAssert(OmnibarHost.ActualWidth >= OmnibarHost.MinWidth - 1, "Toolbar actions squeezed the omnibar below its minimum width");
         await SmokeCaptureAsync(RootGrid, Path.Combine(root, "workspace-polish.png"));
@@ -123,8 +123,8 @@ public sealed partial class MainWindow
         var dialogTask = conflict.ShowAsync().AsTask();
         try
         {
-            await Task.Delay(300);
-            // A dialog that could not open says why here, instead of as a capture of nothing below.
+            // Opened, or failed to: a dialog that could not open says why here, instead of as a capture of nothing below.
+            await SmokeWaitAsync(() => conflict.IsLoaded || dialogTask.IsCompleted, "the conflict dialog to open");
             if (dialogTask.IsFaulted) await dialogTask;
             SmokeAssert(comparisons[0].KeepBothName == "report (1).txt", "Unexpected Keep both preview");
             await SmokeCaptureAsync(conflict, Path.Combine(root, "conflict-polish.png"));
@@ -168,6 +168,7 @@ public sealed partial class MainWindow
             await SmokeWaitAsync(() => previewList.ContainerFromIndex(0) is ListViewItem { ActualHeight: > 0 }
                 && SmokeDescendants<TextBlock>(previewList).Any(text => text.Text.StartsWith("Ready ·", StringComparison.Ordinal)
                     && text.ActualHeight > 0), "visible rename preview row");
+            await SmokeWaitAsync(() => SmokeDescendants<RenamePreviewName>(renameRoot).Count() == 4, "the rename Before/After columns");
             await Task.Delay(350);
             SmokeAssert(rename.ChangedRows[0].NewName == "report_reviewed.txt", "Rename preview lost the extension");
             SmokeAssert(SmokeDescendants<RenamePreviewName>(renameRoot).Count() == 4, "Rename Before/After columns were not rendered");

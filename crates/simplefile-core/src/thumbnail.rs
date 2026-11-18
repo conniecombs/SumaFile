@@ -3,9 +3,14 @@
 //!
 //! Decoding is most of the cost for a photo, so a JPEG is decoded straight
 //! to a reduced size (a half, a quarter or an eighth) when the thumbnail is
-//! much smaller than the picture. The scaling that follows uses SIMD.
+//! much smaller than the picture, and the small preview most cameras embed
+//! is used instead when it is large enough. The scaling that follows uses
+//! SIMD. A picture is turned the way its Exif orientation says, so a
+//! portrait photo is upright.
 
+use exif::{In, Tag};
 use fast_image_resize as fir;
+use image::metadata::Orientation;
 use image::{DynamicImage, GrayAlphaImage, GrayImage, RgbImage, RgbaImage};
 use std::path::Path;
 
@@ -23,8 +28,13 @@ const MAX_DECODE_BYTES: usize = 512 * 1024 * 1024;
 /// reduction anyway and several times cheaper.
 const SHARP_FILTER_MAX_PIXELS: u64 = 2_500_000;
 
-/// An image decoded for a thumbnail. `image` may be smaller than the file's
-/// picture; `full_size` is always the size the file declares.
+/// An embedded preview whose shape differs from the picture's by more than
+/// this is not the picture: some cameras pad a 3:2 photo's preview to 4:3.
+const PREVIEW_SHAPE_TOLERANCE: f64 = 0.02;
+
+/// An image decoded for a thumbnail, turned the way its orientation says.
+/// `image` may be smaller than the file's picture; `full_size` is always the
+/// picture's size, turned the same way.
 pub(crate) struct Decoded {
     pub(crate) image: DynamicImage,
     pub(crate) full_size: (u32, u32),
@@ -47,20 +57,35 @@ pub(crate) fn render(path: &Path, extension: &str, size: u32) -> Result<Vec<u8>,
 /// Decodes `path` for a thumbnail of `size`.
 pub(crate) fn decode(path: &Path, extension: &str, size: u32) -> Result<Decoded, String> {
     if matches!(extension, "jpg" | "jpeg") {
-        if let Some(decoded) = decode_jpeg_reduced(path, size) {
+        if let Some(decoded) = decode_jpeg_fast(path, size) {
             return Ok(decoded);
         }
     }
-    let image = image::open(path).map_err(|e| format!("Failed to open image: {e}"))?;
+    decode_full(path)
+}
+
+/// The whole picture, by the image library, turned upright.
+fn decode_full(path: &Path) -> Result<Decoded, String> {
+    let open = |error: &dyn std::fmt::Display| format!("Failed to open image: {error}");
+    let mut decoder = image::ImageReader::open(path)
+        .and_then(image::ImageReader::with_guessed_format)
+        .map_err(|e| open(&e))?
+        .into_decoder()
+        .map_err(|e| open(&e))?;
+    let orientation =
+        image::ImageDecoder::orientation(&mut decoder).unwrap_or(Orientation::NoTransforms);
+    let mut image = DynamicImage::from_decoder(decoder).map_err(|e| open(&e))?;
+    image.apply_orientation(orientation);
     let full_size = (image.width(), image.height());
     Ok(Decoded { image, full_size })
 }
 
-/// A JPEG decoded at a half, a quarter or an eighth of its size. `None` when
-/// the thumbnail needs the full picture, and for any file this decoder does
-/// not take (CMYK, 16-bit, damaged): the full decoder then handles the file
-/// and reports its errors.
-fn decode_jpeg_reduced(path: &Path, size: u32) -> Option<Decoded> {
+/// A JPEG by the fast paths: the camera's embedded preview when it is large
+/// enough, else a decode at a half, a quarter or an eighth of the size.
+/// `None` when the thumbnail needs the full picture, and for any file the
+/// reduced decoder does not take (CMYK, 16-bit, damaged): the full decoder
+/// then handles the file and reports its errors.
+fn decode_jpeg_fast(path: &Path, size: u32) -> Option<Decoded> {
     use jpeg_decoder::PixelFormat;
 
     let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
@@ -71,27 +96,116 @@ fn decode_jpeg_reduced(path: &Path, size: u32) -> Option<Decoded> {
     if !matches!(info.pixel_format, PixelFormat::RGB24 | PixelFormat::L8) {
         return None;
     }
-    let full_size = (u32::from(info.width), u32::from(info.height));
+    let sensor_size = (u32::from(info.width), u32::from(info.height));
 
-    let (width, height) = fit(full_size.0, full_size.1, size);
+    let exif = read_exif(path);
+    let orientation = exif
+        .as_ref()
+        .and_then(|exif| orientation_in(exif, In::PRIMARY))
+        .unwrap_or(Orientation::NoTransforms);
+    let full_size = turned(sensor_size, orientation);
+    let target = fit(full_size.0, full_size.1, size);
+
+    if let Some(image) = exif
+        .as_ref()
+        .and_then(|exif| usable_preview(exif, orientation, full_size, target))
+    {
+        return Some(Decoded { image, full_size });
+    }
+
+    // The decoder sees the sensor's picture: ask for the target in that frame.
+    let (want_width, want_height) = turned_back(target, orientation);
     let at_least = |length: u32| {
         u16::try_from(length.saturating_mul(REDUCED_DECODE_MARGIN)).unwrap_or(u16::MAX)
     };
-    let (reduced_width, reduced_height) = decoder.scale(at_least(width), at_least(height)).ok()?;
+    let (reduced_width, reduced_height) = decoder
+        .scale(at_least(want_width), at_least(want_height))
+        .ok()?;
     let reduced_size = (u32::from(reduced_width), u32::from(reduced_height));
-    if reduced_size == full_size {
+    if reduced_size == sensor_size {
         // Nothing to save, and the full decoder is the faster of the two.
         return None;
     }
 
     let pixels = decoder.decode().ok()?;
-    let image = match info.pixel_format {
+    let mut image = match info.pixel_format {
         PixelFormat::RGB24 => {
             DynamicImage::ImageRgb8(RgbImage::from_raw(reduced_size.0, reduced_size.1, pixels)?)
         }
         _ => DynamicImage::ImageLuma8(GrayImage::from_raw(reduced_size.0, reduced_size.1, pixels)?),
     };
+    image.apply_orientation(orientation);
     Some(Decoded { image, full_size })
+}
+
+/// The file's Exif, or `None` when it has none the reader takes.
+fn read_exif(path: &Path) -> Option<exif::Exif> {
+    let mut file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+    exif::Reader::new().read_from_container(&mut file).ok()
+}
+
+/// The orientation tag of `ifd` (IFD0 is the picture's, IFD1 the preview's).
+fn orientation_in(exif: &exif::Exif, ifd: In) -> Option<Orientation> {
+    let value = exif.get_field(Tag::Orientation, ifd)?.value.get_uint(0)?;
+    Orientation::from_exif(u8::try_from(value).ok()?)
+}
+
+/// The preview the camera embedded, turned upright, when it can stand in for
+/// the picture: at least `target` in size and the same shape as the picture.
+fn usable_preview(
+    exif: &exif::Exif,
+    picture_orientation: Orientation,
+    full_size: (u32, u32),
+    target: (u32, u32),
+) -> Option<DynamicImage> {
+    let offset = exif
+        .get_field(Tag::JPEGInterchangeFormat, In::THUMBNAIL)?
+        .value
+        .get_uint(0)?;
+    let length = exif
+        .get_field(Tag::JPEGInterchangeFormatLength, In::THUMBNAIL)?
+        .value
+        .get_uint(0)?;
+    let start = usize::try_from(offset).ok()?;
+    let end = start.checked_add(usize::try_from(length).ok()?)?;
+    let bytes = exif.buf().get(start..end)?;
+    let mut preview = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg).ok()?;
+    // Stored the way the sensor saw it, like the picture, unless it says otherwise.
+    preview.apply_orientation(orientation_in(exif, In::THUMBNAIL).unwrap_or(picture_orientation));
+    if preview.width() < target.0 || preview.height() < target.1 {
+        return None;
+    }
+    let picture_shape = f64::from(full_size.0) / f64::from(full_size.1);
+    let preview_shape = f64::from(preview.width()) / f64::from(preview.height());
+    if ((preview_shape - picture_shape) / picture_shape).abs() > PREVIEW_SHAPE_TOLERANCE {
+        return None;
+    }
+    Some(preview)
+}
+
+/// Whether `orientation` turns the picture a quarter turn, swapping its axes.
+fn swaps_axes(orientation: Orientation) -> bool {
+    matches!(
+        orientation,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    )
+}
+
+/// `size` once the picture is turned by `orientation`.
+fn turned(size: (u32, u32), orientation: Orientation) -> (u32, u32) {
+    if swaps_axes(orientation) {
+        (size.1, size.0)
+    } else {
+        size
+    }
+}
+
+/// `size` in the sensor's frame: the inverse of [`turned`].
+fn turned_back(size: (u32, u32), orientation: Orientation) -> (u32, u32) {
+    turned(size, orientation)
 }
 
 /// The largest size with the aspect ratio of `width` by `height` that fits a
@@ -456,5 +570,350 @@ mod tests {
         assert_eq!((128, 43), thumbnail.dimensions());
         let difference = mean_difference(&reference(&path, 128), &thumbnail);
         assert!(difference < 3.0, "mean difference {difference}");
+    }
+
+    // ---- Orientation and the camera's embedded preview ----
+
+    fn jpeg_bytes(image: &DynamicImage) -> Vec<u8> {
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut buffer, image::ImageFormat::Jpeg)
+            .unwrap();
+        buffer.into_inner()
+    }
+
+    /// `jpeg` with an Exif segment: IFD0 carries `orientation`; with `preview`, IFD1 carries that JPEG as the
+    /// embedded thumbnail, with `preview_orientation` when given. Little-endian TIFF, as cameras write.
+    fn with_exif(
+        jpeg: &[u8],
+        orientation: u16,
+        preview: Option<&[u8]>,
+        preview_orientation: Option<u16>,
+    ) -> Vec<u8> {
+        fn entry(tiff: &mut Vec<u8>, tag: u16, kind: u16, value: u32) {
+            tiff.extend_from_slice(&tag.to_le_bytes());
+            tiff.extend_from_slice(&kind.to_le_bytes());
+            tiff.extend_from_slice(&1u32.to_le_bytes());
+            tiff.extend_from_slice(&value.to_le_bytes());
+        }
+        let mut tiff = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+        let ifd1_entries = preview.map_or(0, |_| 2 + usize::from(preview_orientation.is_some()));
+        let ifd1_offset = 8 + 2 + 12 + 4;
+        tiff.extend_from_slice(&1u16.to_le_bytes());
+        entry(&mut tiff, 0x0112, 3, u32::from(orientation));
+        tiff.extend_from_slice(
+            &(if preview.is_some() {
+                ifd1_offset as u32
+            } else {
+                0
+            })
+            .to_le_bytes(),
+        );
+        if let Some(bytes) = preview {
+            let data_offset = (ifd1_offset + 2 + ifd1_entries * 12 + 4) as u32;
+            tiff.extend_from_slice(&(ifd1_entries as u16).to_le_bytes());
+            if let Some(value) = preview_orientation {
+                entry(&mut tiff, 0x0112, 3, u32::from(value));
+            }
+            entry(&mut tiff, 0x0201, 4, data_offset);
+            entry(&mut tiff, 0x0202, 4, bytes.len() as u32);
+            tiff.extend_from_slice(&0u32.to_le_bytes());
+            tiff.extend_from_slice(bytes);
+        }
+        assert_eq!(&jpeg[..2], b"\xff\xd8");
+        let mut out = jpeg[..2].to_vec();
+        out.extend_from_slice(b"\xff\xe1");
+        out.extend_from_slice(&((2 + 6 + tiff.len()) as u16).to_be_bytes());
+        out.extend_from_slice(b"Exif\0\0");
+        out.extend_from_slice(&tiff);
+        out.extend_from_slice(&jpeg[2..]);
+        out
+    }
+
+    /// The thumbnail a full decode gives once the picture is turned the way `orientation` says.
+    fn oriented_reference(path: &Path, orientation: u16, size: u32) -> DynamicImage {
+        let mut image = image::open(path).unwrap();
+        image
+            .apply_orientation(image::metadata::Orientation::from_exif(orientation as u8).unwrap());
+        image.thumbnail(size, size)
+    }
+
+    fn solid(width: u32, height: u32, colour: [u8; 3]) -> DynamicImage {
+        DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb(colour)))
+    }
+
+    fn is_green(pixel: [u8; 3]) -> bool {
+        pixel[0] < 40 && pixel[1] > 200 && pixel[2] < 40
+    }
+
+    /// Phone and camera photos carry the sensor's picture plus an orientation tag; a thumbnail must be turned
+    /// the way the tag says, or a portrait photo shows on its side.
+    #[test]
+    fn a_rotated_jpeg_decoded_at_reduced_size_is_turned_upright() {
+        let dir = TempDir::new("rotated-reduced");
+        let path = dir.file("portrait.jpg");
+        std::fs::write(
+            &path,
+            with_exif(
+                &jpeg_bytes(&DynamicImage::ImageRgb8(picture(640, 480))),
+                6,
+                None,
+                None,
+            ),
+        )
+        .unwrap();
+
+        let thumbnail = thumbnail(&path, "jpg", 128);
+
+        assert_eq!((96, 128), thumbnail.dimensions());
+        let difference = mean_difference(&oriented_reference(&path, 6, 128), &thumbnail);
+        assert!(difference < 3.0, "mean difference {difference}");
+    }
+
+    #[test]
+    fn a_rotated_jpeg_decoded_in_full_is_turned_upright() {
+        let dir = TempDir::new("rotated-full");
+        let path = dir.file("upside-down.jpg");
+        std::fs::write(
+            &path,
+            with_exif(
+                &jpeg_bytes(&DynamicImage::ImageRgb8(picture(200, 150))),
+                3,
+                None,
+                None,
+            ),
+        )
+        .unwrap();
+
+        let thumbnail = thumbnail(&path, "jpg", 128);
+
+        assert_eq!((128, 96), thumbnail.dimensions());
+        let difference = mean_difference(&oriented_reference(&path, 3, 128), &thumbnail);
+        assert!(difference < 3.0, "mean difference {difference}");
+    }
+
+    /// The path for files the reduced decoder does not take (here CMYK) turns the picture too.
+    #[test]
+    fn a_rotated_jpeg_the_reduced_decoder_refuses_is_turned_upright() {
+        let dir = TempDir::new("rotated-cmyk");
+        let path = dir.file("cmyk.jpg");
+        std::fs::write(
+            &path,
+            with_exif(include_bytes!("testdata/cmyk.jpg"), 6, None, None),
+        )
+        .unwrap();
+
+        let decoded = decode(&path, "jpg", 32).unwrap();
+
+        // Decoded whole and turned a quarter turn. Compared before the JPEG encoding of the thumbnail: this
+        // fixture is noisy enough that chroma subsampling alone moves a 24-pixel-wide picture more than the
+        // tolerance, and the question here is only whether the picture was turned.
+        assert_eq!((240, 320), decoded.image.dimensions());
+        assert_eq!((240, 320), decoded.full_size);
+        let mut upright = image::open(&path).unwrap();
+        upright.apply_orientation(image::metadata::Orientation::Rotate90);
+        let difference = mean_difference(&upright, &decoded.image);
+        assert!(difference < 1.0, "mean difference {difference}");
+        assert_eq!((24, 32), thumbnail(&path, "jpg", 32).dimensions());
+    }
+
+    #[test]
+    fn a_mirrored_jpeg_is_mirrored_back() {
+        let dir = TempDir::new("mirrored");
+        let path = dir.file("mirrored.jpg");
+        std::fs::write(
+            &path,
+            with_exif(
+                &jpeg_bytes(&DynamicImage::ImageRgb8(picture(640, 480))),
+                2,
+                None,
+                None,
+            ),
+        )
+        .unwrap();
+
+        let thumbnail = thumbnail(&path, "jpg", 128);
+
+        assert_eq!((128, 96), thumbnail.dimensions());
+        let difference = mean_difference(&oriented_reference(&path, 2, 128), &thumbnail);
+        assert!(difference < 3.0, "mean difference {difference}");
+    }
+
+    /// Most camera JPEGs carry a small ready-made preview. When it is at least as large as the thumbnail, it
+    /// is the thumbnail: no decoding of the picture at all. The preview here is a different picture (solid
+    /// green) so the test can tell which one was used.
+    #[test]
+    fn a_large_enough_embedded_preview_is_used_as_the_thumbnail() {
+        let dir = TempDir::new("preview-used");
+        let path = dir.file("photo.jpg");
+        let preview = jpeg_bytes(&solid(160, 120, [0, 255, 0]));
+        std::fs::write(
+            &path,
+            with_exif(
+                &jpeg_bytes(&DynamicImage::ImageRgb8(picture(1600, 1200))),
+                1,
+                Some(&preview),
+                None,
+            ),
+        )
+        .unwrap();
+
+        let thumbnail = thumbnail(&path, "jpg", 128).to_rgb8();
+
+        // The size the picture itself would give, not the preview's own size.
+        assert_eq!((128, 96), thumbnail.dimensions());
+        assert!(
+            is_green(thumbnail.get_pixel(64, 48).0),
+            "{:?}",
+            thumbnail.get_pixel(64, 48).0
+        );
+        assert!(
+            is_green(thumbnail.get_pixel(2, 2).0),
+            "{:?}",
+            thumbnail.get_pixel(2, 2).0
+        );
+    }
+
+    #[test]
+    fn an_embedded_preview_smaller_than_the_thumbnail_is_not_used() {
+        let dir = TempDir::new("preview-small");
+        let path = dir.file("photo.jpg");
+        let preview = jpeg_bytes(&solid(160, 120, [0, 255, 0]));
+        std::fs::write(
+            &path,
+            with_exif(
+                &jpeg_bytes(&DynamicImage::ImageRgb8(picture(1600, 1200))),
+                1,
+                Some(&preview),
+                None,
+            ),
+        )
+        .unwrap();
+
+        let thumbnail = thumbnail(&path, "jpg", 256);
+
+        assert_eq!((256, 192), thumbnail.dimensions());
+        let difference = mean_difference(&reference(&path, 256), &thumbnail);
+        assert!(difference < 3.0, "mean difference {difference}");
+    }
+
+    /// Some cameras pad the preview of a 3:2 photo to 4:3 with black bars. A preview whose shape is not the
+    /// picture's is not the picture.
+    #[test]
+    fn an_embedded_preview_of_another_shape_is_not_used() {
+        let dir = TempDir::new("preview-shape");
+        let path = dir.file("photo.jpg");
+        let preview = jpeg_bytes(&solid(160, 120, [0, 255, 0]));
+        std::fs::write(
+            &path,
+            with_exif(
+                &jpeg_bytes(&DynamicImage::ImageRgb8(picture(1602, 1068))),
+                1,
+                Some(&preview),
+                None,
+            ),
+        )
+        .unwrap();
+
+        let thumbnail = thumbnail(&path, "jpg", 128);
+
+        assert_eq!((128, 85), thumbnail.dimensions());
+        let difference = mean_difference(&reference(&path, 128), &thumbnail);
+        assert!(difference < 3.0, "mean difference {difference}");
+    }
+
+    #[test]
+    fn a_damaged_embedded_preview_is_not_used() {
+        let dir = TempDir::new("preview-damaged");
+        let path = dir.file("photo.jpg");
+        std::fs::write(
+            &path,
+            with_exif(
+                &jpeg_bytes(&DynamicImage::ImageRgb8(picture(1600, 1200))),
+                1,
+                Some(b"not a jpeg"),
+                None,
+            ),
+        )
+        .unwrap();
+
+        let thumbnail = thumbnail(&path, "jpg", 128);
+
+        assert_eq!((128, 96), thumbnail.dimensions());
+        let difference = mean_difference(&reference(&path, 128), &thumbnail);
+        assert!(difference < 3.0, "mean difference {difference}");
+    }
+
+    /// The preview is stored the way the sensor saw it, like the picture: it is turned the same way.
+    #[test]
+    fn an_embedded_preview_is_turned_upright_too() {
+        let dir = TempDir::new("preview-rotated");
+        let path = dir.file("portrait.jpg");
+        let mut halves = RgbImage::from_pixel(160, 120, Rgb([0, 255, 0]));
+        for y in 0..120 {
+            for x in 80..160 {
+                halves.put_pixel(x, y, Rgb([0, 0, 255]));
+            }
+        }
+        let preview = jpeg_bytes(&DynamicImage::ImageRgb8(halves));
+        std::fs::write(
+            &path,
+            with_exif(
+                &jpeg_bytes(&DynamicImage::ImageRgb8(picture(1600, 1200))),
+                6,
+                Some(&preview),
+                None,
+            ),
+        )
+        .unwrap();
+
+        let thumbnail = thumbnail(&path, "jpg", 128).to_rgb8();
+
+        // Rotated 90 degrees clockwise: the left (green) half is now the top half.
+        assert_eq!((96, 128), thumbnail.dimensions());
+        assert!(
+            is_green(thumbnail.get_pixel(48, 20).0),
+            "top {:?}",
+            thumbnail.get_pixel(48, 20).0
+        );
+        let bottom = thumbnail.get_pixel(48, 108).0;
+        assert!(bottom[2] > 200 && bottom[1] < 40, "bottom {bottom:?}");
+    }
+
+    /// A preview with its own orientation tag follows that tag rather than the picture's.
+    #[test]
+    fn an_embedded_previews_own_orientation_wins() {
+        let dir = TempDir::new("preview-own-orientation");
+        let path = dir.file("photo.jpg");
+        let mut halves = RgbImage::from_pixel(160, 120, Rgb([0, 255, 0]));
+        for y in 0..120 {
+            for x in 80..160 {
+                halves.put_pixel(x, y, Rgb([0, 0, 255]));
+            }
+        }
+        let preview = jpeg_bytes(&DynamicImage::ImageRgb8(halves));
+        // The picture is upright; the preview says it is upside down.
+        std::fs::write(
+            &path,
+            with_exif(
+                &jpeg_bytes(&DynamicImage::ImageRgb8(picture(1600, 1200))),
+                1,
+                Some(&preview),
+                Some(3),
+            ),
+        )
+        .unwrap();
+
+        let thumbnail = thumbnail(&path, "jpg", 128).to_rgb8();
+
+        // Turned half a turn: the green half is now on the right.
+        assert_eq!((128, 96), thumbnail.dimensions());
+        assert!(
+            is_green(thumbnail.get_pixel(96, 48).0),
+            "right {:?}",
+            thumbnail.get_pixel(96, 48).0
+        );
+        let left = thumbnail.get_pixel(32, 48).0;
+        assert!(left[2] > 200 && left[1] < 40, "left {left:?}");
     }
 }

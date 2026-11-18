@@ -104,3 +104,27 @@ export function planReleaseVersion(root, input) {
     .replace(`SumaFile ${current.display} is Windows-only.`, `SumaFile ${next.display} is Windows-only.`));
   return { version: next, changes };
 }
+
+/**
+ * The published release for `tag`, or null when there is none. A draft has no tag yet, so the API does not find it
+ * by tag. `api` fetches an endpoint and throws on any failure; only "not found" means there is no release.
+ */
+export function findPublishedRelease(repository, tag, api) {
+  try {
+    return api(`repos/${repository}/releases/tags/${tag}`);
+  } catch (error) {
+    if (/HTTP 404/.test(error.message)) return null;
+    throw error;
+  }
+}
+
+/**
+ * Stops a release run whose tag is already published. The installer, its signature and the updater manifest of a
+ * published release are what people installed and what the updater verifies: a second run would replace them.
+ */
+export function requireUnpublished(tag, release) {
+  if (!release || release.draft) return;
+  throw new Error(`Release ${tag} is already published (${String(release.published_at).slice(0, 10)}). `
+    + 'A release run would replace the files people already installed. Bump the version instead; '
+    + 'to rebuild this version on purpose, delete the release or return it to draft first.');
+}

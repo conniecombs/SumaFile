@@ -67,6 +67,11 @@ fn cache_root() -> PathBuf {
     }
 }
 
+/// How thumbnails are rendered. Raise it when a rendering change should
+/// replace the thumbnails already cached: 2 turns photos the way their Exif
+/// orientation says, which 1 did not.
+const THUMBNAIL_FORMAT: u32 = 2;
+
 /// Computes the cache key for a given file path, modification time, file size,
 /// and requested thumbnail size.
 fn cache_key(path: &str, modified: SystemTime, size: u64, thumb_size: u32) -> String {
@@ -76,6 +81,9 @@ fn cache_key(path: &str, modified: SystemTime, size: u64, thumb_size: u32) -> St
         .unwrap_or(0);
 
     let mut hasher = Sha256::new();
+    hasher.update(b"format:");
+    hasher.update(THUMBNAIL_FORMAT.to_le_bytes());
+    hasher.update(b":");
     hasher.update(path.as_bytes());
     hasher.update(b":");
     hasher.update(modified_epoch.to_le_bytes());
@@ -344,6 +352,24 @@ mod tests {
         let k1 = cache_key(r"C:\test.jpg", t, 1234, 128);
         let k2 = cache_key(r"C:\test.jpg", t, 5678, 128);
         assert_ne!(k1, k2);
+    }
+
+    /// 1.1.2 and earlier cached thumbnails that ignored the photo's orientation. The key carries a format
+    /// version, so those entries are left behind instead of shown.
+    #[test]
+    fn cache_key_is_not_the_key_of_an_earlier_thumbnail_format() {
+        let t = SystemTime::UNIX_EPOCH;
+        let mut old = Sha256::new();
+        old.update(br"C:\test.jpg:");
+        old.update(0u64.to_le_bytes());
+        old.update(b":");
+        old.update(1234u64.to_le_bytes());
+        old.update(b":");
+        old.update(128u32.to_le_bytes());
+        assert_ne!(
+            hex::encode(old.finalize()),
+            cache_key(r"C:\test.jpg", t, 1234, 128)
+        );
     }
 
     #[test]

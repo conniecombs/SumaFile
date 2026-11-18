@@ -8,6 +8,35 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Thumbnails
+
+- Photos are turned the way their Exif orientation says. A portrait photo
+  from a phone or camera stores the sensor's landscape picture plus a tag
+  that says how to turn it; thumbnails ignored the tag and showed such photos
+  on their side. The thumbnail in the file grid, the preview pane's image and
+  the Properties picture are all made by the same code and are all upright
+  now. The disk cache key carries a format version, so thumbnails cached by
+  earlier versions are made afresh once rather than shown sideways.
+- The small preview most cameras embed in a JPEG is used as the thumbnail
+  when it is at least as large as the thumbnail asked for and has the
+  picture's shape. For the file grid's 128-pixel thumbnails that skips
+  decoding the photo entirely: under 1 ms instead of about 80 ms for a
+  24-megapixel photo (measured one thread, on a Linux server processor). A
+  preview padded to another shape, damaged, or smaller than the thumbnail is
+  not used. The preview pane and Properties ask for larger thumbnails than
+  cameras embed, so they still decode the photo at reduced size as in 1.1.2.
+
+### CI and releases
+
+- A release run stops at validation when its version is already published;
+  a draft can still be rebuilt.
+- Dependabot's NuGet updates: the three packages `docs/PLUGINS.md` pins for
+  plugin authors leave the grouped update, and major versions of `System.*`
+  and `Microsoft.Extensions.*` (the next .NET's) are ignored.
+- The Windows UI smoke waits for the state each step needs instead of fixed
+  delays in five places, and reports managed memory figures that can be
+  compared between runs (`liveManagedBytes`, `allocatedBytes`).
+
 ---
 
 ## [1.1.2] - prepared 2026-11-18

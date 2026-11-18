@@ -94,6 +94,12 @@ The release workflow will:
    publish after the Windows build succeeds.
 7. The separate `Release build` workflow only uploads an Actions artifact; it
    never creates or publishes a GitHub Release.
+8. A run stops at validation when its version is already published. The
+   installer, its signature and `latest-winui.json` of a published release are
+   what people installed and what the updater verifies, so a run never
+   replaces them. A draft can be rebuilt as often as needed. To rebuild a
+   published version on purpose, delete that release or return it to draft
+   first; otherwise bump the version.
 
 ### 5. Manual Release
 
@@ -107,6 +113,10 @@ You can also trigger a release manually:
 
 If `draft` is set to `false`, the workflow publishes the release after the
 Windows build succeeds.
+
+If the run fails in **Validate release version** with "already published",
+`main` still holds a version that has been released: merge a version bump and
+start a new run.
 
 ## Release Artifacts
 
@@ -145,7 +155,7 @@ See [`docs/UPDATER_RELEASE.md`](../docs/UPDATER_RELEASE.md) for the operational 
 |----------|---------|---------|
 | `ci.yml` | Push/PR to `main`, manual dispatch | Rust format, Clippy, tests, repo checks, Rust dependency audit, service build, WinUI tests |
 | `release.yml` | Tag push (`v*`), manual dispatch | Version validation, release quality gates, WinUI/NSIS/MSI packaging, asset upload, automatic publishing for tag pushes; manual publish opt-in |
-| `dependabot.yml` | Weekly schedule | Dependency update pull requests for Cargo, npm, and GitHub Actions |
+| `dependabot.yml` | Weekly schedule | Dependency update pull requests for Cargo, npm, GitHub Actions, and NuGet |
 
 ## Code Signing
 

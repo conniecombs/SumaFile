@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { findNugetLocks, parseVersion, planReleaseVersion, readReleaseVersion, readReleaseNotes } from '../lib/release-version.mjs';
+import { findNugetLocks, findPublishedRelease, parseVersion, planReleaseVersion, readReleaseVersion, readReleaseNotes, requireUnpublished } from '../lib/release-version.mjs';
 
 const sourceRoot = resolve(import.meta.dirname, '../..');
 const nugetLocks = findNugetLocks(sourceRoot);
@@ -156,4 +156,25 @@ test('manual releases remain drafts by default and can explicitly publish', () =
   const manual = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF_TYPE: 'branch', GITHUB_REF_NAME: 'main' };
   assert.equal(resolveWorkflowRelease({ ...manual, RELEASE_DRAFT: '' }).draft, 'true');
   assert.equal(resolveWorkflowRelease({ ...manual, RELEASE_DRAFT: 'false' }).draft, 'false');
+});
+
+test('a release run refuses a tag that is already published', () => {
+  // Its installer, signature and updater manifest are what people installed and what the updater verifies.
+  const published = { tag_name: 'v1.1.2', draft: false, published_at: '2026-11-18T17:00:00Z' };
+  assert.throws(() => requireUnpublished('v1.1.2', published), /v1\.1\.2 is already published \(2026-11-18\)/);
+});
+
+test('a release run may create a release or refresh a draft', () => {
+  assert.doesNotThrow(() => requireUnpublished('v1.1.3', null));
+  assert.doesNotThrow(() => requireUnpublished('v1.1.3', { tag_name: 'v1.1.3', draft: true, published_at: null }));
+});
+
+test('only "not found" counts as no published release', () => {
+  const asked = [];
+  assert.deepEqual(findPublishedRelease('owner/repo', 'v1.1.2', endpoint => { asked.push(endpoint); return { tag_name: 'v1.1.2' }; }),
+    { tag_name: 'v1.1.2' });
+  assert.deepEqual(asked, ['repos/owner/repo/releases/tags/v1.1.2']);
+  assert.equal(findPublishedRelease('owner/repo', 'v9.9.9', () => { throw new Error('gh api failed: gh: Not Found (HTTP 404)'); }), null);
+  // An outage must stop the run, not wave it through.
+  assert.throws(() => findPublishedRelease('owner/repo', 'v9.9.9', () => { throw new Error('gh api failed: HTTP 503'); }), /503/);
 });
