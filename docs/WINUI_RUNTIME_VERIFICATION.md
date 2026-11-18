@@ -105,6 +105,11 @@ both CI workflows retain it even when a final report could not be written.
 First-row latency is measured from navigation until layout produces a
 container for the first row. Final navigation/render time includes a 200 ms
 settling interval. Working set is a process snapshot, not a peak measurement.
+Of the managed memory figures, compare `liveManagedBytes` (the heap after a
+full collection) and `allocatedBytes` (allocated process-wide from navigating
+until the listing settled) between runs. `managedBytes` is the heap at that
+moment, garbage included, and moves by megabytes with where the collector is
+in its cycle.
 Heartbeat gaps measure dispatcher scheduling delays, not display frame times.
 Use the same machine, configuration and fixture size for before/after results.
 

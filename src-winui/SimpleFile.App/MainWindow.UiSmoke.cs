@@ -88,6 +88,7 @@ public sealed partial class MainWindow
                 workspace.SetFileListView(PaneId.Primary, "list");
                 var expected = Directory.GetFiles(folder).Length;
                 double? firstPaint = null;
+                var allocatedAtStart = GC.GetTotalAllocatedBytes();
                 var timer = Stopwatch.StartNew();
                 void OnLayout(object? sender, object args)
                 {
@@ -101,13 +102,19 @@ public sealed partial class MainWindow
                     await SmokeWaitAsync(() => PrimaryFiles.Count == expected && firstPaint is not null, "listing and first painted row");
                     await Task.Delay(200);
                     var navigationMs = timer.Elapsed.TotalMilliseconds;
+                    var allocatedBytes = GC.GetTotalAllocatedBytes() - allocatedAtStart;
                     var realized = SmokeDescendants<ListViewItem>(PrimaryFileList).Count();
                     if (!baseline) SmokeAssert(realized < 1000 && realized < expected / 2, $"List view realized {realized} of {expected} rows");
                     await SmokeCheckListAsync(PrimaryFileList, baseline);
                     using var process = Process.GetCurrentProcess();
+                    // managedBytes is the heap at this moment, garbage included: it moves with where the collector
+                    // happens to be in its cycle, so two runs can differ by megabytes with nothing kept alive.
+                    // liveManagedBytes (after a full collection) and allocatedBytes (process-wide, from navigating
+                    // until the listing settled) are the figures to compare between runs.
+                    var managedBytes = GC.GetTotalMemory(false);
                     results.Add(new { scenario = "large-folder", entries = expected, firstPaintMs = firstPaint,
                         navigationMs, realizedRows = realized, workingSetBytes = process.WorkingSet64,
-                        managedBytes = GC.GetTotalMemory(false) });
+                        managedBytes, liveManagedBytes = GC.GetTotalMemory(true), allocatedBytes });
                 }
                 finally { PrimaryFileList.LayoutUpdated -= OnLayout; }
 
