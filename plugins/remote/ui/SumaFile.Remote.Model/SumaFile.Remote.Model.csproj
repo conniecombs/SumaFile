@@ -16,6 +16,6 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Compile-only: CommunityToolkit.Mvvm is a shared prefix in PluginLoadContext, so the host's copy loads. -->
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" ExcludeAssets="runtime" PrivateAssets="all" />
   </ItemGroup>
 </Project>
