@@ -340,7 +340,7 @@ public sealed partial class MainWindow
         await ShowPropertiesForRowAsync(workspace, row);
     }
 
-    private async Task ShowPropertiesForRowAsync(ExplorerWorkspace workspace, FileRow row, bool measureNow = false)
+    private async Task ShowPropertiesForRowAsync(ExplorerWorkspace workspace, FileRow row)
     {
         var fileOps = workspace.FileOps;
         if (fileOps is null)
@@ -464,30 +464,55 @@ public sealed partial class MainWindow
 
         if (row.IsDir)
         {
-            // Walking a large tree can take a while, so the totals are counted on request (or at once
-            // when the Folder metrics command opened the dialog) and the walk stops when the dialog closes.
+            // The count starts as the dialog opens. Walking a large tree can take a while, so the one button stops
+            // the walk (and starts it again once stopped or failed), and closing the dialog stops it too.
             var metricsHost = PropertiesSection(rows, "Contents");
             var metricsStatus = new TextBlock
             {
-                Text = "Counts every file and folder inside, including subfolders.",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Brush("SfTextMutedBrush"),
             };
-            var metricsButton = new Button { Content = "Calculate totals", HorizontalAlignment = HorizontalAlignment.Left };
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(metricsButton, "Properties.CalculateTotals");
+            var metricsButton = new Button { HorizontalAlignment = HorizontalAlignment.Left };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(metricsButton, "Properties.FolderCount");
             metricsHost.Children.Add(metricsButton);
             metricsHost.Children.Add(metricsStatus);
 
             CancellationTokenSource? metricsCts = null;
-            void Measure()
+            void Show(FolderCountState state, string? error = null)
             {
-                metricsButton.IsEnabled = false;
-                metricsStatus.Text = "Calculating…";
-                metricsCts = BeginUtilityOperation("PropertiesFolderMetrics");
-                _ = LoadFolderMetricsIntoAsync(fileOps, row.Path, metricsHost, metricsStatus, metricsButton, metricsCts);
+                var (status, button) = FolderCountPresentation.For(state, error);
+                metricsStatus.Text = status;
+                metricsButton.Content = button;
             }
 
-            metricsButton.Click += (_, _) => Measure();
+            void Start()
+            {
+                Show(FolderCountState.Counting);
+                var cts = BeginUtilityOperation("PropertiesFolderMetrics");
+                metricsCts = cts;
+                _ = LoadFolderMetricsIntoAsync(fileOps, row.Path, metricsHost, metricsStatus, metricsButton, cts,
+                    onStopped: () => { metricsCts = null; Show(FolderCountState.Stopped); },
+                    onFailed: message => { metricsCts = null; Show(FolderCountState.Failed, message); });
+            }
+
+            metricsButton.Click += (_, _) =>
+            {
+                if (metricsCts is { } running)
+                {
+                    try
+                    {
+                        running.Cancel();
+                        return;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // The walk already finished and the registry disposed its token source.
+                        metricsCts = null;
+                    }
+                }
+
+                Start();
+            };
             dialog.Closed += (_, _) =>
             {
                 try
@@ -499,10 +524,7 @@ public sealed partial class MainWindow
                     // The lookup already finished and the registry disposed its token source.
                 }
             };
-            if (measureNow)
-            {
-                Measure();
-            }
+            Start();
         }
 
         await DialogHost.ShowAsync(dialog);
@@ -561,13 +583,16 @@ public sealed partial class MainWindow
         StackPanel host,
         TextBlock status,
         Button button,
-        CancellationTokenSource cts)
+        CancellationTokenSource cts,
+        Action onStopped,
+        Action<string> onFailed)
     {
         try
         {
             var metrics = await fileOps.GetFolderMetricsAsync(path, cts.Token);
             if (cts.IsCancellationRequested)
             {
+                onStopped();
                 return;
             }
 
@@ -577,12 +602,13 @@ public sealed partial class MainWindow
         }
         catch (OperationCanceledException)
         {
+            // Stopped by the button, or by the dialog closing (then nobody sees the words).
+            onStopped();
         }
         catch (Exception exception)
         {
-            // Leave the button so the count can be tried again.
-            status.Text = exception.Message;
-            button.IsEnabled = true;
+            // The button stays, so the count can be tried again.
+            onFailed(exception.Message);
         }
         finally
         {
@@ -655,7 +681,7 @@ public sealed partial class MainWindow
         if (folders.Length == 1)
         {
             // One folder: Properties measures it (Quick Look no longer shows folder metrics).
-            await ShowPropertiesForRowAsync(workspace, folders[0], measureNow: true);
+            await ShowPropertiesForRowAsync(workspace, folders[0]);
             return;
         }
 
