@@ -10,6 +10,34 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
+## [1.1.2] - prepared 2026-11-18
+
+See the [v1.1.2 release notes](RELEASE_1.1.2.md).
+
+### Thumbnails
+
+- A JPEG is decoded straight to a half, a quarter or an eighth of its size
+  when the thumbnail is that much smaller than the picture. The file service
+  used to decode the whole photo and then shrink it; decoding was about 80%
+  of the time a new thumbnail took. The reduced decode keeps at least two
+  source pixels for each thumbnail pixel.
+- Thumbnails are scaled with SIMD (`fast_image_resize`): a Lanczos filter
+  for sources up to 2.5 megapixels, a box average above that.
+- Measured on generated photos at 128 pixels, one thread: a 24-megapixel
+  JPEG went from 209 ms to 89 ms, a 12-megapixel JPEG from 111 ms to 47 ms,
+  a 12-megapixel PNG from 120 ms to 99 ms. Progressive JPEGs gain about 20%.
+- Thumbnail sizes are unchanged. CMYK and 16-bit JPEGs, damaged files,
+  pictures smaller than the thumbnail and images deeper than 8 bits per
+  channel are handled as before. Thumbnails already in the disk cache are
+  kept.
+
+### Dependencies
+
+- Added the Rust crates `fast_image_resize` 6.1 and `jpeg-decoder` 0.3
+  (without its worker threads), both MIT or Apache-2.0.
+
+---
+
 ## [1.1.1] - prepared 2026-11-17
 
 See the [v1.1.1 release notes](RELEASE_1.1.1.md).
