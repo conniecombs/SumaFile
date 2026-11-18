@@ -157,9 +157,12 @@ public class ExplorerWorkspaceTests
         Assert.DoesNotContain(workspace.VisibleEntriesFor(PaneId.Secondary), entry => entry.Name == "notes.txt");
     }
 
+    // An eventual-state wait, not a speed bound: the continuations it waits for run on the thread pool, which under
+    // full-suite load on a CI runner can take seconds to grow (InvalidateDecorations_SlowSourceThatAnswersNothing
+    // timed out at 2 s once on windows-2025). A passing test still finishes as soon as the state arrives.
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         while (!predicate())
         {
             await Task.Delay(20, timeout.Token);
