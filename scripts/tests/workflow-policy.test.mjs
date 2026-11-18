@@ -84,3 +84,32 @@ test('the dispatched merge-gate handoff stays narrow and gated', () => {
   assert.ok(errors.some(error => error.includes('successful required gate')));
   assert.ok(errors.some(error => error.includes('dispatched CI run id')));
 });
+
+test('a release run must check that its tag is not already published', () => {
+  const { workflows, dependabot } = source();
+  const validate = workflows['release.yml'].jobs.validate;
+  validate.steps = validate.steps.filter(step => !step.run?.includes('--require-unpublished'));
+  assert.ok(validateWorkflows(workflows, dependabot).some(error => error.includes('published release')));
+});
+test('the guard runs before anything is built', () => {
+  const { workflows, dependabot } = source();
+  const steps = workflows['release.yml'].jobs.validate.steps;
+  const guard = steps.find(step => step.run?.includes('--require-unpublished'));
+  assert.equal(guard.env.RELEASE_TAG, '${{ steps.version.outputs.version }}');
+  assert.ok(steps.indexOf(guard) > steps.findIndex(step => step.id === 'version'));
+  assert.deepEqual(validateWorkflows(workflows, dependabot), []);
+});
+test('Dependabot keeps the plugin contract packages out of the grouped update', () => {
+  // docs/PLUGINS.md pins these three for plugin authors; a bump needs that table edited by a person, so a group that
+  // contains one can never pass CI on its own.
+  const { workflows, dependabot } = source();
+  const nuget = dependabot.updates.find(update => update['package-ecosystem'] === 'nuget');
+  nuget.groups['minor-and-patch']['exclude-patterns'] = ['Microsoft.WindowsAppSDK'];
+  assert.ok(validateWorkflows(workflows, dependabot).some(error => error.includes('plugin contract packages')));
+});
+test('Dependabot does not propose the next .NET major for runtime-versioned packages', () => {
+  const { workflows, dependabot } = source();
+  const nuget = dependabot.updates.find(update => update['package-ecosystem'] === 'nuget');
+  nuget.ignore = nuget.ignore.filter(rule => rule['dependency-name'] !== 'System.*');
+  assert.ok(validateWorkflows(workflows, dependabot).some(error => error.includes('next .NET major')));
+});

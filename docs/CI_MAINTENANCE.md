@@ -39,6 +39,18 @@ NuGet lockfiles are committed for all four projects; CI restores in locked mode.
 Run `dotnet restore src-winui/SimpleFile.sln --force-evaluate` locally when
 intentionally updating package references, then review the lockfile changes.
 
+Two NuGet rules keep Dependabot's pull requests mergeable without a person:
+
+- `CommunityToolkit.Mvvm`, `Microsoft.Windows.SDK.BuildTools` and
+  `Microsoft.WindowsAppSDK` are left out of the grouped update. `docs/PLUGINS.md`
+  pins their versions for plugin authors and
+  `PluginsDoc_PinnedVersions_MatchTheVersionsTheHostBuildsWith` holds that table
+  to the lock file, so a bump of one needs the table edited too. Each arrives as
+  its own pull request, red until the table's version is updated on its branch.
+- Major versions of `System.*` and `Microsoft.Extensions.*` are ignored. Those
+  packages follow the .NET runtime's version, so their next major is for the
+  next .NET. Remove the rule when the app moves to that .NET.
+
 Rust, Node, and .NET have one version source each: `rust-toolchain.toml`,
 `.node-version`, and `global.json`. CI uses those sources and `windows-2025`.
 The runner image still receives upstream servicing; pinning its OS label does

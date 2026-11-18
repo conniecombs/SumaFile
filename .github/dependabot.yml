@@ -47,6 +47,19 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+        # docs/PLUGINS.md pins these three for plugin authors, and a test holds the table to the lock file. A bump
+        # needs that table edited by a person, so each comes as its own pull request and never blocks the group.
+        exclude-patterns:
+          - "CommunityToolkit.Mvvm"
+          - "Microsoft.Windows.SDK.BuildTools"
+          - "Microsoft.WindowsAppSDK"
+    # These follow the .NET runtime's version: their next major is for the next .NET, not for this app's.
+    # Remove both rules when the app moves to that .NET.
+    ignore:
+      - dependency-name: "System.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
     labels: ["dependencies", "dotnet"]
 
 

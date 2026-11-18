@@ -97,6 +97,7 @@ export function validateWorkflows(workflows, dependabot) {
   check(release?.on?.workflow_dispatch?.inputs?.version?.required === false, 'Release: manual version must be optional');
   job('release.yml', 'validate');
   command('release.yml', 'validate', /^node scripts\/release-version\.mjs --resolve$/, 'manifest-derived release version');
+  command('release.yml', 'validate', /^node scripts\/release-version\.mjs --require-unpublished$/, 'published release guard');
   needs('release.yml', 'checks', ['validate']);
   needs('release.yml', 'build', ['validate', 'checks']);
   needs('release.yml', 'publish', ['validate', 'build']);
@@ -165,6 +166,16 @@ export function validateWorkflows(workflows, dependabot) {
   command('maintenance.yml', 'prepare', /^node scripts\/publish-maintenance\.mjs$/, 'bounded PR publication');
   for (const [ecosystem, directory] of [['cargo', '/'], ['github-actions', '/'], ['npm', '/'], ['nuget', '/src-winui']]) {
     check(dependabot?.updates?.some(update => update['package-ecosystem'] === ecosystem && update.directory === directory), `Dependabot: missing ${ecosystem}`);
+  }
+  const nuget = dependabot?.updates?.find(update => update['package-ecosystem'] === 'nuget');
+  const ungrouped = list(nuget?.groups?.['minor-and-patch']?.['exclude-patterns']);
+  // The packages docs/PLUGINS.md pins for plugin authors (PluginSharedAssembliesDocTests holds the table to the lock file).
+  for (const name of ['CommunityToolkit.Mvvm', 'Microsoft.Windows.SDK.BuildTools', 'Microsoft.WindowsAppSDK']) {
+    check(ungrouped.includes(name), `Dependabot: keep the plugin contract packages out of the NuGet group (${name})`);
+  }
+  for (const family of ['System.*', 'Microsoft.Extensions.*']) {
+    check(list(nuget?.ignore).some(rule => rule['dependency-name'] === family
+      && list(rule['update-types']).includes('version-update:semver-major')), `Dependabot: ${family} must not propose the next .NET major`);
   }
   return findings;
 }

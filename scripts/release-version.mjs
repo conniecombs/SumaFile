@@ -1,6 +1,7 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { planReleaseVersion, readReleaseVersion, readReleaseNotes } from './lib/release-version.mjs';
+import { githubApi } from './lib/github.mjs';
+import { findPublishedRelease, planReleaseVersion, readReleaseVersion, readReleaseNotes, requireUnpublished } from './lib/release-version.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const args = process.argv.slice(2);
@@ -15,6 +16,12 @@ if (args.includes('--resolve')) {
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT,
     `version=${version.tag}\nprerelease=${version.prerelease}\ndraft=${draft}\nnotes=${notes}\n`);
   console.log(JSON.stringify({ ...version, draft, notes }));
+} else if (args.includes('--require-unpublished')) {
+  const tag = process.env.RELEASE_TAG?.trim() || readReleaseVersion(root).tag;
+  const repository = process.env.GITHUB_REPOSITORY;
+  if (!repository) throw new Error('GITHUB_REPOSITORY is required');
+  requireUnpublished(tag, findPublishedRelease(repository, tag, githubApi));
+  console.log(`${tag} is not published.`);
 } else {
   const input = args.find(arg => !arg.startsWith('--'));
   if (!input) throw new Error('Usage: node scripts/release-version.mjs VERSION [--write] (preview by default)');
