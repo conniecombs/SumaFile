@@ -8,6 +8,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+---
+
+## [1.1.3] - prepared 2026-11-18
+
+See the [v1.1.3 release notes](RELEASE_1.1.3.md).
+
 ### Properties
 
 - A folder's Properties dialog counts its files, folders and size through

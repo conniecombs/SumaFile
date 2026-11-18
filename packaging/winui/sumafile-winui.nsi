@@ -10,7 +10,7 @@ Unicode True
   !error "VERSION must be defined."
 !endif
 !ifndef NUMERIC_VERSION
-  !define NUMERIC_VERSION "1.1.2"
+  !define NUMERIC_VERSION "1.1.3"
 !endif
 !ifndef OUTFILE
   !error "OUTFILE must be defined."
