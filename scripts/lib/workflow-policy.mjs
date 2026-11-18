@@ -164,6 +164,10 @@ export function validateWorkflows(workflows, dependabot) {
   check(action(maintenance?.jobs?.prepare, 'actions/checkout')?.with?.ref === '${{ needs.assess.outputs.source }}', 'Maintenance repair must use the assessed default-branch commit');
   command('maintenance.yml', 'assess', /^node scripts\/plan-maintenance\.mjs$/, 'bounded failure classification');
   command('maintenance.yml', 'prepare', /^node scripts\/publish-maintenance\.mjs$/, 'bounded PR publication');
+  check(list(maintenance?.on?.workflow_dispatch?.inputs?.recipe?.options).includes('nuget-locks'), 'Maintenance: nuget-locks recipe required');
+  check(action(maintenance?.jobs?.prepare, 'actions/setup-dotnet')?.with?.['global-json-file'] === 'global.json', 'Maintenance: lock-file repair needs the pinned .NET SDK');
+  command('maintenance.yml', 'prepare', /^node scripts\/fetch-dependabot-proposal\.mjs$/, 'Dependabot proposal read');
+  check(action(merge?.jobs?.automerge, 'actions/setup-dotnet')?.with?.['global-json-file'] === 'global.json', 'Merge gate: lock-file verification needs the pinned .NET SDK');
   for (const [ecosystem, directory] of [['cargo', '/'], ['github-actions', '/'], ['npm', '/'], ['nuget', '/src-winui']]) {
     check(dependabot?.updates?.some(update => update['package-ecosystem'] === ecosystem && update.directory === directory), `Dependabot: missing ${ecosystem}`);
   }

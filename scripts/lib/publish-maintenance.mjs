@@ -3,8 +3,13 @@ import { limits, validateRepairFiles } from './maintenance-policy.mjs';
 
 // The API is injected so tests exercise the complete publication/recovery path
 // without touching GitHub. No push, approval or merge happens in this function.
-export function publishMaintenance({ api, repository, source, recipe, files }) {
+export function publishMaintenance({ api, repository, source, recipe, files, dependabot }) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || !/^[a-f0-9]{40}$/.test(source)) throw new Error('Invalid source');
+  if (recipe === 'nuget-locks' && !(Number.isInteger(dependabot?.number) && /^[a-f0-9]{40}$/.test(dependabot?.sha ?? ''))) {
+    throw new Error('A nuget-locks repair needs its Dependabot provenance (pull request number and head)');
+  }
+  const provenance = dependabot ? `\nSumaFile-Dependabot: ${dependabot.number}@${dependabot.sha}` : '';
+  const supersedes = dependabot ? `\n\nSupersedes #${dependabot.number}: the same package versions, with the lock files of every project that references the updated ones restored. Dependabot closes #${dependabot.number} once this merges.` : '';
   if (!validateRepairFiles(recipe, files) || files.some(file => typeof file.content !== 'string'
       || Buffer.byteLength(file.content) > limits.fileBytes || file.content.includes('\0'))) throw new Error('Repair exceeds the allowlist or size limits');
   const repo = `repos/${repository}`;
@@ -30,7 +35,7 @@ export function publishMaintenance({ api, repository, source, recipe, files }) {
     if (commit.tree.sha !== tree.sha || commit.parents.length !== 1 || commit.parents[0].sha !== source) throw new Error('Existing branch does not match this proposal');
   } else {
     const commit = api(`${repo}/git/commits`, { method: 'POST', body: {
-      message: `Maintain ${recipe}\n\nSumaFile-Maintenance: ${recipe}\nSumaFile-Source: ${source}`,
+      message: `Maintain ${recipe}\n\nSumaFile-Maintenance: ${recipe}\nSumaFile-Source: ${source}${provenance}`,
       tree: tree.sha, parents: [source],
     } });
     api(`${repo}/git/refs`, { method: 'POST', body: { ref: `refs/heads/${branch}`, sha: commit.sha } });
@@ -38,7 +43,7 @@ export function publishMaintenance({ api, repository, source, recipe, files }) {
   let pr;
   try { pr = api(`${repo}/pulls`, { method: 'POST', body: {
     title: `Maintenance: ${recipe}`, head: branch, base: 'main',
-    body: `Applies the bounded ${recipe} recipe to main at ${source}.\n\nCI must validate this exact head, including Windows UI and installer checks. Automatic merging also requires enforced, strict branch protection. Release version changes require human review.`,
+    body: `Applies the bounded ${recipe} recipe to main at ${source}.\n\nCI must validate this exact head, including Windows UI and installer checks. Automatic merging also requires enforced, strict branch protection. Release version changes require human review.${supersedes}`,
   } });
   } catch (error) {
     if (/GitHub Actions is not permitted to create or approve pull requests/i.test(error.message)) {

@@ -50,6 +50,20 @@ Two NuGet rules keep Dependabot's pull requests mergeable without a person:
 - Major versions of `System.*` and `Microsoft.Extensions.*` are ignored. Those
   packages follow the .NET runtime's version, so their next major is for the
   next .NET. Remove the rule when the app moves to that .NET.
+  `npm run check:dotnet-packages` holds the project files to the same rule.
+
+Dependabot regenerates the lock file of the project whose package it bumps,
+but a lock file also records the dependencies of every project it references,
+so the referencing projects (the App, for a Core bump) fail CI's locked restore
+with NU1004. That failure is repaired by the `nuget-locks` maintenance recipe:
+it applies the pull request's package versions to current main, runs the
+solution-wide forced restore, and proposes the result as a maintenance pull
+request that supersedes Dependabot's (which Dependabot then closes). Only
+version attributes are taken from the pull request; its code never runs. The
+merge gate replays the restore from the same Dependabot head before merging.
+Restoring on Linux with `EnableWindowsTargeting` reproduces the Windows lock
+files byte for byte, which is what makes the replay possible on the ordinary
+runners.
 
 Rust, Node, and .NET have one version source each: `rust-toolchain.toml`,
 `.node-version`, and `global.json`. CI uses those sources and `windows-2025`.
@@ -92,11 +106,13 @@ not proof of an identical root cause.
 | Current main reports stale IPC/Open With generated files | Regenerate from existing schemas and propose a repair PR |
 | Daily security check or an audit-only failure on a current same-repository branch | Re-audit trusted current main and propose Cargo patch updates |
 | Weekly toolchain check | Propose stable updates within current major versions |
+| A Dependabot NuGet branch fails the locked restore (NU1004) | Apply its package versions to current main, restore every lock file and propose a superseding PR |
 | Explicit release-version preparation | Propose a consistent version change; human merge required |
 | PR code failure, old main failure, fork, mixed security/compiler/test failure, missing logs, or unknown cause | Record the diagnosis in the workflow summary and fail the assessment for attention |
 
 Write-capable jobs only check out an assessed main commit. They never execute
-PR code. Repair proposals are restricted to existing files in recipe-specific
+PR code (the `nuget-locks` recipe reads a Dependabot pull request's version
+attributes, nothing else). Repair proposals are restricted to existing files in recipe-specific
 allowlists, at most 30 files, 1,500 changed lines, and 1 MB per file. They cannot
 delete files, alter tests or workflows as an incidental repair, or add advisory
 exceptions. An identical proposal is deduplicated even if its PR was closed.

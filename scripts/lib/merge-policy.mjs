@@ -17,7 +17,8 @@ export function dependencyUpdateType(message) {
 
 export function safeDependencyFile(file) {
   if (file.status !== 'modified' || !file.patch) return false;
-  if (['Cargo.lock', 'package-lock.json'].includes(file.filename) || /^src-winui\/[^/]+\/packages\.lock\.json$/.test(file.filename)) return true;
+  if (['Cargo.lock', 'package-lock.json'].includes(file.filename) || /^(?:src-winui|plugins\/(?:git|remote)\/ui|templates\/sumafile-plugin\/ui)\/[^/]+\/packages\.lock\.json$/.test(file.filename)
+      || file.filename === 'src-winui/SimpleFile.Tests/Fixtures/HelloPlugin/packages.lock.json') return true;
   const changes = file.patch.split('\n').filter(line => /^[+-](?![+-])/.test(line)).map(line => line.slice(1));
   if (!changes.length) return false;
   const sameApartFromVersions = normalize => {
@@ -31,7 +32,7 @@ export function safeDependencyFile(file) {
       .map(line => line.slice(1).trim().replace(/@[^\s]+/, '@VERSION')).sort();
     return JSON.stringify(normalized('+')) === JSON.stringify(normalized('-'));
   }
-  if (/^src-winui\/[^/]+\/[^/]+\.csproj$/.test(file.filename)) {
+  if (/^(?:src-winui|plugins\/(?:git|remote)\/ui|templates\/sumafile-plugin\/ui)\/[^/]+\/[^/]+\.csproj$/.test(file.filename)) {
     return changes.every(line => /^\s*<PackageReference\s+Include="[\w.]+"\s+Version="[\d.]+"\s*(?:\/>|>)\s*$/.test(line))
       && sameApartFromVersions(line => line.replace(/Version="[\d.]+"/, 'Version="VERSION"'));
   }

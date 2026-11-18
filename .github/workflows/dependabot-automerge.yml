@@ -43,6 +43,10 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
+      - name: Setup the pinned .NET SDK for lock-file repair verification
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
       - name: Verify the current PR and merge eligible dependencies
         run: node scripts/automerge-dependencies.mjs
         env:

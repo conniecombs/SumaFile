@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { githubApi } from './lib/github.mjs';
 import { publishMaintenance } from './lib/publish-maintenance.mjs';
+import { proposalFile } from './lib/nuget-locks.mjs';
 
 const git = args => execFileSync('git', args, { encoding: 'utf8' }).trim();
 const source = process.env.MAINTENANCE_SOURCE;
@@ -14,5 +15,7 @@ const files = diff.split('\n').map(line => {
   const [additions, deletions, filename] = line.split('\t');
   return { filename, status: 'modified', additions: Number(additions), deletions: Number(deletions), content: readFileSync(filename, 'utf8') };
 });
+const recipe = process.env.MAINTENANCE_RECIPE;
+const dependabot = recipe === 'nuget-locks' ? (({ number, sha }) => ({ number, sha }))(JSON.parse(readFileSync(proposalFile, 'utf8'))) : undefined;
 console.log(JSON.stringify(publishMaintenance({ api: githubApi, repository: process.env.GITHUB_REPOSITORY,
-  source, recipe: process.env.MAINTENANCE_RECIPE, files }), null, 2));
+  source, recipe, files, dependabot }), null, 2));

@@ -11,10 +11,14 @@ on:
       recipe:
         description: Bounded maintenance recipe
         type: choice
-        options: [security, toolchains, generated, rustfmt, release]
+        options: [security, toolchains, generated, rustfmt, release, nuget-locks]
         default: security
       version:
         description: Version for release preparation only (does not publish a release)
+        type: string
+        required: false
+      pr:
+        description: Dependabot pull request number, for nuget-locks only
         type: string
         required: false
 permissions:
@@ -33,6 +37,7 @@ jobs:
       source: ${{ steps.plan.outputs.source }}
       run_id: ${{ steps.plan.outputs.run_id }}
       version: ${{ steps.plan.outputs.version }}
+      pr: ${{ steps.plan.outputs.pr }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -80,6 +85,7 @@ jobs:
       MAINTENANCE_RECIPE: ${{ needs.assess.outputs.recipe }}
       MAINTENANCE_SOURCE: ${{ needs.assess.outputs.source }}
       RELEASE_VERSION: ${{ needs.assess.outputs.version }}
+      MAINTENANCE_PR: ${{ needs.assess.outputs.pr }}
     steps:
       - name: Checkout assessed default-branch commit
         uses: actions/checkout@v7
@@ -96,6 +102,18 @@ jobs:
         with:
           tool: cargo-audit
       - run: npm ci --ignore-scripts
+      - name: Setup the pinned .NET SDK for lock-file repairs
+        if: env.MAINTENANCE_RECIPE == 'nuget-locks'
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      # The recipe runs without a token; this step reads the Dependabot pull request with one and leaves the
+      # proposal under target/ for it. Only package versions are taken from the pull request.
+      - name: Read the Dependabot proposal at its current head
+        if: env.MAINTENANCE_RECIPE == 'nuget-locks'
+        run: node scripts/fetch-dependabot-proposal.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Apply the bounded recipe
         run: node scripts/prepare-maintenance.mjs
       - name: Check generated proposal

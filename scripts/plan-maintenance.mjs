@@ -25,15 +25,20 @@ if (process.env.GITHUB_EVENT_NAME === 'workflow_run') {
   plan.run_id = String(run.id);
 } else {
   const recipe = event.inputs?.recipe ?? (event.schedule === '30 9 * * 1' ? 'toolchains' : 'security');
-  if (!['toolchains', 'release', 'rustfmt', 'generated', 'security'].includes(recipe)) throw new Error('Unsupported maintenance recipe');
+  if (!['toolchains', 'release', 'rustfmt', 'generated', 'security', 'nuget-locks'].includes(recipe)) throw new Error('Unsupported maintenance recipe');
   if (recipe === 'release') parseVersion(event.inputs?.version ?? '');
   plan = { action: 'prepare', recipe, reason: `${recipe} maintenance requested`, version: event.inputs?.version ?? '' };
+  if (recipe === 'nuget-locks') {
+    const pr = Number(event.inputs?.pr);
+    if (!Number.isInteger(pr) || pr <= 0) throw new Error('nuget-locks needs the Dependabot pull request number');
+    plan.pr = pr;
+  }
 }
 plan.source = main;
 console.log(JSON.stringify(plan, null, 2));
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Maintenance assessment\n\n\`\`\`json\n${JSON.stringify(plan, null, 2)}\n\`\`\`\n`);
 if (process.env.GITHUB_OUTPUT) {
-  for (const key of ['action', 'recipe', 'source', 'run_id', 'version']) {
+  for (const key of ['action', 'recipe', 'source', 'run_id', 'version', 'pr']) {
     const value = String(plan[key] ?? '');
     if (/[\r\n]/.test(value)) throw new Error('Invalid workflow output');
     appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);

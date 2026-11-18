@@ -109,3 +109,11 @@ test('an unstable PR merges only when approval-pending runs explain it', () => {
   input.pr.mergeable_state = 'blocked';
   assert.equal(evaluateMerge({ ...input, onlyApprovalPending: true }).eligible, false);
 });
+
+test('plugin and template projects are dependency files like the src-winui ones', () => {
+  const patch = '@@ -1 +1 @@\n-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />\n+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />';
+  assert.equal(safeDependencyFile({ filename: 'plugins/remote/ui/SumaFile.Remote.Model/SumaFile.Remote.Model.csproj', status: 'modified', patch }), true);
+  assert.equal(safeDependencyFile({ filename: 'plugins/git/ui/SumaFile.Git/packages.lock.json', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }), true);
+  assert.equal(safeDependencyFile({ filename: 'src-winui/SimpleFile.Tests/Fixtures/HelloPlugin/packages.lock.json', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }), true);
+  assert.equal(safeDependencyFile({ filename: 'plugins/git/backend/Cargo.toml', status: 'modified', patch }), false);
+});
