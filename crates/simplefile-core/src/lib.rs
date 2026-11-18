@@ -5,7 +5,7 @@
 
 /// User-facing SumaFile version shown in About, Settings, handshake, and updater.
 /// Cargo / MSBuild `<Version>` stay numeric for packaging APIs that require x.y.z.
-pub const APP_DISPLAY_VERSION: &str = "1.1.1";
+pub const APP_DISPLAY_VERSION: &str = "1.1.2";
 
 pub mod archive;
 pub mod checksum;
@@ -28,6 +28,7 @@ pub mod settings_store;
 pub mod smart_folders;
 pub mod tags;
 pub mod terminal;
+mod thumbnail;
 pub mod thumbnail_cache;
 pub mod updater;
 pub mod utils;
