@@ -42,11 +42,13 @@ intentionally updating package references, then review the lockfile changes.
 Two NuGet rules keep Dependabot's pull requests mergeable without a person:
 
 - `CommunityToolkit.Mvvm`, `Microsoft.Windows.SDK.BuildTools` and
-  `Microsoft.WindowsAppSDK` are left out of the grouped update. `docs/PLUGINS.md`
-  pins their versions for plugin authors and
+  `Microsoft.WindowsAppSDK` are ignored. `docs/PLUGINS.md` pins their versions
+  for plugin authors and
   `PluginsDoc_PinnedVersions_MatchTheVersionsTheHostBuildsWith` holds that table
-  to the lock file, so a bump of one needs the table edited too. Each arrives as
-  its own pull request, red until the table's version is updated on its branch.
+  to the lock file, so a bump is a plugin-compatibility decision: a person
+  changes the version and the table together, in a release. (Left merely out
+  of the group, Dependabot opened one red pull request per package per project
+  directory.)
 - Major versions of `System.*` and `Microsoft.Extensions.*` are ignored. Those
   packages follow the .NET runtime's version, so their next major is for the
   next .NET. Remove the rule when the app moves to that .NET.

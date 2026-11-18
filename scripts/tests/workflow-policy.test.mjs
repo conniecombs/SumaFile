@@ -99,13 +99,19 @@ test('the guard runs before anything is built', () => {
   assert.ok(steps.indexOf(guard) > steps.findIndex(step => step.id === 'version'));
   assert.deepEqual(validateWorkflows(workflows, dependabot), []);
 });
-test('Dependabot keeps the plugin contract packages out of the grouped update', () => {
-  // docs/PLUGINS.md pins these three for plugin authors; a bump needs that table edited by a person, so a group that
-  // contains one can never pass CI on its own.
+test('Dependabot leaves the plugin contract packages alone', () => {
+  // docs/PLUGINS.md pins these three for plugin authors: a bump is a plugin-compatibility decision, made by a person
+  // with the table edited, not a weekly pull request. Left merely ungrouped, Dependabot opened one red pull request
+  // per package per project directory (#82 to #90).
   const { workflows, dependabot } = source();
   const nuget = dependabot.updates.find(update => update['package-ecosystem'] === 'nuget');
-  nuget.groups['minor-and-patch']['exclude-patterns'] = ['Microsoft.WindowsAppSDK'];
+  nuget.ignore = nuget.ignore.filter(rule => rule['dependency-name'] !== 'Microsoft.WindowsAppSDK');
   assert.ok(validateWorkflows(workflows, dependabot).some(error => error.includes('plugin contract packages')));
+  const narrowed = source();
+  const rule = narrowed.dependabot.updates.find(update => update['package-ecosystem'] === 'nuget').ignore
+    .find(rule => rule['dependency-name'] === 'CommunityToolkit.Mvvm');
+  rule['update-types'] = ['version-update:semver-major'];
+  assert.ok(validateWorkflows(narrowed.workflows, narrowed.dependabot).some(error => error.includes('plugin contract packages')));
 });
 test('Dependabot does not propose the next .NET major for runtime-versioned packages', () => {
   const { workflows, dependabot } = source();
