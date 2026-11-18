@@ -124,6 +124,8 @@ public sealed partial class MainWindow
         try
         {
             await Task.Delay(300);
+            // A dialog that could not open says why here, instead of as a capture of nothing below.
+            if (dialogTask.IsFaulted) await dialogTask;
             SmokeAssert(comparisons[0].KeepBothName == "report (1).txt", "Unexpected Keep both preview");
             await SmokeCaptureAsync(conflict, Path.Combine(root, "conflict-polish.png"));
             var choices = SmokeDescendants<RadioButtons>(conflict).Single(group => group.Name == "ChoiceButtons");
@@ -191,9 +193,25 @@ public sealed partial class MainWindow
 
     private static async Task SmokeCaptureAsync(FrameworkElement element, string path)
     {
-        element.UpdateLayout();
+        // A dialog that is still opening is not in the visual tree yet. RenderAsync refuses such an element with an
+        // ArgumentException, and draws nothing for one without a size: wait until there is something to capture.
         var bitmap = new RenderTargetBitmap();
-        await bitmap.RenderAsync(element);
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            element.UpdateLayout();
+            try
+            {
+                await bitmap.RenderAsync(element);
+                if (bitmap.PixelWidth > 0 && bitmap.PixelHeight > 0) break;
+            }
+            catch (ArgumentException) when (timer.Elapsed < TimeSpan.FromSeconds(30))
+            {
+            }
+            if (timer.Elapsed >= TimeSpan.FromSeconds(30))
+                throw new TimeoutException($"UI smoke timed out: nothing to capture for {Path.GetFileName(path)}");
+            await Task.Delay(50);
+        }
         var pixels = await bitmap.GetPixelsAsync();
         var bytes = new byte[pixels.Length];
         using (var reader = DataReader.FromBuffer(pixels)) reader.ReadBytes(bytes);
