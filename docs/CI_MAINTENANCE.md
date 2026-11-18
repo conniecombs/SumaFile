@@ -119,7 +119,9 @@ allowlists, at most 30 files, 1,500 changed lines, and 1 MB per file. They canno
 delete files, alter tests or workflows as an incidental repair, or add advisory
 exceptions. An identical proposal is deduplicated even if its PR was closed.
 If main moves, the repair must be recomputed. New main commits can receive new
-proposals; this is not an unlimited retry loop on the same failed revision.
+proposals; this is not an unlimited retry loop on the same failed revision. A
+proposal main has moved past, or whose Dependabot pull request has closed or
+moved, is closed by the merge gate with a note the next time the gate runs.
 
 PR creation uses the workflow token and explicitly dispatches CI, because
 token-created PR events do not start another workflow automatically. Interrupted
