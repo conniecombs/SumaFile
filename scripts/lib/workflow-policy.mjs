@@ -172,10 +172,11 @@ export function validateWorkflows(workflows, dependabot) {
     check(dependabot?.updates?.some(update => update['package-ecosystem'] === ecosystem && update.directory === directory), `Dependabot: missing ${ecosystem}`);
   }
   const nuget = dependabot?.updates?.find(update => update['package-ecosystem'] === 'nuget');
-  const ungrouped = list(nuget?.groups?.['minor-and-patch']?.['exclude-patterns']);
-  // The packages docs/PLUGINS.md pins for plugin authors (PluginSharedAssembliesDocTests holds the table to the lock file).
+  // The packages docs/PLUGINS.md pins for plugin authors (PluginSharedAssembliesDocTests holds the table to the lock
+  // file): bumped by a person, as a plugin-compatibility decision, never by a pull request Dependabot opens.
   for (const name of ['CommunityToolkit.Mvvm', 'Microsoft.Windows.SDK.BuildTools', 'Microsoft.WindowsAppSDK']) {
-    check(ungrouped.includes(name), `Dependabot: keep the plugin contract packages out of the NuGet group (${name})`);
+    check(list(nuget?.ignore).some(rule => rule['dependency-name'] === name && rule['update-types'] === undefined),
+      `Dependabot: leave the plugin contract packages alone (${name})`);
   }
   for (const family of ['System.*', 'Microsoft.Extensions.*']) {
     check(list(nuget?.ignore).some(rule => rule['dependency-name'] === family

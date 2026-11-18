@@ -4,6 +4,7 @@ import { evaluateMerge, onlyApprovalPendingRunsBlock } from './lib/merge-policy.
 import { verifyMaintenance } from './verify-maintenance.mjs';
 import { maintenanceMetadata } from './lib/maintenance-policy.mjs';
 import { currentRunJobs } from './lib/workflow-jobs.mjs';
+import { closeStaleMaintenanceProposals } from './lib/stale-maintenance.mjs';
 
 const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
 const repository = process.env.GITHUB_REPOSITORY;
@@ -11,6 +12,13 @@ const repository = process.env.GITHUB_REPOSITORY;
 // last job dispatches this gate with the run id instead. Either way the run is re-read from the API and assessed by
 // the same policy; the event only names it.
 const runId = assessedRunId(event);
+// Proposals that can no longer merge (main moved, or their Dependabot pull request is gone) are closed with a note,
+// so they do not sit open and red. A failure here must not hold up the merge this gate was dispatched for.
+try {
+  for (const { number, reason } of closeStaleMaintenanceProposals({ api: githubApi, repository })) console.log(`Closed stale proposal #${number}: ${reason}`);
+} catch (error) {
+  console.log(`Stale proposals were not swept: ${error.message}`);
+}
 const run = await completedRun(runId);
 const prs = githubPages(`repos/${repository}/commits/${run.head_sha}/pulls?per_page=100`).flat();
 for (const candidate of prs.filter(pr => pr.state === 'open' && pr.head.sha === run.head_sha)) {
