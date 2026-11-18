@@ -40,3 +40,39 @@ test('merge verification replays the real generators and rejects altered proposa
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('a nuget-locks proposal is verified by reading the same Dependabot head and replaying the restore', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sumafile-locks-verify-'));
+  const git = args => execFileSync('git', args, { encoding: 'utf8', cwd: root }).trim();
+  try {
+    const path = 'src-winui/SimpleFile.Core/packages.lock.json';
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), '{ "version": 1 }\n');
+    git(['init', '--quiet']);
+    git(['add', '.']);
+    git(['-c', 'user.name=Maintenance fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Fixture']);
+    const source = git(['rev-parse', 'HEAD']);
+    const sha = 'c'.repeat(40);
+    const asked = [];
+    const api = request => {
+      asked.push(request);
+      if (request.startsWith('repos/owner/repo/git/blobs/')) return { encoding: 'base64', content: Buffer.from('{ "version": 2 }\n').toString('base64') };
+      if (request === 'repos/owner/repo/pulls/80') return { number: 80, user: { login: 'dependabot[bot]' }, base: { ref: 'main' }, head: { sha, repo: { full_name: 'owner/repo' } } };
+      if (request.startsWith('repos/owner/repo/pulls/80/files')) return [{ filename: 'src-winui/SimpleFile.Core/packages.lock.json', status: 'modified', patch: '@@ -1 +1 @@\n-a\n+b' }];
+      throw new Error(`unexpected ${request}`);
+    };
+    const runs = [];
+    const run = (recipe, version, cwd) => { runs.push({ recipe, cwd }); writeFileSync(join(root, path), '{ "version": 2 }\n'); };
+    const input = { repository: 'owner/repo',
+      commit: { commit: { message: `SumaFile-Maintenance: nuget-locks\nSumaFile-Source: ${source}\nSumaFile-Dependabot: 80@${sha}` } },
+      files: [{ filename: path, sha: 'blob', status: 'modified', additions: 1, deletions: 1 }], api };
+    assert.equal(verifyMaintenance(input, root, { run }), true);
+    assert.deepEqual(runs, [{ recipe: 'nuget-locks', cwd: root }]);
+    // The proposal was read from GitHub at the recorded head, for the replay to apply.
+    assert.ok(asked.includes('repos/owner/repo/pulls/80'));
+    assert.match(readFileSync(join(root, 'target/maintenance/dependabot-proposal.json'), 'utf8'), /"number":\s*80/);
+  } finally {
+    if (!resolve(root).startsWith(resolve(tmpdir()) + sep)) throw new Error('Unsafe fixture cleanup');
+    rmSync(root, { recursive: true, force: true });
+  }
+});

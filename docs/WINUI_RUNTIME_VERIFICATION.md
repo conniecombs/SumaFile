@@ -1,6 +1,6 @@
 # WinUI runtime verification
 
-Latest release: **SumaFile 1.1.2**. See [release notes](RELEASE_1.1.2.md) for the complete change set.
+Latest release: **SumaFile 1.1.3**. See [release notes](RELEASE_1.1.3.md) for the complete change set.
 
 Run `npm run smoke:winui-ui` from a Windows desktop session. The script builds
 the Debug WinUI application and Rust service, generates folders containing
@@ -101,6 +101,17 @@ The harness also atomically updates `progress.json` before each major scenario,
 including transfer options, concurrency, storage pressure and bulk copying.
 If the host exceeds its process timeout, the script prints the last checkpoint;
 both CI workflows retain it even when a final report could not be written.
+
+The `thumbnails` scenario opens a folder of 96 camera-like photos (1600x1200
+JPEGs; every other one a portrait stored on its side with Exif orientation 6,
+two of three with the 160x120 preview cameras embed) in the tiles view with a
+fresh thumbnail cache. It reports the time until every visible row has its
+thumbnail (`viewportMs`), then loads the remaining thumbnails one at a time
+cold (`coldMs`, decoded by the service and written to its disk cache) and all of
+them again warm (`warmMs`, served from that cache with the in-app cache
+dropped), with per-thumbnail averages. Every photo must get a thumbnail and
+every portrait must come out taller than wide; those are gates, the times are
+diagnostic.
 
 First-row latency is measured from navigation until layout produces a
 container for the first row. Final navigation/render time includes a 200 ms

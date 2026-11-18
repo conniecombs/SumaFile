@@ -131,6 +131,11 @@ public sealed partial class MainWindow
 
             if (baseline) return true;
 
+            // Thumbnails of a camera-like photo folder: viewport, cold and warm timings; portraits upright.
+            await CheckpointAsync("thumbnails");
+            var photos = Path.Combine(root, "photos");
+            if (Directory.Exists(photos)) await SmokeThumbnailsAsync(workspace, root, photos, results);
+
             // Exercise narrow panes and repeated changes between virtualizing panel types.
             await CheckpointAsync("layout");
             var sample = folders[0];

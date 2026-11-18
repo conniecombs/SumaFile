@@ -820,6 +820,10 @@ public class Sprint2FileListTests
         Assert.Contains("LoadFolderMetricsIntoAsync(fileOps, row.Path", shared);
         Assert.Contains("GetFolderMetricsAsync(path, cts.Token)", shared);
         Assert.Contains("InspectionDetails.FolderMetricRows(", shared);
+        // The count starts when the dialog opens; the button stops it (and restarts a stopped or failed count).
+        Assert.Contains("FolderCountPresentation.For(", shared);
+        Assert.DoesNotContain("Calculate totals", shared);
+        Assert.DoesNotContain("measureNow", shared);
         Assert.Contains("dialog.Closed +=", shared);
         Assert.Contains("await DialogHost.ShowAsync(dialog);", shared);
     }

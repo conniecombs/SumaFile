@@ -245,6 +245,36 @@ public class InspectionDetailsTests
             rows);
     }
 
+    // Properties starts counting a folder's contents as soon as it opens; the one button stops the count, and
+    // starts it again once stopped or failed.
+    [Fact]
+    public void FolderCountPresentation_WhileCounting_OffersToStop()
+    {
+        var (status, button) = FolderCountPresentation.For(FolderCountState.Counting);
+
+        Assert.Equal("Counting every file and folder inside, including subfolders\u2026", status);
+        Assert.Equal("Stop", button);
+    }
+
+    [Fact]
+    public void FolderCountPresentation_OnceStopped_OffersToCountAgain()
+    {
+        var (status, button) = FolderCountPresentation.For(FolderCountState.Stopped);
+
+        Assert.Equal("Stopped before the count finished.", status);
+        Assert.Equal("Count", button);
+    }
+
+    [Fact]
+    public void FolderCountPresentation_AfterAFailure_ShowsTheReasonAndOffersToTryAgain()
+    {
+        var (status, button) = FolderCountPresentation.For(FolderCountState.Failed, "Access to the path is denied.");
+
+        Assert.Equal("Access to the path is denied.", status);
+        Assert.Equal("Try again", button);
+        Assert.Equal("The count failed.", FolderCountPresentation.For(FolderCountState.Failed).Status);
+    }
+
     [Fact]
     public void FolderComparison_ListsEachFolderWithRecursiveCountsAndATotal()
     {

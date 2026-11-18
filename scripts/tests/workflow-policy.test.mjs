@@ -113,3 +113,20 @@ test('Dependabot does not propose the next .NET major for runtime-versioned pack
   nuget.ignore = nuget.ignore.filter(rule => rule['dependency-name'] !== 'System.*');
   assert.ok(validateWorkflows(workflows, dependabot).some(error => error.includes('next .NET major')));
 });
+
+test('the maintenance workflow can prepare and the gate can verify a nuget-locks repair', () => {
+  const { workflows, dependabot } = source();
+  const maintenance = workflows['maintenance.yml'];
+  assert.ok(maintenance.on.workflow_dispatch.inputs.recipe.options.includes('nuget-locks'));
+  const broken = source();
+  broken.workflows['maintenance.yml'].jobs.prepare.steps = broken.workflows['maintenance.yml'].jobs.prepare.steps
+    .filter(step => !step.uses?.startsWith('actions/setup-dotnet@') && !step.run?.includes('fetch-dependabot-proposal'));
+  const errors = validateWorkflows(broken.workflows, broken.dependabot);
+  assert.ok(errors.some(error => error.includes('.NET SDK')), errors.join('\n'));
+  assert.ok(errors.some(error => error.includes('Dependabot proposal')), errors.join('\n'));
+  const gate = source();
+  gate.workflows['dependabot-automerge.yml'].jobs.automerge.steps = gate.workflows['dependabot-automerge.yml'].jobs.automerge.steps
+    .filter(step => !step.uses?.startsWith('actions/setup-dotnet@'));
+  assert.ok(validateWorkflows(gate.workflows, gate.dependabot).some(error => error.includes('.NET SDK')));
+  assert.deepEqual(validateWorkflows(workflows, dependabot), []);
+});

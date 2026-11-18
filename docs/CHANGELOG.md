@@ -8,6 +8,36 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+---
+
+## [1.1.3] - prepared 2026-11-18
+
+See the [v1.1.3 release notes](RELEASE_1.1.3.md).
+
+### Properties
+
+- A folder's Properties dialog counts its files, folders and size through
+  every subfolder as soon as it opens, instead of after a "Calculate totals"
+  click. The one button stops the walk, and starts it again once stopped or
+  failed; closing the dialog stops it too.
+
+### CI and maintenance
+
+- Dependabot's NuGet updates failed the locked restore (NU1004) because
+  Dependabot regenerates the lock file of the project it bumps but not those
+  of the projects that reference it. A `nuget-locks` maintenance recipe now
+  repairs that: it applies the pull request's package versions to current
+  main, restores every lock file and proposes a superseding pull request,
+  which the merge gate verifies by replaying the restore. Plugin and template
+  projects join the dependency-only merge allowlist.
+- `System.Drawing.Common` is back on the .NET 10 line (10.0.11); the 11.0.0
+  bump had mixed the next .NET's runtime packages into the app build.
+  `npm run check:dotnet-packages` keeps `System.*` and `Microsoft.Extensions.*`
+  on the targeted .NET's major.
+- The Windows UI smoke has a `thumbnails` scenario: a folder of camera-like
+  photos with embedded previews and portrait orientation tags, timed for the
+  viewport, cold and warm, with every portrait checked to come out upright.
+
 ### Thumbnails
 
 - Photos are turned the way their Exif orientation says. A portrait photo

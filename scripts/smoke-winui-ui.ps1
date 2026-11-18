@@ -226,6 +226,88 @@ function Wait-UiSmokeHelperProcessesGone {
 
 # Runs git for the Git plugin fixture, bounded at 30 s, isolated as the app is: the smoke's empty global config, no
 # system config, no fsmonitor, no prompts, and no repository walk out of the test root. Returns git's stdout.
+function Write-SmokeExifEntry {
+    param($Writer, [int]$Tag, [int]$Type, [int]$Value)
+    $Writer.Write([uint16]$Tag); $Writer.Write([uint16]$Type); $Writer.Write([uint32]1); $Writer.Write([uint32]$Value)
+}
+
+# An Exif APP1 segment as cameras write it (little-endian TIFF): IFD0 carries the orientation and, with a preview,
+# IFD1 carries that JPEG as the embedded thumbnail (JPEGInterchangeFormat 0x0201 and its length 0x0202).
+function New-SmokeExifSegment {
+    param([int]$Orientation, [byte[]]$Preview)
+    $tiff = New-Object System.IO.MemoryStream
+    $writer = New-Object System.IO.BinaryWriter $tiff
+    $writer.Write([byte[]](0x49, 0x49, 0x2A, 0x00)); $writer.Write([uint32]8)
+    $ifd1Offset = 8 + 2 + 12 + 4
+    $writer.Write([uint16]1)
+    Write-SmokeExifEntry $writer 0x0112 3 $Orientation
+    if ($Preview) { $writer.Write([uint32]$ifd1Offset) } else { $writer.Write([uint32]0) }
+    if ($Preview) {
+        $dataOffset = $ifd1Offset + 2 + 2 * 12 + 4
+        $writer.Write([uint16]2)
+        Write-SmokeExifEntry $writer 0x0201 4 $dataOffset
+        Write-SmokeExifEntry $writer 0x0202 4 $Preview.Length
+        $writer.Write([uint32]0)
+        $writer.Write($Preview)
+    }
+    $writer.Flush()
+    $body = $tiff.ToArray()
+    $writer.Dispose()
+    $length = 2 + 6 + $body.Length
+    $segment = New-Object System.IO.MemoryStream
+    $header = [byte[]](0xFF, 0xE1, [byte](($length -shr 8) -band 0xFF), [byte]($length -band 0xFF), 0x45, 0x78, 0x69, 0x66, 0x00, 0x00)
+    $segment.Write($header, 0, $header.Length)
+    $segment.Write($body, 0, $body.Length)
+    return ,$segment.ToArray()
+}
+
+function Get-SmokeJpegBytes {
+    param([System.Drawing.Image]$Image)
+    $stream = New-Object System.IO.MemoryStream
+    $Image.Save($stream, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+    $bytes = $stream.ToArray()
+    $stream.Dispose()
+    return ,$bytes
+}
+
+# A folder of camera-like photos for the thumbnail scenario: 1600x1200 JPEGs, every other one tagged Exif orientation
+# 6 (a portrait photo stored as the sensor saw it, named -portrait), two of every three with the 160x120 preview
+# cameras embed (the third, -plain, has none and is decoded at reduced size). The picture is off-centre so a turned
+# thumbnail differs from an unturned one.
+function New-SmokePhotoFixture {
+    param([Parameter(Mandatory = $true)][string]$Folder, [int]$Count = 96)
+    Add-Type -AssemblyName System.Drawing
+    New-Item -ItemType Directory -Path $Folder -Force | Out-Null
+    $picture = New-Object System.Drawing.Bitmap 1600, 1200
+    $graphics = [System.Drawing.Graphics]::FromImage($picture)
+    $graphics.Clear([System.Drawing.Color]::SteelBlue)
+    $graphics.FillEllipse([System.Drawing.Brushes]::Goldenrod, 150, 120, 600, 600)
+    $graphics.FillRectangle([System.Drawing.Brushes]::Firebrick, 1100, 800, 400, 300)
+    $graphics.Dispose()
+    $preview = New-Object System.Drawing.Bitmap $picture, 160, 120
+    $pictureBytes = Get-SmokeJpegBytes -Image $picture
+    $previewBytes = Get-SmokeJpegBytes -Image $preview
+    $picture.Dispose()
+    $preview.Dispose()
+    if ($pictureBytes[0] -ne 0xFF -or $pictureBytes[1] -ne 0xD8) { throw 'System.Drawing did not produce a JPEG.' }
+    for ($index = 0; $index -lt $Count; $index++) {
+        $portrait = ($index % 2) -eq 1
+        $withPreview = ($index % 3) -ne 2
+        $kind = 'landscape'
+        $orientation = 1
+        if ($portrait) { $kind = 'portrait'; $orientation = 6 }
+        if (-not $withPreview) { $kind += '-plain' }
+        if ($withPreview) { $exif = New-SmokeExifSegment -Orientation $orientation -Preview $previewBytes }
+        else { $exif = New-SmokeExifSegment -Orientation $orientation -Preview $null }
+        $file = New-Object System.IO.MemoryStream
+        $file.Write($pictureBytes, 0, 2)
+        $file.Write($exif, 0, $exif.Length)
+        $file.Write($pictureBytes, 2, $pictureBytes.Length - 2)
+        [System.IO.File]::WriteAllBytes((Join-Path $Folder ('photo-{0:D3}-{1}.jpg' -f $index, $kind)), $file.ToArray())
+        $file.Dispose()
+    }
+}
+
 function Invoke-SmokeGit {
     param(
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
@@ -316,6 +398,7 @@ foreach ($count in $Counts) {
         else { [System.IO.File]::WriteAllText((Join-Path $folder ($name + '.txt')), 'SumaFile runtime fixture') }
     }
 }
+New-SmokePhotoFixture -Folder (Join-Path $testRoot 'photos')
 $archivesRoot = $null
 if ($PluginsDir -or $NoPlugins) {
     # sample.7z for the 7-Zip checks, made with the bundled 7za from <archives>\fixture. The names are built from
@@ -532,6 +615,7 @@ try {
     if ($process.ExitCode -ne 0) { throw "App exited with code $($process.ExitCode) after reporting results. Evidence: $reportPath" }
     Write-Host 'UI runtime smoke scenarios passed.'
     $report.results | Where-Object { $_.scenario -eq 'large-folder' } | Format-Table -AutoSize | Out-Host
+    $report.results | Where-Object { $_.scenario -eq 'thumbnails' } | Format-Table -AutoSize | Out-Host
     Write-Host ("Completed scenarios: " + (($report.results | ForEach-Object { $_.scenario } | Group-Object | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ', '))
     $report.uiHeartbeat | Format-List | Out-Host
     $smokeCompleted = $true

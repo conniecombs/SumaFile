@@ -9,7 +9,7 @@ export const releaseFiles = ['README.md', 'Cargo.lock', 'src-winui/Directory.Bui
   'src-winui/SimpleFile.App/app.manifest', 'packaging/winui/sumafile-winui.nsi',
   'crates/simplefile-core/src/lib.rs', ...['core', 'ipc', 'service'].map(name => `crates/simplefile-${name}/Cargo.toml`),
   ...['App', 'Core', 'Ipc', 'Tests'].map(name => `src-winui/SimpleFile.${name}/packages.lock.json`)];
-export const recipes = ['rustfmt', 'generated', 'toolchains', 'release', 'security'];
+export const recipes = ['rustfmt', 'generated', 'toolchains', 'release', 'security', 'nuget-locks'];
 export const limits = { files: 30, changedLines: 1500, fileBytes: 1_000_000 };
 
 export function allowedRepairPath(recipe, path) {
@@ -19,6 +19,10 @@ export function allowedRepairPath(recipe, path) {
   if (recipe === 'rustfmt') return /^crates\/simplefile-(core|ipc|service)\/(src|tests)\/[\w/.-]+\.rs$/.test(path);
   if (recipe === 'toolchains') return ['rust-toolchain.toml', 'global.json', '.node-version'].includes(path);
   if (recipe === 'release') return releaseFiles.includes(path);
+  // The .NET projects' own files and their lock files, which the solution-wide restore rewrites.
+  if (recipe === 'nuget-locks') {
+    return /^(?:src-winui\/[\w.-]+|src-winui\/SimpleFile\.Tests\/Fixtures\/HelloPlugin|plugins\/(?:git|remote)\/ui\/[\w.-]+|templates\/sumafile-plugin\/ui\/[\w.-]+)\/(?:[\w.-]+\.csproj|packages\.lock\.json)$/.test(path);
+  }
   return false;
 }
 
@@ -50,6 +54,14 @@ export function classifyFailure({ run, jobs, log, repository, mainSha, branchHea
       && /RUSTSEC-\d{4}-\d+|vulnerabilit(?:y|ies) found|denied warning found/i.test(log)) {
     return { action: 'prepare', recipe: 'security', reason: 'Re-audit current main and propose bounded Cargo patches', baseline, failedSteps: steps };
   }
+  // Dependabot's NuGet update regenerated one project's lock file but not those of the projects that reference it.
+  // The repair is built from current main with the pull request's versions; its code is never run.
+  const dependabotNuget = /^dependabot\/nuget\//.test(run.head_branch) && run.pull_requests?.length === 1
+    && Number.isInteger(run.pull_requests[0]?.number);
+  if (dependabotNuget && /error NU1004\b/.test(log) && steps.every(step => step.startsWith('WinUI host:'))) {
+    return { action: 'prepare', recipe: 'nuget-locks', pr: run.pull_requests[0].number,
+      reason: 'Restore the lock files of the projects that reference the updated one', baseline, failedSteps: steps };
+  }
   // A deterministic error wins even when an unrelated download also failed.
   if (/error\[E\d+\]|error (?:CS|NU)\d+|test result: FAILED|Failed!\s+-\s+Failed:|panicked at|Assertion failed|RUSTSEC-\d{4}-\d+|vulnerabilit(?:y|ies) found/i.test(log)) {
     return review('Compiler, assertion, package or security failure requires review');
@@ -73,7 +85,13 @@ export function classifyFailure({ run, jobs, log, repository, mainSha, branchHea
 }
 
 export function maintenanceMetadata(message) {
-  const recipe = /^SumaFile-Maintenance: (\w+)$/m.exec(message)?.[1];
+  const recipe = /^SumaFile-Maintenance: ([\w-]+)$/m.exec(message)?.[1];
   const source = /^SumaFile-Source: ([a-f0-9]{40})$/m.exec(message)?.[1];
-  return recipes.includes(recipe) && source ? { recipe, source } : null;
+  if (!recipes.includes(recipe) || !source) return null;
+  const provenance = /^SumaFile-Dependabot: (\d+)@([a-f0-9]{40})$/m.exec(message);
+  if (recipe === 'nuget-locks') {
+    // A lock-file repair without the pull request it took its versions from cannot be replayed.
+    return provenance ? { recipe, source, dependabot: { number: Number(provenance[1]), sha: provenance[2] } } : null;
+  }
+  return { recipe, source };
 }

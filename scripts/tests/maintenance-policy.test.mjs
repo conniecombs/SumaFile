@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyFailure, validateRepairFiles } from '../lib/maintenance-policy.mjs';
+import { classifyFailure, maintenanceMetadata, validateRepairFiles } from '../lib/maintenance-policy.mjs';
 import { publishMaintenance } from '../lib/publish-maintenance.mjs';
 
 const source = 'a'.repeat(40);
@@ -108,4 +108,69 @@ test('publication explains disabled workflow PR creation and preserves recovery 
   assert.throws(() => publishMaintenance({ ...proposal(), api }), /--permissions-only/);
   assert.ok(mock.calls.some(c => c.path.endsWith('/git/refs')));
   assert.equal(mock.calls.some(c => c.path.endsWith('/dispatches')), false);
+});
+
+// ---- The nuget-locks recipe: Dependabot updates a project's lock file but not those of the projects that
+// reference it, so a NuGet update fails the locked restore with NU1004 on the branch and never on main.
+const dependabotRun = (log = 'error NU1004: The project references simplefile.core whose dependencies has changed.') => {
+  const input = fixture('Run WinUI tests', log);
+  input.jobs[0].name = 'WinUI host';
+  input.run.head_branch = 'dependabot/nuget/src-winui/SimpleFile.Core/minor-and-patch-7a1e3c8403';
+  input.run.head_sha = 'c'.repeat(40);
+  input.run.pull_requests = [{ number: 80 }];
+  input.branchHead = 'c'.repeat(40);
+  return input;
+};
+test('a Dependabot NuGet branch failing the locked restore gets the nuget-locks recipe', () => {
+  const plan = classifyFailure(dependabotRun());
+  assert.equal(plan.action, 'prepare');
+  assert.equal(plan.recipe, 'nuget-locks');
+  assert.equal(plan.pr, 80);
+});
+test('the nuget-locks recipe needs the lock-file error on a current Dependabot NuGet branch with one PR', () => {
+  for (const change of [
+    input => { input.log = 'error CS1001: Identifier expected'; },
+    input => { input.run.head_branch = 'dependabot/cargo/rusqlite-0.43.0'; },
+    input => { input.run.head_branch = 'feature/locks'; },
+    input => { input.run.pull_requests = []; },
+    input => { input.branchHead = 'd'.repeat(40); },
+    input => { input.run.head_repository.full_name = 'fork/repo'; },
+  ]) {
+    const input = dependabotRun(); change(input);
+    assert.notEqual(classifyFailure(input).recipe, 'nuget-locks');
+    assert.equal(classifyFailure(input).action, 'review');
+  }
+});
+test('the nuget-locks allowlist is the project files and lock files of the .NET projects', () => {
+  const file = path => ({ filename: path, status: 'modified', additions: 1, deletions: 1 });
+  for (const path of ['src-winui/SimpleFile.Core/SimpleFile.Core.csproj', 'src-winui/SimpleFile.App/packages.lock.json',
+    'src-winui/SimpleFile.Tests/Fixtures/HelloPlugin/packages.lock.json', 'plugins/git/ui/SumaFile.Git/packages.lock.json',
+    'plugins/remote/ui/SumaFile.Remote.Model/SumaFile.Remote.Model.csproj', 'templates/sumafile-plugin/ui/Example.Plugin/packages.lock.json']) {
+    assert.equal(validateRepairFiles('nuget-locks', [file(path)]), true, path);
+  }
+  for (const path of ['src-winui/Directory.Build.props', 'src-winui/SimpleFile.App/MainWindow.xaml.cs', 'Cargo.lock',
+    'src-winui/SimpleFile.sln', '.github/workflows/ci.yml', 'package-lock.json']) {
+    assert.equal(validateRepairFiles('nuget-locks', [file(path)]), false, path);
+  }
+});
+test('nuget-locks provenance names the Dependabot pull request and the head it was read at', () => {
+  const sha = 'c'.repeat(40);
+  const message = `Maintain nuget-locks\n\nSumaFile-Maintenance: nuget-locks\nSumaFile-Source: ${source}\nSumaFile-Dependabot: 80@${sha}`;
+  assert.deepEqual(maintenanceMetadata(message), { recipe: 'nuget-locks', source, dependabot: { number: 80, sha } });
+  // Without its provenance a nuget-locks proposal is not a recipe result.
+  assert.equal(maintenanceMetadata(`SumaFile-Maintenance: nuget-locks\nSumaFile-Source: ${source}`), null);
+  // Other recipes carry none.
+  assert.deepEqual(maintenanceMetadata(`SumaFile-Maintenance: toolchains\nSumaFile-Source: ${source}`), { recipe: 'toolchains', source });
+});
+test('a nuget-locks publication records its provenance and names the pull request it supersedes', () => {
+  const mock = fakeApi();
+  const sha = 'c'.repeat(40);
+  const files = [{ filename: 'src-winui/SimpleFile.Core/SimpleFile.Core.csproj', status: 'modified', additions: 3, deletions: 3, content: '<Project />\n' },
+    { filename: 'src-winui/SimpleFile.App/packages.lock.json', status: 'modified', additions: 5, deletions: 5, content: '{}\n' }];
+  assert.equal(publishMaintenance({ repository: 'owner/repo', source, recipe: 'nuget-locks', files, dependabot: { number: 80, sha }, api: mock.api }).created, true);
+  const commit = mock.calls.find(call => call.path.endsWith('/git/commits'));
+  assert.ok(commit.body.message.includes(`SumaFile-Dependabot: 80@${sha}`), commit.body.message);
+  const pr = mock.calls.find(call => call.path.endsWith('/repo/pulls'));
+  assert.match(pr.body.body, /#80/);
+  assert.throws(() => publishMaintenance({ repository: 'owner/repo', source, recipe: 'nuget-locks', files, api: fakeApi().api }), /provenance/);
 });
