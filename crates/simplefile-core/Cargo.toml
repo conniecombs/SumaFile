@@ -19,6 +19,9 @@ base64 = "0.23"
 ed25519-dalek = "3"
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+# Thumbnails: SIMD scaling, and JPEG decoding at reduced size (no worker threads).
+fast_image_resize = "6.1"
+jpeg-decoder = { version = "0.3.2", default-features = false }
 md-5 = "0.11"
 sha1 = "0.11"
 sha2 = "0.11"

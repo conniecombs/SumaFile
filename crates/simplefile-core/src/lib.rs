@@ -28,6 +28,7 @@ pub mod settings_store;
 pub mod smart_folders;
 pub mod tags;
 pub mod terminal;
+mod thumbnail;
 pub mod thumbnail_cache;
 pub mod updater;
 pub mod utils;

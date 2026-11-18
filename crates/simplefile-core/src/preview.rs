@@ -115,14 +115,7 @@ pub fn generate_thumbnail(path: String, size: Option<u32>) -> Result<Vec<u8>, St
         }
     }
 
-    let img = image::open(&path_buf).map_err(|e| format!("Failed to open image: {e}"))?;
-    // Let the image library handle aspect-ratio-preserving resize
-    let thumbnail = img.thumbnail(thumb_size, thumb_size);
-    let mut buffer = std::io::Cursor::new(Vec::new());
-    thumbnail
-        .write_to(&mut buffer, image::ImageFormat::Jpeg)
-        .map_err(|e| format!("Failed to encode thumbnail: {e}"))?;
-    let jpeg_bytes = buffer.into_inner();
+    let jpeg_bytes = crate::thumbnail::render(&path_buf, &extension, thumb_size)?;
 
     if cache_enabled {
         // Store in cache (fire-and-forget; errors are silently ignored).
