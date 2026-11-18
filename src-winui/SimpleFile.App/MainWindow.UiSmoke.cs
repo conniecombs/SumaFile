@@ -161,7 +161,7 @@ public sealed partial class MainWindow
                         await SmokeCheckListAsync(list, baseline);
                     foreach (var details in new[] { PrimaryDetailsFileList, SecondaryDetailsFileList }.Where(list => list.Visibility == Visibility.Visible))
                     {
-                        var inner = SmokeDescendants<ListView>(details).Single();
+                        var inner = await SmokeDetailsListAsync(details);
                         await SmokeCheckListAsync(inner, baseline);
                     }
                     results.Add(new { scenario = "dual-pane-layout", width, appliedWidth, requestedView = view,
@@ -188,7 +188,7 @@ public sealed partial class MainWindow
                     SmokeAssert(EffectiveFileListViewForPane(PaneId.Primary) == "details",
                         $"Full-width Details is unavailable at {PrimaryFileViewport.ActualWidth}px");
                     sawDetails = true;
-                    await SmokeCheckListAsync(SmokeDescendants<ListView>(PrimaryDetailsFileList).Single(), baseline);
+                    await SmokeCheckListAsync(await SmokeDetailsListAsync(PrimaryDetailsFileList), baseline);
                 }
                 else await SmokeCheckListAsync(PrimaryFileList, baseline);
                 results.Add(new { scenario = "single-pane-layout", requestedView = view,
@@ -1670,11 +1670,13 @@ public sealed partial class MainWindow
         {
             scroll.ChangeView(null, scroll.ScrollableHeight * fraction, null, disableAnimation: true);
             await Task.Delay(120);
-            var items = SmokeDescendants<ListViewItem>(list).Where(item => item.ActualHeight > 0)
+            (ListViewItem item, Rect bounds)[] Visible() => SmokeDescendants<ListViewItem>(list).Where(item => item.ActualHeight > 0)
                 .Select(item => (item, bounds: item.TransformToVisual(list).TransformBounds(new Rect(0, 0, item.ActualWidth, item.ActualHeight))))
                 .Where(row => row.bounds.Bottom > 0 && row.bounds.Top < list.ActualHeight)
                 .OrderBy(row => row.bounds.Top).ThenBy(row => row.bounds.Left).ToArray();
-            SmokeAssert(items.Length > 0, "No visible rows after scrolling");
+            // A slow machine may not have built the rows at the new position 120 ms after the scroll.
+            await SmokeWaitAsync(() => Visible().Length > 0, "visible rows after scrolling");
+            var items = Visible();
             for (var index = 1; index < items.Length; index++)
             {
                 var previous = items[index - 1].bounds;
@@ -1686,9 +1688,15 @@ public sealed partial class MainWindow
         var target = list.Items[^1];
         list.SelectedItem = target;
         list.ScrollIntoView(target);
-        await Task.Delay(150);
-        SmokeAssert(list.ContainerFromItem(target) is ListViewItem, "Last selected item did not scroll into view");
+        await SmokeWaitAsync(() => list.ContainerFromItem(target) is ListViewItem, "the last selected item to scroll into view");
         SmokeAssert(ReferenceEquals(list.SelectedItem, target), "Selection was lost while recycling containers");
+    }
+
+    /// <summary>The list inside a Details view, once the view has built it: switching to Details builds it a moment later.</summary>
+    private static async Task<ListView> SmokeDetailsListAsync(DependencyObject details)
+    {
+        await SmokeWaitAsync(() => SmokeDescendants<ListView>(details).Any(), "the Details list to be built");
+        return SmokeDescendants<ListView>(details).Single();
     }
 }
 #endif
