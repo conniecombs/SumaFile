@@ -23,6 +23,6 @@
          The Model's own Mvvm reference is PrivateAssets="all", so this project needs its own for ObservableObject members. -->
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2526" ExcludeAssets="runtime" PrivateAssets="all" />
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" ExcludeAssets="runtime" PrivateAssets="all" />
   </ItemGroup>
 </Project>
