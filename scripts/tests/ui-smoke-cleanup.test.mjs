@@ -329,3 +329,22 @@ test('Clear-UiSmokeLastPassed and Copy-UiSmokePassedScreenshots', { skip: !pwsh 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The thumbnail scenario: a camera-like photo folder (embedded previews, Exif orientation 6 on the portraits) and
+// the timings of its thumbnails, with every portrait checked to come out upright.
+test('the UI smoke makes a camera-like photo folder and times its thumbnails', () => {
+  const exif = functionBody(script, 'New-SmokeExifSegment');
+  assert.match(exif, /0x0112/, 'writes the Exif orientation tag');
+  assert.match(exif, /0x0201/, 'writes the embedded preview offset');
+  const fixture = functionBody(script, 'New-SmokePhotoFixture');
+  assert.match(fixture, /New-SmokeExifSegment -Orientation \$orientation -Preview \$previewBytes/);
+  assert.match(fixture, /\$kind = 'portrait'; \$orientation = 6/, 'portraits carry orientation 6');
+  assert.match(fixture, /'photo-\{0:D3\}-\{1\}\.jpg'/, 'names end in -portrait or -landscape, which the scenario reads');
+  assert.match(script, /New-SmokePhotoFixture -Folder \(Join-Path \$testRoot 'photos'\)/);
+  assert.match(script, /scenario -eq 'thumbnails'/, 'prints the thumbnail timings');
+  const smoke = readFileSync(path.join(repoRoot, 'src-winui', 'SimpleFile.App', 'MainWindow.UiSmoke.Thumbnails.cs'), 'utf8');
+  assert.match(smoke, /scenario = "thumbnails"/);
+  assert.match(smoke, /PixelHeight > [\w.]+PixelWidth/, 'checks that a portrait photo gives a portrait thumbnail');
+  assert.match(smoke, /FileListThumbnailHost\.InvalidatePaths\(/, 'measures the warm pass without the in-app cache');
+  assert.match(readFileSync(path.join(repoRoot, 'src-winui', 'SimpleFile.App', 'MainWindow.UiSmoke.cs'), 'utf8'), /await SmokeThumbnailsAsync\(/);
+});
