@@ -53,7 +53,7 @@ public sealed partial class MainWindow
                     Padding = column.Id == "name" ? new Thickness(38, 5, 8, 5) : new Thickness(10, 5, 8, 5),
                     Content = HeaderLabel(column, pane),
                     Tag = new PaneSort(pane, column.Sort),
-                    ContextFlyout = CreateColumnHeaderFlyout(column.Id, pane),
+                    ContextFlyout = CreateColumnsFlyout(pane, column.Id),
                 };
                 button.Click += OnSortColumn;
                 ToolTipService.SetToolTip(button, $"Sort by {column.Label}");
@@ -92,9 +92,19 @@ public sealed partial class MainWindow
         UpdateHeaderColumnWidths(header, columns);
     }
 
-    private MenuFlyout CreateColumnHeaderFlyout(string columnId, PaneId pane)
+    /// <summary>
+    /// The column picker on a header's right-click: a toggle per column, the presets as starting points, and the
+    /// two size-to-fit items for the header that was clicked.
+    /// </summary>
+    private MenuFlyout CreateColumnsFlyout(PaneId pane, string columnId)
     {
         var flyout = new MenuFlyout();
+        foreach (var item in ColumnMenuItems(pane))
+        {
+            flyout.Items.Add(item);
+        }
+
+        flyout.Items.Add(new MenuFlyoutSeparator());
         var sizeColumn = new MenuFlyoutItem { Text = "Size Column to Fit" };
         sizeColumn.Click += (_, _) => SizeColumnToFit(columnId, pane, save: true);
         var sizeAll = new MenuFlyoutItem { Text = "Size All Columns to Fit" };
@@ -102,6 +112,66 @@ public sealed partial class MainWindow
         flyout.Items.Add(sizeColumn);
         flyout.Items.Add(sizeAll);
         return flyout;
+    }
+
+    /// <summary>The same picker as a "Columns" submenu at the end of the list background's menu, in the Details view.</summary>
+    private void AppendColumnsMenu(MenuFlyout flyout, PaneId pane)
+    {
+        if (_workspace is null || EffectiveFileListViewForPane(pane) != "details")
+        {
+            return;
+        }
+
+        var columns = new MenuFlyoutSubItem { Text = "Columns" };
+        foreach (var item in ColumnMenuItems(pane))
+        {
+            columns.Items.Add(item);
+        }
+
+        flyout.Items.Add(new MenuFlyoutSeparator());
+        flyout.Items.Add(columns);
+    }
+
+    /// <summary>Fresh menu items each time: a flyout item can belong to one menu only.</summary>
+    private IEnumerable<MenuFlyoutItemBase> ColumnMenuItems(PaneId pane)
+    {
+        var workspace = _workspace;
+        if (workspace is null)
+        {
+            yield break;
+        }
+
+        var layout = workspace.ColumnsFor(pane);
+        foreach (var column in layout.Columns.Where(column => column.Id != "name"))
+        {
+            var toggle = new ToggleMenuFlyoutItem { Text = column.Label, IsChecked = layout.IsVisible(column.Id) };
+            AutomationProperties.SetAutomationId(toggle, $"Columns.{column.Id}");
+            var (id, shown) = (column.Id, toggle.IsChecked);
+            toggle.Click += (_, _) =>
+            {
+                workspace.SetColumnVisible(pane, id, !shown);
+                SyncFromWorkspace();
+                _ = RunUiActionAsync("Columns", () => workspace.SaveUiSettingsAsync());
+            };
+            yield return toggle;
+        }
+
+        yield return new MenuFlyoutSeparator();
+        var presets = new MenuFlyoutSubItem { Text = "Presets" };
+        foreach (var preset in ColumnLayout.Presets.Keys)
+        {
+            var item = new MenuFlyoutItem { Text = char.ToUpperInvariant(preset[0]) + preset[1..] };
+            var key = preset;
+            item.Click += (_, _) =>
+            {
+                workspace.ApplyColumnPreset(pane, key);
+                SyncFromWorkspace();
+                _ = RunUiActionAsync("Columns", () => workspace.SaveUiSettingsAsync());
+            };
+            presets.Items.Add(item);
+        }
+
+        yield return presets;
     }
 
     private static void UpdateHeaderColumnWidths(Grid header, ColumnLayout columns)

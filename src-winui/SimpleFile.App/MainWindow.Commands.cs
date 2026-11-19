@@ -816,6 +816,7 @@ public sealed partial class MainWindow
         var selected = SelectedRowsForPane(targetPane);
 
         PopulateMenuFlyout(flyout, ContextMenuBuilder.Build(BuildContextMenuRequest(selected)));
+        AppendColumnsMenu(flyout, targetPane);
     }
 
     private async void PopulatePaneMoreMenu(MenuFlyout? flyout, PaneId pane)

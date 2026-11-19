@@ -53,6 +53,13 @@ public class WinUiSourceShapeTests
 
         Assert.Contains("ColumnResizeTarget", mainWindow);
         Assert.Contains("Size Column to Fit", mainWindow);
+        // The column picker: a toggle per column and the presets, on the header's and the list background's menus.
+        Assert.Contains("new ToggleMenuFlyoutItem", mainWindow);
+        Assert.Contains("Text = \"Presets\"", mainWindow);
+        Assert.Contains("Text = \"Columns\"", mainWindow);
+        Assert.Contains("workspace.SetColumnVisible(", mainWindow);
+        Assert.Contains("workspace.ApplyColumnPreset(", mainWindow);
+        Assert.Contains("AppendColumnsMenu(flyout, targetPane);", mainWindow);
         Assert.Contains("Size All Columns to Fit", mainWindow);
         Assert.Contains("OnColumnThumbDoubleTapped", mainWindow);
         Assert.Contains("ColumnLayoutHost.For(", fileRowView);
