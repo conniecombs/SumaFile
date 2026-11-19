@@ -845,3 +845,214 @@ async fn listing_view_opens_from_an_unverified_cached_listing_and_then_corrects_
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn facts_scratch_db() -> std::path::PathBuf {
+    static DB: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DB.get_or_init(|| {
+        let path = scratch_dir("facts-db").join("metadata.db");
+        // Every fact test in this process caches into one scratch database, never the user's.
+        std::env::set_var("SIMPLEFILE_METADATA_DB", &path);
+        path
+    })
+    .clone()
+}
+
+fn wav_bytes(seconds: u32) -> Vec<u8> {
+    let data_len = 8_000 * seconds;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&8_000u32.to_le_bytes());
+    bytes.extend_from_slice(&8_000u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&8u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    bytes.resize(bytes.len() + data_len as usize, 128);
+    bytes
+}
+
+/// Sends `get_entry_facts` and collects every `entry-facts` fact until the reply with `id` arrives.
+async fn entry_facts_round_trip(
+    client: &mut tokio::io::DuplexStream,
+    id: u64,
+    params: Value,
+) -> (Vec<Value>, Value) {
+    send_request(client, "get_entry_facts", id, params).await;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut facts = Vec::new();
+    loop {
+        let message: Value = match tokio::time::timeout_at(deadline, read_frame(client)).await {
+            Ok(Ok(payload)) => serde_json::from_slice(&payload).unwrap(),
+            _ => panic!("get_entry_facts never replied; facts so far: {facts:?}"),
+        };
+        if message["id"] == json!(id) {
+            return (facts, message);
+        }
+        if message["method"] == "entry-facts" {
+            facts.extend(
+                message["params"]["facts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .cloned(),
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entry_facts_stream_for_files_and_folders_and_the_reply_counts_them() {
+    let _db = facts_scratch_db();
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("facts");
+    let tone = dir.join("tone.wav");
+    std::fs::write(&tone, wav_bytes(65)).unwrap();
+    let sub = dir.join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("a.txt"), b"aaaa").unwrap();
+    std::fs::write(sub.join("b.txt"), b"bb").unwrap();
+    let missing = dir.join("missing.mp3");
+    let path = |p: &std::path::Path| p.to_string_lossy().to_string();
+
+    let (facts, reply) = entry_facts_round_trip(
+        &mut client,
+        2,
+        json!({
+            "requestId": "primary",
+            "paths": [path(&tone), path(&sub), path(&missing)],
+            "kinds": ["duration", "folder_size", "item_count", "colour"],
+        }),
+    )
+    .await;
+
+    let find = |p: &std::path::Path, kind: &str| {
+        facts
+            .iter()
+            .find(|fact| fact["path"] == path(p) && fact["kind"] == kind)
+            .unwrap_or_else(|| panic!("no {kind} for {}", p.display()))
+            .clone()
+    };
+    assert_eq!(
+        ("ready", "1:05", 65.0),
+        (
+            find(&tone, "duration")["state"].as_str().unwrap(),
+            find(&tone, "duration")["text"].as_str().unwrap(),
+            find(&tone, "duration")["sort"].as_f64().unwrap()
+        )
+    );
+    assert_eq!("none", find(&tone, "folder_size")["state"]);
+    assert_eq!("none", find(&sub, "duration")["state"]);
+    assert_eq!(
+        ("ready", "6"),
+        (
+            find(&sub, "folder_size")["state"].as_str().unwrap(),
+            find(&sub, "folder_size")["text"].as_str().unwrap()
+        )
+    );
+    assert_eq!(
+        ("ready", "2"),
+        (
+            find(&sub, "item_count")["state"].as_str().unwrap(),
+            find(&sub, "item_count")["text"].as_str().unwrap()
+        )
+    );
+    assert_eq!("failed", find(&missing, "duration")["state"]);
+    // Three paths, three known kinds (the unknown one is ignored).
+    assert_eq!(9, facts.len());
+    assert_eq!(
+        json!({ "request_id": "primary", "settled": 9 }),
+        reply["result"]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn put_entry_facts_is_served_from_the_cache_next_time() {
+    let _db = facts_scratch_db();
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("facts-put");
+    let clip = dir.join("old.avi");
+    std::fs::write(&clip, b"RIFF\0\0\0\0AVI LIST").unwrap();
+    let clip_path = clip.to_string_lossy().to_string();
+
+    // Without the cache the service cannot read an AVI.
+    let (before, _) = entry_facts_round_trip(
+        &mut client,
+        2,
+        json!({ "requestId": "p", "paths": [clip_path], "kinds": ["duration"] }),
+    )
+    .await;
+    assert_eq!("unsupported", before[0]["state"]);
+
+    let put = call_skipping_notifications(
+        &mut client,
+        "put_entry_facts",
+        3,
+        json!({ "facts": [{ "path": clip_path, "kind": "duration", "state": "ready", "text": "0:42", "sort": 42.0 }] }),
+    )
+    .await;
+    assert_eq!(Value::Null, put["result"]);
+
+    let (after, _) = entry_facts_round_trip(
+        &mut client,
+        4,
+        json!({ "requestId": "p", "paths": [clip_path], "kinds": ["duration"] }),
+    )
+    .await;
+    assert_eq!(
+        ("ready", "0:42"),
+        (
+            after[0]["state"].as_str().unwrap(),
+            after[0]["text"].as_str().unwrap()
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_entry_facts_replies_and_a_cancelled_request_still_settles() {
+    let _db = facts_scratch_db();
+    let (mut client, _server) = serve_test_session().await;
+    let dir = scratch_dir("facts-cancel");
+    let paths: Vec<String> = (0..40)
+        .map(|index| {
+            let file = dir.join(format!("f{index}.txt"));
+            std::fs::write(&file, b"x").unwrap();
+            file.to_string_lossy().to_string()
+        })
+        .collect();
+
+    send_request(
+        &mut client,
+        "get_entry_facts",
+        2,
+        json!({ "requestId": "c", "paths": paths, "kinds": ["dimensions"] }),
+    )
+    .await;
+    send_request(
+        &mut client,
+        "cancel_entry_facts",
+        3,
+        json!({ "requestId": "c" }),
+    )
+    .await;
+
+    // Both reply, in whichever order the work settled.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut replies = std::collections::HashMap::new();
+    while replies.len() < 2 {
+        let message: Value = match tokio::time::timeout_at(deadline, read_frame(&mut client)).await
+        {
+            Ok(Ok(payload)) => serde_json::from_slice(&payload).unwrap(),
+            _ => panic!("replies so far: {replies:?}"),
+        };
+        if let Some(id) = message.get("id").and_then(Value::as_u64) {
+            replies.insert(id, message);
+        }
+    }
+    assert_eq!(Value::Null, replies[&3]["result"]);
+    assert!(replies[&2]["result"]["settled"].as_u64().unwrap() <= 40);
+}

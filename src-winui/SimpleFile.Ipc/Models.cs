@@ -898,3 +898,47 @@ public sealed class UpdateInfo
     [JsonPropertyName("sha256")] public string? Sha256 { get; set; }
     [JsonPropertyName("size")] public ulong? Size { get; set; }
 }
+
+/// <summary>One lazy-column value for one entry; see <c>get_entry_facts</c>.</summary>
+public sealed class EntryFact
+{
+    public const string Ready = "ready";
+    public const string None = "none";
+    public const string Unsupported = "unsupported";
+    public const string Failed = "failed";
+
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = "";
+
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "";
+
+    /// <summary>ready, none, unsupported or failed.</summary>
+    [JsonPropertyName("state")]
+    public string State { get; set; } = "";
+
+    [JsonPropertyName("text")]
+    public string Text { get; set; } = "";
+
+    /// <summary>What the column sorts by: pixels, seconds, pages, bytes, or unix milliseconds for a date.</summary>
+    [JsonPropertyName("sort")]
+    public double? Sort { get; set; }
+}
+
+public sealed class EntryFactsBatch
+{
+    [JsonPropertyName("request_id")]
+    public string RequestId { get; set; } = "";
+
+    [JsonPropertyName("facts")]
+    public List<EntryFact> Facts { get; set; } = [];
+}
+
+public sealed class EntryFactsResult
+{
+    [JsonPropertyName("request_id")]
+    public string RequestId { get; set; } = "";
+
+    [JsonPropertyName("settled")]
+    public uint Settled { get; set; }
+}

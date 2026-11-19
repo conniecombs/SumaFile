@@ -36,6 +36,7 @@
       "source": "crates/simplefile-service/src/listing_views.rs",
       "notes": "A watched folder changed: the rows that moved in every open view of it, or reset=true."
     },
+    "entry-facts": { "params": "EntryFactsBatch", "source": "crates/simplefile-service/src/session/fact_jobs.rs", "notes": "A batch of lazy column values for one get_entry_facts request, flushed every 16 facts or 50 ms." },
     "list_directory.chunk": {
       "params": "DirectoryListingChunkNotification",
       "source": "replaces tauri::ipc::Channel on list_directory",

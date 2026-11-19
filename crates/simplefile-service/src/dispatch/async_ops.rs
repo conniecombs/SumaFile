@@ -1,8 +1,9 @@
 use super::params::{
-    parse_params, parse_path_params, DiskCleanupParams, DuplicateCheckParams, ListDirectoryParams,
-    ListingViewIdParams, ListingViewRangeParams, OpenListingViewParams, OperationIdParams,
-    OptionalOperationIdParams, PathParams, ProgressCopyMoveParams, SearchFilesParams,
-    SearchIdParams, ThumbnailBatchParams, ThumbnailParams,
+    parse_params, parse_path_params, CancelEntryFactsParams, DiskCleanupParams,
+    DuplicateCheckParams, EntryFactsParams, ListDirectoryParams, ListingViewIdParams,
+    ListingViewRangeParams, OpenListingViewParams, OperationIdParams, OptionalOperationIdParams,
+    PathParams, ProgressCopyMoveParams, PutEntryFactsParams, SearchFilesParams, SearchIdParams,
+    ThumbnailBatchParams, ThumbnailParams,
 };
 use super::{Dispatch, SessionState};
 use serde_json::Value;
@@ -181,6 +182,57 @@ pub(super) fn cancel_folder_metrics(
         .store(true, Ordering::Relaxed);
     state.count_items_cancel.store(true, Ordering::Relaxed);
     Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
+}
+
+/// At most this many request ids keep a cancel flag; the app reuses one id per pane, so the map stays small.
+const MAX_ENTRY_FACT_REQUESTS: usize = 64;
+
+pub(super) fn get_entry_facts(state: &mut SessionState, request: &JsonRpcRequest) -> Dispatch {
+    match parse_params::<EntryFactsParams>(request) {
+        Ok(p) => {
+            if state.entry_facts_cancel.len() >= MAX_ENTRY_FACT_REQUESTS {
+                state.entry_facts_cancel.clear();
+            }
+            let cancel = Arc::new(AtomicBool::new(false));
+            // The same id again means the app moved on: the earlier request stops.
+            if let Some(previous) = state
+                .entry_facts_cancel
+                .insert(p.request_id.clone(), cancel.clone())
+            {
+                previous.store(true, Ordering::Relaxed);
+            }
+            Dispatch::GetEntryFacts {
+                id: request.id.clone(),
+                request_id: p.request_id,
+                paths: p.paths,
+                kinds: p.kinds,
+                cancel,
+            }
+        }
+        Err(r) => Dispatch::Reply(r),
+    }
+}
+
+pub(super) fn cancel_entry_facts(state: &mut SessionState, request: &JsonRpcRequest) -> Dispatch {
+    match parse_params::<CancelEntryFactsParams>(request) {
+        Ok(p) => {
+            if let Some(flag) = state.entry_facts_cancel.remove(&p.request_id) {
+                flag.store(true, Ordering::Relaxed);
+            }
+            Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
+        }
+        Err(r) => Dispatch::Reply(r),
+    }
+}
+
+pub(super) fn put_entry_facts(request: &JsonRpcRequest) -> Dispatch {
+    match parse_params::<PutEntryFactsParams>(request) {
+        Ok(p) => Dispatch::PutEntryFacts {
+            id: request.id.clone(),
+            facts: p.facts,
+        },
+        Err(r) => Dispatch::Reply(r),
+    }
 }
 
 pub(super) fn copy_with_progress(request: &JsonRpcRequest) -> Dispatch {

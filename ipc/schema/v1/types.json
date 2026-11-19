@@ -86,6 +86,9 @@
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["size", "item_count", "subdirectories", "total_files", "total_folders"]
     },
+    "EntryFact": { "source": "crates/simplefile-core/src/models.rs", "fields": ["path", "kind", "state", "text", "sort"], "optional": ["text", "sort"], "notes": "state is ready, none, unsupported or failed; sort orders the column (pixels, seconds, pages, bytes, unix milliseconds)." },
+    "EntryFactsBatch": { "source": "crates/simplefile-core/src/models.rs", "fields": ["request_id", "facts"] },
+    "EntryFactsResult": { "source": "crates/simplefile-core/src/models.rs", "fields": ["request_id", "settled"] },
     "SearchResult": {
       "source": "crates/simplefile-core/src/models.rs",
       "fields": ["name", "path", "is_dir", "size", "modified", "extension", "match_type"]

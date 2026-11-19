@@ -77,6 +77,9 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `get_listing_view_range` | Rows after the first page | `ListingViewController.StartFill` | `ListingViewWorkspaceTests` / `ListingViewIpcTests` | Scroll to the end of a large folder | `PASS` |
 | `refresh_listing_view` | Refresh as a row delta | `ListingViewController.TryRefreshAsync` | `ListingViewWorkspaceTests` / service session tests | F5 after an external change | `PASS` |
 | `close_listing_view` | Drop a pane's view | IPC | `ListingViewIpcTests` / service session tests | — | `PASS` |
+| `get_entry_facts` | Lazy column values, streamed as `entry-facts` | `LazyColumnController` | `LazyColumnWorkspaceTests` / service session tests | Show Dimensions in a photo folder | `PASS` |
+| `cancel_entry_facts` | Drop a pane's fact request | `LazyColumnController` | service session tests | Navigate while a column fills | `PASS` |
+| `put_entry_facts` | Cache what the Windows fallback found | `BackendSession` | service session tests | Duration of an AVI | `PASS` |
 | `list_subdirectories` | Sidebar tree children | `LoadTreeChildrenAsync` + Folders list | `ParityFeaturesTests` tree flatten | Expand a tree node | `PASS` |
 | `create_directory` | New folder | New menu template + rename + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+Shift+N | `PASS` |
 | `create_file` | New text/blank file | New menu template + selection + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+N | `PASS` |

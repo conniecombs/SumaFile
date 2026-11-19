@@ -453,6 +453,13 @@ pub struct EntryFact {
     pub sort: Option<f64>,
 }
 
+/// The reply to `get_entry_facts`: how many facts were sent for the request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryFactsResult {
+    pub request_id: String,
+    pub settled: u32,
+}
+
 /// A batch of facts streamed for one `get_entry_facts` request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntryFactsBatch {

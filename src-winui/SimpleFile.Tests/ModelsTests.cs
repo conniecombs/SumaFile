@@ -57,6 +57,23 @@ public class ModelsTests
     }
 
     [Fact]
+    public void EntryFactsBatch_DeserializesFactsWithAndWithoutValues()
+    {
+        const string json = """
+            { "request_id": "primary", "facts": [
+              { "path": "C:\\a.mp4", "kind": "duration", "state": "ready", "text": "1:05", "sort": 65.0 },
+              { "path": "C:\\b.png", "kind": "dimensions", "state": "failed" } ] }
+            """;
+
+        var batch = JsonSerializer.Deserialize<EntryFactsBatch>(json, IpcJson.Options)!;
+
+        Assert.Equal("primary", batch.RequestId);
+        Assert.Equal(("duration", EntryFact.Ready, "1:05", 65.0), (batch.Facts[0].Kind, batch.Facts[0].State, batch.Facts[0].Text, batch.Facts[0].Sort));
+        Assert.Equal((EntryFact.Failed, "", (double?)null), (batch.Facts[1].State, batch.Facts[1].Text, batch.Facts[1].Sort));
+        Assert.Equal(3u, JsonSerializer.Deserialize<EntryFactsResult>("""{ "request_id": "primary", "settled": 3 }""", IpcJson.Options)!.Settled);
+    }
+
+    [Fact]
     public void FileEntry_DeserializesHiddenAndSystemFlags()
     {
         const string json = """
