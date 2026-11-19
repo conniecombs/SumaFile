@@ -48,7 +48,8 @@ pub(crate) fn encode_directory_listing_result(
 
 /// A listing view page. Unlike the list_directory frames, each entry carries
 /// its Hidden and System attributes (one flags byte), and no retired
-/// git_status field.
+/// git_status field. Frame version 2 added created, accessed and the
+/// attribute letters to every entry encoding.
 pub(crate) fn encode_listing_view_page(
     request_id: i32,
     page: &ListingViewPage,
@@ -75,6 +76,9 @@ pub(crate) fn encode_listing_view_page(
         writer.string(&entry.extension)?;
         writer.opt_string(entry.permissions.as_deref())?;
         writer.opt_string(entry.symlink_target.as_deref())?;
+        writer.string(&entry.created)?;
+        writer.string(&entry.accessed)?;
+        writer.string(&entry.attributes)?;
     }
     Ok(writer.finish())
 }
@@ -250,6 +254,9 @@ impl BinaryWriter {
             self.opt_string(entry.permissions.as_deref())?;
             self.opt_string(entry.symlink_target.as_deref())?;
             self.opt_string(entry.git_status.as_deref())?;
+            self.string(&entry.created)?;
+            self.string(&entry.accessed)?;
+            self.string(&entry.attributes)?;
         }
         Ok(())
     }
@@ -276,7 +283,7 @@ mod tests {
     /// The same bytes are decoded in the host's ListingViewIpcTests
     /// (BinaryPage_DecodesTheServicesGoldenFrame): the two sides agree on
     /// the page frame byte for byte.
-    const GOLDEN_LISTING_VIEW_PAGE: &str = "5346423101090700000002000000763104000000433A5C7700010300000002010000000000000100000002000000010000006400000000090000000000000000010000006D00000000000005000000662E74787408000000583A5C662E747874060102000000000000000000000300000074787401020000007277010100000074";
+    const GOLDEN_LISTING_VIEW_PAGE: &str = "5346423102090700000002000000763104000000433A5C7700010300000002010000000000000100000002000000010000006400000000090000000000000000010000006D00000000000000000000000000000000000005000000662E74787408000000583A5C662E74787406010200000000000000000000030000007478740102000000727701010000007401000000630100000061020000005241";
 
     fn entry(name: &str) -> FileEntry {
         FileEntry {
@@ -325,6 +332,9 @@ mod tests {
                     symlink_target: Some("t".to_string()),
                     // Retired and never sent in a page.
                     git_status: Some("M".to_string()),
+                    created: "c".to_string(),
+                    accessed: "a".to_string(),
+                    attributes: "RA".to_string(),
                     ..entry("f.txt")
                 },
             ],

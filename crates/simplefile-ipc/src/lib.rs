@@ -8,7 +8,7 @@ pub const JSONRPC_VERSION: &str = "2.0";
 pub const MAX_FRAME_BYTES: u32 = 80 * 1024 * 1024;
 
 pub const BINARY_FRAME_MAGIC: [u8; 4] = *b"SFB1";
-pub const BINARY_FRAME_VERSION: u8 = 1;
+pub const BINARY_FRAME_VERSION: u8 = 2;
 
 pub const ERR_APPLICATION: i32 = -32000;
 pub const ERR_HOST_OWNED: i32 = -32001;

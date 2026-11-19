@@ -28,9 +28,9 @@
     },
     "FileEntry": {
       "source": "crates/simplefile-core/src/models.rs",
-      "fields": ["name", "path", "is_dir", "is_symlink", "is_hidden", "is_system", "size", "modified", "extension", "permissions", "symlink_target", "git_status"],
-      "optional": ["is_hidden", "is_system", "permissions", "symlink_target", "git_status"],
-      "notes": "git_status is retired and always absent: Git moved to the com.sumafile.git plugin in phase 4, whose row decorations replace it. The field stays so the v1 wire format and the binary listing frame keep their shape."
+      "fields": ["name", "path", "is_dir", "is_symlink", "is_hidden", "is_system", "size", "modified", "extension", "permissions", "symlink_target", "git_status", "created", "accessed", "attributes"],
+      "optional": ["is_hidden", "is_system", "permissions", "symlink_target", "git_status", "created", "accessed", "attributes"],
+      "notes": "git_status is retired and always absent: Git moved to the com.sumafile.git plugin in phase 4, whose row decorations replace it. The field stays so the v1 wire format and the binary listing frame keep their shape. created, accessed and attributes (Explorer's letters R H S A C E O T, L for a reparse point) arrived with binary frame version 2; JSON omits them when empty."
     },
     "DirectoryListing": {
       "source": "crates/simplefile-core/src/models.rs",

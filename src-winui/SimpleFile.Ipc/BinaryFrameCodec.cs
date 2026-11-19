@@ -170,6 +170,9 @@ public static class BinaryFrameCodec
             writer.WriteString(entry.Extension);
             writer.WriteOptionalString(entry.Permissions);
             writer.WriteOptionalString(entry.SymlinkTarget);
+            writer.WriteString(entry.Created);
+            writer.WriteString(entry.Accessed);
+            writer.WriteString(entry.Attributes);
         }
 
         return writer.ToArray();
@@ -212,6 +215,9 @@ public static class BinaryFrameCodec
                 Extension = reader.ReadString(),
                 Permissions = reader.ReadOptionalString(),
                 SymlinkTarget = reader.ReadOptionalString(),
+                Created = reader.ReadString(),
+                Accessed = reader.ReadString(),
+                Attributes = reader.ReadString(),
             });
         }
 
@@ -278,6 +284,9 @@ public static class BinaryFrameCodec
                 Permissions = reader.ReadOptionalString(),
                 SymlinkTarget = reader.ReadOptionalString(),
                 GitStatus = reader.ReadOptionalString(),
+                Created = reader.ReadString(),
+                Accessed = reader.ReadString(),
+                Attributes = reader.ReadString(),
             });
         }
 
@@ -383,6 +392,9 @@ public static class BinaryFrameCodec
             writer.WriteOptionalString(entry.Permissions);
             writer.WriteOptionalString(entry.SymlinkTarget);
             writer.WriteOptionalString(entry.GitStatus);
+            writer.WriteString(entry.Created);
+            writer.WriteString(entry.Accessed);
+            writer.WriteString(entry.Attributes);
         }
     }
 

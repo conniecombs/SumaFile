@@ -47,6 +47,18 @@ public sealed class FileEntry
 
     [JsonPropertyName("itemCount")]
     public ulong? ItemCount { get; set; }
+
+    /// <summary>Creation time in the form of <see cref="Modified"/>, or empty when unknown.</summary>
+    [JsonPropertyName("created")]
+    public string Created { get; set; } = "";
+
+    /// <summary>Last access time in the form of <see cref="Modified"/>, or empty when unknown.</summary>
+    [JsonPropertyName("accessed")]
+    public string Accessed { get; set; } = "";
+
+    /// <summary>Explorer's attribute letters (R H S A C E O T, L for a reparse point), or empty.</summary>
+    [JsonPropertyName("attributes")]
+    public string Attributes { get; set; } = "";
 }
 
 public sealed class DirectoryListing
