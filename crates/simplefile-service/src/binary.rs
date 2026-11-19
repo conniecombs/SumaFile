@@ -292,6 +292,9 @@ mod tests {
             permissions: None,
             symlink_target: None,
             git_status: None,
+            created: String::new(),
+            accessed: String::new(),
+            attributes: String::new(),
         }
     }
 

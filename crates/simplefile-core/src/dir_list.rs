@@ -832,6 +832,9 @@ fn file_entry_from_find_data(
     let (is_hidden, is_system) = hidden_system_from_attrs(&name_str, attrs);
     let size = ((data.nFileSizeHigh as u64) << 32) | (data.nFileSizeLow as u64);
     let modified = filetime_to_string(data.ftLastWriteTime);
+    let created = filetime_to_string(data.ftCreationTime);
+    let accessed = filetime_to_string(data.ftLastAccessTime);
+    let attributes = crate::file_attributes::attribute_letters(attrs);
 
     let path_buf: PathBuf = parent.join(&name);
     let file_path = path_buf.to_string_lossy().to_string();
@@ -875,6 +878,9 @@ fn file_entry_from_find_data(
         permissions: None,
         symlink_target,
         git_status: None,
+        created,
+        accessed,
+        attributes,
     })
 }
 
@@ -1212,6 +1218,9 @@ mod sort_tests {
             permissions: None,
             symlink_target: None,
             git_status: None,
+            created: String::new(),
+            accessed: String::new(),
+            attributes: String::new(),
         }
     }
 

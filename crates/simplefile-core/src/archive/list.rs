@@ -379,6 +379,9 @@ fn file_entry_for_archive_child(
         permissions: None,
         symlink_target: None,
         git_status: None,
+        created: String::new(),
+        accessed: String::new(),
+        attributes: String::new(),
     }
 }
 

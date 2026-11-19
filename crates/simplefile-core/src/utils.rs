@@ -66,6 +66,12 @@ fn build_file_entry(
     let (is_hidden, is_system) = meta
         .map(|metadata| hidden_system_from_metadata(&name, metadata))
         .unwrap_or_else(|| (name_looks_hidden(&name), false));
+    let time_or_empty = |time: std::io::Result<std::time::SystemTime>| {
+        time.map(format_system_time).unwrap_or_default()
+    };
+    let created = meta.map_or_else(String::new, |metadata| time_or_empty(metadata.created()));
+    let accessed = meta.map_or_else(String::new, |metadata| time_or_empty(metadata.accessed()));
+    let attributes = meta.map_or_else(String::new, attribute_letters_of);
 
     Some(FileEntry {
         name,
@@ -80,7 +86,28 @@ fn build_file_entry(
         permissions: None,
         symlink_target,
         git_status: None,
+        created,
+        accessed,
+        attributes,
     })
+}
+
+/// Explorer's attribute letters for `meta`: the Windows attributes, or `R`
+/// for a read-only file elsewhere.
+fn attribute_letters_of(meta: &fs::Metadata) -> String {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        crate::file_attributes::attribute_letters(meta.file_attributes())
+    }
+    #[cfg(not(windows))]
+    {
+        if meta.permissions().readonly() {
+            "R".to_string()
+        } else {
+            String::new()
+        }
+    }
 }
 
 /// Build a `FileEntry` from a path. Uses a single `symlink_metadata` call for

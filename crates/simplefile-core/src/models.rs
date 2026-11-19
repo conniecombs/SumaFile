@@ -31,6 +31,16 @@ pub struct FileEntry {
     /// format and the binary listing frame keep their shape.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_status: Option<String>,
+    /// Creation time in the form of `modified`, or empty when unknown.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub created: String,
+    /// Last access time in the form of `modified`, or empty when unknown.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub accessed: String,
+    /// Windows attribute letters as Explorer shows them (R H S A C E O T L),
+    /// or empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub attributes: String,
 }
 
 /// Represents the result of a directory listing
