@@ -359,7 +359,11 @@ public sealed partial class FileRowView : UserControl
                 continue;
             }
 
-            ToolTipService.SetToolTip(text, string.IsNullOrWhiteSpace(value) ? null : value);
+            ToolTipService.SetToolTip(
+                text,
+                string.Equals(value, EntryPresentation.PendingMark, StringComparison.Ordinal)
+                    ? "Not read yet. Click to read it."
+                    : string.IsNullOrWhiteSpace(value) ? null : value);
         }
 
         ApplyTagPip(Row.TagColor);
@@ -771,8 +775,24 @@ public sealed partial class FileRowView : UserControl
     {
         var text = CreateMetadataText();
         text.Margin = new Thickness(10, 0, 8, 0);
+        text.Tag = id;
+        text.Tapped += OnTextCellTapped;
         _textCells[id] = text;
         return text;
+    }
+
+    /// <summary>A click on a lazy column's "…" reads that one value; any other click is the row's.</summary>
+    private void OnTextCellTapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (Row is not { } row
+            || sender is not TextBlock { Tag: string id } cell
+            || !string.Equals(cell.Text, EntryPresentation.PendingMark, StringComparison.Ordinal)
+            || ColumnLayoutHost.For(row.Pane).Find(id)?.FactKind is not { } kind)
+        {
+            return;
+        }
+
+        LazyColumnHost.RequestFact(row.Pane, row.Path, kind);
     }
 
     private TextBlock CreateMetadataText(double opacity = 0.9)

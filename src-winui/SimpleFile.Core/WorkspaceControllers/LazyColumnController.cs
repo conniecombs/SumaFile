@@ -20,6 +20,7 @@ internal sealed class LazyColumnController
     public const int MaxFillEntries = 5000;
 
     private readonly Dictionary<PaneId, ViewportRequest?> _viewportRequests = new();
+    private readonly Dictionary<PaneId, CancellationTokenSource> _fills = new();
     private readonly Dictionary<string, Request> _requests = new(StringComparer.Ordinal);
     private int _sequence;
 
@@ -116,9 +117,11 @@ internal sealed class LazyColumnController
 
         List<FileEntry> candidates;
         ExplorerPane state;
+        int navigationToken;
         lock (workspace.Gate)
         {
             state = workspace.Pane(workspace.Normalize(pane));
+            navigationToken = state.NavigationToken;
             candidates = state.Entries
                 .Where(entry => LazyColumns.CanHaveValue(kind, entry) && entry.FactFor(kind) is null)
                 .ToList();
@@ -131,6 +134,12 @@ internal sealed class LazyColumnController
         for (var offset = 0; offset < total; offset += MaxPathsPerRequest)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (state.NavigationToken != navigationToken)
+            {
+                // The pane left the folder: the rest is not read.
+                break;
+            }
+
             var chunk = candidates.Skip(offset).Take(Math.Min(MaxPathsPerRequest, total - offset)).ToList();
             Request request;
             lock (workspace.Gate)
@@ -150,6 +159,79 @@ internal sealed class LazyColumnController
         }
 
         return new LazyColumnFill(total, done, skipped);
+    }
+
+    /// <summary>
+    /// Reads <paramref name="kind"/> for the whole folder of <paramref name="pane"/> in the background (a sort by the
+    /// column, or "Calculate for this folder"), reporting progress through <see cref="ExplorerWorkspace.LazyColumnFill"/>.
+    /// A fill under way for the pane stops first.
+    /// </summary>
+    public void StartFill(ExplorerWorkspace workspace, PaneId pane, string kind)
+    {
+        var id = workspace.Normalize(pane);
+        CancelFill(workspace, id);
+        var cts = new CancellationTokenSource();
+        lock (workspace.Gate)
+        {
+            _fills[id] = cts;
+        }
+
+        _ = RunFillAsync(workspace, id, kind, cts);
+    }
+
+    /// <summary>Stops the fill under way for <paramref name="pane"/>, if any; what it read stays.</summary>
+    public void CancelFill(ExplorerWorkspace workspace, PaneId pane)
+    {
+        CancellationTokenSource? previous;
+        lock (workspace.Gate)
+        {
+            _fills.Remove(workspace.Normalize(pane), out previous);
+        }
+
+        previous?.Cancel();
+    }
+
+    private async Task RunFillAsync(ExplorerWorkspace workspace, PaneId pane, string kind, CancellationTokenSource cts)
+    {
+        var progress = new FillProgress(workspace, pane, kind);
+        LazyColumnFill result;
+        try
+        {
+            result = await FillFolderFactsAsync(workspace, pane, kind, progress, cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            result = progress.Last ?? new LazyColumnFill(0, 0, 0);
+        }
+
+        lock (workspace.Gate)
+        {
+            if (_fills.TryGetValue(pane, out var current) && ReferenceEquals(current, cts))
+            {
+                _fills.Remove(pane);
+            }
+
+            workspace.SetLazyColumnFillCore(new LazyColumnFillStatus(pane, kind, result, Done: true, Cancelled: cts.IsCancellationRequested));
+        }
+
+        workspace.NotifyChanged();
+        cts.Dispose();
+    }
+
+    private sealed class FillProgress(ExplorerWorkspace workspace, PaneId pane, string kind) : IProgress<LazyColumnFill>
+    {
+        public LazyColumnFill? Last { get; private set; }
+
+        public void Report(LazyColumnFill value)
+        {
+            Last = value;
+            lock (workspace.Gate)
+            {
+                workspace.SetLazyColumnFillCore(new LazyColumnFillStatus(pane, kind, value, Done: false, Cancelled: false));
+            }
+
+            workspace.NotifyChanged();
+        }
     }
 
     /// <summary>A batch of values arrived; they belong to a request this controller issued, or are dropped.</summary>
@@ -417,3 +499,6 @@ internal sealed class LazyColumnController
 
 /// <summary>Progress of a sort's fill: rows it reads, rows done, and rows over the cap it leaves unknown.</summary>
 public sealed record LazyColumnFill(int Total, int Done, int Skipped);
+
+/// <summary>The fill under way, or just finished, for a pane: what it reads and how far it is.</summary>
+public sealed record LazyColumnFillStatus(PaneId Pane, string Kind, LazyColumnFill Fill, bool Done, bool Cancelled);

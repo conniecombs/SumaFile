@@ -113,6 +113,10 @@ internal sealed class FolderViewController
             || target.SortAscending != currentAscending)
         {
             workspace.NotifyChanged();
+            if (!string.Equals(target.SortBy, currentSort, StringComparison.OrdinalIgnoreCase))
+            {
+                workspace.StartLazySortFillIfNeeded(pane);
+            }
         }
     }
 

@@ -38,12 +38,24 @@ public sealed class FileRow : IInspectionEntryPresentation
     public string TagName { get; set; } = "";
     public PaneId Pane { get; set; } = PaneId.Primary;
     public bool IsHidden { get; set; }
+    /// <summary>
+    /// The lazy columns' cells by column id: the value, or <see cref="EntryPresentation.PendingMark"/> while the row
+    /// can have one that has not been read. Folders' size and items cells are among them.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> LazyCells { get; set; } = NoLazyCells;
     private static readonly IReadOnlySet<string> NoDecorationPlugins = new HashSet<string>(StringComparer.Ordinal);
+    private static readonly IReadOnlyDictionary<string, string> NoLazyCells = new Dictionary<string, string>(StringComparer.Ordinal);
+    private static readonly IReadOnlyList<FileListColumn> LazyColumnDefinitions = new ColumnLayout().Columns.Where(column => column.IsLazy).ToList();
 
     public string AutomationName => IsDir ? $"Folder {Name}" : $"File {Name}";
 
     public string ColumnText(string columnId)
     {
+        if (LazyCells.TryGetValue(columnId, out var lazy))
+        {
+            return lazy;
+        }
+
         return columnId switch
         {
             "name" => Name,
@@ -89,7 +101,26 @@ public sealed class FileRow : IInspectionEntryPresentation
             TagName = tag?.Name ?? "",
             Pane = pane,
             IsHidden = EntryPresentation.IsHiddenFromUser(entry),
+            LazyCells = LazyCellsOf(entry),
         };
+    }
+
+    private static IReadOnlyDictionary<string, string> LazyCellsOf(FileEntry entry)
+    {
+        Dictionary<string, string>? cells = null;
+        foreach (var column in LazyColumnDefinitions)
+        {
+            var text = EntryPresentation.CellText(entry, column);
+            if (text.Length == 0)
+            {
+                continue;
+            }
+
+            cells ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            cells[column.Id] = text;
+        }
+
+        return cells ?? NoLazyCells;
     }
 }
 

@@ -21,7 +21,8 @@ namespace SimpleFile.App;
 public sealed partial class MainWindow : Window
 {
     private const int WorkspaceSyncCoalesceMilliseconds = 75;
-    private const int ColumnEnrichmentIdleDelayMilliseconds = 650;
+    /// <summary>How long after the last scroll or row change the rows on screen are reported for their lazy columns.</summary>
+    private const int ViewportReportDelayMilliseconds = 120;
 
     private BackendSession? _backend;
     private ExplorerWorkspace? _workspace;
@@ -63,13 +64,8 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _startupNavigationCts;
     private readonly Dictionary<int, Style> _tileItemStyles = new();
     private ElementTheme? _appliedTheme;
-    private string? _columnEnrichmentSignature;
-    private CancellationTokenSource? _columnEnrichmentCts;
-    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _columnEnrichmentTimer;
-    private IReadOnlyList<PaneId> _pendingColumnEnrichmentPanes = [];
-    private bool _pendingColumnEnrichmentNeedsSizes;
-    private int _pendingColumnEnrichmentToken;
-    private int _columnEnrichmentToken;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _viewportReportTimer;
+    private LazyColumnFillStatus? _shownLazyColumnFill;
     private bool _acceptingPathSuggestion;
     private int _pathLostFocusToken;
     private Flyout? _pathSuggestFlyout;
@@ -227,6 +223,7 @@ public sealed partial class MainWindow : Window
             AttachViewModels();
             FileListThumbnailHost.Configure(LoadFileListImageThumbnailAsync);
             ColumnLayoutHost.Attach(_workspace.PrimaryColumns, _workspace.SecondaryColumns);
+            ConfigureLazyColumns(_workspace);
             _workspace.Changed += OnWorkspaceChanged;
             _fileChangeSubscription = client.On<FileChangeEvent>(Protocol.FileChangeEvent, OnFileChange);
             await _workspace.InitializeAsync(deferInitialNavigation: true);
@@ -675,7 +672,8 @@ public sealed partial class MainWindow : Window
         }
 
         QueueWatchActiveDirectory();
-        QueueColumnEnrichment();
+        QueueViewportReport();
+        ShowLazyColumnFillStatus();
 
         if (_workspace.PendingReconnect is { } drive && !_reconnectDialogOpen)
         {
@@ -1362,11 +1360,8 @@ public sealed partial class MainWindow : Window
         _paneSizeColumnRefreshTimer?.Stop();
         _paneSizeColumnRefreshTimer = null;
         StopWorkspaceSyncTimer();
-        CancelColumnEnrichment();
+        CancelViewportReport();
         CancelStartupNavigation();
-        Interlocked.Increment(ref _columnEnrichmentToken);
-        _columnEnrichmentCts?.Cancel();
-        _columnEnrichmentCts = null;
         _watchTargetPath = null;
         _watchedPath = null;
 

@@ -241,6 +241,73 @@ public class LazyColumnWorkspaceTests
         Assert.Equal("doc000.pdf", names[^1]);
     }
 
+    [Fact]
+    public async Task SortingByAnAutomaticLazyColumnFillsTheFolderThenSorts()
+    {
+        var pdfs = Enumerable.Range(0, 30).Select(index => FakeEntryFactsBackend.Entry(Work, $"doc{index:D3}.pdf")).ToArray();
+        var (workspace, backend) = await OpenAsync(pdfs);
+        backend.Answer = (path, kind) => FakeEntryFactsBackend.Ready(path, kind, (100 - int.Parse(path[^7..^4])).ToString(), 100 - int.Parse(path[^7..^4]));
+        workspace.SetColumnVisible(PaneId.Primary, "pages", true);
+
+        workspace.SetSort("pages");
+
+        await UntilAsync(() => workspace.LazyColumnFill is { Done: true }, "the fill to finish");
+        Assert.Equal(new LazyColumnFillStatus(PaneId.Primary, LazyColumns.Pages, new LazyColumnFill(30, 30, 0), true, false), workspace.LazyColumnFill);
+        Assert.Equal("doc029.pdf", workspace.VisibleEntriesFor(PaneId.Primary)[0].Name);
+        // Sorting the other way needs no second read.
+        workspace.SetSort("pages");
+        Assert.Single(backend.Requests);
+    }
+
+    [Fact]
+    public async Task SortingByAnOnRequestColumnSortsByWhatIsKnownWithoutReading()
+    {
+        var (workspace, backend) = await OpenAsync([Folder("B"), Folder("A"), Photo(0)]);
+
+        workspace.SetSort("size");
+
+        await Task.Delay(50);
+        Assert.Empty(backend.Requests);
+        Assert.Null(workspace.LazyColumnFill);
+    }
+
+    [Fact]
+    public async Task AFillBeyondTheCapReadsTheCapAndSaysHowManyItLeft()
+    {
+        var pdfs = Enumerable.Range(0, LazyColumnController.MaxFillEntries + 10)
+            .Select(index => FakeEntryFactsBackend.Entry(Work, $"doc{index:D5}.pdf"))
+            .ToArray();
+        var (workspace, backend) = await OpenAsync(pdfs);
+        backend.Answer = (path, kind) => FakeEntryFactsBackend.Ready(path, kind, "1", 1);
+
+        workspace.ReadColumnForFolder(PaneId.Primary, LazyColumns.Pages);
+
+        await UntilAsync(() => workspace.LazyColumnFill is { Done: true }, "the fill to finish");
+        Assert.Equal(new LazyColumnFill(LazyColumnController.MaxFillEntries, LazyColumnController.MaxFillEntries, 10), workspace.LazyColumnFill!.Fill);
+        Assert.Null(Row(workspace, pdfs[^1].Name).FactFor(LazyColumns.Pages));
+    }
+
+    [Fact]
+    public async Task CancellingTheFillKeepsWhatWasRead()
+    {
+        var pdfs = Enumerable.Range(0, 100).Select(index => FakeEntryFactsBackend.Entry(Work, $"doc{index:D3}.pdf")).ToArray();
+        var (workspace, backend) = await OpenAsync(pdfs);
+        workspace.ReadColumnForFolder(PaneId.Primary, LazyColumns.Pages);
+        await UntilAsync(() => backend.Requests.Count == 1, "the first chunk");
+        var first = backend.Requests[0];
+        backend.Deliver(first.Id, [.. first.Paths.Select(path => FakeEntryFactsBackend.Ready(path, LazyColumns.Pages, "2", 2))]);
+        backend.Complete(first.Id, first.Paths.Length);
+        await UntilAsync(() => backend.Requests.Count == 2, "the second chunk");
+
+        workspace.CancelColumnFill(PaneId.Primary);
+
+        await UntilAsync(() => workspace.LazyColumnFill is { Done: true, Cancelled: true }, "the fill to stop");
+        Assert.Equal(new LazyColumnFill(100, 64, 0), workspace.LazyColumnFill!.Fill);
+        Assert.Contains(backend.Requests[1].Id, backend.Cancelled);
+        Assert.Equal("2", EntryPresentation.ColumnText(Row(workspace, "doc000.pdf"), "pages"));
+        Assert.Null(Row(workspace, "doc099.pdf").FactFor(LazyColumns.Pages));
+    }
+
     private sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);

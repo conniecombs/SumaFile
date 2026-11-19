@@ -8,6 +8,15 @@ namespace SimpleFile.Tests;
 
 public class ColumnLayoutTests
 {
+    [Theory]
+    [InlineData(45, "0:45")]
+    [InlineData(3723.9, "1:02:03")]
+    [InlineData(0, "0:00")]
+    public void FormatDuration_WritesWhatTheServiceWrites(double seconds, string expected)
+    {
+        Assert.Equal(expected, LazyColumns.FormatDuration(TimeSpan.FromSeconds(seconds)));
+    }
+
     [Fact]
     public void SetVisible_TogglesAColumnAndNeverHidesName()
     {

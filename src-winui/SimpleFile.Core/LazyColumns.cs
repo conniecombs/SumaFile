@@ -74,5 +74,15 @@ public static class LazyColumns
         return normalized;
     }
 
+    /// <summary>A duration as the service writes it: h:mm:ss over an hour, else m:ss, seconds rounded down.</summary>
+    public static string FormatDuration(TimeSpan duration)
+    {
+        var total = (long)Math.Floor(Math.Max(0, duration.TotalSeconds));
+        var hours = total / 3600;
+        var minutes = total % 3600 / 60;
+        var seconds = total % 60;
+        return hours > 0 ? $"{hours}:{minutes:D2}:{seconds:D2}" : $"{minutes}:{seconds:D2}";
+    }
+
     private static bool IsMode(string? mode) => mode is Automatic or OnRequest;
 }
