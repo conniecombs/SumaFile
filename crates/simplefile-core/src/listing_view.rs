@@ -37,8 +37,8 @@ impl RevisionClock {
 /// The order and filter of a view. Two equal option sets give the same rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListingViewOptions {
-    /// `name`, `size`, `modified` (or `date`), `extension` or `type`.
-    /// Anything else sorts by name.
+    /// `name`, `size`, `modified` (or `date`), `created`, `accessed`,
+    /// `attributes`, `extension` or `type`. Anything else sorts by name.
     pub sort_by: String,
     pub sort_ascending: bool,
     /// Folders before files, whatever the sort column.
@@ -520,6 +520,9 @@ impl ListingView {
             "size" => ColumnKey::Number(entry.size),
             // "YYYY-MM-DD HH:MM" orders as text the way it orders as a time.
             "modified" | "date" => ColumnKey::Bytes(entry.modified.as_bytes().into()),
+            "created" => ColumnKey::Bytes(entry.created.as_bytes().into()),
+            "accessed" => ColumnKey::Bytes(entry.accessed.as_bytes().into()),
+            "attributes" => ColumnKey::Bytes(self.collator.sort_key(&entry.attributes)),
             "extension" => ColumnKey::Bytes(self.collator.sort_key(&entry.extension)),
             "type" => ColumnKey::Bytes(self.collator.sort_key(if entry.is_dir {
                 "folder"
@@ -639,6 +642,36 @@ mod tests {
 
     fn view(entries: Vec<FileEntry>, options: ListingViewOptions) -> ListingView {
         ListingView::new("primary", listing(entries), true, options)
+    }
+
+    #[test]
+    fn a_view_sorts_by_created_accessed_and_attributes() {
+        let mut a = entry("a.txt", false, 1);
+        a.created = "2026-01-03 00:00".to_string();
+        a.accessed = "2026-01-01 00:00".to_string();
+        a.attributes = "RA".to_string();
+        let mut b = entry("b.txt", false, 1);
+        b.created = "2026-01-01 00:00".to_string();
+        b.accessed = "2026-01-03 00:00".to_string();
+        b.attributes = "A".to_string();
+        let mut c = entry("c.txt", false, 1);
+        c.created = "2026-01-02 00:00".to_string();
+        c.accessed = "2026-01-02 00:00".to_string();
+        c.attributes = "HA".to_string();
+        let by = |column: &str| {
+            names(&view(
+                vec![a.clone(), b.clone(), c.clone()],
+                ListingViewOptions {
+                    sort_by: column.to_string(),
+                    ..Default::default()
+                },
+            ))
+        };
+
+        assert_eq!(vec!["b.txt", "c.txt", "a.txt"], by("created"));
+        assert_eq!(vec!["a.txt", "c.txt", "b.txt"], by("accessed"));
+        // The letters sort as text: A, HA, RA.
+        assert_eq!(vec!["b.txt", "c.txt", "a.txt"], by("attributes"));
     }
 
     fn names(view: &ListingView) -> Vec<String> {

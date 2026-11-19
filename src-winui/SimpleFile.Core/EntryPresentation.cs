@@ -82,6 +82,9 @@ public static class EntryPresentation
             "size" => FormatEntrySize(entry),
             "items" => FormatItemCount(entry),
             "date" or "modified" => FormatModified(entry.Modified),
+            "created" => string.IsNullOrEmpty(entry.Created) ? "" : FormatModified(entry.Created),
+            "accessed" => string.IsNullOrEmpty(entry.Accessed) ? "" : FormatModified(entry.Accessed),
+            "attributes" => entry.Attributes ?? "",
             "type" => FileType(entry),
             "extension" => FormatExtension(entry),
             "symlink" => entry.SymlinkTarget ?? "",
@@ -343,6 +346,12 @@ public static class EntryPresentation
             case "modified":
             case "date":
                 return ParseModifiedMillis(left.Modified).CompareTo(ParseModifiedMillis(right.Modified));
+            case "created":
+                return ParseModifiedMillis(left.Created).CompareTo(ParseModifiedMillis(right.Created));
+            case "accessed":
+                return ParseModifiedMillis(left.Accessed).CompareTo(ParseModifiedMillis(right.Accessed));
+            case "attributes":
+                return StringComparer.OrdinalIgnoreCase.Compare(left.Attributes ?? "", right.Attributes ?? "");
             case "extension":
                 return StringComparer.CurrentCultureIgnoreCase.Compare(left.Extension ?? "", right.Extension ?? "");
             case "type":

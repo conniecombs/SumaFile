@@ -15,6 +15,9 @@ public sealed class FileRow : IInspectionEntryPresentation
     public string SizeText { get; set; } = "";
     public string ItemsText { get; set; } = "";
     public string ModifiedText { get; set; } = "";
+    public string CreatedText { get; set; } = "";
+    public string AccessedText { get; set; } = "";
+    public string AttributesText { get; set; } = "";
     public string TypeText { get; set; } = "";
     public bool IsCut { get; set; }
     public ulong Size { get; set; }
@@ -47,6 +50,9 @@ public sealed class FileRow : IInspectionEntryPresentation
             "size" => SizeText,
             "items" => ItemsText,
             "date" or "modified" => ModifiedText,
+            "created" => CreatedText,
+            "accessed" => AccessedText,
+            "attributes" => AttributesText,
             "type" => TypeText,
             "extension" => ExtensionText,
             "git" => DecorationText,
@@ -68,6 +74,9 @@ public sealed class FileRow : IInspectionEntryPresentation
             SizeText = EntryPresentation.ColumnText(entry, "size"),
             ItemsText = EntryPresentation.ColumnText(entry, "items"),
             ModifiedText = EntryPresentation.FormatModified(entry.Modified),
+            CreatedText = EntryPresentation.ColumnText(entry, "created"),
+            AccessedText = EntryPresentation.ColumnText(entry, "accessed"),
+            AttributesText = EntryPresentation.ColumnText(entry, "attributes"),
             TypeText = EntryPresentation.FileType(entry),
             IsCut = isCut,
             Size = entry.Size,
