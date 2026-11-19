@@ -53,6 +53,13 @@ public class WinUiSourceShapeTests
 
         Assert.Contains("ColumnResizeTarget", mainWindow);
         Assert.Contains("Size Column to Fit", mainWindow);
+        // The column picker: a toggle per column and the presets, on the header's and the list background's menus.
+        Assert.Contains("new ToggleMenuFlyoutItem", mainWindow);
+        Assert.Contains("Text = \"Presets\"", mainWindow);
+        Assert.Contains("Text = \"Columns\"", mainWindow);
+        Assert.Contains("workspace.SetColumnVisible(", mainWindow);
+        Assert.Contains("workspace.ApplyColumnPreset(", mainWindow);
+        Assert.Contains("AppendColumnsMenu(flyout, targetPane);", mainWindow);
         Assert.Contains("Size All Columns to Fit", mainWindow);
         Assert.Contains("OnColumnThumbDoubleTapped", mainWindow);
         Assert.Contains("ColumnLayoutHost.For(", fileRowView);
@@ -134,18 +141,25 @@ public class WinUiSourceShapeTests
         && Path.GetFileName(path) == "MainWindow.UiSmoke.Remote.cs";
 
     [Fact]
-    public void MainWindow_DefersColumnEnrichmentUntilIdle()
+    public void MainWindow_ReportsTheRowsOnScreenForTheirLazyColumns()
     {
         var root = FindRepoRoot();
         var mainWindow = ReadMainWindowSource(Path.Combine(root, "SimpleFile.App"));
 
-        Assert.Contains("ColumnEnrichmentIdleDelayMilliseconds = 650", mainWindow);
-        Assert.Contains("CreateColumnEnrichmentTimer", mainWindow);
-        Assert.Contains("timer.Interval = TimeSpan.FromMilliseconds(ColumnEnrichmentIdleDelayMilliseconds)", mainWindow);
-        Assert.Contains("QueueColumnEnrichmentTimer", mainWindow);
-        Assert.Contains("CancelColumnEnrichment();", mainWindow);
-        Assert.Contains("private void CancelColumnEnrichment()", mainWindow);
-        Assert.DoesNotContain("_ = EnrichColumnsAsync(panes, needsSizes, token, cts);", mainWindow);
+        // The first-32-folders pass is gone: the rows on screen are reported (debounced) and their lazy columns read.
+        Assert.Contains("ViewportReportDelayMilliseconds = 120", mainWindow);
+        Assert.Contains("timer.Interval = TimeSpan.FromMilliseconds(ViewportReportDelayMilliseconds)", mainWindow);
+        Assert.Contains("_workspace.ReportViewport(pane, range.First, range.Last);", mainWindow);
+        Assert.Contains("CancelViewportReport();", mainWindow);
+        Assert.Contains("workspace.FactFallback = ReadFactWithWindowsAsync;", mainWindow);
+        Assert.Contains("GetVideoPropertiesAsync()", mainWindow);
+        Assert.Contains("GetMusicPropertiesAsync()", mainWindow);
+        Assert.Contains("SemaphoreSlim WindowsPropertyReads = new(2, 2);", mainWindow);
+        Assert.Contains("workspace.ReadColumnForFolder(pane, kind)", mainWindow);
+        Assert.Contains("Text = \"Read as rows appear\"", mainWindow);
+        Assert.Contains("SetStatusText($\"Reading {label}… {fill.Fill.Done:N0} of {fill.Fill.Total:N0}\")", mainWindow);
+        Assert.DoesNotContain("QueueColumnEnrichment", mainWindow);
+        Assert.DoesNotContain("FillFolderMetricsAsync", mainWindow);
     }
 
     [Fact]
@@ -1636,6 +1650,15 @@ public class WinUiSourceShapeTests
         {
             Assert.Contains("left." + member, same);
         }
+
+        // A row whose free columns or lazy cells changed (a "…" that filled in) is a changed row, or the list keeps the old one.
+        foreach (var member in new[] { "CreatedText", "AccessedText", "AttributesText" })
+        {
+            Assert.Contains("left." + member + " == right." + member, same);
+        }
+
+        Assert.Contains("left.SameLazyCells(right)", same);
+        Assert.Contains("public bool SameLazyCells(FileRow other)", rows);
 
         // The status column shows only when a decoration provider exists, not with the legacy Git switch.
         var transfer = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Transfer.cs"));

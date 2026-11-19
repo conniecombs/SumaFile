@@ -146,6 +146,15 @@ public sealed partial class NamedPipeJsonClient
     public Task CloseListingViewAsync(string viewId, CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.CloseListingViewMethod, new { viewId }, ct);
 
+    public Task<EntryFactsResult> GetEntryFactsAsync(string requestId, string[] paths, string[] kinds, CancellationToken ct = default)
+        => InvokeAsync<EntryFactsResult>(Protocol.GetEntryFactsMethod, new { requestId, paths, kinds }, ct);
+
+    public Task CancelEntryFactsAsync(string requestId, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CancelEntryFactsMethod, new { requestId }, ct);
+
+    public Task PutEntryFactsAsync(EntryFact[] facts, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.PutEntryFactsMethod, new { facts }, ct);
+
     public Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default)
         => InvokeAsync<TreeNode[]>(Protocol.ListSubdirectoriesMethod, new { path }, ct);
 

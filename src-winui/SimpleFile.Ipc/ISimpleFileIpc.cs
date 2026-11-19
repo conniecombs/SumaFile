@@ -102,6 +102,9 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task<FileMetadata> GetFileMetadataAsync(string path, CancellationToken ct = default);
     Task<TreeNode[]> ListSubdirectoriesAsync(string path, CancellationToken ct = default);
     Task<FolderMetrics> GetFolderMetricsAsync(string path, CancellationToken ct = default);
+    Task<EntryFactsResult> GetEntryFactsAsync(string requestId, string[] paths, string[] kinds, CancellationToken ct = default);
+    Task CancelEntryFactsAsync(string requestId, CancellationToken ct = default);
+    Task PutEntryFactsAsync(EntryFact[] facts, CancellationToken ct = default);
     Task<ulong> CalculateFolderSizeAsync(string path, CancellationToken ct = default);
     Task<ulong> CountFolderItemsAsync(string path, CancellationToken ct = default);
     Task<TransferResult[]> CopyWithProgressAsync(string[] sources, string destination, string? operationId, string conflictAction, CancellationToken ct = default);

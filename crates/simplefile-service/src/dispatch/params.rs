@@ -2,7 +2,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use simplefile_core::dir_list::{ListDirectoryOptions, ListingMode};
 use simplefile_core::listing_view::ListingViewOptions;
-use simplefile_core::models::SearchOptions;
+use simplefile_core::models::{EntryFact, SearchOptions};
 use simplefile_ipc::rpc::{JsonRpcRequest, JsonRpcResponse};
 use simplefile_ipc::ERR_INVALID_PARAMS;
 
@@ -434,4 +434,23 @@ where
             )
         }),
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct EntryFactsParams {
+    #[serde(rename = "requestId")]
+    pub(crate) request_id: String,
+    pub(crate) paths: Vec<String>,
+    pub(crate) kinds: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CancelEntryFactsParams {
+    #[serde(rename = "requestId")]
+    pub(crate) request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PutEntryFactsParams {
+    pub(crate) facts: Vec<EntryFact>,
 }

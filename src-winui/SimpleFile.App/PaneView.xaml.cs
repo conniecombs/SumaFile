@@ -28,6 +28,7 @@ public sealed partial class PaneView : UserControl
         ApplyPane(PaneId.Primary);
         PartDetailsFileList.SelectionChanged += (_, e) => DetailsSelectionChanged?.Invoke(this, e);
         PartDetailsFileList.RowInvoked += (_, e) => DetailsRowInvoked?.Invoke(this, e);
+        PartDetailsFileList.ViewportChanged += (_, e) => DetailsViewportChanged?.Invoke(this, e);
         PartDetailsFileList.RowContextRequested += (_, e) => DetailsRowContextRequested?.Invoke(this, e);
         PartDetailsFileList.BackgroundContextRequested += (_, e) => DetailsBackgroundContextRequested?.Invoke(this, e);
         PartDetailsFileList.RowsDragStarting += (_, e) => DetailsRowsDragStarting?.Invoke(this, e);
@@ -109,6 +110,7 @@ public sealed partial class PaneView : UserControl
     public event RangeBaseValueChangedEventHandler? DetailsHorizontalScrollChanged;
     public event EventHandler<DetailsFileSelectionChangedEventArgs>? DetailsSelectionChanged;
     public event EventHandler<DetailsFileRowEventArgs>? DetailsRowInvoked;
+    public event EventHandler? DetailsViewportChanged;
     public event EventHandler<DetailsFileRowContextEventArgs>? DetailsRowContextRequested;
     public event EventHandler<DetailsFileBackgroundContextEventArgs>? DetailsBackgroundContextRequested;
     public event EventHandler<DetailsFileRowsDragStartingEventArgs>? DetailsRowsDragStarting;

@@ -202,6 +202,7 @@ public sealed partial class MainWindow
         PrimaryPane.DetailsHorizontalScrollChanged += OnPrimaryDetailsHorizontalScrollChanged;
         PrimaryPane.DetailsSelectionChanged += OnPrimaryDetailsSelectionChanged;
         PrimaryPane.DetailsRowInvoked += OnPrimaryDetailsRowInvoked;
+        PrimaryPane.DetailsViewportChanged += (_, _) => QueueViewportReport();
         PrimaryPane.DetailsRowContextRequested += OnPrimaryDetailsRowContextRequested;
         PrimaryPane.DetailsBackgroundContextRequested += OnPrimaryDetailsBackgroundContextRequested;
         PrimaryPane.DetailsRowsDragStarting += OnDetailsRowsDragStarting;
@@ -231,6 +232,7 @@ public sealed partial class MainWindow
         SecondaryPane.DetailsHorizontalScrollChanged += OnSecondaryDetailsHorizontalScrollChanged;
         SecondaryPane.DetailsSelectionChanged += OnSecondaryDetailsSelectionChanged;
         SecondaryPane.DetailsRowInvoked += OnSecondaryDetailsRowInvoked;
+        SecondaryPane.DetailsViewportChanged += (_, _) => QueueViewportReport();
         SecondaryPane.DetailsRowContextRequested += OnSecondaryDetailsRowContextRequested;
         SecondaryPane.DetailsBackgroundContextRequested += OnSecondaryDetailsBackgroundContextRequested;
         SecondaryPane.DetailsRowsDragStarting += OnDetailsRowsDragStarting;

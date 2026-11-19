@@ -5,7 +5,7 @@ public static partial class Protocol
     public const int Version = 1;
     public const string JsonRpc = "2.0";
     public const uint MaxFrameBytes = 80 * 1024 * 1024;
-    public const byte BinaryFrameVersion = 1;
+    public const byte BinaryFrameVersion = 2;
 
     public const int ErrParse = -32700;
     public const int ErrInvalidRequest = -32600;

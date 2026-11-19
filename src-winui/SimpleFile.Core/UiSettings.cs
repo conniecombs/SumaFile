@@ -69,6 +69,12 @@ public sealed class UiSettings
     public string ColumnPreset { get; set; } = "default";
     /// <summary>Secondary pane column preset (independent of primary).</summary>
     public string SecondaryColumnPreset { get; set; } = "default";
+    /// <summary>The primary pane's visible column ids, in order; empty means the preset's.</summary>
+    public List<string> VisibleColumns { get; set; } = [];
+    /// <summary>The secondary pane's visible column ids, in order; empty means the preset's.</summary>
+    public List<string> SecondaryVisibleColumns { get; set; } = [];
+    /// <summary>Each lazy column's mode (<see cref="LazyColumns.Automatic"/> or <see cref="LazyColumns.OnRequest"/>) by fact kind.</summary>
+    public Dictionary<string, string> LazyColumnModes { get; set; } = new(StringComparer.Ordinal);
     /// <summary>Primary pane column widths.</summary>
     public Dictionary<string, double> ColumnWidths { get; set; } = new(StringComparer.Ordinal);
     /// <summary>Secondary pane column widths (independent of primary).</summary>

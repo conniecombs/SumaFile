@@ -25,6 +25,9 @@ public interface IExplorerBackend
     /// </summary>
     IListingViewBackend? ListingViews => null;
 
+    /// <summary>The backend's lazy column reader, or null when it has none: lazy columns then stay empty.</summary>
+    IEntryFactsBackend? EntryFacts => null;
+
     Task<DirectoryListing> ListDirectoryAsync(
         string path,
         Action<DirectoryListingChunk>? onChunk = null,

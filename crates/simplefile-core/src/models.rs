@@ -31,6 +31,16 @@ pub struct FileEntry {
     /// format and the binary listing frame keep their shape.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_status: Option<String>,
+    /// Creation time in the form of `modified`, or empty when unknown.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub created: String,
+    /// Last access time in the form of `modified`, or empty when unknown.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub accessed: String,
+    /// Windows attribute letters as Explorer shows them (R H S A C E O T L),
+    /// or empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub attributes: String,
 }
 
 /// Represents the result of a directory listing
@@ -421,4 +431,38 @@ pub struct ArchiveFormatCapability {
 #[derive(Debug, Serialize)]
 pub struct ArchiveCapabilities {
     pub formats: Vec<ArchiveFormatCapability>,
+}
+
+// ============================================================================
+// Entry facts (lazy columns)
+// ============================================================================
+
+/// One value of a lazy column for one entry: `kind` is a wire name from
+/// `entry_facts::FactKind`, `state` is `ready`, `none` (nothing to show for
+/// this entry), `unsupported` (the app may try its own fallback) or `failed`.
+/// `text` is what the cell shows; `sort` orders the column (pixels, seconds,
+/// pages, bytes, or unix milliseconds for a date).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EntryFact {
+    pub path: String,
+    pub kind: String,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<f64>,
+}
+
+/// The reply to `get_entry_facts`: how many facts were sent for the request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryFactsResult {
+    pub request_id: String,
+    pub settled: u32,
+}
+
+/// A batch of facts streamed for one `get_entry_facts` request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryFactsBatch {
+    pub request_id: String,
+    pub facts: Vec<EntryFact>,
 }

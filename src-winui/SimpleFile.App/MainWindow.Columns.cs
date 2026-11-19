@@ -53,7 +53,7 @@ public sealed partial class MainWindow
                     Padding = column.Id == "name" ? new Thickness(38, 5, 8, 5) : new Thickness(10, 5, 8, 5),
                     Content = HeaderLabel(column, pane),
                     Tag = new PaneSort(pane, column.Sort),
-                    ContextFlyout = CreateColumnHeaderFlyout(column.Id, pane),
+                    ContextFlyout = CreateColumnsFlyout(pane, column.Id),
                 };
                 button.Click += OnSortColumn;
                 ToolTipService.SetToolTip(button, $"Sort by {column.Label}");
@@ -92,9 +92,20 @@ public sealed partial class MainWindow
         UpdateHeaderColumnWidths(header, columns);
     }
 
-    private MenuFlyout CreateColumnHeaderFlyout(string columnId, PaneId pane)
+    /// <summary>
+    /// The column picker on a header's right-click: a toggle per column, the presets as starting points, and the
+    /// two size-to-fit items for the header that was clicked.
+    /// </summary>
+    private MenuFlyout CreateColumnsFlyout(PaneId pane, string columnId)
     {
         var flyout = new MenuFlyout();
+        foreach (var item in ColumnMenuItems(pane))
+        {
+            flyout.Items.Add(item);
+        }
+
+        AppendLazyColumnItems(flyout, pane, columnId);
+        flyout.Items.Add(new MenuFlyoutSeparator());
         var sizeColumn = new MenuFlyoutItem { Text = "Size Column to Fit" };
         sizeColumn.Click += (_, _) => SizeColumnToFit(columnId, pane, save: true);
         var sizeAll = new MenuFlyoutItem { Text = "Size All Columns to Fit" };
@@ -102,6 +113,66 @@ public sealed partial class MainWindow
         flyout.Items.Add(sizeColumn);
         flyout.Items.Add(sizeAll);
         return flyout;
+    }
+
+    /// <summary>The same picker as a "Columns" submenu at the end of the list background's menu, in the Details view.</summary>
+    private void AppendColumnsMenu(MenuFlyout flyout, PaneId pane)
+    {
+        if (_workspace is null || EffectiveFileListViewForPane(pane) != "details")
+        {
+            return;
+        }
+
+        var columns = new MenuFlyoutSubItem { Text = "Columns" };
+        foreach (var item in ColumnMenuItems(pane))
+        {
+            columns.Items.Add(item);
+        }
+
+        flyout.Items.Add(new MenuFlyoutSeparator());
+        flyout.Items.Add(columns);
+    }
+
+    /// <summary>Fresh menu items each time: a flyout item can belong to one menu only.</summary>
+    private IEnumerable<MenuFlyoutItemBase> ColumnMenuItems(PaneId pane)
+    {
+        var workspace = _workspace;
+        if (workspace is null)
+        {
+            yield break;
+        }
+
+        var layout = workspace.ColumnsFor(pane);
+        foreach (var column in layout.Columns.Where(column => column.Id != "name"))
+        {
+            var toggle = new ToggleMenuFlyoutItem { Text = column.Label, IsChecked = layout.IsVisible(column.Id) };
+            AutomationProperties.SetAutomationId(toggle, $"Columns.{column.Id}");
+            var (id, shown) = (column.Id, toggle.IsChecked);
+            toggle.Click += (_, _) =>
+            {
+                workspace.SetColumnVisible(pane, id, !shown);
+                SyncFromWorkspace();
+                _ = RunUiActionAsync("Columns", () => workspace.SaveUiSettingsAsync());
+            };
+            yield return toggle;
+        }
+
+        yield return new MenuFlyoutSeparator();
+        var presets = new MenuFlyoutSubItem { Text = "Presets" };
+        foreach (var preset in ColumnLayout.Presets.Keys)
+        {
+            var item = new MenuFlyoutItem { Text = char.ToUpperInvariant(preset[0]) + preset[1..] };
+            var key = preset;
+            item.Click += (_, _) =>
+            {
+                workspace.ApplyColumnPreset(pane, key);
+                SyncFromWorkspace();
+                _ = RunUiActionAsync("Columns", () => workspace.SaveUiSettingsAsync());
+            };
+            presets.Items.Add(item);
+        }
+
+        yield return presets;
     }
 
     private static void UpdateHeaderColumnWidths(Grid header, ColumnLayout columns)
@@ -253,153 +324,5 @@ public sealed partial class MainWindow
         }
 
         return null;
-    }
-
-    private void QueueColumnEnrichment()
-    {
-        if (_workspace?.FileOps is null)
-        {
-            return;
-        }
-
-        var panes = _workspace.DualPaneEnabled
-            ? new[] { PaneId.Primary, PaneId.Secondary }
-            : new[] { PaneId.Primary };
-        var needsSizes = _workspace.Settings.ShowFolderSizes;
-        var signatureParts = new List<string>
-        {
-            $"sizes={needsSizes}",
-        };
-        foreach (var pane in panes)
-        {
-            var columns = _workspace.ColumnsFor(pane);
-            signatureParts.Add($"{pane}:visible={string.Join(',', columns.VisibleIds)}");
-            signatureParts.Add(ColumnEnrichmentSignatureFor(pane));
-        }
-
-        var signature = string.Join('|', signatureParts);
-        if (string.Equals(signature, _columnEnrichmentSignature, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        _columnEnrichmentSignature = signature;
-        _columnEnrichmentCts?.Cancel();
-        _columnEnrichmentTimer?.Stop();
-        var token = Interlocked.Increment(ref _columnEnrichmentToken);
-        QueueColumnEnrichmentTimer(panes, needsSizes, token);
-    }
-
-    private void QueueColumnEnrichmentTimer(IReadOnlyList<PaneId> panes, bool needsSizes, int token)
-    {
-        _pendingColumnEnrichmentPanes = panes;
-        _pendingColumnEnrichmentNeedsSizes = needsSizes;
-        _pendingColumnEnrichmentToken = token;
-        var timer = _columnEnrichmentTimer ??= CreateColumnEnrichmentTimer();
-        timer.Stop();
-        timer.Start();
-    }
-
-    private Microsoft.UI.Dispatching.DispatcherQueueTimer CreateColumnEnrichmentTimer()
-    {
-        var timer = DispatcherQueue.CreateTimer();
-        timer.Interval = TimeSpan.FromMilliseconds(ColumnEnrichmentIdleDelayMilliseconds);
-        timer.Tick += (_, _) =>
-        {
-            timer.Stop();
-            var cts = _columnEnrichmentCts;
-            if (cts is null || cts.IsCancellationRequested)
-            {
-                cts = new CancellationTokenSource();
-                _columnEnrichmentCts = cts;
-            }
-
-            _ = EnrichColumnsAsync(
-                _pendingColumnEnrichmentPanes,
-                _pendingColumnEnrichmentNeedsSizes,
-                _pendingColumnEnrichmentToken,
-                cts);
-        };
-        return timer;
-    }
-
-    private void CancelColumnEnrichment()
-    {
-        _columnEnrichmentTimer?.Stop();
-        _columnEnrichmentCts?.Cancel();
-        _columnEnrichmentSignature = null;
-        _pendingColumnEnrichmentPanes = [];
-        _pendingColumnEnrichmentNeedsSizes = false;
-        _pendingColumnEnrichmentToken = 0;
-    }
-
-    private string ColumnEnrichmentSignatureFor(PaneId pane)
-    {
-        if (_workspace is null)
-        {
-            return "";
-        }
-
-        var state = _workspace.Pane(pane);
-        var entries = string.Join(
-            '\u001e',
-            state.Entries.Take(64).Select(entry => $"{entry.Path}:{entry.Modified}:{entry.IsDir}"));
-        return $"{pane}:{state.Path}:{state.NavigationToken}:{state.ListingInProgress}:{state.Entries.Count}:{entries}";
-    }
-
-    private async Task EnrichColumnsAsync(
-        IReadOnlyList<PaneId> panes,
-        bool needsSizes,
-        int token,
-        CancellationTokenSource cts)
-    {
-        using var preemptionRegistration = (_workspace?.ForegroundScheduler ?? ForegroundTaskScheduler.Shared)
-            .RegisterPreemptibleBackground(
-                cts,
-                preemptOnNavigation: true,
-                preemptOnScrolling: true,
-                preemptOnTyping: true);
-        try
-        {
-            var workspace = _workspace;
-            var cancellationToken = cts.Token;
-            if (workspace is null)
-            {
-                return;
-            }
-
-            foreach (var pane in panes)
-            {
-                var state = workspace.Pane(pane);
-                if (cancellationToken.IsCancellationRequested
-                    || token != _columnEnrichmentToken
-                    || state.ListingInProgress)
-                {
-                    return;
-                }
-
-                if (state.PathIsNetwork)
-                {
-                    continue;
-                }
-
-                var columns = workspace.ColumnsFor(pane);
-                var needsItems = columns.IsVisible("items");
-                var paneNeedsSizes = needsSizes;
-                if (paneNeedsSizes || needsItems)
-                {
-                    await workspace.FillFolderMetricsAsync(pane, paneNeedsSizes, needsItems, cancellationToken).ConfigureAwait(true);
-                }
-            }
-        }
-        finally
-        {
-            if (ReferenceEquals(_columnEnrichmentCts, cts))
-            {
-                _columnEnrichmentCts = null;
-            }
-
-            cts.Dispose();
-        }
     }
 }

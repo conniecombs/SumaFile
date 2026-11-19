@@ -94,6 +94,36 @@ public class EntryPresentationTests
     }
 
     [Fact]
+    public void ColumnText_ShowsTheFreeColumnsAndSortEntriesOrdersThem()
+    {
+        var older = new FileEntry { Name = "older.txt", Path = @"C:\older.txt", Created = "2026-01-01 09:00", Accessed = "2026-03-01 09:00", Attributes = "RA" };
+        var newer = new FileEntry { Name = "newer.txt", Path = @"C:\newer.txt", Created = "2026-02-01 09:00", Accessed = "2026-01-01 09:00", Attributes = "A" };
+        var unknown = new FileEntry { Name = "unknown.txt", Path = @"C:\unknown.txt" };
+
+        Assert.Equal(EntryPresentation.FormatModified("2026-01-01 09:00"), EntryPresentation.ColumnText(older, "created"));
+        Assert.Equal(EntryPresentation.FormatModified("2026-03-01 09:00"), EntryPresentation.ColumnText(older, "accessed"));
+        Assert.Equal("RA", EntryPresentation.ColumnText(older, "attributes"));
+        Assert.Equal("", EntryPresentation.ColumnText(unknown, "created"));
+        Assert.Equal("", EntryPresentation.ColumnText(unknown, "attributes"));
+
+        string[] Names(string column) => [.. EntryPresentation.SortEntries([older, newer, unknown], column).Select(entry => entry.Name)];
+        Assert.Equal(["unknown.txt", "older.txt", "newer.txt"], Names("created"));
+        Assert.Equal(["unknown.txt", "newer.txt", "older.txt"], Names("accessed"));
+        Assert.Equal(["unknown.txt", "newer.txt", "older.txt"], Names("attributes"));
+    }
+
+    [Fact]
+    public void ColumnLayout_OffersTheFreeColumns()
+    {
+        var columns = new ColumnLayout();
+        Assert.Equal(("Created", "created"), (columns.Find("created")!.Label, columns.Find("created")!.Sort));
+        Assert.Equal(("Accessed", "accessed"), (columns.Find("accessed")!.Label, columns.Find("accessed")!.Sort));
+        Assert.Equal(("Attributes", "attributes"), (columns.Find("attributes")!.Label, columns.Find("attributes")!.Sort));
+        // Not in any preset: the picker adds them.
+        Assert.DoesNotContain("created", ColumnLayout.Presets.Values.SelectMany(ids => ids));
+    }
+
+    [Fact]
     public void ColumnText_FormatsExtraColumns()
     {
         var folder = new FileEntry

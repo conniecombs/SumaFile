@@ -33,9 +33,16 @@ public sealed partial class SettingsWindow
         settings.Theme = UiSettings.NormalizeTheme(Theme);
         settings.DefaultView = UiSettings.NormalizeDefaultView(DefaultView);
         settings.DefaultIconSize = UiSettings.NormalizeIconSize(DefaultIconSize);
+        var previousPreset = settings.ColumnPreset;
         settings.ColumnPreset = UiSettings.NormalizeColumnPreset(ColumnPreset);
-        // Settings is a global default: apply the chosen preset to both panes.
+        // Settings is a global default: apply the chosen preset to both panes. A new preset replaces the column
+        // sets the user picked in the panes' own menus; an unchanged one leaves them alone.
         settings.SecondaryColumnPreset = settings.ColumnPreset;
+        if (!string.Equals(previousPreset, settings.ColumnPreset, StringComparison.Ordinal))
+        {
+            settings.VisibleColumns = [];
+            settings.SecondaryVisibleColumns = [];
+        }
         settings.ShowHidden = ShowHiddenSwitch.IsOn;
         settings.ConfirmDelete = ConfirmDeleteSwitch.IsOn;
         settings.KeepFoldersOnTop = KeepFoldersOnTopSwitch.IsOn;

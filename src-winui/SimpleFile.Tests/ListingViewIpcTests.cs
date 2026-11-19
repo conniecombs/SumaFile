@@ -201,7 +201,7 @@ public class ListingViewIpcTests
     /// page frame byte for byte.
     /// </summary>
     private const string GoldenListingViewPage =
-        "5346423101090700000002000000763104000000433A5C7700010300000002010000000000000100000002000000010000006400000000090000000000000000010000006D00000000000005000000662E74787408000000583A5C662E747874060102000000000000000000000300000074787401020000007277010100000074";
+        "5346423102090700000002000000763104000000433A5C7700010300000002010000000000000100000002000000010000006400000000090000000000000000010000006D00000000000000000000000000000000000005000000662E74787408000000583A5C662E74787406010200000000000000000000030000007478740102000000727701010000007401000000630100000061020000005241";
 
     [Fact]
     public void BinaryPage_DecodesTheServicesGoldenFrame()
@@ -218,6 +218,8 @@ public class ListingViewIpcTests
         var file = page.Entries[1];
         Assert.Equal(("f.txt", @"X:\f.txt", false, true, true, false, 513ul, "txt"), (file.Name, file.Path, file.IsDir, file.IsSymlink, file.IsHidden, file.IsSystem, file.Size, file.Extension));
         Assert.Equal(("rw", "t"), (file.Permissions, file.SymlinkTarget));
+        Assert.Equal(("", "", ""), (folder.Created, folder.Accessed, folder.Attributes));
+        Assert.Equal(("c", "a", "RA"), (file.Created, file.Accessed, file.Attributes));
         // And the host's own encoder writes the same bytes.
         Assert.Equal(GoldenListingViewPage, Convert.ToHexString(BinaryFrameCodec.EncodeListingViewPage(7, page)));
     }

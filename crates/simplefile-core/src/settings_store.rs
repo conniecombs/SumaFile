@@ -159,7 +159,7 @@ pub fn open_metadata_db() -> Result<MetadataDb, String> {
     open_metadata_db_at(&path)
 }
 
-fn open_metadata_db_at(path: &Path) -> Result<MetadataDb, String> {
+pub(crate) fn open_metadata_db_at(path: &Path) -> Result<MetadataDb, String> {
     let registry = CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut registry = registry
         .lock()
@@ -236,6 +236,21 @@ fn init_schema(connection: &Connection) -> rusqlite::Result<()> {
             tag_id INTEGER NOT NULL,
             PRIMARY KEY (file_path, tag_id),
             FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // Lazy column values, keyed by the file's size and modified time so a changed file is read again.
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS entry_facts (
+            path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            modified TEXT NOT NULL,
+            state TEXT NOT NULL,
+            text TEXT NOT NULL,
+            sort REAL,
+            PRIMARY KEY (path, kind)
         )",
         [],
     )?;

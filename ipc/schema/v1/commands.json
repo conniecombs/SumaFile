@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "domainMethodCount": 79,
+  "domainMethodCount": 82,
   "methods": {
     "ipc.handshake": {
       "kind": "handshake",
@@ -75,6 +75,9 @@
       "notes": "Enumerates the view's folder again and returns only what changed; reset=true means the pages must be read again."
     },
     "close_listing_view": { "params": { "viewId": "string" }, "result": "null" },
+    "get_entry_facts": { "params": { "requestId": "string", "paths": "string[]", "kinds": "string[]" }, "result": "EntryFactsResult", "notes": "Lazy column values for paths, kinds among folder_size, item_count, dimensions, duration, date_taken, camera, pages. Facts stream back as entry-facts notifications (visible rows first, as the app ordered them) and the reply says how many settled; a cancelled request replies with what it had. A request id already in flight is cancelled by the new one." },
+    "cancel_entry_facts": { "params": { "requestId": "string" }, "result": "null", "cancellation": true },
+    "put_entry_facts": { "params": { "facts": "EntryFact[]" }, "result": "null", "notes": "Caches values the app found itself (the Windows property system's duration), keyed by each file's current size and modified time." },
     "list_subdirectories": { "params": { "path": "string" }, "result": "TreeNode[]" },
     "create_directory": { "params": { "path": "string", "name": "string" }, "result": "string" },
     "create_file": { "params": { "path": "string", "name": "string" }, "result": "string" },

@@ -38,6 +38,42 @@ public class ModelsTests
     }
 
     [Fact]
+    public void FileEntry_DeserializesTheFreeColumnsAndDefaultsThemEmpty()
+    {
+        const string json = """
+            {
+              "name": "a.txt", "path": "C:\\a.txt", "is_dir": false, "is_symlink": false, "size": 1,
+              "modified": "2026-01-02 03:04", "extension": "txt",
+              "created": "2026-01-01 00:00", "accessed": "2026-01-03 05:06", "attributes": "RA"
+            }
+            """;
+
+        var entry = JsonSerializer.Deserialize<FileEntry>(json, IpcJson.Options)!;
+        Assert.Equal(("2026-01-01 00:00", "2026-01-03 05:06", "RA"), (entry.Created, entry.Accessed, entry.Attributes));
+
+        // The service omits them when empty.
+        var bare = JsonSerializer.Deserialize<FileEntry>("""{ "name": "b", "path": "C:\\b", "is_dir": true, "is_symlink": false, "size": 0, "modified": "", "extension": "" }""", IpcJson.Options)!;
+        Assert.Equal(("", "", ""), (bare.Created, bare.Accessed, bare.Attributes));
+    }
+
+    [Fact]
+    public void EntryFactsBatch_DeserializesFactsWithAndWithoutValues()
+    {
+        const string json = """
+            { "request_id": "primary", "facts": [
+              { "path": "C:\\a.mp4", "kind": "duration", "state": "ready", "text": "1:05", "sort": 65.0 },
+              { "path": "C:\\b.png", "kind": "dimensions", "state": "failed" } ] }
+            """;
+
+        var batch = JsonSerializer.Deserialize<EntryFactsBatch>(json, IpcJson.Options)!;
+
+        Assert.Equal("primary", batch.RequestId);
+        Assert.Equal(("duration", EntryFact.Ready, "1:05", 65.0), (batch.Facts[0].Kind, batch.Facts[0].State, batch.Facts[0].Text, batch.Facts[0].Sort));
+        Assert.Equal((EntryFact.Failed, "", (double?)null), (batch.Facts[1].State, batch.Facts[1].Text, batch.Facts[1].Sort));
+        Assert.Equal(3u, JsonSerializer.Deserialize<EntryFactsResult>("""{ "request_id": "primary", "settled": 3 }""", IpcJson.Options)!.Settled);
+    }
+
+    [Fact]
     public void FileEntry_DeserializesHiddenAndSystemFlags()
     {
         const string json = """

@@ -1,3 +1,4 @@
+mod fact_jobs;
 mod io;
 mod jobs;
 mod listing_jobs;
@@ -367,6 +368,27 @@ where
                         path,
                         cancel,
                     );
+                }
+                Dispatch::GetEntryFacts {
+                    id,
+                    request_id,
+                    paths,
+                    kinds,
+                    cancel,
+                } => {
+                    fact_jobs::spawn_entry_facts(
+                        writer.clone(),
+                        scheduler.clone(),
+                        cache.clone(),
+                        id,
+                        request_id,
+                        paths,
+                        kinds,
+                        cancel,
+                    );
+                }
+                Dispatch::PutEntryFacts { id, facts } => {
+                    fact_jobs::spawn_put_entry_facts(writer.clone(), scheduler.clone(), id, facts);
                 }
                 Dispatch::Shutdown(response) => {
                     crate::watcher::unwatch_directory(&mut watcher_state);

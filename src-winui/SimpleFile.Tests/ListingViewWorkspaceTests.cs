@@ -413,6 +413,9 @@ public class ListingViewWorkspaceTests
     [InlineData("extension", true, true)]
     [InlineData("type", false, true)]
     [InlineData("size", false, true)]
+    [InlineData("created", false, true)]
+    [InlineData("Accessed", true, true)]
+    [InlineData("attributes", false, true)]
     // Folder sizes are measured by the pane, so the size order is the pane's too.
     [InlineData("size", true, false)]
     [InlineData("items", false, false)]

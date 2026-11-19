@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 79-command schema vs Rust/C#
+npm run check:ipc-schema      # 82-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (79)
+## 2. IPC commands (82)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -77,6 +77,9 @@ Each command must appear here. Service registry is `crates/simplefile-service/sr
 | `get_listing_view_range` | Rows after the first page | `ListingViewController.StartFill` | `ListingViewWorkspaceTests` / `ListingViewIpcTests` | Scroll to the end of a large folder | `PASS` |
 | `refresh_listing_view` | Refresh as a row delta | `ListingViewController.TryRefreshAsync` | `ListingViewWorkspaceTests` / service session tests | F5 after an external change | `PASS` |
 | `close_listing_view` | Drop a pane's view | IPC | `ListingViewIpcTests` / service session tests | — | `PASS` |
+| `get_entry_facts` | Lazy column values, streamed as `entry-facts` | `LazyColumnController` | `LazyColumnWorkspaceTests` / service session tests | Show Dimensions in a photo folder | `PASS` |
+| `cancel_entry_facts` | Drop a pane's fact request | `LazyColumnController` | service session tests | Navigate while a column fills | `PASS` |
+| `put_entry_facts` | Cache what the Windows fallback found | `BackendSession` | service session tests | Duration of an AVI | `PASS` |
 | `list_subdirectories` | Sidebar tree children | `LoadTreeChildrenAsync` + Folders list | `ParityFeaturesTests` tree flatten | Expand a tree node | `PASS` |
 | `create_directory` | New folder | New menu template + rename + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+Shift+N | `PASS` |
 | `create_file` | New text/blank file | New menu template + selection + IPC | `ExplorerWorkspaceTests` / `FileOperationServiceTests` | Ctrl+N | `PASS` |
@@ -447,7 +450,7 @@ The WinUI CI job runs the `-PluginsDir` smoke, `npm run check:winui-startup-budg
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 79 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 82 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |

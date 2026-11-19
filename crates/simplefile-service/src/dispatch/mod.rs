@@ -5,8 +5,9 @@ mod params;
 use crate::session_cache::SessionCache;
 use serde_json::Value;
 use simplefile_core::dir_list::ListDirectoryOptions;
-use simplefile_core::models::SearchOptions;
+use simplefile_core::models::{EntryFact, SearchOptions};
 use simplefile_ipc::rpc::{JsonRpcRequest, JsonRpcResponse};
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -26,6 +27,8 @@ pub struct SessionState {
     pub folder_size_cancel: Arc<AtomicBool>,
     pub folder_item_count_cancel: Arc<AtomicBool>,
     pub count_items_cancel: Arc<AtomicBool>,
+    /// The cancel flag of each `get_entry_facts` request in flight, by request id.
+    pub entry_facts_cancel: HashMap<String, Arc<AtomicBool>>,
     pub cache: SessionCache,
 }
 
@@ -42,6 +45,7 @@ impl Default for SessionState {
             folder_size_cancel: Arc::new(AtomicBool::new(false)),
             folder_item_count_cancel: Arc::new(AtomicBool::new(false)),
             count_items_cancel: Arc::new(AtomicBool::new(false)),
+            entry_facts_cancel: HashMap::new(),
             cache: SessionCache::new(),
         }
     }
@@ -239,6 +243,17 @@ pub(crate) enum Dispatch {
         id: Option<Value>,
         path: String,
         cancel: Arc<AtomicBool>,
+    },
+    GetEntryFacts {
+        id: Option<Value>,
+        request_id: String,
+        paths: Vec<String>,
+        kinds: Vec<String>,
+        cancel: Arc<AtomicBool>,
+    },
+    PutEntryFacts {
+        id: Option<Value>,
+        facts: Vec<EntryFact>,
     },
     Shutdown(JsonRpcResponse),
 }

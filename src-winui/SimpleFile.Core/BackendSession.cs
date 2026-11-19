@@ -6,7 +6,7 @@ using DriveInfo = SimpleFile.Ipc.DriveInfo;
 
 namespace SimpleFile.Core;
 
-public sealed class BackendSession : IExplorerBackend, IListingViewBackend, IAsyncDisposable
+public sealed class BackendSession : IExplorerBackend, IListingViewBackend, IEntryFactsBackend, IAsyncDisposable
 {
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private Process? _service;
@@ -149,6 +149,33 @@ public sealed class BackendSession : IExplorerBackend, IListingViewBackend, IAsy
         return UseClientAsync(client => client.CloseListingViewAsync(viewId, cancellationToken), cancellationToken);
     }
 
+    public IEntryFactsBackend? EntryFacts => this;
+
+    public event Action<EntryFactsBatch>? EntryFactsReceived;
+
+    public async Task<int> GetEntryFactsAsync(
+        string requestId,
+        IReadOnlyList<string> paths,
+        IReadOnlyList<string> kinds,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await UseClientAsync(
+                client => client.GetEntryFactsAsync(requestId, [.. paths], [.. kinds], cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return (int)Math.Min(result.Settled, int.MaxValue);
+    }
+
+    public Task CancelEntryFactsAsync(string requestId, CancellationToken cancellationToken = default)
+    {
+        return UseClientAsync(client => client.CancelEntryFactsAsync(requestId, cancellationToken), cancellationToken);
+    }
+
+    public Task PutEntryFactsAsync(IReadOnlyList<EntryFact> facts, CancellationToken cancellationToken = default)
+    {
+        return UseClientAsync(client => client.PutEntryFactsAsync([.. facts], cancellationToken), cancellationToken);
+    }
+
     public Task SelectDirectoryAsync(string? defaultPath = null, CancellationToken cancellationToken = default)
     {
         return UseClientAsync(client => client.SelectDirectoryAsync(defaultPath, cancellationToken), cancellationToken);
@@ -289,6 +316,7 @@ public sealed class BackendSession : IExplorerBackend, IListingViewBackend, IAsy
             // A restarted service has no views: the subscription belongs to this client, and the workspace opens
             // its views again when a page or refresh of the old ones fails.
             _ = _client.On<ListingViewDelta>(Protocol.ListingViewChangedEvent, delta => ListingViewChanged?.Invoke(delta));
+            _ = _client.On<EntryFactsBatch>(Protocol.EntryFactsEvent, batch => EntryFactsReceived?.Invoke(batch));
             Handshake = await _client.HandshakeAsync(_authToken, cancellationToken).ConfigureAwait(false);
             timer.Mark("handshake", $"methods={Handshake.MethodCount}");
             Health = await _client.HealthAsync(cancellationToken).ConfigureAwait(false);

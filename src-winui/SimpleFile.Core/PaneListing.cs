@@ -32,7 +32,7 @@ internal sealed class PaneListing
     public static bool IsServiceSortColumn(string? sortBy, bool folderSizesShown) =>
         (sortBy ?? "name").Trim().ToLowerInvariant() switch
         {
-            "" or "name" or "modified" or "date" or "extension" or "type" => true,
+            "" or "name" or "modified" or "date" or "created" or "accessed" or "attributes" or "extension" or "type" => true,
             // Folder sizes are measured by the pane and never reach the service.
             "size" => !folderSizesShown,
             _ => false,

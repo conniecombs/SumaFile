@@ -28,6 +28,7 @@ public sealed partial class ExplorerWorkspace
     private readonly WorkspaceSelectionController _selection = new();
     private readonly object _gate = new();
     private readonly ListingViewController _listingViews = new();
+    private readonly LazyColumnController _lazyColumns = new();
 
     public ExplorerWorkspace(
         IExplorerBackend backend,
@@ -43,6 +44,11 @@ public sealed partial class ExplorerWorkspace
         if (_backend.ListingViews is { } listingViews)
         {
             listingViews.ListingViewChanged += delta => _listingViews.OnDelta(this, delta);
+        }
+
+        if (_backend.EntryFacts is { } entryFacts)
+        {
+            entryFacts.EntryFactsReceived += batch => _lazyColumns.OnBatch(this, batch);
         }
 
         FileOps = fileOps;

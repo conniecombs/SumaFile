@@ -28,6 +28,9 @@ pub fn recycle_bin_entry() -> FileEntry {
         permissions: None,
         symlink_target: None,
         git_status: None,
+        created: String::new(),
+        accessed: String::new(),
+        attributes: String::new(),
     }
 }
 
@@ -399,6 +402,9 @@ fn collect_sid_entries(recycle_root: &Path, entries: &mut Vec<FileEntry>) {
                 permissions: None,
                 symlink_target: Some(parsed.original_path),
                 git_status: None,
+                created: String::new(),
+                accessed: String::new(),
+                attributes: String::new(),
             });
         }
     }
@@ -488,6 +494,9 @@ mod tests {
             permissions: None,
             symlink_target: Some(original_path.to_string()),
             git_status: None,
+            created: String::new(),
+            accessed: String::new(),
+            attributes: String::new(),
         }
     }
 

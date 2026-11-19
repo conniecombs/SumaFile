@@ -7,7 +7,7 @@ namespace SimpleFile.Ipc;
 
 public static partial class Protocol
 {
-    public const int DomainMethodCount = 79;
+    public const int DomainMethodCount = 82;
     public const byte BinaryListDirectoryChunk = 1;
     public const byte BinaryListDirectoryResult = 2;
     public const byte BinarySearchResultsBatch = 3;
@@ -29,6 +29,9 @@ public static partial class Protocol
     public const string GetListingViewRangeMethod = "get_listing_view_range";
     public const string RefreshListingViewMethod = "refresh_listing_view";
     public const string CloseListingViewMethod = "close_listing_view";
+    public const string GetEntryFactsMethod = "get_entry_facts";
+    public const string CancelEntryFactsMethod = "cancel_entry_facts";
+    public const string PutEntryFactsMethod = "put_entry_facts";
     public const string ListSubdirectoriesMethod = "list_subdirectories";
     public const string CreateDirectoryMethod = "create_directory";
     public const string CreateFileMethod = "create_file";
@@ -108,6 +111,7 @@ public static partial class Protocol
     public const string SearchCompleteEvent = "search-complete";
     public const string UpdateChunkEvent = "update-chunk";
     public const string ListingViewChangedEvent = "listing-view-changed";
+    public const string EntryFactsEvent = "entry-facts";
     public const string ListDirectoryChunkEvent = "list_directory.chunk";
 
     public static IReadOnlyList<string> DomainMethods { get; } =
@@ -120,6 +124,9 @@ public static partial class Protocol
         "get_listing_view_range",
         "refresh_listing_view",
         "close_listing_view",
+        "get_entry_facts",
+        "cancel_entry_facts",
+        "put_entry_facts",
         "list_subdirectories",
         "create_directory",
         "create_file",
@@ -201,6 +208,7 @@ public static partial class Protocol
 
     public static IReadOnlyList<string> CancellationMethods { get; } =
     [
+        "cancel_entry_facts",
         "cancel_operation",
         "cancel_folder_size",
         "cancel_folder_item_count",

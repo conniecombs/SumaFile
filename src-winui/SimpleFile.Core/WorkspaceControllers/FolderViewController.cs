@@ -113,6 +113,10 @@ internal sealed class FolderViewController
             || target.SortAscending != currentAscending)
         {
             workspace.NotifyChanged();
+            if (!string.Equals(target.SortBy, currentSort, StringComparison.OrdinalIgnoreCase))
+            {
+                workspace.StartLazySortFillIfNeeded(pane);
+            }
         }
     }
 
@@ -237,11 +241,14 @@ internal sealed class FolderViewController
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(primaryColumns);
         ArgumentNullException.ThrowIfNull(secondaryColumns);
+        // The preset is the starting point; a column set the user picked (saved per pane) replaces it.
         primaryColumns.ApplyPreset(
             string.IsNullOrWhiteSpace(settings.ColumnPreset) ? "default" : settings.ColumnPreset);
+        primaryColumns.RestoreVisibleIds(settings.VisibleColumns);
         primaryColumns.RestoreWidths(settings.ColumnWidths);
         secondaryColumns.ApplyPreset(
             string.IsNullOrWhiteSpace(settings.SecondaryColumnPreset) ? "default" : settings.SecondaryColumnPreset);
+        secondaryColumns.RestoreVisibleIds(settings.SecondaryVisibleColumns);
         secondaryColumns.RestoreWidths(settings.SecondaryColumnWidths);
     }
 

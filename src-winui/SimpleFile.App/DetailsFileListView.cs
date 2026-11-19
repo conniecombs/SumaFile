@@ -137,6 +137,9 @@ public sealed class DetailsFileListView : UserControl
 
     public event EventHandler? RowsDragCompleted;
 
+    /// <summary>The rows on screen changed: a scroll, or the rows themselves. See <see cref="VisibleRange"/>.</summary>
+    public event EventHandler? ViewportChanged;
+
     public PaneId Pane
     {
         get => (PaneId)GetValue(PaneProperty);
@@ -346,9 +349,41 @@ public sealed class DetailsFileListView : UserControl
         }
     }
 
-    private static void OnScrollViewerViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    private void OnScrollViewerViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
         ForegroundTaskScheduler.Shared.RecordActivity(ForegroundActivityKind.Scrolling);
+        ViewportChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>The first and last row index realized on screen, or null before the list has laid out.</summary>
+    public (int First, int Last)? VisibleRange()
+    {
+        if (_list.ItemsPanelRoot is not ItemsStackPanel panel || _rows.Count == 0)
+        {
+            return null;
+        }
+
+        var first = panel.FirstVisibleIndex;
+        var last = panel.LastVisibleIndex;
+        if (first < 0 || last < first)
+        {
+            return null;
+        }
+
+        return (first, Math.Min(last, _rows.Count - 1));
+    }
+
+    /// <summary>Tells the viewport listeners after the rows changed, once the list has laid the new rows out.</summary>
+    private void NotifyViewportAfterLayout()
+    {
+        if (ViewportChanged is null)
+        {
+            return;
+        }
+
+        DispatcherQueue.TryEnqueue(
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            () => ViewportChanged?.Invoke(this, EventArgs.Empty));
     }
 
     public void BeginUpdate()
@@ -384,6 +419,7 @@ public sealed class DetailsFileListView : UserControl
         {
             RefreshRowsFromItemsSource();
             RestoreSelectionByPaths(selectedPaths ?? []);
+            NotifyViewportAfterLayout();
         }
     }
 
@@ -398,6 +434,7 @@ public sealed class DetailsFileListView : UserControl
         var selectedPaths = SelectedPathSet();
         ApplyRowsChange(e);
         RestoreSelectionByPaths(selectedPaths);
+        NotifyViewportAfterLayout();
     }
 
     private void ApplyRowsChange(NotifyCollectionChangedEventArgs e)

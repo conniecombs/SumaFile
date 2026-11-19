@@ -933,7 +933,11 @@ public sealed partial class MainWindow
         && left.Size == right.Size
         && left.ItemsText == right.ItemsText
         && left.ModifiedText == right.ModifiedText
+        && left.CreatedText == right.CreatedText
+        && left.AccessedText == right.AccessedText
+        && left.AttributesText == right.AttributesText
         && left.SizeText == right.SizeText
+        && left.SameLazyCells(right)
         && left.TypeText == right.TypeText
         && left.ExtensionText == right.ExtensionText
         && left.DecorationText == right.DecorationText

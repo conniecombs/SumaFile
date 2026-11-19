@@ -47,6 +47,29 @@ public sealed class FileEntry
 
     [JsonPropertyName("itemCount")]
     public ulong? ItemCount { get; set; }
+
+    /// <summary>Creation time in the form of <see cref="Modified"/>, or empty when unknown.</summary>
+    [JsonPropertyName("created")]
+    public string Created { get; set; } = "";
+
+    /// <summary>Last access time in the form of <see cref="Modified"/>, or empty when unknown.</summary>
+    [JsonPropertyName("accessed")]
+    public string Accessed { get; set; } = "";
+
+    /// <summary>Explorer's attribute letters (R H S A C E O T, L for a reparse point), or empty.</summary>
+    [JsonPropertyName("attributes")]
+    public string Attributes { get; set; } = "";
+
+    /// <summary>
+    /// The lazy column values read for this entry so far, by fact kind (see <c>get_entry_facts</c>); null until one
+    /// arrives. Replaced whole on every write, so a reader never sees a dictionary being changed.
+    /// </summary>
+    [JsonIgnore]
+    public IReadOnlyDictionary<string, EntryFact>? Facts { get; set; }
+
+    /// <summary>The fact of <paramref name="kind"/> for this entry, in whatever state it settled, or null when none was read.</summary>
+    public EntryFact? FactFor(string kind) =>
+        Facts is { } facts && facts.TryGetValue(kind, out var fact) ? fact : null;
 }
 
 public sealed class DirectoryListing
@@ -885,4 +908,48 @@ public sealed class UpdateInfo
     [JsonPropertyName("url")] public string? Url { get; set; }
     [JsonPropertyName("sha256")] public string? Sha256 { get; set; }
     [JsonPropertyName("size")] public ulong? Size { get; set; }
+}
+
+/// <summary>One lazy-column value for one entry; see <c>get_entry_facts</c>.</summary>
+public sealed class EntryFact
+{
+    public const string Ready = "ready";
+    public const string None = "none";
+    public const string Unsupported = "unsupported";
+    public const string Failed = "failed";
+
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = "";
+
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "";
+
+    /// <summary>ready, none, unsupported or failed.</summary>
+    [JsonPropertyName("state")]
+    public string State { get; set; } = "";
+
+    [JsonPropertyName("text")]
+    public string Text { get; set; } = "";
+
+    /// <summary>What the column sorts by: pixels, seconds, pages, bytes, or unix milliseconds for a date.</summary>
+    [JsonPropertyName("sort")]
+    public double? Sort { get; set; }
+}
+
+public sealed class EntryFactsBatch
+{
+    [JsonPropertyName("request_id")]
+    public string RequestId { get; set; } = "";
+
+    [JsonPropertyName("facts")]
+    public List<EntryFact> Facts { get; set; } = [];
+}
+
+public sealed class EntryFactsResult
+{
+    [JsonPropertyName("request_id")]
+    public string RequestId { get; set; } = "";
+
+    [JsonPropertyName("settled")]
+    public uint Settled { get; set; }
 }

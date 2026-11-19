@@ -15,6 +15,9 @@ public sealed class FileRow : IInspectionEntryPresentation
     public string SizeText { get; set; } = "";
     public string ItemsText { get; set; } = "";
     public string ModifiedText { get; set; } = "";
+    public string CreatedText { get; set; } = "";
+    public string AccessedText { get; set; } = "";
+    public string AttributesText { get; set; } = "";
     public string TypeText { get; set; } = "";
     public bool IsCut { get; set; }
     public ulong Size { get; set; }
@@ -35,18 +38,33 @@ public sealed class FileRow : IInspectionEntryPresentation
     public string TagName { get; set; } = "";
     public PaneId Pane { get; set; } = PaneId.Primary;
     public bool IsHidden { get; set; }
+    /// <summary>
+    /// The lazy columns' cells by column id: the value, or <see cref="EntryPresentation.PendingMark"/> while the row
+    /// can have one that has not been read. Folders' size and items cells are among them.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> LazyCells { get; set; } = NoLazyCells;
     private static readonly IReadOnlySet<string> NoDecorationPlugins = new HashSet<string>(StringComparer.Ordinal);
+    private static readonly IReadOnlyDictionary<string, string> NoLazyCells = new Dictionary<string, string>(StringComparer.Ordinal);
+    private static readonly IReadOnlyList<FileListColumn> LazyColumnDefinitions = new ColumnLayout().Columns.Where(column => column.IsLazy).ToList();
 
     public string AutomationName => IsDir ? $"Folder {Name}" : $"File {Name}";
 
     public string ColumnText(string columnId)
     {
+        if (LazyCells.TryGetValue(columnId, out var lazy))
+        {
+            return lazy;
+        }
+
         return columnId switch
         {
             "name" => Name,
             "size" => SizeText,
             "items" => ItemsText,
             "date" or "modified" => ModifiedText,
+            "created" => CreatedText,
+            "accessed" => AccessedText,
+            "attributes" => AttributesText,
             "type" => TypeText,
             "extension" => ExtensionText,
             "git" => DecorationText,
@@ -68,6 +86,9 @@ public sealed class FileRow : IInspectionEntryPresentation
             SizeText = EntryPresentation.ColumnText(entry, "size"),
             ItemsText = EntryPresentation.ColumnText(entry, "items"),
             ModifiedText = EntryPresentation.FormatModified(entry.Modified),
+            CreatedText = EntryPresentation.ColumnText(entry, "created"),
+            AccessedText = EntryPresentation.ColumnText(entry, "accessed"),
+            AttributesText = EntryPresentation.ColumnText(entry, "attributes"),
             TypeText = EntryPresentation.FileType(entry),
             IsCut = isCut,
             Size = entry.Size,
@@ -80,7 +101,45 @@ public sealed class FileRow : IInspectionEntryPresentation
             TagName = tag?.Name ?? "",
             Pane = pane,
             IsHidden = EntryPresentation.IsHiddenFromUser(entry),
+            LazyCells = LazyCellsOf(entry),
         };
+    }
+
+    /// <summary>Whether every lazy cell reads the same as <paramref name="other"/>'s: a "…" that filled in is a changed row.</summary>
+    public bool SameLazyCells(FileRow other)
+    {
+        if (LazyCells.Count != other.LazyCells.Count)
+        {
+            return false;
+        }
+
+        foreach (var (id, text) in LazyCells)
+        {
+            if (!other.LazyCells.TryGetValue(id, out var otherText) || !string.Equals(text, otherText, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static IReadOnlyDictionary<string, string> LazyCellsOf(FileEntry entry)
+    {
+        Dictionary<string, string>? cells = null;
+        foreach (var column in LazyColumnDefinitions)
+        {
+            var text = EntryPresentation.CellText(entry, column);
+            if (text.Length == 0)
+            {
+                continue;
+            }
+
+            cells ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            cells[column.Id] = text;
+        }
+
+        return cells ?? NoLazyCells;
     }
 }
 
