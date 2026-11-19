@@ -90,13 +90,38 @@ public static class EntryPresentation
             "symlink" => entry.SymlinkTarget ?? "",
             "path" => entry.Path,
             "parent" => PathRules.GetParentPath(entry.Path) ?? "",
+            LazyColumns.DateTaken => entry.FactFor(LazyColumns.DateTaken) is { State: EntryFact.Ready } taken ? FormatModified(taken.Text) : "",
+            LazyColumns.Dimensions or LazyColumns.Duration or LazyColumns.Camera or LazyColumns.Pages =>
+                entry.FactFor(columnId) is { State: EntryFact.Ready } fact ? fact.Text : "",
             _ => "",
         };
     }
 
+    /// <summary>What a lazy column's cell shows while its value is unknown and the row can have one.</summary>
+    public const string PendingMark = "\u2026";
+
+    /// <summary>
+    /// A cell's text: the column's value, or <see cref="PendingMark"/> in a lazy column whose value the row can have
+    /// but has not read yet. A fact that settled without a value (none, unsupported, failed) shows nothing.
+    /// </summary>
+    public static string CellText(FileEntry entry, FileListColumn column)
+    {
+        var text = ColumnText(entry, column.Id);
+        if (text.Length == 0
+            && column.FactKind is { } kind
+            && LazyColumns.CanHaveValue(kind, entry)
+            && entry.FactFor(kind) is null)
+        {
+            return PendingMark;
+        }
+
+        return text;
+    }
+
     public static string FormatEntrySize(FileEntry entry)
     {
-        return entry.IsDir && entry.Size == 0
+        // A folder shows no size until it was measured; an empty measured folder shows 0 B.
+        return entry.IsDir && entry.Size == 0 && entry.FactFor(LazyColumns.FolderSize) is not { State: EntryFact.Ready }
             ? ""
             : FormatFileSize(entry.Size);
     }
@@ -362,6 +387,16 @@ public static class EntryPresentation
             }
             case "items":
                 return (left.ItemCount ?? 0UL).CompareTo(right.ItemCount ?? 0UL);
+            case LazyColumns.Camera:
+                return StringComparer.CurrentCultureIgnoreCase.Compare(
+                    ColumnText(left, LazyColumns.Camera),
+                    ColumnText(right, LazyColumns.Camera));
+            case LazyColumns.Dimensions:
+            case LazyColumns.Duration:
+            case LazyColumns.DateTaken:
+            case LazyColumns.Pages:
+                // Unknown and valueless rows sort before every value; equal values fall back to the name.
+                return FactSort(left, normalizedSortBy).CompareTo(FactSort(right, normalizedSortBy));
             case ColumnLayout.DecorationColumnId:
                 return StringComparer.CurrentCultureIgnoreCase.Compare(
                     decorationText?.Invoke(left.Path) ?? "",
@@ -379,6 +414,17 @@ public static class EntryPresentation
             default:
                 return StringComparer.CurrentCultureIgnoreCase.Compare(left.Name, right.Name);
         }
+    }
+
+    private static double FactSort(FileEntry entry, string kind)
+    {
+        var fact = entry.FactFor(kind);
+        if (fact is not { State: EntryFact.Ready })
+        {
+            return -1;
+        }
+
+        return fact.Sort ?? -1;
     }
 
     private static long ParseModifiedMillis(string? modified)

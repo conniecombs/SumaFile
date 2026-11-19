@@ -59,6 +59,17 @@ public sealed class FileEntry
     /// <summary>Explorer's attribute letters (R H S A C E O T, L for a reparse point), or empty.</summary>
     [JsonPropertyName("attributes")]
     public string Attributes { get; set; } = "";
+
+    /// <summary>
+    /// The lazy column values read for this entry so far, by fact kind (see <c>get_entry_facts</c>); null until one
+    /// arrives. Replaced whole on every write, so a reader never sees a dictionary being changed.
+    /// </summary>
+    [JsonIgnore]
+    public IReadOnlyDictionary<string, EntryFact>? Facts { get; set; }
+
+    /// <summary>The fact of <paramref name="kind"/> for this entry, in whatever state it settled, or null when none was read.</summary>
+    public EntryFact? FactFor(string kind) =>
+        Facts is { } facts && facts.TryGetValue(kind, out var fact) ? fact : null;
 }
 
 public sealed class DirectoryListing
