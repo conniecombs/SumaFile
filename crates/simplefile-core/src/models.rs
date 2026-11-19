@@ -432,3 +432,30 @@ pub struct ArchiveFormatCapability {
 pub struct ArchiveCapabilities {
     pub formats: Vec<ArchiveFormatCapability>,
 }
+
+// ============================================================================
+// Entry facts (lazy columns)
+// ============================================================================
+
+/// One value of a lazy column for one entry: `kind` is a wire name from
+/// `entry_facts::FactKind`, `state` is `ready`, `none` (nothing to show for
+/// this entry), `unsupported` (the app may try its own fallback) or `failed`.
+/// `text` is what the cell shows; `sort` orders the column (pixels, seconds,
+/// pages, bytes, or unix milliseconds for a date).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EntryFact {
+    pub path: String,
+    pub kind: String,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<f64>,
+}
+
+/// A batch of facts streamed for one `get_entry_facts` request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryFactsBatch {
+    pub request_id: String,
+    pub facts: Vec<EntryFact>,
+}

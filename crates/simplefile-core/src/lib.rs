@@ -14,6 +14,7 @@ pub mod collation;
 pub mod compare;
 pub mod dir_list;
 pub mod drives;
+pub mod entry_facts;
 pub mod file_attributes;
 pub mod file_ops;
 pub mod listing_view;
