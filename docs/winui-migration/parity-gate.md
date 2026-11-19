@@ -30,7 +30,7 @@ Required = every row except those marked `WAIVED`.
 # Automated (CI + local)
 npm run check                 # ipc-schema, updater, workflows, packaging, parity-gate
 npm run check:winui           # xUnit: navigation, IPC, transfers, polish
-npm run check:ipc-schema      # 79-command schema vs Rust/C#
+npm run check:ipc-schema      # 82-command schema vs Rust/C#
 npm run check:winui-packaging
 cargo test --locked --all-features
 
@@ -61,7 +61,7 @@ Manual host: `npm run dev:winui` or `dist\winui\payload\SumaFile.exe`.
 
 ---
 
-## 2. IPC commands (79)
+## 2. IPC commands (82)
 
 Each command must appear here. Service registry is `crates/simplefile-service/src/dispatch/`. C# names are `SimpleFile.Ipc.Protocol` + `ISimpleFileIpc`.
 
@@ -450,7 +450,7 @@ The WinUI CI job runs the `-PluginsDir` smoke, `npm run check:winui-startup-budg
 | Check | What it gates |
 | --- | --- |
 | `npm run check:winui-parity-gate` | This file lists every handler, ctx id, palette id, and a status |
-| `npm run check:ipc-schema` | 79 commands + events vs Rust/C# |
+| `npm run check:ipc-schema` | 82 commands + events vs Rust/C# |
 | `npm run check:winui` | xUnit: workspace, dual-pane, IPC, file ops, polish |
 | `npm run check:winui-packaging` | NSIS/WiX/scripts/workflows |
 | `npm run check:updater` / `check:workflows` | WinUI updater + installer artifacts |

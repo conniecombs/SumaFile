@@ -8,6 +8,37 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Details view columns
+
+- Right-click a column header, or open "Columns" from the list background's
+  menu in the Details view, to pick columns: a toggle per column, the presets
+  as starting points, and the name column always on. Each pane keeps its own
+  choice, saved with the layout.
+- Three new free columns come with every listing: Created, Accessed and
+  Attributes (Explorer's R H S A C E O T letters, L for a reparse point). They
+  sort in the service like the others.
+- Five columns are read per row on demand: Dimensions (images), Duration
+  (audio and video), Date taken and Camera (photos), Pages (PDF). Folder size
+  and Items are read the same way. A cell shows "…" while the row can have a
+  value that has not been read; click it to read that one value. The Rust
+  service reads the files (JPEG, PNG, GIF, WebP, BMP headers; MP3, FLAC, WAV,
+  M4A, OGG, Opus, AAC and MP4, MOV, MKV, WebM containers; EXIF; PDF page
+  trees), caches each value by the file's size and modified time in
+  metadata.db, and never reads more than two folder trees and four files at a
+  time. AVI, WMV, MPEG and ASF durations come from the Windows property system
+  instead, two at a time, and are cached too.
+- Each on-demand column reads either as rows appear (the default for all but
+  folder size) or only when asked ("Read as rows appear" in the header menu).
+  "Calculate … for this folder" reads a column for the whole folder, with its
+  progress in the status line and a "Stop calculating" item. Sorting by a
+  column that reads as rows appear reads the whole folder first, 5,000 rows at
+  most; above that the status line says how many were left unread. The
+  "folder sizes" setting makes the Size column read folder sizes as rows
+  appear, as it did before.
+- The binary listing frame is version 2: every entry carries the three free
+  columns. Three IPC methods: `get_entry_facts` (streams `entry-facts`
+  notifications), `cancel_entry_facts`, `put_entry_facts`.
+
 ---
 
 ## [1.1.3] - prepared 2026-11-18

@@ -231,7 +231,12 @@ Settings in `%APPDATA%\com.simplefile.desktop` are not removed.
   tree sections
 - Details, list, tiles, and content views
 - Per-pane view style, icon size, sort column, and sort direction
-- Column presets: default, details, media, developer, and photo
+- Column presets: default, details, media, developer, and photo, and a column
+  picker on each header's right-click (Created, Accessed, Attributes, and the
+  on-demand Dimensions, Duration, Date taken, Camera and Pages columns)
+- On-demand columns read as rows come into view or only when asked; a "…" cell
+  reads its one value on a click, and "Calculate … for this folder" reads a
+  column for the whole folder with progress in the status line
 - Explorer-style column resizing, size-to-fit, and horizontal scrolling
 - Details stays selected in narrow panes, with compact leading columns and
   horizontal access to the remaining columns
