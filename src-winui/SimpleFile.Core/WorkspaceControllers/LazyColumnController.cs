@@ -237,7 +237,7 @@ internal sealed class LazyColumnController
     /// <summary>A batch of values arrived; they belong to a request this controller issued, or are dropped.</summary>
     public void OnBatch(ExplorerWorkspace workspace, EntryFactsBatch batch)
     {
-        var fallbacks = new List<(FileEntry Entry, EntryFact Fact)>();
+        var fallbacks = new List<(ExplorerPane Pane, FileEntry Entry, EntryFact Fact)>();
         var changed = false;
         lock (workspace.Gate)
         {
@@ -258,7 +258,7 @@ internal sealed class LazyColumnController
                 changed = true;
                 if (fact.State == EntryFact.Unsupported && workspace.FactFallback is not null)
                 {
-                    fallbacks.Add((entry, fact));
+                    fallbacks.Add((request.Pane, entry, fact));
                 }
             }
 
@@ -273,9 +273,9 @@ internal sealed class LazyColumnController
             workspace.NotifyChanged();
         }
 
-        foreach (var (entry, fact) in fallbacks)
+        foreach (var (pane, entry, fact) in fallbacks)
         {
-            _ = RunFallbackAsync(workspace, entry, fact.Kind);
+            _ = RunFallbackAsync(workspace, pane, entry, fact.Kind);
         }
     }
 
@@ -375,7 +375,7 @@ internal sealed class LazyColumnController
                 }
             }
 
-            if (completed)
+            if (completed && request.NavigationToken == request.Pane.NavigationToken)
             {
                 // The request ended without a word about these: they are not asked for again and again.
                 foreach (var entry in request.Entries.Values)
@@ -418,7 +418,7 @@ internal sealed class LazyColumnController
         });
     }
 
-    private static async Task RunFallbackAsync(ExplorerWorkspace workspace, FileEntry entry, string kind)
+    private static async Task RunFallbackAsync(ExplorerWorkspace workspace, ExplorerPane pane, FileEntry entry, string kind)
     {
         var fallback = workspace.FactFallback;
         var backend = workspace.Backend.EntryFacts;
@@ -445,6 +445,8 @@ internal sealed class LazyColumnController
         lock (workspace.Gate)
         {
             Apply(entry, found);
+            // The pane's sorted rows are cached by content version: a sort by this column must see the value.
+            pane.BumpContentVersion();
         }
 
         workspace.NotifyChanged();

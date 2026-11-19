@@ -1651,6 +1651,15 @@ public class WinUiSourceShapeTests
             Assert.Contains("left." + member, same);
         }
 
+        // A row whose free columns or lazy cells changed (a "…" that filled in) is a changed row, or the list keeps the old one.
+        foreach (var member in new[] { "CreatedText", "AccessedText", "AttributesText" })
+        {
+            Assert.Contains("left." + member + " == right." + member, same);
+        }
+
+        Assert.Contains("left.SameLazyCells(right)", same);
+        Assert.Contains("public bool SameLazyCells(FileRow other)", rows);
+
         // The status column shows only when a decoration provider exists, not with the legacy Git switch.
         var transfer = File.ReadAllText(Path.Combine(root, "SimpleFile.App", "MainWindow.Transfer.cs"));
         var effective = MethodBody(transfer, "private ColumnLayout EffectiveColumnsForPane(");

@@ -105,6 +105,25 @@ public sealed class FileRow : IInspectionEntryPresentation
         };
     }
 
+    /// <summary>Whether every lazy cell reads the same as <paramref name="other"/>'s: a "…" that filled in is a changed row.</summary>
+    public bool SameLazyCells(FileRow other)
+    {
+        if (LazyCells.Count != other.LazyCells.Count)
+        {
+            return false;
+        }
+
+        foreach (var (id, text) in LazyCells)
+        {
+            if (!other.LazyCells.TryGetValue(id, out var otherText) || !string.Equals(text, otherText, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static IReadOnlyDictionary<string, string> LazyCellsOf(FileEntry entry)
     {
         Dictionary<string, string>? cells = null;

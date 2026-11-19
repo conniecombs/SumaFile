@@ -89,6 +89,8 @@ public class LazyColumnWorkspaceTests
         backend.Deliver(request.Id, FakeEntryFactsBackend.Ready(photo.Path, "dimensions", "6000 × 4000", 24_000_000));
         backend.Complete(request.Id, 1);
 
+        // Neither the late value nor the request's end settles the old folder's rows.
+        await Task.Delay(100);
         Assert.Null(photo.FactFor("dimensions"));
     }
 
@@ -215,6 +217,23 @@ public class LazyColumnWorkspaceTests
         Assert.Equal([(clip.Path, LazyColumns.Duration)], asked);
         Assert.Equal("0:42", EntryPresentation.ColumnText(clip, "duration"));
         Assert.Equal((clip.Path, "duration", "0:42"), (backend.Put[0].Path, backend.Put[0].Kind, backend.Put[0].Text));
+    }
+
+    [Fact]
+    public async Task FallbackResultsReSortAPaneSortedByThatColumn()
+    {
+        var (workspace, backend) = await OpenAsync([FakeEntryFactsBackend.Entry(Work, "long.avi"), FakeEntryFactsBackend.Entry(Work, "short.avi")]);
+        backend.Answer = (path, kind) => FakeEntryFactsBackend.Settled(path, kind, EntryFact.Unsupported);
+        workspace.FactFallback = (path, kind, _) => Task.FromResult<EntryFact?>(path.EndsWith("short.avi", StringComparison.Ordinal)
+            ? FakeEntryFactsBackend.Ready(path, kind, "0:05", 5)
+            : FakeEntryFactsBackend.Ready(path, kind, "1:40", 100));
+        workspace.SetColumnVisible(PaneId.Primary, "duration", true);
+
+        // Sorting by duration fills the folder; the service has nothing, so every value comes from the fallback.
+        workspace.SetSort("duration");
+        await UntilAsync(() => backend.Put.Count == 2, "both fallback answers");
+
+        Assert.Equal(["short.avi", "long.avi"], workspace.VisibleEntriesFor(PaneId.Primary).Select(entry => entry.Name));
     }
 
     [Fact]
