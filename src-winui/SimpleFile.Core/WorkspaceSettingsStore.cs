@@ -31,6 +31,8 @@ internal static class WorkspaceSettingsStore
         "openInNewTab",
         "progressQueue.visible",
         "showFolderSizes",
+        "visibleColumns",
+        "lazyColumnModes",
         "previewVisible",
         "preview.pinned",
         "preview.autoCollapse",
@@ -105,6 +107,10 @@ internal static class WorkspaceSettingsStore
         var columnWidths = ReadColumnWidths(values);
         settings.ColumnWidths = columnWidths.Primary;
         settings.SecondaryColumnWidths = columnWidths.Secondary;
+        var visibleColumns = ReadVisibleColumns(values);
+        settings.VisibleColumns = visibleColumns.Primary;
+        settings.SecondaryVisibleColumns = visibleColumns.Secondary;
+        settings.LazyColumnModes = ReadLazyColumnModes(values);
         settings.ShortcutOverrides = ReadShortcutOverrides(values);
         settings.CommandSurface = CommandSurfaceLayout.FromJson(
             ReadSetting(values, CommandSurfaceLayout.SettingsKey));
@@ -172,6 +178,9 @@ internal static class WorkspaceSettingsStore
         settings.SecondaryColumnPreset = UiSettings.NormalizeColumnPreset(settings.SecondaryColumnPreset);
         settings.ColumnWidths = primaryColumns.SnapshotWidths();
         settings.SecondaryColumnWidths = secondaryColumns.SnapshotWidths();
+        settings.VisibleColumns = primaryColumns.SnapshotVisibleIds();
+        settings.SecondaryVisibleColumns = secondaryColumns.SnapshotVisibleIds();
+        settings.LazyColumnModes = LazyColumns.NormalizeModes(settings.LazyColumnModes);
         settings.FolderViewSettings.Normalize();
         settings.ShortcutOverrides = KeyboardShortcutMap.NormalizeOverrides(settings.ShortcutOverrides);
         settings.CommandSurface.Normalize();
@@ -207,6 +216,12 @@ internal static class WorkspaceSettingsStore
                 ["primary"] = settings.ColumnWidths,
                 ["secondary"] = settings.SecondaryColumnWidths,
             })),
+            ("visibleColumns", JsonSerializer.Serialize(new Dictionary<string, List<string>>(StringComparer.Ordinal)
+            {
+                ["primary"] = settings.VisibleColumns,
+                ["secondary"] = settings.SecondaryVisibleColumns,
+            })),
+            ("lazyColumnModes", JsonSerializer.Serialize(settings.LazyColumnModes)),
             (KeyboardShortcutMap.SettingsKey, KeyboardShortcutMap.WriteOverridesJson(settings.ShortcutOverrides)),
             (CommandSurfaceLayout.SettingsKey, settings.CommandSurface.ToJson()),
             (FolderViewSettingsDocument.SettingsKey, settings.FolderViewSettings.ToJson()),
@@ -256,6 +271,46 @@ internal static class WorkspaceSettingsStore
             ? primary
             : UiSettings.NormalizeColumnPreset(secondaryRaw);
         return new PaneColumnPresets(primary, secondary);
+    }
+
+    private static (List<string> Primary, List<string> Secondary) ReadVisibleColumns(IReadOnlyDictionary<string, string?> values)
+    {
+        var raw = ReadSetting(values, "visibleColumns");
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return ([], []);
+        }
+
+        try
+        {
+            var panes = JsonSerializer.Deserialize<Dictionary<string, List<string?>?>>(raw);
+            List<string> Clean(string pane) => panes is not null && panes.TryGetValue(pane, out var ids) && ids is not null
+                ? ids.Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id!.Trim()).Distinct(StringComparer.Ordinal).ToList()
+                : [];
+            return (Clean("primary"), Clean("secondary"));
+        }
+        catch (JsonException)
+        {
+            return ([], []);
+        }
+    }
+
+    private static Dictionary<string, string> ReadLazyColumnModes(IReadOnlyDictionary<string, string?> values)
+    {
+        var raw = ReadSetting(values, "lazyColumnModes");
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        try
+        {
+            return LazyColumns.NormalizeModes(JsonSerializer.Deserialize<Dictionary<string, string>>(raw));
+        }
+        catch (JsonException)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
     }
 
     private static PaneColumnWidths ReadColumnWidths(IReadOnlyDictionary<string, string?> values)

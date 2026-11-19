@@ -1,12 +1,83 @@
 using System.Collections.Generic;
 using System.Linq;
 using SimpleFile.Core;
+using SimpleFile.Ipc;
 using Xunit;
 
 namespace SimpleFile.Tests;
 
 public class ColumnLayoutTests
 {
+    [Fact]
+    public void SetVisible_TogglesAColumnAndNeverHidesName()
+    {
+        var columns = new ColumnLayout();
+        columns.SetVisible("dimensions", true);
+        Assert.Equal(["name", "size", "date", "type", "dimensions"], columns.VisibleIds);
+        columns.SetVisible("size", false);
+        Assert.Equal(["name", "date", "type", "dimensions"], columns.VisibleIds);
+        columns.SetVisible("name", false);
+        Assert.Contains("name", columns.VisibleIds);
+        columns.SetVisible("dimensions", true);
+        Assert.Single(columns.VisibleIds, "dimensions");
+    }
+
+    [Fact]
+    public void LazyColumns_NameTheirFactKindAndWhichEntriesCanHaveAValue()
+    {
+        var columns = new ColumnLayout();
+        Assert.Equal(LazyColumns.FolderSize, columns.Find("size")!.FactKind);
+        Assert.Equal(LazyColumns.ItemCount, columns.Find("items")!.FactKind);
+        Assert.Equal(LazyColumns.Dimensions, columns.Find("dimensions")!.FactKind);
+        Assert.Equal(LazyColumns.Duration, columns.Find("duration")!.FactKind);
+        Assert.Equal(LazyColumns.DateTaken, columns.Find("date_taken")!.FactKind);
+        Assert.Equal(LazyColumns.Camera, columns.Find("camera")!.FactKind);
+        Assert.Equal(LazyColumns.Pages, columns.Find("pages")!.FactKind);
+        Assert.Null(columns.Find("name")!.FactKind);
+        Assert.Null(columns.Find("created")!.FactKind);
+
+        var folder = new FileEntry { Name = "src", IsDir = true };
+        var photo = new FileEntry { Name = "a.JPG", Extension = "JPG" };
+        var clip = new FileEntry { Name = "a.mkv", Extension = "mkv" };
+        var song = new FileEntry { Name = "a.flac", Extension = "flac" };
+        var paper = new FileEntry { Name = "a.pdf", Extension = "pdf" };
+        var text = new FileEntry { Name = "a.txt", Extension = "txt" };
+        Assert.True(LazyColumns.CanHaveValue(LazyColumns.FolderSize, folder));
+        Assert.False(LazyColumns.CanHaveValue(LazyColumns.FolderSize, photo));
+        Assert.True(LazyColumns.CanHaveValue(LazyColumns.ItemCount, folder));
+        Assert.True(LazyColumns.CanHaveValue(LazyColumns.Dimensions, photo));
+        Assert.False(LazyColumns.CanHaveValue(LazyColumns.Dimensions, clip));
+        Assert.True(LazyColumns.CanHaveValue(LazyColumns.Duration, clip));
+        Assert.True(LazyColumns.CanHaveValue(LazyColumns.Duration, song));
+        Assert.False(LazyColumns.CanHaveValue(LazyColumns.Duration, photo));
+        Assert.True(LazyColumns.CanHaveValue(LazyColumns.DateTaken, photo));
+        Assert.True(LazyColumns.CanHaveValue(LazyColumns.Camera, photo));
+        Assert.True(LazyColumns.CanHaveValue(LazyColumns.Pages, paper));
+        Assert.False(LazyColumns.CanHaveValue(LazyColumns.Pages, text));
+        Assert.False(LazyColumns.CanHaveValue(LazyColumns.Dimensions, folder));
+    }
+
+    [Fact]
+    public void LazyColumns_FolderSizeIsOnRequestAndTheRestAutomatic()
+    {
+        Assert.Equal(LazyColumns.OnRequest, LazyColumns.DefaultMode(LazyColumns.FolderSize));
+        foreach (var kind in new[] { LazyColumns.ItemCount, LazyColumns.Dimensions, LazyColumns.Duration, LazyColumns.DateTaken, LazyColumns.Camera, LazyColumns.Pages })
+        {
+            Assert.Equal(LazyColumns.Automatic, LazyColumns.DefaultMode(kind));
+        }
+
+        var modes = LazyColumns.NormalizeModes(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [LazyColumns.Dimensions] = "ON-REQUEST",
+            [LazyColumns.FolderSize] = "automatic",
+            ["unknown"] = "automatic",
+            [LazyColumns.Pages] = "sometimes",
+        });
+        Assert.Equal(new Dictionary<string, string> { [LazyColumns.Dimensions] = LazyColumns.OnRequest, [LazyColumns.FolderSize] = LazyColumns.Automatic }, modes);
+        Assert.Equal(LazyColumns.OnRequest, LazyColumns.ModeFor(modes, LazyColumns.Dimensions));
+        Assert.Equal(LazyColumns.Automatic, LazyColumns.ModeFor(modes, LazyColumns.Pages));
+    }
+
     [Fact]
     public void ColumnLayout_ClampsResizeAndAppliesPresets()
     {

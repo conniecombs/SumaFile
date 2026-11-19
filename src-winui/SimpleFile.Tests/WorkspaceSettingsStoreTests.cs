@@ -119,6 +119,40 @@ public class WorkspaceSettingsStoreTests
     }
 
     [Fact]
+    public async Task SaveAndLoadAsync_RoundTripsVisibleColumnsAndLazyColumnModes()
+    {
+        var ipc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(ipc);
+        var primary = new ColumnLayout();
+        primary.RestoreVisibleIds(["name", "size", "dimensions", "created"]);
+        var secondary = new ColumnLayout();
+        secondary.RestoreVisibleIds(["name", "duration"]);
+        var settings = new UiSettings
+        {
+            LazyColumnModes = new Dictionary<string, string>(StringComparer.Ordinal) { [LazyColumns.Dimensions] = LazyColumns.OnRequest },
+        };
+
+        await WorkspaceSettingsStore.SaveAsync(fileOps, settings, primary, secondary, false, [], [], CancellationToken.None);
+        var state = await WorkspaceSettingsStore.LoadAsync(fileOps, CancellationToken.None);
+
+        Assert.Equal(["name", "size", "dimensions", "created"], state.Settings.VisibleColumns);
+        Assert.Equal(["name", "duration"], state.Settings.SecondaryVisibleColumns);
+        Assert.Equal(LazyColumns.OnRequest, LazyColumns.ModeFor(state.Settings.LazyColumnModes, LazyColumns.Dimensions));
+
+        // The saved set wins over the preset; without one the preset applies.
+        var controller = new FolderViewController();
+        var (p, s) = (new ColumnLayout(), new ColumnLayout());
+        controller.ApplyColumnSettings(state.Settings, p, s);
+        Assert.Equal(["name", "size", "dimensions", "created"], p.VisibleIds);
+        Assert.Equal(["name", "duration"], s.VisibleIds);
+        state.Settings.VisibleColumns = [];
+        state.Settings.SecondaryVisibleColumns = [];
+        state.Settings.ColumnPreset = "developer";
+        controller.ApplyColumnSettings(state.Settings, p, s);
+        Assert.Equal(ColumnLayout.Presets["developer"], p.VisibleIds);
+    }
+
+    [Fact]
     public async Task SaveAndLoadAsync_RoundTripsSettingsPlacesAndColumnWidths()
     {
         var ipc = new ConfigurableIpc();

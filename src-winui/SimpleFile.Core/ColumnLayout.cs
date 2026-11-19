@@ -15,6 +15,11 @@ public sealed class FileListColumn
     public string Id { get; }
     public string Label { get; }
     public string Sort { get; }
+
+    /// <summary>The fact kind (<see cref="LazyColumns"/>) this column shows on demand, or null for a free column.</summary>
+    public string? FactKind { get; init; }
+
+    public bool IsLazy => FactKind is not null;
     public double Width { get; set; }
     public double MinWidth { get; }
     public double MaxWidth { get; }
@@ -51,8 +56,9 @@ public sealed class ColumnLayout
         Columns =
         [
             new("name", "Name", "name", 240, 80, UnboundedMaxWidth),
-            new("size", "Size", "size", 100, 36, UnboundedMaxWidth),
-            new("items", "Items", "items", 86, 36, UnboundedMaxWidth),
+            // Free for files; a folder's size is a fact read on demand.
+            new("size", "Size", "size", 100, 36, UnboundedMaxWidth) { FactKind = LazyColumns.FolderSize },
+            new("items", "Items", "items", 86, 36, UnboundedMaxWidth) { FactKind = LazyColumns.ItemCount },
             new("date", "Modified", "date", 160, 36, UnboundedMaxWidth),
             new("created", "Created", "created", 160, 36, UnboundedMaxWidth),
             new("accessed", "Accessed", "accessed", 160, 36, UnboundedMaxWidth),
@@ -63,6 +69,11 @@ public sealed class ColumnLayout
             new("symlink", "Link target", "symlink", 180, 36, UnboundedMaxWidth),
             new("path", "Path", "path", 220, 36, UnboundedMaxWidth),
             new("parent", "Parent", "parent", 180, 36, UnboundedMaxWidth),
+            new("dimensions", "Dimensions", "dimensions", 120, 36, UnboundedMaxWidth) { FactKind = LazyColumns.Dimensions },
+            new("duration", "Duration", "duration", 90, 36, UnboundedMaxWidth) { FactKind = LazyColumns.Duration },
+            new("date_taken", "Date taken", "date_taken", 160, 36, UnboundedMaxWidth) { FactKind = LazyColumns.DateTaken },
+            new("camera", "Camera", "camera", 140, 36, UnboundedMaxWidth) { FactKind = LazyColumns.Camera },
+            new("pages", "Pages", "pages", 70, 36, UnboundedMaxWidth) { FactKind = LazyColumns.Pages },
         ];
         VisibleIds = [.. DefaultVisible];
     }
@@ -121,6 +132,32 @@ public sealed class ColumnLayout
         if (VisibleIds.Count == 0)
         {
             VisibleIds.AddRange(DefaultVisible);
+        }
+
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Shows or hides a column, keeping the order of the rest; the name column never hides.</summary>
+    public void SetVisible(string id, bool visible)
+    {
+        if (Find(id) is null || (id == "name" && !visible))
+        {
+            return;
+        }
+
+        var shown = IsVisible(id);
+        if (visible == shown)
+        {
+            return;
+        }
+
+        if (visible)
+        {
+            VisibleIds.Add(id);
+        }
+        else
+        {
+            VisibleIds.RemoveAll(visibleId => string.Equals(visibleId, id, StringComparison.Ordinal));
         }
 
         Changed?.Invoke(this, EventArgs.Empty);
