@@ -14,6 +14,24 @@ The crate owns the transport, so a backend only answers requests:
 The pipe server needs Windows. On other platforms the crate still builds, so a handler and its tests run anywhere,
 and `serve` fails at once.
 
+## Dependencies
+
+The SumaFile repository packages this crate but does not publish it, so a backend takes it by path from a SumaFile
+checkout (`<checkout>` below). The crate finds its own dependency, `simplefile-ipc`, in the checkout, and it needs
+Rust 1.98.0 or newer (its `rust-version`). The example below also needs `serde_json` and `tokio`:
+
+```toml
+[dependencies]
+serde_json = "1"
+sumafile-plugin = { path = "<checkout>/crates/sumafile-plugin" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+sumafile-plugin = { path = "<checkout>/crates/sumafile-plugin", features = ["test-support"] }
+```
+
+`async_trait` is re-exported by the crate, so a backend needs no dependency of its own for it.
+
 ## Example
 
 ```rust,no_run
@@ -55,18 +73,20 @@ async fn main() {
 ```
 
 `serve` returns when the last client disconnects, so the backend exits when SumaFile closes the connection. Pass
-`true` for `accepts_multiple_clients` when the backend is also an archive engine, which the SumaFile service connects
-to as a second client.
+`true` for `accepts_multiple_clients` when the backend is also an archive engine: the SumaFile file service then
+connects alongside the host, with up to 8 connections at once and one more when it sends a `cancel`.
 
 ## Testing a handler
 
-With the `test-support` feature, `HostClient::fake` is an in-memory host with the same API: settings you choose, and
-the progress, log and event calls your handler made.
+With the `test-support` feature, `HostClient::fake(settings)` is an in-memory host with the same API. It reads and
+writes the settings map you pass, hands out progress ids of its own and records what the handler did:
 
-```toml
-[dev-dependencies]
-sumafile-plugin = { version = "1", features = ["test-support"] }
-```
+- `fake_log()`: the `(level, message)` pairs the handler logged;
+- `fake_events()`: the `(event, params)` of every `emit`;
+- `fake_progress_calls()`: every `host.progress_*` call in order, as text such as `begin <title>` and
+  `complete <id>`;
+- `fake_progress()`: the `(operationId, current, total, currentItem)` of every `archive_progress`;
+- `fake_cancel(operation_id)`: marks an id cancelled, as a client's `cancel` would, so `is_cancelled` returns true.
 
 ## Protocol
 
@@ -75,7 +95,9 @@ The wire protocol, the handshake, every `host.*` method and the error codes are 
 guide, [`docs/PLUGINS.md`](https://github.com/conniecombs/SumaFile/blob/main/docs/PLUGINS.md). Backends written in
 another language implement the framing directly.
 
-The crate speaks plugin SDK protocol `1.0.0` (`SDK_VERSION`). The constants it shares with the SumaFile host live in
+The crate speaks plugin SDK protocol `1.0.0` (`SDK_VERSION`). It also exports `CANCELLED_MESSAGE`, the message a
+cancelled archive operation fails with, `ARCHIVE_PROGRESS_NOTIFICATION`, `DEFAULT_CALL_TIMEOUT` (30 s for a `host.*`
+call), `EARLY_CANCEL_LIMIT` and `SERVICE_CONNECTION_ERROR`. The constants it shares with the SumaFile host live in
 [`simplefile-ipc`](https://github.com/conniecombs/SumaFile/tree/main/crates/simplefile-ipc).
 
 ## License
