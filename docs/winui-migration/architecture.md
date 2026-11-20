@@ -1,5 +1,19 @@
 # WinUI 3 + Rust IPC Architecture
 
+> **Status: historical, not maintained.** This is the design written in August 2026, before the WinUI application and the IPC service were implemented. It is kept as a record of the decisions and of the alternatives that were considered. It does not describe the system as built, and it is not updated.
+>
+> The main things in it that no longer hold:
+>
+> - **Process model.** The service does not check the client process id and does not poll the parent every 2 seconds. It reads a session token from stdin, creates the pipe for its own user only, and waits on the parent process handle. After a service crash the UI reconnects by itself; there is no Restart prompt.
+> - **Code layout.** There is no `Host` trait, `IpcHost` or `AppState`, and `src-tauri/` is gone. The shipped Rust code is five crates and three plugin backends, and the C# solution has six projects.
+> - **IPC contract.** The method counts (74, 79 and 86) and the "frozen" method list are wrong: the service has 82 domain methods. The contract is `ipc/schema/v1`, and the bindings on both sides are generated from it; the hand-synced DTOs and `check-ipc-parity.mjs` of this plan were not built. Frames are not JSON only: the largest payloads use binary frames.
+> - **UI state.** `ui-settings.json`, `ui-export.json` and the LevelDB importer do not exist. Settings and layout are keys in the `settings` table of `metadata.db`.
+> - **Updater.** An update is verified with an Ed25519 signature and a SHA-256 hash from `latest-winui.json`, and the installer is then started silently. Minisign and the `app.restart-required` event are not used.
+>
+> Plugins, listing views, lazy columns and the transfer crate were built later and are not in this document.
+>
+> The current description of the system is in [`../ARCHITECTURE.md`](../ARCHITECTURE.md). The plugin system is in [`../PLUGINS.md`](../PLUGINS.md), the IPC contract in [`../../ipc/schema/README.md`](../../ipc/schema/README.md), and the parity record in [`parity-gate.md`](parity-gate.md).
+
 | Field | Value |
 | --- | --- |
 | **Title** | SimpleFile-Windows WinUI 3 + Rust IPC Architecture |

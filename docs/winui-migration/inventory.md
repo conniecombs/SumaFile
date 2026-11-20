@@ -1,5 +1,16 @@
 # SimpleFile WinUI 3 Migration Inventory
 
+> **Status: historical, not maintained.** This is the inventory of the Svelte/Tauri application, taken on 2026-08-14 before the migration to WinUI. It records what the retired application did, which the WinUI application was built to match. It is kept as history. It does not describe the application as it is now, and it is not updated.
+>
+> The main things in it that no longer hold:
+>
+> - **Removed code.** §1 is titled "Current architecture" but describes the Tauri application. Every `src-tauri/` and `frontend/` path names code that was removed on 2026-08-15. §8 and §9 describe the Tauri host configuration, npm scripts, script files and workflows of that time: the Tauri ones are gone, and those that kept their names now build and check the WinUI application.
+> - **Command tables.** The tables of §2 were edited after the migration, so they are neither the Tauri list nor the current one. The text says 74 commands and the tables hold 80, among them 11 Git methods the service no longer has, and 13 current methods are missing. §2 gives the live count as 79; the service has 82 domain methods, listed in `ipc/schema/v1/commands.json`.
+> - **Settings.** `get_db_setting` and `set_db_setting` are marked "no live UI caller" in §2.5. They are now how the UI reads and writes its settings, which are stored in the `settings` table of `metadata.db` and not in WebView `localStorage` (§7 and §10).
+> - **Shortcuts.** The table of §5.3 is the Tauri default set. The WinUI defaults differ: Ctrl+N opens a new tab, the terminal is ``Ctrl+` ``, Backspace goes back and Settings is Ctrl+,. They are defined in `src-winui/SimpleFile.Core/KeyboardShortcutMap.cs`.
+>
+> The current description of the system is in [`../ARCHITECTURE.md`](../ARCHITECTURE.md). The plugin system is in [`../PLUGINS.md`](../PLUGINS.md), the IPC contract in [`../../ipc/schema/README.md`](../../ipc/schema/README.md), and the parity record in [`parity-gate.md`](parity-gate.md).
+
 **Date:** 2026-08-14  
 **Status:** Historical inventory. Svelte/Tauri UI and packaging were retired after the parity gate closed.  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
