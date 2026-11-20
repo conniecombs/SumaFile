@@ -156,7 +156,7 @@ internal static partial class PreviewHtmlRenderer
         return $"""<pre><code data-language="{WebUtility.HtmlEncode(language)}">{encoded}</code></pre>""";
     }
 
-    // Allowlist sanitizer (build_notes/2026-07-17-markdown-preview-sanitization.md): only the listed
+    // Allowlist sanitizer: only the listed
     // tags survive, with a per-tag attribute allowlist; links keep http/https/mailto/fragment hrefs
     // only; everything else is dropped. Unknown tags lose their markup but keep their text, while
     // script-like elements lose their content as well.
