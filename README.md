@@ -3,7 +3,7 @@
 [![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
 [![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
 [![Installer Smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
-![Version](https://img.shields.io/badge/version-1.1.3-2563eb)
+![Version](https://img.shields.io/badge/version-1.1.4-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%7C%20Windows%2011-0078D4?logo=windows)
 ![UI](https://img.shields.io/badge/UI-WinUI%203-5b8def)
 ![Backend](https://img.shields.io/badge/backend-Rust%20IPC-b7410e?logo=rust)
@@ -71,7 +71,7 @@ All visible files and paths belong to its generated test workspace.
 
 | Area | Current state |
 | --- | --- |
-| Product version | `1.1.3` |
+| Product version | `1.1.4` |
 | Platform | Windows 10 2004+ / Windows 11, x64 |
 | UI | Unpackaged WinUI 3 desktop app |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
@@ -88,6 +88,21 @@ bundled plugins, are new in 1.1.0: 1.0.4 has those features built into
 SumaFile itself. See [Plugins](#plugins), the
 [v1.1.0 release notes](docs/RELEASE_1.1.0.md) and the
 [changelog](docs/CHANGELOG.md).
+
+## What changed in 1.1.4
+
+A hotfix for copies that failed after every file had been written: a folder
+reached through a middle breadcrumb carried a doubled separator after the
+drive letter, and Windows refused to rename the finished files into place.
+The path is built correctly now, the transfer service cleans such paths
+itself, the progress bar no longer runs backwards when a file fails late, and
+the last step of a copy waits out a file held by a scanner. The release also
+carries the Details view column work: a column picker on each header, Created,
+Accessed and Attributes columns, and Dimensions, Duration, Date taken, Camera,
+Pages and folder sizes read per row on demand.
+
+See the [v1.1.4 release notes](docs/RELEASE_1.1.4.md) for the details,
+upgrade instructions and known limitations.
 
 ## What changed in 1.1.3
 
@@ -166,11 +181,11 @@ v1.0.3, upgrade instructions and known limitations.
 Download the latest Windows release from
 [GitHub Releases](https://github.com/conniecombs/SumaFile/releases).
 
-| v1.1.3 artifact | Recommended use |
+| v1.1.4 artifact | Recommended use |
 | --- | --- |
-| `SumaFile_1.1.3_x64-winui-setup.exe` | Normal per-user installation |
-| `SumaFile_1.1.3_x64-winui.msi` | MSI deployment or installer validation |
-| `SumaFile_1.1.3_x64-winui-portable.zip` | Portable, extracted-folder usage |
+| `SumaFile_1.1.4_x64-winui-setup.exe` | Normal per-user installation |
+| `SumaFile_1.1.4_x64-winui.msi` | MSI deployment or installer validation |
+| `SumaFile_1.1.4_x64-winui-portable.zip` | Portable, extracted-folder usage |
 | `latest-winui.json` | Signed updater metadata for published releases |
 
 Requirements:
@@ -818,7 +833,7 @@ Before creating a release tag:
 
 1. Confirm the version fields above match.
 2. Run `npm run check:release`.
-3. Run the WinUI smoke commands required by `docs/RELEASE_1.1.3.md`.
+3. Run the WinUI smoke commands required by `docs/RELEASE_1.1.4.md`.
 4. Confirm the Installer Smoke workflow succeeds on the release commit.
 5. Merge the version bump, then tag the merged commit or start a new Release run from the updated `main`.
 
@@ -838,6 +853,7 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 | [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
 | [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
 | [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | Signed updater releases |
+| [docs/RELEASE_1.1.4.md](docs/RELEASE_1.1.4.md) | Changes since v1.1.3: the transfer hotfix (doubled path separator, progress readout, patient finalize), the column picker and on-demand columns, upgrading and known limitations |
 | [docs/RELEASE_1.1.3.md](docs/RELEASE_1.1.3.md) | Changes since v1.1.2: upright thumbnails from the camera's preview, Properties counting on open, lock-file repair, the release guard, upgrading and known limitations |
 | [docs/RELEASE_1.1.2.md](docs/RELEASE_1.1.2.md) | Changes since v1.1.1: faster thumbnails, the measurements, upgrading and known limitations |
 | [docs/RELEASE_1.1.1.md](docs/RELEASE_1.1.1.md) | Changes since v1.1.0: service-held folder listings, paging and row deltas, the hidden-file fix, upgrading and known limitations |
@@ -867,7 +883,7 @@ More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
 
 ## Known Limitations
 
-- SumaFile 1.1.3 is Windows-only.
+- SumaFile 1.1.4 is Windows-only.
 - Installing SumaFile for the first time is manual; in-app update installation requires a
   newer published release with signed `latest-winui.json` metadata.
 - RAR archives can be listed and extracted, but RAR creation and in-place RAR
