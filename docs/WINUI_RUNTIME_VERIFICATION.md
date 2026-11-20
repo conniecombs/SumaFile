@@ -1,10 +1,13 @@
 # WinUI runtime verification
 
-Latest release: **SumaFile 1.1.4**. See [release notes](RELEASE_1.1.4.md) for the complete change set.
+`npm run smoke:winui-ui` drives the real Debug application and Rust service
+through rendering, layout, transfer and plugin scenarios. Run it from a
+Windows desktop session.
 
-Run `npm run smoke:winui-ui` from a Windows desktop session. The script builds
-the Debug WinUI application and Rust service, generates folders containing
-10,000 and 100,000 mixed text/image files, and launches the real application.
+The script, `scripts/smoke-winui-ui.ps1`, builds the Debug service, the
+bundled plugin backends, the SFTP test server and the WinUI application,
+generates folders containing 10,000 and 100,000 mixed text/image files, and
+launches the real application.
 Use `-SkipBuild` after an existing Debug build, or `-Counts 10000` for the
 smaller PR-sized run:
 
@@ -15,18 +18,96 @@ npm run smoke:winui-ui -- -SkipBuild -Counts 10000 -MaxWindowWidth 1000
 ```
 
 Rendering and stale-navigation checks exercise every requested folder size.
-Cancellation and bulk-copy correctness use the smallest requested fixture
-(10,000 files in the default suite). This keeps the 100,000-entry rendering
-gate independent of durable per-file copy/flush throughput. A deliberate
-100,000-file copy stress run can use `-Counts 100000 -TimeoutSeconds 3600`;
-its elapsed time is diagnostic, not a rendering performance measurement.
+Layout, cancellation and bulk-copy correctness use the smallest requested
+fixture (10,000 files in the default suite). This keeps the 100,000-entry
+rendering gate independent of durable per-file copy/flush throughput. A
+deliberate 100,000-file copy stress run can use
+`-Counts 100000 -TimeoutSeconds 3600`; its elapsed time is diagnostic, not a
+rendering performance measurement.
+
+## Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `-Counts <n>` | Sizes of the generated folders, each between 1,000 and 100,000. Default: 10,000 and 100,000 |
+| `-SkipBuild` | Use the existing Debug build instead of building first |
+| `-TimeoutSeconds <n>` | How long the script waits for the application to finish. Default 600, at most 7,200 |
+| `-MaxWindowWidth <n>` | Caps the logical window width the layout scenarios request, from 1,000 to 3,840. Default 3,840 |
+| `-PluginsDir <folder>` | Plugins-on mode: load the bundled plugins and, pre-approved, the plugins in `<folder>`. `<folder>` is one plugin folder or a folder of plugin folders |
+| `-NoPlugins` | Plugins-off mode: load no plugin. It cannot be combined with `-PluginsDir` |
+| `-Baseline` | Record only the large-folder and navigation scenarios, without the virtualization assertion |
+| `-KeepResults` | Keep the run folder after a passing run |
+
+## Modes
+
+The plugin switches select one of three modes. Every mode runs the common
+scenarios: `large-folder` and `navigate-during-loading` for each folder size,
+`thumbnails`, `dual-pane-layout`, `single-pane-layout`,
+`pane-filter-search-controls`, `preview-collapse-expand-pin`,
+`conflict-comparison-dialog`, `rename-before-after-preview`,
+`transfer-cancellation`, `adaptive-transfer-ui`, `storage-pressure-recovery`
+and `adaptive-bulk-copy`.
+
+| Mode | Switch | Plugins loaded | Additional scenarios | Needs |
+| --- | --- | --- | --- | --- |
+| Plain | none | The bundled plugins staged with the Debug build | None | Nothing extra |
+| Plugins on | `-PluginsDir target\fixture-plugins\com.sumafile.hello` | The bundled plugins and the Hello fixture plugin | `plugins`, `sevenzip`, `sevenzip-backend-loss`, `remote`, `remote-backend-loss`, `git`, `service-reconnect` | The fixture plugin, the bundled 7-Zip, Git for Windows, the SFTP test server |
+| Plugins off | `-NoPlugins` | None | `plugins`, `sevenzip`, `remote` and `git`, each asserting that the feature is absent | The bundled 7-Zip, Git for Windows |
+
+What the plugin modes need:
+
+- **The fixture plugin.** `scripts/build-fixture-plugin.ps1` builds the Hello
+  plugin into `target\fixture-plugins\com.sumafile.hello`. The `plugins`
+  scenario requires it, so `-PluginsDir` must include it.
+- **The bundled 7-Zip.** `third_party\7zip\win-x64\7za.exe`, which is in the
+  repository. The script packs the `sample.7z` fixture with it.
+- **Git for Windows** on the `PATH`. The script creates the repositories of
+  the `git` scenario with it.
+- **The SFTP test server**, `target\debug\sumafile-remote-test-server.exe`.
+  The script's own build and `scripts/build-fixture-plugin.ps1` both build it;
+  the script starts it on the loopback interface and stops it afterwards.
+- **The bundled plugins**, staged in the Debug build's `plugins` folder. The
+  script's own build stages them. Plugins-on mode fails when they are missing,
+  and every mode fails when the staged files no longer match the build outputs
+  they were copied from, which `-SkipBuild` can leave behind.
+
+What the additional scenarios check:
+
+| Scenario | Plugins on | Plugins off |
+| --- | --- | --- |
+| `plugins` | The Hello fixture is discovered and enabled, its command is in the command palette and runs, its backend starts and registers the `.hello` archive format, and its sidebar section, window, dialog, settings page, panels and row decorations work, including decorations of the folder shown at startup | No plugin, plugin command, plugin sidebar section or row decoration provider exists |
+| `sevenzip` | The bundled 7-Zip plugin is trusted through `bundled.json` and serves `.7z` listing, browsing, folder creation inside the archive, create and extract as Transfers rows, Cancel of a long create, and its executable override setting | `.7z` is unavailable everywhere, with the note that names the plugin |
+| `sevenzip-backend-loss` | Killing the 7-Zip backend faults the plugin and shows the note in the pane; a restart brings the listing back | Not run |
+| `remote` | The bundled FTP/SFTP plugin against the SFTP test server: a profile imported from a 1.0.4 database, the manager window, a new profile with a saved password, host-key trust, browsing, upload, download, Cancel from the Transfers row, folder operations, disabling the plugin during a transfer, profile deletion and the settings page | No remote command, toolbar action, menu entry or Settings text exists |
+| `remote-backend-loss` | Killing the remote backend faults the plugin and removes its sidebar section; a restart brings both back | Not run |
+| `git` | The bundled Git plugin: trust and commands, the legacy setting migration, row decorations, the workbench panel, stage, unstage, diff, discard, fetch, pull, commit and push (each checked with the `git` command line), detaching and disabling, and a removed toolbar toggle staying removed | No Git command, toolbar action, menu entry, Settings text, decoration or backend exists |
+| `service-reconnect` | Killing the service reconnects the application; `.7z` is served through the plugin again and the remote and Git backends keep running | Not run |
+
+## Isolation and results
 
 The harness exists only in Debug builds. It starts after the normal backend
 handshake and workspace initialization, before deferred startup navigation.
-Settings, metadata database, operation journal, files and report are isolated
-under `test-results/ui-smoke/<run>/`. The marker file created by the script
-must exist before the host accepts the smoke root. Release binaries do not
-contain the scenario runner. No user settings or folders are modified.
+The marker file created by the script must exist before the host accepts the
+smoke root. Release binaries do not contain the scenario runner.
+
+Settings, metadata database, operation journal, thumbnail cache, plugin data,
+plugin approvals, plugin log, Git configuration, fixtures and report are
+isolated under `test-results/ui-smoke/<run>/`, which Git ignores. A run
+touches two things outside `test-results/ui-smoke/`:
+
+- The application appends to its diagnostic logs in `%LOCALAPPDATA%\SumaFile`:
+  `startup-timing.log`, which `npm run check:winui-startup-budget` reads, and
+  `service.log` when the service writes to its error stream.
+- In plugins-on mode the `remote` scenario saves one password as a generic
+  Windows Credential Manager entry named `SumaFile.Remote.<profile id>` and
+  deletes it again. When the application left the entry behind, the script
+  removes it. When any other new `SumaFile.Remote.*` entry appeared, the
+  script fails the run and deletes nothing.
+
+After the application exits, the script also checks that the run changed
+neither the pre-release plugin locations under `%LOCALAPPDATA%\SumaFile` nor
+the plugin data, approvals and plugin log in the Debug build folder. The
+script stops only the application and the SFTP server it started.
 
 A failed run keeps its `<run>` folder as evidence. A passing run copies its
 `report.json` to `test-results/ui-smoke/last-passed-report.json` and its polish
@@ -36,7 +117,8 @@ deletes the previous run's `last-passed-report.json` and `last-passed/*-polish.p
 so a failed run never leaves an older pass's files looking like its own. A
 folder that cannot be deleted (a helper process still running, a link inside
 it, a file that cannot be listed or made writable) is kept with a warning and
-does not fail a run that passed.
+does not fail a run that passed. Close the test process before removing a kept
+run folder by hand.
 
 ## Assertions
 
@@ -49,31 +131,40 @@ does not fail a run that passed.
 - Two pending navigations must leave only the newer folder's rows visible;
   late chunks from the previous folder cannot repaint the pane.
 - Both panes are exercised at logical window widths 1,000, 1,280 and 1,920 while
-  changing List, Tiles and Details views. Details retains its column layout
-  in both narrow and wide panes, with compact leading columns and horizontal
-  scrolling for additional columns. A full-width single pane cycles through
-  all views as well; resizing must never silently substitute List for Details.
+  changing List, Tiles and Details views. Details must stay the effective
+  view at every width, and the run must see it both in a pane narrower than
+  720 pixels and in a full-width single pane, which cycles through all views
+  as well; resizing must never silently substitute List for Details.
   Requested window sizes may be capped by the desktop. `-MaxWindowWidth 1000`
   reproduces that constraint locally without changing the desktop resolution.
   Window sizes account for DPI scaling and the divider is recentered
   at each size (the product normally preserves its stored pixel width).
-  Actual pane widths and the effective view are included in the report. These
-  checks replace the former source-text assertion requiring a nonvirtualized
-  panel.
+  Actual pane widths and the effective view are included in the report.
 - A real copy runs through the application's transfer queue, progress window,
   service and cancellation route. Cancellation must occur while running,
-  reach the cancelled terminal UI state and remove staging paths.
+  reach the cancelled terminal UI state, remove staging paths and leave the
+  source files unchanged.
+- The transfer options dialog persists its mode, concurrency and bandwidth
+  limit. A copy of eight files shows four active file rows, accepts a live
+  concurrency change and produces files whose SHA-256 matches the source. A
+  destination file held open by another reader makes the transfer show that
+  it is retrying, keeps the original file until the reader lets go, and then
+  completes without a manual retry. A bulk copy of the smallest fixture folder
+  must match its source byte for byte.
 - Pane-local filters remain visible across pane/omnibar changes; Clear filter
   affects only its pane. A real search exposes Return to folder and that button
   restores the listing.
-- Unpinned empty preview collapses, the rail reopens it, and the pin button
-  keeps it open. The toolbar reserves the omnibar's minimum usable width.
+- With nothing selected, the unpinned preview stays open and shows its empty
+  state. A cramped dual-pane layout collapses it to its rail, the rail reopens
+  it, and the pin button keeps it open. The toolbar reserves the omnibar's
+  minimum usable width.
 - The conflict dialog renders incoming/existing metadata and Keep both names.
   Choosing Keep both is checked against an actual backend copy without
   overwriting the existing file.
-- Advanced Rename renders its Before/After rows, preserves extensions, and
-  updates the rename scope. The run captures `workspace-polish.png`,
-  `conflict-polish.png`, and `rename-polish.png` alongside the JSON report.
+- Advanced Rename renders its Before/After columns aligned with their headers,
+  disables Rename while the new names conflict, and preserves extensions. The
+  run captures `workspace-polish.png`, `conflict-polish.png`, and
+  `rename-polish.png` alongside the JSON report.
 
 ## Refresh the README screenshots
 
@@ -125,28 +216,33 @@ Heartbeat gaps measure dispatcher scheduling delays, not display frame times.
 Use the same machine, configuration and fixture size for before/after results.
 
 `-Baseline` records the large-folder and navigation scenarios without the
-virtualization assertion; it intentionally skips the remaining scenarios and
-is for comparing an older implementation, not for acceptance or CI.
+virtualization assertion; it skips every scenario after them and is for
+comparing an older implementation, not for acceptance or CI.
 
-PR CI compiles the entire application/XAML, verifies production artifact
-hashing, runs the 10,000-entry UI scenarios and uploads JSON reports. The
-nightly/manual installer workflow also runs the full 100,000-entry suite and
-uploads reports alongside installer evidence. CI requires an interactive
-Windows desktop capable of hosting WinUI windows.
-
-Fixture directories are retained for diagnosis and ignored by Git. Close the
-test process before removing an individual run directory. The script owns
-only its launched process; it never stops unrelated service instances.
+Pull-request CI (the **WinUI host** job) compiles the entire application/XAML,
+verifies production artifact hashing, and runs the 10,000-entry scenarios
+twice: first in plugins-on mode with the Hello fixture, then in plugins-off
+mode. Between the two it runs `npm run check:winui-startup-budget`, which
+reads the startup timings of the plugins-on run, and copies that run's report
+and screenshots to `plugins-passed-report.json` and `plugins-passed/`. The job
+uploads the reports and screenshots as the `sumafile-winui-runtime` artifact,
+also when a step failed. The installer workflow runs the plain mode with
+10,000 and 100,000 entries and uploads its reports alongside installer
+evidence. It runs daily, on manual dispatch, and in CI for Dependabot and
+maintenance pull requests. Both run on GitHub-hosted `windows-2025` runners.
 
 ## Other gates
 
-`npm run check:winui` tests Core/IPC behavior without a XAML runtime.
+`npm run check:winui` runs the C# tests in `src-winui/SimpleFile.Tests`. Run
+`scripts/build-fixture-plugin.ps1` and `npm run build:plugins` first: the test
+project copies the plugins they stage.
 `npm run build:winui` compiles the application and XAML.
 `npm run check:winui-release-hash` loads only the production hash function from
 the packaging script and checks known SHA-256 vectors, concurrent readers,
 paths with spaces and missing-artifact failure. It does not build installers.
-Packaged startup, file-operation, MSI, NSIS and upgrade smokes remain required
-when changing their corresponding contracts.
+Run the packaged startup, file-operation, MSI, NSIS and upgrade smokes when
+changing what they cover; [the release runbook](../.github/RELEASE.md) lists
+them.
 
 ## Local measurements, 2026-10-18
 
