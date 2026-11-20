@@ -736,7 +736,9 @@ pub fn promote_leased_with_policy(
     lease: &mut crate::journal::StagingLease,
     mut waiting: impl FnMut(std::time::Duration, &str),
 ) -> Result<(), Failure> {
-    let mut retry = Retry::from_policy(policy);
+    // Every byte is already written: a file held open by a scanner for a
+    // while is waited out with the whole retry budget, not three attempts.
+    let mut retry = Retry::from_policy(policy).patient_with_busy();
     loop {
         crate::reliability::wait(std::time::Duration::ZERO, cancel)
             .map_err(|_| Failure::cancelled())?;
@@ -776,13 +778,19 @@ fn promote_attempt_leased(
         });
     }
 
-    match rename_exclusive(staged_path, final_path) {
+    // A rename refused for a reason other than the existing destination (a
+    // malformed path, a volume that cannot rename) is remembered: when moving
+    // the existing file aside then fails too, that first reason is the one
+    // worth reading.
+    let first_refusal = match rename_exclusive(staged_path, final_path) {
         Ok(()) => return Ok(()),
-        Err(e) if is_already_exists_error(&e) || path_exists_no_follow(final_path) => {}
+        Err(e) if is_already_exists_error(&e) => None,
+        Err(e) if path_exists_no_follow(final_path) => Some(e),
         Err(e) => return Err(Failure::io("Finalize destination", final_path, e)),
-    }
+    };
 
-    let backup_path = move_existing_to_backup_leased(final_path, lease)?;
+    let backup_path = move_existing_to_backup_leased(final_path, lease)
+        .map_err(|error| with_first_refusal(error, first_refusal.as_ref()))?;
     if let Err(error) = rename_exclusive(staged_path, final_path) {
         return Err(match rename_exclusive(&backup_path, final_path) {
             Ok(()) => Failure::io(
@@ -811,6 +819,20 @@ fn promote_attempt_leased(
         )
     })?;
     Ok(())
+}
+
+/// The backup step's failure, with the rename refusal that preceded it, if any.
+fn with_first_refusal(error: Failure, first: Option<&std::io::Error>) -> Failure {
+    match first {
+        Some(first) => Failure::with_kind(
+            format!(
+                "{}; the rename into place itself was refused first: {first}",
+                error.message
+            ),
+            error.kind,
+        ),
+        None => error,
+    }
 }
 
 fn move_existing_to_backup_leased(
@@ -940,6 +962,28 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn a_backup_failure_names_the_rename_refusal_that_came_first() {
+        let second = super::Failure::io(
+            "Prepare destination replacement",
+            "V:\\\\sync\\a.mp4",
+            std::io::Error::other("The parameter is incorrect. (os error 87)"),
+        );
+        let first = std::io::Error::other("The parameter is incorrect. (os error 87)");
+        let combined = super::with_first_refusal(second.clone(), Some(&first));
+        assert!(combined
+            .message
+            .starts_with("Prepare destination replacement ["));
+        assert!(combined
+            .message
+            .ends_with("the rename into place itself was refused first: The parameter is incorrect. (os error 87)"));
+        assert_eq!(combined.kind, second.kind);
+        assert_eq!(
+            super::with_first_refusal(second.clone(), None).message,
+            second.message
+        );
+    }
 
     fn unique_temp_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()

@@ -45,6 +45,43 @@ fn record_path(staged: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// A record left by an earlier attempt at the same staged path whose cleanup
+/// failed (the partial was still held open, say): nobody holds it any more, so
+/// its artifacts are recovered and the record reused, instead of every retry of
+/// the file failing on "record exists" until the folder is visited again.
+fn reclaim_abandoned(path: &Path, staged: &Path, original: String) -> Result<File, String> {
+    let Ok(mut file) = open_locked(path, false) else {
+        // Held by a live lease: the original refusal stands.
+        return Err(original);
+    };
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(RECORD_LIMIT)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Read abandoned transfer record [{}]: {e}", path.display()))?;
+    let last = bytes
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map(|end| {
+            bytes[..end]
+                .rsplit(|byte| *byte == b'\n')
+                .next()
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    let Ok(record) = serde_json::from_slice::<Record>(last) else {
+        return Err(original);
+    };
+    if record.version != 1 || !same_path(&record.staged, staged) {
+        return Err(original);
+    }
+    recover(&record)?;
+    file.set_len(0)
+        .and_then(|()| file.seek(SeekFrom::Start(0)).map(|_| ()))
+        .map_err(|e| format!("Reset abandoned transfer record [{}]: {e}", path.display()))?;
+    Ok(file)
+}
+
 fn open_locked(path: &Path, create: bool) -> Result<File, String> {
     let file = OpenOptions::new()
         .read(true)
@@ -70,7 +107,11 @@ impl StagingLease {
         let path = record_path(staged);
         // Recovery runs once per directory before scheduling. An existing
         // unrecorded partial cannot establish ownership and is left intact.
-        let file = open_locked(&path, true)?;
+        let file = match open_locked(&path, true) {
+            Ok(file) => file,
+            Err(error) if path_exists_no_follow(&path) => reclaim_abandoned(&path, staged, error)?,
+            Err(error) => return Err(error),
+        };
         let mut options = OpenOptions::new();
         if overwrite && staged == destination {
             options.write(true).create(true).truncate(true);
@@ -358,6 +399,54 @@ mod tests {
         fs::create_dir(&root).unwrap();
         root
     }
+    /// An attempt whose cleanup failed leaves its record and partial behind; the
+    /// retry of the same file takes them over instead of failing on the record.
+    #[test]
+    fn a_new_lease_reclaims_the_abandoned_record_of_the_same_staged_path() {
+        let root = root();
+        let destination = root.join("movie.mp4");
+        let stage = crate::staging::staging_path_for(&destination, "op").unwrap();
+        let record = record_path(&stage);
+        {
+            let mut abandoned = StagingLease::begin("source", &destination, &stage, false).unwrap();
+            let mut partial = abandoned.take_staged_file().unwrap();
+            partial.write_all(b"half of the movie").unwrap();
+            drop(partial);
+            // Dropped without finish or abort: the record and the partial stay.
+        }
+        assert!(record.exists());
+        assert_eq!(fs::read(&stage).unwrap(), b"half of the movie");
+
+        let mut retried = StagingLease::begin("source", &destination, &stage, false).unwrap();
+        // The retry owns a fresh, empty partial under the same name and the one record.
+        assert_eq!(fs::metadata(&stage).unwrap().len(), 0);
+        assert!(retried.owns_staged());
+        drop(retried.take_staged_file());
+        retried.finish().unwrap();
+        assert!(!record.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_record_held_by_a_live_lease_is_not_reclaimed() {
+        let root = root();
+        let destination = root.join("file");
+        let stage = crate::staging::staging_path_for(&destination, "live").unwrap();
+        let live = StagingLease::begin("source", &destination, &stage, false).unwrap();
+
+        let error = StagingLease::begin("source", &destination, &stage, false)
+            .err()
+            .expect("a second lease on a live record is refused");
+
+        assert!(
+            error.contains("in use") || error.contains("exists"),
+            "{error}"
+        );
+        assert!(live.owns_staged());
+        drop(live);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn recovery_preserves_live_and_unowned_artifacts() {
         let root = root();
