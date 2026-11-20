@@ -101,6 +101,10 @@ install with SumaFile as three bundled plugins: `com.sumafile.sevenzip`,
 After installing, open Settings -> Updates to check published releases. Builds
 with trusted updater metadata can download and launch the NSIS setup from inside
 the app. Builds without complete trusted metadata fall back to the release page.
+The in-app update always runs the NSIS setup, whatever the running copy was
+installed from: update an MSI install with the new MSI and a portable copy
+with the new ZIP. [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) has the
+details.
 
 Uninstalling (Windows Settings -> Apps, or removing the MSI) deletes the
 installation folder. That includes every plugin file SumaFile keeps there:
@@ -528,6 +532,8 @@ and the template in `templates/sumafile-plugin`.
 - SumaFile 1.1.4 is Windows-only.
 - Installing SumaFile for the first time is manual; in-app update installation requires a
   newer published release with signed `latest-winui.json` metadata.
+- The in-app update installs the NSIS setup even when SumaFile was installed
+  from the MSI or runs from the portable ZIP.
 - RAR archives can be listed and extracted, but RAR creation and in-place RAR
   rewrites are not supported.
 - Account-backed storage integrations are out of scope. FTP/FTPS/SFTP

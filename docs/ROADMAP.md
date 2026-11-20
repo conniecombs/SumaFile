@@ -132,6 +132,12 @@ Also open:
   ownership changes.
 - Interactive actions in archive previews, and visual smoke coverage per
   preview format.
+- The archive viewer dialog can no longer be opened: the context-menu id that
+  led to it is not produced any more, and no other control reaches it. Restore
+  an entry point or remove the dialog.
+- There is no C# test of permanent delete, of redoing a copy, or of
+  `startup.log`. Three rows of the parity record are marked as passing
+  without an automated test.
 
 ## Service and storage
 
@@ -166,15 +172,41 @@ Also open:
   honoured in release builds.
 - Decide what a plugin signature should mean beyond integrity.
 - Decide whether uninstalling removes the remote plugin's saved credentials.
+- The two clients of a plugin backend disagree in the handshake: the app
+  sends its four-part assembly version as `hostVersion` and the file service
+  the display version, and they check the reply's `sdkVersion` by different
+  rules. Pick one form and one rule.
+- `ipc/schema/plugin/v1/protocol.json` does not list error `-32700`, which the
+  helper crate sends, so the documentation test does not pin it.
+- The Rust example in the plugin guide and the crate README is compiled by
+  nothing.
+- The template's staging script hard-codes the project, assembly and backend
+  names that a rename has to change; derive them instead.
 
 ## Build, release and repository
 
 - The maintenance workflow's `release` recipe cannot publish the change
-  `npm run release:prepare` makes. Release preparation is done by hand; see
+  `npm run release:prepare` makes: its allowlist omits four files the command
+  now edits. Release preparation is done by hand; see
   [the release runbook](../.github/RELEASE.md).
+- The `rustfmt` repair recipe's allowlist covers three crates, while the
+  formatter and CI cover the whole workspace, so a formatting failure in any
+  other crate produces a repair that is refused.
+- An in-app update does not check how SumaFile was installed. On an MSI
+  install it runs the NSIS setup into the same default folder and leaves two
+  registrations with Windows. No smoke runs the in-app update end to end.
+- Workflow leftovers: the release build is passed two signing variables of the
+  retired application that nothing reads; one release step runs only for
+  `v1.0.0`; the upgrade smoke in the release gate skips silently when no
+  published installer can be downloaded; the Release build workflow has an
+  input with no effect and installs an audit tool it never runs; two step
+  names still say "dual-stack"; CI is triggered for a `C#` branch that does
+  not exist.
+- The UI smoke appends to the user's own `startup-timing.log` and
+  `service.log`, because neither path can be redirected.
 - `tools/sevenz-evaluation` has its own lock file, which no longer matches the
   workspace crates, and nothing builds it in CI.
 - There is no third-party notices file for the Rust crates and NuGet packages
   the installers bundle. Only 7-Zip's licence ships.
 - `ipc/schema/v1/events.json` still lists event names of the retired
-  application that nothing emits.
+  application, and an `app.restart-required` notification, that nothing emits.
