@@ -8,6 +8,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+---
+
+## [1.1.4] - prepared 2026-11-20
+
+See the [v1.1.4 release notes](RELEASE_1.1.4.md).
+
 ### Transfers
 
 - Copies into a folder reached by clicking a middle breadcrumb failed after
