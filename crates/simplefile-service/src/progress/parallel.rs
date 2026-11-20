@@ -970,8 +970,9 @@ fn copy_files_streaming_with_sink(
         };
         let mut active = BTreeMap::<usize, ActiveFile>::new();
         let mut deferred_retries = VecDeque::<(usize, Failure)>::new();
-        // Bytes a deferred file had written when it failed; its retry resumes
-        // the partial, so the readout starts there instead of dropping to zero.
+        // Bytes a deferred file had written when it failed. The failed attempt's
+        // partial is removed and the retry copies the file again from the start;
+        // the readout keeps these bytes so it holds still instead of dropping.
         let mut carried = BTreeMap::<usize, u64>::new();
         let mut file_hl_attempts = BTreeMap::<usize, usize>::new();
         let mut first_snapshot = true;

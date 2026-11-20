@@ -42,10 +42,11 @@ officially representing the community in public spaces.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the
-project maintainers via GitHub's private messaging or by opening a
-[Security Advisory](https://github.com/conniecombs/SumaFile/security/advisories/new)
-(for privacy). All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately to
+the project maintainers through the repository's
+[private report form](https://github.com/conniecombs/SumaFile/security/advisories/new). It is the
+form used for security reports and is visible only to the maintainers. All complaints will be
+reviewed and investigated promptly and fairly.
 
 ## Attribution
 

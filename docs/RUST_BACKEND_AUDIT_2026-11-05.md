@@ -1,5 +1,22 @@
 # SumaFile Rust Backend Audit — 2026-11-05
 
+> **Status, reviewed 2026-11-20.** This is the record of the backend audit of
+> 5 November 2026 and of the four rounds of fixes that followed it, released in
+> 1.0.3. It is kept as history and is not maintained. File paths, line numbers,
+> test names and counts are those of commit `61b493a`. Since then the transfer
+> primitives moved into `crates/sumafile-transfer`, Git, FTP/SFTP and 7-Zip
+> moved out of the service into the bundled plugins under `plugins/`, and
+> folders are no longer staged during a transfer. The "Suggested order" and
+> "Cost today" sections describe work that is done.
+>
+> Still open, and tracked in the [roadmap](ROADMAP.md): M9, M15, M19, L2 and
+> L8, which the Status section below lists as not changed, and parts of H9
+> (labels are not updated on rename or move), L3 (the pipe's access control
+> list is applied after creation), L5 (same-volume detection, unsaved learning)
+> and M10 (shared cancel flags for folder size and count), which the tables
+> below mark as done. The current system is described in
+> [Architecture](ARCHITECTURE.md).
+
 Scope: the three Rust crates (`crates/simplefile-core` ~14k lines,
 `crates/simplefile-service` ~22k lines, `crates/simplefile-ipc` ~0.7k lines) on
 `main` at commit `61b493a`. The WinUI host was read only where a backend

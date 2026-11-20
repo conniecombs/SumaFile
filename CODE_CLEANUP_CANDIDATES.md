@@ -1,33 +1,24 @@
 # Code Cleanup Candidates
 
-Reviewed against the live WinUI 3 + Rust tree on 2026-10-18. The current
-maintenance queue comes first; completed splits remain in the decision log.
-Original options and obsolete line-count estimates have been retired.
+The record of the structural cleanup of the WinUI 3 and Rust tree, reconciled
+against the code on 2026-10-18 and reviewed on 2026-11-20. The work it tracked
+is complete. Cleanup candidates that are still open moved to the
+[roadmap](docs/ROADMAP.md); the current structure is described in
+[Architecture](docs/ARCHITECTURE.md).
 
-## Current priorities
+## Standing practices
 
-1. Keep repository, WinUI application build, Rust, and security gates green.
-   PR CI compiles the application/XAML as well as running Core/IPC tests.
-   Release hashing is checked against the production PowerShell function.
-2. Protect large-folder rendering with `npm run smoke:winui-ui`. The real
-   Debug host and Rust service record first-row latency, container count,
-   memory and dispatcher gaps. Scenarios cover scrolling, selection, resizing,
-   view changes, navigation replacement, and active-transfer cancellation.
-   See [runtime verification](docs/WINUI_RUNTIME_VERIFICATION.md).
-3. Reduce UI adapter duplication when changing the owning workflow.
-   `MainWindow.xaml.cs` retains startup/session orchestration and workspace
-   synchronization. Focused partials and UserControls own command, transfer,
-   sidebar, pane, preview, and dialog surfaces. Extract behavior into Core
-   where possible; verify XAML layout through runtime assertions.
-4. Review the static `AppServices` lifetime when changing reconnect/session
-   ownership. Preserve the shared transfer manager and event cleanup if
-   simplifying ViewModel construction.
-5. Consider centralizing `com.simplefile.desktop` across Rust settings,
-   updater, and IPC boundaries only with migration coverage. Existing database
-   and update compatibility identifiers remain intentional.
-
-These are later maintenance candidates, not claims of current defects.
-Runtime timings depend on hardware, build configuration and caches.
+1. Keep the repository, WinUI build, Rust and security gates green. Pull
+   request CI compiles the application and its XAML as well as running the
+   Core and IPC tests, and checks release hashing against the production
+   PowerShell function.
+2. Protect large-folder rendering with `npm run smoke:winui-ui`. The Debug app
+   and the Rust service record first-row latency, container count, memory and
+   dispatcher gaps while scrolling, selecting, resizing, changing views,
+   replacing a navigation and cancelling a transfer. See
+   [runtime verification](docs/WINUI_RUNTIME_VERIFICATION.md).
+3. Change the IPC schema and regenerate; never edit `Protocol.Generated.cs`,
+   `NamedPipeJsonClient.Generated.cs` or `protocol_generated.rs` by hand.
 
 ## Completed structural work
 
@@ -57,14 +48,12 @@ npm run smoke:winui-ui
 npm run check:release
 ```
 
-Run packaged startup/file-operation/installer smokes when changing those
-contracts. Generated IPC files remain generator-owned: change the schema and
-regenerate rather than editing `Protocol.Generated.cs`,
-`NamedPipeJsonClient.Generated.cs`, or `protocol_generated.rs` manually.
+Run the packaged startup, file-operation and installer smokes when changing
+those contracts.
 
 ## Decision log
 
-Historical decisions, reconciled against the live tree on 2026-10-18. These entries describe completed work rather than a new implementation queue.
+Historical decisions, reconciled against the live tree on 2026-10-18. These entries describe completed work as it stood then; names and counts in them are of that date. The workspace has since gained controllers for listing views and on-demand columns, and Git, FTP/SFTP and 7-Zip moved into plugins.
 
 | Finding | Chosen option | Notes |
 | --- | --- | --- |

@@ -15,9 +15,10 @@ supported release target.
 | Field | Value |
 |-------|-------|
 | **Windows version/build** | <!-- e.g. Windows 11 24H2 build 26100 --> |
-| **SumaFile version** | <!-- e.g. 1.0.3 - check About dialog or release page --> |
+| **SumaFile version** | <!-- from Settings > About, or the release page --> |
 | **Install/source** | <!-- e.g. NSIS installer, MSI installer, portable zip, `npm run dev:winui` --> |
-| **Affected storage** | <!-- e.g. local NTFS path, mapped network drive, UNC path, removable drive --> |
+| **Affected storage** | <!-- e.g. local NTFS path, mapped network drive, UNC path, removable drive, FTP/SFTP connection --> |
+| **Plugin involved** | <!-- Git, FTP/SFTP, 7-Zip, a third-party plugin, or none --> |
 | **Rust/.NET version** | <!-- For local/dev builds only; otherwise write N/A --> |
 
 ---
@@ -44,4 +45,7 @@ supported release target.
 
 <!-- Anything else that might be relevant: file types involved, directory size, network drives, etc. -->
 
-<!-- Startup diagnostics: %LOCALAPPDATA%\SumaFile\startup.log -->
+<!-- Logs, with personal paths removed (docs/SUPPORT.md says what each holds):
+     %LOCALAPPDATA%\SumaFile\startup.log, service.log and operations.jsonl,
+     and plugins.log in the installation folder. For a failed copy or move, the
+     failed line of operations.jsonl is the most useful item. -->
