@@ -61,8 +61,10 @@ the SumaFile name; its notes are kept as
 - **Write directly to the destination.** The option now applies to folder
   copies, replaced files and remote downloads, not only to new single files.
   Folders are created under their final names and replaced files are
-  overwritten in place, so a cancelled or failed transfer leaves partial
-  files behind; the option's note says so.
+  overwritten in place. The option's note says that a cancelled or failed
+  transfer leaves partial files behind;
+  [Transfers](TRANSFER_TUNING.md#write-directly-to-the-destination) describes
+  what the engine does today.
 - **Transfer artifacts.** Show hidden files now lists SumaFile's own partial
   files, ownership records and replacement backups instead of always
   dropping them.

@@ -72,13 +72,45 @@ on-demand column values have shipped. What remains:
 
 - Benchmark copy and move against Windows Explorer on SSD, HDD, USB, a network
   share and many small files, and on a physical NAS.
+- **A second pass can treat a different file as already copied.** Retried
+  items and answered conflicts go through the same second pass, and that pass
+  counts a destination file that matches the source by the check mode as done.
+  With "Size only", a conflict answered with Replace or Keep both writes
+  nothing when the two files have the same size, and a move then deletes the
+  source. Apply the check only to retried failures, never to a conflict the
+  user answered.
 - The options dialog says "Write directly to the destination" leaves partial
-  files behind after a failure. [Transfers](TRANSFER_TUNING.md) records what
-  the engine does today; make the text and the behaviour agree.
-- Partial files left by copies that failed before 1.1.4 under a path with a
-  doubled separator are not matched by recovery and must be deleted by hand.
-  Teach recovery to match a record whose path differs only in repeated
-  separators.
+  files behind after a failure. The engine deletes the file it was writing,
+  so after a failed or cancelled Replace with this option neither the old
+  file nor the new one is left. [Transfers](TRANSFER_TUNING.md) records what
+  the engine does today; make the text and the behaviour agree, and keep the
+  old file until the new one is complete.
+- "Always copy" does not always copy: in a second pass it compares content
+  like Checksum, and in a first pass no check mode skips anything. Rename the
+  choice or change what it does.
+- The dialog shows 192 MiB and 4 streams when nothing has been saved, while
+  the service's defaults are 256 MiB and no streams, so the first change to
+  any setting also saves those two values. Use one set of defaults.
+- While a file waits for a later retry round, its bytes leave the task's
+  bytes done and return when the retry starts, so the readout still falls
+  then. Keep them counted.
+- Why the partial files of the copies that failed before 1.1.4 were not
+  removed by the clean-up that follows a failed file was not established.
+  When the rename that gives a file its final name fails, the error of the
+  clean-up that follows is discarded; report it.
+- A retry after a checksum mismatch continues the partial file at its current
+  length, so it verifies the same bytes again instead of copying them again.
+- A task's own settings stop applying 24 hours after they were saved, also
+  while the task is still queued or running.
+- A destination that refuses the attribute update keeps the Hidden attribute
+  on a file that is published all the same.
+- A request the service refuses while planning, such as copying a folder into
+  itself, is reported with the "CONFLICT:" prefix of a name conflict. What
+  the app offers the user then was not checked.
+- A partial file's name is 35 characters longer than the file's own, and its
+  record's 41. Whether a file with a name near the 255-character limit can be
+  copied was not tested.
+- `operations.jsonl` is appended to and never trimmed.
 - The same-volume replace swap is two renames without an ownership record. A
   crash between them leaves the destination missing and a replace backup that
   recovery does not restore. Fixing it needs a change to the record format.
@@ -210,3 +242,16 @@ Also open:
   the installers bundle. Only 7-Zip's licence ships.
 - `ipc/schema/v1/events.json` still lists event names of the retired
   application, and an `app.restart-required` notification, that nothing emits.
+- The notes in `ipc/schema/v1/protocol.json` are out of date: they give 79
+  methods where there are 82, a log path under `%LOCALAPPDATA%\SimpleFile`,
+  and a list of cancel methods without `cancel_entry_facts`.
+- Adding an IPC method means editing the literal count 82 in two check
+  scripts as well as the schema. Derive the count from the schema.
+- The handshake reply carries the service's method count, which the app logs
+  and never compares with its own. `Protocol.ErrHandshake` (-32002) is mapped
+  by the app and never sent by the service.
+- The startup budget check has a rule for `MainWindow.StartupDriveRefresh`
+  stages, which the app no longer writes, so the rule never applies.
+- In a development checkout the app looks for the file service in
+  `target\debug` before `target\release`, so a stale debug build is started
+  in preference to a fresh release build.

@@ -14,18 +14,22 @@ there are three new IPC methods.
   writing every file.** The breadcrumb bar joined a drive root and its first
   folder as `V:\\sync` (two separators), and so did the path-join helper for a
   drive root. Clicking that crumb put the pane, every folder entered from it
-  and every copy into them on the doubled path. Windows reads and writes files
-  under such a path, but refuses the rename that moves a finished copy into
-  place ("The parameter is incorrect"), so each file was reported failed after
-  its last byte and its hidden `.sumafile-partial` stayed in the destination.
-  Both joins now give `V:\sync`, and the transfer service collapses repeated
-  separators in every source and destination before it plans anything, so no
-  other source of such a path can reach the rename.
-- **The progress bar no longer runs backwards.** A file that fails after its
-  last byte keeps its bytes in the readout, and the final error report counts
-  what was written. A file queued for a later retry is not resumed: the failed
-  attempt's partial file is removed and the retry copies the file again from
-  the start, while the readout keeps the bytes already counted.
+  and every copy into them on the doubled path. In the failure this was
+  diagnosed from, files were written under such a path, but the rename that
+  moves a finished copy into place was refused ("The parameter is incorrect"),
+  so each file was reported failed after its last byte and its
+  `.sumafile-partial` file stayed in the destination. Both joins now give
+  `V:\sync`, and the transfer service collapses repeated separators in every
+  source and destination before it plans anything, so no other source of such
+  a path can reach the rename.
+- **A file that fails for good keeps its bytes in the progress readout.**
+  Before, the bytes of a file that failed after its last byte left the
+  readout, so the bar ran backwards as files failed. Now they stay, and the
+  final error report counts what was written. A file set aside for a later
+  retry round is not resumed: its partial file is removed and the retry copies
+  the file again from the start. While such a file waits for its round its
+  bytes are out of the readout, and they return when the retry starts; see
+  Known Limitations.
 - **The last step of a copy is more patient and says more.** The rename that
   publishes a fully copied file waits out a file held open by a virus scanner
   or indexer with the whole retry budget instead of three attempts. When
@@ -81,15 +85,19 @@ connections and plugins are kept. A saved column layout from 1.1.3 loads as it
 was; the new columns are off until you turn them on.
 
 If a copy failed in 1.1.3 or earlier with "The parameter is incorrect", its
-destination folder may still hold hidden `.name.<id>.sumafile-partial` files
-and small `.sumafile-partial.state` files next to them. Delete both by hand
-(show hidden files first); see Known Limitations.
+destination folder may still hold `.name.<id>.sumafile-partial` files and
+small `.sumafile-partial.state` files next to them. SumaFile lists them only
+when hidden files are shown. Copy any file into that folder with 1.1.4 first:
+a transfer into a folder starts by cleaning up what earlier transfers left
+there. Then delete by hand what is still there, as described under
+[Deleting leftovers by hand](https://github.com/conniecombs/SumaFile/blob/main/docs/TRANSFER_TUNING.md#deleting-leftovers-by-hand).
+See also Known Limitations.
 
 ## Dogfood 10-Step Script
 
 1. Install 1.1.4 over a disposable v1.1.3 installation.
 2. Open a folder two levels below a drive root, click the first folder's breadcrumb, enter the folder again, and copy a large file into it with Replace: it completes, and the path box never shows two backslashes after the drive letter.
-3. Copy several large files at once and watch the progress readout: it only rises.
+3. Copy several large files at once and watch the progress readout: bytes done does not fall as files finish.
 4. Copy a file onto one that another program holds open: the copy waits and retries instead of failing in three seconds, and the error, if it does fail, names the cause.
 5. Right-click a column header: toggle Created, Accessed and Attributes on, sort by each, and restart the app: the choice is kept per pane.
 6. In a folder of photos turn on Dimensions, Date taken and Camera: the cells on screen fill in, scrolling fills the next rows, and a second visit is immediate.
@@ -104,10 +112,14 @@ No manual import is needed for normal SimpleFile-to-SumaFile use. SumaFile keeps
 
 ## Known Limitations
 
-- Partial files left behind by the failed copies of earlier versions are not
-  removed automatically: their ownership records were written under the
-  doubled path, which the per-folder recovery does not match to the folder's
-  real path. Delete them by hand.
+- Partial files left behind by the failed copies of earlier versions may
+  stay. Those copies ran the usual clean-up after each failed file and the
+  partial files stayed all the same; why was not established. The same
+  clean-up runs again at the start of the next transfer into the folder.
+  Delete by hand what it leaves (see Upgrading).
+- While a file waits for a later retry round, its bytes are out of the task's
+  bytes done, so the readout falls by that amount until the retry starts. Only
+  a file that failed for good keeps its bytes.
 - Every folder in a default Details view shows "…" in Size until it is clicked
   or the "folder sizes" setting is on, because folder size is read on request
   by default.
@@ -119,8 +131,10 @@ No manual import is needed for normal SimpleFile-to-SumaFile use. SumaFile keeps
   and filesystem was not established; the failure was diagnosed from one
   machine's operations journal and the fix removes the doubled path at both
   ends.
-- The installer build and the installer smokes have not run for this build;
-  run them on the release commit.
+- The Release workflow built the installers on the release commit and its
+  smokes passed: packaged file operations, NSIS install, launch and uninstall,
+  NSIS upgrade from the latest published release, and MSI install, upgrade
+  and uninstall. The in-app update was not exercised.
 - The column picker, the "…" cells, the header menu, the status line and the
   Windows duration fallback were verified by unit tests, a type-check build
   and CI, not on a Windows desktop by hand.

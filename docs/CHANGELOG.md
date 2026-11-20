@@ -19,17 +19,18 @@ See the [v1.1.4 release notes](RELEASE_1.1.4.md).
 - Copies into a folder reached by clicking a middle breadcrumb failed after
   every file had been written. The breadcrumb bar joined a drive root and its
   first folder as `V:\\sync` (two separators), as did the path-join helper for
-  a drive root; Windows reads and writes files under such a path but refuses
-  the rename that moves a finished copy into place ("The parameter is
-  incorrect"), so every file was reported failed and its hidden
-  `.sumafile-partial` stayed behind. Both joins are fixed, and the transfer
-  service now collapses repeated separators in every source and destination it
-  receives before planning.
-- A file that fails after its last byte no longer makes the progress bar run
-  backwards: its bytes stay in the readout, and the final error report counts
-  what was written. A file queued for a later retry is not resumed: the failed
-  attempt's partial file is removed and the retry copies the file again from
-  the start, while the readout keeps the bytes already counted.
+  a drive root. In the failure this was diagnosed from, files were written
+  under such a path but the rename that moves a finished copy into place was
+  refused ("The parameter is incorrect"), so every file was reported failed
+  and its `.sumafile-partial` file stayed behind. Both joins are fixed, and
+  the transfer service now collapses repeated separators in every source and
+  destination it receives before planning.
+- A file that fails for good after its last byte no longer makes the progress
+  bar run backwards: its bytes stay in the readout, and the final error report
+  counts what was written. A file set aside for a later retry round is not
+  resumed: its partial file is removed and the retry copies the file again
+  from the start. While it waits for its round its bytes are out of the
+  readout; they return when the retry starts.
 - The rename that publishes a fully copied file waits out a file held open by
   a scanner or indexer with the whole retry budget rather than three attempts;
   when the Replace flow fails while moving the existing file aside, the error

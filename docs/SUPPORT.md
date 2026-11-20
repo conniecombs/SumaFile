@@ -72,10 +72,11 @@ For a failed or stuck copy or move, include:
   move.
 - The counts the failure dialog showed and what you chose there.
 
-A transfer may leave hidden `.sumafile-partial` files, `.state` records or
-replace backups in the destination folder. Do not delete them before reading
-[Transfers](TRANSFER_TUNING.md), which says what each one is and when removing
-it is safe.
+A transfer may leave `.sumafile-partial` files, `.state` records or replace
+backups in the destination folder. Their names begin with a dot, so SumaFile
+lists them only when hidden files are shown. Do not delete them before reading
+[Transfers](TRANSFER_TUNING.md#what-a-transfer-can-leave-in-a-destination-folder),
+which says what each one is and when removing it is safe.
 
 ## UI smoke failures
 

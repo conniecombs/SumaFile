@@ -542,9 +542,10 @@ and the template in `templates/sumafile-plugin`.
 - A sort by an on-demand column reads at most 5,000 rows; in a larger folder
   the rest sort as unknown until read. Nothing is read automatically for
   on-demand columns on a network path; a click on a cell still reads it.
-- A copy that failed in a version before 1.1.4 may have left hidden
+- A copy that failed in a version before 1.1.4 may have left
   `.sumafile-partial` files in its destination; see
-  [Transfers](docs/TRANSFER_TUNING.md) before deleting them.
+  [Deleting leftovers by hand](docs/TRANSFER_TUNING.md#deleting-leftovers-by-hand)
+  before deleting them.
 - Rendered Markdown task-list checkboxes are read-only preview controls; editing
   task state requires editing the Markdown source.
 - Some Windows-reserved shortcuts may not be assignable; shortcut remapping,
