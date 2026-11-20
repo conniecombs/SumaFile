@@ -26,6 +26,41 @@ pub fn is_keep_both_action(conflict_action: &str) -> bool {
     )
 }
 
+/// A Windows path with every run of separators after the root collapsed to one
+/// backslash: `V:\\sync\Movies` becomes `V:\sync\Movies`. A leading `\\` (a UNC
+/// path) and a `\\?\` or `\\.\` prefix are kept. Windows accepts the doubled
+/// form when creating and writing a file, but `MoveFileExW` refuses it with
+/// "The parameter is incorrect", so every path a transfer receives goes
+/// through here before it is planned.
+pub fn collapse_separators(path: &str) -> String {
+    let (prefix, rest) = if path.starts_with(r"\\?\") || path.starts_with(r"\\.\") {
+        path.split_at(4)
+    } else if path.starts_with(r"\\") {
+        path.split_at(2)
+    } else {
+        ("", path)
+    };
+    let mut out = String::with_capacity(path.len());
+    out.push_str(prefix);
+    let mut in_run = false;
+    for ch in rest.chars() {
+        if ch == '\\' || ch == '/' {
+            if !in_run {
+                out.push(if ch == '/' && !rest.contains('\\') {
+                    '/'
+                } else {
+                    '\\'
+                });
+                in_run = true;
+            }
+        } else {
+            in_run = false;
+            out.push(ch);
+        }
+    }
+    out
+}
+
 pub fn is_already_exists_error(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::AlreadyExists
         || matches!(error.raw_os_error(), Some(80 | 183))
@@ -121,6 +156,25 @@ mod tests {
             .expect("system time")
             .as_nanos();
         std::env::temp_dir().join(format!("sumafile-path-conflict-{name}-{nanos}"))
+    }
+
+    #[test]
+    fn collapse_separators_keeps_roots_and_prefixes_and_collapses_the_rest() {
+        assert_eq!(collapse_separators(r"V:\\sync\Movies"), r"V:\sync\Movies");
+        assert_eq!(
+            collapse_separators(r"V:\sync\\\Movies\"),
+            r"V:\sync\Movies\"
+        );
+        assert_eq!(collapse_separators(r"V:\sync\Movies"), r"V:\sync\Movies");
+        assert_eq!(
+            collapse_separators(r"\\server\\share\dir"),
+            r"\\server\share\dir"
+        );
+        assert_eq!(collapse_separators(r"\\?\V:\\sync"), r"\\?\V:\sync");
+        assert_eq!(collapse_separators(r"V:/sync//Movies"), "V:/sync/Movies");
+        assert_eq!(collapse_separators(r"V:\sync//Movies"), r"V:\sync\Movies");
+        assert_eq!(collapse_separators("/mnt//data/file"), "/mnt/data/file");
+        assert_eq!(collapse_separators(""), "");
     }
 
     #[test]

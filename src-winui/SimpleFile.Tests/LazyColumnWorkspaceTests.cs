@@ -189,7 +189,8 @@ public class LazyColumnWorkspaceTests
 
         Assert.Equal([LazyColumns.ItemCount], Assert.Single(backend.Requests).Kinds);
         Assert.Equal("3 items", EntryPresentation.ColumnText(album, "items"));
-        Assert.True(Volatile.Read(ref changes) >= 1);
+        // The change event follows the value, outside the workspace lock: wait for it rather than race it.
+        await UntilAsync(() => Volatile.Read(ref changes) >= 1, "the change event");
 
         workspace.RequestFact(PaneId.Primary, album.Path, LazyColumns.FolderSize);
         await UntilAsync(() => album.FactFor(LazyColumns.FolderSize) is not null, "the folder size");

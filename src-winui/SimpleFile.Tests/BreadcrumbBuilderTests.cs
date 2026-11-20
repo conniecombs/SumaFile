@@ -14,11 +14,26 @@ public class BreadcrumbBuilderTests
         Assert.Equal(@"C:\", segments[0].Path);
         Assert.False(segments[0].Current);
         Assert.Equal("Users", segments[1].Label);
-        // ContentShell concatenates `C:\` + `\Users` → `C:\\Users` (same quirk).
-        Assert.Equal(@"C:\\Users", segments[1].Path);
+        // The old frontend concatenated `C:\` + `\Users` into `C:\\Users`. Navigating to that path made every
+        // folder entered from it, and every copy into them, carry the doubled separator; the final rename of a
+        // transferred file then failed with "The parameter is incorrect".
+        Assert.Equal(@"C:\Users", segments[1].Path);
         Assert.Equal("Public", segments[2].Label);
-        Assert.Equal(@"C:\\Users\Public", segments[2].Path);
+        Assert.Equal(@"C:\Users\Public", segments[2].Path);
         Assert.True(segments[2].Current);
+    }
+
+    [Fact]
+    public void FromPath_SegmentPathsRoundTripThroughTheBuilder()
+    {
+        var segments = BreadcrumbBuilder.FromPath(@"V:\sync\Movies");
+
+        foreach (var segment in segments)
+        {
+            var again = BreadcrumbBuilder.FromPath(segment.Path);
+            Assert.Equal(segment.Path, again[^1].Path);
+            Assert.DoesNotContain(@"\\", segment.Path.Substring(Math.Min(1, segment.Path.Length)));
+        }
     }
 
     [Fact]

@@ -36,6 +36,9 @@ public class PathRulesTests
     {
         Assert.Equal(@"C:\Users\Desktop", PathRules.JoinPath(@"C:\Users", "Desktop"));
         Assert.Equal(@"C:\Users\Desktop", PathRules.JoinPath(@"C:\Users\", "Desktop"));
+        // A drive root already ends with its separator.
+        Assert.Equal(@"C:\Users", PathRules.JoinPath(@"C:\", "Users"));
+        Assert.Equal(@"C:\Users", PathRules.JoinPath("C:", "Users"));
     }
 
     [Fact]

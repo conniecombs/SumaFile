@@ -36,7 +36,9 @@ use plan::{
 };
 use serde::Serialize;
 use simplefile_core::models::ProgressUpdate;
-use simplefile_core::path_conflict::{is_already_exists_error, rename_exclusive};
+use simplefile_core::path_conflict::{
+    collapse_separators, is_already_exists_error, rename_exclusive,
+};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -244,6 +246,33 @@ enum Request {
 }
 
 impl Request {
+    /// The same request with every path's separators collapsed; see
+    /// [`collapse_separators`].
+    fn normalized(self) -> Self {
+        match self {
+            Self::Selection {
+                sources,
+                conflict_action,
+            } => Self::Selection {
+                sources: sources
+                    .iter()
+                    .map(|source| collapse_separators(source))
+                    .collect(),
+                conflict_action,
+            },
+            Self::Items(items) => Self::Items(
+                items
+                    .into_iter()
+                    .map(|item| TransferItem {
+                        source: collapse_separators(&item.source),
+                        destination: collapse_separators(&item.destination),
+                        action: item.action,
+                    })
+                    .collect(),
+            ),
+        }
+    }
+
     fn requested_sources(&self) -> Vec<String> {
         match self {
             Self::Selection { sources, .. } => sources.clone(),
@@ -359,6 +388,11 @@ fn transfer_with_policy_blocking(
     emit_tuning: &dyn Fn(parallel::TuningUpdate),
     policy: &dyn Fn() -> tuning::Policy,
 ) -> Result<Vec<TransferResult>, TransferBatchError> {
+    // A doubled separator (`V:\\sync`, from a path the app assembled) survives
+    // every create and write but fails the final rename; nothing downstream
+    // sees one.
+    let request = request.normalized();
+    let destination = collapse_separators(&destination);
     let requested_sources = request.requested_sources();
     let total_bytes = Arc::new(AtomicU64::new(0));
     let total_files = Arc::new(AtomicU64::new(0));
@@ -545,6 +579,7 @@ fn transfer_with_policy_blocking(
 
     let cancelled_early = cancel.load(Ordering::Relaxed);
     let mut cancelled = cancelled_early;
+    let mut failed_bytes = 0u64;
     if !cancelled_early && (!files.is_empty() || !roots.is_empty()) {
         let ctx = reporting::CopyContext {
             progress: &progress,
@@ -556,6 +591,7 @@ fn transfer_with_policy_blocking(
         let result =
             parallel::copy_selection(&roots, files, &ctx, &mut completed_bytes, &mut session);
         cancelled = result.copy.cancelled || cancel.load(Ordering::Relaxed);
+        failed_bytes = result.copy.failed_bytes;
 
         for index in &result.copy.completed {
             let Some(task) = result.copy.completed_tasks.get(index) else {
@@ -686,8 +722,10 @@ fn transfer_with_policy_blocking(
 
     if !failed.is_empty() {
         let message = failed[0].error.clone();
+        // What was written counts, including the files that then failed: the
+        // last update never shows less than the one before it.
         progress.emit_with_total(
-            completed_bytes,
+            completed_bytes.saturating_add(failed_bytes),
             final_total,
             String::new(),
             "error",

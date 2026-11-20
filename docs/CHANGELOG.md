@@ -8,6 +8,27 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Transfers
+
+- Copies into a folder reached by clicking a middle breadcrumb failed after
+  every file had been written. The breadcrumb bar joined a drive root and its
+  first folder as `V:\\sync` (two separators), as did the path-join helper for
+  a drive root; Windows reads and writes files under such a path but refuses
+  the rename that moves a finished copy into place ("The parameter is
+  incorrect"), so every file was reported failed and its hidden
+  `.sumafile-partial` stayed behind. Both joins are fixed, and the transfer
+  service now collapses repeated separators in every source and destination it
+  receives before planning.
+- A file that fails after its last byte no longer makes the progress bar run
+  backwards: its bytes stay in the readout, a deferred retry resumes from where
+  the partial stands, and the final error report counts what was written.
+- The rename that publishes a fully copied file waits out a file held open by
+  a scanner or indexer with the whole retry budget rather than three attempts;
+  when the Replace flow fails while moving the existing file aside, the error
+  also names the rename refusal that came first; and a retry no longer fails on
+  the ownership record an earlier attempt's failed cleanup left behind, it
+  recovers that attempt's partial and takes the record over.
+
 ### Details view columns
 
 - Right-click a column header, or open "Columns" from the list background's

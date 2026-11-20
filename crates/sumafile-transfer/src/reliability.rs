@@ -184,6 +184,9 @@ pub struct Retry {
     pub failures: u32,
     max_attempts: u32,
     base_sleep: Duration,
+    /// Attempts a `Busy` failure gets; [`BUSY_ATTEMPTS`] unless the caller is
+    /// willing to wait a file out (see [`Self::patient_with_busy`]).
+    busy_attempts: u32,
 }
 
 impl Default for Retry {
@@ -193,6 +196,7 @@ impl Default for Retry {
             failures: 0,
             max_attempts: 6,
             base_sleep: Duration::from_secs(1),
+            busy_attempts: BUSY_ATTEMPTS,
         }
     }
 }
@@ -204,7 +208,17 @@ impl Retry {
             failures: 0,
             max_attempts: max_attempts.clamp(1, 50),
             base_sleep: base_sleep.clamp(Duration::from_millis(10), Duration::from_secs(60)),
+            busy_attempts: BUSY_ATTEMPTS,
         }
+    }
+
+    /// Gives a `Busy` failure the full attempt budget instead of the quick
+    /// [`BUSY_ATTEMPTS`]: for the rename that publishes a fully copied file, a
+    /// scanner or indexer holding it for a while is worth waiting out rather
+    /// than throwing the copy away.
+    pub fn patient_with_busy(mut self) -> Self {
+        self.busy_attempts = self.max_attempts;
+        self
     }
 
     pub fn from_policy(policy: &crate::policy::Policy) -> Self {
@@ -219,7 +233,7 @@ impl Retry {
         let first = self.first.get_or_insert_with(|| error.clone()).clone();
         log::warn!("Transfer attempt {}: {}", self.failures, error);
         let limit = if error.kind == FailureKind::Busy {
-            BUSY_ATTEMPTS.min(self.max_attempts)
+            self.busy_attempts.min(self.max_attempts)
         } else {
             self.max_attempts
         };
@@ -317,6 +331,22 @@ mod tests {
         let reported = retry.failed_with(busy()).unwrap_err();
         assert_eq!(reported.kind, FailureKind::Busy);
         assert!(reported.message.contains("after 3 attempts"));
+    }
+
+    #[test]
+    fn a_patient_retry_gives_busy_files_the_whole_budget() {
+        let mut retry = Retry::with_limits(10, Duration::from_millis(10)).patient_with_busy();
+        let busy = || Failure::with_kind("sharing violation", FailureKind::Busy);
+        for _ in 0..9 {
+            assert!(retry.failed_with(busy()).is_ok());
+        }
+        let reported = retry.failed_with(busy()).unwrap_err();
+        assert_eq!(reported.kind, FailureKind::Busy);
+        assert!(
+            reported.message.contains("after 10 attempts"),
+            "{}",
+            reported.message
+        );
     }
 
     #[test]

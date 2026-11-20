@@ -54,6 +54,13 @@ public static class PathRules
             return $"/{name}";
         }
 
+        // A drive root keeps its separator (`C:\`), so the name follows it directly: `C:\` + `\Users` would
+        // give `C:\\Users`, a path Windows reads and writes but refuses to rename into (error 87).
+        if (cleanParent.EndsWith('\\') || cleanParent.EndsWith('/'))
+        {
+            return $"{cleanParent}{name}";
+        }
+
         return $"{cleanParent}{PathSeparator(cleanParent)}{name}";
     }
 

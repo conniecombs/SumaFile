@@ -39,9 +39,11 @@ public static class BreadcrumbBuilder
         {
             var part = parts[index];
             var isDrive = index == 0 && part.EndsWith(':');
-            currentAccumulated += index == 0
+            // Joined, never concatenated: `V:\` + `\sync` would give `V:\\sync`, a path Windows accepts for
+            // reading and writing files but rejects (error 87) when a transfer renames its finished file into place.
+            currentAccumulated = index == 0
                 ? (isDrive ? $"{part}\\" : part)
-                : $"\\{part}";
+                : PathRules.JoinPath(currentAccumulated, part);
             segments.Add(new BreadcrumbSegment
             {
                 Label = part,

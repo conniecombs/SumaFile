@@ -147,6 +147,10 @@ enum Message {
 
 pub(crate) struct CopyResult {
     pub bytes: u64,
+    /// Bytes written by files that failed for good. They stay in the progress
+    /// readout: a file that fails after its last byte must not make the bar
+    /// run backwards, and the final error report counts what was processed.
+    pub failed_bytes: u64,
     /// Indices of completed top-level tasks, in completion order.
     pub completed: Vec<usize>,
     /// Final destinations that differ from the task's planned one (keep-both).
@@ -168,6 +172,7 @@ impl CopyResult {
     fn new() -> Self {
         Self {
             bytes: 0,
+            failed_bytes: 0,
             completed: Vec::new(),
             destinations: BTreeMap::new(),
             completed_tasks: BTreeMap::new(),
@@ -965,6 +970,9 @@ fn copy_files_streaming_with_sink(
         };
         let mut active = BTreeMap::<usize, ActiveFile>::new();
         let mut deferred_retries = VecDeque::<(usize, Failure)>::new();
+        // Bytes a deferred file had written when it failed; its retry resumes
+        // the partial, so the readout starts there instead of dropping to zero.
+        let mut carried = BTreeMap::<usize, u64>::new();
         let mut file_hl_attempts = BTreeMap::<usize, usize>::new();
         let mut first_snapshot = true;
         let mut last_display = Instant::now();
@@ -1077,7 +1085,8 @@ fn copy_files_streaming_with_sink(
                                 last_display: &Instant,
                                 tasks: &mut BTreeMap<usize, FileTask>,
                                 lane_done: &mut [u64; 2],
-                                lane_files: &mut [u64; 2]| {
+                                lane_files: &mut [u64; 2],
+                                carried: &mut BTreeMap<usize, u64>| {
             match message {
                 Message::ScanAvailable => {}
                 Message::Progress(index, update) => {
@@ -1090,14 +1099,17 @@ fn copy_files_streaming_with_sink(
                     {
                         let current = offset
                             .saturating_add(result.bytes)
+                            .saturating_add(result.failed_bytes)
                             .saturating_add(active.values().map(|f| f.current).sum::<u64>());
                         ctx.finalizing(current, update.current_item);
                     }
                 }
                 Message::Finished(index, bytes, status) => {
-                    let lane = active
-                        .remove(&index)
+                    let finished = active.remove(&index);
+                    let lane = finished
+                        .as_ref()
                         .map(|file| lane_index(two_lanes, file.total));
+                    let written = finished.map(|file| file.current).unwrap_or(0);
                     match status {
                         Ok(FileOutcome::Copied {
                             version,
@@ -1151,9 +1163,11 @@ fn copy_files_streaming_with_sink(
                                 && !worker_cancel.load(Ordering::Relaxed)
                                 && error.kind.is_retryable()
                             {
+                                carried.insert(index, written);
                                 deferred_retries.push_back((index, error));
                             } else if let Some(task) = tasks.remove(&index) {
                                 file_hl_attempts.remove(&index);
+                                result.failed_bytes = result.failed_bytes.saturating_add(written);
                                 result.failed.push((
                                     index,
                                     TaskFailure {
@@ -1257,7 +1271,7 @@ fn copy_files_streaming_with_sink(
                     next_idx,
                     ActiveFile {
                         path: task.source.to_string_lossy().into(),
-                        current: 0,
+                        current: carried.remove(&next_idx).unwrap_or(0),
                         total: task.size,
                     },
                 );
@@ -1330,6 +1344,7 @@ fn copy_files_streaming_with_sink(
                         &mut tasks,
                         &mut lane_done,
                         &mut lane_files,
+                        &mut carried,
                     );
                     while let Ok(msg) = event_rx.try_recv() {
                         handle_event(
@@ -1344,6 +1359,7 @@ fn copy_files_streaming_with_sink(
                             &mut tasks,
                             &mut lane_done,
                             &mut lane_files,
+                            &mut carried,
                         );
                     }
                 }
@@ -1357,6 +1373,7 @@ fn copy_files_streaming_with_sink(
             }
             let current = offset
                 .saturating_add(result.bytes)
+                .saturating_add(result.failed_bytes)
                 .saturating_add(active.values().map(|f| f.current).sum::<u64>());
             let (_, lane_in_flight) = lane_load(&active, two_lanes);
             let reports = [0, 1].map(|lane| {
@@ -1512,6 +1529,89 @@ mod tests {
             "{} retained tasks",
             result.retained_tasks_peak
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Files that fail after their last byte (a refused rename into place)
+    /// keep their bytes in the readout: the bar never runs backwards, and the
+    /// result says how much was written.
+    #[test]
+    fn late_failures_never_move_the_readout_backwards() {
+        let root = std::env::temp_dir().join(crate::progress::generate_transfer_operation_id());
+        fs::create_dir(&root).unwrap();
+        const SIZE: u64 = 65536;
+        let tasks: Vec<_> = (0..4)
+            .map(|index| FileTask {
+                source: root.join(format!("{index}.bin")),
+                destination: root.join(format!("dest-{index}.bin")),
+                size: SIZE,
+                network: false,
+                conflict: ConflictAction::Error,
+                owned_tree: false,
+                symlink: false,
+                top_level: true,
+                delete_source: false,
+                retry: false,
+            })
+            .collect();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let total = Arc::new(AtomicU64::new(4 * SIZE));
+        let files = Arc::new(AtomicU64::new(4));
+        let completed = Arc::new(AtomicU64::new(0));
+        let updates = Mutex::new(Vec::<u64>::new());
+        let ctx = ProgressContext {
+            emit: &|update: ProgressUpdate| updates.lock().unwrap().push(update.current),
+            operation_id: "late-failure-test",
+            operation_type: "copy",
+            cancel: &cancel,
+            total_bytes: &total,
+            total_files: &files,
+            completed_files: &completed,
+            last_running_emit: Mutex::new(Instant::now() - Duration::from_secs(1)),
+            retry_count: None,
+            rate_limit: None,
+            write_latency: None,
+        };
+        let policy = || Policy {
+            mode: Mode::Manual,
+            manual_concurrency: 2,
+            ..Policy::default()
+        };
+        let mut session = Session::new(
+            "late-failure-test",
+            "copy",
+            &[],
+            &root.to_string_lossy(),
+            &policy,
+            &|_| {},
+        );
+        let copy = |task: &FileTask, context: &CopyContext<'_>, _: &mut u64| {
+            // Past the worker's 50 ms emit throttle, so every file's full
+            // progress reaches the scheduler before the file fails.
+            std::thread::sleep(Duration::from_millis(60));
+            context.progress.emit_now(
+                task.size,
+                task.size,
+                task.source.to_string_lossy().into(),
+                "running",
+                None,
+            );
+            std::thread::sleep(Duration::from_millis(60));
+            Err(format!(
+                "Finalize destination [{}]: refused",
+                task.destination.display()
+            ))
+        };
+        let result = copy_files_using(&tasks, &ctx, &mut session, 0, &copy);
+
+        assert_eq!(result.failed.len(), 4);
+        assert_eq!(result.failed_bytes, 4 * SIZE);
+        let updates = updates.lock().unwrap();
+        assert!(
+            updates.windows(2).all(|pair| pair[0] <= pair[1]),
+            "readout ran backwards: {updates:?}"
+        );
+        assert!(updates.iter().any(|&current| current > 0), "{updates:?}");
         fs::remove_dir_all(root).unwrap();
     }
 
