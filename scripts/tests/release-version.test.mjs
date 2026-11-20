@@ -80,6 +80,9 @@ test('release preview is read-only and applying it keeps every identity in sync'
     // A later stable bump replaces the whole pre-release text.
     assert.match(planReleaseVersion(root, '1.2.3').changes.get('README.md'), /badge\/version-1\.2\.3-2563eb\)/);
     assert.match(readme, /SumaFile_1\.2\.3-beta\.1_x64-winui/);
+    // The link to the release notes follows the version, so no README line is edited by hand at a release.
+    assert.match(readme, /\]\(docs\/RELEASE_1\.2\.3-beta\.1\.md\)/);
+    assert.ok(!readme.includes(`docs/RELEASE_${original.display}.md`), 'the previous notes are no longer linked');
     assert.equal(planReleaseVersion(root, '1.2.3-beta.1').changes.size, 0);
     const manifestPath = resolve(root, 'src-winui/SimpleFile.App/app.manifest');
     const manifest = readFileSync(manifestPath, 'utf8');
