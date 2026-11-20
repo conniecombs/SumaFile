@@ -1,5 +1,7 @@
 # FTP/SFTP Manager Implementation Plan
 
+> **Status:** implemented; shipped in 1.0.1, then moved into the bundled FTP/SFTP plugin (`plugins/remote`) in 1.1.0, so the `crates/simplefile-core/src/remote` and `crates/simplefile-service/src/remote` paths, the `remote_*` IPC methods and the `RemoteManager*` files under `src-winui` that it names no longer exist. This is a record of the plan as written; the task boxes below were not kept up to date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build SumaFile's native FTP/SFTP manager, beginning with profile management and a dedicated manager surface backed by schema-first IPC.

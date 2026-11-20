@@ -56,6 +56,41 @@ the SumaFile name; its notes are kept as
   dialog opens: **Calculate totals** counts every file and folder inside it,
   including subfolders, and adds up their size.
 
+## Transfers
+
+- **Write directly to the destination.** The option now applies to folder
+  copies, replaced files and remote downloads, not only to new single files.
+  Folders are created under their final names and replaced files are
+  overwritten in place. The option's note says that a cancelled or failed
+  transfer leaves partial files behind;
+  [Transfers](TRANSFER_TUNING.md#write-directly-to-the-destination) describes
+  what the engine does today.
+- **Transfer artifacts.** Show hidden files now lists SumaFile's own partial
+  files, ownership records and replacement backups instead of always
+  dropping them.
+- **Automatic tuning.** A decision takes about three to five seconds on a
+  steady transfer. The first number of simultaneous files depends on the
+  drives: one or two for a hard disk, more between solid-state drives, in
+  between for a network share. Files under 1 MiB and larger files run in two
+  lanes that share the file ceiling, so a few huge files no longer slow a
+  batch of small ones, and a sustained rise in write latency ends a test of
+  more files early. Custom mode and chosen queue orders are unchanged. See
+  [Transfer tuning](TRANSFER_TUNING.md#how-the-scheduler-decides).
+- **Many small files.** To or from a network share or cloud drive they copy
+  with more files at once: the small-file lane is judged on files per
+  second, starts with 16 files on such routes and may grow to 32 while the
+  file ceiling is still the default 16 (a ceiling you changed is kept).
+  Files that fit in one copy buffer are no longer pre-allocated, which saves
+  one request per small file on a network share.
+
+## CI and maintenance
+
+- Maintenance pull requests can now reach the automatic merge check: their CI
+  run starts it directly when it passes, and a pull request whose only
+  outstanding check is its own approval-held CI run is no longer refused.
+  Branch protection on `main` is still required before anything merges. See
+  [CI maintenance](CI_MAINTENANCE.md).
+
 ## Upgrading
 
 Windows 10 version 2004 or later, or Windows 11, x64. Close SumaFile after

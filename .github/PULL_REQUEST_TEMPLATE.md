@@ -27,7 +27,7 @@ Closes #<!-- issue number -->
 - [ ] Other Windows version:
 
 **Windows build tools:**
-- [ ] .NET SDK 10 and stable Rust are available
+- [ ] The pinned .NET SDK (`global.json`) and Rust toolchain (`rust-toolchain.toml`) are installed
 - [ ] Not applicable for this change
 
 **Run/install mode tested:**
@@ -35,6 +35,7 @@ Closes #<!-- issue number -->
 - [ ] Unpackaged payload (`dist/winui/payload/SumaFile.exe`)
 - [ ] NSIS installer
 - [ ] MSI installer
+- [ ] Portable ZIP
 - [ ] Not applicable for this change
 
 **Storage context tested:**
@@ -54,15 +55,18 @@ Closes #<!-- issue number -->
 - [ ] I have run `cargo fmt --all` and there are no formatting issues
 - [ ] I have run `cargo clippy --locked --all-targets --all-features -- -D warnings` with no new warnings
 - [ ] I have run `cargo test --locked --all-features` and all tests pass
-- [ ] I have run `npm run check`
-- [ ] I have run `npm run check:release` for release-level or migration changes
-- [ ] I have run the documented `cargo audit --deny warnings` command and there are no new advisories
+- [ ] I have run `npm run check` and `npm run test:maintenance`
+- [ ] I have run `npm run check:winui` (the C# tests), or explained why they are not affected
+- [ ] I have run `npm run generate:ipc-bindings` after changing `ipc/schema`
+- [ ] I have run `npm run check:release` for release or installer changes
+- [ ] I have run `npm run check:security` and there are no new advisories
 - [ ] I have tested on Windows or explained why runtime testing is not applicable
-- [ ] New IPC methods validate path inputs via `validate_existing_path()` or `validate_name()`
+- [ ] New IPC methods validate path inputs with the helpers in `crates/simplefile-core/src/utils.rs` (`validate_existing_path_no_resolve`, `validate_path_no_follow`, `validate_name`)
 - [ ] No user-controlled data is passed to shell commands without sanitization
 - [ ] Drive-listing changes preserve local and mapped network drive behavior
 - [ ] I have added tests for new backend behavior (or explained why tests are not applicable)
-- [ ] I have updated documentation if the change affects user-facing behavior
+- [ ] Plugin changes keep `docs/PLUGINS.md` and the plugin manifests in step
+- [ ] I have updated documentation if the change affects user-facing behavior, including the `[Unreleased]` section of `docs/CHANGELOG.md`
 
 ---
 

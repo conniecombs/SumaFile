@@ -1,5 +1,7 @@
 # Plugin System Phase 5: Third-Party Readiness Implementation Plan
 
+> **Status:** implemented; shipped in 1.1.0. As planned, nothing is published: the SDK package and the Rust helper crate are packed as dry runs only. This is a record of the plan as written; the task boxes below were not kept up to date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the plugin system usable by an author outside this repository, with nothing published. That means:

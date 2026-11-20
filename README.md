@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
 [![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
-[![Installer Smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
+[![Installer smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
 ![Version](https://img.shields.io/badge/version-1.1.4-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%7C%20Windows%2011-0078D4?logo=windows)
 ![UI](https://img.shields.io/badge/UI-WinUI%203-5b8def)
@@ -15,29 +15,20 @@ shell with a Rust filesystem service so browsing, transfers, search, previews,
 archives, checksums, cleanup tools and, through bundled plugins, Git status and
 remote FTP/SFTP profiles can stay responsive in one local-first app.
 
-**Repository topics:** `windows`, `file-manager`, `winui-3`, `rust`,
-`named-pipe-ipc`, `dual-pane`, `tabs`, `file-preview`, `advanced-rename`,
-`archive-manager`, `checksum`, `git-status`, `windows-installer`,
-`local-first`.
-
 ## Contents
 
 - [Screenshots](#screenshots)
 - [Status](#status)
-- [Highlights](#highlights)
 - [Install](#install)
-- [Use SumaFile](#use-sumafile)
-- [Feature Reference](#feature-reference)
-- [Settings and State](#settings-and-state)
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Settings and Data Locations](#settings-and-data-locations)
 - [Plugins](#plugins)
-- [Transfer tuning](docs/TRANSFER_TUNING.md)
+- [Known Limitations](#known-limitations)
 - [Development](#development)
-- [Architecture](#architecture)
-- [Testing and Verification](#testing-and-verification)
-- [Release and Tags](#release-and-tags)
 - [Documentation Map](#documentation-map)
 - [Security](#security)
-- [Known Limitations](#known-limitations)
 - [Support](#support)
 - [License](#license)
 
@@ -63,9 +54,10 @@ apply them, and the Tokens button explains each placeholder.
 
 ![Advanced Rename previewing the reviewed suffix for two generated text files](docs/assets/screenshots/v1.0.4-advanced-rename.png)
 
-These captures come from the running v1.0.4 WinUI app on a
-[GitHub-hosted Windows runner](https://github.com/conniecombs/SumaFile/actions/runs/42298176359).
-All visible files and paths belong to its generated test workspace.
+These captures come from the v1.0.4 app running on a GitHub-hosted Windows
+runner. All visible files and paths belong to its generated test workspace.
+[Runtime verification](docs/WINUI_RUNTIME_VERIFICATION.md) says how to refresh
+them.
 
 ## Status
 
@@ -75,113 +67,21 @@ All visible files and paths belong to its generated test workspace.
 | Platform | Windows 10 2004+ / Windows 11, x64 |
 | UI | Unpackaged WinUI 3 desktop app |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
+| Plugins | Git, FTP/SFTP and 7-Zip ship as bundled plugins; third-party plugins install from a file |
 | Release artifacts | NSIS setup, MSI, portable ZIP, updater manifest |
-| Storage scope | Local folders, local drives, removable media, mapped network shares, archives, and an FTP/FTPS/SFTP profile browser from the bundled FTP/SFTP plugin |
+| Storage scope | Local folders, local drives, removable media, mapped network shares, archives, and FTP/FTPS/SFTP connections through the bundled plugin |
 | License | [MIT](LICENSE) |
 
-The active application is the WinUI host under `src-winui/` plus the Rust crates
-under `crates/`. Historical migration notes remain in `docs/winui-migration/`,
-but the Svelte/Tauri surface is not the shipping UI for this branch.
-
-The plugin system, and the move of Git, FTP/SFTP and 7-Zip into three
-bundled plugins, are new in 1.1.0: 1.0.4 has those features built into
-SumaFile itself. See [Plugins](#plugins), the
-[v1.1.0 release notes](docs/RELEASE_1.1.0.md) and the
-[changelog](docs/CHANGELOG.md).
-
-## What changed in 1.1.4
-
-A hotfix for copies that failed after every file had been written: a folder
-reached through a middle breadcrumb carried a doubled separator after the
-drive letter, and Windows refused to rename the finished files into place.
-The path is built correctly now, the transfer service cleans such paths
-itself, the progress bar no longer runs backwards when a file fails late, and
-the last step of a copy waits out a file held by a scanner. The release also
-carries the Details view column work: a column picker on each header, Created,
-Accessed and Attributes columns, and Dimensions, Duration, Date taken, Camera,
-Pages and folder sizes read per row on demand.
-
-See the [v1.1.4 release notes](docs/RELEASE_1.1.4.md) for the details,
-upgrade instructions and known limitations.
-
-## What changed in 1.1.3
-
-Photos from phones and cameras are upright in the file grid, the preview pane
-and Properties, and the grid's thumbnails come from the preview the camera
-embedded when it is large enough, so a folder of photos fills in almost at
-once. A folder's Properties counts its contents as soon as it opens. The rest
-is CI and maintenance: Dependabot's NuGet updates repair their own lock files,
-a release run refuses to replace a published release, and the UI smoke times
-thumbnails.
-
-See the [v1.1.3 release notes](docs/RELEASE_1.1.3.md) for the details,
-upgrade instructions and known limitations.
-
-## What changed in 1.1.2
-
-Thumbnails of photos are made about twice as fast the first time a folder is
-shown: a JPEG is decoded straight to a reduced size, and every thumbnail is
-scaled with SIMD. Nothing else changed.
-
-See the [v1.1.2 release notes](docs/RELEASE_1.1.2.md) for the measurements,
-upgrade instructions and known limitations.
-
-## What changed in 1.1.1
-
-The file service now keeps each folder sorted and filtered, the app reads it in
-pages, and a file added, removed or renamed updates its own row instead of
-listing the folder again. Files with the Windows Hidden attribute are hidden
-when Show hidden files is off. The FTP/SFTP manager keeps its selection, and
-the folder comparison is a table.
-
-See the [v1.1.1 release notes](docs/RELEASE_1.1.1.md) for the changes since
-v1.1.0, upgrade instructions and known limitations.
-
-## What changed in 1.1.0
-
-Git, FTP/SFTP and 7-Zip are now three plugins that ship with SumaFile, on a new
-plugin system that third parties can build on. Settings -> Plugins has an
-overview and one page per plugin. Uninstalling now also removes plugin data,
-including FTP/SFTP profiles. The item count sits beside the folder address,
-Properties is grouped and can count a folder through every subfolder, and
-automatic transfer tuning decides sooner.
-
-See the [v1.1.0 release notes](docs/RELEASE_1.1.0.md) for the changes since
-v1.0.4, upgrade instructions and known limitations.
-
-## What changed in 1.0.4
-
-Menus grey out what is unavailable instead of hiding it, Delete is a direct
-menu item, and the omnibar returns to Path mode when a search or filter ends.
-The conflict dialog uses one choice list with Continue as the default, the
-Transfers window no longer steals focus, and transfer options show three
-settings with the rest under Advanced. Git controls appear only inside a
-repository, FTP/SFTP profiles get a trust prompt for new server keys, and
-labels, the sidebar, profiles and connections each have one name everywhere.
-
-See the [v1.0.4 release notes](docs/RELEASE_1.0.4.md) for the changes since
-v1.0.3, upgrade instructions and known limitations.
-
-## Highlights
-
-| Need | SumaFile capability |
-| --- | --- |
-| Work in two locations | Dual-pane browsing with independent pane history, tabs, sort, view, and selection |
-| Keep workspace context | Saved layouts for panes, tabs, columns, preview width, sidebar state, and pane split |
-| Move files confidently | Copy/move progress, cancellation, conflict choices, Recycle Bin delete, and undo/redo |
-| Inspect before opening | Persistent preview pane, Quick Look, metadata, checksums, properties, and compare |
-| Organize messy folders | Tags, bookmarks, recents, smart folders, duplicate finder, cleanup, and Advanced Rename |
-| Work with archives | Create, list, view, extract, pack, and unpack supported archives |
-| Handle developer folders | Git status column and dockable Git workbench (bundled Git plugin), terminal launch, and Open With preferences |
-| Reach remote servers | FTP, FTPS, and SFTP profile manager from the bundled FTP/SFTP plugin, with test, browse, upload, download, rename, and delete actions |
-| Stay Windows-native | Drive labels, network-share status, shell icons, Windows installers, and Windows shortcuts |
+What changed in this version is in its [release notes](docs/RELEASE_1.1.4.md).
+Every earlier version is in the [changelog](docs/CHANGELOG.md), and open work
+is in the [roadmap](docs/ROADMAP.md).
 
 ## Install
 
 Download the latest Windows release from
 [GitHub Releases](https://github.com/conniecombs/SumaFile/releases).
 
-| v1.1.4 artifact | Recommended use |
+| Artifact | Recommended use |
 | --- | --- |
 | `SumaFile_1.1.4_x64-winui-setup.exe` | Normal per-user installation |
 | `SumaFile_1.1.4_x64-winui.msi` | MSI deployment or installer validation |
@@ -193,27 +93,29 @@ Requirements:
 - Windows 10 version 2004 or newer, or Windows 11
 - x64 Windows
 - Git for Windows with `git.exe` on `PATH`, for Git status and the Git workbench
-- Built-in RAR listing and extraction; RAR creation is not supported
 
 `.7z` support (with the bundled 7-Zip), FTP/FTPS/SFTP connections and Git
-come with SumaFile. In 1.0.4 they are part of the app; from 1.1.0 they
-are three bundled plugins that install with SumaFile: `com.sumafile.sevenzip`, `com.sumafile.remote` and
-`com.sumafile.git`.
+install with SumaFile as three bundled plugins: `com.sumafile.sevenzip`,
+`com.sumafile.remote` and `com.sumafile.git`.
 
 After installing, open Settings -> Updates to check published releases. Builds
 with trusted updater metadata can download and launch the NSIS setup from inside
 the app. Builds without complete trusted metadata fall back to the release page.
+The in-app update always runs the NSIS setup, whatever the running copy was
+installed from: update an MSI install with the new MSI and a portable copy
+with the new ZIP. [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) has the
+details.
 
 Uninstalling (Windows Settings -> Apps, or removing the MSI) deletes the
-installation folder. From 1.1.0 that includes every plugin file
-SumaFile keeps there: plugins you installed, `plugins-data` (with the FTP/SFTP
-connection profiles), `plugin-approvals.json` and `plugins.log`; an upgrade or
-reinstall keeps them. Saved FTP/SFTP passwords and passphrases stay in Windows
-Credential Manager under `SumaFile.Remote.*` targets: delete the connections in
-SumaFile before uninstalling, or remove those entries in Credential Manager.
-Settings in `%APPDATA%\com.simplefile.desktop` are not removed.
+installation folder. That includes every plugin file SumaFile keeps there:
+plugins you installed, `plugins-data` (with the FTP/SFTP connection profiles),
+`plugin-approvals.json` and `plugins.log`; an upgrade or reinstall keeps them.
+Saved FTP/SFTP passwords and passphrases stay in Windows Credential Manager
+under `SumaFile.Remote.*` targets: delete the connections in SumaFile before
+uninstalling, or remove those entries in Credential Manager. Settings in
+`%APPDATA%\com.simplefile.desktop` are not removed.
 
-## Use SumaFile
+## Quick Start
 
 1. Open SumaFile.
 2. Choose a location from Quick Access, drives, bookmarks, recents, smart
@@ -235,26 +137,18 @@ Settings in `%APPDATA%\com.simplefile.desktop` are not removed.
 8. Save repeatable pane/tab/column setups from the Profiles button on the
    toolbar.
 
-## Feature Reference
+## Features
 
 ### Navigation and Layout
 
-- Dual-pane browsing with independent active-pane state
-- Pane-local tabs with history, close, switch, and direct tab shortcuts
+- Dual-pane browsing with independent pane history, tabs, sort, view and
+  selection
+- Pane-local tabs with history, close, switch, direct tab shortcuts, and
+  Reopen closed tab from the command palette
+- Open in other pane on a folder's menu
 - Breadcrumbs and a single omnibar for paths, commands, search, and filtering
-- Quick Access, drives, bookmarks, recent locations, smart folders, and folder
-  tree sections
-- Details, list, tiles, and content views
-- Per-pane view style, icon size, sort column, and sort direction
-- Column presets: default, details, media, developer, and photo, and a column
-  picker on each header's right-click (Created, Accessed, Attributes, and the
-  on-demand Dimensions, Duration, Date taken, Camera and Pages columns)
-- On-demand columns read as rows come into view or only when asked; a "…" cell
-  reads its one value on a click, and "Calculate … for this folder" reads a
-  column for the whole folder with progress in the status line
-- Explorer-style column resizing, size-to-fit, and horizontal scrolling
-- Details stays selected in narrow panes, with compact leading columns and
-  horizontal access to the remaining columns
+- Quick Access, drives with labels and network-share status, bookmarks, recent
+  locations, smart folders, and folder tree sections
 - Persistent pane-local filter counts, Clear filter, and search result banners
   with Return to folder
 - Marquee selection, multi-selection, type-ahead selection, and live directory
@@ -263,22 +157,71 @@ Settings in `%APPDATA%\com.simplefile.desktop` are not removed.
   actions
 - Status bar with the item count and the selection's count and size, shown
   beside the folder address
+- Named workspace profiles from the Profiles button: five built in (Standard,
+  Developer, Photos, Transfer, Minimal) and your own, each a snapshot of panes,
+  tabs, views, columns, sorting and chrome
 
-### File Operations
+### Views, Columns and Thumbnails
+
+- Details, list, tiles, and content views, with a per-pane view style, icon
+  size, sort column, and sort direction
+- A view can be remembered everywhere, for one folder, or for a folder and its
+  subfolders ("Remember this view for" in the view menu), and applied to both
+  panes at once
+- Details columns: Name, Size, Items, Modified, Created, Accessed, Attributes,
+  Type, Ext, Status, Link target, Path, Parent, Dimensions, Duration, Date
+  taken, Camera, and Pages. Attributes shows Explorer's letters
+- A column picker on every column header's right-click and under Columns in the
+  list background's menu: a toggle per column and the presets as starting
+  points. Each pane keeps its own columns, saved with the layout
+- Explorer-style column resizing, size-to-fit, and horizontal scrolling;
+  Details stays usable in narrow panes with compact leading columns
+- Columns read on demand, one row at a time: Dimensions for images, Duration
+  for audio and video, Date taken and Camera for photos, Pages for PDFs, and
+  Size and Items for folders. A cell shows "…" while its row can have a value
+  that has not been read; click it to read that one value
+- Each on-demand column either reads as rows come into view or waits to be
+  asked ("Read as rows appear" in its header menu); folder size waits by
+  default, and the "folder sizes" setting makes it read as rows appear.
+  "Calculate … for this folder" reads a column for the whole folder, with
+  progress in the status line and "Stop calculating"
+- Values read from files are kept between sessions by each file's size and
+  modified time, so a second visit is immediate
+- Thumbnails as file icons: SumaFile makes them for JPEG, PNG, GIF, WebP
+  and BMP, turned upright by the photo's orientation tag and taken from the
+  camera's embedded preview when that is large enough; videos show a frame;
+  PDFs and Office documents use Windows' own thumbnails. Settings -> Storage &
+  cache controls the thumbnail cache
+- Keep-folders-on-top sorting, and settings-controlled visibility of hidden
+  and system files
+
+### File Operations and Transfers
 
 - Create file and folder
 - Rename and Advanced Rename
 - Copy, cut, paste, drag, drop, copy to other pane, and move to other pane
-- Transfer progress with bytes, totals, rate, ETA, cancellation, and operation
-  history
+- A Transfers window with a row per task: bytes, totals, rate, ETA, the files
+  being copied, Cancel, and per-task Options
 - Per-file conflict handling for skip, replace, keep both, or fail. Retry uses
   each failed file’s original destination, including files nested inside merged folders.
 - Overwrite comparisons show incoming/existing paths, sizes, modification
   dates, and a preview of the Keep both filename
+- By default a file is written to a hidden temporary file beside its
+  destination and renamed into place when complete, so a half-written file
+  never appears under its final name. A move deletes each source only after
+  its copy is in place
+- Four transfer modes (Automatic, Conservative, Maximum throughput, Custom),
+  a bandwidth limit, checksum verification, and automatic retries of files that
+  fail, under Transfers -> Transfer defaults and Settings -> Behavior
 - Recycle Bin delete and permanent delete
 - Undo/redo for create, rename, copy, move, and Recycle Bin delete flows
 - Clipboard history for recent copy/cut sets
 - Operation journal written to `%LOCALAPPDATA%\SumaFile\operations.jsonl`
+
+[Transfers](docs/TRANSFER_TUNING.md) is the reference for the transfer engine:
+every setting, how the automatic modes decide, what a failed or cancelled
+transfer leaves behind, and how recovery works. FTP, FTPS and SFTP transfers
+run in the FTP/SFTP plugin with the plugin's own settings.
 
 ### Preview and Inspection
 
@@ -286,7 +229,7 @@ Settings in `%APPDATA%\com.simplefile.desktop` are not removed.
 | --- | --- |
 | Images | PNG, JPG/JPEG, GIF, SVG, WebP, BMP, ICO, TIFF |
 | PDF | Path-backed PDF preview and metadata |
-| Video | MP4, WebM, AVI, MOV, MKV, FLV, WMV, OGG |
+| Video | MP4, WebM, AVI, MOV, MKV, FLV, WMV, MPEG, OGV |
 | Audio | MP3, WAV, FLAC, OGG, AAC, WMA, M4A, AIFF |
 | Text and code | Plain text, source files, scripts, config, logs |
 | Markdown | Raw text or rendered Markdown with GitHub-flavored tables and task lists |
@@ -303,17 +246,16 @@ Inspection tools include:
 - Quick Look for focused inspection
 - Properties dialog grouped into General, Attributes, and the file's metadata,
   with values you can select and copy
-- Calculate totals in a folder's Properties counts every file and folder
-  inside it, including subfolders, and adds up their size
+- A folder's Properties counts its files, folders and total size through every
+  subfolder as soon as it opens; one button stops the count and starts it again
+- Compare folder metrics for two or more selected folders, shown as a table
 - Image dimensions and EXIF where available
 - Office/PDF/media metadata where available
 - MD5, SHA-1, and SHA-256 checksums
 - Text diff for two small UTF-8 files
 - Binary comparison with hex/ASCII rows for images, executables, oversized text,
   invalid UTF-8, or other binary content
-- A persisted Rendered toggle for Markdown and data files. Markdown task-list
-  checkboxes are preview-only controls; change the source file to update task
-  state.
+- A persisted Rendered toggle for Markdown and data files
 
 ### Search and Smart Folders
 
@@ -322,6 +264,8 @@ Inspection tools include:
 - Optional content search in the omnibar’s Search mode
 - Filters for size, date, depth, and hidden-file inclusion
 - Batched, cancellable search results for large trees
+- Folders that Windows has indexed can be answered from the Windows Search
+  index instead of a walk of the folder
 - Smart folders saved from reusable search criteria
 
 ### Archives
@@ -347,14 +291,11 @@ links and special entries that could escape the destination.
 - Labels for files and folders, shown under Labels in the sidebar
 - Bookmarks and recent locations
 - Smart folders
-- Folder metrics: files, folders, total items and total size through every
-  subfolder
-- Duplicate finder
+- Duplicate checker, and "Large files and duplicates" for finding what takes
+  the space in a folder
 - Advanced Rename with live preview and collision checks
 - Rename preview shows full Before/After names, highlights changes, and labels
   each target Ready, Unchanged, or Conflict
-- Settings-controlled hidden/system file visibility
-- Keep-folders-on-top sorting mode
 
 ### Git and Developer Tools
 
@@ -417,56 +358,55 @@ in Windows Credential Manager under their `SumaFile.Remote.` targets and keep
 working without being entered again. Remote sessions end with the plugin's
 backend, not with the file service.
 
-### Transfer speed and automatic retries
+A new SFTP server's key is shown for approval ("Trust this server?"), and a
+changed key is refused until you replace the trusted one.
 
-Filesystem file/folder copies and moves (including mounted cloud drives, mapped
-shares, removable drives, and cross-volume moves) share the same transfer engine.
-FTP, FTPS, and SFTP uploads/downloads in the FTP/SFTP plugin use the same
-staging and retry code with the plugin's own settings (Settings -> Plugins).
-Remote sessions copy one file at a time. Same-volume moves can use a direct
-rename.
+## Keyboard Shortcuts
 
-- **Custom** keeps the selected concurrency, subject to the chosen buffer budget,
-  shared process resource bounds and provider capabilities. Slow I/O and errors
-  never replace it with a smaller learned value.
-- **Zero bandwidth means unlimited in every mode.** There is no additional safety
-  rate. Successful cloud reads, NAS writes, metadata gaps and durability flushes
-  cannot impose a hidden limit. Native streams charge actual payload bytes,
-  including short reads and small files, rather than reserving full buffers at EOF.
-- Automatic modes start from the kind of drives involved (fewer files at once for
-  a hard disk, more between solid-state drives), schedule small and large files
-  in two lanes that share the file limit, and treat a sustained rise in write
-  latency as an early sign of a saturated drive (see
-  [Transfer tuning](docs/TRANSFER_TUNING.md#how-the-scheduler-decides)).
-- Automatic modes compare sustained aggregate throughput while work is queued.
-  They can test more/fewer workers and back off after actual I/O failures. A quiet
-  window alone is not a failure. Settings learned by the former latency-based
-  controller are not reused.
-- A failing file or finalization step uses configurable retry limits. New-policy
-  defaults are ten low-level attempts and three file passes, with cancellable
-  exponential waits starting at one second. **Retrying failed I/O** identifies
-  the actual failing phase/path. The affected file waits; healthy workers and new
-  files continue within their configured limits. Permission, conflict, missing-file,
-  invalid-data, authentication, and certificate/host-key errors fail promptly.
-- Empty and partially written operation-owned filesystem temporary files resume
-  correctly. FTP/SFTP plugin retries reconnect and restart the incomplete staged
-  file from byte zero. Completed files are retained; failed moves retain sources.
-  The first error is preserved alongside any later failure. Buffered writes and
-  durability checks still complete before a filesystem destination is promoted.
-- **Write directly to the destination** (Advanced transfer options) skips the
-  hidden temporary files. New files and folders are created under their final
-  names, and replaced files are overwritten in place; the FTP/SFTP plugin's
-  own "Write downloads directly to the destination" setting does the same for
-  remote downloads. A cancelled or failed transfer then leaves partial files and
-  folders behind instead of the untouched original.
-- SumaFile does not read or control pCloud Drive's cache occupancy. Its buffer
-  budget is RAM, and temporary files are on the destination. A synchronous OS
-  filesystem call may remain blocked until its driver returns. Archive creation/
-  extraction retains its separate format-specific engine.
+Press `F1` or `Ctrl+/` in SumaFile for the live shortcut list.
 
-## Settings and State
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+L` / `Alt+D` | Focus path bar |
+| `Enter` | Open selected item |
+| `Ctrl+Enter` | Open folder in new tab |
+| `Alt+Enter` | Properties |
+| `Alt+Home` | Go home |
+| `Alt+Up` | Parent folder |
+| `Alt+Left` / `Alt+Right` | Back / forward |
+| `Backspace` | Back (when a file list has focus) |
+| `F5` | Refresh |
+| `F6` | Open or close second pane |
+| `Tab` | Switch active pane when a file list has focus and dual pane is open |
+| `Alt+1` / `Alt+2` | Focus left / right pane |
+| `Ctrl+Shift+Left` / `Ctrl+Shift+Right` | Focus left / right pane |
+| `Ctrl+T` or `Ctrl+N` / `Ctrl+W` | New tab / close tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+1`-`Ctrl+9` | Jump to tab; `9` means last tab |
+| `F2` | Rename |
+| `Delete` / `Shift+Delete` | Recycle Bin delete / permanent delete |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
+| `Ctrl+Shift+C` | Copy path |
+| `Ctrl+Shift+V` | Clipboard history |
+| `Ctrl+A` | Select all |
+| `Ctrl+Shift+N` | New folder (New text document is in the New menu) |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
+| `Ctrl+Alt+C` / `Ctrl+Alt+M` | Copy / move to other pane |
+| `Space` | Quick Look (when a file list has focus) |
+| `Alt+P` | Show or hide the preview pane |
+| `Ctrl+H` | Show or hide hidden/system files |
+| `Ctrl+B` | Bookmark current folder |
+| `Ctrl+Mouse wheel` | Change icon size |
+| `Ctrl+F` / `F3` | Focus the omnibar in Search mode |
+| `Ctrl+Shift+P` | Command palette |
+| ``Ctrl+` `` | Open terminal here |
+| `Ctrl+,` | Settings |
+| `Escape` | Close transient UI, clear filter, or clear selection |
 
-Settings is organized into:
+## Settings and Data Locations
+
+Settings has a search box and is organized into:
 
 | Section | Controls |
 | --- | --- |
@@ -487,7 +427,7 @@ context. Named profiles are separate snapshots available from the Profiles
 button on the toolbar; applying a profile does not change the folders-on-top
 setting or the Git plugin's settings.
 
-Persistent compatibility data stays at:
+Settings, labels, layouts and remembered column values are kept in:
 
 ```text
 %APPDATA%\com.simplefile.desktop
@@ -498,16 +438,20 @@ keeps this path for compatibility with earlier SimpleFile builds and also falls
 back to legacy `SimpleFile` / `SumaFile` app-data folders when an existing
 metadata database is found there.
 
-Runtime diagnostics are written under:
+Logs are written under `%LOCALAPPDATA%\SumaFile`:
 
 ```text
-%LOCALAPPDATA%\SumaFile\startup.log
-%LOCALAPPDATA%\SumaFile\operations.jsonl
+startup.log           failures while the window starts
+service.log           what the file service printed to its error stream
+operations.jsonl      one line per started, finished or failed file operation
+startup-timing.log    how long each startup stage took
 ```
 
-## Plugins
+Plugin files, plugin data and `plugins.log` are in the installation folder; see
+[Plugins](#plugins). [Support](docs/SUPPORT.md) says what to look for in each
+log.
 
-The plugin system is new in 1.1.0; 1.0.4 does not have it.
+## Plugins
 
 Plugins add commands, menus, toolbar buttons, sidebar sections, panels, file
 row decorations, settings and archive formats to SumaFile. Three plugins install
@@ -583,50 +527,36 @@ center offers Restart. `plugins.log` has the details.
 To write a plugin, start from the guide, [docs/PLUGINS.md](docs/PLUGINS.md),
 and the template in `templates/sumafile-plugin`.
 
-## Keyboard Shortcuts
+## Known Limitations
 
-Press `F1` or `Ctrl+/` in SumaFile for the live shortcut list.
-
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl+L` / `Alt+D` | Focus path bar |
-| `Enter` | Open selected item |
-| `Ctrl+Enter` | Open folder in new tab |
-| `Alt+Enter` | Properties |
-| `Alt+Home` | Go home |
-| `Alt+Up` | Parent folder |
-| `Alt+Left` / `Alt+Right` | Back / forward |
-| `Backspace` | Back (when a file list has focus) |
-| `F5` | Refresh |
-| `F6` | Open or close second pane |
-| `Tab` | Switch active pane when a file list has focus and dual pane is open |
-| `Alt+1` / `Alt+2` | Focus left / right pane |
-| `Ctrl+Shift+Left` / `Ctrl+Shift+Right` | Focus left / right pane |
-| `Ctrl+T` or `Ctrl+N` / `Ctrl+W` | New tab / close tab |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
-| `Ctrl+1`-`Ctrl+9` | Jump to tab; `9` means last tab |
-| `F2` | Rename |
-| `Delete` / `Shift+Delete` | Recycle Bin delete / permanent delete |
-| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
-| `Ctrl+Shift+C` | Copy path |
-| `Ctrl+Shift+V` | Clipboard history |
-| `Ctrl+A` | Select all |
-| `Ctrl+Shift+N` | New folder (New text document is in the New menu) |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
-| `Ctrl+Alt+C` / `Ctrl+Alt+M` | Copy / move to other pane |
-| `Space` | Quick Look (when a file list has focus) |
-| `Alt+P` | Show or hide the preview pane |
-| `Ctrl+H` | Show or hide hidden/system files |
-| `Ctrl+B` | Bookmark current folder |
-| `Ctrl+Mouse wheel` | Change icon size |
-| `Ctrl+F` / `F3` | Focus the omnibar in Search mode |
-| `Ctrl+Shift+P` | Command palette |
-| ``Ctrl+` `` | Open terminal here |
-| `Ctrl+,` | Settings |
-| `Escape` | Close transient UI, clear filter, or clear selection |
+- SumaFile 1.1.4 is Windows-only.
+- Installing SumaFile for the first time is manual; in-app update installation requires a
+  newer published release with signed `latest-winui.json` metadata.
+- The in-app update installs the NSIS setup even when SumaFile was installed
+  from the MSI or runs from the portable ZIP.
+- RAR archives can be listed and extracted, but RAR creation and in-place RAR
+  rewrites are not supported.
+- Account-backed storage integrations are out of scope. FTP/FTPS/SFTP
+  connections are available in the FTP/SFTP plugin's separate manager window,
+  not mounted into the main panes.
+- A sort by an on-demand column reads at most 5,000 rows; in a larger folder
+  the rest sort as unknown until read. Nothing is read automatically for
+  on-demand columns on a network path; a click on a cell still reads it.
+- A copy that failed in a version before 1.1.4 may have left
+  `.sumafile-partial` files in its destination; see
+  [Deleting leftovers by hand](docs/TRANSFER_TUNING.md#deleting-leftovers-by-hand)
+  before deleting them.
+- Rendered Markdown task-list checkboxes are read-only preview controls; editing
+  task state requires editing the Markdown source.
+- Some Windows-reserved shortcuts may not be assignable; shortcut remapping,
+  import, and export live in Settings -> Shortcuts.
+- Inline rename is available in the Details view; List, Tiles and Content views
+  still open the rename dialog.
 
 ## Development
+
+[Contributing](docs/CONTRIBUTING.md) has the rules for a change, and
+[Architecture](docs/ARCHITECTURE.md) describes the system.
 
 ### Prerequisites
 
@@ -634,11 +564,11 @@ Press `F1` or `Ctrl+/` in SumaFile for the live shortcut list.
 | --- | --- | --- |
 | Windows | Windows 10 2004+ or Windows 11 x64 | Target platform |
 | Node.js | Exact version in `.node-version` | Root scripts and checks; run `npm ci --ignore-scripts` |
-| Rust | Exact MSVC toolchain in `rust-toolchain.toml` | `simplefile-core`, `simplefile-ipc`, `simplefile-service` |
+| Rust | Exact MSVC toolchain in `rust-toolchain.toml` | The service crates and the plugin backends |
 | .NET SDK | Exact version in `global.json` | WinUI solution and tests |
 | Windows SDK | 10.0.19041+ | WinUI target platform |
 | NSIS | Optional | NSIS setup executable |
-| WiX v3 | Optional | MSI package |
+| WiX | Optional; 3.14.1 or later with `WixUtilExtension` | MSI package |
 | Bundled 7-Zip files | In repo (`third_party/7zip/win-x64`) | Staged into the 7-Zip plugin folder for `.7z` archive operations and packaged payload checks |
 
 ### Run Locally
@@ -646,11 +576,12 @@ Press `F1` or `Ctrl+/` in SumaFile for the live shortcut list.
 ```powershell
 git clone https://github.com/conniecombs/SumaFile.git
 cd SumaFile
+npm ci --ignore-scripts
 npm run dev
 ```
 
-`npm run dev` builds the Rust service and starts the WinUI app. To run the UI
-against a specific service binary:
+`npm run dev` builds the Rust service, builds and stages the bundled plugins,
+and starts the WinUI app. To run the UI against a specific service binary:
 
 ```powershell
 $env:SIMPLEFILE_SERVICE_PATH = "R:\path\to\simplefile-service.exe"
@@ -673,103 +604,118 @@ Useful local-only overrides:
 `SIMPLEFILE_7Z` is no longer read. While it is set and the override is empty,
 the 7-Zip plugin's backend logs a one-time warning that names the setting.
 
-### Common Commands
+### Commands
 
 Run these from the repository root.
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Build service and run the WinUI app |
+| `npm run dev` | Build the service and the bundled plugins, then run the WinUI app |
+| `npm run build:plugins` | Build and stage the bundled plugins |
 | `npm run build:winui` | Build the WinUI solution in Debug |
-| `npm run check:winui` | Run the WinUI xUnit suite |
-| `npm run check:winui-release-hash` | Verify production release artifact hashing |
+| `npm run generate:ipc-bindings` | Regenerate the Rust and C# IPC bindings from `ipc/schema` |
+| `npm run generate:open-with-policy` | Regenerate the Open With policy both sides share |
+| `npm run check` | Repository checks: IPC schema and generated files, identity, updater, workflows, packaging, parity record, NuGet package rules |
+| `npm run test:maintenance` | The script tests: maintenance and merge policy, release tooling, plugin packaging and signing, and the checks that read the documentation |
 | `npm run check:rust` | Rust format check, tests, and Clippy with warnings denied |
-| `npm run check` | Repo guard scripts for IPC, identity, updater, workflows, packaging, and parity |
-| `npm run check:release` | `check` + Rust checks + dependency audit |
-| `npm run test:maintenance` | Failure classification, required gates, update/merge policy, and mocked PR recovery |
-| `npm run maintenance:plan` | Offline preview of GitHub protection/settings; applies nothing |
-| `npm run maintenance:toolchains` | Read-only preview from official toolchain release feeds |
-| `npm run release:prepare -- VERSION` | Preview a coordinated release-version change; add `--write` to apply locally |
-| `npm run build` | Build release payload/installers through the WinUI release script |
-| `npm run release:build` | Local release pipeline alias |
-| `npm run generate:ipc-bindings` | Regenerate schema-derived Rust/C# IPC bindings |
-| `npm run smoke:winui` | Launch smoke for built payload |
-| `npm run smoke:winui-ui` | Real WinUI rendering, large-folder measurements, layout, navigation, and cancellation checks |
+| `npm run check:winui` | The C# xUnit suite |
+| `npm run check:security` | Rust dependency audit; needs `cargo-audit` |
+| `npm run check:release` | `check`, `check:rust` and `check:security` together |
+| `npm run check:winui-release-hash` | Verify production release artifact hashing |
+| `npm run check:winui-startup-budget` | Check the startup timings the last run recorded against the startup budget |
+| `npm run smoke:winui-ui` | The real app on generated folders: rendering, large-folder measurements, layout, navigation, plugins, and cancellation |
+| `npm run smoke:winui` | Launch smoke for the built payload |
 | `npm run smoke:winui-file-ops` | File operation smoke |
-| `npm run smoke:winui-msi` | MSI extraction/launch smoke |
-| `npm run smoke:winui-installer` | NSIS install/launch/uninstall smoke |
+| `npm run smoke:winui-msi` | MSI extraction and launch smoke |
+| `npm run smoke:winui-msi-lifecycle` | MSI install, major upgrade and uninstall smoke, with a user plugin in the install folder |
+| `npm run smoke:winui-installer` | NSIS install, launch and uninstall smoke |
 | `npm run smoke:winui-upgrade` | Previous release to local installer upgrade smoke |
 | `npm run smoke:winui-upgrade-from-ref` | Upgrade smoke from a specific Git ref |
+| `npm run release:prepare -- VERSION` | Preview a coordinated version change; add `--write` to apply it |
+| `npm run release:build` | Build the release payload and installers (`npm run build` and `build:winui:release` are aliases) |
+| `npm run release:local` | `check:release`, then `release:build` |
+| `npm run pack:sdk`, `npm run pack:crates` | Pack the plugin SDK and the plugin crates as a dry run |
+| `npm run sign:plugin` | Create a plugin signing key, sign a plugin, or verify one |
+| `npm run maintenance:plan` | Offline preview of GitHub protection and settings; applies nothing |
+| `npm run maintenance:toolchains` | Read-only preview from official toolchain release feeds |
 
-## Architecture
+### Architecture and Project Layout
 
 ```text
-SumaFile.exe
-  WinUI 3 desktop shell
-  panes, tabs, sidebar, dialogs, preview, transfers, settings
-        |
-        | length-prefixed named-pipe JSON-RPC
-        v
-simplefile-service.exe
-  dispatcher, watcher, search, progress, cancellation, plugin archive engines
-        |
-        v
-simplefile-core
-  file ops, archive, preview data, metadata, checksum, compare,
-  drives, tags, smart folders, updater, shell helpers
+SumaFile.exe                      WinUI 3 app: panes, tabs, dialogs, preview,
+  |      |                        transfers, settings, and the plugin host
+  |      | named pipe, JSON-RPC
+  |      v
+  |    simplefile-service.exe     Rust file service: listings, file operations,
+  |      |                        transfers, search, watcher, previews, archives
+  |      | named pipe (archive formats a plugin provides)
+  v      v
+plugin backends                   one process per plugin that has a backend:
+                                  7-Zip, FTP/SFTP, Git
 ```
 
-Important contracts:
-
-- The app owns one service process per UI process.
-- The service is tied to the UI process with a Windows job object, while files
-  opened through the shell can outlive SumaFile.
-- IPC contracts live in `ipc/schema/v1`; generated Rust and C# bindings must
-  remain synchronized.
-- Windows packaging must ship `SumaFile.exe`, `simplefile-service.exe`,
-  `resources.pri`, XBF files, and Windows App SDK dependencies together.
-- Runtime identity is SumaFile, while selected internal namespaces and
-  compatibility paths intentionally keep the SimpleFile name.
-
-## Project Layout
+- Each app process starts its own file service and ties it to itself with a
+  Windows job object, so the service never outlives the app. Programs opened
+  through the shell are not part of that job.
+- The IPC contract lives in `ipc/schema`; the Rust and C# bindings are
+  generated from it and checked against it.
+- Plugins load into the app from the installation folder. A plugin's backend
+  is its own process, started by the app when the plugin is activated.
+- Windows packaging ships `SumaFile.exe`, `simplefile-service.exe`,
+  `resources.pri`, the XBF files, the Windows App SDK files and the `plugins`
+  folder together.
+- The product is SumaFile; selected internal namespaces and the application
+  data path keep the earlier SimpleFile name on purpose.
 
 ```text
 SumaFile/
 |-- src-winui/
-|   |-- SimpleFile.App/       WinUI window, dialogs, preview, toolbar, panes
-|   |-- SimpleFile.Core/      Workspace, settings, menus, transfers, preview helpers, layout state
-|   |-- SimpleFile.Ipc/       Named-pipe JSON-RPC client and generated bindings
-|   `-- SimpleFile.Tests/     xUnit tests for WinUI/core/IPC behavior
+|   |-- SimpleFile.App/         WinUI window, dialogs, preview, toolbar, panes
+|   |-- SimpleFile.Core/        Workspace, navigation, transfers, menus, settings
+|   |-- SimpleFile.Ipc/         Named-pipe client, wire models, generated bindings
+|   |-- SimpleFile.PluginSdk/   The contract a plugin's UI is built against
+|   |-- SimpleFile.PluginHost/  Plugin discovery, consent, loading, backends
+|   `-- SimpleFile.Tests/       xUnit tests
 |-- crates/
-|   |-- simplefile-core/      Filesystem, archive, preview, metadata logic
-|   |-- simplefile-ipc/       Protocol constants, framing, schema tests
-|   `-- simplefile-service/   Rust named-pipe service process
-|-- ipc/schema/v1/            JSON-RPC command, type, event, and golden files
-|-- packaging/winui/          NSIS, WiX, and Windows assets
-|-- scripts/                  Checks, release scripts, smoke tests, codegen
-|-- docs/                     Roadmap, support, updater, release, migration docs
-|-- build_notes/              Maintainer notes from hardening and migration work
-|-- .github/workflows/        CI, release, release-build, installer smoke
-|-- package.json              Root command runner
-|-- Cargo.toml                Rust workspace
-`-- LICENSE                   MIT License
+|   |-- simplefile-core/        Filesystem, archive, preview, metadata logic
+|   |-- simplefile-ipc/         Protocol constants, framing, schema tests
+|   |-- simplefile-service/     The file service process
+|   |-- sumafile-transfer/      Transfer policy, staging, recovery, tuning
+|   `-- sumafile-plugin/        Helper crate for plugin backends
+|-- plugins/                    The bundled Git, FTP/SFTP and 7-Zip plugins
+|-- templates/sumafile-plugin/  Starting point for a third-party plugin
+|-- ipc/schema/                 The app-to-service contract and the plugin protocol
+|-- packaging/winui/            NSIS, WiX, and Windows assets
+|-- third_party/7zip/           The bundled 7-Zip files and their licence
+|-- scripts/                    Checks, release scripts, smoke tests, codegen
+|-- docs/                       Reference, process and historical documents
+|-- .github/workflows/          CI, release, installer smoke, maintenance
+|-- package.json                Root command runner
+|-- Cargo.toml                  Rust workspace
+`-- LICENSE                     MIT License
 ```
 
-## Testing and Verification
+[Architecture](docs/ARCHITECTURE.md) has the full description.
 
-Recommended local development gate:
+### Testing and Verification
+
+The C# tests start the real service and load real plugins, so build those
+first. A local development gate:
 
 ```powershell
-npm run build:winui
-npm run check:winui
-npm run check:winui-release-hash
-npm run smoke:winui-ui
 npm run check
+npm run test:maintenance
 npm run check:rust
-git diff --check
+cargo build -p simplefile-service
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-fixture-plugin.ps1
+npm run build:plugins
+npm run check:winui
+npm run build:winui
+npm run smoke:winui-ui
 ```
 
-Release-quality gate:
+Before shipping release assets or changing packaging or update behaviour, also
+run:
 
 ```powershell
 npm run check:release
@@ -781,139 +727,79 @@ npm run smoke:winui-installer
 npm run smoke:winui-upgrade
 ```
 
-| Gate | Coverage |
-| --- | --- |
-| `check:ipc-generated` | Generated Rust/C# IPC bindings match schema |
-| `check:ipc-schema` | Schema, service dispatcher, and C# client stay aligned |
-| `check:identity` | Current-facing files use SumaFile repository identity |
-| `check:updater` | Updater URL, signature, and manifest wiring |
-| `check:workflows` | GitHub Actions workflow surface |
-| `check:provider-surface` | External account-backed storage surfaces remain out of scope |
-| `check:windows-assets` | Windows app and packaging assets |
-| `check:winui-packaging` | NSIS/MSI/release-script contracts |
-| `check:winui-parity-gate` | WinUI parity rows remain PASS/WAIVED |
-| `check:winui` | xUnit app/core/IPC tests |
-| `check:winui-release-hash` | Production SHA-256 known vectors and artifact access/error behavior |
-| `smoke:winui-ui` | Real Debug host/service rendering, virtualization, layout, selection, navigation, and cancellation; see [runtime verification](docs/WINUI_RUNTIME_VERIFICATION.md) |
-| `check:rust` | Rust fmt, tests, and Clippy |
-| `check:security` | Rust dependency audit |
+The NSIS and upgrade smokes install and remove SumaFile for the current user,
+and refuse to run while SumaFile is installed for that user or running.
+[Runtime verification](docs/WINUI_RUNTIME_VERIFICATION.md) describes the UI
+smoke, and [CI and maintenance](docs/CI_MAINTENANCE.md) describes what CI runs
+on every pull request.
 
-Installer and upgrade smokes are slower by design. Use them before shipping
-release assets or changing packaging/update behavior.
+### Releasing
 
-## Release and Tags
+Release outputs are written under `dist/winui/` by `npm run release:build`:
+the runnable `payload/` folder, the portable ZIP, the NSIS setup, the MSI and
+the signed `latest-winui.json`. `npm run release:prepare -- VERSION --write`
+sets the version everywhere it is recorded. The release notes and the
+changelog section are written by hand.
 
-Release outputs are written under `dist/winui/` by
-`scripts/build-winui-release.ps1`.
-
-| Output | Contents |
-| --- | --- |
-| `payload/` | Runnable unpackaged app folder |
-| `SumaFile_<version>_x64-winui-portable.zip` | Portable package |
-| `SumaFile_<version>_x64-winui-setup.exe` | NSIS per-user installer |
-| `SumaFile_<version>_x64-winui.msi` | MSI package |
-| `latest-winui.json` | Signed updater manifest |
-
-Version fields that must stay synchronized:
-
-- `src-winui/Directory.Build.props`: `<Version>` and
-  `<InformationalVersion>`
-- `crates/simplefile-core/src/lib.rs`: `APP_DISPLAY_VERSION`
-- `crates/simplefile-core/Cargo.toml`
-- `crates/simplefile-ipc/Cargo.toml`
-- `crates/simplefile-service/Cargo.toml`
-- `Cargo.lock` and NuGet project-reference lock entries
-- `src-winui/SimpleFile.App/app.manifest` and the NSIS numeric fallback
-- README badges and install artifact names
-- `docs/CHANGELOG.md`
-
-Git release tags use `vMAJOR.MINOR.PATCH`, for example `v1.0.3`.
-
-Before creating a release tag:
-
-1. Confirm the version fields above match.
-2. Run `npm run check:release`.
-3. Run the WinUI smoke commands required by `docs/RELEASE_1.1.4.md`.
-4. Confirm the Installer Smoke workflow succeeds on the release commit.
-5. Merge the version bump, then tag the merged commit or start a new Release run from the updated `main`.
-
-More detail lives in [.github/RELEASE.md](.github/RELEASE.md) and
-[docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md).
+[.github/RELEASE.md](.github/RELEASE.md) is the release runbook, and
+[docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) covers the updater's signing
+key and what the app verifies before it installs an update.
 
 ## Documentation Map
 
 | Document | Use it for |
 | --- | --- |
-| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Current and historical changes |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Near-term priorities and branch scope |
-| [docs/FEATURE_OPPORTUNITIES.md](docs/FEATURE_OPPORTUNITIES.md) | Candidate product gaps and recently closed gaps |
-| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Contributor workflow and expectations |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Every release, with a link to each version's release notes |
+| [docs/RELEASE_1.1.4.md](docs/RELEASE_1.1.4.md) | The current version: changes, upgrading, known limitations |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Open work and what is out of scope |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Processes, projects and crates, the IPC contract, storage, where a change goes |
+| [docs/TRANSFER_TUNING.md](docs/TRANSFER_TUNING.md) | Transfers: settings, automatic modes, failures, retries, leftovers and recovery |
 | [docs/PLUGINS.md](docs/PLUGINS.md) | Writing SumaFile plugins: `plugin.json`, contributions, the SDK, the backend protocol, signing and packaging |
-| [docs/CI_MAINTENANCE.md](docs/CI_MAINTENANCE.md) | Pinned toolchains, bounded repair, update PRs, merge gates, and separate activation steps |
-| [docs/SUPPORT.md](docs/SUPPORT.md) | Useful details for reports |
-| [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting and sensitive-file rules |
-| [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | Signed updater releases |
-| [docs/RELEASE_1.1.4.md](docs/RELEASE_1.1.4.md) | Changes since v1.1.3: the transfer hotfix (doubled path separator, progress readout, patient finalize), the column picker and on-demand columns, upgrading and known limitations |
-| [docs/RELEASE_1.1.3.md](docs/RELEASE_1.1.3.md) | Changes since v1.1.2: upright thumbnails from the camera's preview, Properties counting on open, lock-file repair, the release guard, upgrading and known limitations |
-| [docs/RELEASE_1.1.2.md](docs/RELEASE_1.1.2.md) | Changes since v1.1.1: faster thumbnails, the measurements, upgrading and known limitations |
-| [docs/RELEASE_1.1.1.md](docs/RELEASE_1.1.1.md) | Changes since v1.1.0: service-held folder listings, paging and row deltas, the hidden-file fix, upgrading and known limitations |
-| [docs/RELEASE_1.1.0.md](docs/RELEASE_1.1.0.md) | Changes since v1.0.4: the plugin system, what changed for Git, FTP/SFTP and 7-Zip, upgrading and known limitations |
-| [docs/RELEASE_1.0.4.md](docs/RELEASE_1.0.4.md) | Changes since v1.0.3, upgrade instructions and release checklist |
-| [docs/RELEASE_1.0.3.md](docs/RELEASE_1.0.3.md) | Changes since v1.0.2, upgrade instructions and release checklist |
-| [docs/RELEASE_1.0.2.md](docs/RELEASE_1.0.2.md) | Complete 1.0.1 → 1.0.2 release notes, upgrade guidance and checklist |
-| [docs/RELEASE_1.0.1.md](docs/RELEASE_1.0.1.md) | Historical 1.0.1 release checklist |
-| [docs/RELEASE_1.0.0.md](docs/RELEASE_1.0.0.md) | Historical 1.0.0 release checklist and dogfood plan |
-| [.github/RELEASE.md](.github/RELEASE.md) | Release process |
-| [src-winui/README.md](src-winui/README.md) | WinUI host build/run notes |
-| [docs/winui-migration/](docs/winui-migration/) | Historical migration architecture and parity records |
+| [templates/sumafile-plugin](templates/sumafile-plugin/README.md) | A plugin to copy and rename |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Setup, rules and checks for a change |
+| [docs/CODE_OF_CONDUCT.md](docs/CODE_OF_CONDUCT.md) | Expected conduct and how to report a problem |
+| [docs/SUPPORT.md](docs/SUPPORT.md) | Reporting a problem, the logs, troubleshooting |
+| [docs/SECURITY.md](docs/SECURITY.md) | Vulnerability reporting, sensitive files, the plugin trust model |
+| [.github/RELEASE.md](.github/RELEASE.md) | The release runbook |
+| [docs/UPDATER_RELEASE.md](docs/UPDATER_RELEASE.md) | The updater's signing key and verification |
+| [docs/CI_MAINTENANCE.md](docs/CI_MAINTENANCE.md) | CI jobs, pinned toolchains, dependency updates and the merge gate |
+| [docs/WINUI_RUNTIME_VERIFICATION.md](docs/WINUI_RUNTIME_VERIFICATION.md) | The Windows UI smoke and its measurements |
+| [ipc/schema](ipc/schema/README.md) | The IPC contract files and how to change them |
+| [src-winui](src-winui/README.md) | The C# solution: projects, build and test |
+
+Historical records, kept for the decisions they hold and not maintained:
+[docs/winui-migration/](docs/winui-migration/) (the move from the earlier
+Tauri application), [docs/superpowers/](docs/superpowers/README.md) (design
+specifications and implementation plans), the
+[backend audit](docs/RUST_BACKEND_AUDIT_2026-11-05.md) and
+[UI audit](docs/UI_AUDIT_2026-11-05.md) of November 2026, the
+[transfer engine review](docs/TRANSPORT_ENGINE_REVIEW.md), and the
+[cleanup log](CODE_CLEANUP_CANDIDATES.md).
 
 ## Security
 
+- Report vulnerabilities privately; [docs/SECURITY.md](docs/SECURITY.md) says
+  how.
+- Plugins run with your permissions and without a sandbox; see
+  [Plugins in docs/SECURITY.md](docs/SECURITY.md#plugins).
+- Archive extraction validates destination paths before writing, and TAR
+  extraction skips links and special entries.
+- Open With refuses executable/script payload files as launch targets.
 - Do not commit updater private keys, signing keys (including plugin signing
   keys, `*.pem`), `.env` files, local secrets, personal settings exports, or
   logs containing private paths.
-- Plugins run with your permissions and without a sandbox; see
-  [Plugins in docs/SECURITY.md](docs/SECURITY.md#plugins).
-- Gitignored sensitive locations include `.secrets/`, `*.key`, `.env`, and
-  `.env.*`.
-- Archive extraction validates destination paths before writing.
-- TAR extraction skips links and special entries.
-- Open With refuses executable/script payload files as launch targets.
-- Report vulnerabilities through [docs/SECURITY.md](docs/SECURITY.md).
-
-## Known Limitations
-
-- SumaFile 1.1.4 is Windows-only.
-- Installing SumaFile for the first time is manual; in-app update installation requires a
-  newer published release with signed `latest-winui.json` metadata.
-- RAR archives can be listed and extracted, but RAR creation and in-place RAR
-  rewrites are not supported.
-- Account-backed storage integrations are intentionally out of scope for this
-  branch. FTP/FTPS/SFTP profiles are available in the FTP/SFTP plugin's
-  separate manager window, not mounted into the main panes.
-- Rendered Markdown task-list checkboxes are read-only preview controls; editing
-  task state requires editing the Markdown source.
-- Some Windows-reserved shortcuts may not be assignable; shortcut remapping,
-  import, and export live in Settings -> Shortcuts.
-- Inline rename is available in the Details view; List, Tiles and Content views
-  still open the rename dialog.
 
 ## Support
 
-When reporting an issue, include:
+Report a problem with the
+[bug report form](https://github.com/conniecombs/SumaFile/issues/new/choose).
+Include the Windows version, the SumaFile version from Settings -> About, how
+it was installed, the exact path and workflow with private parts removed, and
+the relevant lines from the logs under `%LOCALAPPDATA%\SumaFile`.
 
-- Windows version
-- SumaFile version from Settings -> About or the About dialog
-- Whether you used the setup executable, MSI, portable ZIP, or a dev run
-- The exact path/workflow where the issue happened, with private path segments
-  redacted if needed
-- Relevant snippets from `%LOCALAPPDATA%\SumaFile\startup.log`
-- Relevant snippets from `%LOCALAPPDATA%\SumaFile\operations.jsonl`
-- Whether `npm run smoke:winui`, `npm run smoke:winui-file-ops`,
-  `npm run smoke:winui-msi`, and `npm run smoke:winui-installer` pass locally
-  when the issue involves install, startup, updates, or filesystem operations
-
-See [docs/SUPPORT.md](docs/SUPPORT.md) for the full support checklist.
+[docs/SUPPORT.md](docs/SUPPORT.md) lists what each log holds, how to
+troubleshoot startup and transfers, and where in the code common problems
+start.
 
 ## License
 

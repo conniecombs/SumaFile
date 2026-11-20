@@ -1,5 +1,25 @@
 # Transport engine review and repairs
 
+**Status: historical record.** This document records the review of the
+transfer engine and the repairs released in SumaFile 1.0.2 and 1.0.3. It is
+kept as a record and is not brought up to date. These statements in it no
+longer describe the engine:
+
+* Directory staging and promotion. New folders are no longer built in a hidden
+  sibling directory and published when complete. Folders are created under
+  their final names, and only files are staged and renamed.
+* The disk-backed completion manifest. Completed files are not recorded in a
+  manifest for later deletion. A move deletes each file's source right after
+  that file has its final name.
+* Prefix verification on low-level retries. A low-level retry continues a
+  partial file at its current length and does not compare the bytes already
+  written with the source.
+* FTP, FTPS and SFTP as part of this engine. Since 1.1.0 remote transfers run
+  in the FTP/SFTP plugin, which has settings of its own.
+
+Current behavior is described in [Transfers](TRANSFER_TUNING.md) and
+[Architecture](ARCHITECTURE.md).
+
 The initial repairs shipped in [SumaFile 1.0.2](RELEASE_1.0.2.md). The [v1.0.3 follow-up](#v103-repairs) covers per-file retries and the transfer scheduler. See the [1.0.3 release notes](RELEASE_1.0.3.md) for upgrade guidance.
 
 Scope: local, removable, UNC and mounted-cloud copy/move; FTP/FTPS/SFTP streaming;
@@ -100,8 +120,7 @@ remote credentials are needed for the regression suite.
 
 ## v1.0.3 repairs
 
-A second review on `2086121` (`docs/superpowers/specs/2026-11-05-transport-engine-audit.md`)
-led to the repairs designed in `docs/superpowers/specs/2026-11-05-transport-engine-repairs-design.md`.
+A second review on `2086121` led to further repairs.
 In short: one coordinator per selection that continues past per-file failures and reports each
 with its destination and kind; a targeted retry (`items`) so the conflict dialog acts on the file
 it shows; structured failure kinds; roughly half the per-file metadata round trips (no DACL copy,

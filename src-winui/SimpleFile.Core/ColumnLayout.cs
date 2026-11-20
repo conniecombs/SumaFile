@@ -26,7 +26,7 @@ public sealed class FileListColumn
 }
 
 /// <summary>
-/// Default widths/presets match frontend/src/lib/fileListColumns.ts.
+/// The Details view's columns, their default widths, the presets and each pane's visible set.
 /// </summary>
 public sealed class ColumnLayout
 {

@@ -125,7 +125,7 @@ public sealed class KeyboardShortcutExportDocument
 }
 
 /// <summary>
-/// Default shortcut map from docs/winui-migration/inventory.md section 5.3.
+/// The default shortcut map. The README's Keyboard Shortcuts table lists the same defaults.
 /// </summary>
 public static class KeyboardShortcutMap
 {

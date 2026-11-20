@@ -1,5 +1,16 @@
 # Final migration audit
 
+> **Status: historical, not maintained.** This is the audit made on 2026-08-15, the day the Svelte/Tauri application was retired. It is a snapshot of that day, kept as the record of the retirement. It is not updated.
+>
+> The main things in it that no longer hold:
+>
+> - **Counts.** The "Check suite" table gives the figures of 2026-08-15: version 1.1.0, 76 domain methods, 6 emitted events, 29 context ids, 40 palette ids, 120 xUnit tests, 77 Rust tests and 213 lockfile crates. On 2026-11-20 the version is 1.1.4 and the tree has 82 domain methods, 9 emitted events, 46 context ids, 73 palette ids, 363 lockfile packages, and about 1,320 xUnit test methods and 785 Rust tests (counted in the source, not by a run).
+> - **Updater.** "Residual risk" says in-app `install_update` stays blocked until installer signature verification is in place. It is in place: the service checks an Ed25519 signature and a SHA-256 hash before it starts the installer.
+> - **Service lookup.** "Intentionally left" says `ServiceLocator` keeps `src-tauri/target` candidates. They were removed.
+> - **Documents.** Several documents named in the tables were later merged into other documents or deleted, so some of those paths no longer exist. `docs/IMPROVEMENT_PLAN.md`, `docs/RUST_MIGRATION_FEASIBILITY.md`, `build_notes/`, `rust-core-extraction.md` and the `parity-*.md` files other than `parity-gate.md` are gone.
+>
+> The current description of the system is in [`../ARCHITECTURE.md`](../ARCHITECTURE.md). The plugin system is in [`../PLUGINS.md`](../PLUGINS.md), the IPC contract in [`../../ipc/schema/README.md`](../../ipc/schema/README.md), and the parity record in [`parity-gate.md`](parity-gate.md).
+
 **Date:** 2026-08-15  
 **Source tree:** `R:\Repos\SimpleFile-Windows`  
 **Shipping host:** WinUI 3 unpackaged app + Rust `simplefile-service` (named-pipe JSON-RPC)  

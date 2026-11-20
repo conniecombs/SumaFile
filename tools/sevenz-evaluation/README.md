@@ -1,5 +1,11 @@
 # sevenz-rust2 evaluation
 
+> **Status.** This is the dated record of an evaluation that ended on
+> 2026-11-07; the tool is not built by CI and is not maintained. Its own
+> `Cargo.lock` was written against SumaFile 1.0.4 and no longer matches the
+> workspace crates it depends on by path, so the `--locked` commands below
+> fail until that lock file is refreshed (run them once without `--locked`).
+
 The 2026-11-07 evaluation **rejected a complete replacement of bundled 7-Zip**.
 `sevenz-rust2` 0.25.0 cannot decode Deflate64 inside a `.7z` archive that the
 shipping SumaFile adapter successfully lists and extracts. Replacing the engine

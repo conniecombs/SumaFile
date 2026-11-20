@@ -2,7 +2,8 @@
 
 This guide is for authors of SumaFile plugins. It covers the plugin folder and its `plugin.json`, every contribution
 kind, declarative settings, the C# SDK, the backend protocol, the limits and deadlines the host applies, where
-SumaFile keeps plugin files, trust and signing, packaging, the plugin template and the packages.
+SumaFile keeps plugin files, trust and signing, packaging, the plugin template, the plugins in this repository to
+read as worked examples, and the packages.
 
 Where this guide and the code disagree, the code is right; please report the difference. The sources are:
 
@@ -30,6 +31,7 @@ an error code, a contribution kind or a setting type that those sources define.
 - [Signing](#signing)
 - [Packaging and installing a `.sfplugin`](#packaging-and-installing-a-sfplugin)
 - [The plugin template](#the-plugin-template)
+- [Worked examples](#worked-examples)
 - [Packages](#packages)
 - [Plugin states and troubleshooting](#plugin-states-and-troubleshooting)
 - [Host-shared assemblies](#host-shared-assemblies)
@@ -53,6 +55,9 @@ SumaFile renders every contribution from the manifest before any plugin code run
 the first command, the first time a sidebar section, panel or row decoration needs its provider, or the first time
 the plugin's settings page opens. A backend starts on the UI half's first backend call, or at startup when the
 manifest asks for it or the plugin serves archive formats.
+
+SumaFile itself runs as two processes: the app, which this guide calls the host, and its file service
+(`simplefile-service.exe`), which this guide calls the service. [ARCHITECTURE.md](ARCHITECTURE.md) describes them.
 
 There is no sandbox. A plugin runs with the user's permissions, which is why SumaFile asks the user before it enables
 one (see [Trust and consent](#trust-and-consent)).
@@ -218,8 +223,10 @@ A command id is 1 to 128 characters with no whitespace, wherever it is declared 
 | `shortcut` | no | Display text only: the palette shows it next to the command. This host does not bind it to a key. |
 
 The entry type handles every command in `ICommandHandler.ExecuteAsync`, on the UI thread, with the active folder and
-selection. Commands need a `ui` assembly: the reader accepts them without one, but running one marks the plugin Load
-failed. An exception from `ExecuteAsync` other than a cancellation is shown in SumaFile's message bar.
+selection (`PluginCommandContext`; see [Data types](#data-types)). Commands need a `ui` assembly: the reader accepts
+them without one, but running one marks the plugin Load failed. A command of an entry type that does not implement
+`ICommandHandler` fails with `Plugin '<id>' does not handle commands.`, and the plugin stays enabled. That message,
+like an exception from `ExecuteAsync` other than a cancellation, is shown in SumaFile's message bar.
 
 ```csharp
 public async Task ExecuteAsync(PluginCommandContext context, CancellationToken ct)
@@ -274,7 +281,7 @@ evaluating a `when` never asks a provider.
 
 | Field | Required | Rules |
 | --- | --- | --- |
-| `command` | yes | A declared command. A command appears at most once in `toolbar` (`The toolbar command '<c>' is declared more than once in contributions.toolbar.`). |
+| `command` | yes | Names a command the plugin declares in `commands`. As for context-menu items, the reader checks only its grammar, and an undeclared command fails when it runs. A command appears at most once in `toolbar` (`The toolbar command '<c>' is declared more than once in contributions.toolbar.`). |
 | `label` | yes | The button's text and tooltip. |
 | `glyph` | no | An icon character from SumaFile's icon font (Segoe Fluent Icons), at most 8 characters. Default empty. |
 | `placement` | no | `primary` (on the toolbar) or `overflow` (in the overflow menu, the default). |
@@ -292,9 +299,11 @@ Users arrange plugin buttons like SumaFile's own in Settings > Toolbar, where a 
 ```
 
 A collapsible section in the sidebar, below SumaFile's own sections. The host draws the header from the manifest:
-`title`, a collapse button and, when `command` names a declared command, a button that runs it. `id` follows the
-setting key grammar (`^[a-z0-9][a-zA-Z0-9_-]{0,63}$`) and is unique within the plugin; `title` and `provider` are
-required. The section needs a `ui` assembly (`contributions.sidebar needs a ui assembly.`).
+`title`, a collapse button and, when `command` is present, a button that runs it. `command` is optional, but it must
+name a command the plugin declares in `commands`; unlike in `contextMenu` and `toolbar`, an undeclared one makes the
+manifest invalid (`The <path>.command value '<c>' does not name a command declared in contributions.commands.`). `id`
+follows the setting key grammar (`^[a-z0-9][a-zA-Z0-9_-]{0,63}$`) and is unique within the plugin; `title` and
+`provider` are required. The section needs a `ui` assembly (`contributions.sidebar needs a ui assembly.`).
 
 The entry type implements `ISidebarSectionProvider`. `CreateSidebarSection(PluginSidebarSectionRequest(SectionId,
 Provider))` runs on the UI thread and returns the body as a `Microsoft.UI.Xaml.FrameworkElement` (typed `object`; see
@@ -321,7 +330,7 @@ public object CreateSidebarSection(PluginSidebarSectionRequest request) =>
 | `provider` | yes | Passed to the provider in the request. |
 | `placement` | no | `bottom` (the default) or `right` of the file list. |
 | `detachable` | no | Whether the host offers to move the panel into its own window. Default `false`. |
-| `command` | no | A declared command that toggles the panel; a command toggles at most one panel. |
+| `command` | no | A command the plugin declares in `commands`; an undeclared one makes the manifest invalid, as for `sidebar`. A command belongs to at most one panel. The host handles the command itself: run from the palette or a menu it shows the panel, its toolbar button toggles the panel, and `ExecuteAsync` never receives it. |
 
 Panels need a `ui` assembly. The host draws the chrome (title, dock-or-window toggle, close button, resize grip) and
 shows one plugin panel at a time. The entry type implements `IPanelProvider`; `CreatePanel(PluginPanelRequest(PanelId,
@@ -350,6 +359,9 @@ public async Task<PluginFolderDecorations> GetDecorationsAsync(PluginDecorationR
 }
 ```
 
+- The request is `PluginDecorationRequest(Provider, FolderPath, Paths)`: the manifest's `provider`, the listed folder
+  and the full paths of its listed rows. The result is `PluginFolderDecorations(Rows, FolderFlags)`;
+  `PluginFolderDecorations.Empty` has no rows and no flags.
 - It runs on a thread-pool thread and must not touch WinUI objects. The plugin is activated on the UI thread before
   the first call.
 - SumaFile waits 250 ms for the result before it shows the folder, and applies a later result when it arrives, up to
@@ -361,6 +373,12 @@ public async Task<PluginFolderDecorations> GetDecorationsAsync(PluginDecorationR
   listed row is ignored. `RowDecoration(Text, BrushKey?, Tooltip?)`: `BrushKey` is one of `SfDecorationAddedBrush`,
   `SfDecorationModifiedBrush`, `SfDecorationUntrackedBrush`, `SfDecorationDeletedBrush`, `SfTextPrimaryBrush`,
   `SfTextMutedBrush` or `SfAccentBrush`; anything else draws with `SfTextMutedBrush`.
+- The file list shows a decoration in two of its four views. In the Details view it is the row's cell in the
+  **Status** column: `Text` in semi-bold in the decoration's brush, with `Tooltip`, or else the text, as the cell's
+  tooltip. The column sorts by the text. It is not one of the default columns: the user turns it on in the column
+  header's menu, where the Developer preset includes it. In the Content view `Text` starts the row's last line, before
+  the link target when the row has one, and the line takes the decoration's brush unless a link target is shown. The
+  List and Tiles views show no decoration.
 - `FolderFlags` are names for `folderFlag(name)`, each matching `^[A-Za-z][A-Za-z0-9_-]{0,63}$`; others and duplicates
   are dropped.
 - When two plugins decorate the same row, the plugin whose id sorts first (ordinal) owns its text.
@@ -474,8 +492,9 @@ folder:
 </ItemGroup>
 ```
 
-The package is not published yet: outside this repository, pack it from a SumaFile checkout and add it as a local
-source (see [Packages](#packages)); inside this repository the template uses a project reference instead. A plugin that builds WinUI elements targets `net10.0-windows10.0.19041.0` and also references
+The repository packs the package but does not publish it: outside this repository, pack it from a SumaFile checkout
+and add it as a local source (see [Packages](#packages)); inside this repository the template uses a project
+reference instead. A plugin that builds WinUI elements targets `net10.0-windows10.0.19041.0` and also references
 `Microsoft.WindowsAppSDK` and `Microsoft.Windows.SDK.BuildTools` compile-only, at the versions SumaFile ships
 ([Host-shared assemblies](#host-shared-assemblies)), as `plugins/git/ui/SumaFile.Git` does.
 
@@ -492,7 +511,9 @@ The entry type (`ui.entryType`) implements `IPlugin` and whichever of the others
 | `IRowDecorationProvider` | `rowDecorations` | `Task<PluginFolderDecorations> GetDecorationsAsync(PluginDecorationRequest request, CancellationToken ct)` |
 | `ISettingsPageProvider` | `settingsPage` | `object CreateSettingsPage(PluginSettingsPageRequest request)` |
 
-A contribution whose interface the entry type lacks marks the plugin Load failed when it is first used.
+A sidebar section, panel, settings page or row decoration provider whose interface the entry type lacks marks the
+plugin Load failed when it is first used. A command without `ICommandHandler` only fails, and the plugin stays
+enabled (see [`commands`](#commands)).
 
 `ActivateAsync` hands the plugin an `IPluginHost`, which it keeps for its lifetime:
 
@@ -503,7 +524,7 @@ A contribution whose interface the entry type lacks marks the plugin Load failed
 | `OnBackendEvent<T>(eventName, handler)` | Subscribes to the backend's notifications named `eventName`; dispose the result to unsubscribe. It works before the backend starts and carries over a restart. |
 | `Settings` (`IPluginSettings`) | `GetAsync(key, ct)` (null when unset) and `SetAsync(key, value, ct)`, string values; see [Declarative settings](#declarative-settings). |
 | `Progress` (`IPluginProgress`) | `Begin(title)` adds a Transfers row and returns an `IPluginOperation` with `Report(current, total, detail)`, `Complete()`, `Fail(message)` and a `CancellationToken` that the row's Cancel button cancels. Disposing it completes a row that has not ended. |
-| `Dialogs` (`IPluginDialogs`) | `ShowMessageAsync`, `ConfirmAsync`, `PickFolderAsync`, `ShowDialogAsync(object contentDialog, ct)` and `Notify(message, isError)` (a non-modal notice in the message bar, titled with the plugin's name). Dialogs queue behind any other open dialog. |
+| `Dialogs` (`IPluginDialogs`) | `ShowMessageAsync(title, message, ct)` (a message with an OK button), `ConfirmAsync(title, message, confirmLabel, ct)` (`confirmLabel` and Cancel buttons; `true` only for the confirm button), `PickFolderAsync(ct)` (the chosen folder's full path, or null when the user cancelled), `ShowDialogAsync(object contentDialog, ct)` (a dialog the plugin built; returns a `PluginDialogResult`) and `Notify(message, isError)` (a non-modal notice in the message bar, titled with the plugin's name). The message and confirm dialogs add the line `From the <plugin name> plugin`. Dialogs queue behind any other open dialog; cancelling the `ct` of a message, confirm or plugin-built dialog hides it, or drops it while it is still queued. |
 | `Workspace` (`IPluginWorkspace`) | `ActivePath` and `SelectedPaths` of the active pane, a `Changed` event, `NavigateAsync(path, ct)` and `RefreshAsync(ct)`. |
 | `Logger` (`IPluginLogger`) | `Info`, `Warn`, `Error(message, exception?)`, written to `plugins.log` with the plugin id. |
 | `Windows` (`IPluginWindows`) | `Attach(object window, PluginWindowOptions(Title, Width, Height))` hands a plugin-created window to the host, which gives it SumaFile's chrome and closes it before it stops the plugin. Width is clamped to 320-3840 and height to 240-2160 device-independent pixels; a title is cut to 120 characters, and a blank one becomes the plugin's name. |
@@ -523,6 +544,23 @@ Theme resources the host keeps stable, for `Application.Current.Resources` or `{
 strings: `SfTextPrimaryBrush`, `SfTextMutedBrush`, `SfBgPrimaryBrush`, `SfBgSecondaryBrush`, `SfBorderBrush`,
 `SfAccentSoftBrush`, `SfAccentBrush`, `SfIconFont`, `SfGhostButtonStyle`, `SfTextBoxStyle`, `SfEmptyHintStyle`,
 `SfSidebarListStyle`, `SfNavListItemStyle` and the four `SfDecoration*Brush` keys.
+
+### Data types
+
+The values that cross the interfaces are positional records, apart from one enum and the version constants:
+
+| Type | Members |
+| --- | --- |
+| `PluginCommandContext` | `CommandId` (`plugin:<plugin id>:<command id>`), `ActivePath` (the active pane's folder, or null when there is none) and `SelectedPaths` (the full paths of the active pane's selected items, possibly empty). |
+| `PluginSidebarSectionRequest` | `SectionId` and `Provider`, the section's `id` and `provider` in the manifest. |
+| `PluginPanelRequest` | `PanelId` and `Provider`, the panel's `id` and `provider` in the manifest, and `Detached` (true for the panel's own window). |
+| `PluginSettingsPageRequest` | `Provider`, the `provider` of `settingsPage`. |
+| `PluginDecorationRequest` | `Provider` (the `provider` of `rowDecorations`), `FolderPath` (the listed folder) and `Paths` (the full paths of its listed rows). |
+| `PluginFolderDecorations` | `Rows` (a dictionary from row path to `RowDecoration`) and `FolderFlags` (a list of names); the static `Empty` has neither. |
+| `RowDecoration` | `Text`, and the optional `BrushKey` and `Tooltip`. |
+| `PluginWindowOptions` | `Title`, `Width` and `Height`. |
+| `PluginDialogResult` | The result of `ShowDialogAsync`: `Primary` or `Secondary` for those buttons, `None` for the close button or Escape, or when the host hid the dialog. |
+| `PluginSdk` | The constants `Version` (`1.0.0`, also the package version) and `Major` (`1`). |
 
 ### The `object` hand-off rule
 
@@ -629,22 +667,27 @@ answers.
 
 ### Handshake
 
-`plugin.handshake` is the first request on every connection. The host sends:
+`plugin.handshake` is the first request on every connection. Each client sends its own version as `hostVersion`, so
+the value below is only an example. The host sends:
 
 ```json
 { "jsonrpc": "2.0", "id": 1, "method": "plugin.handshake", "params": { "pluginId": "com.example.tool", "hostVersion": "1.1.4.0", "sdkVersion": "1.0.0" } }
 ```
 
-The file service sends the same params plus `"client": "simplefile-service"`, which tells a backend which connection
-is the service's. The backend replies:
+The file service sends the same fields plus `"client": "simplefile-service"`, which tells a backend which connection
+is the service's. The two clients fill `hostVersion` differently: the host sends the assembly version of
+`SimpleFile.PluginHost`, always four numeric parts (`1.1.4.0` in a 1.1.4 build), and the service sends SumaFile's
+display version (`1.1.4` in the same build). The crate does not read `hostVersion`. The backend replies:
 
 ```json
 { "jsonrpc": "2.0", "id": 1, "result": { "pluginId": "com.example.tool", "pluginVersion": "1.2.0", "sdkVersion": "1.0.0" } }
 ```
 
-The reply's `pluginId` must equal the manifest's id and its `sdkVersion` must be a plain `major.minor.patch` with
-major `1`, or the start fails. The host waits at most 5 s for the reply, the service 5 s too. Any other request before
-the handshake fails with `-32600`.
+The reply's `pluginId` must equal the manifest's id and its `sdkVersion` must have major `1`, or the start fails. The
+host parses the `sdkVersion` as a numeric version of two to four dot-separated parts, so a `-` or `+` suffix fails
+there; the service compares only the text before the first dot. Reply with a plain `major.minor.patch`, as the crate
+does (`1.0.0`). The host waits at most 5 s for the reply, the service 5 s too. Any other request before the handshake
+fails with `-32600`.
 
 ### Requests and routing
 
@@ -767,9 +810,10 @@ relative to the archive root.
   but parent folders exists at those paths.
 - `operationId` is optional in the schema (`string?` in `ipc/schema/plugin/v1/protocol.json`), but SumaFile's service
   sends one with every call except `archive.list`: the operation's own id, or `svc-<pid>-<n>`. An engine should still
-  accept a call without one, and then reports no progress for it and cannot be cancelled. While working, send the notification `archive.progress` with
-  `{ operationId, current, total, currentItem? }` on the connection that carries the request, at least every 5 s,
-  with `current <= total` (`total` 0 means unknown). Each one restarts the call's idle deadline, and the service shows it as the operation's progress.
+  accept a call without one, and then reports no progress for it and cannot be cancelled.
+- While working, send the notification `archive.progress` with `{ operationId, current, total, currentItem? }` on the
+  connection that carries the request, at least every 5 s, with `current <= total` (`total` 0 means unknown). Each one
+  restarts the call's idle deadline, and the service shows it as the operation's progress.
 - A call that passes its deadline fails and the service closes that connection. After a `cancel`, the service waits
   at most 5 s for the cancelled call's reply.
 
@@ -825,10 +869,15 @@ async fn main() {
 - `HostClient` makes the `host.*` calls (`get_settings`, `set_setting`, `progress_begin`, `progress_report`,
   `progress_complete`, `progress_fail`, `log`, `notify`), sends events (`emit`) and archive progress
   (`archive_progress`), and reads cancel flags (`is_cancelled(operation_id)`). On the service connection,
-  `host_connection()` returns the host's connection, for settings.
-- With the `test-support` feature, `HostClient::fake(settings)` is an in-memory host for handler tests.
+  `host_connection()` returns the host's connection, for settings; `emit` fails there, like the `host.*` calls.
+- With the `test-support` feature, `HostClient::fake(settings)` is an in-memory host for handler tests. Its accessors
+  return what the handler did: `fake_log`, `fake_events`, `fake_progress_calls` (the `host.progress_*` calls) and
+  `fake_progress` (the `archive_progress` calls); `fake_cancel(operation_id)` marks an id cancelled.
+- The crate exports the protocol's constants: `SDK_VERSION`, `CANCELLED_MESSAGE` (the message of a cancelled
+  `archive.*` call), `ARCHIVE_PROGRESS_NOTIFICATION`, `DEFAULT_CALL_TIMEOUT`, `EARLY_CANCEL_LIMIT` and
+  `SERVICE_CONNECTION_ERROR` (the error of a `host.*` call or an `emit` on the service connection).
 
-The crate's README (`crates/sumafile-plugin/README.md`) has the details. The template's backend
+The crate's README (`crates/sumafile-plugin/README.md`) has the dependency lines. The template's backend
 (`templates/sumafile-plugin/backend`) is a complete example with tests.
 
 ### Backends in other languages
@@ -916,25 +965,28 @@ There is no sandbox, so SumaFile asks before it runs a plugin.
   folder match the record. When any of them changes, the plugin waits for consent again. Install from file and Remove
   clear the plugin's stored decision, so the next scan asks again. Other files are not hashed for this: an unsigned
   plugin whose DLL changes keeps its approval (whoever can write to the installation folder already controls
-  SumaFile). Change `version` in `plugin.json` with every
-  release, so users confirm each release; sign the plugin so that any change to a listed file breaks the signature.
-- **Bundled plugins.** The release build writes `plugins\bundled.json` with the id and `plugin.json` SHA-256 of each
-  plugin that ships with SumaFile (`{"plugins":[{"id":"com.sumafile.sevenzip","manifestSha256":"<64 hex>"}]}`). A listed
-  plugin found in the app's own `plugins` folder with that hash is enabled without consent, unless the user disabled
-  it. A copy in another root, or with another hash, needs consent. A package can never replace a bundled plugin, and
-  Remove is never offered for one.
-- **Compatibility.** A plugin whose `sdkVersion` major is not `1`, or whose minor is above the host SDK's minor (`0`),
-  is listed as not compatible and never loads.
+  SumaFile). Change `version` in `plugin.json` with every release, so users confirm each release; sign the plugin so
+  that any change to a listed file breaks the signature.
+- **Bundled plugins.** `plugins\bundled.json` lists the id and `plugin.json` SHA-256 of each plugin that ships with
+  SumaFile (`{"plugins":[{"id":"com.sumafile.sevenzip","manifestSha256":"<64 hex>"}]}`). The staging step that copies
+  the bundled plugins writes it, for a Debug run and for the release build alike (see
+  [Building and staging the bundled plugins](#building-and-staging-the-bundled-plugins)). A listed plugin found in the
+  app's own `plugins` folder with that hash is enabled without consent, unless the user disabled it. A copy in another
+  root, or with another hash, needs consent. A package can never replace a bundled plugin, and Remove is never offered
+  for one.
+- **Compatibility.** A plugin whose manifest has any `sdkVersion` error is listed as not compatible and never loads:
+  the field is missing or not `major.minor.patch`, its major is not `1`, or its minor is above the host SDK's minor
+  (`0`). The plugin is listed that way even when the manifest has other errors too.
 - **Backend pipes.** The host checks that the server of a plugin's pipe is the backend process it launched and that
   it runs as the current user.
 
 ## Signing
 
-A signature lets the consent dialog and the plugin's Settings page show **Signed · key <fingerprint>**. It proves that the
-plugin's files are unchanged since they were signed with that key. It does not prove who the publisher is: the key
-comes from the plugin's own `plugin.json`, so anyone can sign a plugin with a key of their own. Unsigned plugins and
-plugins with an invalid signature can still be enabled; the dialog says **Unsigned plugin** or **Invalid signature:
-<reason>**.
+A signature lets the consent dialog and the plugin's Settings page show **Signed · key <fingerprint>**. It proves that
+the plugin's files are unchanged since they were signed with that key. It does not prove who the publisher is: the
+key comes from the plugin's own `plugin.json`, so anyone can sign a plugin with a key of their own. Unsigned plugins
+and plugins with an invalid signature can still be enabled; the dialog says **Unsigned plugin** or **Invalid
+signature: <reason>**.
 
 The host verifies the signature when it scans plugins (at startup and on Rescan), not on each load. Verification
 hashes every listed file at scan time, so a very large signed plugin adds to startup (see
@@ -959,8 +1011,9 @@ hashes every listed file at scan time, so a very large signed plugin adds to sta
 - `publisher.publicKey` in `plugin.json` is the raw 32-byte public key in base64. The fingerprint SumaFile shows is the
   first 16 hex characters of its SHA-256.
 
-`scripts/sign-plugin.mjs` (Node 22, no dependencies; `npm run sign:plugin -- <args>` in this repository) writes exactly
-what the host checks:
+`scripts/sign-plugin.mjs` writes exactly what the host checks. It is one Node.js file with no dependencies, so it can
+be copied out of the repository; `.node-version` pins the Node.js version the repository's CI runs its scripts with,
+and `npm run sign:plugin -- <args>` runs the tool in this repository:
 
 ```powershell
 # Once: a key pair, in a folder outside every repository.
@@ -1014,9 +1067,9 @@ user to disable the plugin and restart SumaFile. Installing clears the plugin's 
 plugin waits for consent, even when it replaces an approved copy. Ship a new version as a new package with a new
 `version`.
 
-**Remove** on a plugin's Settings page deletes its folder, after a confirmation. It is offered only for plugins in SumaFile's
-own `plugins` folder that `bundled.json` does not list; bundled plugins are disabled instead. Remove stops the plugin
-first, clears its stored approval, and keeps its settings and its `plugins-data` folder.
+**Remove** on a plugin's Settings page deletes its folder, after a confirmation. It is offered only for plugins in
+SumaFile's own `plugins` folder that `bundled.json` does not list; bundled plugins are disabled instead. Remove stops
+the plugin first, clears its stored approval, and keeps its settings and its `plugins-data` folder.
 
 ## The plugin template
 
@@ -1033,12 +1086,60 @@ first, clears its stored approval, and keeps its settings and its `plugins-data`
 Inside this repository the template builds with everything else (the backend is a Cargo workspace member, the UI
 project is in `src-winui/SimpleFile.sln`), and `SimpleFile.Tests` loads it through the real plugin host. To try it in
 SumaFile, stage it, point `SUMAFILE_PLUGIN_ROOTS` at `target\template-plugins`, start SumaFile and enable it. Its
-README, `templates/sumafile-plugin/README.md`, walks through building, staging, consent, signing, packaging, renaming
-it, and building a copy outside this repository against a local SumaFile checkout (see [Packages](#packages)).
+README, `templates/sumafile-plugin/README.md`, has the template's own commands for building, staging, loading,
+signing and packaging it, the names to change when renaming it, and the template's steps for a copy outside this
+repository; the rules behind those steps are in this guide ([Trust and consent](#trust-and-consent),
+[Signing](#signing), [Packaging and installing a `.sfplugin`](#packaging-and-installing-a-sfplugin),
+[Packages](#packages)).
+
+## Worked examples
+
+The repository holds five complete plugins. Each has a `plugin.json` to read beside its code:
+
+- **The template**, `templates/sumafile-plugin` (`com.example.template`): the smallest plugin with both halves. One
+  command, one declarative setting and a `first-call` backend with one method (see
+  [The plugin template](#the-plugin-template)).
+- **7-Zip archives**, `plugins/sevenzip` (`com.sumafile.sevenzip`): a backend-only plugin. It declares
+  `archiveFormats` for `.7z` with all four capabilities, and its backend (`plugins/sevenzip/backend`) serves the seven
+  `archive.*` methods by running the bundled `7za.exe`, sends `archive.progress`, honours `cancel`, and reads its one
+  `path` setting through `host_connection()`, because its requests arrive on the service connection.
+- **FTP/SFTP connections**, `plugins/remote` (`com.sumafile.remote`): a command with a `toolbar` button, a `sidebar`
+  section with a header command, a `settingsPage` below declarative `integer`, `enum` and `boolean` settings, a
+  window of its own attached through `IPluginHost.Windows`, dialogs it builds itself (`ShowDialogAsync`), and a
+  `first-call` backend that sends events and opens a Transfers row. `plugins/remote/protocol.json` documents the
+  backend's methods and events.
+- **Git**, `plugins/git` (`com.sumafile.git`): `rowDecorations` with a folder flag, `contextMenu` items and a
+  `toolbar` button whose `when` read `folderFlag(inRepository)` and `hasDecoration`, a detachable panel with its
+  command, a setting with `migrateFrom`, and a `startup` backend whose fetch, pull and push open Transfers rows.
+  `plugins/git/protocol.json` documents the backend's methods.
+- **The Hello fixture**, `src-winui/SimpleFile.Tests/Fixtures/HelloPlugin` (`com.sumafile.hello`) with the backend
+  `crates/hello-plugin-backend`: the test plugin of SumaFile's own test suite. It declares all eight contribution
+  kinds and its entry type implements all six interfaces of the [Interfaces](#interfaces) table; its backend serves a
+  toy `.hello` archive format through every `archive.*` method. `scripts/build-fixture-plugin.ps1` stages it for the
+  tests; it is not one of the bundled plugins.
+
+### Building and staging the bundled plugins
+
+The 7-Zip, FTP/SFTP and Git plugins ship with SumaFile. `npm run build:plugins` (`scripts/build-plugins.ps1`) builds
+and stages them:
+
+1. It builds the three backends with `cargo build --locked` and the FTP/SFTP and Git UI projects with `dotnet build`,
+   in Debug unless the script gets `-Configuration Release`.
+2. It writes one folder per plugin under `target\plugins\<plugin id>\`: `plugin.json`, the backend executable and,
+   for a plugin with a UI half, its UI assembly, its model assembly and the `.deps.json`. The 7-Zip folder also gets
+   the bundled 7-Zip files from `third_party\7zip\win-x64`.
+3. It writes `target\plugins\bundled.json` from the staged `plugin.json` files and checks the staged root.
+
+`npm run dev:winui` runs it before it starts the app. A Debug build of `SimpleFile.App` copies `target\plugins` into
+the `plugins` folder of its output folder when `target\plugins\bundled.json` exists, replacing each staged plugin
+folder whole. The release build (`scripts/build-winui-release.ps1`) stages the same three plugins from Release builds
+into the release payload's `plugins` folder. Both use the functions and the file lists in
+`scripts/lib/plugin-staging.ps1`.
 
 ## Packages
 
-The SDK and the helper crate are packaged, but only as dry runs: neither is published yet.
+The repository packs the SDK and the helper crate but publishes neither: no npm script or workflow pushes a package
+to nuget.org or crates.io, and `scripts/tests/plugin-crates-package.test.mjs` fails if one does.
 
 - **`SumaFile.PluginSdk`** (NuGet), from `src-winui/SimpleFile.PluginSdk`. `npm run pack:sdk` (`dotnet pack
   src-winui/SimpleFile.PluginSdk -c Release -o target/packages`) writes `target/packages/SumaFile.PluginSdk.1.0.0.nupkg`
@@ -1050,8 +1151,7 @@ The SDK and the helper crate are packaged, but only as dry runs: neither is publ
   sumafile-plugin`) builds each package from its packaged sources against a temporary local registry. CI runs it on a
   clean checkout without `--allow-dirty`.
 
-Until they are published, a plugin outside this repository builds against a local SumaFile checkout
-(`<checkout>`):
+A plugin outside this repository therefore builds against a local SumaFile checkout (`<checkout>`):
 
 1. Run `npm run pack:sdk` in the checkout; it writes `<checkout>/target/packages/SumaFile.PluginSdk.1.0.0.nupkg`.
 2. Add a `nuget.config` beside the plugin's project (or any folder above it) with that folder as a package source,
@@ -1085,8 +1185,8 @@ Until they are published, a plugin outside this repository builds against a loca
    sumafile-plugin = { path = "<checkout>/crates/sumafile-plugin" }
    ```
 
-Once the packages are published, drop the local source and use `sumafile-plugin = "1"`. The template's README,
-`templates/sumafile-plugin/README.md` ("Outside this repository"), walks through both with the template's files.
+The template's README, `templates/sumafile-plugin/README.md` ("Outside this repository"), lists the same steps with
+the template's file names.
 
 ## Plugin states and troubleshooting
 
@@ -1099,7 +1199,7 @@ with its details:
 | Enabled | Enabled (· background process running) | Contributions are shown; code loads on first use. |
 | Disabled | Disabled | The user turned it off. |
 | InvalidManifest | Invalid plugin.json | The manifest broke a rule; the plugin's page lists the errors. |
-| IncompatibleSdk | Not compatible with this version of SumaFile | The `sdkVersion` major is not `1`, or its minor is above the host SDK's. |
+| IncompatibleSdk | Not compatible with this version of SumaFile | The manifest has an `sdkVersion` error: the field is missing or malformed, its major is not `1`, or its minor is above the host SDK's. The plugin's page lists the errors. |
 | LoadFailed | Failed to load: <message> | The UI assembly or entry type could not load, `ActivateAsync` threw, or a provider failed. Disable and enable it, or rescan, to try again. |
 | Faulted | Stopped: <message> | The backend stopped, failed to start three times within 60 s, or its archive engine could not register. The status center offers Restart. |
 | Shadowed | Overridden by <folder> | The same id is in a later root (only with `SUMAFILE_PLUGIN_ROOTS`). |

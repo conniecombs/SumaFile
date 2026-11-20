@@ -1,9 +1,10 @@
 # Security Policy
 
-## Supported Branch
+## Supported Versions
 
-Security reports for `main`, and the latest release, SumaFile 1.1.4, should be evaluated against the Windows release scope: local files, mapped network drives, archives, previews, metadata, cleanup tools, updater metadata, and Windows installers.
-See [v1.0.4 release notes](RELEASE_1.0.4.md) for the release boundary.
+Security fixes are made on `main` and shipped in the next release. Only the latest release is supported; the in-app updater and the [Releases page](https://github.com/conniecombs/SumaFile/releases) always offer it.
+
+Reports are evaluated against the Windows release scope: local files, mapped network drives, archives, previews, metadata, cleanup tools, transfers, updater metadata, Windows installers, the plugin host and the bundled plugins.
 
 The plugin system, new in SumaFile 1.1.0, moves Git status and the Git workbench, FTP/FTPS/SFTP sessions and 7-Zip archives into the bundled plugins `com.sumafile.git`, `com.sumafile.remote` and `com.sumafile.sevenzip`. Reports against those plugins and against the plugin host are in scope; see [Plugins](#plugins).
 
@@ -23,7 +24,9 @@ The repository ignores `.secrets/`, `*.key`, `*.pem`, `.env`, and `.env.*`.
 
 ## Reporting
 
-When reporting a vulnerability, include:
+Report a vulnerability privately through [Report a vulnerability](https://github.com/conniecombs/SumaFile/security/advisories/new) on the repository's Security tab. Do not open a public issue for it.
+
+Include:
 
 - A concise impact summary.
 - A reproduction path using local files or a disposable test directory.

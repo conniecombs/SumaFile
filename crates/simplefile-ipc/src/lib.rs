@@ -1,7 +1,7 @@
 //! IPC protocol constants for the WinUI ↔ Rust named-pipe JSON-RPC host.
 //!
-//! Schemas live in `ipc/schema/v1/` until a C# project exists. This crate
-//! does not implement the pipe server.
+//! The schema both sides are generated from lives in `ipc/schema/v1/`. This
+//! crate does not implement the pipe server.
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const JSONRPC_VERSION: &str = "2.0";

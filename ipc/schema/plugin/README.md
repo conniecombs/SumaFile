@@ -9,11 +9,15 @@ The author guide, [docs/PLUGINS.md](../../../docs/PLUGINS.md), explains the
 protocol for backend authors ("The backend"), with the lifetime, limits and
 deadlines around it. This file is the reference for the wire shapes.
 
+The helper crate, `crates/sumafile-plugin`, implements the backend side of
+this protocol. The repository packs the crate but does not publish it; the
+guide's "Packages" section says how a backend outside the repository takes it.
+
 | File | Role |
 | --- | --- |
 | `v1/protocol.json` | Command line, handshake, `host.*` methods, archive-engine methods with their params, results and deadlines, the `archive.progress` notification, error codes, cancellation, SDK version |
 | `plugins/remote/protocol.json` (repository root) | The remote plugin's own methods, events, enums, types and error texts (see Plugin-owned methods) |
-| `plugins/git/protocol.json` (repository root) | The Git plugin's own methods, types and error texts (see Git plugin methods) |
+| `plugins/git/protocol.json` (repository root) | The Git plugin's own methods, types and error texts (see Plugin-owned methods) |
 
 ## Connections
 
@@ -22,14 +26,21 @@ deadlines around it. This file is the reference for the wire shapes.
   `pluginId`, `hostVersion`, `sdkVersion`, and optional `client` (the Rust
   service sends `"simplefile-service"`). Result: `pluginId`, `pluginVersion`,
   `sdkVersion`. Any other request before it fails with `-32600`.
+- `hostVersion` is the sender's own version. The host sends the assembly
+  version of `SimpleFile.PluginHost`, four numeric parts; the service sends
+  SumaFile's display version (`APP_DISPLAY_VERSION` in
+  `crates/simplefile-core`).
 - The handshake reply's `pluginId` must equal the manifest id and its
-  `sdkVersion` must be `major.minor.patch` with major 1, or the start fails. The
-  host waits 5 s for the backend to connect, then 5 s for the reply.
+  `sdkVersion` must have major 1, or the start fails. The host parses the
+  `sdkVersion` as a numeric version of two to four parts; the service compares
+  the text before the first dot. The host waits 5 s for the backend to
+  connect, then 5 s for the reply.
 - `host.*` methods are requests the backend sends to the WinUI host (settings,
   progress, log, notify). On the service connection `host.log` is a local no-op
   and every other `host.*` call fails at once; a handler serving the service
-  reaches the host through the host's own connection (`HostClient::host_connection`
-  in the helper crate). The service never answers a request from a backend.
+  reaches the host through the host's own connection
+  (`HostClient::host_connection` in the helper crate). The service never
+  answers a request from a backend.
 - The host's request ids are integers, and a backend's `host.*` requests must
   use 32-bit integer ids too: the host reads a request with any other id as a
   notification and never answers it.
@@ -47,7 +58,7 @@ error below is `-32602` (invalid params) unless noted.
 | `host.progress_report` | `{ operationId: string, current: int64, total: int64, detail?: string }` | `null` | `'current' must be an integer.`, `'total' must be an integer.`, `Unknown operationId.` |
 | `host.progress_complete` | `{ operationId: string }` | `null` | `Unknown operationId.` |
 | `host.progress_fail` | `{ operationId: string, message: string }` | `null` | `'message' must be a string.`, `Unknown operationId.` |
-| `host.log` | `{ level: "info" \| "warn" \| "error", message: string }` | `null` | `'level' must be info, warn or error.`, `'message' must be a string.` |
+| `host.log` | `{ level: "info" \| "warn" \| "error", message: string }` | `null` | `'level' must be a string.`, `'level' must be info, warn or error.`, `'message' must be a string.` |
 | `host.notify` | `{ message: string, isError?: boolean }` | `null` | `'message' must be a string.` |
 
 - Settings keys match `^[a-z0-9][a-zA-Z0-9_-]{0,63}$`; the host stores them as
@@ -77,8 +88,9 @@ The service holds a small pool of connections per plugin (up to 8) and keeps
 at most one call in flight on each, so a listing never waits behind a long
 extract. A backend that declares archive formats must therefore accept several
 service connections at once. When the service's caller cancels, the service
-sends `cancel` on another connection of the pool and waits at most the cancel
-deadline (5 s) for the cancelled call's reply.
+sends `cancel` on another connection of the pool, or on a new one beyond the 8
+when none is idle, and waits at most the cancel deadline (5 s) for the
+cancelled call's reply.
 
 | Method | Params | Result | Deadline |
 | --- | --- | --- | --- |
@@ -153,67 +165,33 @@ notification, on any of its connections. The backend never sends `cancel`.
 
 ## Plugin-owned methods
 
-- A plugin's backend may serve its own methods to its own UI, through
-  `IPluginHost.InvokeBackendAsync`. The plugin documents them in
-  `plugins/<name>/protocol.json`: methods with their params and results, the
-  events the backend sends with `emit`, and the error texts its UI matches.
-  `plugins/remote/protocol.json` is the first.
-- `cancel` works for them as for any request. A cancel naming the request's
-  `params.operationId`, or an id that `host.progress_begin` returned, sets the
-  flag. The remote plugin watches both ids: the Transfers row's Cancel sends
-  the progress id, and the plugin UI's own Cancel sends the request id.
+A plugin's backend may serve its own methods to its own UI, through
+`IPluginHost.InvokeBackendAsync`. The plugin documents them in
+`plugins/<name>/protocol.json`: methods with their params and results, the
+events the backend sends with `emit`, and the error texts its UI matches.
+
+Two bundled plugins have such a file. Each file is the reference for its
+plugin's methods: `notes` texts, for the file and for the methods that need
+one, describe the behaviour. This README does not repeat them:
+
+| File | Backend | Top-level keys |
+| --- | --- | --- |
+| `plugins/remote/protocol.json` | `sumafile-remote-backend` (`plugins/remote/backend`) | `plugin`, `notes`, `methods`, `events`, `enums`, `types`, `errors` |
+| `plugins/git/protocol.json` | `sumafile-git-backend` (`plugins/git/backend`) | `plugin`, `notes`, `methods`, `types`, `errors`; the backend sends no events |
+
+`npm run check:ipc-schema` checks both files against the code (see
+Validation).
+
+- `cancel` works for these methods as for any request. A cancel naming the
+  request's `params.operationId`, or an id that `host.progress_begin` returned,
+  sets the flag. The remote plugin watches both ids: the Transfers row's Cancel
+  sends the progress id, and the plugin UI's own Cancel sends the request id.
 - The outcome of a cancel is the method's to define. Archive engine methods
   fail with `-32000` and `Archive operation cancelled`. The remote
   `transfer.run` replies normally with `cancelled: true` and ends its row with
   `host.progress_fail(row, "Transfer cancelled")`. The Git plugin's fetch,
   pull and push fail with `-32000` and `Git operation cancelled`, and end
   their row with `host.progress_fail(row, "Git operation cancelled")`.
-
-### Git plugin methods
-
-`plugins/git/protocol.json` documents them; `sumafile-git-backend`
-(`plugins/git/backend`) serves them. Params are camelCase; results keep the
-1.0.4 shapes, with snake_case fields, and their paths use native separators.
-The backend sends no events.
-
-| Method | Params | Result |
-| --- | --- | --- |
-| `repo.status` | `{ path }` | `GitRepositoryStatus` |
-| `repo.decorations` | `{ folder, operationId? }` | `GitFolderDecorations { in_repository, root, rows: [{ path, status }] }` |
-| `paths.stage`, `paths.unstage`, `paths.discard` | `{ path, paths }` | `GitCommandResult` |
-| `paths.diff` | `{ path, filePath }` | `string` |
-| `repo.commit` | `{ path, message, operationId }` | `GitCommandResult` |
-| `remote.fetch`, `remote.pull`, `remote.push` | `{ path, operationId }` | `GitCommandResult` |
-
-- `repo.decorations` lists the folder's direct children only, as
-  `<folder>\<name>`. Below no `.git` marker (the walk honours
-  `GIT_CEILING_DIRECTORIES` and is skipped when `GIT_DIR` or `GIT_WORK_TREE`
-  is set), for a missing folder and on any git failure it answers
-  `{ in_repository: false, root: null, rows: [] }`, and outside a repository
-  it runs no git. Without git it answers the same, spawns nothing and logs
-  one warning per backend process. A `cancel` naming its optional
-  `operationId` kills that request's git process, or ends its wait for a
-  status run another caller started, and the call fails with `-32000` and
-  `Git operation cancelled`.
-- `repo.status`, `repo.decorations` and `paths.diff` are read-only: they run
-  no program the repository's config names (no hook, fsmonitor, filter
-  driver, external diff, textconv, or git inside a submodule). Callers asking
-  for the same repository root while its status runs share that one run.
-- `paths.stage`, `paths.unstage` and `paths.discard` resolve `.` and `..`
-  first: a path that resolves to the root fails with `Refusing to run a
-  file-level Git action against the repository root.`, one that leaves it as
-  outside the repository. They run the repository's hooks and filters, as
-  git does for the user's own actions.
-- fetch, pull and push open a Transfers row, `Fetching <repository folder
-  name>` (`Pulling …`, `Pushing …`), or run without one when no host
-  connection exists. The row ends with `progress_complete`, or with
-  `progress_fail` and the error text. A `cancel` naming the request's
-  `operationId` or the row's id stops git and every process it started
-  within 50 ms. `repo.commit` honours `cancel` for its `operationId` and opens
-  no row.
-- Without `git.exe` on an absolute `PATH` entry every method except
-  `repo.decorations` fails with `Git was not found. Install Git for Windows or
-  add git.exe to PATH.` and runs nothing.
 
 ## Errors
 
@@ -223,7 +201,7 @@ The backend sends no events.
 | `-32600` | request before `plugin.handshake`, or a frame that is neither a request nor a reply |
 | `-32601` | method not found |
 | `-32602` | invalid params |
-| `-32603` | handler panicked |
+| `-32603` | internal error: a handler that panicked, or a host-side failure answering a `host.*` request |
 | `-32000` | application error (`Archive operation cancelled` after a cancel) |
 
 Who answers with which code:
@@ -242,40 +220,53 @@ Who answers with which code:
 
 ## Validation
 
-`npm run check:ipc-schema` asserts:
+`npm run check:ipc-schema` (`scripts/check-ipc-schema.mjs`) asserts for
+`v1/protocol.json`:
 
 - every `hostMethods` entry is a string literal in
   `src-winui/SimpleFile.PluginHost/Backend/PluginHostMethods.cs` and
   `crates/sumafile-plugin/src/host.rs`;
-- every `archiveEngineMethods` key is a string literal in
-  `crates/simplefile-service/src/plugin_archive/mod.rs` (the sender) and
-  `crates/hello-plugin-backend/src/main.rs` (the fixture that serves them), and
-  names a deadline from `deadlines`;
-- `"archive.progress"` is a string literal in `crates/sumafile-plugin/src/host.rs`
-  (the producer) and `crates/simplefile-service/src/plugin_archive/connection.rs`
-  (the consumer);
+- `handshake.method` is `plugin.handshake` and `cancel.method` is `cancel`;
+- every `archiveEngineMethods` entry has a `params` object, a `result` and a
+  `deadline` that `deadlines` defines, and its key is a string literal in
+  `crates/simplefile-service/src/plugin_archive/mod.rs` (the sender) and in
+  the two backends that serve the methods,
+  `crates/hello-plugin-backend/src/main.rs` (the test fixture) and
+  `plugins/sevenzip/backend/src/handler.rs` (the 7-Zip plugin);
+- `notifications` documents `archive.progress`, and `"archive.progress"` is a
+  string literal in `crates/sumafile-plugin/src/host.rs` (the producer) and
+  `crates/simplefile-service/src/plugin_archive/connection.rs` (the consumer);
 - `cancel.cancelledMessage` is a string literal in
-  `crates/simplefile-core/src/archive/engine.rs` and
-  `crates/sumafile-plugin/src/lib.rs`;
+  `crates/simplefile-core/src/archive/engine.rs`,
+  `crates/sumafile-plugin/src/lib.rs` and
+  `src-winui/SimpleFile.Core/FileOperationService.cs`;
 - `sdkVersion` equals `PluginSdk.Version` in
   `src-winui/SimpleFile.PluginSdk/PluginSdk.cs`, `SDK_VERSION` in
   `crates/sumafile-plugin/src/lib.rs` and `PLUGIN_SDK_VERSION` in
   `crates/simplefile-service/src/plugin_archive/mod.rs`.
 
+When no check has failed up to that point, it prints a line that starts
+`Checked plugin protocol v1:` and gives the number of host methods, the number
+of archive engine methods and the SDK version.
+
 For each plugin protocol in its `pluginProtocols` table
 (`plugins/remote/protocol.json` and `plugins/git/protocol.json`) it asserts:
 
+- `plugin` is the plugin's id (`com.sumafile.remote`, `com.sumafile.git`);
+- `methods` is not empty, and every method has `params` and a `result`;
 - every key of `methods` and `events` is a string literal in each of the
   plugin's literal sources: the backend's handler, which serves them
   (`plugins/remote/backend/src/handler.rs`,
   `plugins/git/backend/src/handler.rs`), and the C# client's names for them
-  where one exists (`plugins/remote/ui/SumaFile.Remote.Model/RemoteProtocol.cs`);
-  every event a method `emits` or names as its `progressEvent` is documented
+  (`plugins/remote/ui/SumaFile.Remote.Model/RemoteProtocol.cs`,
+  `plugins/git/ui/SumaFile.Git.Model/GitProtocol.cs`);
+- every event a method `emits` or names as its `progressEvent` is documented
   under `events`, which is optional but never empty;
-- for every `errors` entry, the text before its first `<placeholder>` (the
-  whole text when it has none) starts a string literal in each file of its
-  `sources`. The backend builds these texts with `format!`, so
-  `"remote session not found: {session_id}"` matches
-  `remote session not found: <id>`;
-- it prints `Checked <label> plugin protocol: <n> methods, <n> events, <n> error texts.`,
-  e.g. `Checked git plugin protocol: 10 methods, 0 events, 5 error texts.`
+- every `errors` entry has a `text` and at least one file in `sources`, and
+  the text before its first `<placeholder>` (the whole text when it has none)
+  starts a string literal in each of those files. The backend builds these
+  texts with `format!`, so `"remote session not found: {session_id}"` matches
+  `remote session not found: <id>`.
+
+For each file that passes it prints
+`Checked <label> plugin protocol: <n> methods, <n> events, <n> error texts.`

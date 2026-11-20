@@ -101,6 +101,8 @@ export function planReleaseVersion(root, input) {
     .replace(/(img\.shields\.io\/badge\/version-).+?(?=-2563eb\))/, `$1${encodeURIComponent(next.display).replaceAll('-', '--').replaceAll('_', '__')}`)
     .replace(/(\| Product version \| `)[^`]+(` \|)/, `$1${next.display}$2`)
     .replaceAll(`SumaFile_${current.display}_`, `SumaFile_${next.display}_`)
+    // The README links the current version's release notes (check-sumafile-identity.mjs requires it).
+    .replaceAll(`docs/RELEASE_${current.display}.md`, `docs/RELEASE_${next.display}.md`)
     .replace(`SumaFile ${current.display} is Windows-only.`, `SumaFile ${next.display} is Windows-only.`));
   return { version: next, changes };
 }

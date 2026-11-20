@@ -10,10 +10,14 @@ It contributes one command, **Example: echo the greeting**, and one setting, **G
 setting, sends it to the backend's `example.echo` method and shows the reply in SumaFile's message bar.
 
 The full author guide, with every manifest field and its limits, every contribution kind, the threading rules and the
-backend protocol, is [docs/PLUGINS.md](../../docs/PLUGINS.md).
+backend protocol, is [docs/PLUGINS.md](../../docs/PLUGINS.md). It also holds the rules for consent, signing, packaging
+and building outside the repository; this README has the template's commands for each and links to the guide for the
+rest. In a copy outside the SumaFile repository those links do not resolve: read `docs/PLUGINS.md` in the SumaFile
+checkout the copy builds against.
 
-To build a copy outside the SumaFile repository, see [Outside this repository](#outside-this-repository): the SDK and
-the helper crate are not published yet, so it builds against a local SumaFile checkout.
+To build a copy outside the SumaFile repository, see [Outside this repository](#outside-this-repository): the
+repository packs the SDK and the helper crate but does not publish them, so a copy builds against a local SumaFile
+checkout.
 
 ## What is in the folder
 
@@ -44,7 +48,7 @@ a plugin folder.
 ## Build and test
 
 Inside the SumaFile repository the template is part of the build: the backend is a member of the Cargo workspace and
-the UI project is in `src-winui/SimpleFile.sln`, so CI builds and tests both. By hand:
+the UI project is in `src-winui/SimpleFile.sln`, so CI builds and tests both. By hand, from the repository root:
 
 ```powershell
 cargo test -p example-plugin-backend
@@ -61,7 +65,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File templates\sumafile-plugin\st
 # or: -Configuration Release
 ```
 
-`stage.ps1` builds both halves and writes a fresh plugin folder:
+`stage.ps1` builds both halves, writes a fresh plugin folder and prints its path:
 
 ```text
 target\template-plugins\com.example.template\
@@ -70,6 +74,10 @@ target\template-plugins\com.example.template\
   Example.Plugin.deps.json
   example-plugin-backend.exe
 ```
+
+The folder is `template-plugins\com.example.template` under Cargo's target folder. Inside the SumaFile repository
+that is `target\`, as shown and as the commands below assume. A copy outside any Cargo workspace stages under its own
+`backend\target\` instead: use the path `stage.ps1` prints.
 
 The folder name must be the plugin id. No copy of `SimpleFile.PluginSdk.dll` belongs in it: SumaFile loads its own.
 The staged folder is only for development; SumaFile's own build never stages or ships the template.
@@ -93,32 +101,33 @@ npm run dev:winui          # or start SumaFile.exe from this PowerShell window
 SumaFile never runs a plugin it has not been told to trust. The first time it finds the plugin it asks **Enable
 plugin?**, showing its name, publisher, version, permissions (`backend-process`), the fact that it runs a backend
 process, and its signature state (Unsigned until you sign it). Choose **Enable**. After **Keep disabled**, Settings >
-Plugins lists **Example plugin** as waiting for your approval, with a **Review…** button that asks again. Once enabled,
-the command appears in the command palette (`Ctrl+Shift+P`) and the **Greeting** setting on the plugin's card in
-Settings > Plugins.
+Plugins lists **Example plugin** as waiting for your approval; open the plugin's own page from there and choose
+**Review…** to be asked again. Once enabled, the command appears in the command palette (`Ctrl+Shift+P`) and the
+**Greeting** setting on the plugin's page under Settings > Plugins.
 
-SumaFile records the approval with the SHA-256 of `plugin.json`. When `plugin.json` changes (a new version, a new
-permission, a public key), the signature state or the plugin's folder changes, or the plugin is installed from a file
-or removed, the plugin waits for consent again.
+The plugin waits for consent again when its `plugin.json`, its signature state or its folder changes, and after it is
+installed from a file or removed. The guide has the rules under
+[Trust and consent](../../docs/PLUGINS.md#trust-and-consent).
 
 ## Sign it
 
-A signature lets the consent dialog and the plugin's card show **Signed · key <fingerprint>**; an unsigned plugin can
-still be enabled. The signature proves that the files are unchanged since you signed them with that key. It does not
-prove who you are: the key comes from the plugin's own `plugin.json`. The repository's signing tool is `scripts/sign-plugin.mjs` (Node 22):
+A signature lets the consent dialog and the plugin's page in Settings show **Signed · key <fingerprint>**; an unsigned
+plugin can still be enabled. The repository's signing tool is `scripts/sign-plugin.mjs`, one Node.js file with no
+dependencies (`.node-version` in the repository pins the Node.js version its CI uses).
 
 ```powershell
 # Once: a key pair. Keep signing-key.pem private, in a folder outside every repository (keygen refuses a git work tree).
 node scripts\sign-plugin.mjs keygen --out $HOME\sumafile-keys
 ```
 
-`keygen` writes `signing-key.pem` (PKCS#8) and prints the raw 32-byte public key in base64. Put it in `plugin.json`:
+`keygen` prints `publisher.publicKey`. Put it in `plugin.json`:
 
 ```json
 "publisher": { "name": "Example Publisher", "publicKey": "<the printed base64 key>" }
 ```
 
-Then stage the folder again and sign what you ship, as the last step (any later change to a file breaks the signature):
+Then stage the folder again and sign it as the last step. `stage.ps1` starts from an empty folder each time, and any
+change to the folder after signing breaks the signature:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File templates\sumafile-plugin\stage.ps1 -Configuration Release
@@ -126,12 +135,8 @@ node scripts\sign-plugin.mjs sign target\template-plugins\com.example.template -
 node scripts\sign-plugin.mjs verify target\template-plugins\com.example.template
 ```
 
-`sign` refuses a key that does not match `publisher.publicKey`. It writes `signature.json`: the SHA-256 of every file
-in the folder except `plugin.json` and `signature.json`, and an Ed25519 signature over `plugin.json` and that list,
-the payload SumaFile's verifier checks. Any file added to the folder later that `signature.json` does not list makes
-the signature invalid, so sign last. `verify` checks the folder the way SumaFile does and prints the fingerprint.
-`stage.ps1` always starts from an empty folder, so re-sign after every stage. SumaFile checks the signature when it
-scans plugins (at startup and on Rescan), not each time the plugin loads.
+`verify` checks the folder the way SumaFile does. What a signature proves, the `signature.json` format and what `sign`
+refuses are in the guide under [Signing](../../docs/PLUGINS.md#signing).
 
 ## Package it as a `.sfplugin`
 
@@ -144,26 +149,34 @@ Compress-Archive -Path "$folder\*" -DestinationPath target\com.example.template.
 Move-Item target\com.example.template.zip target\com.example.template-0.1.0.sfplugin -Force
 ```
 
-Users install it with Settings > Plugins > Install from file, which unzips it into SumaFile's `plugins` folder; the
-plugin then waits for their consent.
+Users install it with Settings > Plugins > Install from file; the plugin then waits for their consent. What the
+installer refuses is in the guide under
+[Packaging and installing a `.sfplugin`](../../docs/PLUGINS.md#packaging-and-installing-a-sfplugin).
 
 ## Make it yours
 
-Rename consistently, then rebuild and re-stage:
+Rename consistently, then rebuild and re-stage. `stage.ps1` names the UI project, the UI assembly and the backend
+executable itself, so it changes with them:
 
 - the id: `plugin.json` `id`, `PLUGIN_ID` in `backend/src/handler.rs`, `EchoCommand` in `ExamplePlugin.cs` and
   `$pluginId` in `stage.ps1` (the staged folder is named after it);
 - `name`, `version` (keep `plugin.json`, `backend/Cargo.toml` and `ui/Directory.Build.props` on the same version) and
-  `publisher`;
-- the UI assembly and entry type (`ui.assembly`, `ui.entryType`), and the backend executable (`backend.executable`,
-  the crate's `[[bin]]` name);
+  `publisher` (`plugin.json`, and `<Authors>` in `ui/Directory.Build.props`);
+- the UI assembly: `ui.assembly` in `plugin.json`, `<AssemblyName>` in `Example.Plugin.csproj`, and
+  `Example.Plugin.dll` in `stage.ps1`. When the project folder or the `.csproj` file is renamed, `$uiProject` in
+  `stage.ps1` (`ui\Example.Plugin\Example.Plugin.csproj`) changes too;
+- the entry type: `ui.entryType` in `plugin.json` is the namespace and class name in `ExamplePlugin.cs`
+  (`Example.Plugin.ExamplePlugin`); `<RootNamespace>` in `Example.Plugin.csproj` names the same namespace;
+- the backend executable: `backend.executable` in `plugin.json`, the `[[bin]]` name in `backend/Cargo.toml` and
+  `example-plugin-backend.exe` in `stage.ps1`;
 - the methods: add them to `ExampleHandler::handle`, with tests on `HostClient::fake`.
 
 ## Outside this repository
 
-Inside SumaFile the template takes the SDK and the helper crate from the repository by path. Neither package is
-published yet, so a copy outside the repository builds against a local SumaFile checkout (`<checkout>` below, such as
-`C:\src\SumaFile`):
+Inside SumaFile the template takes the SDK and the helper crate from the repository by path. The repository does not
+publish either, so a copy outside it builds against a local SumaFile checkout (`<checkout>` below, such as
+`C:\src\SumaFile`). The guide explains these steps under [Packages](../../docs/PLUGINS.md#packages), including the
+NuGet cache to clear after packing the SDK again. With the template's files they are:
 
 1. In the checkout, pack the SDK. This writes `<checkout>\target\packages\SumaFile.PluginSdk.1.0.0.nupkg`:
 
@@ -172,8 +185,7 @@ published yet, so a copy outside the repository builds against a local SumaFile 
    npm run pack:sdk
    ```
 
-2. Next to the copy's `plugin.json`, add a `nuget.config` with that folder as a package source (nuget.org stays
-   available through your user configuration):
+2. Next to the copy's `plugin.json`, add a `nuget.config` with that folder as a package source:
 
    ```xml
    <?xml version="1.0" encoding="utf-8"?>
@@ -185,20 +197,16 @@ published yet, so a copy outside the repository builds against a local SumaFile 
    ```
 
 3. In `ui/Example.Plugin/Example.Plugin.csproj`, replace the `ProjectReference` to `SimpleFile.PluginSdk.csproj`
-   (the whole element, with its `Private` and `ExcludeAssets`) with the same compile-only reference to the package:
+   (the whole element, with its `Private` and `ExcludeAssets`) with the same compile-only reference to the package,
+   then run `dotnet restore --force-evaluate` in `ui/Example.Plugin` to rewrite `packages.lock.json`:
 
    ```xml
    <PackageReference Include="SumaFile.PluginSdk" Version="1.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
    ```
 
-   then run `dotnet restore --force-evaluate` in `ui/Example.Plugin` to rewrite `packages.lock.json`, and build as
-   usual. `ui/Directory.Build.props` and `ui/Directory.Build.targets` import SumaFile's build settings only when they
-   find them, and otherwise set the same defaults themselves. NuGet caches a package by id and version: after packing
-   the SDK again at the same version, delete `%USERPROFILE%\.nuget\packages\sumafile.pluginsdk\1.0.0` before you
-   restore.
-
-4. In `backend/Cargo.toml`, point both dependencies on `sumafile-plugin` at the checkout's crate (it finds its own
-   dependency, `simplefile-ipc`, in the checkout by path):
+4. In `backend/Cargo.toml`, point both dependencies on `sumafile-plugin` at the checkout's crate. The crate needs
+   Rust 1.98.0 or newer, and the checkout's `rust-toolchain.toml` does not apply outside the checkout; with an older
+   default toolchain, use `rustup toolchain install 1.98.0` and `cargo +1.98.0 test`:
 
    ```toml
    [dependencies]
@@ -208,25 +216,13 @@ published yet, so a copy outside the repository builds against a local SumaFile 
    sumafile-plugin = { path = "C:/src/SumaFile/crates/sumafile-plugin", features = ["test-support"] }
    ```
 
-   The crate needs Rust 1.98.0 or newer (its `rust-version`); the checkout's `rust-toolchain.toml` does not apply
-   outside it, so use `rustup toolchain install 1.98.0` and `cargo +1.98.0 test` if your default toolchain is older.
-   A copy outside any Cargo workspace builds on its own (its target folder is `backend\target`, which `stage.ps1`
-   finds through `cargo metadata`); a copy inside another workspace joins that workspace's `members`.
+5. Copy `scripts/sign-plugin.mjs` from the checkout; it is a single file with no dependencies.
 
-5. `scripts/sign-plugin.mjs` is a single Node file with no dependencies: copy it alongside.
+`ui/Directory.Build.props` and `ui/Directory.Build.targets` import SumaFile's build settings only when they find them;
+outside the repository the props file sets the same defaults itself. A copy outside any Cargo workspace builds on its
+own, with `backend\target` as its target folder; a copy inside another workspace joins that workspace's `members`.
 
-Once the packages are published, drop the `nuget.config` source (the `PackageReference` stays as it is) and use the
-published crate instead of the path:
-
-```toml
-[dependencies]
-sumafile-plugin = "1"
-
-[dev-dependencies]
-sumafile-plugin = { version = "1", features = ["test-support"] }
-```
-
-The SDK version is the plugin's `sdkVersion` (`1.0.0`). SumaFile loads a plugin whose `sdkVersion` has its own SDK's
-major version and a minor version no higher than its own, because the SDK assembly binds by major.minor. A plugin is
-bound to the versions of the assemblies SumaFile shares with it (the SDK, WinUI and the Windows App SDK,
-`CommunityToolkit.Mvvm`); [docs/PLUGINS.md](../../docs/PLUGINS.md#host-shared-assemblies) lists them.
+The SDK version in the package reference is the plugin's `sdkVersion` (`1.0.0`). Which SDK versions a SumaFile build
+loads, and the assembly versions a plugin is bound to, are in the guide under
+[`plugin.json` reference](../../docs/PLUGINS.md#pluginjson-reference) and
+[Host-shared assemblies](../../docs/PLUGINS.md#host-shared-assemblies).

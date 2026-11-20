@@ -1,5 +1,7 @@
 # Plugin System Phase 1 Implementation Plan
 
+> **Status:** implemented; shipped in 1.1.0. The plugin, plugin-data and approval locations under `%LOCALAPPDATA%\SumaFile` that it names were moved into the installation folder in phase 4. This is a record of the plan as written; the task boxes below were not kept up to date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the plugin SDK, the host that discovers, approves, loads and talks to plugins, the one archive-engine hook in the Rust service, a Settings > Plugins page, and a fixture plugin that proves every phase-1 slot, while Git, FTP/SFTP and 7-Zip stay internal.
