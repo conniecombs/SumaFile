@@ -7,9 +7,11 @@ Release date: 2026-05-29
 > licensed under the MIT License. The licensing language below records the
 > terms under which SimpleFile 1.1.0 was originally published.
 > This file is a historical SimpleFile 1.1.0 snapshot, not the SumaFile 1.1.0
-> release notes, which are in `docs/RELEASE_1.1.0.md`. Current SumaFile
+> release notes, which are in `docs/RELEASE_1.1.0.md`. These are the notes of
+> an old version of the old product, kept as a record. Current SumaFile
 > release validation, packaging, and runtime behavior use the WinUI host plus
-> Rust IPC service documented in `README.md` and `docs/RELEASE_1.0.3.md`.
+> Rust IPC service documented in `README.md`; `docs/CHANGELOG.md` lists the
+> current version and links its release notes.
 
 ## Summary
 
@@ -18,6 +20,10 @@ repository and supersedes the unreleased local `v1.0.4` tag. It combines the
 Svelte/Vite shell migration, release-readiness hardening, Windows installer
 smoke coverage, startup-location fixes, safer file-operation conflict behavior,
 and the new proprietary project license.
+
+The version numbers in these notes, 1.1.0 and the `v1.0.4` tag included, are
+SimpleFile's own. They are not SumaFile 1.1.0 or SumaFile 1.0.4: SumaFile's
+numbering started again at 1.0.0.
 
 ## Licensing at Release
 

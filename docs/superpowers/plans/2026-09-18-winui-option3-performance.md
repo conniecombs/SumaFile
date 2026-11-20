@@ -1,5 +1,7 @@
 # WinUI Option 3 Performance Implementation Plan
 
+> **Status:** implemented in part; shipped in 1.0.1. Tasks 1 and 2 (lazy drive probes, the virtualized Details list) shipped. Task 3 was not carried out as written: the startup budget still allows a drive refresh after a minimum delay (`src-winui/SimpleFile.Core/StartupTimingBudget.cs`). This is a record of the plan as written; the task boxes below were not kept up to date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fully fix SumaFile WinUI startup and interaction choppiness by making drive probing lazy/cancellable and replacing the non-virtualized details list with a virtualized path.

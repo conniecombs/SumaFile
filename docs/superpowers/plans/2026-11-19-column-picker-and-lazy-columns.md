@@ -1,5 +1,7 @@
 # Column picker and lazy columns — implementation plan
 
+> **Status:** implemented; shipped in 1.1.4. This is a record of the plan as written; the task boxes below were not kept up to date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A right-click column picker in the Details view with three new free columns (Created, Accessed, Attributes) and five lazy columns (Dimensions, Duration, Date taken, Camera, Pages) whose values, like folder Size and Items, are read on demand through one streaming service call, cached, and filled for the rows on screen.

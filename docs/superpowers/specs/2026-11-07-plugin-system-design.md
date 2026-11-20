@@ -1,8 +1,8 @@
 # SumaFile plugin system
 
-**Status:** implemented through phase 5 (§14) on the `plugin-system-phase-1`
-branch; unreleased. Where this design and the code or `docs/PLUGINS.md` differ,
-the code is right.
+**Status:** implemented through phase 5 (§14); shipped in 1.1.0. This is a
+record of the design as planned and is no longer kept up to date. Where it
+and the code or `docs/PLUGINS.md` differ, the code is right.
 **Date:** 2026-11-07
 **Scope:** a third-party plugin system for SumaFile, and the migration of Git,
 FTP/SFTP and 7-Zip support out of the core product into three first-party

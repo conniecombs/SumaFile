@@ -1,5 +1,8 @@
 # SumaFile 1.0.4 UX Recommendations (spec)
 
+> **Status:** implemented; shipped in 1.0.4. This is a record of the design as
+> planned; it was not kept up to date afterwards.
+
 Source: design review of the shipping WinUI 3 host on 2026-11-06 (toolbar, panes,
 sidebar, context menus, dialogs, transfers, settings, shortcuts, preview, Git,
 FTP/SFTP manager), cross-checked against `docs/UI_AUDIT_2026-11-05.md`. Items

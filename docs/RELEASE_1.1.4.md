@@ -22,9 +22,10 @@ there are three new IPC methods.
   separators in every source and destination before it plans anything, so no
   other source of such a path can reach the rename.
 - **The progress bar no longer runs backwards.** A file that fails after its
-  last byte keeps its bytes in the readout, a file waiting for its retry
-  starts from where its partial stands, and the final error report counts
-  what was written.
+  last byte keeps its bytes in the readout, and the final error report counts
+  what was written. A file queued for a later retry is not resumed: the failed
+  attempt's partial file is removed and the retry copies the file again from
+  the start, while the readout keeps the bytes already counted.
 - **The last step of a copy is more patient and says more.** The rename that
   publishes a fully copied file waits out a file held open by a virus scanner
   or indexer with the whole retry budget instead of three attempts. When

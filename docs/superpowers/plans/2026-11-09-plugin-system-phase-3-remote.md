@@ -1,5 +1,7 @@
 # Plugin System Phase 3: FTP/SFTP Plugin Implementation Plan
 
+> **Status:** implemented; shipped in 1.1.0. The plugin, plugin-data and approval locations under `%LOCALAPPDATA%\SumaFile` that it names were moved into the installation folder in phase 4. This is a record of the plan as written; the task boxes below were not kept up to date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move SumaFile's whole FTP/FTPS/SFTP feature out of core into the first-party plugin `com.sumafile.remote`: a Rust backend that owns profiles, credentials, sessions, both providers and the transfer engine, and a C# UI assembly built in code that contributes the FTP/SFTP manager window, the Connections sidebar section, a custom settings page and the `ftp-sftp-manager` command. Remote transfers become Transfers-window rows with Cancel. The host gains the sidebar-section slot, plugin-owned secondary windows, dialogs through the host gate and the custom settings page slot. Core loses the 13 remote IPC methods. Saved profiles and passwords keep working after the upgrade.

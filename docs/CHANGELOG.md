@@ -10,7 +10,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
-## [1.1.4] - prepared 2026-11-20
+## [1.1.4] - 2026-11-20
 
 See the [v1.1.4 release notes](RELEASE_1.1.4.md).
 
@@ -26,8 +26,10 @@ See the [v1.1.4 release notes](RELEASE_1.1.4.md).
   service now collapses repeated separators in every source and destination it
   receives before planning.
 - A file that fails after its last byte no longer makes the progress bar run
-  backwards: its bytes stay in the readout, a deferred retry resumes from where
-  the partial stands, and the final error report counts what was written.
+  backwards: its bytes stay in the readout, and the final error report counts
+  what was written. A file queued for a later retry is not resumed: the failed
+  attempt's partial file is removed and the retry copies the file again from
+  the start, while the readout keeps the bytes already counted.
 - The rename that publishes a fully copied file waits out a file held open by
   a scanner or indexer with the whole retry budget rather than three attempts;
   when the Replace flow fails while moving the existing file aside, the error
@@ -66,9 +68,13 @@ See the [v1.1.4 release notes](RELEASE_1.1.4.md).
   columns. Three IPC methods: `get_entry_facts` (streams `entry-facts`
   notifications), `cancel_entry_facts`, `put_entry_facts`.
 
+### Dependencies
+
+- Updated the NuGet package `System.Drawing.Common` from 10.0.11 to 10.0.15.
+
 ---
 
-## [1.1.3] - prepared 2026-11-18
+## [1.1.3] - 2026-11-18
 
 See the [v1.1.3 release notes](RELEASE_1.1.3.md).
 
@@ -78,23 +84,6 @@ See the [v1.1.3 release notes](RELEASE_1.1.3.md).
   every subfolder as soon as it opens, instead of after a "Calculate totals"
   click. The one button stops the walk, and starts it again once stopped or
   failed; closing the dialog stops it too.
-
-### CI and maintenance
-
-- Dependabot's NuGet updates failed the locked restore (NU1004) because
-  Dependabot regenerates the lock file of the project it bumps but not those
-  of the projects that reference it. A `nuget-locks` maintenance recipe now
-  repairs that: it applies the pull request's package versions to current
-  main, restores every lock file and proposes a superseding pull request,
-  which the merge gate verifies by replaying the restore. Plugin and template
-  projects join the dependency-only merge allowlist.
-- `System.Drawing.Common` is back on the .NET 10 line (10.0.11); the 11.0.0
-  bump had mixed the next .NET's runtime packages into the app build.
-  `npm run check:dotnet-packages` keeps `System.*` and `Microsoft.Extensions.*`
-  on the targeted .NET's major.
-- The Windows UI smoke has a `thumbnails` scenario: a folder of camera-like
-  photos with embedded previews and portrait orientation tags, timed for the
-  viewport, cold and warm, with every portrait checked to come out upright.
 
 ### Thumbnails
 
@@ -114,8 +103,22 @@ See the [v1.1.3 release notes](RELEASE_1.1.3.md).
   not used. The preview pane and Properties ask for larger thumbnails than
   cameras embed, so they still decode the photo at reduced size as in 1.1.2.
 
-### CI and releases
+### CI, releases and maintenance
 
+- Dependabot's NuGet updates failed the locked restore (NU1004) because
+  Dependabot regenerates the lock file of the project it bumps but not those
+  of the projects that reference it. A `nuget-locks` maintenance recipe now
+  repairs that: it applies the pull request's package versions to current
+  main, restores every lock file and proposes a superseding pull request,
+  which the merge gate verifies by replaying the restore. Plugin and template
+  projects join the dependency-only merge allowlist.
+- `System.Drawing.Common` is back on the .NET 10 line (10.0.11); the 11.0.0
+  bump had mixed the next .NET's runtime packages into the app build.
+  `npm run check:dotnet-packages` keeps `System.*` and `Microsoft.Extensions.*`
+  on the targeted .NET's major.
+- The Windows UI smoke has a `thumbnails` scenario: a folder of camera-like
+  photos with embedded previews and portrait orientation tags, timed for the
+  viewport, cold and warm, with every portrait checked to come out upright.
 - A release run stops at validation when its version is already published;
   a draft can still be rebuilt.
 - Dependabot's NuGet updates: the three packages `docs/PLUGINS.md` pins for
@@ -124,10 +127,28 @@ See the [v1.1.3 release notes](RELEASE_1.1.3.md).
 - The Windows UI smoke waits for the state each step needs instead of fixed
   delays in five places, and reports managed memory figures that can be
   compared between runs (`liveManagedBytes`, `allocatedBytes`).
+- Dependabot ignores the three packages `docs/PLUGINS.md` pins
+  (`CommunityToolkit.Mvvm`, `Microsoft.Windows.SDK.BuildTools` and
+  `Microsoft.WindowsAppSDK`) altogether: left only out of the grouped update,
+  each arrived as a failing pull request per project directory. A bump of one
+  is made by hand, together with that table.
+- The merge gate closes maintenance proposals that can no longer merge: one
+  that `main` has moved past, and a lock-file repair whose Dependabot pull
+  request has closed or moved. Each is closed with a note saying why. See
+  [CI maintenance](CI_MAINTENANCE.md).
+
+### Dependencies
+
+- Updated the Rust crates `rusqlite` from 0.41.1 to 0.43.0, `zip` from 9.5.0
+  to 9.6.0 and `ureq` from 3.5.1 to 3.5.2.
+- Updated the NuGet packages `Markdig` from 1.3.2 to 1.6.0,
+  `Microsoft.Extensions.DependencyInjection` from 10.0.0 to 10.0.15,
+  `System.Data.OleDb` from 9.0.6 to 9.0.23, `Microsoft.NET.Test.Sdk` from
+  18.9.0 to 18.12.0 and `xunit.runner.visualstudio` from 4.0.0 to 4.0.1.
 
 ---
 
-## [1.1.2] - prepared 2026-11-18
+## [1.1.2] - 2026-11-18
 
 See the [v1.1.2 release notes](RELEASE_1.1.2.md).
 
@@ -155,7 +176,7 @@ See the [v1.1.2 release notes](RELEASE_1.1.2.md).
 
 ---
 
-## [1.1.1] - prepared 2026-11-17
+## [1.1.1] - 2026-11-17
 
 See the [v1.1.1 release notes](RELEASE_1.1.1.md).
 
@@ -212,7 +233,7 @@ See the [v1.1.1 release notes](RELEASE_1.1.1.md).
 
 ---
 
-## [1.1.0] - prepared 2026-11-12
+## [1.1.0] - 2026-11-12
 
 ### The plugin system
 
@@ -308,7 +329,7 @@ Developed as the Beta branch. See the
 
 ---
 
-## [1.0.4] - prepared 2026-11-06
+## [1.0.4] - 2026-11-06
 
 - Context menus grey out unavailable commands, Delete is a direct item, and
   the More menu keeps only toolbar, Tools, Profiles and pane commands.
@@ -333,7 +354,7 @@ Developed as the Beta branch. See the
 
 ---
 
-## [1.0.3] - prepared 2026-11-06
+## [1.0.3] - 2026-11-06
 
 - The omnibar combines navigation, commands, search and filtering. Multi-selection
   survives refreshes, previews release media when closed, and dialogs respect DPI,
@@ -353,7 +374,9 @@ Developed as the Beta branch. See the
 
 ## [1.0.2] - 2026-11-05
 
-Published November 5, 2026. The [v1.0.2 release](https://github.com/conniecombs/SumaFile/releases/tag/v1.0.2) contains the Windows downloads.
+Tagged November 5, 2026 as [v1.0.2](https://github.com/conniecombs/SumaFile/releases/tag/v1.0.2).
+No GitHub release is published for the tag, so the Releases page has no
+Windows downloads for this version.
 The baseline is the published v1.0.1 tag (October 20, 2026), not the earlier
 checklist date. See [complete release notes](RELEASE_1.0.2.md) for all 19
 application commits, dependency changes, upgrade instructions and limitations.
@@ -415,6 +438,8 @@ application commits, dependency changes, upgrade instructions and limitations.
 
 ## [1.0.1] - 2026-10-20
 
+See the [v1.0.1 release checklist](RELEASE_1.0.1.md).
+
 ### Added
 - Settings now opens as a standalone, resizable WinUI window with `NavigationView`
   categories, a scrollable workspace, explicit Save/Cancel commands, and normal
@@ -425,6 +450,23 @@ application commits, dependency changes, upgrade instructions and limitations.
 - Git integration now has a bottom panel with repository summary, changed-path
   rows, diff, stage, unstage, discard, fetch, pull, push, and commit actions.
   Settings -> Behavior can completely disable the Git UI and backend calls.
+- FTP/SFTP manager (Tools -> FTP/SFTP Manager) with saved FTP, FTPS and SFTP
+  profiles. A profile signs in with a password, anonymously, through an SSH
+  agent or with a private key, can be tested before it is saved, and can keep
+  its password or passphrase in Windows Credential Manager. A connected
+  profile browses remote folders with create folder, upload, download, rename,
+  delete, refresh and disconnect actions. Plain FTP requires an explicit
+  insecure-connection acknowledgement. Profiles are not mounted into the panes.
+- The sidebar lists the saved FTP/SFTP profiles and opens the manager on the
+  chosen one, and the manager browses a local folder beside the remote one for
+  uploads and downloads.
+- FTP/SFTP folder uploads and downloads are recursive and streamed, with byte
+  progress, cancellation, per-item outcomes, retry of incomplete selections,
+  and report, skip, replace or keep-both conflict choices. Existing files are
+  preserved until the transfer of their replacement completes.
+- Markdown previews now render through Markdig with GitHub-flavored tables and
+  task lists, and the preview waits for WebView2 to initialize before it
+  navigates to HTML content.
 
 ### Changed
 - The published tag includes MIT licensing consistently across the license text,
@@ -435,6 +477,22 @@ application commits, dependency changes, upgrade instructions and limitations.
   VIProductVersion all use `1.0.1`.
 - Toolbar overflow and context menu labels now resolve through the shared app
   command catalog so customized command surfaces keep consistent naming.
+- Drive details are now probed lazily. The light drive listing skips
+  disk-space queries for network drives and for fixed drives whose file system
+  looks remote, and one drive is resolved on demand (`list_drives` with
+  `mode: "drive"` and a path).
+- The Details view now renders through a virtualized `ListView` instead of
+  creating a row control for every entry of a folder up front.
+- `.7z` archives now use a 7-Zip console tool bundled with SumaFile instead of
+  a separately installed 7-Zip.
+- Node, Rust and .NET versions are now pinned in `.node-version`,
+  `rust-toolchain.toml` and `global.json`. npm and NuGet lock files are
+  committed, and CI restores in locked mode.
+- A maintenance workflow (`maintenance.yml`) now retries or proposes bounded
+  repairs for failed CI runs and checks weekly for toolchain updates.
+  Dependency updates and those repairs merge only through a validated merge
+  policy. See [CI maintenance](CI_MAINTENANCE.md). `npm run release:prepare`
+  previews or applies a coordinated release-version change.
 
 ### Fixed
 - Removed stale merge-conflict markers from the WinUI settings branch.
@@ -442,9 +500,17 @@ application commits, dependency changes, upgrade instructions and limitations.
 - Release builds now report MSI/package lock holders without failing on
   singleton PowerShell pipeline output.
 
+### Removed
+- The optional WinRAR install flow under Settings -> Tools, with its four IPC
+  methods (`check_rar_installed`, `prepare_rar_install`, `discard_rar_install`
+  and `install_rar`). RAR archives are listed and extracted by built-in code;
+  creating RAR archives is not supported.
+
 ---
 
 ## [1.0.0] - 2026-09-02
+
+See the [v1.0.0 release checklist](RELEASE_1.0.0.md).
 
 ### Added
 - Recycle Bin is a first-class location (Quick Access). Restore, permanent delete, and Empty Recycle Bin work from the pane.
@@ -495,9 +561,20 @@ application commits, dependency changes, upgrade instructions and limitations.
   destination after join/rename (ZIP/TAR/RAR), and TAR skips symlink/special
   entries so unpack cannot plant out-of-tree links.
 
+### Removed
+- Cloud-drive support through rclone and WinFsp, as described under
+  SimpleFile 1.0.0: the Google Drive, OneDrive, Dropbox, pCloud and
+  S3-compatible providers, drive-letter mounts, cloud-to-cloud transfers and
+  `CLOUD_DRIVES.md`. Account-backed storage integrations are not part of
+  1.0.0; local folders, local drives, removable media, mapped network shares
+  and archives are the supported storage.
+- macOS and Linux builds. CI and the release workflow build Windows x64 only,
+  and the macOS- and Linux-specific backend code (drive enumeration, terminal
+  launch, Unix metadata and symlink handling) was removed.
+
 ---
 
-## [1.1.0] - 2026-05-29
+## [SimpleFile 1.1.0] - 2026-05-29
 
 ### Added
 - Local release validation now includes repeatable Windows smoke tests for the
@@ -845,12 +922,18 @@ application commits, dependency changes, upgrade instructions and limitations.
 
 ---
 
-[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.1.4...HEAD
+[1.1.4]: https://github.com/conniecombs/SumaFile/compare/v1.1.3...v1.1.4
+[1.1.3]: https://github.com/conniecombs/SumaFile/compare/v1.1.2...v1.1.3
+[1.1.2]: https://github.com/conniecombs/SumaFile/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/conniecombs/SumaFile/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/conniecombs/SumaFile/compare/v1.0.4...v1.1.0
+[1.0.4]: https://github.com/conniecombs/SumaFile/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/conniecombs/SumaFile/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/conniecombs/SumaFile/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/conniecombs/SumaFile/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/conniecombs/SumaFile/releases/tag/v1.0.0
-[1.1.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.3...v1.1.0
+[SimpleFile 1.1.0]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.3...v1.1.0
 [SimpleFile 1.0.3]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.2...v1.0.3
 [SimpleFile 1.0.2]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.1...v1.0.2
 [SimpleFile 1.0.1]: https://github.com/conniecombs/SimpleFile-Windows/compare/v1.0.0...v1.0.1

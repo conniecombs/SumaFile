@@ -1,5 +1,7 @@
 # FTP/SFTP Manager Design
 
+> **Status:** implemented; shipped in 1.0.1, then moved into the bundled FTP/SFTP plugin (`plugins/remote`) in 1.1.0, so the `crates/simplefile-core/src/remote` and `crates/simplefile-service/src/remote` paths and the `remote_*` IPC methods it names no longer exist. This is a record of the design as planned; it was not kept up to date afterwards.
+
 ## Goal
 
 Build a native FTP/SFTP manager for SumaFile that starts as a dedicated transfer manager surface and grows into normal remote browsing once the contracts are proven. The first user-visible milestone must let a user create remote connection profiles, connect, browse a remote directory, create folders, delete/rename entries, and upload/download through the existing transfer-progress UX.

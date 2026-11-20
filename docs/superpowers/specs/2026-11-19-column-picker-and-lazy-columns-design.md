@@ -1,5 +1,8 @@
 # Column picker and lazy columns
 
+> **Status:** implemented; shipped in 1.1.4. This is a record of the design as
+> planned; it was not kept up to date afterwards.
+
 Design agreed in conversation on 2026-11-19. Implementation follows the plan in
 `docs/superpowers/plans/2026-11-19-column-picker-and-lazy-columns.md`.
 

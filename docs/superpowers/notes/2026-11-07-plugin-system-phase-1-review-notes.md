@@ -1,5 +1,7 @@
 # Plugin system phase 1: review notes and controller rulings
 
+> **Status:** closed record, not maintained. Despite its name it covers plugin system phases 1 to 5: the phase 1 review, then the rulings, closures and reviews of the later phases. The plugin system shipped in 1.1.0; where these notes call it unreleased, or the version 1.0.4, that was true when they were written. The items the last paragraph leaves for the owner to decide have no ruling recorded here.
+
 Branch `plugin-system-phase-1`, final commit 487a2df. Source: the subagent-driven-development ledger for docs/superpowers/plans/2026-11-07-plugin-system-phase-1.md. Phase 2 planning should start from the follow-ups below.
 
 ## Final whole-branch review

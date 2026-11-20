@@ -1,5 +1,7 @@
 # Plugin System Phase 2: 7-Zip Plugin Implementation Plan
 
+> **Status:** implemented; shipped in 1.1.0. The plugin, plugin-data and approval locations under `%LOCALAPPDATA%\SumaFile` that it names were moved into the installation folder in phase 4. This is a record of the plan as written; the task boxes below were not kept up to date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move 7-Zip out of SumaFile's core into the first-party plugin `com.sumafile.sevenzip`. Plugin archive formats get full in-pane browsing, reading and mutation. Plugin-format extract and create run as cancellable Transfers rows with progress. Bundled plugins are trusted without a consent dialog, and the release payload ships the plugin under `plugins\com.sumafile.sevenzip`.

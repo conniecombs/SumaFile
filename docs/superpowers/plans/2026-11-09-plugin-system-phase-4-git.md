@@ -1,5 +1,7 @@
 # Plugin System Phase 4: Git Plugin Implementation Plan
 
+> **Status:** implemented; shipped in 1.1.0. This is a record of the plan as written; the task boxes below were not kept up to date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** First keep every plugin file inside SumaFile's installation folder and close the phase 3 carry-overs. Then give the host its side-panel and row-decoration slots, and move SumaFile's whole Git feature out of core into the first-party plugin `com.sumafile.git`: a Rust backend built from `git.rs`, a code-built C# UI with the workbench panel, ten commands, a context-menu group, a toolbar toggle and a startup-activated row decoration provider. Core loses the 11 Git IPC methods and every Git surface, and a default install keeps working as before.
