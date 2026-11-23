@@ -48,11 +48,34 @@ public sealed class TextFitTests
     }
 
     [Fact]
-    public void FileName_ShrinksTheStartBeforeItGivesUpTheEnd()
+    public void FileName_ShrinksTheStartThenTheEndAndGivesUpTheExtensionLast()
     {
-        Assert.Equal("M…summer.mkv", TextFit.FileName("My holiday film from the summer.mkv", Chars(12)));
-        // Not even one leading character fits beside the kept end: cut at the end instead.
-        Assert.Equal("My holi…", TextFit.FileName("My holiday film from the summer.mkv", Chars(8)));
+        const string name = "My holiday film from the summer.mkv";
+        Assert.Equal("M…summer.mkv", TextFit.FileName(name, Chars(12)));
+        // No leading character fits beside "summer.mkv": the end shrinks to the extension alone.
+        Assert.Equal("My….mkv", TextFit.FileName(name, Chars(8)));
+        Assert.Equal("M….mkv", TextFit.FileName(name, Chars(6)));
+        // Not even one character fits beside the extension: cut at the end instead.
+        Assert.Equal("My h…", TextFit.FileName(name, Chars(5)));
+    }
+
+    [Fact]
+    public void FileName_KeepsTheWholeExtensionOfAShortName()
+    {
+        // The extension is more than a third of the name; the kept end must still not cut into it.
+        Assert.Equal("Re….docx", TextFit.FileName("Report.docx", Chars(8)));
+        Assert.Equal("R….docx", TextFit.FileName("Report.docx", Chars(7)));
+        Assert.Equal("archi…r.gz", TextFit.FileName("archive.tar.gz", Chars(10)));
+    }
+
+    [Fact]
+    public void FileName_TreatsOnlyAShortLastPartWithoutSpacesAsAnExtension()
+    {
+        Assert.Equal("READ…NG_NAME", TextFit.FileName("README_WITH_A_LONG_NAME", Chars(12)));
+        // A full stop in a title, a leading dot and a very long last part are not extensions.
+        Assert.Equal("Dr. S…long title", TextFit.FileName("Dr. Strange and the long title", Chars(16)));
+        Assert.Equal(".git…long-name", TextFit.FileName(".gitignore-with-a-long-name", Chars(14)));
+        Assert.Equal("downloa…-partial", TextFit.FileName("download.sumafile-partial", Chars(16)));
     }
 
     [Fact]

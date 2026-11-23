@@ -11,8 +11,11 @@ public static class TextFit
 {
     public const string Ellipsis = "…";
 
-    // The end of a file name kept by FileName: at most this many characters, and at most a third of the name.
+    // The end of a file name kept by FileName: at most this many characters and at most a third of the name,
+    // but never less than the whole extension.
     private const int MaxFileNameTail = 12;
+    // The part after the last full stop is an extension when it is this short and has no white space.
+    private const int MaxExtensionLength = 10;
 
     /// <summary>The text, or its start followed by the mark.</summary>
     public static string End(string text, Func<string, bool> fits)
@@ -29,7 +32,8 @@ public static class TextFit
 
     /// <summary>
     /// A file name, or its start, the mark, and its end. The end carries the extension and the last characters
-    /// before it, which is where numbered files differ.
+    /// before it, which is where numbered files differ. When no start fits beside that end, the end shrinks to
+    /// the extension alone; the extension is given up last, for a cut at the end.
     /// </summary>
     public static string FileName(string name, Func<string, bool> fits)
     {
@@ -39,9 +43,15 @@ public static class TextFit
         }
 
         var starts = StringInfo.ParseCombiningCharacters(name);
-        var tailCount = Math.Min(MaxFileNameTail, starts.Length / 3);
-        if (tailCount > 0)
+        var extension = ExtensionCount(name, starts);
+        var usual = Math.Max(Math.Min(MaxFileNameTail, starts.Length / 3), extension);
+        foreach (var tailCount in usual == extension ? [usual] : new[] { usual, extension })
         {
+            if (tailCount == 0)
+            {
+                continue;
+            }
+
             var tail = name[starts[^tailCount]..].TrimStart();
             var kept = Largest(1, starts.Length - tailCount - 1,
                 count => fits(Head(name, starts, count) + Ellipsis + tail));
@@ -52,6 +62,36 @@ public static class TextFit
         }
 
         return End(name, fits);
+    }
+
+    /// <summary>
+    /// How many characters the extension takes, its full stop included; zero when the name has none. A leading
+    /// full stop (<c>.gitignore</c>), a last part with white space (<c>Dr. Strange</c>) and a very long last
+    /// part are not extensions.
+    /// </summary>
+    private static int ExtensionCount(string name, int[] starts)
+    {
+        var stop = name.LastIndexOf('.');
+        if (stop <= 0 || stop == name.Length - 1)
+        {
+            return 0;
+        }
+
+        var at = Array.BinarySearch(starts, stop);
+        if (at < 0 || starts.Length - at - 1 > MaxExtensionLength)
+        {
+            return 0;
+        }
+
+        for (var i = stop + 1; i < name.Length; i++)
+        {
+            if (char.IsWhiteSpace(name[i]))
+            {
+                return 0;
+            }
+        }
+
+        return starts.Length - at;
     }
 
     /// <summary>
