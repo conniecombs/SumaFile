@@ -100,8 +100,10 @@ public static class DropDestination
         IReadOnlyList<string> sources,
         string destination,
         Func<string, bool> destinationPathExists,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<string, bool>? isDirectoryNoFollow = null)
     {
+        isDirectoryNoFollow ??= NativePath.IsDirectoryNoFollow;
         var seenSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var conflicts = new List<string>();
         var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -116,7 +118,10 @@ public static class DropDestination
             }
 
             var sourceDuplicate = !seenSources.Add(name);
-            var destinationConflict = destinationPathExists(PathRules.JoinPath(destination, name));
+            var target = PathRules.JoinPath(destination, name);
+            var destinationConflict = destinationPathExists(target)
+                && !(isDirectoryNoFollow(target) && isDirectoryNoFollow(source)
+                    && !PathRules.PathsEqual(source, target));
             if ((sourceDuplicate || destinationConflict) && emitted.Add(name))
             {
                 conflicts.Add(name);

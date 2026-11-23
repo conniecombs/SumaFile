@@ -162,12 +162,16 @@ rename; what it points to is not copied.
 
 ### When the destination exists
 
-Before a transfer starts, SumaFile checks the names of the selected items
-against the destination folder and asks what to do with each one that exists:
-**Replace the existing file**, **Skip this file** or **Keep both**, with **Do
-this for all remaining conflicts**. A conflict found later (a file inside a
-folder that is being merged, or a file that appeared meanwhile) is reported
-when the pass ends and asked then.
+Copying or moving a folder into a same-name destination folder merges their
+contents automatically at each level. An empty destination folder fills immediately.
+Files with different names coexist. For example, if both folders contain
+`2025/family.jpg`, that file prompts for **Replace**, **Skip** or **Keep both**.
+A file and a folder occupying the same path also require a decision.
+
+SumaFile can ask about top-level conflicts before copying. Conflicts found
+inside a folder or created during a transfer are reported after the pass.
+An answer applies to that path. **Do this for all remaining conflicts**
+reuses the answer for subsequent conflicts in the same transfer.
 
 * **Replace.** The new file is written to its partial file first. Then the
   existing file is renamed to
@@ -180,8 +184,12 @@ when the pass ends and asked then.
 * **Skip.** The existing file stays and the item is reported as skipped.
 * **Keep both.** The new file is written as `name (1).ext`, or with the first
   free number.
-* **Folders.** An existing folder is merged, not replaced, and the answer
-  applies to each file inside it. Keep both on a folder creates `name (1)`.
+* **Undo and Redo.** A merge records the files it added and the folders it
+  created. Undo recycles copied files or moves files back to their source
+  paths. It removes a newly created directory only while it is empty. Redo
+  replays the recorded additions. A replaced file cannot be restored by Undo.
+  Skipping all files in a copy into an existing folder creates no Undo entry
+  unless the copy also created a directory.
 
 ### Moves
 
@@ -199,6 +207,8 @@ when the pass ends and asked then.
 * When all files are done, the source folders are removed, deepest first. A
   folder that still holds a failed or skipped file stays; a folder that holds
   anything else, such as a file added during the move, stays and is reported.
+  Resolving a conflict in a later pass moves the selected file. Its source
+  parent can remain empty because that pass processes only the file.
 * A same-drive move with Replace renames the existing file to a
   `.sumafile-replace-backup` name, renames the source into place and deletes
   the backup. It writes no ownership record.
@@ -429,7 +439,7 @@ files go through the same new pass.
 ### How a retried item recognizes what is already there
 
 A retried item is a file or a whole folder. A folder is walked again from its
-top. For each file the engine first looks at the destination: when a file is
+top. When you choose **Retry** after an error, the engine first looks at the destination: when a file is
 already there and matches the source by the [check mode](#check-modes), it
 counts as copied and is not copied again (in a move, its source is then
 deleted). A missing file is copied. A file that is there but does not match is
@@ -454,11 +464,11 @@ carries the message of its first failure.
 
 **What the choice decides.**
 
-* In every pass after the first (the items you retried, and the files whose
-  conflict you answered with Replace or Keep both), a destination file that
+* When you retry a failed item, a destination file that
   counts as already copied is left as it is and reported as done. With "Size
   only", a different file of the same size counts. "Always copy" does not
-  force a copy here; it compares content like Checksum.
+  force a copy here; it compares content like Checksum. An explicit Replace or
+  Keep both choice always performs the requested action, even for two matching files.
 * Checksum also verifies each copy. While a file is copied, a SHA-256 hash of
   the bytes read from the source is computed. After the last write the partial
   file is read back and hashed, and a difference fails the try as a transient

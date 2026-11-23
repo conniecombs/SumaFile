@@ -539,6 +539,15 @@ pub fn delete_verified_source_tree(
     manifest: &TreeCopyManifest,
     failed_sources: &[PathBuf],
 ) -> Result<(), String> {
+    delete_verified_source_tree_recording(root, manifest, failed_sources, |_| {})
+}
+
+pub fn delete_verified_source_tree_recording(
+    root: &Path,
+    manifest: &TreeCopyManifest,
+    failed_sources: &[PathBuf],
+    mut removed: impl FnMut(&Path),
+) -> Result<(), String> {
     let mut errors = Vec::new();
     manifest.files.visit(|file_path, expected| {
         if let Err(err) = delete_verified_source(file_path, expected) {
@@ -564,6 +573,8 @@ pub fn delete_verified_source_tree(
                 "Source directory retained [{}]: {error}",
                 dir_path.display()
             ));
+        } else {
+            removed(dir_path);
         }
     }
 

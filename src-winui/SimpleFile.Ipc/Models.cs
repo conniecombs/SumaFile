@@ -528,6 +528,37 @@ public sealed class TransferResult
     public string Source { get; set; } = "";
     [JsonPropertyName("destination")]
     public string Destination { get; set; } = "";
+
+    [JsonPropertyName("changes")]
+    public TransferChanges? Changes { get; set; }
+
+    [JsonIgnore]
+    public bool CanUndo => Changes is null || Changes.Files.Length != 0
+        || Changes.CreatedDirectories.Length != 0 || Changes.RemovedSourceDirectories.Length != 0;
+}
+
+public sealed class TransferChanges
+{
+    [JsonPropertyName("files")]
+    public string[] Files { get; set; } = [];
+    [JsonPropertyName("created_dirs")]
+    public string[] CreatedDirectories { get; set; } = [];
+    [JsonPropertyName("removed_source_dirs")]
+    public string[] RemovedSourceDirectories { get; set; } = [];
+    [JsonPropertyName("streamed_paths")]
+    public int StreamedPaths { get; set; }
+}
+
+public sealed class TransferChangeChunk
+{
+    [JsonPropertyName("operation_id")]
+    public string OperationId { get; set; } = "";
+    [JsonPropertyName("result_index")]
+    public int ResultIndex { get; set; }
+    [JsonPropertyName("field")]
+    public string Field { get; set; } = "";
+    [JsonPropertyName("paths")]
+    public string[] Paths { get; set; } = [];
 }
 
 public sealed class TransferFailure
@@ -559,7 +590,7 @@ public sealed class TransferItemRequest
     [JsonPropertyName("destination")]
     public string Destination { get; set; } = "";
 
-    /// <summary>"error", "skip", "replace" or "keep-both".</summary>
+    /// <summary>"error", "skip", "replace", "keep-both", or "create-only" for exclusive replay.</summary>
     [JsonPropertyName("action")]
     public string Action { get; set; } = "error";
 }

@@ -198,6 +198,32 @@ public class FileOperationServiceTests
     }
 
     [Fact]
+    public async Task CopyAsync_ReassemblesLargeMergeReceiptsByOperationAndRoot()
+    {
+        var ipc = new ConfigurableIpc();
+        ipc.CopyWithProgressHandler = (_, _, id, _, _) =>
+        {
+            void Chunk(string operation, int index, string field, string value) =>
+                ipc.Emit(Protocol.TransferChangesEvent, new TransferChangeChunk
+                {
+                    OperationId = operation, ResultIndex = index, Field = field, Paths = [value],
+                });
+            Chunk("another-copy", 0, "files", "unrelated");
+            Chunk(id!, 0, "files", "a");
+            Chunk(id!, 1, "created_dirs", "empty");
+            Chunk(id!, 0, "files", "b");
+            return Task.FromResult(new TransferResult[] {
+                new() { Changes = new() { StreamedPaths = 2 } },
+                new() { Changes = new() { StreamedPaths = 1 } },
+            });
+        };
+        var copied = await new FileOperationService(ipc).CopyAsync(["first", "second"], "dst", "error");
+        Assert.Equal(["a", "b"], copied[0].Changes!.Files);
+        Assert.Equal(["empty"], copied[1].Changes!.CreatedDirectories);
+        Assert.Equal(0, ipc.SubscriptionCount(Protocol.TransferChangesEvent));
+    }
+
+    [Fact]
     public async Task CopyAsync_ReportsProgressAndDisposesSubscription()
     {
         var seen = new List<ProgressUpdate>();

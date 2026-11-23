@@ -869,6 +869,7 @@ fn copy_file_stream_with_hash(
 #[derive(Debug)]
 pub(crate) enum FileOutcome {
     Copied {
+        reused: bool,
         version: SourceVersion,
         /// Where the file was published; differs from the plan after keep-both.
         destination: PathBuf,
@@ -922,7 +923,7 @@ fn resolve_file_conflict(
             }
             Ok(Some((dst.to_path_buf(), true)))
         }
-        ConflictAction::Error => Ok(Some((dst.to_path_buf(), false))),
+        ConflictAction::Error | ConflictAction::CreateOnly => Ok(Some((dst.to_path_buf(), false))),
         ConflictAction::Skip => {
             if !resume_existing && path_exists_no_follow(dst) {
                 Ok(None)
@@ -975,6 +976,7 @@ pub(crate) fn copy_file_with_progress_versioned(
             ctx.progress
                 .complete_file(*completed_bytes, src.to_string_lossy().to_string());
             return Ok(FileOutcome::Copied {
+                reused: true,
                 version,
                 destination: planned_dst.to_path_buf(),
             });
@@ -992,7 +994,13 @@ pub(crate) fn copy_file_with_progress_versioned(
 
     let exists = path_exists_no_follow(dst);
     let use_inplace = ctx.policy.inplace;
-    if use_inplace && exists && !replace_existing {
+    if exists && is_real_directory(dst) {
+        return Err(Failure::conflict(format!(
+            "destination exists with a different type: {}",
+            dst.display()
+        )));
+    }
+    if exists && !replace_existing && !ctx.resume_existing {
         return Err(Failure::conflict(conflict_for_existing_destination(dst)));
     }
     let staged_path = if use_inplace {
@@ -1115,6 +1123,7 @@ pub(crate) fn copy_file_with_progress_versioned(
             ctx.progress
                 .complete_file(*completed_bytes, src.to_string_lossy().to_string());
             Ok(FileOutcome::Copied {
+                reused: false,
                 version,
                 destination: dst.to_path_buf(),
             })
@@ -1210,6 +1219,7 @@ pub(crate) fn copy_symlink_with_progress(
     ctx.progress
         .complete_file(completed_bytes, src_path.to_string_lossy().to_string());
     Ok(FileOutcome::Copied {
+        reused: false,
         version,
         destination: dst_path.to_path_buf(),
     })
@@ -1322,6 +1332,7 @@ fn swap_source_into_place(source: &Path, dst: &Path) -> Result<(), Failure> {
 fn renamed_outcome(dst: &Path) -> Result<FileOutcome, Failure> {
     let version = capture_source_version_for_path(dst)?;
     Ok(FileOutcome::Copied {
+        reused: false,
         version,
         destination: dst.to_path_buf(),
     })

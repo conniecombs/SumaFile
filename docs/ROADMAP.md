@@ -72,13 +72,6 @@ on-demand column values have shipped. What remains:
 
 - Benchmark copy and move against Windows Explorer on SSD, HDD, USB, a network
   share and many small files, and on a physical NAS.
-- **A second pass can treat a different file as already copied.** Retried
-  items and answered conflicts go through the same second pass, and that pass
-  counts a destination file that matches the source by the check mode as done.
-  With "Size only", a conflict answered with Replace or Keep both writes
-  nothing when the two files have the same size, and a move then deletes the
-  source. Apply the check only to retried failures, never to a conflict the
-  user answered.
 - The options dialog says "Write directly to the destination" leaves partial
   files behind after a failure. The engine deletes the file it was writing,
   so after a failed or cancelled Replace with this option neither the old
@@ -167,9 +160,9 @@ Also open:
 - The archive viewer dialog can no longer be opened: the context-menu id that
   led to it is not produced any more, and no other control reaches it. Restore
   an entry point or remove the dialog.
-- There is no C# test of permanent delete, of redoing a copy, or of
-  `startup.log`. Three rows of the parity record are marked as passing
-  without an automated test.
+- Add C# coverage for permanent delete, ordinary whole-item copy redo and
+  `startup.log`. The merge-specific copy Undo/Redo regression is in
+  `UndoStackTests`.
 
 ## Service and storage
 

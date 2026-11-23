@@ -34,6 +34,8 @@ const PRIME_WINDOW: Duration = Duration::from_millis(150);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConflictAction {
     Error,
+    /// Exact Undo/Redo replay. Even a matching file or folder is a conflict.
+    CreateOnly,
     Skip,
     Replace,
     KeepBoth,
@@ -43,6 +45,7 @@ impl ConflictAction {
     pub(crate) fn parse(action: &str) -> Self {
         match action.trim().to_ascii_lowercase().as_str() {
             "skip" => Self::Skip,
+            "create-only" => Self::CreateOnly,
             "replace" => Self::Replace,
             "rename" | "keep-both" | "keep_both" => Self::KeepBoth,
             _ => Self::Error,
@@ -93,6 +96,8 @@ pub(crate) struct FileTask {
     pub symlink: bool,
     /// Selected directly by the user (reported in `committed`), not found by a walk.
     pub top_level: bool,
+    /// Existing destination root whose Undo receipt records this file.
+    pub merge_root: Option<usize>,
     /// Move: delete the verified source right after the file is published.
     /// Files inside staged trees are deleted after the tree is promoted instead.
     pub delete_source: bool,
@@ -153,6 +158,7 @@ pub(crate) struct CopyResult {
     pub failed_bytes: u64,
     /// Indices of completed top-level tasks, in completion order.
     pub completed: Vec<usize>,
+    pub reused: std::collections::HashSet<usize>,
     /// Final destinations that differ from the task's planned one (keep-both).
     pub destinations: BTreeMap<usize, PathBuf>,
     /// The completed top-level tasks themselves (source and planned destination).
@@ -174,6 +180,7 @@ impl CopyResult {
             bytes: 0,
             failed_bytes: 0,
             completed: Vec::new(),
+            reused: Default::default(),
             destinations: BTreeMap::new(),
             completed_tasks: BTreeMap::new(),
             skipped: Vec::new(),
@@ -221,7 +228,7 @@ struct DirQueue {
 
 #[derive(Default)]
 struct MarchState {
-    created_dirs: Vec<(usize, PathBuf, PathBuf)>,
+    created_dirs: Vec<(usize, usize, PathBuf, PathBuf)>,
     source_dirs: Vec<(usize, usize, PathBuf, SourceVersion)>,
     dir_failures: Vec<TaskFailure>,
 }
@@ -229,6 +236,7 @@ struct MarchState {
 /// Outcome of one selected directory after the walk, metadata and promotion.
 pub(crate) struct RootOutcome {
     pub manifest: TreeCopyManifest,
+    pub changes: Option<super::TransferChanges>,
     /// The root itself could not be created, promoted or recovered.
     pub error: Option<Failure>,
 }
@@ -238,6 +246,32 @@ pub(crate) struct SelectionResult {
     pub roots: Vec<RootOutcome>,
     /// Directories that could not be read, created or published (not files).
     pub dir_failures: Vec<TaskFailure>,
+}
+
+/// Open a real directory for merging or create it exclusively. Only the creator
+/// owns it for Undo, including when two transfers reach the same path together.
+fn prepare_directory(path: &Path, allow_merge: bool) -> Result<bool, Failure> {
+    if !super::execute::is_real_directory(path) {
+        match fs::create_dir(path) {
+            Ok(()) => return Ok(true),
+            Err(error) if simplefile_core::path_conflict::is_already_exists_error(&error) => {
+                if !super::execute::is_real_directory(path) {
+                    return Err(Failure::conflict(format!(
+                        "destination exists with a different type: {}",
+                        path.display()
+                    )));
+                }
+            }
+            Err(error) => return Err(Failure::io("Create destination directory", path, error)),
+        }
+    }
+    if !allow_merge {
+        return Err(Failure::conflict(
+            crate::transfer_staging::conflict_for_existing_destination(path),
+        ));
+    }
+    crate::transfer_journal::recover_directory(path)?;
+    Ok(false)
 }
 
 /// Walk every selected directory with `rclone fs/march`-style multi-checker
@@ -252,9 +286,6 @@ pub(crate) fn copy_selection(
     completed_bytes: &mut u64,
     session: &mut Session<'_>,
 ) -> SelectionResult {
-    use super::execute::is_real_directory;
-    use simplefile_core::path_conflict::create_dir_exclusive;
-
     let is_move = ctx.progress.operation_type == "move";
     let cancel = ctx.progress.cancel;
     let total_bytes = ctx.progress.total_bytes;
@@ -265,41 +296,26 @@ pub(crate) fn copy_selection(
     let mut manifests: Vec<Option<Arc<crate::transfer_manifest::DiskManifest>>> = Vec::new();
     let march_state = Mutex::new(MarchState::default());
     let mut initial_dirs = VecDeque::new();
+    let mut merged_roots = vec![false; roots.len()];
     let mut root_errors: Vec<Option<Failure>> = Vec::with_capacity(roots.len());
     for (root_index, root) in roots.iter().enumerate() {
         let mut root_error = None;
         let mut manifest = None;
-        let seed = (|| -> Result<(PathBuf, bool), Failure> {
-            let existing = is_real_directory(&root.destination);
-            if existing {
-                crate::transfer_journal::recover_directory(&root.destination)
-                    .map_err(Failure::from)?;
-                return Ok((root.destination.clone(), false));
-            }
-            if path_exists_no_follow(&root.destination) {
-                return Err(Failure::conflict(format!(
-                    "destination exists with a different type: {}",
-                    root.destination.display()
-                )));
-            }
-            // Folders are written under their final names from the start: no
-            // hidden staging tree. A cancelled or failed transfer keeps the
-            // files it already copied; each file is still staged and renamed
-            // on its own, so no half-written file is ever left under its name.
-            create_dir_exclusive(&root.destination)?;
-            march_state
-                .lock()
-                .expect("march state lock poisoned")
-                .created_dirs
-                .push((0, root.source.clone(), root.destination.clone()));
-            Ok((root.destination.clone(), false))
-        })();
-        match seed {
-            Ok((destination, owned)) => {
-                // Every move root needs a manifest, not only owned (staged)
-                // roots: a merge into an existing folder still stages any
-                // subfolder that is new at the destination, and the files
-                // under it are deleted from the manifest after publication.
+        let allow_merge = !matches!(
+            root.conflict,
+            ConflictAction::KeepBoth | ConflictAction::CreateOnly
+        );
+        match prepare_directory(&root.destination, allow_merge) {
+            Ok(created) => {
+                merged_roots[root_index] =
+                    !created || (root.retry && root.conflict != ConflictAction::CreateOnly);
+                if created {
+                    march_state
+                        .lock()
+                        .expect("march state lock poisoned")
+                        .created_dirs
+                        .push((0, root_index, root.source.clone(), root.destination.clone()));
+                }
                 if is_move {
                     match crate::transfer_manifest::DiskManifest::new() {
                         Ok(disk) => manifest = Some(disk),
@@ -311,9 +327,13 @@ pub(crate) fn copy_selection(
                         0usize,
                         root_index,
                         root.source.clone(),
-                        destination,
-                        owned,
-                        root.conflict,
+                        root.destination.clone(),
+                        false,
+                        if root.conflict == ConflictAction::KeepBoth {
+                            ConflictAction::Error
+                        } else {
+                            root.conflict
+                        },
                     ));
                 }
             }
@@ -337,6 +357,11 @@ pub(crate) fn copy_selection(
     let roots_ref = roots;
     let mut pending_files: VecDeque<FileTask> = files.into_iter().collect();
 
+    let merged_roots = &merged_roots;
+    let mut changes: Vec<_> = merged_roots
+        .iter()
+        .map(|merged| merged.then(super::TransferChanges::default))
+        .collect();
     let copy_res = std::thread::scope(|march_scope| {
         for _ in 0..checker_count {
             let dir_queue = &dir_queue;
@@ -377,28 +402,14 @@ pub(crate) fn copy_selection(
                             "Directory nesting exceeds the safe transfer limit",
                         ));
                     }
-                    if depth > 0 {
-                        let existing = is_real_directory(&dst_dir);
-                        if existing {
-                            if !owned_tree {
-                                crate::transfer_journal::recover_directory(&dst_dir)?;
-                            }
-                        } else if path_exists_no_follow(&dst_dir) {
-                            // A file or link occupies the directory's name. Never
-                            // delete it to make room; the user decides.
-                            return Err(Failure::conflict(format!(
-                                "destination exists with a different type: {}",
-                                dst_dir.display()
-                            )));
-                        } else {
-                            // New subfolders get their final names as well.
-                            create_dir_exclusive(&dst_dir)?;
-                            march_state
-                                .lock()
-                                .expect("march state lock poisoned")
-                                .created_dirs
-                                .push((depth, src_dir.clone(), dst_dir.clone()));
-                        }
+                    if depth > 0
+                        && prepare_directory(&dst_dir, conflict != ConflictAction::CreateOnly)?
+                    {
+                        march_state
+                            .lock()
+                            .expect("march state lock poisoned")
+                            .created_dirs
+                            .push((depth, root_index, src_dir.clone(), dst_dir.clone()));
                     }
                     let version =
                         crate::transfer_staging::capture_source_version_for_path(&src_dir)?;
@@ -462,8 +473,9 @@ pub(crate) fn copy_selection(
                                 owned_tree,
                                 symlink,
                                 top_level: false,
+                                merge_root: merged_roots[root_index].then_some(root_index),
                                 delete_source: delete_source && !owned_tree,
-                                retry: root.retry,
+                                retry: root.retry && root.conflict == ConflictAction::Error,
                             };
                             if task_tx.send(Ok(task)).is_err() {
                                 return Ok(());
@@ -524,16 +536,31 @@ pub(crate) fn copy_selection(
         };
 
         let manifests_ref = &manifests;
-        let mut completed = |task: &FileTask, version: &SourceVersion| -> Result<(), String> {
-            if !task.owned_tree || !is_move {
-                return Ok(());
-            }
-            // Staged-tree moves delete sources only after the tree is published.
-            let Some(manifest) = root_manifest_for(manifests_ref, roots_ref, &task.source) else {
-                return Ok(());
+        let mut completed =
+            |task: &FileTask, version: &SourceVersion, reused: bool| -> Result<(), String> {
+                if let Some(index) = task.merge_root {
+                    if !reused && task.conflict != ConflictAction::Replace {
+                        let relative = task
+                            .destination
+                            .strip_prefix(&roots_ref[index].destination)
+                            .expect("file in merge root");
+                        changes[index]
+                            .as_mut()
+                            .expect("merge receipt")
+                            .files
+                            .push(relative.to_string_lossy().into_owned());
+                    }
+                }
+                if !task.owned_tree || !is_move {
+                    return Ok(());
+                }
+                // Staged-tree moves delete sources only after the tree is published.
+                let Some(manifest) = root_manifest_for(manifests_ref, roots_ref, &task.source)
+                else {
+                    return Ok(());
+                };
+                manifest.push(&task.source, version)
             };
-            manifest.push(&task.source, version)
-        };
         let res = copy_files_streaming_with_sink(
             &mut next_task,
             ctx.progress,
@@ -562,7 +589,9 @@ pub(crate) fn copy_selection(
 
     let mut root_outcomes: Vec<RootOutcome> = root_errors
         .into_iter()
-        .map(|error| RootOutcome {
+        .zip(changes)
+        .map(|(error, changes)| RootOutcome {
+            changes,
             manifest: TreeCopyManifest::default(),
             error,
         })
@@ -580,6 +609,17 @@ pub(crate) fn copy_selection(
             .push((src, version));
     }
 
+    for (_, index, _, dst) in &state.created_dirs {
+        if let Some(changes) = &mut root_outcomes[*index].changes {
+            let relative = dst
+                .strip_prefix(&roots[*index].destination)
+                .expect("directory in merge root");
+            changes
+                .created_dirs
+                .push(relative.to_string_lossy().into_owned());
+        }
+    }
+
     if copy_res.cancelled {
         // Workers are joined and their interrupted partial files are removed.
         // Everything copied so far stays where it is; sources are untouched.
@@ -590,7 +630,7 @@ pub(crate) fn copy_selection(
         };
     }
 
-    for (_, src, dst) in state.created_dirs.iter().rev() {
+    for (_, _, src, dst) in state.created_dirs.iter().rev() {
         if let Err(error) = simplefile_core::file_ops::preserve_basic_metadata(src, dst) {
             log::warn!(
                 "Could not preserve directory metadata for {}: {error}",
@@ -671,6 +711,7 @@ fn copy_task(
     // selected check mode) was transferred by the attempt that reported the
     // failure: it is done, apart from a move's source that is still to delete.
     let already_copied = task.retry
+        && task.conflict == ConflictAction::Error
         && !task.symlink
         && path_exists_no_follow(&task.destination)
         && crate::transfer_staging::existing_file_matches_source_with_mode(
@@ -700,6 +741,7 @@ fn copy_task(
             .progress
             .complete_file(*copied, task.source.to_string_lossy().into());
         FileOutcome::Copied {
+            reused: true,
             version,
             destination: task.destination.clone(),
         }
@@ -753,6 +795,7 @@ fn copy_files_using(
     let wrapped = |task: &FileTask, context: &CopyContext<'_>, copied: &mut u64| {
         copy(task, context, copied).map_err(Failure::from)?;
         Ok(FileOutcome::Copied {
+            reused: false,
             version: SourceVersion {
                 is_symlink: task.symlink,
                 is_dir: false,
@@ -783,7 +826,7 @@ pub(crate) fn copy_files_streaming_using(
     copy_files_streaming_with_sink(next_task, ctx, session, offset, copy, None)
 }
 
-type CompletionSink<'a> = dyn FnMut(&FileTask, &SourceVersion) -> Result<(), String> + 'a;
+type CompletionSink<'a> = dyn FnMut(&FileTask, &SourceVersion, bool) -> Result<(), String> + 'a;
 
 /// Files in flight and their copied bytes, per lane.
 fn lane_load(active: &BTreeMap<usize, ActiveFile>, two_lanes: bool) -> ([usize; 2], [u64; 2]) {
@@ -1114,6 +1157,7 @@ fn copy_files_streaming_with_sink(
                     let written = finished.map(|file| file.current).unwrap_or(0);
                     match status {
                         Ok(FileOutcome::Copied {
+                            reused,
                             version,
                             destination,
                         }) => {
@@ -1126,7 +1170,7 @@ fn copy_files_streaming_with_sink(
                                 return;
                             };
                             if let Some(sink) = completed_sink.as_deref_mut() {
-                                if let Err(error) = sink(&task, &version) {
+                                if let Err(error) = sink(&task, &version, reused) {
                                     result.failed.push((
                                         index,
                                         TaskFailure {
@@ -1138,6 +1182,9 @@ fn copy_files_streaming_with_sink(
                                 }
                             }
                             if task.top_level {
+                                if reused {
+                                    result.reused.insert(index);
+                                }
                                 result.completed.push(index);
                                 if destination != task.destination {
                                     result.destinations.insert(index, destination);
@@ -1487,12 +1534,13 @@ mod tests {
                 owned_tree: false,
                 symlink: false,
                 top_level: false,
+                merge_root: None,
                 delete_source: false,
                 retry: false,
             }))
         };
         let mut count = 0;
-        let mut sink = |_: &FileTask, _: &SourceVersion| {
+        let mut sink = |_: &FileTask, _: &SourceVersion, _: bool| {
             count += 1;
             Ok(())
         };
@@ -1511,6 +1559,7 @@ mod tests {
                     .fetch_add(1, Ordering::Relaxed);
             }
             Ok(FileOutcome::Copied {
+                reused: false,
                 version: version.clone(),
                 destination: task.destination.clone(),
             })
@@ -1552,6 +1601,7 @@ mod tests {
                 owned_tree: false,
                 symlink: false,
                 top_level: true,
+                merge_root: None,
                 delete_source: false,
                 retry: false,
             })
@@ -1640,6 +1690,7 @@ mod tests {
                     owned_tree: false,
                     symlink: false,
                     top_level: true,
+                    merge_root: None,
                     delete_source: false,
                     retry: false,
                 }
@@ -1756,6 +1807,7 @@ mod tests {
                         owned_tree: false,
                         symlink: false,
                         top_level: true,
+                        merge_root: None,
                         delete_source: false,
                         retry: false,
                     }
@@ -1888,6 +1940,7 @@ mod tests {
                     owned_tree: false,
                     symlink: false,
                     top_level: true,
+                    merge_root: None,
                     delete_source: false,
                     retry: false,
                 }
@@ -1957,6 +2010,7 @@ mod tests {
                 }
             }
             Ok(FileOutcome::Copied {
+                reused: false,
                 version: snapshot.clone(),
                 destination: task.destination.clone(),
             })
@@ -2102,6 +2156,7 @@ mod tests {
                     owned_tree: false,
                     symlink: false,
                     top_level: true,
+                    merge_root: None,
                     delete_source: false,
                     retry: false,
                 }
@@ -2210,6 +2265,7 @@ mod tests {
                         owned_tree: false,
                         symlink: false,
                         top_level: true,
+                        merge_root: None,
                         delete_source: false,
                         retry: false,
                     }

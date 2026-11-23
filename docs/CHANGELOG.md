@@ -10,6 +10,20 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ---
 
+## [1.1.5] - 2026-11-22
+
+See the [v1.1.5 release notes](RELEASE_1.1.5.md).
+
+### Transfers
+
+- Copy and move merge matching folders, including empty folders, without a confirmation.
+  Same-path files and file/folder conflicts still prompt. An individual answer applies
+  to its exact path, and Keep both also works when both files have matching size and date.
+- Merge Undo and Redo track the files added and the directories created. A move also
+  records the source directories it removed. Undo preserves existing destination content.
+
+---
+
 ## [1.1.4] - 2026-11-20
 
 See the [v1.1.4 release notes](RELEASE_1.1.4.md).
@@ -923,7 +937,8 @@ See the [v1.0.0 release checklist](RELEASE_1.0.0.md).
 
 ---
 
-[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.1.4...HEAD
+[Unreleased]: https://github.com/conniecombs/SumaFile/compare/v1.1.5...HEAD
+[1.1.5]: https://github.com/conniecombs/SumaFile/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/conniecombs/SumaFile/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/conniecombs/SumaFile/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/conniecombs/SumaFile/compare/v1.1.1...v1.1.2

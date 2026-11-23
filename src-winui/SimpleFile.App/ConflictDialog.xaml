@@ -17,13 +17,15 @@
             x:Name="ChoiceButtons"
             AutomationProperties.Name="Conflict choice"
             SelectedIndex="1">
-            <StackPanel Spacing="2">
-                <TextBlock Text="Replace the existing file" />
-                <TextBlock
-                    FontSize="12"
-                    Foreground="{ThemeResource SfTextMutedBrush}"
-                    Text="Replaced files cannot be undone." />
-            </StackPanel>
+            <RadioButton x:Name="ReplaceChoice">
+                <StackPanel Spacing="2">
+                    <TextBlock Text="Replace the existing file" />
+                    <TextBlock
+                        FontSize="12"
+                        Foreground="{ThemeResource SfTextMutedBrush}"
+                        Text="Replaced files cannot be undone." />
+                </StackPanel>
+            </RadioButton>
             <TextBlock Text="Skip this file" />
             <TextBlock x:Name="KeepBothOption" Text="Keep both" TextWrapping="Wrap" />
         </RadioButtons>

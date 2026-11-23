@@ -245,6 +245,27 @@ public sealed class FileOperationService : ISettingsBackend
         _journal?.Started(operationType, operationId, sources, destination);
         operationStarted?.Invoke(operationId);
         IDisposable? subscription = null;
+        var changeChunks = new Dictionary<(int Index, string Field), List<string>>();
+        using var changesSubscription = ipc.On<TransferChangeChunk>(Protocol.TransferChangesEvent, chunk =>
+        {
+            if (chunk.OperationId != operationId) return;
+            var key = (chunk.ResultIndex, chunk.Field);
+            if (!changeChunks.TryGetValue(key, out var paths)) changeChunks.Add(key, paths = []);
+            paths.AddRange(chunk.Paths);
+        });
+        // Notifications and the terminal reply arrive in order on the same pipe.
+        void CompleteReceipts(TransferResult[] results)
+        {
+            for (var i = 0; i < results.Length; i++)
+            {
+                if (results[i].Changes is not { StreamedPaths: > 0 } changes) continue;
+                changes.Files = changeChunks.GetValueOrDefault((i, "files"))?.ToArray() ?? [];
+                changes.CreatedDirectories = changeChunks.GetValueOrDefault((i, "created_dirs"))?.ToArray() ?? [];
+                changes.RemovedSourceDirectories = changeChunks.GetValueOrDefault((i, "removed_source_dirs"))?.ToArray() ?? [];
+                if (changes.StreamedPaths != changes.Files.Length + changes.CreatedDirectories.Length + changes.RemovedSourceDirectories.Length)
+                    throw new IOException("The folder transfer's Undo receipt was incomplete.");
+            }
+        }
         using var tuningSubscription = tuning is null ? null : ipc.On<TuningUpdate>(Protocol.TransferTuningEvent, update =>
         {
             if (update.OperationId == operationId) tuning.Report(update);
@@ -281,6 +302,7 @@ public sealed class FileOperationService : ISettingsBackend
             if (ct.CanBeCanceled)
                 cancelRegistration = ct.Register(() => _ = RequestBackendCancellationAsync());
             var results = await transfer.ConfigureAwait(false);
+            CompleteReceipts(results);
             if (ct.IsCancellationRequested)
             {
                 throw new TransferCanceledException(
@@ -310,6 +332,7 @@ public sealed class FileOperationService : ISettingsBackend
         }
         catch (IpcException exception) when (TryGetTransferOutcome(exception, out var outcome))
         {
+            CompleteReceipts(outcome.Committed);
             if (string.Equals(outcome.Status, "cancelled", StringComparison.Ordinal))
             {
                 _journal?.Cancelled(operationType, operationId);

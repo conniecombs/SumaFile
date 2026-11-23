@@ -1,6 +1,11 @@
 {
   "protocolVersion": 1,
   "emitted": {
+    "transfer-changes": {
+      "params": "TransferChangeChunk",
+      "source": "crates/simplefile-service/src/session/jobs.rs",
+      "notes": "Reliable ordered merge Undo receipt chunks preceding the terminal transfer response. result_index indexes result or error.data.committed."
+    },
     "transfer-tuning": {
       "params": "TuningUpdate",
       "source": "crates/simplefile-service/src/progress/parallel.rs"

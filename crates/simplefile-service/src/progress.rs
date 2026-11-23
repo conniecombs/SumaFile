@@ -49,6 +49,25 @@ use std::time::Instant;
 pub struct TransferResult {
     pub source: String,
     pub destination: String,
+    /// Absent for a whole new item. A merge owns only the paths listed here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changes: Option<TransferChanges>,
+}
+
+#[derive(Debug, Default, Serialize, Clone)]
+pub struct TransferChanges {
+    /// Paths relative to the selected source/destination roots.
+    pub files: Vec<String>,
+    pub created_dirs: Vec<String>,
+    /// Move only, deepest first. The empty path denotes the selected source root.
+    pub removed_source_dirs: Vec<String>,
+    /// Set by the IPC writer when these paths were sent before the response.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub streamed_paths: usize,
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
 }
 
 /// One file or directory that was not transferred. `kind` is `conflict` when
@@ -295,9 +314,10 @@ fn plans_for_items(
     let dest_network = volumes.is_network(&dest_root);
     let mut plans = Vec::with_capacity(items.len());
     let mut scanned_dirs = HashSet::new();
+    let mut reserved = HashSet::new();
     for item in items {
         let source_path = simplefile_core::utils::validate_path_no_follow(&item.source)?;
-        let final_dest = PathBuf::from(item.destination.trim());
+        let mut final_dest = PathBuf::from(item.destination.trim());
         if final_dest.file_name().is_none() || !final_dest.is_absolute() {
             return Err(format!(
                 "Retry destination must be an absolute file path: {}",
@@ -310,6 +330,34 @@ fn plans_for_items(
         // A failed folder is walked again; what it already copied is
         // recognised file by file, so only the missing part is transferred.
         let is_dir = file_type.is_dir() && !file_type.is_symlink();
+        let conflict = ConflictAction::parse(&item.action);
+        if conflict == ConflictAction::CreateOnly
+            && simplefile_core::path_conflict::path_exists_no_follow(&final_dest)
+        {
+            return Err(crate::transfer_staging::conflict_for_existing_destination(
+                &final_dest,
+            ));
+        }
+        if matches!(conflict, ConflictAction::Error | ConflictAction::Replace)
+            && simplefile_core::path_conflict::paths_refer_to_same_entry(&source_path, &final_dest)
+        {
+            return Err("Cannot copy or move an item onto itself".into());
+        }
+        if is_dir {
+            if conflict == ConflictAction::KeepBoth
+                && (simplefile_core::path_conflict::path_exists_no_follow(&final_dest)
+                    || reserved.contains(&simplefile_core::path_conflict::path_collision_key(
+                        &final_dest,
+                    )))
+            {
+                final_dest = unique_destination_path(
+                    final_dest.parent().unwrap(),
+                    final_dest.file_name().unwrap(),
+                    &reserved,
+                )?;
+            }
+            plan::ensure_dir_not_inside_itself(&source_path, &final_dest)?;
+        }
         if let Some(parent) = final_dest.parent() {
             if scanned_dirs.insert(parent.to_path_buf()) {
                 if !parent.is_dir() {
@@ -320,12 +368,15 @@ fn plans_for_items(
                 crate::transfer_journal::recover_directory(parent)?;
             }
         }
+        reserved.insert(simplefile_core::path_conflict::path_collision_key(
+            &final_dest,
+        ));
         let is_symlink = file_type.is_symlink();
         plans.push(TransferPlan {
             network: dest_network || volumes.is_network(&source_path),
             source_path,
             final_dest,
-            conflict: ConflictAction::parse(&item.action),
+            conflict,
             file_count: u64::from(!is_dir),
             is_dir,
             is_symlink,
@@ -438,6 +489,7 @@ fn transfer_with_policy_blocking(
                 skipped.push(TransferResult {
                     source: source.to_string_lossy().into(),
                     destination: final_dest.to_string_lossy().into(),
+                    changes: None,
                 });
             }
             plans
@@ -539,6 +591,7 @@ fn transfer_with_policy_blocking(
                         transferred.push(TransferResult {
                             source: plan.source_path.to_string_lossy().into(),
                             destination: target.to_string_lossy().into(),
+                            changes: None,
                         });
                         continue;
                     }
@@ -571,6 +624,7 @@ fn transfer_with_policy_blocking(
                 owned_tree: false,
                 symlink: plan.is_symlink,
                 top_level: true,
+                merge_root: None,
                 delete_source: is_move,
                 retry,
             });
@@ -579,6 +633,7 @@ fn transfer_with_policy_blocking(
 
     let cancelled_early = cancel.load(Ordering::Relaxed);
     let mut cancelled = cancelled_early;
+    let mut partial_roots = HashSet::new();
     let mut failed_bytes = 0u64;
     if !cancelled_early && (!files.is_empty() || !roots.is_empty()) {
         let ctx = reporting::CopyContext {
@@ -606,6 +661,9 @@ fn transfer_with_policy_blocking(
             transferred.push(TransferResult {
                 source: task.source.to_string_lossy().into(),
                 destination: destination.to_string_lossy().into(),
+                changes: (result.copy.reused.contains(index)
+                    || task.conflict == ConflictAction::Replace)
+                    .then(TransferChanges::default),
             });
         }
         for (_, task) in &result.copy.skipped {
@@ -613,6 +671,7 @@ fn transfer_with_policy_blocking(
                 skipped.push(TransferResult {
                     source: task.source.to_string_lossy().into(),
                     destination: task.destination.to_string_lossy().into(),
+                    changes: None,
                 });
             }
         }
@@ -646,7 +705,8 @@ fn transfer_with_policy_blocking(
                     .map(|(_, task)| task.source.clone()),
             )
             .collect();
-        for (root, outcome) in roots.iter().zip(result.roots) {
+        for (root, mut outcome) in roots.iter().zip(result.roots) {
+            let mut record_root = false;
             match outcome.error {
                 Some(error) if error.is_cancelled() => cancelled = true,
                 Some(error) => {
@@ -659,13 +719,23 @@ fn transfer_with_policy_blocking(
                 None if cancelled => {}
                 None => {
                     if is_move {
-                        if let Err(error) = crate::transfer_staging::delete_verified_source_tree(
-                            &root.source,
-                            &outcome.manifest,
-                            &failed_paths,
-                        ) {
-                            // The data was copied but the move is incomplete:
-                            // report it once, as a failure, never also as committed.
+                        if let Err(error) =
+                            crate::transfer_staging::delete_verified_source_tree_recording(
+                                &root.source,
+                                &outcome.manifest,
+                                &failed_paths,
+                                |path| {
+                                    if let Some(changes) = &mut outcome.changes {
+                                        changes.removed_source_dirs.push(
+                                            path.strip_prefix(&root.source)
+                                                .expect("source directory in root")
+                                                .to_string_lossy()
+                                                .into_owned(),
+                                        );
+                                    }
+                                },
+                            )
+                        {
                             failed.push(TransferFailure::new(
                                 &root.source,
                                 &root.destination,
@@ -673,14 +743,31 @@ fn transfer_with_policy_blocking(
                                     "Copied but failed to delete source: {error}"
                                 )),
                             ));
-                            continue;
+                        } else {
+                            record_root = true;
                         }
+                    } else {
+                        record_root = true;
                     }
-                    transferred.push(TransferResult {
-                        source: root.source.to_string_lossy().into(),
-                        destination: root.destination.to_string_lossy().into(),
-                    });
                 }
+            }
+            // A cancelled merge can have both committed additions and work left at the root.
+            if cancelled && !record_root {
+                partial_roots.insert(root.source.to_string_lossy().into_owned());
+            }
+            // A partial merge has individually undoable additions even after cancellation.
+            if record_root
+                || outcome.changes.as_ref().is_some_and(|changes| {
+                    !changes.files.is_empty()
+                        || !changes.created_dirs.is_empty()
+                        || !changes.removed_source_dirs.is_empty()
+                })
+            {
+                transferred.push(TransferResult {
+                    source: root.source.to_string_lossy().into(),
+                    destination: root.destination.to_string_lossy().into(),
+                    changes: outcome.changes,
+                });
             }
         }
     }
@@ -709,7 +796,9 @@ fn transfer_with_policy_blocking(
             .collect();
         let pending = requested_sources
             .iter()
-            .filter(|source| !settled.contains(source.as_str()))
+            .filter(|source| {
+                !settled.contains(source.as_str()) || partial_roots.contains(source.as_str())
+            })
             .cloned()
             .collect();
         return Err(TransferBatchError::cancelled(
@@ -948,6 +1037,122 @@ mod tests {
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[test]
+    fn a_populated_tree_merges_into_an_empty_folder_for_copy_and_move() {
+        for operation in ["copy", "move"] {
+            let root = unique_temp_path(operation);
+            let source = root.join("source").join("Photos");
+            let destination = root.join("target");
+            let target = destination.join("Photos");
+            fs::create_dir_all(source.join("nested")).unwrap();
+            fs::create_dir_all(&target).unwrap();
+            fs::write(source.join("nested").join("a"), b"photo").unwrap();
+
+            let results = transfer_with_progress_blocking(
+                operation,
+                vec![source.to_string_lossy().into()],
+                destination.to_string_lossy().into(),
+                super::generate_transfer_operation_id(),
+                "error".into(),
+                Arc::new(AtomicBool::new(false)),
+                &|_| {},
+            )
+            .unwrap();
+            let changes = results[0]
+                .changes
+                .as_ref()
+                .expect("existing root must carry a merge receipt");
+            assert_eq!(
+                changes.files,
+                [std::path::Path::new("nested")
+                    .join("a")
+                    .to_string_lossy()
+                    .into_owned()]
+            );
+            assert_eq!(changes.created_dirs, ["nested"]);
+            assert_eq!(fs::read(target.join("nested").join("a")).unwrap(), b"photo");
+            if operation == "move" {
+                assert_eq!(changes.removed_source_dirs, ["nested", ""]);
+                assert!(!source.exists());
+            } else {
+                assert!(changes.removed_source_dirs.is_empty());
+                assert!(source.is_dir());
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn merging_reports_only_added_files_and_created_directories_for_undo() {
+        let root = unique_temp_path("merge_undo");
+        let source = root.join("src").join("Photos");
+        let destination = root.join("dst");
+        let photos = destination.join("Photos");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::create_dir_all(source.join("empty")).unwrap();
+        fs::create_dir_all(photos.join("nested")).unwrap();
+        fs::write(source.join("added.jpg"), b"new").unwrap();
+        fs::write(source.join("nested").join("same.jpg"), b"incoming").unwrap();
+        fs::write(photos.join("nested").join("same.jpg"), b"existing").unwrap();
+        fs::write(photos.join("original.jpg"), b"keep").unwrap();
+
+        let failure = transfer_with_progress_blocking(
+            "copy",
+            vec![source.to_string_lossy().into()],
+            destination.to_string_lossy().into(),
+            super::generate_transfer_operation_id(),
+            "error".into(),
+            Arc::new(AtomicBool::new(false)),
+            &|_| {},
+        )
+        .unwrap_err();
+        assert_eq!(failure.outcome.failed.len(), 1);
+        assert_eq!(
+            failure.outcome.failed[0].destination,
+            photos.join("nested").join("same.jpg").to_string_lossy()
+        );
+        let changes = failure.outcome.committed[0].changes.as_ref().unwrap();
+        assert_eq!(changes.files, ["added.jpg"]);
+        assert_eq!(changes.created_dirs, ["empty"]);
+        assert!(changes.removed_source_dirs.is_empty());
+        assert_eq!(fs::read(photos.join("original.jpg")).unwrap(), b"keep");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keep_both_retry_honors_the_choice_for_matching_files_and_folders_over_files() {
+        let root = unique_temp_path("merge_keep_both");
+        let source = root.join("src");
+        let destination = root.join("dst");
+        fs::create_dir_all(source.join("album")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(source.join("album").join("photo"), b"photo").unwrap();
+        fs::write(destination.join("album"), b"original").unwrap();
+        fs::write(source.join("same"), b"same").unwrap();
+        fs::copy(source.join("same"), destination.join("same")).unwrap();
+        simplefile_core::file_ops::preserve_basic_metadata(
+            &source.join("same"),
+            &destination.join("same"),
+        )
+        .unwrap();
+
+        for name in ["same", "album"] {
+            let mut item = retry_item(&source.join(name), &destination.join(name));
+            item.action = "keep-both".into();
+            let copied = retry_items("copy", vec![item], &destination).unwrap();
+            assert_eq!(
+                copied[0].destination,
+                destination.join(format!("{name} (1)")).to_string_lossy()
+            );
+        }
+        assert_eq!(fs::read(destination.join("album")).unwrap(), b"original");
+        assert_eq!(
+            fs::read(destination.join("album (1)").join("photo")).unwrap(),
+            b"photo"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

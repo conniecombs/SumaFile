@@ -17,6 +17,7 @@ pub const BINARY_LISTING_VIEW_PAGE: u8 = 9;
 pub const HANDSHAKE_METHOD: &str = "ipc.handshake";
 pub const HEALTH_METHOD: &str = "ipc.health";
 pub const SHUTDOWN_METHOD: &str = "ipc.shutdown";
+pub const TRANSFER_CHANGES: &str = "transfer-changes";
 pub const TRANSFER_TUNING: &str = "transfer-tuning";
 pub const FILE_CHANGE: &str = "file-change";
 pub const OPERATION_PROGRESS: &str = "operation-progress";

@@ -57,6 +57,23 @@ public class DropDestinationTests
     }
 
     [Fact]
+    public void FolderPairsMergeWhileFilesTypeMismatchesAndDuplicateSourcesStillPrompt()
+    {
+        string[] sources = [@"C:\src\Photos", @"C:\src\notes.txt", @"C:\src\mismatch", @"C:\one\shared", @"C:\two\shared"];
+        var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            sources[0], @"D:\out\Photos", sources[2], sources[3], sources[4], @"D:\out\shared"
+        };
+
+        var conflicts = DropDestination.ProbeConflictingTransferNames(sources, @"D:\out",
+            _ => true, isDirectoryNoFollow: directories.Contains);
+
+        Assert.Equal(["notes.txt", "mismatch", "shared"], conflicts);
+        Assert.Equal(["Photos"], DropDestination.ProbeConflictingTransferNames([@"D:\out\Photos"],
+            @"D:\out", _ => true, isDirectoryNoFollow: directories.Contains));
+    }
+
+    [Fact]
     public void NativePath_ExistsNoFollow_DoesNotFollowDanglingSymlink()
     {
         var root = Path.Combine(Path.GetTempPath(), "sumafile-nofollow-" + Guid.NewGuid().ToString("N"));

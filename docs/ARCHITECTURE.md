@@ -217,7 +217,7 @@ Application errors are told apart by message prefix: `CONFLICT:`, `TRASH_UNAVAIL
 Events are notifications, sent with `EventSink` (`session/jobs.rs`) and received with
 `ISimpleFileIpc.On<T>(Protocol.<Name>Event, handler)`: `list_directory.chunk`,
 `listing-view-changed`, `entry-facts`, `file-change`, `operation-progress`, `transfer-tuning`,
-`search-results-batch`, `search-complete` and `update-chunk`. Several pieces of work can be in
+`transfer-changes`, `search-results-batch`, `search-complete` and `update-chunk`. Several pieces of work can be in
 flight, so an event says whose it is: `list_directory.chunk` carries the JSON-RPC id of its
 request, a view delta the view id, and progress, tuning, search and fact events the operation,
 search or request id of their work. The file service never sends a request to the app;
@@ -347,6 +347,14 @@ operation id in an `OperationRegistry` and run on the transfer lane. `progress.r
 workers: one coordinator owns ordering, aggregate progress and the active-file list, and a failed
 or conflicting file is recorded while the rest of the selection continues. Progress is reported as
 `operation-progress`, scheduler decisions as `transfer-tuning`.
+
+The Windows client requests individual conflict decisions for matching files.
+Matching folders merge recursively. The service records newly published files and
+created directories relative to each existing destination root, plus source
+directories removed by a move. These changes travel with the committed result
+on success, partial failure or cancellation. Large change lists arrive in ordered
+`transfer-changes` notifications before the result. Undo and Redo use the recorded
+paths and remove directories only while empty.
 
 The parts that do not depend on the service live in `sumafile-transfer`, so the FTP/SFTP plugin's
 backend uses the same code. Unless the policy asks for in-place writes, a file is written to

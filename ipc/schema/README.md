@@ -14,6 +14,16 @@ generated from these files and checked against them.
 | `v1/open-with-policy.json` | The Open With policy both sides share |
 | `plugin/` | The plugin protocol; see [its README](plugin/README.md) |
 
+## Transfer receipts
+
+A committed folder merge includes a `changes` object listing the relative
+files added, directories created, and move-source directories removed. A
+client must use those changes for Undo. For a large receipt, collect the
+`transfer-changes` events for the operation before processing the terminal
+reply. Each event identifies a result index and field. The `streamed_paths`
+count lets the client check completeness on success, partial failure or
+cancellation. The [wire types](v1/types.json) define both shapes.
+
 ## Changing the contract
 
 1. Edit the JSON in `v1/`.

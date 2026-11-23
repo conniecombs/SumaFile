@@ -60,12 +60,17 @@ public sealed partial class ConflictDialog : ContentDialog
         ChoiceHint.Visibility = Visibility.Collapsed;
         KeepBothOption.Text = TransferConflictPromptFormatter.KeepBothLabel(null);
         ComparisonCards.Children.Clear();
+        ReplaceChoice.IsEnabled = true;
         ChoiceButtons.SelectedIndex = SkipIndex;
         Result = ConflictResolution.Cancel;
     }
 
-    public void SetComparisons(IReadOnlyList<TransferConflictComparison> comparisons)
+    public void SetComparisons(IReadOnlyList<TransferConflictComparison> comparisons, bool allowReplace = true)
     {
+        ReplaceChoice.IsEnabled = allowReplace && !comparisons.Any(c =>
+            (c.Incoming.Kind == "Folder" && c.Existing.Kind is "File" or "Link" or "Folder")
+            || (c.Existing.Kind == "Folder" && c.Incoming.Kind is "File" or "Link")
+            || PathRules.PathsEqual(c.Incoming.Path, c.Existing.Path));
         ComparisonCards.Children.Clear();
         foreach (var comparison in comparisons)
         {

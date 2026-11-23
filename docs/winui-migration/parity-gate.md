@@ -216,6 +216,7 @@ The WinUI CI job runs the `-PluginsDir` smoke, `npm run check:winui-startup-budg
 | `listing-view-changed` | Row delta of a watched folder's views | `BackendSession` → `ListingViewController.OnDelta` | `ListingViewWorkspaceTests` / service session tests | Create a file in Explorer; one row appears, scroll and selection stay | `MANUAL` |
 | `entry-facts` | Lazy column values of a pane's fact request | `BackendSession.EntryFactsReceived` → `LazyColumnController.OnBatch` | `LazyColumnWorkspaceTests` / service session tests | Show Dimensions in a photo folder; the cells fill in | `PASS` |
 | `operation-progress` | Copy/move/cleanup/dup | Progress panel | `FileOperationServiceTests` | Watch bar + cancel | `PASS` |
+| `transfer-changes` | Chunked Undo receipts for large folder merges | `FileOperationService` collects each operation's changes | `CopyAsync_ReassemblesLargeMergeReceiptsByOperationAndRoot` | Undo and redo a large merge | `MANUAL` |
 | `transfer-tuning` | Transfer policy and active files | Transfer options and active file list | `TransferPolicyTests`, parallel worker tests, adaptive UI smoke | Change policy while copying | `PASS` |
 | `search-results-batch` | Incremental search | Search box batches | Client | Search streams rows | `MANUAL` |
 | `search-complete` | Count notification | Status text | Client complete callback | Search finishes | `PASS` |

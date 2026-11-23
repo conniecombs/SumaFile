@@ -13,6 +13,106 @@ namespace SimpleFile.Tests;
 public class UndoStackTests
 {
     [Fact]
+    public async Task MergeUndoAndRedoPreserveTheExistingTreeAndLaterAdditions()
+    {
+        var root = Directory.CreateTempSubdirectory();
+        try
+        {
+            var destination = Directory.CreateDirectory(Path.Combine(root.FullName, "Photos")).FullName;
+            var sub = Directory.CreateDirectory(Path.Combine(destination, "new")).FullName;
+            var added = Path.Combine(sub, "added.jpg");
+            var later = Path.Combine(sub, "later.jpg");
+            var old = Path.Combine(destination, "original.jpg");
+            var recycle = Path.Combine(root.FullName, "recycled");
+            File.WriteAllText(added, "incoming");
+            File.WriteAllText(later, "later");
+            File.WriteAllText(old, "existing");
+            var ipc = new ConfigurableIpc
+            {
+                MoveToTrashHandler = (paths, _) =>
+                {
+                    Assert.Equal([added], paths);
+                    File.Move(added, recycle);
+                    return Task.FromResult(new[] { recycle });
+                },
+                RestoreRecycleBinHandler = (paths, _) =>
+                {
+                    Assert.Equal([recycle], paths);
+                    File.Move(recycle, added);
+                    return Task.FromResult(new[] { added });
+                },
+            };
+            var stack = new UndoStack();
+            stack.PushCopy([new TransferResult
+            {
+                Source = Path.Combine(root.FullName, "source"), Destination = destination,
+                Changes = new TransferChanges { Files = [Path.Combine("new", "added.jpg")], CreatedDirectories = ["new"] },
+            }], new FileOperationService(ipc));
+
+            await stack.UndoAsync();
+            Assert.False(File.Exists(added));
+            Assert.Equal("existing", File.ReadAllText(old));
+            Assert.Equal("later", File.ReadAllText(later));
+            await stack.RedoAsync();
+            Assert.Equal("incoming", File.ReadAllText(added));
+            await stack.UndoAsync();
+            Assert.Equal("later", File.ReadAllText(later));
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task MergedMoveRestoresRemovedSourceDirectoriesAndHonorsExactFileNames()
+    {
+        var root = Directory.CreateTempSubdirectory();
+        try
+        {
+            var source = Path.Combine(root.FullName, "source", "Photos");
+            Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+            var target = Directory.CreateDirectory(Path.Combine(root.FullName, "target", "Photos")).FullName;
+            var nested = Directory.CreateDirectory(Path.Combine(target, "new")).FullName;
+            var relative = Path.Combine("new", "moved.jpg");
+            File.WriteAllText(Path.Combine(target, relative), "photo");
+            File.WriteAllText(Path.Combine(target, "original"), "keep");
+            var ipc = new ConfigurableIpc
+            {
+                CreateDirectoryHandler = (parent, name, _) =>
+                    Task.FromResult(Directory.CreateDirectory(Path.Combine(parent, name)).FullName),
+                MoveItemsWithProgressHandler = (items, _, _, _) =>
+                {
+                    var item = Assert.Single(items);
+                    Assert.Equal("create-only", item.Action);
+                    File.Move(item.Source, item.Destination);
+                    return Task.FromResult(new[] { new TransferResult { Source = item.Source, Destination = item.Destination } });
+                },
+            };
+            var stack = new UndoStack();
+            stack.PushMove([new TransferResult
+            {
+                Source = source, Destination = target,
+                Changes = new() { Files = [relative], CreatedDirectories = ["new"], RemovedSourceDirectories = ["new", ""] },
+            }], new FileOperationService(ipc));
+
+            await stack.UndoAsync();
+            Assert.Equal("photo", File.ReadAllText(Path.Combine(source, relative)));
+            Assert.False(Directory.Exists(nested));
+            Assert.Equal("keep", File.ReadAllText(Path.Combine(target, "original")));
+            await stack.RedoAsync();
+            Assert.False(Directory.Exists(source));
+            Assert.Equal("photo", File.ReadAllText(Path.Combine(target, relative)));
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void EmptyMergeReceiptDoesNotRegisterUndoForTheDestination()
+    {
+        var stack = new UndoStack();
+        stack.PushCopy([new TransferResult { Changes = new TransferChanges() }], new FileOperationService(new ConfigurableIpc()));
+        Assert.False(stack.CanUndo);
+    }
+
+    [Fact]
     public async Task UndoStack_UndoThenRedo_InvokesInOrder()
     {
         var log = new List<string>();

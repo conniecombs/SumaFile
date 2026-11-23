@@ -13,7 +13,7 @@ public static class TransferConflictComparisonLoader
 {
     public static IReadOnlyList<TransferConflictComparison> Load(
         IReadOnlyList<string> sources, string destination, IReadOnlyList<string> conflicts, CancellationToken token,
-        string? existingConflictPath = null)
+        string? existingConflictPath = null, string? incomingConflictPath = null)
     {
         var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<TransferConflictComparison>();
@@ -24,7 +24,7 @@ public static class TransferConflictComparisonLoader
                 && PathRules.PathContains(destination, existingConflictPath)
                 ? existingConflictPath : Path.Combine(destination, name);
             var relative = Path.GetRelativePath(destination, target);
-            var source = sources.Select(path =>
+            var source = incomingConflictPath ?? sources.Select(path =>
             {
                 var top = PathRules.Basename(path);
                 if (string.Equals(relative, top, StringComparison.OrdinalIgnoreCase)) return path;

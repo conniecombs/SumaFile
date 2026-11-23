@@ -75,18 +75,40 @@ pub(crate) fn same_volume(source: &Path, destination: &Path) -> bool {
     source.components().next() == destination.components().next()
 }
 
-fn ensure_dir_not_inside_itself(source_path: &Path, final_dest: &Path) -> Result<(), String> {
-    if let Ok(canonical_source) = source_path.canonicalize() {
-        let canonical_dest = final_dest
-            .parent()
-            .and_then(|parent| parent.canonicalize().ok())
-            .map(|parent| parent.join(final_dest.file_name().unwrap_or_default()));
-        if let Some(canonical_dest) = canonical_dest {
-            if canonical_dest.starts_with(&canonical_source) {
-                return Err(
-                    "Cannot copy or move a directory into itself or one of its subdirectories"
-                        .to_string(),
-                );
+pub(super) fn ensure_dir_not_inside_itself(
+    source_path: &Path,
+    final_dest: &Path,
+) -> Result<(), String> {
+    let canonical_source = source_path.canonicalize().map_err(|error| {
+        format!(
+            "Inspect source directory {}: {error}",
+            source_path.display()
+        )
+    })?;
+    // Exact retries can target a parent that has disappeared. Check its nearest
+    // existing ancestor before any missing directories are created.
+    let mut ancestor = final_dest.parent();
+    while let Some(parent) = ancestor {
+        match parent.canonicalize() {
+            Ok(resolved) => {
+                if resolved.starts_with(&canonical_source)
+                    || paths_refer_to_same_entry(source_path, final_dest)
+                {
+                    return Err(
+                        "Cannot copy or move a directory into itself or one of its subdirectories"
+                            .into(),
+                    );
+                }
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                ancestor = parent.parent()
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Inspect destination directory {}: {error}",
+                    parent.display()
+                ))
             }
         }
     }
@@ -135,11 +157,19 @@ pub(crate) fn resolve_destination(
         };
     }
 
-    if source_is_dir && existing_is_dir && action != ConflictAction::KeepBoth {
+    if source_is_dir
+        && existing_is_dir
+        && !matches!(
+            action,
+            ConflictAction::KeepBoth | ConflictAction::CreateOnly
+        )
+    {
         // Merge; each child resolves its own conflict with the same action.
         return Ok(Some((final_dest, action)));
     }
-    if source_is_dir != existing_is_dir && action == ConflictAction::Replace {
+    if source_is_dir != existing_is_dir
+        && matches!(action, ConflictAction::Replace | ConflictAction::Error)
+    {
         return Err(format!(
             "CONFLICT: destination exists with a different type: {}",
             final_dest.to_string_lossy()
@@ -158,7 +188,9 @@ pub(crate) fn resolve_destination(
             unique_destination_path(dest_dir, file_name, planned_destinations)?,
             action,
         ))),
-        ConflictAction::Error => Err(conflict_for_existing_destination(&final_dest)),
+        ConflictAction::Error | ConflictAction::CreateOnly => {
+            Err(conflict_for_existing_destination(&final_dest))
+        }
     }
 }
 

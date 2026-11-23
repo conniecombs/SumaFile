@@ -6,7 +6,7 @@
     "doNotCamelCaseNested": true
   },
   "enums": {
-    "ConflictAction": ["error", "skip", "replace", "rename", "keep-both", "keep_both"],
+    "ConflictAction": ["error", "create-only", "skip", "replace", "rename", "keep-both", "keep_both"],
     "ListDirectoryMode": ["full", "light"],
     "DriveListMode": ["full", "light"],
     "ProgressStatus": ["running", "finalizing", "completed", "error", "cancelled"],
@@ -185,7 +185,20 @@
     },
     "TransferResult": {
       "source": "crates/simplefile-service/src/progress.rs",
-      "fields": ["source", "destination"]
+      "fields": ["source", "destination", "changes"],
+      "optional": ["changes"],
+      "notes": "An absent changes field denotes a whole transferred item. A present TransferChanges records the additions owned by a merge. An empty changes object with empty arrays carries no undoable work."
+    },
+    "TransferChanges": {
+      "source": "crates/simplefile-service/src/progress.rs",
+      "fields": ["files", "created_dirs", "removed_source_dirs", "streamed_paths"],
+      "optional": ["streamed_paths"],
+      "notes": "Paths are relative to the selected roots. Created directories are ordered shallowest first; removed move-source directories are deepest first. An empty relative directory path denotes the corresponding root."
+    },
+    "TransferChangeChunk": {
+      "source": "crates/simplefile-service/src/session/jobs.rs",
+      "fields": ["operation_id", "result_index", "field", "paths"],
+      "notes": "Append paths in arrival order to the named TransferChanges field. The terminal receipt gives the expected total in streamed_paths."
     },
     "TransferFailure": {
       "source": "crates/simplefile-service/src/progress.rs",
@@ -196,7 +209,7 @@
       "source": "crates/simplefile-service/src/dispatch/params.rs",
       "fields": ["source", "destination", "action"],
       "optional": ["action"],
-      "notes": "Targeted retry for copy_with_progress and move_with_progress: transfer exactly this file to exactly this destination path with this ConflictAction (default error). Nested under the top-level items param; single-word field names, so no casing question arises."
+      "notes": "Targeted retry for copy_with_progress and move_with_progress: transfer exactly this file to exactly this destination path with this ConflictAction (default error). create-only requires a free destination for exact Undo/Redo replay. Nested under the top-level items param; single-word field names, so no casing question arises."
     },
     "TransferBatchOutcome": {
       "source": "crates/simplefile-service/src/progress.rs",

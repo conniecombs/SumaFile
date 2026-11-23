@@ -166,6 +166,13 @@ run folder by hand.
   run captures `workspace-polish.png`, `conflict-polish.png`, and
   `rename-polish.png` alongside the JSON report.
 
+## Manual folder merge checks
+
+The [1.1.5 verification cases](RELEASE_1.1.5.md#manual-verification) cover an
+empty destination folder, nested file conflicts, and Undo and Redo with
+destination-only files. Use copy/paste, drag and drop, or the other-pane commands
+to exercise the shared transfer path.
+
 ## Refresh the README screenshots
 
 Use the `sumafile-winui-runtime` artifact from a successful **WinUI host** job on

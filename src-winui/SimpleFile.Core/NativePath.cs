@@ -22,6 +22,15 @@ public static class NativePath
         return attributes != INVALID_FILE_ATTRIBUTES;
     }
 
+    public static bool IsDirectoryNoFollow(string path)
+    {
+        var attributes = GetFileAttributesW(path);
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & (uint)FileAttributes.Directory) == 0)
+            return false;
+        // Cloud placeholder directories can be reparse points without redirecting the path.
+        return (attributes & (uint)FileAttributes.ReparsePoint) == 0 || new DirectoryInfo(path).LinkTarget is null;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetFileAttributesW(string lpFileName);
 }

@@ -265,15 +265,18 @@ public sealed partial class MainWindow
         int itemCount,
         string? destination = null,
         int skipped = 0,
-        bool undoable = false)
+        bool undoable = false,
+        int skippedChildren = 0)
     {
         if (!DispatcherQueue.HasThreadAccess)
         {
-            DispatcherQueue.TryEnqueue(() => CompleteTransferProgress(move, itemCount, destination, skipped, undoable));
+            DispatcherQueue.TryEnqueue(() => CompleteTransferProgress(move, itemCount, destination, skipped, undoable, skippedChildren));
             return;
         }
 
         var receipt = TransferProgressFormatter.CompletionReceipt(move, itemCount, destination, skipped);
+        if (skippedChildren > 0)
+            receipt += $" ({skippedChildren} nested {(skippedChildren == 1 ? "item" : "items")} skipped)";
         SetStatusText(receipt);
         if (undoable)
         {

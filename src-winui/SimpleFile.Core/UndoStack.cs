@@ -34,6 +34,13 @@ public sealed class UndoStack
 
     public void PushCopy(IReadOnlyList<TransferResult> transferred, FileOperationService ops)
     {
+        if (transferred.Any(item => item.Changes is not null))
+        {
+            var entry = MergeTransferUndo.Create(transferred, ops, move: false);
+            if (entry is not null) Push(entry);
+            return;
+        }
+
         var items = transferred.ToArray();
         Push(new UndoEntry
         {
@@ -128,6 +135,13 @@ public sealed class UndoStack
 
     public void PushMove(IReadOnlyList<TransferResult> transferred, FileOperationService ops)
     {
+        if (transferred.Any(item => item.Changes is not null))
+        {
+            var entry = MergeTransferUndo.Create(transferred, ops, move: true);
+            if (entry is not null) Push(entry);
+            return;
+        }
+
         var items = transferred.ToArray();
         // Per-item bookkeeping lets a failed undo be retried for the items still in place
         // instead of failing forever on the ones already restored.

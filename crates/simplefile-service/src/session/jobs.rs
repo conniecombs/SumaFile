@@ -343,6 +343,52 @@ fn scheduled_result_response<T: Serialize>(
     }
 }
 
+/// Keep large merge receipts below the pipe frame limit. The terminal response
+/// retains an explicit changes object even when every path travelled in chunks.
+async fn stream_transfer_changes(
+    writer: &OutboundSink,
+    operation_id: &str,
+    results: &mut [crate::progress::TransferResult],
+) -> Result<(), String> {
+    let path_bytes: usize = results
+        .iter()
+        .filter_map(|item| item.changes.as_ref())
+        .flat_map(|changes| {
+            changes
+                .files
+                .iter()
+                .chain(&changes.created_dirs)
+                .chain(&changes.removed_source_dirs)
+        })
+        .map(|path| path.len() + 4)
+        .sum();
+    if path_bytes < 4 * 1024 * 1024 {
+        return Ok(());
+    }
+    for (index, item) in results.iter_mut().enumerate() {
+        let Some(changes) = &mut item.changes else {
+            continue;
+        };
+        for (field, paths) in [
+            ("files", &mut changes.files),
+            ("created_dirs", &mut changes.created_dirs),
+            ("removed_source_dirs", &mut changes.removed_source_dirs),
+        ] {
+            for chunk in paths.chunks(128) {
+                let params = json!({"operation_id": operation_id, "result_index": index, "field": field, "paths": chunk});
+                write_json(
+                    writer,
+                    &JsonRpcNotification::new(simplefile_ipc::TRANSFER_CHANGES, params),
+                )
+                .await?;
+            }
+            changes.streamed_paths += paths.len();
+            paths.clear();
+        }
+    }
+    Ok(())
+}
+
 fn transfer_result_response(
     id: Option<Value>,
     result: Result<
@@ -914,7 +960,7 @@ pub(super) fn spawn_copy_move_with_progress(
         let cancel_for_task = cancel.clone();
 
         let items = params.items;
-        let result = scheduler
+        let mut result = scheduler
             .run_transfer(move || {
                 let emit = |update| events_for_task.emit_progress(&update);
                 let tuning = |update| events_for_task.emit("transfer-tuning", &update);
@@ -957,6 +1003,16 @@ pub(super) fn spawn_copy_move_with_progress(
             cache.invalidate_paths(&sources_for_cache);
         }
 
+        let committed = match &mut result {
+            Ok(Ok(results)) => Some(results),
+            Ok(Err(error)) => Some(&mut error.outcome.committed),
+            Err(_) => None,
+        };
+        if let Some(committed) = committed {
+            if let Err(error) = stream_transfer_changes(&writer, &op_id, committed).await {
+                result = Err(error);
+            }
+        }
         let response = transfer_result_response(id, result);
 
         let _ = write_json(&writer, &response).await;
