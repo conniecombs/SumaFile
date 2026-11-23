@@ -2,6 +2,7 @@
     x:Class="SimpleFile.App.TransferProgressWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:SimpleFile.App"
     Title="Transfers">
     <Grid
         x:Name="Root"
@@ -97,24 +98,57 @@
                                 IsExpanded="False"
                                 HorizontalAlignment="Stretch"
                                 HorizontalContentAlignment="Stretch">
-                            <StackPanel Spacing="6">
+                            <StackPanel Spacing="8">
                                 <Grid ColumnSpacing="8">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding TuningText}" TextWrapping="Wrap" FontSize="12"
+                                               VerticalAlignment="Center"
                                                Foreground="{ThemeResource SfTextMutedBrush}" />
                                     <Button Grid.Column="1" Content="Options" Click="OnTaskOptionsClicked" Tag="{Binding}"
                                             AutomationProperties.Name="Transfer options for this task"
                                             IsEnabled="{Binding CanChangeOptions}" Style="{StaticResource SfGhostButtonStyle}" />
                                 </Grid>
-                                <ScrollViewer MaxHeight="180" HorizontalScrollBarVisibility="Disabled">
-                                    <ItemsControl ItemsSource="{Binding ActiveFiles}">
+                                <!-- The files being copied now, under the folder each comes from. Each line is one
+                                     row high: a folder or a name too long for it is shortened by FittedText, and
+                                     the progress column has a fixed width so the figures line up. -->
+                                <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl Margin="0,0,14,0" ItemsSource="{Binding ActiveFolders}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <Grid ColumnSpacing="12" Margin="0,2">
-                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" FontSize="12" ToolTipService.ToolTip="{Binding Path}" />
-                                                    <TextBlock Grid.Column="1" Text="{Binding Progress}" FontSize="12" />
-                                                </Grid>
+                                                <StackPanel Margin="0,0,0,6">
+                                                    <Grid Background="Transparent" RightTapped="OnActivePathRightTapped" Tag="{Binding Folder}">
+                                                        <local:FittedText
+                                                            FontSize="12"
+                                                            FontWeight="SemiBold"
+                                                            Foreground="{ThemeResource SfTextMutedBrush}"
+                                                            Kind="FolderPath"
+                                                            Text="{Binding Folder}"
+                                                            ToolTipService.ToolTip="{Binding Folder}" />
+                                                    </Grid>
+                                                    <ItemsControl ItemsSource="{Binding Files}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Grid Margin="16,3,0,0" Background="Transparent" ColumnSpacing="12"
+                                                                      RightTapped="OnActivePathRightTapped" Tag="{Binding Path}">
+                                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="160" /></Grid.ColumnDefinitions>
+                                                                    <local:FittedText
+                                                                        FontSize="12"
+                                                                        Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                                                        Kind="FileName"
+                                                                        Text="{Binding Name}"
+                                                                        ToolTipService.ToolTip="{Binding Path}" />
+                                                                    <TextBlock
+                                                                        Grid.Column="1"
+                                                                        HorizontalAlignment="Right"
+                                                                        FontSize="12"
+                                                                        Foreground="{ThemeResource SfTextMutedBrush}"
+                                                                        Text="{Binding Progress}"
+                                                                        TextTrimming="CharacterEllipsis" />
+                                                                </Grid>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </StackPanel>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
@@ -146,11 +180,15 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel MinWidth="0" Spacing="3">
-                                    <TextBlock
+                                    <!-- One file by name; with several at once, "name and 7 more files". A long
+                                         name is shortened and the count stays whole. -->
+                                    <local:FittedText
                                         FontSize="13"
                                         Foreground="{ThemeResource SfTextPrimaryBrush}"
+                                        Kind="FileName"
+                                        Suffix="{Binding CurrentItemSuffix}"
                                         Text="{Binding CurrentItemText}"
-                                        TextTrimming="CharacterEllipsis" />
+                                        ToolTipService.ToolTip="{Binding CurrentItemLine}" />
                                     <TextBlock
                                         FontSize="12"
                                         Foreground="{ThemeResource SfTextMutedBrush}"

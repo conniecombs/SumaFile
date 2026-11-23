@@ -200,8 +200,10 @@ uninstalling, or remove those entries in Credential Manager. Settings in
 - Create file and folder
 - Rename and Advanced Rename
 - Copy, cut, paste, drag, drop, copy to other pane, and move to other pane
-- A Transfers window with a row per task: bytes, totals, rate, ETA, the files
-  being copied, Cancel, and per-task Options
+- A Transfers window with a row per task: bytes, totals, rate, ETA, Cancel,
+  and per-task Options. A row names a file being copied and counts the others
+  running beside it; its Details section lists them all under their source
+  folders, with long paths and names shortened to fit
 - Copying or moving a folder into a same-name folder merges their contents automatically,
   including nested folders. A file at the same relative path prompts for Replace, Skip,
   or Keep both. Each answer applies to that conflict unless you select **Do this for all remaining conflicts**.

@@ -26,6 +26,53 @@ public sealed partial class MainWindow
         await Task.Delay(200);
     }
 
+    // FittedText is where the Transfers window shortens text itself, and only a live layout pass shows that it
+    // measures: hand it text far wider than its width and read back what it drew.
+    private static async Task SmokeFittedTextAsync(Grid host)
+    {
+        FittedText Probe(FittedTextKind kind, string text, string suffix, double width, double fontSize) => new()
+        {
+            Kind = kind, Text = text, Suffix = suffix, Width = width, FontSize = fontSize,
+            HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
+        };
+        var folder = Probe(FittedTextKind.FolderPath,
+            @"D:\Media\Library\2024\A very long folder name for the season\Another long folder name\", "", 260, 12);
+        var file = Probe(FittedTextKind.FileName,
+            "A very long recording name that cannot fit in the line - part 0042.mkv", " and 7 more files", 300, 13);
+        var whole = Probe(FittedTextKind.FileName, "short.bin", "", 300, 12);
+        FittedText[] probes = [folder, file, whole];
+        foreach (var probe in probes) host.Children.Add(probe);
+        try
+        {
+            host.UpdateLayout();
+            await Task.Delay(100);
+            host.UpdateLayout();
+            static TextBlock Line(FittedText probe) => SmokeDescendants<TextBlock>(probe).Single();
+            var folderText = Line(folder).Text;
+            SmokeAssert(folderText.Contains(TextFit.Ellipsis, StringComparison.Ordinal)
+                && folderText.StartsWith(@"D:\", StringComparison.Ordinal)
+                && folderText.EndsWith(@"\Another long folder name\", StringComparison.Ordinal)
+                && !folderText.Contains("Library", StringComparison.Ordinal),
+                $"A long folder path was not shortened in the middle: '{folderText}'");
+            var fileText = Line(file).Text;
+            SmokeAssert(fileText.Contains(TextFit.Ellipsis, StringComparison.Ordinal)
+                && fileText.StartsWith("A very", StringComparison.Ordinal)
+                && fileText.EndsWith("0042.mkv and 7 more files", StringComparison.Ordinal),
+                $"A long file name did not keep its start, its end and the count: '{fileText}'");
+            SmokeAssert(Line(whole).Text == "short.bin", $"Text that fits was changed: '{Line(whole).Text}'");
+            foreach (var probe in probes)
+            {
+                var line = Line(probe);
+                SmokeAssert(line.ActualWidth <= probe.ActualWidth + 0.5 && !line.IsTextTrimmed,
+                    $"Shortened text is still too wide: '{line.Text}' is {line.ActualWidth:0.#} of {probe.ActualWidth:0.#}");
+            }
+        }
+        finally
+        {
+            foreach (var probe in probes) host.Children.Remove(probe);
+        }
+    }
+
     private async Task SmokeAdaptiveTransfersAsync(string root, string manyFiles, List<object> results,
         Func<string, Task> checkpoint)
     {
@@ -73,6 +120,14 @@ public sealed partial class MainWindow
         await SmokeExpandTransferDetailsAsync(view);
         SmokeAssert(SmokeDescendants<TextBlock>(view).Any(t => t.Text == "image-0.bin" || t.Text.StartsWith("image-", StringComparison.Ordinal)),
             "The active file model did not render in the transfer window");
+        // Several files run at once: the row names one and counts the others, and Details lists them under
+        // the one folder they come from.
+        await SmokeWaitAsync(() => SmokeDescendants<TextBlock>(view).Any(t => t.Text.StartsWith("image-", StringComparison.Ordinal)
+            && t.Text.Contains(" more file", StringComparison.Ordinal)), "the row's count of the other active files");
+        SmokeAssert(operation.ActiveFolders.Count == 1, $"Files from one folder were listed under {operation.ActiveFolders.Count} headings");
+        await SmokeWaitAsync(() => SmokeDescendants<TextBlock>(view).Any(t => t.Text.EndsWith("adaptive-source" + Path.DirectorySeparatorChar, StringComparison.Ordinal)),
+            "the source folder heading in Details");
+        await SmokeFittedTextAsync((Grid)view);
         var bitmap = new RenderTargetBitmap();
         await bitmap.RenderAsync(view);
         var pixels = (await bitmap.GetPixelsAsync()).ToArray();
@@ -96,7 +151,8 @@ public sealed partial class MainWindow
         }
         results.Add(new { scenario = "adaptive-transfer-ui", files = 8, bytes = 64 * 1024 * 1024,
             elapsedMs = clock.Elapsed.TotalMilliseconds, optionsPersisted = true, liveOverride = true,
-            activeRowsRendered = true, completedRowsRemoved = true, hashesMatch = true });
+            activeRowsRendered = true, otherFilesCounted = true, groupedByFolder = true, longTextShortened = true,
+            completedRowsRemoved = true, hashesMatch = true });
 
         // A real Windows sharing violation at finalization must wait visibly,
         // retain the original, then recover without user retry or lost bytes.

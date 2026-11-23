@@ -1,7 +1,10 @@
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using SimpleFile.Core;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 
 namespace SimpleFile.App;
@@ -41,6 +44,27 @@ public sealed partial class TransferProgressWindow : Window
         // A plugin or archive-engine row never reads transfer.overrides.v1: its settings live in its plugin.
         if (_settings is not null && sender is Button { Tag: TransferOperationViewModel { IsExternal: false } operation })
             await TransferOptionsDialog.ShowAsync(Root.XamlRoot, _settings, operation);
+    }
+
+    // A folder heading or a file line in Details: its Tag is the full path, which the line may show shortened.
+    private void OnActivePathRightTapped(object sender, RightTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string { Length: > 0 } path } line)
+        {
+            return;
+        }
+
+        var copy = new MenuFlyoutItem { Text = "Copy path" };
+        copy.Click += (_, _) =>
+        {
+            var package = new DataPackage();
+            package.SetText(path);
+            Clipboard.SetContent(package);
+        };
+        var menu = new MenuFlyout();
+        menu.Items.Add(copy);
+        menu.ShowAt(line, new FlyoutShowOptions { Position = e.GetPosition(line) });
+        e.Handled = true;
     }
 
     private void OnCancelOperationClicked(object sender, RoutedEventArgs e)

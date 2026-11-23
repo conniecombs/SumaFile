@@ -484,8 +484,17 @@ both. The setting is not a "copy only what changed" switch.
 ## Progress readout
 
 A row shows bytes done of total bytes, a percentage, the speed, the time
-remaining and the name of a file in progress. Details lists every file being
-copied (up to 32) with its own bytes.
+remaining and the name of a file in progress. While several files are copied
+at once the line names one of them and counts the rest: "Movie A.mkv and 7
+more files".
+
+Details lists every file being copied (up to 32) under the folder it comes
+from, with its own bytes. Folders and names are in alphabetical order, and the
+destination is not repeated there; it is in the row's heading. Every line is
+one row high. A folder path too long for its line keeps its root and its last
+folders (`D:\…\Season 2\Extras\`), and a name too long keeps its start and
+its end with the extension (`IMG_2025011…6789.jpg`). Hover over a
+line for the whole path, or right-click it and choose **Copy path**.
 
 * **Total** is the size of the selected files plus every file found so far
   inside the selected folders. It grows while folders are still being scanned,

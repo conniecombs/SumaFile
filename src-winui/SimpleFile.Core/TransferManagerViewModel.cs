@@ -38,12 +38,18 @@ public sealed class TransferOperationViewModel : ObservableObject
     private string _percentText = "";
     private string _summaryText = "Waiting to start";
     private string _currentItemText = "Preparing transfer";
+    // True while the line above names a file; a status line such as "Preparing transfer" gets no count.
+    private bool _currentItemIsFile;
+    private int _activeFileCount;
     private string _speedText = "";
     private string _etaText = "";
     private string _errorMessage = "";
     private string _tuningText = "Automatic tuning starts when files are copied";
     public string TuningText { get => _tuningText; private set => SetProperty(ref _tuningText, value); }
+    /// <summary>The files being copied now, in the order the service reported them; at most 32 rows.</summary>
     public ObservableCollection<ActiveTransferFile> ActiveFiles { get; } = [];
+    /// <summary>The same rows by source folder, folders and names in order, as the Details section lists them.</summary>
+    public ObservableCollection<ActiveTransferFolder> ActiveFolders { get; } = [];
     public TransferPolicy? PolicyOverride { get; set; }
 
     public void ApplyTuning(TuningUpdate update)
@@ -60,7 +66,35 @@ public sealed class TransferOperationViewModel : ObservableObject
             if (row is null) { row = new ActiveTransferFile(file.Path); ActiveFiles.Add(row); }
             row.Update(file);
         }
+
+        SyncActiveFolders();
+        SetActiveFileCount(update.ActiveFiles.Length);
     }
+
+    private void SyncActiveFolders()
+    {
+        var groups = ActiveFiles
+            .GroupBy(file => file.Folder, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        for (var i = ActiveFolders.Count - 1; i >= 0; i--)
+        {
+            if (!groups.Any(group => SameFolder(group.Key, ActiveFolders[i].Folder))) ActiveFolders.RemoveAt(i);
+        }
+
+        for (var i = 0; i < groups.Count; i++)
+        {
+            if (i >= ActiveFolders.Count || !SameFolder(groups[i].Key, ActiveFolders[i].Folder))
+            {
+                ActiveFolders.Insert(i, new ActiveTransferFolder(groups[i].Key));
+            }
+
+            ActiveFolders[i].Sync(groups[i]);
+        }
+    }
+
+    private static bool SameFolder(string left, string right) =>
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
     internal TransferOperationViewModel(
         bool move,
@@ -176,10 +210,59 @@ public sealed class TransferOperationViewModel : ObservableObject
         }
     }
 
+    /// <summary>One file being copied, or a status such as "Preparing transfer".</summary>
     public string CurrentItemText
     {
         get => _currentItemText;
-        private set => SetProperty(ref _currentItemText, value);
+        private set
+        {
+            if (SetProperty(ref _currentItemText, value))
+            {
+                OnPropertyChanged(nameof(CurrentItemLine));
+            }
+        }
+    }
+
+    /// <summary>
+    /// " and 7 more files" while several files are copied at once and the line names one of them; otherwise
+    /// empty. Kept apart from the name so the window can shorten a long name and still show the count.
+    /// </summary>
+    public string CurrentItemSuffix
+    {
+        get
+        {
+            var others = _activeFileCount - 1;
+            return _currentItemIsFile && others > 0
+                ? $" and {others:N0} more {(others == 1 ? "file" : "files")}"
+                : "";
+        }
+    }
+
+    /// <summary>The whole line, unshortened, for the tooltip.</summary>
+    public string CurrentItemLine => CurrentItemText + CurrentItemSuffix;
+
+    private void SetCurrentItem(string text, bool isFile)
+    {
+        var suffix = CurrentItemSuffix;
+        _currentItemIsFile = isFile;
+        CurrentItemText = text;
+        RaiseSuffixIfChanged(suffix);
+    }
+
+    private void SetActiveFileCount(int count)
+    {
+        var suffix = CurrentItemSuffix;
+        _activeFileCount = count;
+        RaiseSuffixIfChanged(suffix);
+    }
+
+    private void RaiseSuffixIfChanged(string previous)
+    {
+        if (!string.Equals(previous, CurrentItemSuffix, StringComparison.Ordinal))
+        {
+            OnPropertyChanged(nameof(CurrentItemSuffix));
+            OnPropertyChanged(nameof(CurrentItemLine));
+        }
     }
 
     public string SpeedText
@@ -311,7 +394,7 @@ public sealed class TransferOperationViewModel : ObservableObject
         ProgressPercent = display.ProgressPercent;
         PercentText = display.Percent;
         SummaryText = display.Summary;
-        CurrentItemText = display.CurrentItemName;
+        SetCurrentItem(display.CurrentItemName, isFile: !string.IsNullOrWhiteSpace(update.CurrentItem));
         SpeedText = update.Status is "running" or "finalizing" ? display.Speed : "";
         EtaText = update.Status is "running" or "finalizing" ? display.Eta : "";
     }
@@ -329,7 +412,7 @@ public sealed class TransferOperationViewModel : ObservableObject
         ProgressPercent = total > 0 ? TransferProgressFormatter.Percent((ulong)bounded, (ulong)total) : 0;
         PercentText = total > 0 ? $"{ProgressPercent:0}%" : "";
         SummaryText = total > 0 ? $"{bounded:N0} of {total:N0}" : bounded > 0 ? $"{bounded:N0} done" : "Working";
-        CurrentItemText = string.IsNullOrWhiteSpace(detail) ? Title : detail;
+        SetCurrentItem(string.IsNullOrWhiteSpace(detail) ? Title : detail, isFile: false);
     }
 
     internal void MarkQueued(bool waitingForDestination)
@@ -343,7 +426,7 @@ public sealed class TransferOperationViewModel : ObservableObject
         SummaryText = waitingForDestination
             ? "Waiting for another transfer to finish"
             : "Waiting to start";
-        CurrentItemText = waitingForDestination ? "Destination busy" : "Preparing transfer";
+        SetCurrentItem(waitingForDestination ? "Destination busy" : "Preparing transfer", isFile: false);
     }
 
     internal void MarkRunning()
@@ -356,7 +439,7 @@ public sealed class TransferOperationViewModel : ObservableObject
         EtaText = "";
         _rateTracker.Reset();
         SummaryText = "Starting transfer";
-        CurrentItemText = "Preparing transfer";
+        SetCurrentItem("Preparing transfer", isFile: false);
     }
 
     internal void MarkCancelling()
@@ -374,12 +457,14 @@ public sealed class TransferOperationViewModel : ObservableObject
         SpeedText = "";
         EtaText = "";
         SummaryText = "Stopping transfer safely";
-        CurrentItemText = "Cancelling transfer";
+        SetCurrentItem("Cancelling transfer", isFile: false);
     }
 
     internal void Complete(TransferOperationStatus status)
     {
         ActiveFiles.Clear();
+        ActiveFolders.Clear();
+        SetActiveFileCount(0);
         TuningText = "";
         IsWaitingForDestination = false;
         Status = status;
@@ -391,13 +476,13 @@ public sealed class TransferOperationViewModel : ObservableObject
                 ProgressPercent = 100;
                 PercentText = "100%";
                 SummaryText = "Transfer complete";
-                CurrentItemText = "Transfer complete";
+                SetCurrentItem("Transfer complete", isFile: false);
                 IsIndeterminate = false;
                 break;
             case TransferOperationStatus.Cancelled:
                 PercentText = "";
                 SummaryText = "Transfer cancelled";
-                CurrentItemText = "Cancelled";
+                SetCurrentItem("Cancelled", isFile: false);
                 IsIndeterminate = false;
                 break;
             case TransferOperationStatus.Failed:
@@ -405,13 +490,13 @@ public sealed class TransferOperationViewModel : ObservableObject
                 SummaryText = string.IsNullOrWhiteSpace(ErrorMessage)
                     ? "Transfer failed"
                     : ErrorMessage;
-                CurrentItemText = "Transfer failed";
+                SetCurrentItem("Transfer failed", isFile: false);
                 IsIndeterminate = false;
                 break;
             case TransferOperationStatus.Skipped:
                 PercentText = "";
                 SummaryText = "Transfer skipped";
-                CurrentItemText = "Skipped";
+                SetCurrentItem("Skipped", isFile: false);
                 IsIndeterminate = false;
                 break;
         }
@@ -485,12 +570,44 @@ public sealed class TransferOperationViewModel : ObservableObject
 
 public sealed class ActiveTransferFile(string path) : ObservableObject
 {
+    // Either separator on any platform: the service sends Windows paths, and the tests run on Linux as well.
+    private readonly int _nameStart = path.LastIndexOfAny(['\\', '/']) + 1;
     private string _progress = "Starting";
     public string Path { get; } = path;
-    public string Name => System.IO.Path.GetFileName(Path);
+    public string Name => Path[_nameStart..];
+    /// <summary>The source folder with its trailing separator; empty for a bare name.</summary>
+    public string Folder => Path[.._nameStart];
     public string Progress { get => _progress; private set => SetProperty(ref _progress, value); }
     public void Update(ActiveFile file) => Progress = file.Total == 0 ? "Finishing" :
         $"{TransferProgressFormatter.FormatBytes(file.Current)} / {TransferProgressFormatter.FormatBytes(file.Total)}";
+}
+
+/// <summary>One source folder and the files being copied from it, names in order.</summary>
+public sealed class ActiveTransferFolder(string folder)
+{
+    public string Folder { get; } = folder;
+    public ObservableCollection<ActiveTransferFile> Files { get; } = [];
+
+    /// <summary>Brings <see cref="Files"/> to the given rows without replacing the rows that stay.</summary>
+    internal void Sync(IEnumerable<ActiveTransferFile> files)
+    {
+        var sorted = files
+            .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(file => file.Path, StringComparer.Ordinal)
+            .ToList();
+        for (var i = Files.Count - 1; i >= 0; i--)
+        {
+            if (!sorted.Contains(Files[i])) Files.RemoveAt(i);
+        }
+
+        for (var i = 0; i < sorted.Count; i++)
+        {
+            if (i < Files.Count && ReferenceEquals(Files[i], sorted[i])) continue;
+            var at = Files.IndexOf(sorted[i]);
+            if (at >= 0) Files.Move(at, i);
+            else Files.Insert(i, sorted[i]);
+        }
+    }
 }
 
 public sealed class TransferManagerViewModel : ObservableObject

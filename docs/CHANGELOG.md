@@ -8,6 +8,19 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Transfers
+
+- A transfer row no longer looks as if one file were copied at a time. While
+  several files run at once its line names one and counts the rest ("Movie
+  A.mkv and 7 more files").
+- The Details section lists the files being copied under the folder each
+  comes from, in alphabetical order, with the byte figures in one column.
+  Right-click a folder or a file there for **Copy path**.
+- A folder path or a file name too long for its line is shortened with "…"
+  instead of being cut at the end: a path keeps its root and its last
+  folders, a name keeps its start and its end with the extension, and the
+  count on a row's line is never cut. The whole text is in the tooltip.
+
 ---
 
 ## [1.1.5] - 2026-11-22
