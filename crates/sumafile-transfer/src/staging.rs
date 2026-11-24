@@ -110,7 +110,7 @@ impl SourceVersion {
 
 #[derive(Debug, Default, Clone)]
 pub struct TreeCopyManifest {
-    pub files: crate::manifest::CopiedFiles,
+    pub files: Vec<(PathBuf, SourceVersion)>,
     pub source_dirs: Vec<(PathBuf, SourceVersion)>,
 }
 
@@ -635,12 +635,11 @@ pub fn delete_verified_source_tree_recording(
     mut removed: impl FnMut(&Path),
 ) -> Result<(), String> {
     let mut errors = Vec::new();
-    manifest.files.visit(|file_path, expected| {
+    for (file_path, expected) in &manifest.files {
         if let Err(err) = delete_verified_source(file_path, expected) {
             errors.push(err);
         }
-        Ok(())
-    })?;
+    }
 
     if !manifest.source_dirs.iter().any(|(path, _)| path == root) {
         return Err(
@@ -1154,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn completion_manifest_preserves_pre_epoch_source_versions() {
+    fn a_stored_source_version_keeps_a_time_before_1970() {
         let root = unique_temp_dir("pre_epoch_manifest");
         let source = root.join("old.txt");
         fs::write(&source, b"old content").unwrap();
@@ -1165,19 +1164,10 @@ mod tests {
         drop(file);
         let expected = capture_source_version_for_path(&source).unwrap();
         assert_eq!(expected.modified, Some(-1_000_000_000));
-        let manifest = crate::manifest::DiskManifest::new().unwrap();
-        manifest.push(&source, &expected).unwrap();
-        let mut visited = 0;
-        manifest
-            .visit(|path, version| {
-                assert_eq!(path, source.as_path());
-                assert_eq!(version, &expected);
-                visited += 1;
-                super::verify_source_unchanged(path, version)
-            })
-            .unwrap();
-        assert_eq!(visited, 1);
-        drop(manifest);
+        let stored = serde_json::to_string(&expected).unwrap();
+        let restored: super::SourceVersion = serde_json::from_str(&stored).unwrap();
+        assert_eq!(restored, expected);
+        super::verify_source_unchanged(&source, &restored).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1282,8 +1272,7 @@ mod tests {
             files: vec![(
                 copied_file.clone(),
                 capture_source_version_for_path(&copied_file).unwrap(),
-            )]
-            .into(),
+            )],
             source_dirs: vec![
                 (
                     src_dir.clone(),
@@ -1327,7 +1316,7 @@ mod tests {
         fs::write(&skipped, b"left on purpose").unwrap();
         fs::write(&added, b"nobody reported this one").unwrap();
         let manifest = TreeCopyManifest {
-            files: Vec::new().into(),
+            files: Vec::new(),
             source_dirs: [&src_dir, &explained, &unexplained, &deep]
                 .into_iter()
                 .map(|dir| (dir.clone(), capture_source_version_for_path(dir).unwrap()))

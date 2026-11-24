@@ -7,7 +7,6 @@
 
 pub mod ids;
 pub mod journal;
-pub mod manifest;
 pub mod path_conflict;
 pub mod paths;
 pub mod policy;

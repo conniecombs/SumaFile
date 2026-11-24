@@ -7,9 +7,9 @@ use super::tuning::CheckMode;
 use crate::transfer_reliability::{Failure, FailureKind, Retry};
 use crate::transfer_staging::{
     capture_source_version_for_path, capture_source_version_from_open_file, cleanup_owned_path,
-    conflict_for_existing_destination, existing_file_matches_source_with_mode, hash_file_contents,
-    preallocate_file, promote_leased_with_policy, remove_path, staging_path_for,
-    verify_source_unchanged, ContentHasher, SourceVersion,
+    conflict_for_existing_destination, hash_file_contents, preallocate_file,
+    promote_leased_with_policy, remove_path, staging_path_for, verify_source_unchanged,
+    ContentHasher, SourceVersion,
 };
 use simplefile_core::path_conflict::path_exists_no_follow;
 use simplefile_core::utils::recreate_symlink;
@@ -937,7 +937,6 @@ pub(crate) fn copy_file_with_progress(
 fn resolve_file_conflict(
     dst: &Path,
     conflict: ConflictAction,
-    resume_existing: bool,
 ) -> Result<Option<(PathBuf, bool)>, Failure> {
     match conflict {
         ConflictAction::Replace => {
@@ -955,14 +954,14 @@ fn resolve_file_conflict(
         }
         ConflictAction::Error | ConflictAction::CreateOnly => Ok(Some((dst.to_path_buf(), false))),
         ConflictAction::Skip => {
-            if !resume_existing && path_exists_no_follow(dst) {
+            if path_exists_no_follow(dst) {
                 Ok(None)
             } else {
                 Ok(Some((dst.to_path_buf(), false)))
             }
         }
         ConflictAction::KeepBoth => {
-            if !resume_existing && path_exists_no_follow(dst) {
+            if path_exists_no_follow(dst) {
                 let parent = dst
                     .parent()
                     .ok_or_else(|| Failure::from("Cannot get destination directory"))?;
@@ -999,25 +998,7 @@ pub(crate) fn copy_file_with_progress_versioned(
         ctx.progress.total_bytes.store(needed, Ordering::Relaxed);
     }
 
-    if ctx.resume_existing && path_exists_no_follow(planned_dst) {
-        if existing_file_matches_source_with_mode(src, planned_dst, ctx.policy.check_mode)? {
-            let version = capture_source_version_for_path(src)?;
-            *completed_bytes = completed_bytes.saturating_add(file_len);
-            ctx.progress
-                .complete_file(*completed_bytes, src.to_string_lossy().to_string());
-            return Ok(FileOutcome::Copied {
-                reused: true,
-                version,
-                destination: planned_dst.to_path_buf(),
-            });
-        }
-
-        remove_path(planned_dst, "resumable destination")?;
-    }
-
-    let Some((dst, replace_existing)) =
-        resolve_file_conflict(planned_dst, conflict, ctx.resume_existing)?
-    else {
+    let Some((dst, replace_existing)) = resolve_file_conflict(planned_dst, conflict)? else {
         return Ok(FileOutcome::Skipped);
     };
     let dst = dst.as_path();
@@ -1030,7 +1011,7 @@ pub(crate) fn copy_file_with_progress_versioned(
             dst.display()
         )));
     }
-    if exists && !replace_existing && !ctx.resume_existing {
+    if exists && !replace_existing {
         return Err(Failure::conflict(conflict_for_existing_destination(dst)));
     }
     let staged_path = if use_inplace {
@@ -1125,7 +1106,7 @@ pub(crate) fn copy_file_with_progress_versioned(
                 if let Err(error) = promote_leased_with_policy(
                     &staged_path,
                     dst,
-                    replace_existing || ctx.resume_existing,
+                    replace_existing,
                     ctx.progress.cancel,
                     &ctx.policy,
                     lease.as_mut().expect("staged copy has an ownership lease"),
@@ -1195,13 +1176,11 @@ pub(crate) fn copy_symlink_with_progress(
     completed_bytes: u64,
     conflict: ConflictAction,
 ) -> Result<FileOutcome, Failure> {
-    let Some((dst_path, replace_existing)) =
-        resolve_file_conflict(planned_dst, conflict, ctx.resume_existing)?
-    else {
+    let Some((dst_path, replace_existing)) = resolve_file_conflict(planned_dst, conflict)? else {
         return Ok(FileOutcome::Skipped);
     };
     let dst_path = dst_path.as_path();
-    if !replace_existing && !ctx.resume_existing && path_exists_no_follow(dst_path) {
+    if !replace_existing && path_exists_no_follow(dst_path) {
         return Err(Failure::conflict(conflict_for_existing_destination(
             dst_path,
         )));
@@ -1238,7 +1217,7 @@ pub(crate) fn copy_symlink_with_progress(
     if let Err(error) = promote_leased_with_policy(
         &staged_path,
         dst_path,
-        replace_existing || ctx.resume_existing,
+        replace_existing,
         ctx.progress.cancel,
         &ctx.policy,
         &mut lease,
@@ -1283,10 +1262,10 @@ pub(crate) fn move_by_rename(
 ) -> Option<Result<FileOutcome, Failure>> {
     use simplefile_core::path_conflict::{is_already_exists_error, rename_exclusive};
 
-    if ctx.resume_existing || !super::plan::same_volume(source, planned_dst) {
+    if !super::plan::same_volume(source, planned_dst) {
         return None;
     }
-    let (dst, replace_existing) = match resolve_file_conflict(planned_dst, conflict, false) {
+    let (dst, replace_existing) = match resolve_file_conflict(planned_dst, conflict) {
         Ok(Some(resolved)) => resolved,
         Ok(None) => return Some(Ok(FileOutcome::Skipped)),
         Err(error) => return Some(Err(error)),

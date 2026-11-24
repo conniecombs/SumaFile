@@ -93,16 +93,12 @@ pub(crate) struct FileTask {
     pub size: u64,
     pub network: bool,
     pub conflict: ConflictAction,
-    /// The destination lives inside an unpublished staging tree owned by this
-    /// operation: an existing file there is this operation's own earlier work.
-    pub owned_tree: bool,
     pub symlink: bool,
     /// Selected directly by the user (reported in `committed`), not found by a walk.
     pub top_level: bool,
     /// Existing destination root whose Undo receipt records this file.
     pub merge_root: Option<usize>,
     /// Move: delete the verified source right after the file is published.
-    /// Files inside staged trees are deleted after the tree is promoted instead.
     pub delete_source: bool,
     /// A targeted retry: a destination that already holds the same file is this
     /// operation's own earlier copy, not a conflict.
@@ -229,7 +225,7 @@ impl CopyResult {
 }
 
 struct DirQueue {
-    dirs: VecDeque<(usize, usize, PathBuf, PathBuf, bool, ConflictAction)>,
+    dirs: VecDeque<(usize, usize, PathBuf, PathBuf, ConflictAction)>,
     active_checkers: usize,
     done: bool,
 }
@@ -294,21 +290,18 @@ pub(crate) fn copy_selection(
     completed_bytes: &mut u64,
     session: &mut Session<'_>,
 ) -> SelectionResult {
-    let is_move = ctx.progress.operation_type == "move";
     let cancel = ctx.progress.cancel;
     let total_bytes = ctx.progress.total_bytes;
     let total_files = ctx.progress.total_files;
     let checker_count = ctx.policy.checkers_limit().clamp(1, 32);
     let channel_cap = ctx.policy.backlog_limit().clamp(64, 8192);
 
-    let mut manifests: Vec<Option<Arc<crate::transfer_manifest::DiskManifest>>> = Vec::new();
     let march_state = Mutex::new(MarchState::default());
     let mut initial_dirs = VecDeque::new();
     let mut merged_roots = vec![false; roots.len()];
     let mut root_errors: Vec<Option<Failure>> = Vec::with_capacity(roots.len());
     for (root_index, root) in roots.iter().enumerate() {
         let mut root_error = None;
-        let mut manifest = None;
         let allow_merge = !matches!(
             root.conflict,
             ConflictAction::KeepBoth | ConflictAction::CreateOnly
@@ -324,31 +317,21 @@ pub(crate) fn copy_selection(
                         .created_dirs
                         .push((0, root_index, root.source.clone(), root.destination.clone()));
                 }
-                if is_move {
-                    match crate::transfer_manifest::DiskManifest::new() {
-                        Ok(disk) => manifest = Some(disk),
-                        Err(error) => root_error = Some(Failure::from(error)),
-                    }
-                }
-                if root_error.is_none() {
-                    initial_dirs.push_back((
-                        0usize,
-                        root_index,
-                        root.source.clone(),
-                        root.destination.clone(),
-                        false,
-                        if root.conflict == ConflictAction::KeepBoth {
-                            ConflictAction::Error
-                        } else {
-                            root.conflict
-                        },
-                    ));
-                }
+                initial_dirs.push_back((
+                    0usize,
+                    root_index,
+                    root.source.clone(),
+                    root.destination.clone(),
+                    if root.conflict == ConflictAction::KeepBoth {
+                        ConflictAction::Error
+                    } else {
+                        root.conflict
+                    },
+                ));
             }
             Err(error) => root_error = Some(error),
         }
         root_errors.push(root_error);
-        manifests.push(manifest);
     }
 
     let actual_checkers = if initial_dirs.is_empty() {
@@ -382,7 +365,7 @@ pub(crate) fn copy_selection(
             let march_stop = &march_stop;
             let task_tx = task_tx.clone();
             march_scope.spawn(move || loop {
-                let (depth, root_index, src_dir, dst_dir, owned_tree, conflict) = {
+                let (depth, root_index, src_dir, dst_dir, conflict) = {
                     let mut q = dir_queue.0.lock().expect("dir queue lock poisoned");
                     loop {
                         if q.done || march_stop.load(Ordering::Acquire) {
@@ -465,7 +448,6 @@ pub(crate) fn copy_selection(
                                 root_index,
                                 child_src,
                                 child_dst,
-                                owned_tree,
                                 conflict,
                             ));
                             dir_queue.1.notify_one();
@@ -489,11 +471,10 @@ pub(crate) fn copy_selection(
                                 size,
                                 network,
                                 conflict,
-                                owned_tree,
                                 symlink,
                                 top_level: false,
                                 merge_root: merged_roots[root_index].then_some(root_index),
-                                delete_source: delete_source && !owned_tree,
+                                delete_source,
                                 retry: root.retry && root.conflict == ConflictAction::Error,
                             };
                             if task_tx.send(Ok(task)).is_err() {
@@ -554,9 +535,8 @@ pub(crate) fn copy_selection(
             }
         };
 
-        let manifests_ref = &manifests;
         let mut completed =
-            |task: &FileTask, version: &SourceVersion, reused: bool| -> Result<(), String> {
+            |task: &FileTask, _: &SourceVersion, reused: bool| -> Result<(), String> {
                 if let Some(index) = task.merge_root {
                     if !reused && task.conflict != ConflictAction::Replace {
                         let relative = task
@@ -570,15 +550,7 @@ pub(crate) fn copy_selection(
                             .push(relative.to_string_lossy().into_owned());
                     }
                 }
-                if !task.owned_tree || !is_move {
-                    return Ok(());
-                }
-                // Staged-tree moves delete sources only after the tree is published.
-                let Some(manifest) = root_manifest_for(manifests_ref, roots_ref, &task.source)
-                else {
-                    return Ok(());
-                };
-                manifest.push(&task.source, version)
+                Ok(())
             };
         let res = copy_files_streaming_with_sink(
             &mut next_task,
@@ -617,12 +589,6 @@ pub(crate) fn copy_selection(
             error,
         })
         .collect();
-    for (root_index, manifest) in manifests.into_iter().enumerate() {
-        if let Some(disk) = manifest {
-            root_outcomes[root_index].manifest.files =
-                crate::transfer_manifest::CopiedFiles::Disk(disk);
-        }
-    }
     for (_, root_index, src, version) in state.source_dirs {
         root_outcomes[root_index]
             .manifest
@@ -672,19 +638,6 @@ pub(crate) fn copy_selection(
         roots: root_outcomes,
         dir_failures,
     }
-}
-
-fn root_manifest_for<'a>(
-    manifests: &'a [Option<Arc<crate::transfer_manifest::DiskManifest>>],
-    roots: &[RootTask],
-    source: &Path,
-) -> Option<&'a Arc<crate::transfer_manifest::DiskManifest>> {
-    roots
-        .iter()
-        .enumerate()
-        .filter(|(_, root)| source.starts_with(&root.source))
-        .max_by_key(|(_, root)| root.source.as_os_str().len())
-        .and_then(|(index, _)| manifests.get(index).and_then(|m| m.as_ref()))
 }
 
 /// Walk one directory into `destination` (test and compatibility entry point).
@@ -1116,7 +1069,6 @@ fn copy_files_streaming_with_sink(
                         progress: &progress,
                         operation_id,
                         network: task.network,
-                        resume_existing: task.owned_tree,
                         policy: policy.clone(),
                     };
                     let mut copied = 0;
@@ -1568,7 +1520,6 @@ mod tests {
                     size: 1,
                     network: false,
                     conflict: ConflictAction::Error,
-                    owned_tree: false,
                     symlink: false,
                     top_level: false,
                     merge_root: None,
@@ -1660,7 +1611,6 @@ mod tests {
                 size: 1,
                 network: false,
                 conflict: ConflictAction::Error,
-                owned_tree: false,
                 symlink: false,
                 top_level: false,
                 merge_root: None,
@@ -1727,7 +1677,6 @@ mod tests {
                 size: SIZE,
                 network: false,
                 conflict: ConflictAction::Error,
-                owned_tree: false,
                 symlink: false,
                 top_level: true,
                 merge_root: None,
@@ -1816,7 +1765,6 @@ mod tests {
                     size: 65536,
                     network: false,
                     conflict: ConflictAction::Error,
-                    owned_tree: false,
                     symlink: false,
                     top_level: true,
                     merge_root: None,
@@ -1933,7 +1881,6 @@ mod tests {
                         size: bytes.len() as u64,
                         network,
                         conflict: ConflictAction::Error,
-                        owned_tree: false,
                         symlink: false,
                         top_level: true,
                         merge_root: None,
@@ -2066,7 +2013,6 @@ mod tests {
                     size: 16,
                     network: false,
                     conflict: ConflictAction::Error,
-                    owned_tree: false,
                     symlink: false,
                     top_level: true,
                     merge_root: None,
@@ -2207,7 +2153,6 @@ mod tests {
             progress: &progress,
             operation_id: "small-tree-test",
             network: false,
-            resume_existing: false,
             policy: active_policy.clone(),
         };
         let snapshots = Mutex::new(Vec::new());
@@ -2232,16 +2177,9 @@ mod tests {
         )
         .expect("small-file tree copy should succeed");
 
-        // Copies keep no completion manifest; only staged-tree moves do.
-        let mut completed_records = 0;
-        manifest
-            .files
-            .visit(|_, _| {
-                completed_records += 1;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(completed_records, 0);
+        // A copy records nothing to delete afterwards.
+        assert!(manifest.files.is_empty());
+        assert!(manifest.source_dirs.is_empty());
         assert_eq!(
             completed_files.load(Ordering::Relaxed),
             total_files_expected as u64
@@ -2282,7 +2220,6 @@ mod tests {
                     size: 1024,
                     network: false,
                     conflict: ConflictAction::Error,
-                    owned_tree: false,
                     symlink: false,
                     top_level: true,
                     merge_root: None,
@@ -2391,7 +2328,6 @@ mod tests {
                         size: *sz as u64,
                         network: false,
                         conflict: ConflictAction::Error,
-                        owned_tree: false,
                         symlink: false,
                         top_level: true,
                         merge_root: None,
@@ -2497,7 +2433,6 @@ mod tests {
             progress: &progress,
             operation_id: "overlapped-multistream-test",
             network: true, // 512 KiB buffer -> triggers 3-slot overlapped ring buffer on 2 MiB file
-            resume_existing: false,
             policy: Policy::default(),
         };
         let mut completed_bytes = 0u64;
@@ -2578,7 +2513,6 @@ mod tests {
                 size: SIZE,
                 network: false,
                 conflict: ConflictAction::Skip,
-                owned_tree: false,
                 symlink: false,
                 top_level: true,
                 merge_root: None,
@@ -2591,7 +2525,6 @@ mod tests {
                 size: SIZE,
                 network: false,
                 conflict: ConflictAction::Skip,
-                owned_tree: false,
                 symlink: false,
                 top_level: true,
                 merge_root: None,

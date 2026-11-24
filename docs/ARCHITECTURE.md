@@ -135,7 +135,7 @@ start the real service and the staged plugins, which must be built first.
 | Crate | Owns | Depends on |
 | --- | --- | --- |
 | `crates/simplefile-ipc` | Protocol constants (`PROTOCOL_VERSION`, `MAX_FRAME_BYTES`, error codes, prefixes), `frame`, the `rpc` types, generated method and event names | none |
-| `crates/sumafile-transfer` | Transfer primitives: `staging`, `journal`, `manifest`, `reliability`, `policy`, `resources`, `tuning`, `ids`, `paths`, `path_conflict`. A leaf crate: it never depends on `simplefile-core` or `simplefile-service` | none |
+| `crates/sumafile-transfer` | Transfer primitives: `staging`, `journal`, `reliability`, `policy`, `resources`, `tuning`, `ids`, `paths`, `path_conflict`. A leaf crate: it never depends on `simplefile-core` or `simplefile-service` | none |
 | `crates/simplefile-core` | The domain, with no transport: `dir_list`, `listing_view`, `collation`, `file_ops`, `archive`, `preview`, thumbnails, `metadata`, `entry_facts`, `fact_cache`, `drives`, `recycle_bin`, `tags`, `smart_folders`, `settings_store`, `cleanup`, `checksum`, `compare`, `open_with`, `terminal`, `updater`, and the wire types in `models.rs` | `sumafile-transfer` |
 | `crates/simplefile-service` | The process: the pipe (`main.rs`), the session loop (`session/`), `dispatch/`, `scheduler.rs`, `binary.rs`, `listing_views.rs`, `session_cache.rs`, the transfer engine (`progress.rs`, `progress/`), `search.rs`, `watcher.rs`, `shell.rs`, `plugin_archive/` | `simplefile-core`, `simplefile-ipc`, `sumafile-transfer` |
 | `crates/sumafile-plugin` | The helper crate for backends: the pipe server, `plugin.handshake`, request routing, cancel flags, `HostClient` | `simplefile-ipc` |

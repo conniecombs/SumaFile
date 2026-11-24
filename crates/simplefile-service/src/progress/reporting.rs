@@ -145,7 +145,6 @@ pub(crate) struct CopyContext<'a> {
     pub(crate) progress: &'a ProgressContext<'a>,
     pub(crate) operation_id: &'a str,
     pub(crate) network: bool,
-    pub(crate) resume_existing: bool,
     pub(crate) policy: super::tuning::Policy,
 }
 

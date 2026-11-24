@@ -17,8 +17,7 @@ pub mod watcher;
 #[cfg(test)]
 use sumafile_transfer::test_io as transfer_test_io;
 use sumafile_transfer::{
-    journal as transfer_journal, manifest as transfer_manifest,
-    reliability as transfer_reliability, staging as transfer_staging,
+    journal as transfer_journal, reliability as transfer_reliability, staging as transfer_staging,
 };
 
 pub use dispatch::SessionState;

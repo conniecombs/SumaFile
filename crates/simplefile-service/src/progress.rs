@@ -628,7 +628,6 @@ fn transfer_with_policy_blocking(
                 size: plan.byte_size,
                 network: plan.network,
                 conflict: plan.conflict,
-                owned_tree: false,
                 symlink: plan.is_symlink,
                 top_level: true,
                 merge_root: None,
@@ -647,7 +646,6 @@ fn transfer_with_policy_blocking(
             progress: &progress,
             operation_id: &operation_id,
             network: plans.iter().any(|plan| plan.network),
-            resume_existing: false,
             policy: session.policy().clone(),
         };
         let result =
@@ -1723,7 +1721,6 @@ mod tests {
             progress: &progress,
             operation_id,
             network: false,
-            resume_existing: false,
             policy: super::Policy::default(),
         };
         let mut completed_bytes = 0;
@@ -1777,7 +1774,6 @@ mod tests {
             progress: &progress,
             operation_id,
             network: true,
-            resume_existing: false,
             policy: super::Policy::default(),
         };
 
