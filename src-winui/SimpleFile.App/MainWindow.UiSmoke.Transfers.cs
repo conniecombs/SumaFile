@@ -32,13 +32,14 @@ public sealed partial class MainWindow
         var detailsScroll = ((Grid)expander.Content).Children.OfType<ScrollViewer>().Single();
         await SmokeWaitAsync(() => detailsScroll.ActualHeight >= TransferWindowLayout.MinDetailsHeight, "stretched Details pane height");
 
-        SecondaryWindowChrome.Resize(transferWindow, 800, 520);
+        // Both heights leave the one expanded pane above its minimum, so the pane has room to follow the window.
+        SecondaryWindowChrome.Resize(transferWindow, 800, 600);
         await Task.Delay(150);
         view.UpdateLayout();
         var shorterViewHeight = view.ActualHeight;
         var shorterDetailsHeight = detailsScroll.ActualHeight;
 
-        SecondaryWindowChrome.Resize(transferWindow, 800, 640);
+        SecondaryWindowChrome.Resize(transferWindow, 800, 720);
         await Task.Delay(150);
         view.UpdateLayout();
         var tallerViewHeight = view.ActualHeight;
@@ -139,6 +140,9 @@ public sealed partial class MainWindow
         for (var i = 0; i < 8; i++) await File.WriteAllBytesAsync(Path.Combine(source, $"image-{i}.bin"), block);
         var expectedHash = SHA256.HashData(block);
         await checkpoint("adaptive-transfer-ui");
+        // The cancelled row of the previous scenario would otherwise be expanded below as well: two Details
+        // panes then share the viewport, both sit at their minimum height, and the resize check measures nothing.
+        _transfer!.ClearCompleted();
         var clock = Stopwatch.StartNew();
         var transfer = TransferWithConflictAsync([source], destination, move: false);
         await SmokeWaitAsync(() => _transfer!.Operations.Any(o => o.Sources.Contains(source) && o.ActiveFiles.Count == 4), "four active file rows");
