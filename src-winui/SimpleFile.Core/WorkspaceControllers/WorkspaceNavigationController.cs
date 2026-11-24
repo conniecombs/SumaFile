@@ -229,8 +229,6 @@ internal sealed class WorkspaceNavigationController
                 state.SyncActiveTab();
                 workspace.SetStatusMessageCore(null);
                 workspace.PlacesController.RecordRecent(listing.Path);
-                workspace.SetPhotoFolderActiveCore(
-                    MediaFolder.IsMediaFolder(listing.Entries, workspace.Settings.PhotoFolderImageThreshold));
                 PublishDecorationsLocked(state, decorations);
                 published = true;
             }
@@ -641,8 +639,6 @@ internal sealed class WorkspaceNavigationController
 
                 state.PathIsNetwork = listing.IsNetwork || workspace.DrivesController.IsNetworkFsPath(state.Path);
                 state.SyncActiveTab();
-                workspace.SetPhotoFolderActiveCore(
-                    MediaFolder.IsMediaFolder(listing.Entries, workspace.Settings.PhotoFolderImageThreshold));
                 // With only a view's first rows in hand, the selected row may be among the rows still to be read.
                 state.SelectedPath = selected is not null
                     && (partial || state.Entries.Any(entry => PathRules.PathsEqual(entry.Path, selected)))

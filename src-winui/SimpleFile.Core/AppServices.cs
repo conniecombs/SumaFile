@@ -31,7 +31,6 @@ public static class AppServices
         // Register ViewModels — transient so each resolution gets fresh state,
         // but in practice these are resolved once and held by the MainWindow.
         services.AddTransient<SearchViewModel>();
-        services.AddTransient<TransferViewModel>();
         services.AddSingleton<TransferManagerViewModel>();
         services.AddTransient<ToolbarViewModel>();
 

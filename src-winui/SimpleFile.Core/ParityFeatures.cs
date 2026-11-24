@@ -199,18 +199,6 @@ public static class PhotoFolder
         "dng", "arw", "cr2", "cr3", "nef", "orf", "rw2", "raf", "srw", "pef", "x3f",
     };
 
-    public static bool IsPhotoFolder(IEnumerable<FileEntry> entries, int thresholdPercent = 70)
-    {
-        var files = entries.Where(entry => !entry.IsDir).ToList();
-        if (files.Count == 0)
-        {
-            return false;
-        }
-
-        var images = files.Count(entry => IsImage(entry.Extension) || IsImage(entry.Name));
-        return images * 100 / files.Count >= thresholdPercent;
-    }
-
     public static bool IsImage(string? nameOrExtension)
     {
         return ExtensionCatalog.Contains(ImageExtensions, nameOrExtension);

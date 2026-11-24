@@ -58,18 +58,6 @@ public static class DropDestination
         return true;
     }
 
-    public static IReadOnlyList<string> ConflictingNames(
-        IReadOnlyList<string> sources,
-        IReadOnlyList<string> destinationEntryNames)
-    {
-        var dest = new HashSet<string>(destinationEntryNames, StringComparer.OrdinalIgnoreCase);
-        return sources
-            .Select(PathRules.Basename)
-            .Where(name => dest.Contains(name))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
     public static IReadOnlyList<string> ConflictingTransferNames(
         IReadOnlyList<string> sources,
         IReadOnlyList<string> destinationEntryNames)

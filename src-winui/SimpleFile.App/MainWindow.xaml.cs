@@ -915,14 +915,6 @@ public sealed partial class MainWindow : Window
         element.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private static void SetWidthIfChanged(FrameworkElement element, double width)
-    {
-        if (double.IsNaN(element.Width) || Math.Abs(element.Width - width) > 0.5)
-        {
-            element.Width = width;
-        }
-    }
-
     private static double MeasuredWidth(FrameworkElement element)
     {
         var width = element.ActualWidth;
@@ -937,11 +929,6 @@ public sealed partial class MainWindow : Window
     private async void OnToggleDualPane(object sender, RoutedEventArgs e)
     {
         await RunUiActionAsync("Dual pane", ToggleDualPaneFromUiAsync);
-    }
-
-    private async void OnCloseDualPane(object sender, RoutedEventArgs e)
-    {
-        await RunUiActionAsync("Close right pane", () => CloseFilePaneFromUiAsync(PaneId.Secondary));
     }
 
     private async void OnClosePrimaryPane(object sender, RoutedEventArgs e)

@@ -98,28 +98,6 @@ public static class AdvancedRename
 {
     public const int DefaultPreviewLimit = 500;
 
-    public static string Apply(string name, AdvancedRenamePlan plan, int index)
-    {
-        ArgumentNullException.ThrowIfNull(plan);
-        if (!UsesAdvancedOptions(plan))
-        {
-            return ApplyLegacy(name, plan, index);
-        }
-
-        return BuildName(new FileEntry { Name = name, Path = name }, index, plan);
-    }
-
-    public static RenameRequest[] Build(IReadOnlyList<FileEntry> entries, AdvancedRenamePlan plan)
-    {
-        ArgumentNullException.ThrowIfNull(entries);
-        ArgumentNullException.ThrowIfNull(plan);
-        return entries.Select((entry, index) => new RenameRequest
-        {
-            Path = entry.Path,
-            NewName = Apply(entry.Name, plan, index),
-        }).ToArray();
-    }
-
     public static (string Base, string Ext) SplitFileName(string name)
     {
         var dotIndex = name.LastIndexOf('.');
@@ -700,44 +678,6 @@ public static class AdvancedRename
 
         var dotIndex = name.LastIndexOf('.');
         return dotIndex >= 0 ? name[(dotIndex + 1)..] : "";
-    }
-
-    private static string ApplyLegacy(string name, AdvancedRenamePlan plan, int index)
-    {
-        var ext = "";
-        var stem = name;
-        var dot = name.LastIndexOf('.');
-        if (dot > 0)
-        {
-            ext = name[dot..];
-            stem = name[..dot];
-        }
-
-        if (!string.IsNullOrEmpty(plan.Find))
-        {
-            stem = stem.Replace(plan.Find, plan.Replace ?? "", StringComparison.OrdinalIgnoreCase);
-        }
-
-        var numbered = plan.StartNumber > 0 ? $"{plan.StartNumber + index}" : "";
-        return $"{plan.Prefix}{stem}{plan.Suffix}{numbered}{ext}";
-    }
-
-    private static bool UsesAdvancedOptions(AdvancedRenamePlan plan)
-    {
-        return plan.AddEnabled
-            || plan.CapitalizeEnabled
-            || plan.ExtensionEnabled
-            || plan.FilterEnabled
-            || plan.NumberEnabled
-            || plan.RemoveEnabled
-            || plan.ReplaceEnabled
-            || plan.ScopeHidden
-            || plan.ScopeRecursive
-            || plan.SeparatorEnabled
-            || plan.TemplateEnabled
-            || plan.TrimEnabled
-            || !plan.SanitizeEnabled
-            || !string.Equals(plan.SanitizeReplacement, "_", StringComparison.Ordinal);
     }
 
     private static string TargetKey(string parentPath, string newName)

@@ -343,37 +343,6 @@ public class ExplorerWorkspaceTests
     }
 
     [Fact]
-    public async Task FillFolderMetrics_StaleNavigationDoesNotUpdateOldEntries()
-    {
-        var backend = FakeExplorerBackend.Typical();
-        var settingsIpc = new ConfigurableIpc();
-        var sizeRequestStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var sizeResponse = new TaskCompletionSource<ulong>(TaskCreationOptions.RunContinuationsAsynchronously);
-        settingsIpc.CalculateFolderSizeHandler = (path, ct) =>
-        {
-            sizeRequestStarted.TrySetResult(path);
-            return sizeResponse.Task.WaitAsync(ct);
-        };
-        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
-        await workspace.InitializeAsync();
-        var oldFolder = workspace.VisibleEntries.Single(entry => entry.Name == "Desktop");
-        var changedEvents = 0;
-        workspace.Changed += (_, _) => changedEvents += 1;
-
-        var metrics = workspace.FillFolderMetricsAsync(PaneId.Primary, includeSizes: true, includeItemCounts: false);
-        Assert.Equal(@"C:\Users\test\Desktop", await sizeRequestStarted.Task);
-        await workspace.NavigateToAsync(@"C:\Users\test\Desktop");
-        var changedAfterNavigation = changedEvents;
-
-        sizeResponse.SetResult(1234);
-        await metrics;
-
-        Assert.Equal(@"C:\Users\test\Desktop", workspace.CurrentPath);
-        Assert.Equal(0UL, oldFolder.Size);
-        Assert.Equal(changedAfterNavigation, changedEvents);
-    }
-
-    [Fact]
     public async Task CreateFolder_CancellationAfterMutationSkipsRefresh()
     {
         var backend = FakeExplorerBackend.Typical();
@@ -828,81 +797,6 @@ public class ExplorerWorkspaceTests
         Assert.True(workspace.PathIsNetwork);
         Assert.Equal("light", backend.LastListDirectoryOptions?.Mode);
         Assert.False(backend.LastListDirectoryOptions?.FinalEntries ?? true);
-    }
-
-    [Fact]
-    public async Task FillFolderMetrics_SkipsRemoteLikeFixedDrive()
-    {
-        var backend = FakeExplorerBackend.Typical();
-        backend.Drives.Add(new DriveInfo
-        {
-            Name = "Mounted Mirror (S:)",
-            Path = @"S:\",
-            DriveType = "Fixed",
-            FileSystem = "AirLiveDrive-7",
-            DriveStatus = "available",
-        });
-        backend.Listings[@"S:\Movies"] = new DirectoryListing
-        {
-            Path = @"S:\Movies",
-            Entries =
-            [
-                new FileEntry { Name = "Season 1", Path = @"S:\Movies\Season 1", IsDir = true },
-            ],
-        };
-        var metricCalls = 0;
-        var settingsIpc = new ConfigurableIpc
-        {
-            CalculateFolderSizeHandler = (_, _) =>
-            {
-                metricCalls += 1;
-                return Task.FromResult(42UL);
-            },
-            CountFolderItemsHandler = (_, _) =>
-            {
-                metricCalls += 1;
-                return Task.FromResult(3UL);
-            },
-        };
-        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
-        await workspace.InitializeAsync();
-        await workspace.NavigateToAsync(@"S:\Movies");
-
-        await workspace.FillFolderMetricsAsync(PaneId.Primary, includeSizes: true, includeItemCounts: true);
-
-        Assert.True(workspace.PathIsNetwork);
-        Assert.Equal(0, metricCalls);
-    }
-
-    [Fact]
-    public async Task FillFolderMetrics_UsesCombinedFolderMetricsWhenSizeAndCountRequested()
-    {
-        var backend = FakeExplorerBackend.Typical();
-        var combinedCalls = 0;
-        var settingsIpc = new ConfigurableIpc
-        {
-            GetFolderMetricsHandler = (path, _) =>
-            {
-                combinedCalls += 1;
-                Assert.Equal(@"C:\Users\test\Desktop", path);
-                return Task.FromResult(new FolderMetrics
-                {
-                    Size = 42,
-                    ItemCount = 3,
-                });
-            },
-            CalculateFolderSizeHandler = (_, _) => throw new InvalidOperationException("split size call should not run"),
-            CountFolderItemsHandler = (_, _) => throw new InvalidOperationException("split item-count call should not run"),
-        };
-        var workspace = new ExplorerWorkspace(backend, new FileOperationService(settingsIpc));
-        await workspace.InitializeAsync();
-
-        await workspace.FillFolderMetricsAsync(PaneId.Primary, includeSizes: true, includeItemCounts: true);
-
-        var desktop = workspace.VisibleEntries.Single(entry => entry.Name == "Desktop");
-        Assert.Equal(42UL, desktop.Size);
-        Assert.Equal(3UL, desktop.ItemCount);
-        Assert.Equal(1, combinedCalls);
     }
 
     [Fact]

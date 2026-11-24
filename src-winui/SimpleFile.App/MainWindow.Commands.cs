@@ -80,9 +80,6 @@ public sealed partial class MainWindow
 
     private string ActiveSearchQuery => _search?.Query ?? "";
 
-    private Button ActiveToolbarMoreButton() =>
-        PrimaryMoreButton;
-
     private void SetSearchCancelEnabled(bool enabled)
     {
         SearchCancelButton.IsEnabled = enabled;

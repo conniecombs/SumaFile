@@ -39,11 +39,6 @@ public class DropDestinationTests
         Assert.False(DropDestination.IsValidDrop([@"C:\Users\test\notes.txt"], @"C:\Users\test"));
         Assert.True(DropDestination.IsValidDrop([@"C:\Users\test\notes.txt"], @"C:\Users\test\Desktop"));
 
-        var conflicts = DropDestination.ConflictingNames(
-            [@"C:\src\notes.txt", @"C:\src\other.txt"],
-            ["notes.txt", "readme.md"]);
-        Assert.Equal(["notes.txt"], conflicts);
-
         var transferConflicts = DropDestination.ConflictingTransferNames(
             [@"C:\one\notes.txt", @"C:\two\notes.txt", @"C:\src\readme.md"],
             ["readme.md"]);

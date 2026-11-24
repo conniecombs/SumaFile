@@ -1252,52 +1252,6 @@ public class FileOperationServiceTests
         Assert.Equal(canceled.Pending, canceled.Outcome.Pending);
     }
 
-    [Fact]
-    public async Task WorkspaceMove_CancelAfterSomeFilesCommit_RegistersEligibleUndoForCommittedItems()
-    {
-        var backend = FakeExplorerBackend.Typical();
-        using var cts = new CancellationTokenSource();
-        var movedBack = new List<(string Source, string Destination)>();
-        var stub = new ConfigurableIpc
-        {
-            MoveWithProgressHandler = (sources, destination, operationId, conflictAction, ct) =>
-            {
-                cts.Cancel();
-                return Task.FromResult(new[]
-                {
-                    new TransferResult
-                    {
-                        Source = @"C:\Users\test\notes.txt",
-                        Destination = @"C:\Users\test\Desktop\notes.txt",
-                    },
-                });
-            },
-            MoveEntryResolvedHandler = (source, destination, conflictAction, ct) =>
-            {
-                movedBack.Add((source, destination));
-                return Task.FromResult(Path.Combine(destination, Path.GetFileName(source)));
-            },
-        };
-        var workspace = new ExplorerWorkspace(backend, new FileOperationService(stub));
-        await workspace.InitializeAsync();
-        await workspace.ToggleDualPaneAsync();
-        await workspace.NavigatePaneAsync(PaneId.Secondary, @"C:\Users\test\Desktop");
-        workspace.ActivatePane(PaneId.Primary);
-
-        await Assert.ThrowsAsync<TransferCanceledException>(() =>
-            workspace.CopyOrMoveToOtherPaneAsync(
-                [@"C:\Users\test\notes.txt", @"C:\Users\test\todo.txt"],
-                move: true,
-                conflictAction: "keep-both",
-                cancellationToken: cts.Token));
-
-        Assert.True(workspace.Undo.CanUndo);
-        await workspace.Undo.UndoAsync();
-        var undone = Assert.Single(movedBack);
-        Assert.Equal(@"C:\Users\test\Desktop\notes.txt", undone.Source);
-        Assert.Equal(@"C:\Users\test", undone.Destination);
-    }
-
     private static OperationJournal TempJournal()
     {
         var path = Path.Combine(

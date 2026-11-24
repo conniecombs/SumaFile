@@ -858,7 +858,8 @@ public class WinUiSourceShapeTests
         Assert.Contains("CancelOperationAsync_CallsNamedIpcCancel", fileOperationTests);
         Assert.Contains("CalculateFolderSizeAsync_CancellationSendsBackendCancel", fileOperationTests);
         Assert.Contains("SearchViewModel_CancelActiveAsyncCancelsBackendSearch", viewModelTests);
-        Assert.Contains("TransferViewModel_CancelAsyncAwaitsBackendCancelCompletion", viewModelTests);
+        var transferManagerTests = File.ReadAllText(Path.Combine(testsRoot, "TransferManagerViewModelTests.cs"));
+        Assert.Contains("Cancel_ExternalOperationCancelsItsRunner", transferManagerTests);
     }
 
     [Fact]
@@ -900,7 +901,6 @@ public class WinUiSourceShapeTests
                      "FolderTreeController.cs",
                      "FolderViewController.cs",
                      "OperationLogController.cs",
-                     "PaneEnrichmentController.cs",
                      "PlacesController.cs",
                      "WorkspaceFileOpsController.cs",
                      "WorkspaceLayoutController.cs",

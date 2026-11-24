@@ -16,7 +16,6 @@ public sealed partial class ExplorerWorkspace
     private readonly PlacesController _places = new();
     private readonly WorkspaceTagController _tags = new();
     private readonly FolderTreeController _folderTree = new();
-    private readonly PaneEnrichmentController _enrichment = new();
     private readonly FolderViewController _folderViews = new();
     private readonly WorkspaceLayoutController _layouts = new();
     private readonly DriveController _drives = new();
@@ -103,7 +102,6 @@ public sealed partial class ExplorerWorkspace
     public List<string> RecentPaths => _places.RecentPaths;
     public List<FolderTreeItem> FolderTreeRows => _folderTree.Rows;
     public long? ActiveTagFilter => _tags.ActiveTagFilter;
-    public bool PhotoFolderActive { get; private set; }
     public TypeAheadBuffer TypeAheadBuffer { get; } = new();
 
     public PaneId SidebarTarget =>
@@ -150,7 +148,6 @@ public sealed partial class ExplorerWorkspace
     internal PlacesController PlacesController => _places;
     internal WorkspaceTagController TagsController => _tags;
     internal FolderTreeController FolderTreeController => _folderTree;
-    internal PaneEnrichmentController EnrichmentController => _enrichment;
     internal FolderViewController FolderViewsController => _folderViews;
     internal WorkspaceLayoutController LayoutsController => _layouts;
     internal DriveController DrivesController => _drives;
@@ -170,7 +167,6 @@ public sealed partial class ExplorerWorkspace
     internal void SetErrorMessageCore(string? value) => ErrorMessage = value;
     internal void SetStatusMessageCore(string? value) => StatusMessage = value;
     internal void SetFileOpenUnsupportedCore(bool value) => FileOpenUnsupported = value;
-    internal void SetPhotoFolderActiveCore(bool value) => PhotoFolderActive = value;
     internal void NotifyChanged() => RaiseChanged();
     internal bool ApplyFolderViewSettingsForPathLocked(PaneId pane, string path) =>
         _folderViews.ApplyFolderViewSettingsForPathLocked(this, pane, path);

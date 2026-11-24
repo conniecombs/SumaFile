@@ -110,7 +110,7 @@ public sealed class TransferOperationViewModel : ObservableObject
         Context = new TransferProgressContext(
             move,
             Sources.Length,
-            TransferViewModel.DescribeSource(Sources),
+            DescribeSource(Sources),
             destination);
         _potentialDestinationPaths = Sources
             .Select(PathRules.Basename)
@@ -572,6 +572,39 @@ public sealed class TransferOperationViewModel : ObservableObject
         }
 
         return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Describes where a transfer's sources come from: their shared parent folder, or
+    /// "Multiple locations" when they have more than one.
+    /// </summary>
+    public static string DescribeSource(IReadOnlyList<string> sources)
+    {
+        if (sources.Count == 0)
+        {
+            return "";
+        }
+
+        var parents = sources
+            .Select(SourceParent)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return parents.Length == 1 ? parents[0] : "Multiple locations";
+    }
+
+    private static string SourceParent(string source)
+    {
+        var trimmed = source.TrimEnd(
+            System.IO.Path.DirectorySeparatorChar,
+            System.IO.Path.AltDirectorySeparatorChar);
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return source;
+        }
+
+        var parent = System.IO.Path.GetDirectoryName(trimmed);
+        return string.IsNullOrWhiteSpace(parent) ? source : parent;
     }
 }
 

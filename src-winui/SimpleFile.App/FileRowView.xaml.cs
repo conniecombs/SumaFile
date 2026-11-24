@@ -978,9 +978,6 @@ public static class ColumnLayoutHost
     private static ColumnLayout? _effectiveSecondary;
     private static string _effectiveSignature = "";
 
-    /// <summary>Legacy alias for the primary pane layout. Prefer <see cref="For"/>.</summary>
-    public static ColumnLayout Shared => _effectivePrimary ?? _primary;
-
     public static ColumnLayout For(PaneId pane) =>
         pane == PaneId.Secondary ? _effectiveSecondary ?? _secondary : _effectivePrimary ?? _primary;
 

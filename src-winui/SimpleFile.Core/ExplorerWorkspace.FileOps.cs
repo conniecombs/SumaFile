@@ -67,13 +67,6 @@ public sealed partial class ExplorerWorkspace
     public Task UnpackFolderAsync(string folderPath, CancellationToken cancellationToken = default) =>
         _fileOpsController.UnpackFolderAsync(this, folderPath, cancellationToken);
 
-    public Task CopyOrMoveToOtherPaneAsync(
-        string[] sources,
-        bool move,
-        string conflictAction = "keep-both",
-        CancellationToken cancellationToken = default) =>
-        _fileOpsController.CopyOrMoveToOtherPaneAsync(this, sources, move, conflictAction, cancellationToken);
-
     public void RememberClipboard() =>
         _operationLog.RememberClipboard(Clipboard);
 
@@ -134,13 +127,4 @@ public sealed partial class ExplorerWorkspace
     public bool IsTreeExpanded(string path) =>
         _folderTree.IsExpanded(path);
 
-    public Task FillFolderSizesAsync(CancellationToken cancellationToken = default) =>
-        FillFolderMetricsAsync(ActivePane, includeSizes: Settings.ShowFolderSizes, includeItemCounts: false, cancellationToken);
-
-    public Task FillFolderMetricsAsync(
-        PaneId pane,
-        bool includeSizes,
-        bool includeItemCounts,
-        CancellationToken cancellationToken = default) =>
-        _enrichment.FillFolderMetricsAsync(this, pane, includeSizes, includeItemCounts, cancellationToken);
 }

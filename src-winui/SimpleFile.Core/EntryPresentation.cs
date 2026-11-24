@@ -346,19 +346,6 @@ public static class EntryPresentation
         return viewportEntries;
     }
 
-    /// <summary>
-    /// Returns visible entries, skipping the sort step when the caller knows
-    /// the entries are already in the desired order (e.g. during progressive
-    /// chunk accumulation from the backend which sorts dirs-first by name).
-    /// </summary>
-    public static IReadOnlyList<FileEntry> VisibleEntriesPreSorted(
-        IEnumerable<FileEntry> entries,
-        string filterQuery = "",
-        bool showHidden = false)
-    {
-        return FilterEntries(entries, filterQuery, showHidden);
-    }
-
     private static int CompareEntries(
         FileEntry left,
         FileEntry right,

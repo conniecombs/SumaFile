@@ -367,36 +367,6 @@ public sealed partial class MainWindow
     private async void OnPrimaryNewItemRequested(object? sender, string id) =>
         await RunUiActionAsync("New", () => RunNewItemCommandAsync(id, ActiveUiPane));
 
-    private async void OnPrimaryRename(object sender, RoutedEventArgs e)
-    {
-        _workspace?.ActivatePane(PaneId.Primary);
-        await RunUiActionAsync("Rename", PromptAndRename);
-    }
-
-    private async void OnPrimaryDelete(object sender, RoutedEventArgs e)
-    {
-        _workspace?.ActivatePane(PaneId.Primary);
-        await RunUiActionAsync("Trash", TrashSelected);
-    }
-
-    private async void OnSecondaryNewFolder(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("New Folder", () => CreateNewItem(PaneId.Secondary, NewItemTemplate.Folder));
-
-    private async void OnSecondaryNewFile(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("New Text Document", () => CreateNewItem(PaneId.Secondary, NewItemTemplate.TextFile));
-
-    private async void OnSecondaryRename(object sender, RoutedEventArgs e)
-    {
-        _workspace?.ActivatePane(PaneId.Secondary);
-        await RunUiActionAsync("Rename", PromptAndRename);
-    }
-
-    private async void OnSecondaryDelete(object sender, RoutedEventArgs e)
-    {
-        _workspace?.ActivatePane(PaneId.Secondary);
-        await RunUiActionAsync("Trash", TrashSelected);
-    }
-
     private FileRow[] GetSelectedEntries() => ActiveSelectedRows.ToArray();
     private void RefreshView() => SyncFromWorkspace();
 
@@ -405,53 +375,30 @@ public sealed partial class MainWindow
 
     private Task ShowSettingsAsync() => _fileOperationDialogs.ShowSettingsAsync();
 
-    private async void OnViewArchiveClicked(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("View archive", ViewSelectedArchiveAsync);
-
     private async Task ViewSelectedArchiveAsync()
     {
         await _fileOperationDialogs.ViewSelectedArchiveAsync();
     }
-
-    private async void OnExtractArchiveClicked(object sender, RoutedEventArgs e)
-    {
-        await RunUiActionAsync("Extract archive", () => _fileOperationDialogs.ExtractSelectedArchiveAsync());
-    }
-
-    private async void OnCreateArchiveClicked(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("Create archive", CreateArchiveAsync);
 
     private async Task CreateArchiveAsync()
     {
         await _fileOperationDialogs.CreateArchiveAsync();
     }
 
-    private async void OnDuplicateCheckerClicked(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("Duplicate checker", ShowDuplicateCheckerAsync);
-
     private async Task ShowDuplicateCheckerAsync()
     {
         await _fileOperationDialogs.ShowDuplicateCheckerAsync();
     }
-
-    private async void OnDiskCleanupClicked(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("Large files and duplicates", ShowDiskCleanupAsync);
 
     private async Task ShowDiskCleanupAsync()
     {
         await _fileOperationDialogs.ShowDiskCleanupAsync();
     }
 
-    private async void OnSetColorLabelClicked(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("Set label", SetColorLabelAsync);
-
     private async Task SetColorLabelAsync()
     {
         await _fileOperationDialogs.SetColorLabelAsync();
     }
-
-    private async void OnOpenTerminalClicked(object sender, RoutedEventArgs e) =>
-        await RunUiActionAsync("Terminal", OpenTerminalInActivePathAsync);
 
     private async Task OpenTerminalInActivePathAsync()
     {

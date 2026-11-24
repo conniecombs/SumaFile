@@ -156,8 +156,6 @@ internal sealed class ListingViewController
                         listing.Total = pane.Entries.Count;
                         pane.ListingInProgress = false;
                         pane.BumpContentVersion();
-                        workspace.SetPhotoFolderActiveCore(
-                            MediaFolder.IsMediaFolder(pane.Entries, workspace.Settings.PhotoFolderImageThreshold));
                         goto filled;
                     }
 
@@ -322,8 +320,6 @@ internal sealed class ListingViewController
                 pane.BumpContentVersion();
                 if (!partial)
                 {
-                    workspace.SetPhotoFolderActiveCore(
-                        MediaFolder.IsMediaFolder(pane.Entries, workspace.Settings.PhotoFolderImageThreshold));
                 }
             }
 
@@ -401,8 +397,6 @@ internal sealed class ListingViewController
             epoch = pane.ListingEpoch;
             if (changed && !pane.ListingInProgress)
             {
-                workspace.SetPhotoFolderActiveCore(
-                    MediaFolder.IsMediaFolder(pane.Entries, workspace.Settings.PhotoFolderImageThreshold));
             }
         }
 

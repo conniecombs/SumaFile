@@ -13,16 +13,6 @@ namespace SimpleFile.Tests;
 public class AdvancedRenameTests
 {
     [Fact]
-    public void AdvancedRename_FindReplacePrefixNumber()
-    {
-        var plan = new AdvancedRenamePlan { Find = "img", Replace = "shot", Prefix = "x-", StartNumber = 1 };
-        Assert.Equal("x-shot1.png", AdvancedRename.Apply("img.png", plan, 0));
-        var requests = AdvancedRename.Build(
-            [new FileEntry { Name = "img.png", Path = @"C:\img.png" }],
-            plan);
-        Assert.Equal("x-shot1.png", requests[0].NewName);
-    }
-    [Fact]
     public void AdvancedRename_TemplateTokensKeepExtensionAndUseNumberSettings()
     {
         var plan = new AdvancedRenamePlan

@@ -514,11 +514,6 @@ public sealed partial class MainWindow
         _previewPresenter.Clear();
     }
 
-    private void UpdatePreviewButtons(FileRow? row)
-    {
-        _previewPresenter.UpdateButtons(row);
-    }
-
     private async void OnPreviewOpenClick(object sender, RoutedEventArgs e)
     {
         await _previewPresenter.OpenSelectedAsync();
