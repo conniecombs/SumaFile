@@ -86,6 +86,7 @@ const version = readReleaseVersion(repoRoot);
 const { file: releasePath, source: releaseNotes } = readReleaseNotes(repoRoot, version);
 const upgradeFromRef = readText('scripts/smoke-winui-upgrade-from-ref.ps1');
 const ipcLib = readText('crates/simplefile-ipc/src/lib.rs');
+const coreLib = readText('crates/simplefile-core/src/lib.rs');
 const settingsStore = readText('crates/simplefile-core/src/settings_store.rs');
 const updater = readText('crates/simplefile-core/src/updater.rs');
 
@@ -124,14 +125,22 @@ for (const snippet of [
   requireSnippet(upgradeFromRef, 'scripts/smoke-winui-upgrade-from-ref.ps1', snippet);
 }
 
+// One identifier under two roofs: the protocol crate is published and cannot depend on the core
+// crate, so each defines it. Inside the core crate there is one definition, which the settings
+// store and the updater use.
 const appIdentifier = extractStringConst(ipcLib, 'crates/simplefile-ipc/src/lib.rs', 'APP_IDENTIFIER');
-for (const [file, value] of [
-  ['crates/simplefile-core/src/settings_store.rs', extractStringConst(settingsStore, 'crates/simplefile-core/src/settings_store.rs', 'APP_IDENTIFIER')],
-  ['crates/simplefile-core/src/updater.rs', extractStringConst(updater, 'crates/simplefile-core/src/updater.rs', 'APP_IDENTIFIER')],
+const coreIdentifier = extractStringConst(coreLib, 'crates/simplefile-core/src/lib.rs', 'APP_IDENTIFIER');
+if (coreIdentifier !== appIdentifier) {
+  fail(`crates/simplefile-core/src/lib.rs APP_IDENTIFIER "${coreIdentifier}" must match simplefile-ipc "${appIdentifier}".`);
+}
+for (const [file, source] of [
+  ['crates/simplefile-core/src/settings_store.rs', settingsStore],
+  ['crates/simplefile-core/src/updater.rs', updater],
 ]) {
-  if (value !== appIdentifier) {
-    fail(`${file} APP_IDENTIFIER "${value}" must match simplefile-ipc "${appIdentifier}".`);
+  if (/const\s+APP_IDENTIFIER\b/u.test(source)) {
+    fail(`${file} must use the crate's APP_IDENTIFIER, not define its own.`);
   }
+  requireSnippet(source, file, 'use crate::APP_IDENTIFIER;');
 }
 
 if (!process.exitCode) {

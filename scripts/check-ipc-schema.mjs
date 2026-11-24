@@ -1,6 +1,11 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  activeServiceCommands,
+  readDispatchSource,
+  rustMethodConstants,
+} from './lib/service-dispatch.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const schemaDir = join(repoRoot, 'ipc', 'schema', 'v1');
@@ -21,12 +26,6 @@ function readJson(relativePath) {
 
 function readRepo(relativePath) {
   return readFileSync(join(repoRoot, relativePath), 'utf8');
-}
-
-function readDispatchSource() {
-  return ['mod.rs', 'handlers.rs', 'async_ops.rs', 'params.rs']
-    .map((file) => readRepo(`crates/simplefile-service/src/dispatch/${file}`))
-    .join('\n');
 }
 
 function repoFiles(relativeRoot, extension) {
@@ -54,32 +53,6 @@ function setDifference(left, right) {
   return [...left].filter((value) => !right.has(value)).sort();
 }
 
-function rustMethodConstants(source) {
-  return new Map(
-    [...source.matchAll(/pub const (METHOD_[A-Z0-9_]+):\s*&str\s*=\s*"([a-z0-9_]+)"/g)].map(
-      (match) => [match[1], match[2]],
-    ),
-  );
-}
-
-function activeServiceCommands(source, rustConstants) {
-  const commands = [
-    ...source.matchAll(/^\s*"([a-z0-9_]+)"\s*=>/gm),
-  ].map((match) => match[1]);
-  const constantArms = [...source.matchAll(/^\s*(METHOD_[A-Z0-9_]+)\s*=>/gm)].map((match) => {
-    const method = rustConstants.get(match[1]);
-    if (!method) {
-      throw new Error(`Unknown generated method constant in service dispatcher: ${match[1]}`);
-    }
-    return method;
-  });
-  commands.push(...constantArms);
-  if (commands.length === 0) {
-    throw new Error('Could not find JSON-RPC method arms in crates/simplefile-service/src/dispatch');
-  }
-  return new Set(commands);
-}
-
 function rustStructFields(source, structName) {
   const start = source.search(new RegExp(`pub(?:\\(crate\\))? struct ${structName}\\b`, 'u'));
   if (start === -1) return null;
@@ -97,13 +70,13 @@ if (!protocol || !types || !commands || !events) {
   process.exit(1);
 }
 
-const serviceDispatch = readDispatchSource();
+const serviceDispatch = readDispatchSource(repoRoot);
 const protocolCs = readRepo('src-winui/SimpleFile.Ipc/Protocol.Generated.cs');
 const protocolGeneratedRs = readRepo('crates/simplefile-ipc/src/protocol_generated.rs');
 const models = readRepo('crates/simplefile-core/src/models.rs');
 
 const rustConstants = rustMethodConstants(protocolGeneratedRs);
-const handlers = activeServiceCommands(serviceDispatch, rustConstants);
+const handlers = new Set(activeServiceCommands(serviceDispatch, rustConstants));
 const schemaMethods = new Set(
   Object.keys(commands.methods || {}).filter((name) => !name.startsWith('ipc.')),
 );
