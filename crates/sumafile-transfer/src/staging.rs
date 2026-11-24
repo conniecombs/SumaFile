@@ -226,7 +226,8 @@ fn modified_timestamp(meta: &fs::Metadata) -> Option<i128> {
 }
 
 pub fn capture_source_version_from_open_file(
-    file: &fs::File,
+    // Only Windows reads the file identity from the handle.
+    #[cfg_attr(not(windows), allow(unused_variables))] file: &fs::File,
     meta: &fs::Metadata,
     content_hash: Option<[u8; 32]>,
 ) -> SourceVersion {
