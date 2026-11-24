@@ -3,7 +3,7 @@
 [![CI](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/ci.yml)
 [![Release](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/release.yml)
 [![Installer smoke](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml/badge.svg)](https://github.com/conniecombs/SumaFile/actions/workflows/installer-smoke.yml)
-![Version](https://img.shields.io/badge/version-1.1.5-2563eb)
+![Version](https://img.shields.io/badge/version-1.2.0-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%7C%20Windows%2011-0078D4?logo=windows)
 ![UI](https://img.shields.io/badge/UI-WinUI%203-5b8def)
 ![Backend](https://img.shields.io/badge/backend-Rust%20IPC-b7410e?logo=rust)
@@ -63,7 +63,7 @@ them.
 
 | Area | Current state |
 | --- | --- |
-| Product version | `1.1.5` |
+| Product version | `1.2.0` |
 | Platform | Windows 10 2004+ / Windows 11, x64 |
 | UI | Unpackaged WinUI 3 desktop app |
 | Backend | Rust `simplefile-service` over named-pipe JSON-RPC |
@@ -72,7 +72,7 @@ them.
 | Storage scope | Local folders, local drives, removable media, mapped network shares, archives, and FTP/FTPS/SFTP connections through the bundled plugin |
 | License | [MIT](LICENSE) |
 
-What changed in this version is in its [release notes](docs/RELEASE_1.1.5.md).
+What changed in this version is in its [release notes](docs/RELEASE_1.2.0.md).
 Every earlier version is in the [changelog](docs/CHANGELOG.md), and open work
 is in the [roadmap](docs/ROADMAP.md).
 
@@ -83,9 +83,9 @@ Download the latest Windows release from
 
 | Artifact | Recommended use |
 | --- | --- |
-| `SumaFile_1.1.5_x64-winui-setup.exe` | Normal per-user installation |
-| `SumaFile_1.1.5_x64-winui.msi` | MSI deployment or installer validation |
-| `SumaFile_1.1.5_x64-winui-portable.zip` | Portable, extracted-folder usage |
+| `SumaFile_1.2.0_x64-winui-setup.exe` | Normal per-user installation |
+| `SumaFile_1.2.0_x64-winui.msi` | MSI deployment or installer validation |
+| `SumaFile_1.2.0_x64-winui-portable.zip` | Portable, extracted-folder usage |
 | `latest-winui.json` | Signed updater metadata for published releases |
 
 Requirements:
@@ -534,7 +534,7 @@ and the template in `templates/sumafile-plugin`.
 
 ## Known Limitations
 
-- SumaFile 1.1.5 is Windows-only.
+- SumaFile 1.2.0 is Windows-only.
 - Installing SumaFile for the first time is manual; in-app update installation requires a
   newer published release with signed `latest-winui.json` metadata.
 - The in-app update installs the NSIS setup even when SumaFile was installed
@@ -755,7 +755,7 @@ key and what the app verifies before it installs an update.
 | Document | Use it for |
 | --- | --- |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Every release, with a link to each version's release notes |
-| [docs/RELEASE_1.1.5.md](docs/RELEASE_1.1.5.md) | The current version: changes, upgrading, known limitations |
+| [docs/RELEASE_1.2.0.md](docs/RELEASE_1.2.0.md) | The current version: changes, upgrading, known limitations |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Open work and what is out of scope |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Processes, projects and crates, the IPC contract, storage, where a change goes |
 | [docs/TRANSFER_TUNING.md](docs/TRANSFER_TUNING.md) | Transfers: settings, automatic modes, failures, retries, leftovers and recovery |

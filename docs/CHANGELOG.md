@@ -8,6 +8,12 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+---
+
+## [1.2.0] - 2026-11-24
+
+See the [v1.2.0 release notes](RELEASE_1.2.0.md).
+
 ### Transfers
 
 - A transfer row no longer looks as if one file were copied at a time. While

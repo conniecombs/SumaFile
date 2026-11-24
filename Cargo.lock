@@ -2623,7 +2623,7 @@ checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
 name = "simplefile-core"
-version = "1.1.5"
+version = "1.2.0"
 dependencies = [
  "base64",
  "chrono",
@@ -2658,7 +2658,7 @@ dependencies = [
 
 [[package]]
 name = "simplefile-ipc"
-version = "1.1.5"
+version = "1.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "simplefile-service"
-version = "1.1.5"
+version = "1.2.0"
 dependencies = [
  "base64",
  "chrono",

@@ -671,13 +671,13 @@ answers.
 the value below is only an example. The host sends:
 
 ```json
-{ "jsonrpc": "2.0", "id": 1, "method": "plugin.handshake", "params": { "pluginId": "com.example.tool", "hostVersion": "1.1.5.0", "sdkVersion": "1.0.0" } }
+{ "jsonrpc": "2.0", "id": 1, "method": "plugin.handshake", "params": { "pluginId": "com.example.tool", "hostVersion": "1.2.0.0", "sdkVersion": "1.0.0" } }
 ```
 
 The file service sends the same fields plus `"client": "simplefile-service"`, which tells a backend which connection
 is the service's. The two clients fill `hostVersion` differently: the host sends the assembly version of
-`SimpleFile.PluginHost`, always four numeric parts (`1.1.5.0` in a 1.1.5 build), and the service sends SumaFile's
-display version (`1.1.5` in the same build). The crate does not read `hostVersion`. The backend replies:
+`SimpleFile.PluginHost`, always four numeric parts (`1.2.0.0` in a 1.2.0 build), and the service sends SumaFile's
+display version (`1.2.0` in the same build). The crate does not read `hostVersion`. The backend replies:
 
 ```json
 { "jsonrpc": "2.0", "id": 1, "result": { "pluginId": "com.example.tool", "pluginVersion": "1.2.0", "sdkVersion": "1.0.0" } }

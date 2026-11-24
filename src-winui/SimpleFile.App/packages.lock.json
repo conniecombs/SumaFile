@@ -223,7 +223,7 @@
           "CommunityToolkit.Mvvm": "[8.4.0, )",
           "Markdig": "[1.6.0, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.15, )",
-          "SimpleFile.Ipc": "[1.1.5, )",
+          "SimpleFile.Ipc": "[1.2.0, )",
           "System.Data.OleDb": "[9.0.23, )"
         }
       },
@@ -236,9 +236,9 @@
           "BouncyCastle.Cryptography": "[2.7.0, )",
           "Markdig": "[1.6.0, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.15, )",
-          "SimpleFile.Core": "[1.1.5, )",
-          "SimpleFile.Ipc": "[1.1.5, )",
-          "SimpleFile.PluginSdk": "[1.1.5, )",
+          "SimpleFile.Core": "[1.2.0, )",
+          "SimpleFile.Ipc": "[1.2.0, )",
+          "SimpleFile.PluginSdk": "[1.2.0, )",
           "System.Data.OleDb": "[9.0.23, )"
         }
       },

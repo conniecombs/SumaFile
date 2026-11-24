@@ -110,4 +110,4 @@
 - [x] Audit status, roadmap, changelog and transfer reference say what the code now does.
 
 ### Task C2: Version 1.2.0
-- [ ] `node scripts/release-version.mjs 1.2.0` (after CI is green), release notes, `npm run check`.
+- [x] `node scripts/release-version.mjs 1.2.0`, release notes, `npm run check`. The version change was committed before the Windows CI run so that one run covers the code and the version together; no tag was made. Tag `v1.2.0` only after that run is green.
