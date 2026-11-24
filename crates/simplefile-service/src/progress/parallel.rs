@@ -28,6 +28,9 @@ use sumafile_transfer::tuning::{lane_index, LaneReport};
 /// controller can classify the workload, but never for longer than
 /// `PRIME_WINDOW`: copying starts as soon as work is available.
 const PRIME_COUNT: usize = 64;
+/// The most worker threads one pass starts; the service-wide limit on files
+/// copied at once.
+const MAX_WORKERS: usize = 32;
 const PRIME_WINDOW: Duration = Duration::from_millis(150);
 
 /// How an existing destination is handled for one file or directory.
@@ -1024,11 +1027,6 @@ fn copy_files_streaming_with_sink(
             &lane_done,
             &lane_files,
         );
-        let worker_count = if producer_done {
-            tasks.len().min(32)
-        } else {
-            32
-        };
         let mut active = BTreeMap::<usize, ActiveFile>::new();
         let mut deferred_retries = VecDeque::<(usize, Failure)>::new();
         // Bytes a deferred file had written when it failed. The failed attempt's
@@ -1052,14 +1050,22 @@ fn copy_files_streaming_with_sink(
             }
         }
 
-        for _ in 0..worker_count {
+        // A worker thread is started when a file is sent and every thread
+        // started so far has a file, up to MAX_WORKERS. A pass used to start
+        // all thirty-two before its first file, whatever it went on to use:
+        // one file at a time on a hard disk kept thirty-one threads waiting.
+        let limiter = session.limiter.clone();
+        let memory = session.memory.clone();
+        let latency = [session.latency(0), session.latency(1)];
+        let mut workers = Vec::new();
+        let spawn_worker = || {
             let work_rx = &work_rx;
             let tx = event_tx.clone();
             let cancel = &worker_cancel;
             let retries = &retry_counts;
-            let limiter = session.limiter.clone();
-            let memory = session.memory.clone();
-            let latency = [session.latency(0), session.latency(1)];
+            let limiter = limiter.clone();
+            let memory = memory.clone();
+            let latency = latency.clone();
             scope.spawn(move || {
                 let last_worker_emit = std::cell::Cell::new(
                     Instant::now()
@@ -1134,9 +1140,8 @@ fn copy_files_streaming_with_sink(
                         break;
                     }
                 }
-            });
-        }
-        drop(event_tx);
+            })
+        };
 
         let mut handle_event = |message: Message,
                                 active: &mut BTreeMap<usize, ActiveFile>,
@@ -1345,6 +1350,9 @@ fn copy_files_streaming_with_sink(
                         total: task.size,
                     },
                 );
+                while workers.len() < active.len().min(MAX_WORKERS) {
+                    workers.push(spawn_worker());
+                }
                 if work_tx
                     .send((next_idx, lane, task, session.policy().clone()))
                     .is_err()
@@ -1433,7 +1441,15 @@ fn copy_files_streaming_with_sink(
                         );
                     }
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // A worker leaves its loop only when the work queue is
+                    // closed, which happens after this loop: one that is gone
+                    // now has died with a file in its hands.
+                    if workers.iter().any(|worker| worker.is_finished()) {
+                        result.scan_error = Some("Copy workers stopped unexpectedly".into());
+                        break;
+                    }
+                }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     if !producer_done || !active.is_empty() {
                         result.scan_error = Some("Copy workers stopped unexpectedly".into());
@@ -1499,6 +1515,93 @@ mod tests {
     use super::super::tuning::{CheckMode, Mode, OrderBy, Policy};
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// The threads a pass starts follow the files it runs at once.
+    #[test]
+    fn a_pass_starts_only_the_worker_threads_it_uses() {
+        for (limit, files) in [(1usize, 120usize), (3, 120)] {
+            let root = std::env::temp_dir().join(crate::progress::generate_transfer_operation_id());
+            fs::create_dir(&root).unwrap();
+            let template = root.join("source");
+            fs::write(&template, b"source").unwrap();
+            let version =
+                crate::transfer_staging::capture_source_version_for_path(&template).unwrap();
+            let policy = || Policy {
+                mode: Mode::Manual,
+                manual_concurrency: limit,
+                ..Policy::default()
+            };
+            let cancel = Arc::new(AtomicBool::new(false));
+            let total = Arc::new(AtomicU64::new(files as u64));
+            let file_count = Arc::new(AtomicU64::new(files as u64));
+            let completed = Arc::new(AtomicU64::new(0));
+            let ctx = ProgressContext {
+                emit: &|_| {},
+                operation_id: "lazy-workers-test",
+                operation_type: "copy",
+                cancel: &cancel,
+                total_bytes: &total,
+                total_files: &file_count,
+                completed_files: &completed,
+                last_running_emit: Mutex::new(Instant::now()),
+                retry_count: None,
+                rate_limit: None,
+                write_latency: None,
+            };
+            let mut session = Session::new(
+                "lazy-workers-test",
+                "copy",
+                &[],
+                &root.to_string_lossy(),
+                &policy,
+                &|_| {},
+            );
+            let mut index = 0;
+            let mut next = || {
+                if index == files {
+                    return Ok(None);
+                }
+                index += 1;
+                Ok(Some(FileTask {
+                    source: root.join(index.to_string()),
+                    destination: root.join(format!("dest-{index}")),
+                    size: 1,
+                    network: false,
+                    conflict: ConflictAction::Error,
+                    owned_tree: false,
+                    symlink: false,
+                    top_level: false,
+                    merge_root: None,
+                    delete_source: false,
+                    retry: false,
+                }))
+            };
+            let threads = Mutex::new(std::collections::HashSet::new());
+            let copy = |task: &FileTask, _: &CopyContext<'_>, _: &mut u64| {
+                threads.lock().unwrap().insert(std::thread::current().id());
+                // Long enough that an idle thread, had one been started,
+                // would have taken the next file.
+                std::thread::sleep(Duration::from_millis(1));
+                Ok(FileOutcome::Copied {
+                    reused: false,
+                    version: version.clone(),
+                    destination: task.destination.clone(),
+                })
+            };
+
+            let result =
+                copy_files_streaming_with_sink(&mut next, &ctx, &mut session, 0, &copy, None);
+
+            assert!(result.failed.is_empty(), "{:?}", result.failed);
+            assert_eq!(completed.load(Ordering::Relaxed), files as u64);
+            let used = threads.lock().unwrap().len();
+            assert!(
+                (1..=limit).contains(&used),
+                "{used} worker threads ran files with a limit of {limit}"
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
 
     #[test]
     fn streaming_completion_is_bounded_and_new_files_receive_current_policy() {
