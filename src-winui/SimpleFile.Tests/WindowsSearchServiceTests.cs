@@ -225,4 +225,46 @@ public class WindowsSearchServiceTests
         var _ = FileOperationService.IsPathIndexed(@"C:\Windows");
         var _2 = FileOperationService.IsPathIndexed(@"Z:\Nonexistent");
     }
+
+    // A quote in a smart-folder value ended the SQL string it was put into, and the query
+    // came back empty.
+    [Fact]
+    public void WhereRestrictions_EscapeQuotesInEveryValue()
+    {
+        var options = new SearchOptions
+        {
+            FileTypes = ["txt", ".it's", "a' OR 'b"],
+            DateAfter = "2026-01-01' OR '1'='1",
+            DateBefore = "2026-12-31'",
+        };
+
+        var where = WindowsSearchService.BuildWhereRestrictions(@"C:\Users\O'Brien\Docs", options);
+
+        Assert.Contains(@"SCOPE='file:C:\Users\O''Brien\Docs'", where);
+        Assert.Contains("System.FileExtension = '.txt'", where);
+        Assert.Contains("System.FileExtension = '.it''s'", where);
+        Assert.Contains("System.FileExtension = '.a'' OR ''b'", where);
+        Assert.Contains("System.DateModified >= '2026-01-01'' OR ''1''=''1'", where);
+        Assert.Contains("System.DateModified <= '2026-12-31'''", where);
+        // Every quote that is not a delimiter is doubled, so the delimiters pair up.
+        var delimiters = 0;
+        foreach (var character in where.Replace("''", ""))
+        {
+            if (character == '\'')
+            {
+                delimiters++;
+            }
+        }
+
+        Assert.Equal(0, delimiters % 2);
+    }
+
+    [Fact]
+    public void WhereRestrictions_LeaveOutWhatIsNotSet()
+    {
+        Assert.Equal("", WindowsSearchService.BuildWhereRestrictions("", new SearchOptions()));
+        Assert.Equal(
+            "AND System.Size >= 10 AND System.Size <= 20",
+            WindowsSearchService.BuildWhereRestrictions(" ", new SearchOptions { MinSize = 10, MaxSize = 20 }));
+    }
 }

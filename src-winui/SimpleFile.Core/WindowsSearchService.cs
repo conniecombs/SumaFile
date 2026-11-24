@@ -327,22 +327,28 @@ public sealed class WindowsSearchService
         }
     }
 
-    private static string BuildWhereRestrictions(string folderScope, SearchOptions options)
+    /// <summary>
+    /// The restrictions added to the generated query. Every value is put into a quoted SQL
+    /// string, so a quote in it is doubled: left as it was, it ended the string, and the query
+    /// failed and returned nothing.
+    /// </summary>
+    internal static string BuildWhereRestrictions(string folderScope, SearchOptions options)
     {
+        static string Quoted(string value) => value.Replace("'", "''");
+
         var parts = new List<string>();
 
         // Scope restriction: SCOPE includes subfolders recursively.
         if (!string.IsNullOrWhiteSpace(folderScope))
         {
-            var escapedScope = folderScope.Replace("'", "''");
-            parts.Add($"AND SCOPE='file:{escapedScope}'");
+            parts.Add($"AND SCOPE='file:{Quoted(folderScope)}'");
         }
 
         // File type filter.
         if (options.FileTypes is { Length: > 0 })
         {
             var extClauses = options.FileTypes
-                .Select(ext => $"System.FileExtension = '.{ext.TrimStart('.')}'")
+                .Select(ext => $"System.FileExtension = '.{Quoted(ext.TrimStart('.'))}'")
                 .ToArray();
             parts.Add($"AND ({string.Join(" OR ", extClauses)})");
         }
@@ -361,12 +367,12 @@ public sealed class WindowsSearchService
         // Date filters.
         if (!string.IsNullOrEmpty(options.DateAfter))
         {
-            parts.Add($"AND System.DateModified >= '{options.DateAfter}'");
+            parts.Add($"AND System.DateModified >= '{Quoted(options.DateAfter)}'");
         }
 
         if (!string.IsNullOrEmpty(options.DateBefore))
         {
-            parts.Add($"AND System.DateModified <= '{options.DateBefore}'");
+            parts.Add($"AND System.DateModified <= '{Quoted(options.DateBefore)}'");
         }
 
         return string.Join(' ', parts);
