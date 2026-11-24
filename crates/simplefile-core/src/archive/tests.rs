@@ -2832,3 +2832,74 @@ fn zip_with_names_that_are_not_plain_is_still_rebuilt() {
     assert!(!left.is_empty(), "{left:?}");
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn zip_create_copy_and_move_through_the_public_api_do_not_rebuild() {
+    let root = unique_temp_dir("zip-inplace-public");
+    let archive = root.join("sample.zip");
+    write_test_zip(&archive, ZIP_SAMPLE);
+    let local = root.join("notes.txt");
+    fs::write(&local, b"from the disk").expect("write a local file");
+
+    let folder = create_archive_directory(text(&archive.join("docs")), "new".into())
+        .expect("create a folder");
+    assert_eq!(folder, text(&archive.join("docs").join("new")));
+    let file = create_archive_file(text(&archive), "empty.txt".into()).expect("create a file");
+    assert_eq!(file, text(&archive.join("empty.txt")));
+    assert_eq!(
+        create_archive_directory(text(&archive), "docs".into()).unwrap_err(),
+        "Directory already exists: docs"
+    );
+
+    // From the disk into the archive.
+    let added = copy_entry_resolved(text(&local), text(&archive.join("docs")), "error".into())
+        .expect("copy a local file in");
+    assert_eq!(added, text(&archive.join("docs").join("notes.txt")));
+    let again = copy_entry_resolved(text(&local), text(&archive.join("docs")), "skip".into())
+        .expect("a skipped copy is not an error");
+    assert!(again.starts_with("SKIPPED:"), "{again}");
+
+    // From one folder of the archive to another.
+    let copied = copy_entry_resolved(
+        text(&archive.join("top.txt")),
+        text(&archive.join("docs")),
+        "error".into(),
+    )
+    .expect("copy inside the archive");
+    assert_eq!(copied, text(&archive.join("docs").join("top.txt")));
+    let moved = move_entry_resolved(
+        text(&archive.join("docs").join("sub")),
+        text(&archive),
+        "error".into(),
+    )
+    .expect("move inside the archive");
+    assert_eq!(moved, text(&archive.join("sub")));
+
+    assert_eq!(
+        zip_files(&archive),
+        vec![
+            ("docs/a.txt".to_string(), 5),
+            ("docs/b.txt".to_string(), 11),
+            ("docs/notes.txt".to_string(), 13),
+            ("docs/top.txt".to_string(), 9),
+            ("empty.txt".to_string(), 0),
+            ("sub/c.txt".to_string(), 6),
+            ("top.txt".to_string(), 9),
+        ]
+    );
+    // The first entry was never unpacked: it is stored exactly as the test archive wrote it.
+    let listing = list_archive(text(&archive)).expect("list the archive");
+    assert!(listing
+        .entries
+        .iter()
+        .any(|entry| entry.path == "docs/new/" || entry.path == "docs/new"));
+    let leftovers: Vec<String> = entry_names(&root)
+        .into_iter()
+        .filter(|name| name != "sample.zip" && name != "notes.txt")
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "no temporary archive stays behind: {leftovers:?}"
+    );
+    let _ = fs::remove_dir_all(root);
+}

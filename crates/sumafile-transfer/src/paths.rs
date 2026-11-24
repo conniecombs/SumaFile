@@ -11,6 +11,21 @@ pub fn unique_destination_path(
     file_name: &std::ffi::OsStr,
     planned_destinations: &HashSet<String>,
 ) -> Result<PathBuf, String> {
+    unique_name(file_name, |candidate| {
+        let candidate = dest_dir.join(candidate);
+        path_exists_no_follow(&candidate)
+            || planned_destinations.contains(&path_collision_key(&candidate))
+    })
+    .map(|name| dest_dir.join(name))
+}
+
+/// The first `name (n).ext` for `file_name`, counting from 1, that `taken`
+/// does not report as in use. This is the "Keep both" naming rule, for a
+/// place that is not a folder on a disk (the inside of an archive) as well.
+pub fn unique_name(
+    file_name: &std::ffi::OsStr,
+    mut taken: impl FnMut(&str) -> bool,
+) -> Result<String, String> {
     let original = Path::new(file_name);
     let stem = original.file_stem().map_or_else(
         || original.to_string_lossy().to_string(),
@@ -21,13 +36,11 @@ pub fn unique_destination_path(
         .map(|extension| extension.to_string_lossy().to_string());
 
     for index in 1..10_000u32 {
-        let candidate_name = match &ext {
+        let candidate = match &ext {
             Some(ext) if !ext.is_empty() => format!("{stem} ({index}).{ext}"),
             _ => format!("{stem} ({index})"),
         };
-        let candidate = dest_dir.join(candidate_name);
-        let candidate_key = path_collision_key(&candidate);
-        if !path_exists_no_follow(&candidate) && !planned_destinations.contains(&candidate_key) {
+        if !taken(&candidate) {
             return Ok(candidate);
         }
     }
@@ -59,7 +72,21 @@ pub fn is_windows_reserved_device_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_windows_reserved_device_name;
+    use super::{is_windows_reserved_device_name, unique_name};
+    use std::ffi::OsStr;
+
+    #[test]
+    fn a_unique_name_is_the_first_numbered_one_that_is_free() {
+        let taken = ["report (1).txt", "report (2).txt", "notes (1)"];
+        let free =
+            |name: &str| unique_name(OsStr::new(name), |candidate| taken.contains(&candidate));
+
+        assert_eq!(free("report.txt").unwrap(), "report (3).txt");
+        assert_eq!(free("notes").unwrap(), "notes (2)");
+        assert_eq!(free("archive.tar.gz").unwrap(), "archive.tar (1).gz");
+        assert_eq!(free(".gitignore").unwrap(), ".gitignore (1)");
+        assert!(unique_name(OsStr::new("always.txt"), |_| true).is_err());
+    }
 
     #[test]
     fn device_names_are_reserved_with_any_case_extension_or_padding() {

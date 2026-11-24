@@ -44,6 +44,22 @@ pub fn copy_entry_resolved(
                     &conflict_action,
                 );
             }
+            if is_built_in_zip(&source_parsed.kind) {
+                if let Some(copied) = super::zip_inplace::try_transfer_within(
+                    &source_parsed.archive_path,
+                    &source_parsed.inner_path,
+                    &destination_parsed.inner_path,
+                    &conflict_action,
+                    false,
+                    &source,
+                )? {
+                    return Ok(in_place_result(
+                        &source_parsed.archive_path,
+                        copied,
+                        &source,
+                    ));
+                }
+            }
             let result =
                 mutate_archive(&source_parsed.archive_path, &source_parsed.kind, |root| {
                     let source_path = root.join(&source_parsed.inner_path);
@@ -64,6 +80,29 @@ pub fn copy_entry_resolved(
             }
             let materialized = materialize_transfer_source(&source, source_parsed.as_ref())?;
             let mut materialized = materialized;
+            if is_built_in_zip(&destination_parsed.kind) {
+                let added = super::zip_inplace::try_add(
+                    &destination_parsed.archive_path,
+                    &destination_parsed.inner_path,
+                    &materialized.path,
+                    &conflict_action,
+                );
+                match added {
+                    Ok(None) => {}
+                    Ok(Some(added)) => {
+                        materialized.cleanup();
+                        return Ok(in_place_result(
+                            &destination_parsed.archive_path,
+                            added,
+                            &source,
+                        ));
+                    }
+                    Err(error) => {
+                        materialized.cleanup();
+                        return Err(error);
+                    }
+                }
+            }
             let result = mutate_archive(
                 &destination_parsed.archive_path,
                 &destination_parsed.kind,
@@ -113,6 +152,18 @@ pub fn move_entry_resolved(
                     &destination_parsed,
                     &conflict_action,
                 );
+            }
+            if is_built_in_zip(&source_parsed.kind) {
+                if let Some(moved) = super::zip_inplace::try_transfer_within(
+                    &source_parsed.archive_path,
+                    &source_parsed.inner_path,
+                    &destination_parsed.inner_path,
+                    &conflict_action,
+                    true,
+                    &source,
+                )? {
+                    return Ok(in_place_result(&source_parsed.archive_path, moved, &source));
+                }
             }
             let result =
                 mutate_archive(&source_parsed.archive_path, &source_parsed.kind, |root| {
@@ -270,6 +321,16 @@ pub fn create_archive_directory(path: String, name: String) -> Result<String, St
     if EngineArchive::of(&parsed).is_some() {
         return mutate_engine::create_entry(&parsed, &name, NewEntry::Directory);
     }
+    if is_built_in_zip(&parsed.kind) {
+        if let Some(created) = super::zip_inplace::try_create(
+            &parsed.archive_path,
+            &parsed.inner_path,
+            &name,
+            NewEntry::Directory,
+        )? {
+            return Ok(build_virtual_archive_path(&parsed.archive_path, &created));
+        }
+    }
     let result = mutate_archive(&parsed.archive_path, &parsed.kind, |root| {
         let dir_path = root.join(&parsed.inner_path).join(&name);
         if dir_path.exists() {
@@ -288,6 +349,16 @@ pub fn create_archive_file(path: String, name: String) -> Result<String, String>
     ensure_archive_can_modify(&parsed.kind)?;
     if EngineArchive::of(&parsed).is_some() {
         return mutate_engine::create_entry(&parsed, &name, NewEntry::File);
+    }
+    if is_built_in_zip(&parsed.kind) {
+        if let Some(created) = super::zip_inplace::try_create(
+            &parsed.archive_path,
+            &parsed.inner_path,
+            &name,
+            NewEntry::File,
+        )? {
+            return Ok(build_virtual_archive_path(&parsed.archive_path, &created));
+        }
     }
     let result = mutate_archive(&parsed.archive_path, &parsed.kind, |root| {
         let file_path = root.join(&parsed.inner_path).join(&name);
@@ -437,9 +508,18 @@ fn delete_archive_entry_parsed(parsed: &ArchivePath) -> Result<(), String> {
 }
 
 /// A ZIP the built-in code handles: its entries can be copied as stored, so a
-/// delete or a rename need not unpack the archive (see `zip_inplace`).
+/// change need not unpack the archive (see `zip_inplace`).
 fn is_built_in_zip(kind: &ArchiveKind) -> bool {
     matches!(kind, ArchiveKind::BuiltIn(ArchiveFormat::Zip))
+}
+
+/// What a copy or a move reports: the new virtual path, or that the user's
+/// conflict action skipped `source`.
+fn in_place_result(archive_path: &Path, placed: Option<PathBuf>, source: &str) -> String {
+    match placed {
+        Some(inner) => build_virtual_archive_path(archive_path, &inner),
+        None => format!("SKIPPED:{source}"),
+    }
 }
 
 /// Temp materialization of an archive entry (or a passthrough local path).

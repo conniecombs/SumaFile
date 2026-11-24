@@ -178,7 +178,7 @@ pub(super) fn create_zip_archive(paths: &[String], archive_path: &str) -> Result
 
 /// Carry the source file's modification time into the zip entry. Without it
 /// every entry (and every rebuilt archive) is stamped "now".
-fn with_source_mtime(
+pub(super) fn with_source_mtime(
     options: zip::write::SimpleFileOptions,
     path: &Path,
 ) -> zip::write::SimpleFileOptions {
@@ -203,7 +203,7 @@ fn with_source_mtime(
     }
 }
 
-fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
+pub(super) fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
     zip: &mut zip::ZipWriter<W>,
     dir: &Path,
     prefix: &str,

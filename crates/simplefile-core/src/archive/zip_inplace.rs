@@ -14,7 +14,11 @@
 //! functions return `None` and the caller extracts and rebuilds as before,
 //! with the errors that gives.
 
-use super::path::{replace_archive, unique_temp_archive_path, zip_entry_relative_path};
+use super::create::{add_dir_to_zip, with_source_mtime};
+use super::mutate_engine::NewEntry;
+use super::path::{
+    build_virtual_archive_path, replace_archive, unique_temp_archive_path, zip_entry_relative_path,
+};
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
@@ -266,6 +270,325 @@ pub(super) fn try_rename(
         Ok(())
     })?;
     Ok(Some(new_path))
+}
+
+/// True when the archive has `key` as an entry or as a folder of one.
+fn exists(entries: &[Entry], key: &[String]) -> bool {
+    !key.is_empty() && entries.iter().any(|entry| is_within(&entry.key, key))
+}
+
+fn joined(parts: &[String]) -> String {
+    parts.join("/")
+}
+
+fn shown(archive_path: &Path, parts: &[String]) -> String {
+    let inner: PathBuf = parts.iter().collect();
+    build_virtual_archive_path(archive_path, &inner)
+}
+
+/// A folder that existed only because something was in it gets an entry of
+/// its own when `gone` leaves it empty, as it stays behind on a disk.
+fn folder_left_empty(
+    entries: &[Entry],
+    kept: impl Fn(&Entry) -> bool,
+    gone: &[String],
+) -> Option<Vec<String>> {
+    let parent_depth = gone.len().checked_sub(1).filter(|depth| *depth > 0)?;
+    let parent_key = &gone[..parent_depth];
+    let example = entries.iter().find(|entry| is_within(&entry.key, gone))?;
+    let still_there = entries
+        .iter()
+        .any(|entry| kept(entry) && is_within(&entry.key, parent_key));
+    (!still_there).then(|| example.parts[..parent_depth].to_vec())
+}
+
+/// Adds an empty folder or file named `name` to the folder `parent`, and
+/// returns its path inside the archive. `None`: not a plain archive.
+pub(super) fn try_create(
+    archive_path: &Path,
+    parent: &Path,
+    name: &str,
+    kind: NewEntry,
+) -> Result<Option<PathBuf>, String> {
+    let mut archive = open(archive_path)?;
+    let Some(entries) = plain_entries(&mut archive)? else {
+        return Ok(None);
+    };
+
+    let mut parts = parts_of(parent);
+    let parent_key = key_of(&parts);
+    if entries
+        .iter()
+        .any(|entry| !entry.is_dir && entry.key == parent_key)
+    {
+        return Err(format!(
+            "Destination is not a directory: {}",
+            shown(archive_path, &parts)
+        ));
+    }
+    parts.push(name.to_string());
+    if exists(&entries, &key_of(&parts)) {
+        return Err(match kind {
+            NewEntry::Directory => format!("Directory already exists: {name}"),
+            NewEntry::File => format!("File already exists: {name}"),
+        });
+    }
+
+    let new_path: PathBuf = parts.iter().collect();
+    rewrite(archive_path, archive, |archive, writer| {
+        for index in 0..entries.len() {
+            copy_as_stored(archive, writer, index)?;
+        }
+        let options = zip::write::SimpleFileOptions::default();
+        match kind {
+            NewEntry::Directory => writer.add_directory(joined(&parts), options),
+            NewEntry::File => writer.start_file(
+                joined(&parts),
+                options.compression_method(zip::CompressionMethod::Stored),
+            ),
+        }
+        .map_err(|e| e.to_string())
+    })?;
+    Ok(Some(new_path))
+}
+
+/// Where an item named `name` goes in the folder `dest`, by the conflict
+/// action the user chose.
+enum Placement {
+    /// At these parts. `replacing`: what is there now goes first.
+    At { parts: Vec<String>, replacing: bool },
+    /// The user chose Skip.
+    Skipped,
+}
+
+/// The rule of a copy or a move into a folder, for a folder inside an
+/// archive: free name, or Skip, Replace, Keep both, or the conflict error the
+/// app answers by asking.
+fn place(
+    archive_path: &Path,
+    entries: &[Entry],
+    dest: &[String],
+    name: &str,
+    conflict_action: &str,
+) -> Result<Placement, String> {
+    let dest_key = key_of(dest);
+    if entries
+        .iter()
+        .any(|entry| !entry.is_dir && entry.key == dest_key)
+    {
+        return Err(format!(
+            "Destination is not a directory: {}",
+            shown(archive_path, dest)
+        ));
+    }
+    let mut parts = dest.to_vec();
+    parts.push(name.to_string());
+    if !exists(entries, &key_of(&parts)) {
+        return Ok(Placement::At {
+            parts,
+            replacing: false,
+        });
+    }
+
+    match conflict_action.to_ascii_lowercase().as_str() {
+        "skip" => Ok(Placement::Skipped),
+        "replace" => Ok(Placement::At {
+            parts,
+            replacing: true,
+        }),
+        "rename" | "keep-both" | "keep_both" => {
+            let free = sumafile_transfer::paths::unique_name(name.as_ref(), |candidate| {
+                let mut key = dest_key.clone();
+                key.push(candidate.to_lowercase());
+                exists(entries, &key)
+            })?;
+            let mut parts = dest.to_vec();
+            parts.push(free);
+            Ok(Placement::At {
+                parts,
+                replacing: false,
+            })
+        }
+        _ => Err(format!(
+            "CONFLICT: destination already exists: {}",
+            shown(archive_path, &parts)
+        )),
+    }
+}
+
+/// Adds the local file or folder `source` to the folder `dest` of the
+/// archive, compressing it; the entries already there are copied as stored.
+/// Returns the new path inside the archive, or `Some(None)` when the user's
+/// conflict action was Skip. `None`: not a plain archive.
+pub(super) fn try_add(
+    archive_path: &Path,
+    dest: &Path,
+    source: &Path,
+    conflict_action: &str,
+) -> Result<Option<Option<PathBuf>>, String> {
+    let mut archive = open(archive_path)?;
+    let Some(entries) = plain_entries(&mut archive)? else {
+        return Ok(None);
+    };
+
+    let meta = fs::symlink_metadata(source).map_err(|e| format!("Failed to stat source: {e}"))?;
+    if meta.file_type().is_symlink() {
+        return Err("Copying symlinks into or out of archives is not supported".to_string());
+    }
+    let name = source
+        .file_name()
+        .ok_or_else(|| "Cannot get file name".to_string())?
+        .to_string_lossy()
+        .into_owned();
+    let (parts, replacing) = match place(
+        archive_path,
+        &entries,
+        &parts_of(dest),
+        &name,
+        conflict_action,
+    )? {
+        Placement::Skipped => return Ok(Some(None)),
+        Placement::At { parts, replacing } => (parts, replacing),
+    };
+    let new_key = key_of(&parts);
+    let new_path: PathBuf = parts.iter().collect();
+
+    rewrite(archive_path, archive, |archive, writer| {
+        for (index, entry) in entries.iter().enumerate() {
+            if !(replacing && is_within(&entry.key, &new_key)) {
+                copy_as_stored(archive, writer, index)?;
+            }
+        }
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        let entry_name = joined(&parts);
+        if meta.is_dir() {
+            writer
+                .add_directory(entry_name.as_str(), options)
+                .map_err(|e| e.to_string())?;
+            add_dir_to_zip(writer, source, &entry_name, options)
+        } else {
+            writer
+                .start_file(entry_name.as_str(), with_source_mtime(options, source))
+                .map_err(|e| e.to_string())?;
+            let mut contents =
+                File::open(source).map_err(|e| format!("Failed to copy file: {e}"))?;
+            std::io::copy(&mut contents, writer)
+                .map(|_| ())
+                .map_err(|e| format!("Failed to copy file: {e}"))
+        }
+    })?;
+    Ok(Some(Some(new_path)))
+}
+
+/// Copies or moves the entry at `source` into the folder `dest` of the same
+/// archive, with everything below it. Returns its new path inside the
+/// archive, or `Some(None)` when the user's conflict action was Skip.
+/// `display` names the source in the error for one that is not there.
+/// `None`: not a plain archive.
+pub(super) fn try_transfer_within(
+    archive_path: &Path,
+    source: &Path,
+    dest: &Path,
+    conflict_action: &str,
+    is_move: bool,
+    display: &str,
+) -> Result<Option<Option<PathBuf>>, String> {
+    let mut archive = open(archive_path)?;
+    let Some(entries) = plain_entries(&mut archive)? else {
+        return Ok(None);
+    };
+
+    let source_key = key_of(&parts_of(source));
+    let Some(example) = entries
+        .iter()
+        .find(|entry| !source_key.is_empty() && is_within(&entry.key, &source_key))
+    else {
+        return Err(format!("Archive entry not found: {display}"));
+    };
+    let depth = source_key.len();
+    let name = example.parts[depth - 1].clone();
+    let dest_parts = parts_of(dest);
+    if is_within(&key_of(&dest_parts), &source_key) {
+        return Err("Cannot copy a directory into itself or one of its subdirectories".to_string());
+    }
+
+    let (parts, replacing) =
+        match place(archive_path, &entries, &dest_parts, &name, conflict_action)? {
+            Placement::Skipped => return Ok(Some(None)),
+            Placement::At { parts, replacing } => (parts, replacing),
+        };
+    let new_key = key_of(&parts);
+    let new_path: PathBuf = parts.iter().collect();
+    if new_key == source_key {
+        // Onto itself: there is nothing to copy or move.
+        return Ok(Some(Some(new_path)));
+    }
+    if replacing && is_within(&source_key, &new_key) {
+        return Err("Cannot replace a folder with an item from inside it".to_string());
+    }
+
+    let replaced = |entry: &Entry| replacing && is_within(&entry.key, &new_key);
+    let transferred = |entry: &Entry| is_within(&entry.key, &source_key);
+    let emptied = if is_move {
+        folder_left_empty(
+            &entries,
+            |entry| !replaced(entry) && !transferred(entry),
+            &source_key,
+        )
+        // The item may have moved to another place in that same folder.
+        .filter(|folder| !is_within(&new_key, &key_of(folder)))
+    } else {
+        None
+    };
+
+    rewrite(archive_path, archive, |archive, writer| {
+        let renamed = |entry: &Entry| {
+            let mut name = parts
+                .iter()
+                .chain(&entry.parts[depth..])
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join("/");
+            if entry.is_dir {
+                name.push('/');
+            }
+            name
+        };
+        for (index, entry) in entries.iter().enumerate() {
+            if replaced(entry) {
+                continue;
+            }
+            if !transferred(entry) {
+                copy_as_stored(archive, writer, index)?;
+            } else if is_move {
+                let file = archive.by_index_raw(index).map_err(|e| e.to_string())?;
+                writer
+                    .raw_copy_file_rename(file, renamed(entry))
+                    .map_err(|e| e.to_string())?;
+            } else {
+                copy_as_stored(archive, writer, index)?;
+            }
+        }
+        if !is_move {
+            // The copies go after everything else, in the order of their originals.
+            for (index, entry) in entries.iter().enumerate() {
+                if transferred(entry) {
+                    let file = archive.by_index_raw(index).map_err(|e| e.to_string())?;
+                    writer
+                        .raw_copy_file_rename(file, renamed(entry))
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        if let Some(folder) = &emptied {
+            writer
+                .add_directory(joined(folder), zip::write::SimpleFileOptions::default())
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })?;
+    Ok(Some(Some(new_path)))
 }
 
 #[cfg(test)]
@@ -634,6 +957,434 @@ mod tests {
             );
             assert_eq!(fs::read(&archive).unwrap(), before, "{label}");
         }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn local_file(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, contents).unwrap();
+        path
+    }
+
+    fn contents_of(archive: &Path, name: &str) -> Vec<u8> {
+        stored(archive)
+            .into_iter()
+            .find(|entry| entry.name == name)
+            .unwrap_or_else(|| panic!("{name} is in the archive"))
+            .contents
+    }
+
+    #[test]
+    fn creating_a_folder_or_a_file_adds_one_entry_and_keeps_the_rest_as_stored() {
+        let dir = temp_dir("create");
+        let archive = sample(&dir);
+        let before = stored(&archive);
+
+        let folder = try_create(&archive, Path::new("docs"), "new", NewEntry::Directory)
+            .unwrap()
+            .expect("a plain archive");
+        let file = try_create(&archive, Path::new(""), "empty.txt", NewEntry::File)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(folder, PathBuf::from("docs").join("new"));
+        assert_eq!(file, PathBuf::from("empty.txt"));
+        let after = stored(&archive);
+        assert_eq!(&after[..before.len()], &before[..]);
+        assert_eq!(after[before.len()].name, "docs/new/");
+        assert_eq!(after[before.len() + 1].name, "empty.txt");
+        assert_eq!(after[before.len() + 1].size, 0);
+        assert_eq!(
+            open(&archive).unwrap().comment(),
+            b"the archive's own comment"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn creating_over_a_name_that_is_taken_is_refused_and_changes_nothing() {
+        let dir = temp_dir("create-taken");
+        let archive = sample(&dir);
+        let before = fs::read(&archive).unwrap();
+
+        assert_eq!(
+            try_create(&archive, Path::new(""), "DOCS", NewEntry::Directory).unwrap_err(),
+            "Directory already exists: DOCS"
+        );
+        assert_eq!(
+            try_create(&archive, Path::new("docs"), "a.txt", NewEntry::File).unwrap_err(),
+            "File already exists: a.txt"
+        );
+        // `loose` exists only through the file in it.
+        assert_eq!(
+            try_create(&archive, Path::new(""), "loose", NewEntry::File).unwrap_err(),
+            "File already exists: loose"
+        );
+        let below_a_file = try_create(&archive, Path::new("top.txt"), "x", NewEntry::Directory);
+        assert!(
+            below_a_file
+                .unwrap_err()
+                .starts_with("Destination is not a directory:"),
+            "a file is not a folder to create in"
+        );
+        assert_eq!(fs::read(&archive).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn adding_a_local_file_compresses_it_and_copies_the_others_as_stored() {
+        let dir = temp_dir("add-file");
+        let archive = sample(&dir);
+        let before = stored(&archive);
+        let local = local_file(&dir, "notes.txt", &[b'n'; 6000]);
+
+        let added = try_add(&archive, Path::new("docs"), &local, "error")
+            .unwrap()
+            .expect("a plain archive");
+
+        assert_eq!(added, Some(PathBuf::from("docs").join("notes.txt")));
+        let after = stored(&archive);
+        assert_eq!(&after[..before.len()], &before[..]);
+        let new = after.last().unwrap();
+        assert_eq!(new.name, "docs/notes.txt");
+        assert_eq!(new.contents, vec![b'n'; 6000]);
+        assert_eq!(new.method, "Deflated");
+        assert!(new.compressed_size < new.size);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn adding_a_local_folder_adds_everything_in_it() {
+        let dir = temp_dir("add-folder");
+        let archive = sample(&dir);
+        let album = dir.join("album");
+        fs::create_dir_all(album.join("2025")).unwrap();
+        fs::create_dir_all(album.join("empty")).unwrap();
+        local_file(&album, "cover.jpg", b"cover");
+        local_file(&album.join("2025"), "a.jpg", b"first");
+
+        // Into a folder the archive does not have yet.
+        let added = try_add(&archive, Path::new("media"), &album, "error")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(added, Some(PathBuf::from("media").join("album")));
+        let all = names(&archive);
+        for expected in [
+            "media/album/",
+            "media/album/cover.jpg",
+            "media/album/2025/",
+            "media/album/2025/a.jpg",
+            "media/album/empty/",
+        ] {
+            assert!(all.contains(&expected.to_string()), "{expected} in {all:?}");
+        }
+        assert_eq!(contents_of(&archive, "media/album/2025/a.jpg"), b"first");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_name_that_is_taken_follows_the_conflict_action() {
+        let dir = temp_dir("add-conflict");
+        let archive = sample(&dir);
+        let local = local_file(&dir, "a.txt", b"from the disk");
+        let docs = Path::new("docs");
+        let before = fs::read(&archive).unwrap();
+
+        // No answer yet: the error the app turns into a question.
+        let conflict = try_add(&archive, docs, &local, "error").unwrap_err();
+        assert!(
+            conflict.starts_with("CONFLICT: destination already exists:"),
+            "{conflict}"
+        );
+        assert!(conflict.ends_with("a.txt"), "{conflict}");
+        assert_eq!(try_add(&archive, docs, &local, "skip").unwrap(), Some(None));
+        assert_eq!(
+            fs::read(&archive).unwrap(),
+            before,
+            "neither changed the archive"
+        );
+
+        let kept = try_add(&archive, docs, &local, "keep-both")
+            .unwrap()
+            .unwrap();
+        assert_eq!(kept, Some(docs.join("a (1).txt")));
+        assert_eq!(contents_of(&archive, "docs/a.txt"), vec![b'a'; 4000]);
+        assert_eq!(contents_of(&archive, "docs/a (1).txt"), b"from the disk");
+        let again = try_add(&archive, docs, &local, "rename").unwrap().unwrap();
+        assert_eq!(again, Some(docs.join("a (2).txt")));
+
+        let replaced = try_add(&archive, docs, &local, "REPLACE").unwrap().unwrap();
+        assert_eq!(replaced, Some(docs.join("a.txt")));
+        assert_eq!(contents_of(&archive, "docs/a.txt"), b"from the disk");
+        assert_eq!(
+            names(&archive)
+                .iter()
+                .filter(|name| *name == "docs/a.txt")
+                .count(),
+            1
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn replacing_a_folder_removes_what_was_in_it() {
+        let dir = temp_dir("add-replace-folder");
+        let archive = sample(&dir);
+        let docs = dir.join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        local_file(&docs, "only.txt", b"new");
+
+        let replaced = try_add(&archive, Path::new(""), &docs, "replace")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(replaced, Some(PathBuf::from("docs")));
+        let all = names(&archive);
+        assert!(all.contains(&"docs/only.txt".to_string()), "{all:?}");
+        assert!(!all
+            .iter()
+            .any(|name| name == "docs/a.txt" || name.starts_with("docs/sub")));
+        assert!(all.contains(&"top.txt".to_string()));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn adding_into_a_file_or_adding_a_missing_source_is_an_error() {
+        let dir = temp_dir("add-errors");
+        let archive = sample(&dir);
+        let local = local_file(&dir, "x.txt", b"x");
+        let before = fs::read(&archive).unwrap();
+
+        let into_a_file = try_add(&archive, Path::new("top.txt"), &local, "error").unwrap_err();
+        assert!(
+            into_a_file.starts_with("Destination is not a directory:"),
+            "{into_a_file}"
+        );
+        let missing = try_add(&archive, Path::new(""), &dir.join("gone.txt"), "error").unwrap_err();
+        assert!(missing.starts_with("Failed to stat source:"), "{missing}");
+        assert_eq!(fs::read(&archive).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_move_inside_the_archive_renames_the_entries_and_keeps_their_bytes() {
+        let dir = temp_dir("move-within");
+        let archive = sample(&dir);
+        let before = stored(&archive);
+
+        let moved = try_transfer_within(
+            &archive,
+            &PathBuf::from("docs").join("sub"),
+            Path::new("loose"),
+            "error",
+            true,
+            "shown",
+        )
+        .unwrap()
+        .expect("a plain archive");
+
+        assert_eq!(moved, Some(PathBuf::from("loose").join("sub")));
+        let after = stored(&archive);
+        let moved_file = after
+            .iter()
+            .find(|entry| entry.name == "loose/sub/c.txt")
+            .expect("the file moved with its folder");
+        let original = before
+            .iter()
+            .find(|entry| entry.name == "docs/sub/c.txt")
+            .unwrap();
+        assert_eq!(moved_file.crc32, original.crc32);
+        assert_eq!(moved_file.compressed_size, original.compressed_size);
+        assert_eq!(moved_file.contents, original.contents);
+        assert!(!after.iter().any(|entry| entry.name.starts_with("docs/sub")));
+        assert_eq!(after.len(), before.len());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn moving_the_last_entry_out_of_a_folder_leaves_the_folder() {
+        let dir = temp_dir("move-empties");
+        let archive = sample(&dir);
+
+        let moved = try_transfer_within(
+            &archive,
+            &PathBuf::from("loose").join("only.txt"),
+            Path::new("docs"),
+            "error",
+            true,
+            "shown",
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(moved, Some(PathBuf::from("docs").join("only.txt")));
+        let all = names(&archive);
+        assert!(all.contains(&"loose/".to_string()), "{all:?}");
+        assert!(all.contains(&"docs/only.txt".to_string()));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_copy_inside_the_archive_keeps_the_original_and_adds_the_copy() {
+        let dir = temp_dir("copy-within");
+        let archive = sample(&dir);
+        let before = stored(&archive);
+
+        let copied = try_transfer_within(
+            &archive,
+            Path::new("docs"),
+            Path::new("loose"),
+            "error",
+            false,
+            "shown",
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(copied, Some(PathBuf::from("loose").join("docs")));
+        let after = stored(&archive);
+        assert_eq!(&after[..before.len()], &before[..]);
+        let copies: Vec<&str> = after[before.len()..]
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(
+            copies,
+            vec![
+                "loose/docs/",
+                "loose/docs/a.txt",
+                "loose/docs/b.txt",
+                "loose/docs/sub/c.txt"
+            ]
+        );
+        assert_eq!(contents_of(&archive, "loose/docs/a.txt"), vec![b'a'; 4000]);
+
+        // A second copy beside the first, kept under another name.
+        let kept = try_transfer_within(
+            &archive,
+            &PathBuf::from("docs").join("a.txt"),
+            Path::new("docs"),
+            "keep-both",
+            false,
+            "shown",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(kept, Some(PathBuf::from("docs").join("a (1).txt")));
+        assert_eq!(contents_of(&archive, "docs/a (1).txt"), vec![b'a'; 4000]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn transfers_inside_the_archive_that_cannot_be_done_change_nothing() {
+        let dir = temp_dir("within-errors");
+        let archive = sample(&dir);
+        let before = fs::read(&archive).unwrap();
+        let within = |source: &str, dest: &str, action: &str, is_move: bool| {
+            try_transfer_within(
+                &archive,
+                Path::new(source),
+                Path::new(dest),
+                action,
+                is_move,
+                "the shown path",
+            )
+        };
+
+        assert_eq!(
+            within("gone", "docs", "error", true).unwrap_err(),
+            "Archive entry not found: the shown path"
+        );
+        assert_eq!(
+            within("docs", "docs/sub", "error", false).unwrap_err(),
+            "Cannot copy a directory into itself or one of its subdirectories"
+        );
+        // A file onto the folder it is in.
+        assert_eq!(
+            within("docs/sub/c.txt", "docs", "replace", true).unwrap(),
+            Some(Some(PathBuf::from("docs").join("c.txt"))),
+            "no file named c.txt is in docs, so this is a plain move"
+        );
+        fs::write(&archive, &before).unwrap();
+        assert_eq!(
+            within("docs/sub", "", "replace", true).unwrap(),
+            Some(Some(PathBuf::from("sub")))
+        );
+        fs::write(&archive, &before).unwrap();
+
+        // Where it already is: nothing to do, whatever the action.
+        assert_eq!(
+            within("docs/a.txt", "docs", "replace", true).unwrap(),
+            Some(Some(PathBuf::from("docs").join("a.txt")))
+        );
+        assert_eq!(
+            within("docs/a.txt", "docs", "skip", true).unwrap(),
+            Some(None)
+        );
+        let conflict = within("docs/a.txt", "docs", "error", false).unwrap_err();
+        assert!(conflict.starts_with("CONFLICT:"), "{conflict}");
+        assert_eq!(fs::read(&archive).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn replacing_a_folder_with_an_item_from_inside_it_is_refused() {
+        let dir = temp_dir("within-replace-parent");
+        let archive = dir.join("nested.zip");
+        write_zip(
+            &archive,
+            &[("box/box/inner.txt", b"inner"), ("box/other.txt", b"other")],
+        );
+        let before = fs::read(&archive).unwrap();
+
+        // `box/box` moved to the root would replace `box`, which holds it.
+        let refused = try_transfer_within(
+            &archive,
+            &PathBuf::from("box").join("box"),
+            Path::new(""),
+            "replace",
+            true,
+            "shown",
+        );
+
+        assert_eq!(
+            refused.unwrap_err(),
+            "Cannot replace a folder with an item from inside it"
+        );
+        assert_eq!(fs::read(&archive).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_new_operations_leave_an_archive_that_is_not_plain_to_the_rebuild() {
+        let dir = temp_dir("not-plain-new");
+        let archive = dir.join("case.zip");
+        write_zip(&archive, &[("A.txt", b"1"), ("a.txt", b"2")]);
+        let local = local_file(&dir, "x.txt", b"x");
+        let before = fs::read(&archive).unwrap();
+
+        assert_eq!(
+            try_create(&archive, Path::new(""), "new", NewEntry::Directory).unwrap(),
+            None
+        );
+        assert_eq!(
+            try_add(&archive, Path::new(""), &local, "error").unwrap(),
+            None
+        );
+        assert_eq!(
+            try_transfer_within(
+                &archive,
+                Path::new("A.txt"),
+                Path::new("d"),
+                "error",
+                true,
+                "s"
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(fs::read(&archive).unwrap(), before);
         let _ = fs::remove_dir_all(dir);
     }
 }
