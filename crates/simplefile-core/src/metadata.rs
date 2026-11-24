@@ -342,9 +342,12 @@ fn pdf_object_text(object: &lopdf::Object) -> Option<String> {
 /// title came out as its letters with a replacement mark and NULs between.
 fn decode_pdf_text_string(bytes: &[u8]) -> String {
     if let Some(utf16) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        // An odd last byte is not a code unit and is left out.
         let units: Vec<u16> = utf16
-            .chunks_exact(2)
-            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_be_bytes(*pair))
             .collect();
         return String::from_utf16_lossy(&units);
     }
