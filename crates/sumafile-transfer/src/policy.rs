@@ -138,17 +138,30 @@ impl Policy {
         self.multi_thread_streams_count().min(affordable.max(1))
     }
 
-    pub fn buffer_count(&self, network: bool, file_len: u64, _operation: &str) -> usize {
+    /// Whether the settings allow this file to be copied in several streams.
+    /// The drives decide the rest: both ends must be local fixed disks.
+    pub fn multistream_candidate(&self, network: bool, file_len: u64) -> bool {
         let buffer = self.buffer_bytes(network) as u64;
-        let streams = self.budgeted_streams(network);
-        if cfg!(windows)
+        cfg!(windows)
             && !network
             && self.check_mode != CheckMode::Checksum
-            && streams >= 2
+            && self.budgeted_streams(network) >= 2
             && file_len >= self.multi_thread_cutoff_bytes()
             && file_len >= buffer * 2
-        {
-            streams
+    }
+
+    /// Buffers one file holds while it is copied. `several_streams` says the
+    /// file will be copied in several streams (the settings allow it and both
+    /// drives are local fixed disks). Only then is a buffer per stream
+    /// reserved, and never fewer than the three a single stream uses, which
+    /// is what a later try of the same file falls back to. Reserving by the
+    /// settings alone charged a file on a removable or cloud drive for
+    /// streams it never used, and with two streams charged it one buffer
+    /// less than it took.
+    pub fn buffer_count(&self, network: bool, file_len: u64, several_streams: bool) -> usize {
+        let buffer = self.buffer_bytes(network) as u64;
+        if several_streams && self.multistream_candidate(network, file_len) {
+            self.budgeted_streams(network).max(3)
         } else if file_len > buffer {
             3
         } else {
@@ -257,7 +270,7 @@ mod budget_tests {
     use super::Policy;
 
     fn reservation(policy: &Policy, network: bool, file_len: u64) -> usize {
-        policy.buffer_bytes(network) * policy.buffer_count(network, file_len, "copy") + 128 * 1024
+        policy.buffer_bytes(network) * policy.buffer_count(network, file_len, true) + 128 * 1024
     }
 
     /// The per-file reservation must always fit the job's memory budget, or
@@ -282,17 +295,45 @@ mod budget_tests {
         assert!(reservation(&many_streams, false, 1 << 31) <= many_streams.memory_bytes());
     }
 
+    /// A file that will not be copied in several streams holds the three
+    /// buffers of one stream, whatever "Streams per large file" says.
     #[test]
-    fn stripes_used_for_copying_match_the_reserved_buffers() {
-        let policy = Policy {
+    fn a_single_stream_copy_reserves_three_buffers_whatever_the_stream_setting() {
+        for streams in [0, 2, 4, 16] {
+            let policy = Policy {
+                multi_thread_streams: streams,
+                ..Policy::default()
+            };
+            assert_eq!(policy.buffer_count(false, 1 << 30, false), 3, "{streams}");
+            assert_eq!(policy.buffer_count(true, 1 << 30, true), 3, "{streams}");
+            assert_eq!(policy.buffer_count(false, 1024, true), 1, "{streams}");
+        }
+    }
+
+    /// Several streams hold a buffer each, and at least the three a later
+    /// single-stream try of the same file takes.
+    #[test]
+    fn a_multistream_copy_reserves_a_buffer_per_stream_and_at_least_three() {
+        for (streams, expected) in [(2, 3), (4, 4), (8, 8)] {
+            let policy = Policy {
+                multi_thread_streams: streams,
+                ..Policy::default()
+            };
+            let reserved = policy.buffer_count(false, 1 << 30, true);
+            if cfg!(windows) {
+                assert_eq!(reserved, expected, "{streams} streams");
+            } else {
+                assert_eq!(reserved, 3, "several streams are Windows-only");
+            }
+        }
+        // The stream count never outgrows the budget.
+        let tight = Policy {
             buffer_size_kib: 4096,
-            multi_thread_streams: 4,
+            multi_thread_streams: 16,
             memory_budget_mb: 16,
             ..Policy::default()
         };
-        assert_eq!(
-            policy.budgeted_streams(false),
-            policy.buffer_count(false, 1 << 30, "copy")
-        );
+        let reserved = tight.buffer_count(false, 1 << 30, true);
+        assert!(reserved * tight.buffer_bytes(false) + 128 * 1024 <= tight.memory_bytes());
     }
 }

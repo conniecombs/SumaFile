@@ -675,8 +675,9 @@ that is running keeps what it has measured and can save again when it ends.
   a buffer is reused only for a request of exactly its size. A buffer cut to
   the length of one small file is not cached, and a full cache drops its
   oldest buffers to keep the newest.
-* **Per file.** A file reserves one buffer when it fits in one, three when it
-  is larger, or one per stream, plus 128 KiB. A file that does not fit waits,
+* **Per file.** A file reserves one buffer when it fits in one and three when
+  it is larger. A file copied in several streams reserves one per stream, and
+  never fewer than three. Each file adds 128 KiB. A file that does not fit waits,
   and can appear in the Details list while it waits.
 * **Bandwidth.** The limit is per task and counts the bytes actually copied.
   It is not a limit for the whole machine. The files being copied take turns

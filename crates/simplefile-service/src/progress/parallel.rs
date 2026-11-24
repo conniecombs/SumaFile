@@ -56,34 +56,44 @@ impl ConflictAction {
     }
 }
 
-fn sort_ready_queue(
-    ready_queue: &mut VecDeque<usize>,
+/// Where two queued files stand in the chosen transfer order.
+fn queue_order(
     tasks: &BTreeMap<usize, FileTask>,
     order_by: OrderBy,
+    a: usize,
+    b: usize,
+) -> std::cmp::Ordering {
+    match order_by {
+        OrderBy::Default => a.cmp(&b),
+        OrderBy::SizeAsc => tasks[&a].size.cmp(&tasks[&b].size).then_with(|| a.cmp(&b)),
+        OrderBy::SizeDesc => tasks[&b].size.cmp(&tasks[&a].size).then_with(|| a.cmp(&b)),
+        OrderBy::Name => tasks[&a]
+            .source
+            .file_name()
+            .cmp(&tasks[&b].source.file_name())
+            .then_with(|| tasks[&a].source.cmp(&tasks[&b].source))
+            .then_with(|| a.cmp(&b)),
+    }
+}
+
+/// Queue the file `index` (already in `tasks`) at its place in the chosen
+/// order. The queue stays sorted, so the place is found by bisection; sorting
+/// the whole queue again for each file the scan delivered cost a full sort of
+/// up to "Maximum queued items" entries per file.
+fn enqueue_ready(
+    queue: &mut VecDeque<usize>,
+    tasks: &BTreeMap<usize, FileTask>,
+    order_by: OrderBy,
+    index: usize,
 ) {
-    if matches!(order_by, OrderBy::Default) || ready_queue.len() <= 1 {
+    if matches!(order_by, OrderBy::Default) {
+        queue.push_back(index);
         return;
     }
-    let slice = ready_queue.make_contiguous();
-    match order_by {
-        OrderBy::Default => {}
-        OrderBy::SizeAsc => {
-            slice.sort_by(|&a, &b| tasks[&a].size.cmp(&tasks[&b].size).then_with(|| a.cmp(&b)));
-        }
-        OrderBy::SizeDesc => {
-            slice.sort_by(|&a, &b| tasks[&b].size.cmp(&tasks[&a].size).then_with(|| a.cmp(&b)));
-        }
-        OrderBy::Name => {
-            slice.sort_by(|&a, &b| {
-                tasks[&a]
-                    .source
-                    .file_name()
-                    .cmp(&tasks[&b].source.file_name())
-                    .then_with(|| tasks[&a].source.cmp(&tasks[&b].source))
-                    .then_with(|| a.cmp(&b))
-            });
-        }
-    }
+    let place = queue.partition_point(|&queued| {
+        queue_order(tasks, order_by, queued, index) != std::cmp::Ordering::Greater
+    });
+    queue.insert(place, index);
 }
 
 #[derive(Clone, Debug)]
@@ -617,14 +627,7 @@ pub(crate) fn copy_selection(
         };
     }
 
-    for (_, _, src, dst) in state.created_dirs.iter().rev() {
-        if let Err(error) = simplefile_core::file_ops::preserve_basic_metadata(src, dst) {
-            log::warn!(
-                "Could not preserve directory metadata for {}: {error}",
-                dst.display()
-            );
-        }
-    }
+    restore_directory_metadata(&state.created_dirs, checker_count);
     ctx.progress.finalizing(
         *completed_bytes,
         roots
@@ -638,6 +641,47 @@ pub(crate) fn copy_selection(
         roots: root_outcomes,
         dir_failures,
     }
+}
+
+/// Fewest created folders that are worth a second thread.
+const DIRECTORIES_PER_METADATA_THREAD: usize = 64;
+
+/// Give each folder the transfer created its source folder's times and
+/// read-only attribute, now that nothing is written into it any more.
+///
+/// The folders do not depend on one another (setting a folder's times does
+/// not touch its parent's), so they are shared out between up to `threads`
+/// threads. One after another, each folder costs three or four requests, and
+/// on a share a tree of many folders spent that time after its last file.
+fn restore_directory_metadata(created: &[(usize, usize, PathBuf, PathBuf)], threads: usize) {
+    let restore = |(_, _, src, dst): &(usize, usize, PathBuf, PathBuf)| {
+        if let Err(error) = simplefile_core::file_ops::preserve_basic_metadata(src, dst) {
+            log::warn!(
+                "Could not preserve directory metadata for {}: {error}",
+                dst.display()
+            );
+        }
+    };
+    let threads = threads
+        .min(created.len() / DIRECTORIES_PER_METADATA_THREAD)
+        .max(1);
+    if threads == 1 {
+        // Deepest first, as before.
+        created.iter().rev().for_each(restore);
+        return;
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(directory) = created.len().checked_sub(index + 1) else {
+                    break;
+                };
+                restore(&created[directory]);
+            });
+        }
+    });
 }
 
 /// Walk one directory into `destination` (test and compatibility entry point).
@@ -929,8 +973,9 @@ fn copy_files_streaming_with_sink(
                 Ok(Ok(task)) => {
                     let idx = next_index;
                     next_index += 1;
-                    ready[lane_index(two_lanes, task.size)].push_back(idx);
+                    let lane = lane_index(two_lanes, task.size);
                     tasks.insert(idx, task);
+                    enqueue_ready(&mut ready[lane], &tasks, order_by, idx);
                 }
                 Ok(Err(error)) => {
                     result.scan_error = Some(error);
@@ -965,8 +1010,6 @@ fn copy_files_streaming_with_sink(
         {
             result.retained_tasks_peak = tasks.len();
         }
-        // A chosen order means one lane, so only lane 0 is ever sorted.
-        sort_ready_queue(&mut ready[0], &tasks, order_by);
 
         let all_network = tasks.values().all(|t| t.network);
         let buffer_size = session.policy().buffer_bytes(all_network);
@@ -1075,10 +1118,17 @@ fn copy_files_streaming_with_sink(
                     let permit_buffer = context
                         .buffer_size()
                         .min(usize::try_from(task.size.max(4096)).unwrap_or(usize::MAX));
+                    // The drives are asked only for a file the settings
+                    // would copy in several streams.
+                    let several_streams = context
+                        .policy
+                        .multistream_candidate(task.network, task.size)
+                        && simplefile_core::utils::is_local_fixed_volume(&task.source)
+                        && simplefile_core::utils::is_local_fixed_volume(&task.destination);
                     let chunks =
                         context
                             .policy
-                            .buffer_count(task.network, task.size, operation_type);
+                            .buffer_count(task.network, task.size, several_streams);
                     let status = Permit::acquire_for_job(
                         permit_buffer
                             .saturating_mul(chunks)
@@ -1219,7 +1269,6 @@ fn copy_files_streaming_with_sink(
                 worker_cancel.store(true, Ordering::Relaxed);
                 producer_done = true;
             }
-            let mut added_from_scan = false;
             while !producer_done
                 && !worker_cancel.load(Ordering::Relaxed)
                 && (ready[0].len() + ready[1].len())
@@ -1231,9 +1280,9 @@ fn copy_files_streaming_with_sink(
                     Ok(Ok(task)) => {
                         let idx = next_index;
                         next_index += 1;
-                        ready[lane_index(two_lanes, task.size)].push_back(idx);
+                        let lane = lane_index(two_lanes, task.size);
                         tasks.insert(idx, task);
-                        added_from_scan = true;
+                        enqueue_ready(&mut ready[lane], &tasks, order_by, idx);
                     }
                     Ok(Err(error)) => {
                         result.scan_error = Some(error);
@@ -1252,9 +1301,6 @@ fn copy_files_streaming_with_sink(
             {
                 result.retained_tasks_peak = result.retained_tasks_peak.max(tasks.len());
             }
-            if added_from_scan {
-                sort_ready_queue(&mut ready[0], &tasks, order_by);
-            }
 
             if (producer_done || deferred_retries.len() >= backlog_limit)
                 && ready.iter().all(VecDeque::is_empty)
@@ -1263,9 +1309,9 @@ fn copy_files_streaming_with_sink(
                 && !deferred_retries.is_empty()
             {
                 for (retry_index, _prev_err) in deferred_retries.drain(..) {
-                    ready[lane_index(two_lanes, tasks[&retry_index].size)].push_back(retry_index);
+                    let lane = lane_index(two_lanes, tasks[&retry_index].size);
+                    enqueue_ready(&mut ready[lane], &tasks, order_by, retry_index);
                 }
-                sort_ready_queue(&mut ready[0], &tasks, order_by);
             }
             open_lanes(
                 session,
@@ -1330,9 +1376,9 @@ fn copy_files_streaming_with_sink(
                         Ok(task) => {
                             let idx = next_index;
                             next_index += 1;
-                            ready[lane_index(two_lanes, task.size)].push_back(idx);
+                            let lane = lane_index(two_lanes, task.size);
                             tasks.insert(idx, task);
-                            sort_ready_queue(&mut ready[0], &tasks, order_by);
+                            enqueue_ready(&mut ready[lane], &tasks, order_by, idx);
                             continue;
                         }
                         Err(error) => {
@@ -1467,6 +1513,113 @@ mod tests {
     use super::super::tuning::{CheckMode, Mode, OrderBy, Policy};
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn queued_task(name: &str, size: u64) -> FileTask {
+        FileTask {
+            source: PathBuf::from("src").join(name),
+            destination: PathBuf::from("dst").join(name),
+            size,
+            network: false,
+            conflict: ConflictAction::Error,
+            symlink: false,
+            top_level: false,
+            merge_root: None,
+            delete_source: false,
+            retry: false,
+        }
+    }
+
+    /// A file put in its place one at a time leaves the queue exactly as a
+    /// sort of the whole queue would.
+    #[test]
+    fn a_file_is_queued_at_its_place_in_the_chosen_order() {
+        let files = [
+            ("m.bin", 5u64),
+            ("a.bin", 9),
+            ("z.bin", 1),
+            ("b.bin", 5),
+            ("k.bin", 7),
+            ("a2.bin", 5),
+            ("c.bin", 0),
+        ];
+        let tasks: BTreeMap<usize, FileTask> = files
+            .iter()
+            .enumerate()
+            .map(|(index, (name, size))| (index, queued_task(name, *size)))
+            .collect();
+        for order_by in [
+            OrderBy::Default,
+            OrderBy::SizeAsc,
+            OrderBy::SizeDesc,
+            OrderBy::Name,
+        ] {
+            for arrival in [
+                vec![0, 1, 2, 3, 4, 5, 6],
+                vec![6, 5, 4, 3, 2, 1, 0],
+                vec![3, 0, 6, 1, 5, 2, 4],
+            ] {
+                let mut queue = VecDeque::new();
+                for &index in &arrival {
+                    enqueue_ready(&mut queue, &tasks, order_by, index);
+                }
+                let mut sorted = arrival.clone();
+                if !matches!(order_by, OrderBy::Default) {
+                    sorted.sort_by(|&a, &b| queue_order(&tasks, order_by, a, b));
+                }
+                assert_eq!(
+                    queue.iter().copied().collect::<Vec<_>>(),
+                    sorted,
+                    "{order_by:?}, arrival {arrival:?}"
+                );
+            }
+        }
+        // Spot checks of what the orders mean.
+        let ordered = |order_by| {
+            let mut queue = VecDeque::new();
+            for index in 0..files.len() {
+                enqueue_ready(&mut queue, &tasks, order_by, index);
+            }
+            queue
+                .iter()
+                .map(|index| files[*index].0)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ordered(OrderBy::SizeAsc)[0], "c.bin");
+        assert_eq!(ordered(OrderBy::SizeDesc)[0], "a.bin");
+        assert_eq!(
+            ordered(OrderBy::Name),
+            ["a.bin", "a2.bin", "b.bin", "c.bin", "k.bin", "m.bin", "z.bin"]
+        );
+    }
+
+    /// Every created folder gets its source's times, on one thread or several.
+    #[test]
+    fn created_folders_get_their_source_times_on_one_thread_or_several() {
+        let root = std::env::temp_dir().join(crate::progress::generate_transfer_operation_id());
+        for (folders, threads) in [(5usize, 8usize), (300, 8)] {
+            let mut created = Vec::new();
+            for index in 0..folders {
+                let src = root.join(format!("src-{folders}-{index}"));
+                fs::create_dir_all(&src).unwrap();
+                created.push((index, 0usize, src, PathBuf::new()));
+            }
+            // The destinations are made later, so their own times differ.
+            std::thread::sleep(Duration::from_millis(40));
+            for (index, _, _, dst) in &mut created {
+                *dst = root.join(format!("dst-{folders}-{index}"));
+                fs::create_dir_all(&dst).unwrap();
+            }
+            let modified = |path: &Path| fs::metadata(path).unwrap().modified().unwrap();
+            assert_ne!(modified(&created[0].2), modified(&created[0].3));
+
+            restore_directory_metadata(&created, threads);
+
+            for (_, _, src, dst) in &created {
+                assert_eq!(modified(dst), modified(src), "{}", dst.display());
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     /// The threads a pass starts follow the files it runs at once.
     #[test]
