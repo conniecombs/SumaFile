@@ -32,15 +32,18 @@ public sealed partial class MainWindow
                     RootGrid.KeyboardAccelerators.Add(accelerator);
                 }
 
-                // "/" on the main keyboard (Oem2) also answers on the numpad (Divide), e.g. Ctrl+/ for help.
+                // A key with a second code answers on both: "/" on the main keyboard (Oem2) also on
+                // the numpad's Divide, e.g. Ctrl+/ for help, and Plus also on the numpad's Add.
                 if (KeyboardShortcutMap.TryParseShortcut(shortcut, out var gesture, out _)
-                    && gesture is not null
-                    && string.Equals(gesture.Key, "Oem2", StringComparison.Ordinal))
+                    && gesture is not null)
                 {
                     var modifiers = ToVirtualKeyModifiers(gesture);
-                    if (registered.Add((assignment.Id, VirtualKey.Divide, modifiers)))
+                    foreach (var code in KeyboardShortcutMap.VirtualKeyCodesFor(gesture.Key).Skip(1))
                     {
-                        RootGrid.KeyboardAccelerators.Add(CreateCommandAccelerator(assignment.Id, VirtualKey.Divide, modifiers));
+                        if (registered.Add((assignment.Id, (VirtualKey)code, modifiers)))
+                        {
+                            RootGrid.KeyboardAccelerators.Add(CreateCommandAccelerator(assignment.Id, (VirtualKey)code, modifiers));
+                        }
                     }
                 }
             }
@@ -512,31 +515,12 @@ public sealed partial class MainWindow
 
     private static bool TryMapVirtualKey(string key, out VirtualKey virtualKey)
     {
-        virtualKey = key switch
-        {
-            "0" => VirtualKey.Number0,
-            "1" => VirtualKey.Number1,
-            "2" => VirtualKey.Number2,
-            "3" => VirtualKey.Number3,
-            "4" => VirtualKey.Number4,
-            "5" => VirtualKey.Number5,
-            "6" => VirtualKey.Number6,
-            "7" => VirtualKey.Number7,
-            "8" => VirtualKey.Number8,
-            "9" => VirtualKey.Number9,
-            "Backspace" => VirtualKey.Back,
-            "Plus" => VirtualKey.Add,
-            "Minus" => VirtualKey.Subtract,
-            "Comma" => VirtualKey.Separator,
-            "Period" => VirtualKey.Decimal,
-            "Slash" => VirtualKey.Divide,
-            "Backslash" => VirtualKey.Divide,
-            // OEM keys on the main keyboard: ` (terminal), , (settings), / (help).
-            "Oem3" or "Backquote" or "Backtick" or "Grave" => (VirtualKey)192,
-            "OemComma" => (VirtualKey)188,
-            "Oem2" or "OemQuestion" => (VirtualKey)191,
-            _ => Enum.TryParse<VirtualKey>(key, out var parsed) ? parsed : default,
-        };
+        // Digits, punctuation and PrintScreen come from the table Core shares with the Settings
+        // recorder (the main keyboard's code first); every other key name is a VirtualKey member.
+        var codes = KeyboardShortcutMap.VirtualKeyCodesFor(key);
+        virtualKey = codes.Count > 0
+            ? (VirtualKey)codes[0]
+            : Enum.TryParse<VirtualKey>(key, out var parsed) ? parsed : default;
 
         return virtualKey != default;
     }

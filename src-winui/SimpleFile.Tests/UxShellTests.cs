@@ -32,22 +32,29 @@ public class UxShellTests
         Assert.Contains("SecondaryFileList", focus);
     }
 
+    /// <summary>
+    /// UI audit S5: the key names of the shortcut map were turned into keys by a table of the
+    /// app's own, which sent Plus, Minus, Comma, Period, Slash and Backslash to keypad keys and
+    /// PrintScreen to nothing. The app and the Settings recorder now share Core's table; its
+    /// codes are checked in <see cref="KeyboardShortcutMapTests"/>.
+    /// </summary>
     [Fact]
-    public void ShortcutKeyTable_MapsTheOemKeysUsedByNewDefaults()
+    public void ShortcutKeyTable_ComesFromTheSharedKeyCodeTable()
     {
         var map = Slice(Read("MainWindow.Shortcuts.cs"), "private static bool TryMapVirtualKey(", "return virtualKey != default;");
+        Assert.Contains("KeyboardShortcutMap.VirtualKeyCodesFor(key)", map);
+        Assert.Contains("Enum.TryParse<VirtualKey>(key", map);
 
-        Assert.Matches(new Regex(@"""Oem3""[^\n]*=> \(VirtualKey\)192"), map);
-        Assert.Matches(new Regex(@"""OemComma""[^\n]*=> \(VirtualKey\)188"), map);
-        Assert.Matches(new Regex(@"""Oem2""[^\n]*=> \(VirtualKey\)191"), map);
-        Assert.Contains("\"Backspace\" => VirtualKey.Back", map);
-        Assert.Contains("\"Slash\" => VirtualKey.Divide", map);
-
-        // Ctrl+/ keeps working on the numpad: an Oem2 chord also registers VirtualKey.Divide.
+        // Ctrl+/ keeps working on the numpad: every further code of a key registers too.
         var apply = Slice(Read("MainWindow.Shortcuts.cs"), "private void ApplyKeyboardShortcuts()", "private void ApplyShortcutHints()");
-        Assert.Matches(new Regex(@"string\.Equals\(gesture\.Key, ""Oem2"", StringComparison\.Ordinal\)"), apply);
-        Assert.Contains("CreateCommandAccelerator(assignment.Id, VirtualKey.Divide, modifiers)", apply);
+        Assert.Contains("KeyboardShortcutMap.VirtualKeyCodesFor(gesture.Key).Skip(1)", apply);
+        Assert.Contains("CreateCommandAccelerator(assignment.Id, (VirtualKey)code, modifiers)", apply);
         Assert.Contains("registered.Add(", apply);
+
+        // The recorder writes the name the table maps back to the pressed key.
+        var recorder = Slice(Read("SettingsWindow.xaml.cs"), "private static string KeyText(VirtualKey key)", "private async void OnClearRecentHistoryClicked(");
+        Assert.Contains("KeyboardShortcutMap.KeyNameForVirtualKeyCode((int)key)", recorder);
+        Assert.DoesNotContain("VirtualKey.Add", recorder);
     }
 
     // Change 2: the omnibar returns to Path mode when a search or filter ends.

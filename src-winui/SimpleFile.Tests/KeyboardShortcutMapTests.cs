@@ -5,6 +5,49 @@ namespace SimpleFile.Tests;
 
 public class KeyboardShortcutMapTests
 {
+    /// <summary>
+    /// UI audit S5: Plus, Minus, Comma, Period, Slash and Backslash were registered on keypad
+    /// keys (Add, Subtract, Separator, Decimal, Divide) and PrintScreen on nothing. Each now maps
+    /// to the main keyboard's key, and to the keypad's as well where there is one.
+    /// </summary>
+    [Fact]
+    public void NamedPunctuationKeys_MapToTheKeysTheyName()
+    {
+        static int[] Codes(string shortcut)
+        {
+            Assert.True(KeyboardShortcutMap.TryParseShortcut(shortcut, out var gesture, out _));
+            return [.. KeyboardShortcutMap.VirtualKeyCodesFor(gesture!.Key)];
+        }
+
+        Assert.Equal(new[] { 0xBB, 0x6B }, Codes("Ctrl+Plus"));      // VK_OEM_PLUS, then the keypad's VK_ADD
+        Assert.Equal(new[] { 0xBD, 0x6D }, Codes("Ctrl+Minus"));     // VK_OEM_MINUS, VK_SUBTRACT
+        Assert.Equal(new[] { 0xBC, 0x6C }, Codes("Ctrl+Comma"));     // VK_OEM_COMMA, VK_SEPARATOR
+        Assert.Equal(new[] { 0xBE, 0x6E }, Codes("Ctrl+Period"));    // VK_OEM_PERIOD, VK_DECIMAL
+        Assert.Equal(new[] { 0xBF, 0x6F }, Codes("Ctrl+Slash"));     // VK_OEM_2, VK_DIVIDE
+        Assert.Equal(new[] { 0xDC }, Codes("Ctrl+Backslash"));       // VK_OEM_5
+        Assert.Equal(new[] { 0x2C }, Codes("PrintScreen"));          // VK_SNAPSHOT
+        Assert.Equal(new[] { 0xC0 }, Codes("Ctrl+Backtick"));        // VK_OEM_3
+        Assert.Equal(new[] { 0x08 }, Codes("Backspace"));
+        Assert.Equal(new[] { 0x35, 0x65 }, Codes("Ctrl+5"));         // the digit row, then the keypad
+        Assert.Empty(KeyboardShortcutMap.VirtualKeyCodesFor("F5"));
+        Assert.Empty(KeyboardShortcutMap.VirtualKeyCodesFor("A"));
+        Assert.Empty(KeyboardShortcutMap.VirtualKeyCodesFor("Escape"));
+
+        // A key the Settings recorder names maps back to the code that was pressed.
+        foreach (var code in new[] { 0xBB, 0x6B, 0xBD, 0x6D, 0xBC, 0x6C, 0xBE, 0x6E, 0xBF, 0x6F, 0x6A, 0xDC, 0x2C, 0xC0, 0x08 })
+        {
+            var name = KeyboardShortcutMap.KeyNameForVirtualKeyCode(code);
+            Assert.NotNull(name);
+            Assert.Contains(code, KeyboardShortcutMap.VirtualKeyCodesFor(name!));
+            Assert.True(KeyboardShortcutMap.TryParseShortcut($"Ctrl+{name}", out var gesture, out _), name);
+            Assert.Equal(name, gesture!.Key);
+        }
+
+        Assert.Equal("PrintScreen", KeyboardShortcutMap.KeyNameForVirtualKeyCode(0x2C));
+        Assert.Null(KeyboardShortcutMap.KeyNameForVirtualKeyCode(0x74)); // F5 keeps its VirtualKey name
+        Assert.Null(KeyboardShortcutMap.KeyNameForVirtualKeyCode(0x41)); // A
+    }
+
     [Fact]
     public void KeyboardShortcuts_IncludeEditableCommandDefaultsAndUnassignedCommands()
     {

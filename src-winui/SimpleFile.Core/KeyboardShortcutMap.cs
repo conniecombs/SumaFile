@@ -657,6 +657,71 @@ public static class KeyboardShortcutMap
         }
     }
 
+    // Windows virtual-key codes, numbered as Windows.System.VirtualKey numbers them. Core does not
+    // reference WinRT, so the codes are spelt out here and the app casts them.
+    private const int VkBack = 0x08;
+    private const int VkSnapshot = 0x2C;
+    private const int VkNumberPad0 = 0x60;
+    private const int VkMultiply = 0x6A;
+    private const int VkAdd = 0x6B;
+    private const int VkSeparator = 0x6C;
+    private const int VkSubtract = 0x6D;
+    private const int VkDecimal = 0x6E;
+    private const int VkDivide = 0x6F;
+    private const int VkOemPlus = 0xBB;
+    private const int VkOemComma = 0xBC;
+    private const int VkOemMinus = 0xBD;
+    private const int VkOemPeriod = 0xBE;
+    private const int VkOem2 = 0xBF;
+    private const int VkOem3 = 0xC0;
+    private const int VkOem5 = 0xDC;
+
+    /// <summary>
+    /// The Windows virtual-key codes a normalized key name (the <c>Key</c> of a parsed shortcut)
+    /// stands for: the main keyboard's key first, the numeric keypad's key after it where there
+    /// is one. Empty for a key this table does not know, such as a letter, a function key or
+    /// Escape, whose code is the <c>VirtualKey</c> member of its name. Plus, Minus, Comma, Period,
+    /// Slash, Backslash and PrintScreen used to be mapped to keypad keys, or to nothing.
+    /// </summary>
+    public static IReadOnlyList<int> VirtualKeyCodesFor(string key) => key switch
+    {
+        "Plus" => [VkOemPlus, VkAdd],
+        "Minus" => [VkOemMinus, VkSubtract],
+        "OemComma" => [VkOemComma, VkSeparator],
+        "Period" => [VkOemPeriod, VkDecimal],
+        "Oem2" => [VkOem2, VkDivide],
+        "Oem3" => [VkOem3],
+        "Backslash" => [VkOem5],
+        "Divide" => [VkDivide],
+        "Multiply" => [VkMultiply],
+        "PrintScreen" => [VkSnapshot],
+        "Backspace" => [VkBack],
+        [>= '0' and <= '9'] => [key[0], VkNumberPad0 + key[0] - '0'],
+        _ => [],
+    };
+
+    /// <summary>
+    /// The key name a recorded virtual-key code is written as, for the codes in this table; null
+    /// for any other code, whose <c>VirtualKey</c> member name is its key name. Every name given
+    /// here maps back to the code through <see cref="VirtualKeyCodesFor"/>, so a shortcut recorded
+    /// in Settings is registered on the key that was pressed.
+    /// </summary>
+    public static string? KeyNameForVirtualKeyCode(int code) => code switch
+    {
+        VkOemPlus or VkAdd => "Plus",
+        VkOemMinus or VkSubtract => "Minus",
+        VkOemComma or VkSeparator => "OemComma",
+        VkOemPeriod or VkDecimal => "Period",
+        VkOem2 => "Oem2",
+        VkOem3 => "Oem3",
+        VkOem5 => "Backslash",
+        VkDivide => "Divide",
+        VkMultiply => "Multiply",
+        VkSnapshot => "PrintScreen",
+        VkBack => "Backspace",
+        _ => null,
+    };
+
     private static string? NormalizeKey(string token)
     {
         var key = token.Trim();

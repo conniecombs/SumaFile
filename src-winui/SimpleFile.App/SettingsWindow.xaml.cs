@@ -853,9 +853,15 @@ public sealed partial class SettingsWindow : Window
             return ((int)key - (int)VirtualKey.NumberPad0).ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        // Punctuation and PrintScreen are named as the shared table names them, so the shortcut
+        // written here is registered on the key that was pressed.
+        if (KeyboardShortcutMap.KeyNameForVirtualKeyCode((int)key) is { } named)
+        {
+            return named;
+        }
+
         return key switch
         {
-            VirtualKey.Back => "Backspace",
             VirtualKey.Escape => "Escape",
             VirtualKey.Enter => "Enter",
             VirtualKey.Space => "Space",
@@ -865,17 +871,6 @@ public sealed partial class SettingsWindow : Window
             VirtualKey.Right => "Right",
             VirtualKey.Up => "Up",
             VirtualKey.Down => "Down",
-            VirtualKey.Add => "Plus",
-            VirtualKey.Subtract => "Minus",
-            VirtualKey.Separator => "Comma",
-            VirtualKey.Decimal => "Period",
-            VirtualKey.Divide => "Divide",
-            VirtualKey.Multiply => "Multiply",
-            // Main-keyboard OEM keys have no named VirtualKey member; emit the names
-            // KeyboardShortcutMap.NormalizeKey accepts (` terminal, , settings, / help).
-            (VirtualKey)188 => "OemComma",
-            (VirtualKey)191 => "Oem2",
-            (VirtualKey)192 => "Oem3",
             _ => key.ToString(),
         };
     }
