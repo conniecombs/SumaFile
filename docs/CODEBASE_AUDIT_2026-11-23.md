@@ -190,7 +190,7 @@ Every finding below was verified directly against live source code and cross-che
 - **Resolution:** Raised SFTP SSH window to `16 MiB`, channel packet to `256 KiB`, `max_write_packet_len = 131_072`, and `max_concurrent_reads/writes = 64`; used `symlink_metadata` (`LSTAT`) on SFTP rename and eliminated redundant upload staging and post-rename `stat` RTTs; and skipped spawning checker threads when `initial_dirs.is_empty()` in `parallel.rs`.
 - **Follow-up (optional):**
   - [ ] Avoid redundant full-file re-reads in `CheckMode::Checksum` remote download (`verify_remote_checksum`) and local cross-volume move (`delete_verified_source`) when file identity + mtime + size are unchanged.
-  - [ ] Spawn transfer worker threads lazily up to `session.total_limit()`.
+  - [x] Spawn transfer worker threads lazily up to `session.total_limit()`: a thread starts when a file is sent and every thread started so far has one ([parallel.rs](../crates/simplefile-service/src/progress/parallel.rs)).
 
 ### [x] P9. [High — Git & 7-Zip Plugins] System-Wide `TH32CS_SNAPTHREAD` Walk and `-bsp1` Stdout Buffering
 - **Locations:** [git/run.rs](../plugins/git/backend/src/run.rs), [sevenzip/run.rs](../plugins/sevenzip/backend/src/run.rs).
