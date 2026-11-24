@@ -241,6 +241,89 @@ public class TransferManagerViewModelTests
     }
 
     [Fact]
+    public async Task SetOperationId_ForRetryPassResetsSpeedBaselineWithoutSpike()
+    {
+        var now = new DateTimeOffset(2026, 9, 18, 12, 0, 0, TimeSpan.Zero);
+        var manager = new TransferManagerViewModel(() => now);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operation = manager.Enqueue(
+            [@"V:\Movies\a.mkv", @"V:\Movies\b.mkv"],
+            @"R:\Movies",
+            move: false,
+            Runner("copy", new ConcurrentQueue<string>(), release));
+
+        operation.SetOperationId("pass-1");
+        operation.ApplyProgress(new ProgressUpdate
+        {
+            OperationId = "pass-1",
+            OperationType = "copy",
+            Current = 0,
+            Total = 100UL * 1024 * 1024,
+            CurrentItem = @"V:\Movies\a.mkv",
+            Status = "running",
+        });
+        now = now.AddSeconds(1);
+        operation.ApplyProgress(new ProgressUpdate
+        {
+            OperationId = "pass-1",
+            OperationType = "copy",
+            Current = 20UL * 1024 * 1024,
+            Total = 100UL * 1024 * 1024,
+            CurrentItem = @"V:\Movies\a.mkv",
+            Status = "running",
+        });
+
+        // Pass 2 carries forward 20 MB copied + 60 MB skipped = 80 MB without spiking speed.
+        operation.SetOperationId("pass-2");
+        now = now.AddSeconds(1);
+        operation.ApplyProgress(new ProgressUpdate
+        {
+            OperationId = "pass-2",
+            OperationType = "copy",
+            Current = 80UL * 1024 * 1024,
+            Total = 100UL * 1024 * 1024,
+            CurrentItem = @"V:\Movies\b.mkv",
+            Status = "running",
+        });
+        Assert.Equal(80, operation.ProgressPercent);
+        Assert.Equal("80%", operation.PercentText);
+        Assert.Equal("Calculating speed", operation.SpeedText);
+
+        now = now.AddSeconds(1);
+        operation.ApplyProgress(new ProgressUpdate
+        {
+            OperationId = "pass-2",
+            OperationType = "copy",
+            Current = 90UL * 1024 * 1024,
+            Total = 100UL * 1024 * 1024,
+            CurrentItem = @"V:\Movies\b.mkv",
+            Status = "running",
+        });
+        Assert.Equal("90 MB of 100 MB · 10 MB/s · 1s remaining", operation.StatusDetailText);
+
+        release.SetResult();
+        await operation.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task SkippedTransfer_CompletesAtFullProgress()
+    {
+        var manager = new TransferManagerViewModel();
+        var operation = manager.Enqueue(
+            [@"C:\src\existing.bin"],
+            @"D:\dst",
+            move: false,
+            (_, _) => Task.FromResult(TransferOperationStatus.Skipped));
+
+        var status = await operation.CompletionTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(TransferOperationStatus.Skipped, status);
+        Assert.Equal(100, operation.ProgressPercent);
+        Assert.Equal("100%", operation.PercentText);
+        Assert.False(operation.IsIndeterminate);
+    }
+
+    [Fact]
     public async Task EnqueueExternal_RunsAtOnceWithItsOwnTitleAndLeavesTransferSlotsFree()
     {
         var manager = new TransferManagerViewModel { MaxConcurrentTransfers = 1 };

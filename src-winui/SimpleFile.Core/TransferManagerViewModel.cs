@@ -358,6 +358,12 @@ public sealed class TransferOperationViewModel : ObservableObject
 
     public void SetOperationId(string operationId)
     {
+        if (_operationId is not null
+            && !string.Equals(_operationId, operationId, StringComparison.Ordinal))
+        {
+            _rateTracker.Reset();
+        }
+
         OperationId = operationId;
     }
 
@@ -494,7 +500,8 @@ public sealed class TransferOperationViewModel : ObservableObject
                 IsIndeterminate = false;
                 break;
             case TransferOperationStatus.Skipped:
-                PercentText = "";
+                ProgressPercent = 100;
+                PercentText = "100%";
                 SummaryText = "Transfer skipped";
                 SetCurrentItem("Skipped", isFile: false);
                 IsIndeterminate = false;

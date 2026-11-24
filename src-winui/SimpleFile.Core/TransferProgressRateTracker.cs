@@ -39,6 +39,11 @@ public sealed class TransferProgressRateTracker
             return _bytesPerSecond;
         }
 
+        if (!_hasSample && update.Current == 0 && update.Total == 0)
+        {
+            return _bytesPerSecond;
+        }
+
         var now = _now();
         if (!_hasSample)
         {

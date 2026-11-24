@@ -467,6 +467,8 @@ fn transfer_with_policy_blocking(
     let mut volumes = VolumeKindCache::default();
     let mut failed: Vec<TransferFailure> = Vec::new();
     let mut skipped: Vec<TransferResult> = Vec::new();
+    let mut planned_skipped_bytes = 0u64;
+    let mut planned_skipped_files = 0u64;
     let planned = match &request {
         Request::Selection {
             sources,
@@ -485,10 +487,12 @@ fn transfer_with_policy_blocking(
                     &Failure::conflict(message),
                 ));
             }
-            for (source, final_dest) in planned_skips {
+            for skip in planned_skips {
+                planned_skipped_bytes = planned_skipped_bytes.saturating_add(skip.byte_size);
+                planned_skipped_files = planned_skipped_files.saturating_add(skip.file_count);
                 skipped.push(TransferResult {
-                    source: source.to_string_lossy().into(),
-                    destination: final_dest.to_string_lossy().into(),
+                    source: skip.source.to_string_lossy().into(),
+                    destination: skip.destination.to_string_lossy().into(),
                     changes: None,
                 });
             }
@@ -548,12 +552,15 @@ fn transfer_with_policy_blocking(
             TransferEstimate::default()
         }
     };
-    total_bytes.store(estimated.bytes, Ordering::Relaxed);
-    total_files.store(estimated.files, Ordering::Relaxed);
+    let initial_total_bytes = estimated.bytes.saturating_add(planned_skipped_bytes);
+    let initial_total_files = estimated.files.saturating_add(planned_skipped_files);
+    total_bytes.store(initial_total_bytes, Ordering::Relaxed);
+    total_files.store(initial_total_files, Ordering::Relaxed);
+    completed_files.store(planned_skipped_files, Ordering::Relaxed);
     progress.emit_with_total(
-        0,
-        estimated.bytes,
-        if estimated.bytes > 0 || estimated.files > 0 {
+        planned_skipped_bytes,
+        initial_total_bytes,
+        if initial_total_bytes > 0 || initial_total_files > 0 {
             "Starting transfer...".to_string()
         } else {
             String::new()
@@ -564,7 +571,7 @@ fn transfer_with_policy_blocking(
 
     let is_move = operation_type == "move";
     let retry = matches!(request, Request::Items(_));
-    let mut completed_bytes = 0u64;
+    let mut completed_bytes = planned_skipped_bytes;
     let mut transferred: Vec<TransferResult> = Vec::with_capacity(plans.len());
     let mut files: Vec<FileTask> = Vec::new();
     let mut roots: Vec<RootTask> = Vec::new();
@@ -2577,6 +2584,137 @@ mod tests {
             );
         }
         drop(held_reader);
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
+    #[test]
+    fn planning_time_skipped_files_count_as_completed_progress() {
+        let src_dir = unique_temp_path("skip_progress_plan_src");
+        let dst_dir = unique_temp_path("skip_progress_plan_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let existing_src = src_dir.join("existing.bin");
+        let fresh_src = src_dir.join("fresh.bin");
+        let existing_len = 128 * 1024u64;
+        let fresh_len = 64 * 1024u64;
+        fs::write(&existing_src, vec![1u8; existing_len as usize]).unwrap();
+        fs::write(&fresh_src, vec![2u8; fresh_len as usize]).unwrap();
+        fs::write(dst_dir.join("existing.bin"), b"already there").unwrap();
+
+        let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
+        let updates_target = updates.clone();
+        let result = transfer_with_progress_blocking(
+            "copy",
+            vec![
+                existing_src.to_string_lossy().to_string(),
+                fresh_src.to_string_lossy().to_string(),
+            ],
+            dst_dir.to_string_lossy().to_string(),
+            "op_skip_plan_progress".to_string(),
+            "skip".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|update| updates_target.lock().unwrap().push(update),
+        )
+        .expect("copy with skip should succeed");
+
+        assert_eq!(result.len(), 1);
+        let updates = updates.lock().unwrap();
+        let sized_running: Vec<&ProgressUpdate> = updates
+            .iter()
+            .filter(|u| u.status == "running" && u.total > 0)
+            .collect();
+        assert!(
+            !sized_running.is_empty(),
+            "expected at least one sized running update: {updates:?}"
+        );
+        for update in &sized_running {
+            assert_eq!(update.total, existing_len + fresh_len);
+            assert!(
+                update.current >= existing_len,
+                "skipped file bytes must be counted as completed: {update:?}"
+            );
+            assert_eq!(update.total_files, 2);
+            assert!(update.current_files >= 1);
+        }
+        let completed = updates
+            .iter()
+            .find(|u| u.status == "completed")
+            .expect("expected completed update");
+        assert_eq!(completed.current, existing_len + fresh_len);
+        assert_eq!(completed.total, existing_len + fresh_len);
+        assert_eq!(completed.current_files, 2);
+        assert_eq!(completed.total_files, 2);
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    #[test]
+    fn merged_folder_skipped_files_count_as_completed_progress() {
+        let src_root = unique_temp_path("skip_progress_merge_src");
+        let dst_root = unique_temp_path("skip_progress_merge_dst");
+        let src_folder = src_root.join("Proj");
+        let dst_folder = dst_root.join("Proj");
+        fs::create_dir_all(&src_folder).unwrap();
+        fs::create_dir_all(&dst_folder).unwrap();
+        let existing_len = 128 * 1024u64;
+        let fresh_len = 64 * 1024u64;
+        fs::write(
+            src_folder.join("a_existing.bin"),
+            vec![1u8; existing_len as usize],
+        )
+        .unwrap();
+        fs::write(
+            src_folder.join("b_fresh.bin"),
+            vec![2u8; fresh_len as usize],
+        )
+        .unwrap();
+        fs::write(dst_folder.join("a_existing.bin"), b"already there").unwrap();
+
+        let updates = Arc::new(Mutex::new(Vec::<ProgressUpdate>::new()));
+        let updates_target = updates.clone();
+        let result = super::transfer_with_policy_blocking(
+            "copy",
+            super::Request::Selection {
+                sources: vec![src_folder.to_string_lossy().to_string()],
+                conflict_action: "skip".to_string(),
+            },
+            dst_root.to_string_lossy().to_string(),
+            "op_skip_merge_progress".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|update| updates_target.lock().unwrap().push(update),
+            &|_| {},
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 1,
+                order_by: super::tuning::OrderBy::Name,
+                ..super::tuning::Policy::default()
+            },
+        )
+        .expect("merge copy with skip should succeed");
+
+        assert_eq!(result.len(), 1);
+        let updates = updates.lock().unwrap();
+        let finalizing = updates
+            .iter()
+            .find(|u| u.status == "finalizing")
+            .expect("expected finalizing update");
+        assert_eq!(
+            finalizing.current,
+            existing_len + fresh_len,
+            "finalizing progress must include skipped bytes: {finalizing:?}"
+        );
+        assert_eq!(finalizing.total, existing_len + fresh_len);
+        let completed = updates
+            .iter()
+            .find(|u| u.status == "completed")
+            .expect("expected completed update");
+        assert_eq!(completed.current, existing_len + fresh_len);
+        assert_eq!(completed.total, existing_len + fresh_len);
+        assert_eq!(completed.current_files, 2);
+        assert_eq!(completed.total_files, 2);
 
         let _ = fs::remove_dir_all(&src_root);
         let _ = fs::remove_dir_all(&dst_root);

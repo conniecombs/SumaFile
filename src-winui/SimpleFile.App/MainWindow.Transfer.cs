@@ -327,8 +327,28 @@ public sealed partial class MainWindow
                 return TransferOperationStatus.Cancelled;
             }
 
-            var progress = new Progress<ProgressUpdate>(update => OnTransferProgress(operation, update));
+            var progressAccumulator = new TransferProgressAccumulator();
+            if (!string.Equals(action, "skip", StringComparison.OrdinalIgnoreCase) && preDecided.Count > 0)
+            {
+                await Task.Run(
+                    () => progressAccumulator.SeedPreDecidedConflicts(
+                        sources,
+                        destination,
+                        preDecided,
+                        NativePath.ExistsNoFollow,
+                        NativePath.IsDirectoryNoFollow,
+                        TransferProgressAccumulator.MeasureSourceItem),
+                    cancellationToken);
+            }
+
+            var progress = new Progress<ProgressUpdate>(update =>
+                OnTransferProgress(operation, progressAccumulator.Apply(update)));
             var tuning = new Progress<TuningUpdate>(operation.ApplyTuning);
+            void OnPassStarted(string operationId)
+            {
+                progressAccumulator.BeginPass(operationId);
+                StartTransferProgress(operation, operationId);
+            }
             var canRegisterUndo = !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
             // Everything committed across the first pass and any retry passes is undone as one
             // entry, and skipped conflicts are counted so the receipt is honest.
@@ -385,13 +405,13 @@ public sealed partial class MainWindow
                                 retryItems,
                                 destination,
                                 progress,
-                                operationId => StartTransferProgress(operation, operationId),
+                                OnPassStarted,
                                 cancellationToken, tuning, operation.PolicyOverride)
                             : await fileOps.CopyItemsAsync(
                                 retryItems,
                                 destination,
                                 progress,
-                                operationId => StartTransferProgress(operation, operationId),
+                                OnPassStarted,
                                 cancellationToken, tuning, operation.PolicyOverride);
                     }
                     else if (move)
@@ -401,7 +421,7 @@ public sealed partial class MainWindow
                             destination,
                             action,
                             progress,
-                            operationId => StartTransferProgress(operation, operationId),
+                            OnPassStarted,
                             cancellationToken, tuning, operation.PolicyOverride);
                     }
                     else
@@ -411,8 +431,20 @@ public sealed partial class MainWindow
                             destination,
                             action,
                             progress,
-                            operationId => StartTransferProgress(operation, operationId),
+                            OnPassStarted,
                             cancellationToken, tuning, operation.PolicyOverride);
+                    }
+
+                    if (string.Equals(action, "skip", StringComparison.OrdinalIgnoreCase) && retryItems is null)
+                    {
+                        foreach (var source in sources)
+                        {
+                            if (!results.Any(item => PathRules.PathsEqual(item.Source, source))
+                                && skippedSelections.Add(source))
+                            {
+                                skippedCount++;
+                            }
+                        }
                     }
 
                     committedAll.AddRange(results);
@@ -447,6 +479,14 @@ public sealed partial class MainWindow
                 {
                     var committed = exception.Outcome.Committed;
                     committedAll.AddRange(committed);
+                    foreach (var skippedItem in exception.Outcome.Skipped)
+                    {
+                        var matched = sources.FirstOrDefault(source => PathRules.PathsEqual(source, skippedItem.Source));
+                        if (matched is not null && skippedSelections.Add(matched))
+                        {
+                            skippedCount++;
+                        }
+                    }
 
                     if (ReferenceEquals(_workspace, workspace))
                     {
@@ -470,6 +510,7 @@ public sealed partial class MainWindow
                         var retryAction = await ChooseConflictActionFromBackendConflictAsync(
                             exception.Message, destination, move, remaining, conflictSession, cancellationToken);
                         if (retryAction is null) return TransferOperationStatus.Cancelled;
+                        progressAccumulator.CompletePass([], TransferProgressAccumulator.MeasureSourceItem);
                         sources = remaining;
                         action = retryAction;
                         canRegisterUndo &= !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
@@ -483,7 +524,8 @@ public sealed partial class MainWindow
                         return TransferOperationStatus.Cancelled;
                     }
                     var retrySources = items.Select(item => item.Source).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    foreach (var failure in failures.Where(f => !retrySources.Contains(f.Source)))
+                    var skippedFailures = failures.Where(f => !retrySources.Contains(f.Source)).ToArray();
+                    foreach (var failure in skippedFailures)
                     {
                         skippedCount++;
                         if (selection.Contains(failure.Source)) skippedSelections.Add(failure.Source);
@@ -498,6 +540,12 @@ public sealed partial class MainWindow
                         }
                         break;
                     }
+
+                    await Task.Run(
+                        () => progressAccumulator.CompletePass(
+                            skippedFailures,
+                            TransferProgressAccumulator.MeasureSourceItem),
+                        cancellationToken);
 
                     retryItems = items;
                     // The service marks replaced files ineligible. Other additions in this merge
@@ -518,6 +566,7 @@ public sealed partial class MainWindow
                         return TransferOperationStatus.Cancelled;
                     }
 
+                    progressAccumulator.CompletePass([], TransferProgressAccumulator.MeasureSourceItem);
                     action = retryAction;
                     canRegisterUndo &= !string.Equals(action, "replace", StringComparison.OrdinalIgnoreCase);
                 }
@@ -634,6 +683,14 @@ public sealed partial class MainWindow
             }
 
             preDecided[name] = chosen;
+        }
+
+        if (session.TryGetSticky(out var stickyAll)
+            && string.Equals(stickyAll, "skip", StringComparison.OrdinalIgnoreCase)
+            && preDecided.Values.All(choice => string.Equals(choice, "skip", StringComparison.OrdinalIgnoreCase)))
+        {
+            preDecided.Clear();
+            return "skip";
         }
 
         return "error";

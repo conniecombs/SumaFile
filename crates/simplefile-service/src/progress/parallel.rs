@@ -152,6 +152,10 @@ enum Message {
 
 pub(crate) struct CopyResult {
     pub bytes: u64,
+    /// Bytes of files skipped because the destination already existed and the
+    /// action was skip. Counted in progress so skipped files appear completed,
+    /// without feeding throughput measurements (`lane_done`).
+    pub skipped_bytes: u64,
     /// Bytes written by files that failed for good. They stay in the progress
     /// readout: a file that fails after its last byte must not make the bar
     /// run backwards, and the final error report counts what was processed.
@@ -178,6 +182,7 @@ impl CopyResult {
     fn new() -> Self {
         Self {
             bytes: 0,
+            skipped_bytes: 0,
             failed_bytes: 0,
             completed: Vec::new(),
             reused: Default::default(),
@@ -585,7 +590,9 @@ pub(crate) fn copy_selection(
         res
     });
 
-    *completed_bytes = completed_bytes.saturating_add(copy_res.bytes);
+    *completed_bytes = completed_bytes
+        .saturating_add(copy_res.bytes)
+        .saturating_add(copy_res.skipped_bytes);
 
     let mut state = march_state.into_inner().expect("march state lock poisoned");
     state.created_dirs.sort_by_key(|item| item.0);
@@ -1149,6 +1156,7 @@ fn copy_files_streaming_with_sink(
                     {
                         let current = offset
                             .saturating_add(result.bytes)
+                            .saturating_add(result.skipped_bytes)
                             .saturating_add(result.failed_bytes)
                             .saturating_add(active.values().map(|f| f.current).sum::<u64>());
                         ctx.finalizing(current, update.current_item);
@@ -1201,6 +1209,8 @@ fn copy_files_streaming_with_sink(
                         }
                         Ok(FileOutcome::Skipped) => {
                             if let Some(task) = tasks.remove(&index) {
+                                result.skipped_bytes =
+                                    result.skipped_bytes.saturating_add(task.size);
                                 result.skipped.push((index, task));
                             }
                             file_hl_attempts.remove(&index);
@@ -1427,6 +1437,7 @@ fn copy_files_streaming_with_sink(
             }
             let current = offset
                 .saturating_add(result.bytes)
+                .saturating_add(result.skipped_bytes)
                 .saturating_add(result.failed_bytes)
                 .saturating_add(active.values().map(|f| f.current).sum::<u64>());
             let (_, lane_in_flight) = lane_load(&active, two_lanes);
@@ -2434,6 +2445,109 @@ mod tests {
             );
             assert!(!cancel.load(Ordering::Relaxed));
         }
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn skipped_files_count_toward_progress_bytes_without_changing_copied_bytes() {
+        let root = std::env::temp_dir().join(crate::progress::generate_transfer_operation_id());
+        fs::create_dir(&root).unwrap();
+        const SIZE: u64 = 65536;
+        let template = root.join("template");
+        fs::write(&template, vec![1u8; SIZE as usize]).unwrap();
+        let version = crate::transfer_staging::capture_source_version_for_path(&template).unwrap();
+
+        let tasks = vec![
+            FileTask {
+                source: root.join("skipped.bin"),
+                destination: root.join("dst_skipped.bin"),
+                size: SIZE,
+                network: false,
+                conflict: ConflictAction::Skip,
+                owned_tree: false,
+                symlink: false,
+                top_level: true,
+                merge_root: None,
+                delete_source: false,
+                retry: false,
+            },
+            FileTask {
+                source: root.join("copied.bin"),
+                destination: root.join("dst_copied.bin"),
+                size: SIZE,
+                network: false,
+                conflict: ConflictAction::Skip,
+                owned_tree: false,
+                symlink: false,
+                top_level: true,
+                merge_root: None,
+                delete_source: false,
+                retry: false,
+            },
+        ];
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let total = Arc::new(AtomicU64::new(SIZE * 2));
+        let files = Arc::new(AtomicU64::new(2));
+        let completed = Arc::new(AtomicU64::new(0));
+        let updates = Mutex::new(Vec::<u64>::new());
+        let ctx = ProgressContext {
+            emit: &|update: ProgressUpdate| updates.lock().unwrap().push(update.current),
+            operation_id: "skipped-progress-test",
+            operation_type: "copy",
+            cancel: &cancel,
+            total_bytes: &total,
+            total_files: &files,
+            completed_files: &completed,
+            last_running_emit: Mutex::new(
+                Instant::now()
+                    .checked_sub(Duration::from_secs(1))
+                    .unwrap_or_else(Instant::now),
+            ),
+            retry_count: None,
+            rate_limit: None,
+            write_latency: None,
+        };
+        let policy = || Policy {
+            mode: Mode::Manual,
+            manual_concurrency: 1,
+            ..Policy::default()
+        };
+        let mut session = Session::new(
+            "skipped-progress-test",
+            "copy",
+            &[],
+            &root.to_string_lossy(),
+            &policy,
+            &|_| {},
+        );
+        let mut iter = tasks.into_iter();
+        let copy = |task: &FileTask, _context: &CopyContext<'_>, copied: &mut u64| {
+            if task.source.ends_with("skipped.bin") {
+                Ok(FileOutcome::Skipped)
+            } else {
+                std::thread::sleep(Duration::from_millis(100));
+                *copied = SIZE;
+                Ok(FileOutcome::Copied {
+                    reused: false,
+                    version: version.clone(),
+                    destination: task.destination.clone(),
+                })
+            }
+        };
+        let result =
+            copy_files_streaming_using(&mut || Ok(iter.next()), &ctx, &mut session, 0, &copy);
+
+        assert_eq!(result.bytes, SIZE);
+        assert_eq!(result.skipped_bytes, SIZE);
+        assert_eq!(result.skipped.len(), 1);
+        assert_eq!(completed.load(Ordering::Relaxed), 2);
+        let updates = updates.into_inner().unwrap();
+        assert!(
+            updates.contains(&SIZE) && updates.contains(&(SIZE * 2)),
+            "emitted progress must include skipped bytes and final total: {updates:?}"
+        );
 
         fs::remove_dir_all(&root).unwrap();
     }

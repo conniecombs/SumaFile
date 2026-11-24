@@ -1098,17 +1098,23 @@ fn transfer_entry(
         return Err("Symbolic links are not followed during folder transfers".into());
     }
     if !is_dir {
+        let size = if upload {
+            fs::symlink_metadata(source).map(|m| m.len()).unwrap_or(0)
+        } else {
+            resolved_entry.map(|entry| entry.size).unwrap_or(0)
+        };
         if depth == 0 {
-            let size = if upload {
-                fs::symlink_metadata(source).map(|m| m.len()).unwrap_or(0)
-            } else {
-                resolved_entry.map(|entry| entry.size).unwrap_or(0)
-            };
             progress.discovered(size, 1);
         }
         let (destination, bytes, skipped) =
             transfer_file(provider, source, destination, resolved_entry, progress)?;
-        progress.files += u64::from(!skipped);
+        if skipped {
+            progress.bytes = progress.bytes.saturating_add(size);
+        }
+        progress.files += 1;
+        if skipped && progress.last.elapsed() >= Duration::from_millis(100) {
+            progress.send("running");
+        }
         outcome.items.push(RemoteTransferItem {
             source: source.into(),
             destination,
@@ -2339,5 +2345,65 @@ mod tests {
         .expect("download over an existing file");
         assert!(outcome.retry_sources.is_empty(), "{:?}", outcome.items);
         assert_eq!(fs::read(&destination).unwrap(), b"remote");
+    }
+
+    #[test]
+    fn skipped_files_count_as_completed_in_transfer_progress() {
+        struct Capture(std::sync::Mutex<Vec<TransferProgress>>);
+        impl TransferObserver for Capture {
+            fn progress(&self, update: &TransferProgress) {
+                self.0.lock().unwrap().push(update.clone());
+            }
+            fn tuning(&self, _: &TransferTuning) {}
+        }
+
+        let fixture = Fixture::new();
+        let mut provider = fixture.provider();
+        let existing_payload = vec![b'a'; 1000];
+        let fresh_payload = vec![b'b'; 500];
+        fs::write(provider.path("/existing.bin"), &existing_payload).unwrap();
+        fs::write(provider.path("/fresh.bin"), &fresh_payload).unwrap();
+        fs::write(fixture.root.join("local/existing.bin"), b"keep").unwrap();
+
+        let mut request = fixture.request(
+            "download",
+            vec!["/existing.bin".into(), "/fresh.bin".into()],
+        );
+        request.conflict_action = "skip".into();
+
+        let capture = Capture(std::sync::Mutex::new(Vec::new()));
+        let outcome = transfer_entries(
+            &mut provider,
+            &request,
+            &AtomicBool::new(false),
+            &capture,
+            &Policy::default,
+        )
+        .expect("download with skip should succeed");
+
+        assert_eq!(outcome.items.len(), 2);
+        assert_eq!(outcome.items[0].status, "skipped");
+        assert_eq!(outcome.items[0].bytes, 0);
+        assert_eq!(outcome.items[1].status, "completed");
+        assert_eq!(outcome.items[1].bytes, 500);
+
+        let updates = capture.0.into_inner().unwrap();
+        let starting_fresh = updates
+            .iter()
+            .find(|u| u.status == "running" && u.current_item == "/fresh.bin")
+            .expect("expected running update when starting second file");
+        assert_eq!(starting_fresh.current, 1000);
+        assert_eq!(starting_fresh.total, 1500);
+        assert_eq!(starting_fresh.current_files, 1);
+        assert_eq!(starting_fresh.total_files, 2);
+
+        let completed = updates
+            .iter()
+            .find(|u| u.status == "completed")
+            .expect("expected completed update");
+        assert_eq!(completed.current, 1500);
+        assert_eq!(completed.total, 1500);
+        assert_eq!(completed.current_files, 2);
+        assert_eq!(completed.total_files, 2);
     }
 }

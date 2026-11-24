@@ -201,9 +201,16 @@ pub(crate) fn resolve_destination(
 /// destination: `(source, destination, message)`.
 pub(crate) type PlanConflict = (PathBuf, PathBuf, String);
 
-/// A top-level item the user's conflict action left in place: `(source,
-/// destination)`. Reported so a skip never silently vanishes from the outcome.
-pub(crate) type PlanSkip = (PathBuf, PathBuf);
+/// A top-level item the user's conflict action left in place. Reported so a
+/// skip never silently vanishes from the outcome, and sized so progress counts
+/// the file as already complete at the destination.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PlanSkip {
+    pub(crate) source: PathBuf,
+    pub(crate) destination: PathBuf,
+    pub(crate) byte_size: u64,
+    pub(crate) file_count: u64,
+}
 
 /// Plans, resolved destination root, per-item conflicts, per-item skips.
 pub(crate) type PlannedInputs = (Vec<TransferPlan>, PathBuf, Vec<PlanConflict>, Vec<PlanSkip>);
@@ -292,7 +299,12 @@ pub(crate) fn prepare_transfer_inputs_cached(
         };
         let Some((final_dest, conflict)) = resolved else {
             let name = source_path.file_name().unwrap_or_default();
-            skipped.push((source_path.clone(), dest_path.join(name)));
+            skipped.push(PlanSkip {
+                source: source_path.clone(),
+                destination: dest_path.join(name),
+                byte_size: if is_regular_file { meta.len() } else { 0 },
+                file_count: u64::from(!is_dir),
+            });
             continue;
         };
 
@@ -335,7 +347,7 @@ pub(crate) fn prime_transfer(
 
 #[cfg(test)]
 mod batch_tests {
-    use super::{prepare_transfer_inputs_cached, VolumeKindCache};
+    use super::{prepare_transfer_inputs_cached, PlanSkip, VolumeKindCache};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -413,7 +425,15 @@ mod batch_tests {
 
         assert_eq!(plans.len(), 1);
         assert!(conflicts.is_empty());
-        assert_eq!(skipped, vec![(clash.clone(), dst_dir.join("clash.txt"))]);
+        assert_eq!(
+            skipped,
+            vec![PlanSkip {
+                source: clash.clone(),
+                destination: dst_dir.join("clash.txt"),
+                byte_size: b"source".len() as u64,
+                file_count: 1,
+            }]
+        );
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);

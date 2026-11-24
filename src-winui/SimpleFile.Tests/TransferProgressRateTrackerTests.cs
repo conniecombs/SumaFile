@@ -60,4 +60,47 @@ public class TransferProgressRateTrackerTests
         Assert.Equal("Calculating speed", reset.Speed);
         Assert.Equal("Estimating time", reset.Eta);
     }
+
+    [Fact]
+    public void Format_IgnoresUnsizedPreparingEventSoPreSkippedBytesDoNotSpikeSpeed()
+    {
+        var now = new DateTimeOffset(2026, 9, 18, 12, 0, 0, TimeSpan.Zero);
+        var tracker = new TransferProgressRateTracker(() => now);
+        var context = new TransferProgressContext(false, 2, @"V:\Movies", @"R:\Movies");
+
+        var preparing = tracker.Format(context, new ProgressUpdate
+        {
+            OperationType = "copy",
+            Current = 0,
+            Total = 0,
+            CurrentItem = "Preparing transfer...",
+            Status = "running",
+        });
+        Assert.Equal("Calculating speed", preparing.Speed);
+
+        now = now.AddSeconds(1);
+        var startedWithSkips = tracker.Format(context, new ProgressUpdate
+        {
+            OperationType = "copy",
+            Current = 80UL * 1024 * 1024,
+            Total = 100UL * 1024 * 1024,
+            Status = "running",
+        });
+        Assert.Equal("80%", startedWithSkips.Percent);
+        Assert.Equal("80 MB of 100 MB", startedWithSkips.Summary);
+        Assert.Equal("Calculating speed", startedWithSkips.Speed);
+
+        now = now.AddSeconds(1);
+        var copying = tracker.Format(context, new ProgressUpdate
+        {
+            OperationType = "copy",
+            Current = 90UL * 1024 * 1024,
+            Total = 100UL * 1024 * 1024,
+            Status = "running",
+        });
+        Assert.Equal("90%", copying.Percent);
+        Assert.Equal("90 MB of 100 MB", copying.Summary);
+        Assert.Equal("10 MB/s", copying.Speed);
+        Assert.Equal("1s remaining", copying.Eta);
+    }
 }
