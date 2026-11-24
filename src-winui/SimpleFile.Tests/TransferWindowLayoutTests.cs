@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using SimpleFile.Core;
 using Xunit;
 using static SimpleFile.Tests.UiAuditSprint3Tests;
 
@@ -102,5 +103,100 @@ public sealed class TransferWindowLayoutTests
         Assert.Contains("WidthOf(candidate + suffix) <= width", control);
         // A screen reader gets the whole text.
         Assert.Contains("AutomationProperties.SetName(control._text, whole)", control);
+    }
+
+    [Fact]
+    public void DetailsPaneStretchesVerticallyAndLeavesTheHeightRulesToCore()
+    {
+        var xaml = Xaml();
+        var details = Details(xaml);
+
+        // No fixed ceiling caps the active-file list when the window grows taller.
+        Assert.DoesNotContain("MaxHeight=\"280\"", details);
+        Assert.DoesNotContain("MaxHeight=", details);
+        Assert.DoesNotContain("<StackPanel Spacing=\"8\">", details);
+        Assert.Contains("<RowDefinition Height=\"Auto\" />", details);
+        Assert.Contains("<RowDefinition Height=\"*\" />", details);
+        Assert.Contains("MinHeight=\"96\"", details);
+
+        var expanderOpenTag = Slice(xaml, "<Expander", ">");
+        Assert.Contains("VerticalAlignment=\"Stretch\"", expanderOpenTag);
+        Assert.Contains("VerticalContentAlignment=\"Stretch\"", expanderOpenTag);
+        Assert.Contains("Expanding=\"OnDetailsExpanderExpanding\"", expanderOpenTag);
+        Assert.Contains("Collapsed=\"OnDetailsExpanderCollapsed\"", expanderOpenTag);
+        Assert.Contains("SizeChanged=\"OnDetailsExpanderSizeChanged\"", expanderOpenTag);
+
+        var listOpenTag = Slice(xaml, "<ListView", ">");
+        Assert.Contains("SizeChanged=\"OnTransferListSizeChanged\"", listOpenTag);
+        Assert.Contains("ContainerContentChanging=\"OnTransferContainerContentChanging\"", listOpenTag);
+
+        var code = Read("TransferProgressWindow.xaml.cs");
+        Assert.Contains("TransferWindowLayout.DetailsScrollHeight(", code);
+        Assert.Contains("TransferWindowLayout.HeightMatches(", code);
+        Assert.Contains("scrollViewer.Height = double.NaN;", code);
+        Assert.Contains("Operations.CollectionChanged -= OnOperationsCollectionChanged;", code);
+    }
+
+    [Fact]
+    public void DetailsScrollHeight_StretchesSingleExpandedCardAcrossWindowHeights()
+    {
+        double[] expandedChrome = [235];
+        double[] noCollapsed = [];
+
+        Assert.Equal(214, TransferWindowLayout.DetailsScrollHeight(450, expandedChrome, noCollapsed));
+        Assert.Equal(414, TransferWindowLayout.DetailsScrollHeight(650, expandedChrome, noCollapsed));
+        Assert.Equal(714, TransferWindowLayout.DetailsScrollHeight(950, expandedChrome, noCollapsed));
+
+        // Shrinking the window floors the Details scroll area at MinDetailsHeight instead of collapsing to zero.
+        Assert.Equal(TransferWindowLayout.MinDetailsHeight, TransferWindowLayout.DetailsScrollHeight(280, expandedChrome, noCollapsed));
+    }
+
+    [Fact]
+    public void DetailsScrollHeight_SplitsViewportAcrossMultipleExpandedCards()
+    {
+        double[] twoExpanded = [235, 235];
+        double[] noCollapsed = [];
+
+        Assert.Equal(164, TransferWindowLayout.DetailsScrollHeight(800, twoExpanded, noCollapsed));
+        Assert.Equal(264, TransferWindowLayout.DetailsScrollHeight(1000, twoExpanded, noCollapsed));
+        Assert.Equal(TransferWindowLayout.MinDetailsHeight, TransferWindowLayout.DetailsScrollHeight(520, twoExpanded, noCollapsed));
+    }
+
+    [Fact]
+    public void DetailsScrollHeight_FitsOneCollapsedSiblingAndCapsReserveWhenManyExist()
+    {
+        double[] expandedChrome = [235];
+
+        // One collapsed sibling fits alongside the expanded card with no outer overflow.
+        Assert.Equal(266, TransferWindowLayout.DetailsScrollHeight(650, expandedChrome, [148]));
+
+        // Many queued/completed rows reserve at most CollapsedSiblingReserveCap so the expanded Details pane still scales 1:1.
+        var manyCollapsed = Enumerable.Repeat(148.0, 10).ToArray();
+        var atDefault = TransferWindowLayout.DetailsScrollHeight(650, expandedChrome, manyCollapsed);
+        var atTaller = TransferWindowLayout.DetailsScrollHeight(1050, expandedChrome, manyCollapsed);
+        Assert.Equal(254, atDefault);
+        Assert.Equal(654, atTaller);
+    }
+
+    [Fact]
+    public void DetailsScrollHeight_IsMonotonicAndHandlesUnmeasuredInputs()
+    {
+        Assert.True(double.IsNaN(TransferWindowLayout.DetailsScrollHeight(600, [], [148])));
+        Assert.True(double.IsNaN(TransferWindowLayout.DetailsScrollHeight(0, [235], [])));
+        Assert.True(double.IsNaN(TransferWindowLayout.DetailsScrollHeight(double.NaN, [235], [])));
+        Assert.True(double.IsNaN(TransferWindowLayout.DetailsScrollHeight(double.PositiveInfinity, [235], [])));
+
+        var previous = 0.0;
+        for (var viewport = 100.0; viewport <= 2000.0; viewport += 7.0)
+        {
+            var current = TransferWindowLayout.DetailsScrollHeight(viewport, [235], [148, 148, 148]);
+            Assert.True(current >= previous, $"Details height dropped from {previous} to {current} at viewport {viewport}.");
+            previous = current;
+        }
+
+        Assert.True(TransferWindowLayout.HeightMatches(double.NaN, double.NaN));
+        Assert.False(TransferWindowLayout.HeightMatches(double.NaN, 200));
+        Assert.True(TransferWindowLayout.HeightMatches(200.2, 200.0));
+        Assert.False(TransferWindowLayout.HeightMatches(200.0, 201.0));
     }
 }

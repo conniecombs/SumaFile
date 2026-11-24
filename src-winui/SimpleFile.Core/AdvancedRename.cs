@@ -193,17 +193,17 @@ public static class AdvancedRename
                 var mode = string.IsNullOrEmpty(plan.TrimMode) ? "both" : plan.TrimMode;
                 if (mode is "start" or "both")
                 {
-                    next = Regex.Replace(next, @"^\s+", "");
+                    next = next.TrimStart();
                 }
 
                 if (mode is "end" or "both")
                 {
-                    next = Regex.Replace(next, @"\s+$", "");
+                    next = next.TrimEnd();
                 }
 
                 if (plan.TrimCollapse)
                 {
-                    next = Regex.Replace(next, @"\s+", " ");
+                    next = CollapseWhitespaceRegex.Replace(next, " ");
                 }
 
                 return next;
@@ -519,6 +519,9 @@ public static class AdvancedRename
         };
     }
 
+    private static readonly Regex CollapseWhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
+    private static readonly Regex WordBoundaryRegex = new(@"(^|[^\p{L}\p{Nd}'])(\p{L})", RegexOptions.Compiled);
+
     public static string ReplaceWithOptions(
         string value,
         string find,
@@ -531,15 +534,16 @@ public static class AdvancedRename
             return value;
         }
 
-        var options = caseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase;
         if (regex)
         {
+            var options = caseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase;
             return Regex.Replace(value, find, replacement ?? "", options);
         }
 
-        return caseSensitive
-            ? value.Replace(find, replacement ?? "", StringComparison.Ordinal)
-            : Regex.Replace(value, Regex.Escape(find), _ => replacement ?? "", options);
+        return value.Replace(
+            find,
+            replacement ?? "",
+            caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
     }
 
     public static string CapitalizeValue(string value, string mode)
@@ -591,9 +595,8 @@ public static class AdvancedRename
         }
 
         var lower = value.ToLowerInvariant();
-        return Regex.Replace(
+        return WordBoundaryRegex.Replace(
             lower,
-            @"(^|[^\p{L}\p{Nd}'])(\p{L})",
             match => match.Groups[1].Value + match.Groups[2].Value.ToUpperInvariant());
     }
 

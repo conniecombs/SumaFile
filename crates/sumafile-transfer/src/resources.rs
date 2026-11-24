@@ -150,13 +150,15 @@ impl Permit {
 }
 impl Drop for Permit {
     fn drop(&mut self) {
-        if let Ok(mut state) = ALLOCATION.lock() {
-            state.workers -= 1;
-            state.active -= self.bytes;
-            if let Some(b) = &self.budget {
-                b.used.fetch_sub(self.bytes, Ordering::Relaxed);
-            }
+        let mut state = ALLOCATION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.workers = state.workers.saturating_sub(1);
+        state.active = state.active.saturating_sub(self.bytes);
+        if let Some(b) = &self.budget {
+            b.used.fetch_sub(self.bytes, Ordering::Relaxed);
         }
+        drop(state);
         AVAILABLE.notify_all();
     }
 }

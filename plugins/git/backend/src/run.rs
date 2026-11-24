@@ -126,12 +126,27 @@ pub fn run_command(
     }
 }
 
+/// Maximum captured stdout/stderr per git process (64 MiB); any excess bytes
+/// are still drained from the pipe so the child process never deadlocks.
+const MAX_PIPE_CAPTURE_BYTES: usize = 64 * 1024 * 1024;
+
 fn drain_in_background<R: std::io::Read + Send + 'static>(
     mut reader: R,
 ) -> std::thread::JoinHandle<Vec<u8>> {
     std::thread::spawn(move || {
         let mut buffer = Vec::new();
-        let _ = reader.read_to_end(&mut buffer);
+        let mut chunk = [0u8; 8192];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if buffer.len() < MAX_PIPE_CAPTURE_BYTES {
+                        let keep = n.min(MAX_PIPE_CAPTURE_BYTES - buffer.len());
+                        buffer.extend_from_slice(&chunk[..keep]);
+                    }
+                }
+            }
+        }
         buffer
     })
 }
@@ -213,18 +228,18 @@ mod job {
     use std::os::windows::process::CommandExt;
     use std::process::{Child, Command};
 
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
-    };
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
         SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
-    use windows_sys::Win32::System::Threading::{
-        OpenThread, ResumeThread, CREATE_NO_WINDOW, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
-    };
+    use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtResumeProcess(process_handle: HANDLE) -> i32;
+    }
 
     /// Owns a job object created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
     /// Dropping it closes the job, which ends every process in it.
@@ -270,20 +285,21 @@ mod job {
     }
 
     /// Starts `command` with `CREATE_NO_WINDOW | CREATE_SUSPENDED`, assigns
-    /// it to a new kill-on-close job and only then resumes its one thread,
-    /// so the process and everything it starts run inside the job. A failed
-    /// job creation, assignment or resume kills the child and returns the
-    /// error.
+    /// it to a new kill-on-close job and only then resumes it via
+    /// `NtResumeProcess`, so the process and everything it starts run inside
+    /// the job without walking system-wide threads. A failed job creation,
+    /// assignment or resume kills the child and returns the error.
     pub fn spawn_in_job(command: &mut Command) -> std::io::Result<(Child, KillOnCloseJob)> {
         command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
         let mut child = command.spawn()?;
         let assigned = KillOnCloseJob::new().and_then(|job| {
+            let process_handle = child.as_raw_handle() as HANDLE;
             // SAFETY: both handles are valid for the duration of the call.
-            let ok = unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle() as HANDLE) };
+            let ok = unsafe { AssignProcessToJobObject(job.0, process_handle) };
             if ok == 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            resume_main_thread(child.id())?;
+            resume_process(process_handle)?;
             Ok(job)
         });
         match assigned {
@@ -296,53 +312,19 @@ mod job {
         }
     }
 
-    /// Resumes the thread of a process created suspended. Such a process has
-    /// exactly one thread.
-    fn resume_main_thread(process_id: u32) -> std::io::Result<()> {
-        // SAFETY: a thread snapshot of the whole system; closed below.
-        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
-        if snapshot == INVALID_HANDLE_VALUE || snapshot.is_null() {
-            return Err(std::io::Error::last_os_error());
-        }
-        let result = (|| {
-            // SAFETY: an all-zero THREADENTRY32 with dwSize set is valid input.
-            let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
-            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
-            // SAFETY: `entry` is a valid, sized THREADENTRY32.
-            let mut more = unsafe { Thread32First(snapshot, &mut entry) } != 0;
-            while more {
-                if entry.th32OwnerProcessID == process_id {
-                    // SAFETY: the thread id comes from the snapshot.
-                    let thread =
-                        unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
-                    if thread.is_null() {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    // SAFETY: `thread` was opened with THREAD_SUSPEND_RESUME.
-                    let resumed = unsafe { ResumeThread(thread) };
-                    let error = std::io::Error::last_os_error();
-                    // SAFETY: `thread` is owned and closed once.
-                    unsafe {
-                        CloseHandle(thread);
-                    }
-                    return if resumed == u32::MAX {
-                        Err(error)
-                    } else {
-                        Ok(())
-                    };
-                }
-                // SAFETY: as for Thread32First.
-                more = unsafe { Thread32Next(snapshot, &mut entry) } != 0;
-            }
+    /// Resumes a process created with `CREATE_SUSPENDED` in O(1) without
+    /// taking a system-wide `TH32CS_SNAPTHREAD` snapshot.
+    fn resume_process(process_handle: HANDLE) -> std::io::Result<()> {
+        // SAFETY: `process_handle` is the live `Child` handle returned by `CreateProcessW`.
+        let status = unsafe { NtResumeProcess(process_handle) };
+        if status >= 0 {
+            Ok(())
+        } else {
             Err(std::io::Error::other(format!(
-                "no thread of process {process_id} to resume"
+                "NtResumeProcess failed with NTSTATUS 0x{:08X}",
+                status as u32
             )))
-        })();
-        // SAFETY: the snapshot handle is owned and closed once.
-        unsafe {
-            CloseHandle(snapshot);
         }
-        result
     }
 }
 

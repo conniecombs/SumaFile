@@ -26,6 +26,34 @@ public sealed partial class MainWindow
         await Task.Delay(200);
     }
 
+    private static async Task SmokeTransferDetailsVerticalResizeAsync(Window transferWindow, FrameworkElement view)
+    {
+        var expander = SmokeDescendants<Expander>(view).First(e => Equals(e.Header, "Details") && e.IsExpanded);
+        var detailsScroll = ((Grid)expander.Content).Children.OfType<ScrollViewer>().Single();
+        await SmokeWaitAsync(() => detailsScroll.ActualHeight >= TransferWindowLayout.MinDetailsHeight, "stretched Details pane height");
+
+        SecondaryWindowChrome.Resize(transferWindow, 800, 520);
+        await Task.Delay(150);
+        view.UpdateLayout();
+        var shorterViewHeight = view.ActualHeight;
+        var shorterDetailsHeight = detailsScroll.ActualHeight;
+
+        SecondaryWindowChrome.Resize(transferWindow, 800, 640);
+        await Task.Delay(150);
+        view.UpdateLayout();
+        var tallerViewHeight = view.ActualHeight;
+        var tallerDetailsHeight = detailsScroll.ActualHeight;
+
+        var viewDelta = tallerViewHeight - shorterViewHeight;
+        var detailsDelta = tallerDetailsHeight - shorterDetailsHeight;
+        SmokeAssert(viewDelta > 40 && Math.Abs(detailsDelta - viewDelta) <= 6,
+            $"Details pane did not resize vertically with the window (details delta {detailsDelta:0.#} vs window delta {viewDelta:0.#})");
+
+        SecondaryWindowChrome.Resize(transferWindow, 800, 620);
+        await Task.Delay(100);
+        view.UpdateLayout();
+    }
+
     // FittedText is where the Transfers window shortens text itself, and only a live layout pass shows that it
     // measures: hand it text far wider than its width and read back what it drew.
     private static async Task SmokeFittedTextAsync(Grid host)
@@ -127,6 +155,7 @@ public sealed partial class MainWindow
         SmokeAssert(operation.ActiveFolders.Count == 1, $"Files from one folder were listed under {operation.ActiveFolders.Count} headings");
         await SmokeWaitAsync(() => SmokeDescendants<TextBlock>(view).Any(t => t.Text.EndsWith("adaptive-source" + Path.DirectorySeparatorChar, StringComparison.Ordinal)),
             "the source folder heading in Details");
+        await SmokeTransferDetailsVerticalResizeAsync(_transferProgressWindow!, view);
         await SmokeFittedTextAsync((Grid)view);
         var bitmap = new RenderTargetBitmap();
         await bitmap.RenderAsync(view);

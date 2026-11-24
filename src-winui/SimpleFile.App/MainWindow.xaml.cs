@@ -435,9 +435,16 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private int _workspaceSyncQueued;
+
     private void OnWorkspaceChanged(object? sender, EventArgs e)
     {
-        DispatcherQueue.TryEnqueue(QueueWorkspaceSync);
+        if (Interlocked.Exchange(ref _workspaceSyncQueued, 1) == 0
+            && !DispatcherQueue.TryEnqueue(QueueWorkspaceSync))
+        {
+            Interlocked.Exchange(ref _workspaceSyncQueued, 0);
+        }
+
         RefreshPluginWorkspace();
     }
 
@@ -466,6 +473,7 @@ public sealed partial class MainWindow : Window
 
     private void QueueWorkspaceSync()
     {
+        Interlocked.Exchange(ref _workspaceSyncQueued, 0);
         if (_workspace is null)
         {
             return;
@@ -555,35 +563,62 @@ public sealed partial class MainWindow : Window
 
         _search?.CheckSearchRootDrift();
 
-        PrimaryDetailsFileList.BeginUpdate();
+        _activeSyncCutPaths = _workspace.Clipboard is { Operation: ClipboardOperation.Cut, HasItems: true } cutClipboard
+            ? new HashSet<string>(cutClipboard.SourcePaths, PathRules.PathComparer)
+            : null;
         try
         {
-            ReplaceIfChanged(
-                PrimaryFiles,
-                (_search?.IsActiveForPane(PaneId.Primary) == true
-                    ? _search.Results.Select(result => SearchRowFrom(result, PaneId.Primary))
-                    : _workspace.VisibleViewportEntriesFor(PaneId.Primary).Select(entry => ToFileRow(entry, PaneId.Primary))).ToList(),
-                SameFileRow);
+            PrimaryDetailsFileList.BeginUpdate();
+            try
+            {
+                ReplaceIfChanged(
+                    PrimaryFiles,
+                    (_search?.IsActiveForPane(PaneId.Primary) == true
+                        ? _search.Results.Select(result => SearchRowFrom(result, PaneId.Primary))
+                        : _workspace.VisibleViewportEntriesFor(PaneId.Primary).Select(entry => ToFileRow(entry, PaneId.Primary))).ToList(),
+                    SameFileRow);
+            }
+            finally
+            {
+                PrimaryDetailsFileList.EndUpdate();
+            }
+
+            var secondaryActive = _workspace.DualPaneEnabled || _search?.IsActiveForPane(PaneId.Secondary) == true;
+            if (secondaryActive)
+            {
+                SecondaryDetailsFileList.BeginUpdate();
+                try
+                {
+                    ReplaceIfChanged(
+                        SecondaryFiles,
+                        (_search?.IsActiveForPane(PaneId.Secondary) == true
+                            ? _search.Results.Select(result => SearchRowFrom(result, PaneId.Secondary))
+                            : _workspace.VisibleViewportEntriesFor(PaneId.Secondary).Select(entry => ToFileRow(entry, PaneId.Secondary))).ToList(),
+                        SameFileRow);
+                }
+                finally
+                {
+                    SecondaryDetailsFileList.EndUpdate();
+                }
+            }
+            else if (SecondaryFiles.Count > 0)
+            {
+                SecondaryDetailsFileList.BeginUpdate();
+                try
+                {
+                    SecondaryFiles.Clear();
+                }
+                finally
+                {
+                    SecondaryDetailsFileList.EndUpdate();
+                }
+            }
         }
         finally
         {
-            PrimaryDetailsFileList.EndUpdate();
+            _activeSyncCutPaths = null;
         }
 
-        SecondaryDetailsFileList.BeginUpdate();
-        try
-        {
-            ReplaceIfChanged(
-                SecondaryFiles,
-                (_search?.IsActiveForPane(PaneId.Secondary) == true
-                    ? _search.Results.Select(result => SearchRowFrom(result, PaneId.Secondary))
-                    : _workspace.VisibleViewportEntriesFor(PaneId.Secondary).Select(entry => ToFileRow(entry, PaneId.Secondary))).ToList(),
-                SameFileRow);
-        }
-        finally
-        {
-            SecondaryDetailsFileList.EndUpdate();
-        }
         ReplaceIfChanged(
             Drives,
             _workspace.Drives.Select(drive => DriveRow.From(drive, _workspace.Pane(_workspace.SidebarTarget).Path)).ToList(),
@@ -600,9 +635,12 @@ public sealed partial class MainWindow : Window
             SameQuickAccessRow);
 
         RebuildBreadcrumbs(PrimaryBreadcrumbHost, _workspace.Primary.Breadcrumbs, PaneId.Primary);
-        RebuildBreadcrumbs(SecondaryBreadcrumbHost, _workspace.Secondary.Breadcrumbs, PaneId.Secondary);
         RebuildTabs(PrimaryTabHost, _workspace.Primary, PaneId.Primary);
-        RebuildTabs(SecondaryTabHost, _workspace.Secondary, PaneId.Secondary);
+        if (_workspace.DualPaneEnabled)
+        {
+            RebuildBreadcrumbs(SecondaryBreadcrumbHost, _workspace.Secondary.Breadcrumbs, PaneId.Secondary);
+            RebuildTabs(SecondaryTabHost, _workspace.Secondary, PaneId.Secondary);
+        }
 
         _toolbar?.SyncFromWorkspace();
         ApplyCommandSurfaceLayout();
@@ -1179,6 +1217,42 @@ public sealed partial class MainWindow : Window
         _networkReconnectCts = null;
     }
 
+    private static bool IsWatchableLocalDirectoryPane(ExplorerPane pane)
+    {
+        var path = pane.Path;
+        return !string.IsNullOrWhiteSpace(path)
+            && !pane.PathIsNetwork
+            && !PathRules.IsRecycleBinPath(path)
+            && !ArchivePaths.IsInsideArchivePath(path);
+    }
+
+    private string[] CollectWatchablePaneDirectories()
+    {
+        if (_workspace is null)
+        {
+            return [];
+        }
+
+        var list = new List<string>(2);
+        var active = _workspace.Active;
+        if (IsWatchableLocalDirectoryPane(active))
+        {
+            list.Add(active.Path);
+        }
+
+        if (_workspace.DualPaneEnabled)
+        {
+            var other = _workspace.OtherPane();
+            if (IsWatchableLocalDirectoryPane(other)
+                && !list.Contains(other.Path, StringComparer.OrdinalIgnoreCase))
+            {
+                list.Add(other.Path);
+            }
+        }
+
+        return list.ToArray();
+    }
+
     private void QueueWatchActiveDirectory()
     {
         if (_workspace?.FileOps is null)
@@ -1186,26 +1260,19 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var path = _workspace.Active.Path;
-        if (string.IsNullOrWhiteSpace(path)
-            || string.Equals(path, _watchTargetPath, StringComparison.OrdinalIgnoreCase))
+        var paths = CollectWatchablePaneDirectories();
+        var targetSignature = string.Join("\n", paths);
+        if (string.Equals(targetSignature, _watchTargetPath, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
-        // Skip filesystem watching on network paths — ReadDirectoryChangesW
-        // is unreliable on many NAS devices and adds background SMB traffic.
-        if (_workspace.Active.PathIsNetwork)
-        {
-            return;
-        }
-
-        _watchTargetPath = path;
+        _watchTargetPath = targetSignature;
         var token = Interlocked.Increment(ref _watchRequestToken);
-        _ = WatchDirectoryAsync(path, token);
+        _ = WatchDirectoriesCoreAsync(paths, targetSignature, token);
     }
 
-    private async Task WatchDirectoryAsync(string path, int token)
+    private async Task WatchDirectoriesCoreAsync(string[] paths, string targetSignature, int token)
     {
         await _watchGate.WaitAsync();
         try
@@ -1215,11 +1282,11 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            await _workspace.FileOps.WatchDirectoryAsync(path);
+            await _workspace.FileOps.WatchDirectoriesAsync(paths);
             if (token == _watchRequestToken
-                && string.Equals(path, _watchTargetPath, StringComparison.OrdinalIgnoreCase))
+                && string.Equals(targetSignature, _watchTargetPath, StringComparison.OrdinalIgnoreCase))
             {
-                _watchedPath = path;
+                _watchedPath = paths.Length > 0 ? paths[0] : null;
             }
         }
         catch (OperationCanceledException)
@@ -1232,7 +1299,7 @@ public sealed partial class MainWindow : Window
         catch (Exception exception)
         {
             if (token == _watchRequestToken
-                && string.Equals(path, _watchTargetPath, StringComparison.OrdinalIgnoreCase))
+                && string.Equals(targetSignature, _watchTargetPath, StringComparison.OrdinalIgnoreCase))
             {
                 _watchTargetPath = null;
                 _watchedPath = null;

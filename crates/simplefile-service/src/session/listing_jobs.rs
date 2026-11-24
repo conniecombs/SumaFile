@@ -369,11 +369,14 @@ fn spawn_revalidate(context: ListingContext, view_id: String, folder: String) {
 }
 
 /// A watched path changed: update the views of its folder and tell the host
-/// which rows moved. Runs on the watcher's own thread.
+/// which rows moved. Runs on the watcher's own thread; full-folder storm
+/// refreshes dispatch onto `scheduler` so the watcher thread never blocks.
 pub(super) fn apply_file_change(
     views: &ListingViews,
     cache: &SessionCache,
     events: &EventSink,
+    runtime: &tokio::runtime::Handle,
+    scheduler: &crate::scheduler::BlockingScheduler,
     path: &str,
 ) {
     let changes = views.apply_path_change(path, |changed| {
@@ -388,16 +391,26 @@ pub(super) fn apply_file_change(
         let Some(folder) = views.path_of(&view_id) else {
             continue;
         };
-        let Ok(enumerated) = enumerate(folder.clone(), |_| Ok(())) else {
-            continue;
-        };
-        if enumerated.is_cacheable() {
-            cache.put_directory_listing(&enumerated.listing.path, enumerated.listing.clone());
-        }
-        if let Some(delta) = views.refresh(&view_id, &folder, enumerated.listing.entries) {
-            if !delta.changes.is_empty() || delta.reset {
-                events.emit_listing_view_delta(&delta);
+        let views = views.clone();
+        let cache = cache.clone();
+        let events = events.clone();
+        let scheduler = scheduler.clone();
+        runtime.spawn(async move {
+            let folder_for_enum = folder.clone();
+            let Ok(Ok(enumerated)) = scheduler
+                .run_general(move || enumerate(folder_for_enum, |_| Ok(())))
+                .await
+            else {
+                return;
+            };
+            if enumerated.is_cacheable() {
+                cache.put_directory_listing(&enumerated.listing.path, enumerated.listing.clone());
             }
-        }
+            if let Some(delta) = views.refresh(&view_id, &folder, enumerated.listing.entries) {
+                if !delta.changes.is_empty() || delta.reset {
+                    events.emit_listing_view_delta_async(&delta).await;
+                }
+            }
+        });
     }
 }

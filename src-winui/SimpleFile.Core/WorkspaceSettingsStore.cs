@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 
 namespace SimpleFile.Core;
@@ -12,6 +13,7 @@ internal sealed class WorkspaceSettingsState
 
 internal static class WorkspaceSettingsStore
 {
+    private static readonly ConditionalWeakTable<ISettingsBackend, Dictionary<string, string>> LastPersistedByBackend = new();
     private const string BookmarksSettingsKey = "places.bookmarks";
     private const string RecentPathsSettingsKey = "places.recents";
     private const string PluginSectionsCollapsedSettingsKey = "sidebar.pluginSectionsCollapsed";
@@ -74,6 +76,7 @@ internal static class WorkspaceSettingsStore
         var timer = new StartupTimer("WorkspaceSettingsStore.Load");
         timer.Mark("begin");
         var values = await fileOps.GetSettingsAsync(LoadSettingKeys, cancellationToken).ConfigureAwait(false);
+        RecordSnapshot(fileOps, values);
         timer.Mark("settings-batch", $"keys={LoadSettingKeys.Length} returned={values.Count}");
 
         var settings = UiSettings.CreateDefault();
@@ -246,10 +249,48 @@ internal static class WorkspaceSettingsStore
             (RecentPathsSettingsKey, JsonSerializer.Serialize(recentPaths)),
         ];
 
-        // Only now the writes: nothing below reads settings again.
-        foreach (var (key, value) in values)
+        // Only now the writes: nothing below reads settings again, and unchanged keys are skipped.
+        var snapshot = LastPersistedByBackend.GetOrCreateValue(fileOps);
+        List<(string Key, string Value)> dirty;
+        lock (snapshot)
+        {
+            dirty = new List<(string Key, string Value)>(values.Length);
+            foreach (var (key, value) in values)
+            {
+                if (!snapshot.TryGetValue(key, out var previous)
+                    || !string.Equals(previous, value, StringComparison.Ordinal))
+                {
+                    dirty.Add((key, value));
+                }
+            }
+        }
+
+        foreach (var (key, value) in dirty)
         {
             await fileOps.SetSettingAsync(key, value, cancellationToken).ConfigureAwait(false);
+            lock (snapshot)
+            {
+                snapshot[key] = value;
+            }
+        }
+    }
+
+    private static void RecordSnapshot(ISettingsBackend fileOps, IReadOnlyDictionary<string, string?> loaded)
+    {
+        var snapshot = LastPersistedByBackend.GetOrCreateValue(fileOps);
+        lock (snapshot)
+        {
+            foreach (var key in LoadSettingKeys)
+            {
+                if (loaded.TryGetValue(key, out var value) && value is not null)
+                {
+                    snapshot[key] = value;
+                }
+                else
+                {
+                    snapshot.Remove(key);
+                }
+            }
         }
     }
 

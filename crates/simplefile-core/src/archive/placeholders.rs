@@ -53,8 +53,17 @@ pub(super) fn unavailable_note_for_path(path: &Path) -> Option<&'static str> {
 /// an archive some engine or built-in format serves, or any other file,
 /// gives `None`.
 pub fn unavailable_archive_note(path: &str) -> Option<&'static str> {
+    let parsed = Path::new(path);
+    let has_candidate = parsed.components().any(|component| match component {
+        Component::Normal(part) => unavailable_note_for_path(Path::new(part)).is_some(),
+        _ => false,
+    });
+    if !has_candidate {
+        return None;
+    }
+
     let mut prefix = PathBuf::new();
-    for component in Path::new(path).components() {
+    for component in parsed.components() {
         prefix.push(component.as_os_str());
         if matches!(component, Component::Normal(_)) && prefix.is_file() {
             if super::path::archive_kind_for_path(&prefix).is_some() {

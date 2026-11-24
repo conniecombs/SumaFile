@@ -28,6 +28,23 @@ public sealed class RemoteManagerViewModel : ObservableObject
     private RemoteProfile? _selectedProfile;
     private RemoteSession? _currentSession;
     private bool _isBusy;
+    private int _busyDepth;
+
+    private void EnterBusy()
+    {
+        if (++_busyDepth == 1)
+        {
+            IsBusy = true;
+        }
+    }
+
+    private void ExitBusy()
+    {
+        if (_busyDepth > 0 && --_busyDepth == 0)
+        {
+            IsBusy = false;
+        }
+    }
     private string _statusText = "No remote profiles";
     private string? _requestedProfileId;
     private string _localPath = "";
@@ -174,7 +191,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
 
     public async Task LoadProfilesAsync(CancellationToken ct = default)
     {
-        IsBusy = true;
+        EnterBusy();
         try
         {
             var selectedId = string.IsNullOrWhiteSpace(_requestedProfileId)
@@ -199,7 +216,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -242,7 +259,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             return new ConnectOutcome(false, null, null, null, StatusText);
         }
 
-        IsBusy = true;
+        EnterBusy();
         try
         {
             var profileName = SelectedProfile.Name;
@@ -267,7 +284,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -354,7 +371,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         string? secret = null,
         CancellationToken ct = default)
     {
-        IsBusy = true;
+        EnterBusy();
         try
         {
             var saved = await _backend.SaveProfileAsync(profile, secret, ct);
@@ -371,7 +388,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -383,7 +400,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             return;
         }
 
-        IsBusy = true;
+        EnterBusy();
         try
         {
             var deleted = SelectedProfile;
@@ -394,7 +411,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -403,7 +420,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         string? secret = null,
         CancellationToken ct = default)
     {
-        IsBusy = true;
+        EnterBusy();
         try
         {
             var result = await _backend.TestProfileAsync(profile, secret, ct);
@@ -414,7 +431,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -426,7 +443,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             return;
         }
 
-        IsBusy = true;
+        EnterBusy();
         try
         {
             await RefreshRemoteDirectoryCoreAsync(RemotePath, ct);
@@ -437,7 +454,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -450,7 +467,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             return;
         }
 
-        IsBusy = true;
+        EnterBusy();
         try
         {
             await RefreshLocalDirectoryCoreAsync(trimmed, ct);
@@ -458,7 +475,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -470,7 +487,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             return;
         }
 
-        IsBusy = true;
+        EnterBusy();
         try
         {
             await RefreshLocalDirectoryCoreAsync(LocalPath, ct);
@@ -478,7 +495,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -547,7 +564,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             return;
         }
 
-        IsBusy = true;
+        EnterBusy();
         try
         {
             await RefreshRemoteDirectoryCoreAsync(path, ct);
@@ -559,7 +576,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -581,7 +598,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             return;
         }
 
-        IsBusy = true;
+        EnterBusy();
         try
         {
             await _backend.DisconnectAsync(CurrentSession.SessionId, ct);
@@ -596,7 +613,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -692,7 +709,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             return;
         }
 
-        IsBusy = true;
+        EnterBusy();
         try
         {
             var created = await _backend.CreateDirectoryAsync(
@@ -711,7 +728,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -736,7 +753,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             return;
         }
 
-        IsBusy = true;
+        EnterBusy();
         try
         {
             var originalName = entry.Name;
@@ -756,7 +773,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -779,7 +796,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
             return;
         }
 
-        IsBusy = true;
+        EnterBusy();
         try
         {
             var deleted = await _backend.DeleteEntriesAsync(
@@ -799,7 +816,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            ExitBusy();
         }
     }
 
@@ -867,7 +884,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
     {
         if (CurrentSession is null) { StatusText = "Connect to a remote profile first"; return; }
         // The window disables its transfer buttons while busy; a request from anywhere else is refused out loud.
-        if (IsBusy) { StatusText = "Another operation is still running. Try again when it finishes."; return; }
+        if (IsBusy || _transferCancellation is not null) { StatusText = "Another operation is still running. Try again when it finishes."; return; }
         sources = sources.Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(direction == "upload" ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal).ToArray();
         if (sources.Length == 0) { StatusText = "Select files or folders to transfer"; return; }
@@ -880,7 +897,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
         _retrySources = sources;
         _retryDirection = direction;
         _retryDestination = destination;
-        IsBusy = true;
+        EnterBusy();
         OnPropertyChanged(nameof(CanCancelTransfer));
         TransferProgressText = "Preparing transfer...";
         try
@@ -948,7 +965,7 @@ public sealed class RemoteManagerViewModel : ObservableObject
                 _transferFinished = null;
             }
 
-            IsBusy = false;
+            ExitBusy();
             OnPropertyChanged(nameof(CanCancelTransfer));
             OnPropertyChanged(nameof(CanRetryTransfers));
             finished.TrySetResult();

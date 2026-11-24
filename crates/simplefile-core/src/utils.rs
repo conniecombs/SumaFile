@@ -200,9 +200,21 @@ pub fn get_file_entry_from_dir_entry(entry: &fs::DirEntry) -> Option<FileEntry> 
 pub fn is_network_path(path: &Path) -> bool {
     let raw = path.to_string_lossy();
     let trimmed = raw.trim();
-    if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
+    let effective = if let Some(verbatim) = trimmed
+        .strip_prefix("\\\\?\\")
+        .or_else(|| trimmed.strip_prefix("\\\\.\\"))
+    {
+        if verbatim.get(..4).is_some_and(|prefix| {
+            prefix.eq_ignore_ascii_case("UNC\\") || prefix.eq_ignore_ascii_case("UNC/")
+        }) {
+            return true;
+        }
+        verbatim
+    } else if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
         return true;
-    }
+    } else {
+        trimmed
+    };
 
     #[cfg(windows)]
     {
@@ -210,7 +222,7 @@ pub fn is_network_path(path: &Path) -> bool {
         use winapi::um::fileapi::GetDriveTypeW;
         use winapi::um::winbase::DRIVE_REMOTE;
 
-        let bytes = trimmed.as_bytes();
+        let bytes = effective.as_bytes();
         if bytes.len() >= 2 && bytes[1] == b':' {
             let letter = bytes[0].to_ascii_uppercase() as char;
             if letter.is_ascii_alphabetic() {
@@ -228,7 +240,7 @@ pub fn is_network_path(path: &Path) -> bool {
         }
     }
 
-    let _ = path;
+    let _ = effective;
     false
 }
 

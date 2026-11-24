@@ -101,13 +101,20 @@ impl RemoteProvider for SftpRemoteProvider {
             self.sftp.rename(source.clone(), target.clone()),
         )
         .map_err(|error| format!("SFTP rename failed for {source}: {error}"))?;
-        let metadata = block_on_runtime(&self.runtime, self.sftp.metadata(target.clone()))
+        let metadata = block_on_runtime(&self.runtime, self.sftp.symlink_metadata(target.clone()))
             .map_err(|error| format!("SFTP stat failed for {target}: {error}"))?;
         Ok(file_entry_from_sftp_metadata(
             &parent_remote_path(&target).unwrap_or_else(|| "/".to_string()),
             &target,
             metadata,
         ))
+    }
+
+    fn rename_path(&mut self, path: &str, new_name: &str) -> Result<(), String> {
+        let source = normalize_remote_path(path);
+        let target = sibling_remote_path(&source, new_name);
+        block_on_runtime(&self.runtime, self.sftp.rename(source.clone(), target))
+            .map_err(|error| format!("SFTP rename failed for {source}: {error}"))
     }
 
     fn delete_entries(&mut self, paths: &[String]) -> Result<Vec<String>, String> {
@@ -225,6 +232,9 @@ async fn connect_async(
     secret: Option<RemoteSecret>,
 ) -> Result<(Handle<VerifiedHostKeyHandler>, SftpSession), Failure> {
     let config = client::Config {
+        window_size: 16 * 1024 * 1024,
+        maximum_packet_size: 256 * 1024,
+        channel_buffer_size: 256,
         inactivity_timeout: Some(REMOTE_CONNECT_TIMEOUT),
         keepalive_interval: Some(Duration::from_secs(10)),
         nodelay: true,
@@ -250,7 +260,14 @@ async fn connect_async(
         .request_subsystem(true, "sftp")
         .await
         .map_err(|error| Failure::new(format!("SFTP subsystem request failed: {error}"), true))?;
-    let sftp = SftpSession::new(channel.into_stream())
+    let sftp_config = russh_sftp::client::Config {
+        max_packet_len: 262_144,
+        max_concurrent_reads: 64,
+        max_concurrent_writes: 64,
+        max_write_packet_len: 131_072,
+        request_timeout_secs: 15,
+    };
+    let sftp = SftpSession::new_with_config(channel.into_stream(), sftp_config)
         .await
         .map_err(|error| Failure::new(format!("SFTP subsystem setup failed: {error}"), true))?;
     sftp.set_timeout(15);

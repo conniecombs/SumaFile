@@ -187,7 +187,7 @@ pub(crate) enum Dispatch {
     },
     WatchDirectory {
         id: Option<Value>,
-        path: String,
+        paths: Vec<String>,
     },
     UnwatchDirectory {
         id: Option<Value>,

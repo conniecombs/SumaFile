@@ -26,6 +26,20 @@ fn is_cancelled(flag: &Arc<AtomicBool>) -> bool {
     flag.load(Ordering::Relaxed)
 }
 
+fn ascii_contains_ignore_case(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    let first = needle[0];
+    let rest = &needle[1..];
+    haystack.windows(needle.len()).any(|window| {
+        window[0].eq_ignore_ascii_case(&first) && window[1..].eq_ignore_ascii_case(rest)
+    })
+}
+
 fn name_matches(
     name: &str,
     query: &str,
@@ -34,6 +48,15 @@ fn name_matches(
 ) -> bool {
     if query.is_empty() {
         return true;
+    }
+
+    if glob_pattern.is_none() {
+        if case_sensitive {
+            return name.contains(query);
+        }
+        if name.is_ascii() && query.is_ascii() {
+            return ascii_contains_ignore_case(name.as_bytes(), query.as_bytes());
+        }
     }
 
     let name_to_match = if case_sensitive {
@@ -49,30 +72,32 @@ fn name_matches(
     }
 }
 
-fn entry_metadata(path: &Path) -> (bool, bool, u64, String) {
+fn entry_metadata_raw(path: &Path) -> (bool, bool, u64, Option<std::time::SystemTime>) {
     match fs::metadata(path) {
         Ok(metadata) => {
             let file_type = metadata.file_type();
             let is_dir = file_type.is_dir();
             let is_file = file_type.is_file();
-            let modified = metadata
-                .modified()
-                .ok()
-                .map(|time| {
-                    DateTime::<Local>::from(time)
-                        .format("%Y-%m-%d %H:%M")
-                        .to_string()
-                })
-                .unwrap_or_else(|| "-".to_string());
+            let modified_time = metadata.modified().ok();
             (
                 is_dir,
                 is_file,
                 if is_dir { 0 } else { metadata.len() },
-                modified,
+                modified_time,
             )
         }
-        Err(_) => (false, false, 0, "-".to_string()),
+        Err(_) => (false, false, 0, None),
     }
+}
+
+fn format_search_modified(modified_time: Option<std::time::SystemTime>) -> String {
+    modified_time
+        .map(|time| {
+            DateTime::<Local>::from(time)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| "-".to_string())
 }
 
 struct FilterCandidate<'a> {
@@ -85,6 +110,14 @@ struct FilterCandidate<'a> {
     modified_time: Option<std::time::SystemTime>,
 }
 
+fn extension_matches_any(ext: &str, types: &[String]) -> bool {
+    if ext.is_ascii() && types.iter().all(|item| item.is_ascii()) {
+        return types.iter().any(|item| item.eq_ignore_ascii_case(ext));
+    }
+    let ext_lower = ext.to_lowercase();
+    types.iter().any(|item| item.to_lowercase() == ext_lower)
+}
+
 fn passes_filters(candidate: &FilterCandidate<'_>, options: &SearchOptions) -> bool {
     if let Some(types) = options
         .file_types
@@ -93,11 +126,7 @@ fn passes_filters(candidate: &FilterCandidate<'_>, options: &SearchOptions) -> b
     {
         // A type filter asks for files of those kinds; a directory whose name
         // happens to match the query is not one of them.
-        if !candidate.is_file {
-            return false;
-        }
-        let ext_lower = candidate.extension.to_lowercase();
-        if !types.iter().any(|item| item.to_lowercase() == ext_lower) {
+        if !candidate.is_file || !extension_matches_any(candidate.extension, types) {
             return false;
         }
     }
@@ -116,15 +145,17 @@ fn passes_filters(candidate: &FilterCandidate<'_>, options: &SearchOptions) -> b
 
     // A date bound can only be satisfied by an entry whose time is known.
     if let Some(ref after) = candidate.after_dt {
+        let after_sys = std::time::SystemTime::from(*after);
         match candidate.modified_time {
-            Some(mod_time) if DateTime::<Local>::from(mod_time) >= *after => {}
+            Some(mod_time) if mod_time >= after_sys => {}
             _ => return false,
         }
     }
 
     if let Some(ref before) = candidate.before_dt {
+        let before_sys = std::time::SystemTime::from(*before);
         match candidate.modified_time {
-            Some(mod_time) if DateTime::<Local>::from(mod_time) <= *before => {}
+            Some(mod_time) if mod_time <= before_sys => {}
             _ => return false,
         }
     }
@@ -132,8 +163,20 @@ fn passes_filters(candidate: &FilterCandidate<'_>, options: &SearchOptions) -> b
     true
 }
 
+fn content_matches_text(content: &str, needle: &str, case_sensitive: bool) -> bool {
+    if case_sensitive {
+        content.contains(needle)
+    } else if content.is_ascii() && needle.is_ascii() {
+        ascii_contains_ignore_case(content.as_bytes(), needle.as_bytes())
+    } else {
+        simplefile_core::native_accel::contains_case_insensitive(content, needle)
+    }
+}
+
 fn content_matches_file(path: &Path, options: &SearchOptions, size: u64) -> bool {
-    if !options.content_search || size >= 2_000_000 {
+    use std::io::Read;
+
+    if !options.content_search || size == 0 || size >= 2_000_000 {
         return false;
     }
 
@@ -144,15 +187,64 @@ fn content_matches_file(path: &Path, options: &SearchOptions, size: u64) -> bool
         return false;
     }
 
-    let Ok(content) = fs::read_to_string(path) else {
+    let Ok(mut file) = fs::File::open(path) else {
         return false;
     };
 
-    if options.case_sensitive {
-        content.contains(needle)
-    } else {
-        simplefile_core::native_accel::contains_case_insensitive(&content, needle)
+    // Sniff the first 8 KiB before allocating up to 2 MiB on binary files.
+    let mut head = [0u8; 8192];
+    let mut head_len = 0usize;
+    while head_len < head.len() {
+        match file.read(&mut head[head_len..]) {
+            Ok(0) => break,
+            Ok(n) => head_len += n,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return false,
+        }
     }
+    if head_len == 0 {
+        return false;
+    }
+
+    let is_utf16_le = head_len >= 2 && head[0] == 0xFF && head[1] == 0xFE;
+    let is_utf16_be = head_len >= 2 && head[0] == 0xFE && head[1] == 0xFF;
+    if !is_utf16_le && !is_utf16_be && head[..head_len].contains(&0) {
+        return false;
+    }
+
+    let mut bytes = Vec::with_capacity((size as usize).min(2_000_000));
+    bytes.extend_from_slice(&head[..head_len]);
+    if (head_len as u64) < size && file.take(2_000_000).read_to_end(&mut bytes).is_err() {
+        return false;
+    }
+
+    if is_utf16_le {
+        let units: Vec<u16> = bytes[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
+            .collect();
+        let text = String::from_utf16_lossy(&units);
+        return content_matches_text(&text, needle, options.case_sensitive);
+    }
+    if is_utf16_be {
+        let units: Vec<u16> = bytes[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_be_bytes)
+            .collect();
+        let text = String::from_utf16_lossy(&units);
+        return content_matches_text(&text, needle, options.case_sensitive);
+    }
+
+    let Ok(content) = std::str::from_utf8(&bytes) else {
+        return false;
+    };
+    content_matches_text(content, needle, options.case_sensitive)
 }
 
 pub fn search_files_blocking(
@@ -235,50 +327,39 @@ pub fn search_files_blocking(
                 }
             }
 
-            let (is_dir, is_file, size, modified, modified_time) = match metadata {
+            let (is_dir, is_file, size, modified_time) = match metadata {
                 Some(metadata) => {
                     let file_type = metadata.file_type();
                     let is_dir = file_type.is_dir();
                     let is_file = file_type.is_file();
                     let modified_time = metadata.modified().ok();
-                    let modified = modified_time
-                        .map(|time| {
-                            DateTime::<Local>::from(time)
-                                .format("%Y-%m-%d %H:%M")
-                                .to_string()
-                        })
-                        .unwrap_or_else(|| "-".to_string());
                     (
                         is_dir,
                         is_file,
                         if is_dir { 0 } else { metadata.len() },
-                        modified,
                         modified_time,
                     )
                 }
-                None => {
-                    let (is_dir, is_file, size, modified) = entry_metadata(&path);
-                    (is_dir, is_file, size, modified, None)
-                }
-            };
-
-            let extension = if is_dir {
-                String::new()
-            } else {
-                path.extension()
-                    .map(|extension| extension.to_string_lossy().to_lowercase())
-                    .unwrap_or_default()
+                None => entry_metadata_raw(&path),
             };
 
             if is_dir && depth < max_depth {
                 queue.push_back((path.clone(), depth + 1));
             }
 
+            let raw_extension = if is_dir {
+                std::borrow::Cow::Borrowed("")
+            } else {
+                path.extension()
+                    .map(|ext| ext.to_string_lossy())
+                    .unwrap_or(std::borrow::Cow::Borrowed(""))
+            };
+
             let candidate = FilterCandidate {
                 is_dir,
                 is_file,
                 size,
-                extension: &extension,
+                extension: raw_extension.as_ref(),
                 after_dt: &after_dt,
                 before_dt: &before_dt,
                 modified_time,
@@ -293,6 +374,13 @@ pub fn search_files_blocking(
             if !matched_name && !matched_content {
                 continue;
             }
+
+            let modified = format_search_modified(modified_time);
+            let extension = if is_dir || raw_extension.is_empty() {
+                String::new()
+            } else {
+                raw_extension.to_lowercase()
+            };
 
             let result = SearchResult {
                 name,

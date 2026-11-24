@@ -131,6 +131,9 @@ public sealed partial class ExplorerWorkspace
     public void ToggleTreeExpanded(string path) =>
         _folderTree.ToggleExpanded(this, path);
 
+    public bool IsTreeExpanded(string path) =>
+        _folderTree.IsExpanded(path);
+
     public Task FillFolderSizesAsync(CancellationToken cancellationToken = default) =>
         FillFolderMetricsAsync(ActivePane, includeSizes: Settings.ShowFolderSizes, includeItemCounts: false, cancellationToken);
 

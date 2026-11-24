@@ -71,6 +71,7 @@ public sealed class DetailsFileListView : UserControl
     private readonly ListView _list;
     private readonly List<FileRow> _rows = [];
     private readonly List<FileRow> _selectedRows = [];
+    private readonly HashSet<string> _selectedPathSet = new(StringComparer.OrdinalIgnoreCase);
     private INotifyCollectionChanged? _observableItems;
     private IEnumerable? _itemsSource;
     private IReadOnlyList<FileListColumn> _columns = [];
@@ -264,22 +265,73 @@ public sealed class DetailsFileListView : UserControl
     }
 
     public bool ContainsSelection(FileRow row) =>
-        _selectedRows.Any(selected => PathRules.PathsEqual(selected.Path, row.Path));
+        _selectedPathSet.Contains(row.Path);
+
+    internal static IEnumerable<(int Index, ListViewItem Container)> RealizedContainers(ListViewBase list)
+    {
+        var count = list.Items.Count;
+        if (count == 0)
+        {
+            yield break;
+        }
+
+        if (list.ItemsPanelRoot is ItemsStackPanel stack
+            && stack.FirstVisibleIndex >= 0
+            && stack.LastVisibleIndex >= stack.FirstVisibleIndex)
+        {
+            var last = Math.Min(stack.LastVisibleIndex, count - 1);
+            for (var index = stack.FirstVisibleIndex; index <= last; index++)
+            {
+                if (list.ContainerFromIndex(index) is ListViewItem container)
+                {
+                    yield return (index, container);
+                }
+            }
+
+            yield break;
+        }
+
+        if (list.ItemsPanelRoot is ItemsWrapGrid wrap
+            && wrap.FirstVisibleIndex >= 0
+            && wrap.LastVisibleIndex >= wrap.FirstVisibleIndex)
+        {
+            var last = Math.Min(wrap.LastVisibleIndex, count - 1);
+            for (var index = wrap.FirstVisibleIndex; index <= last; index++)
+            {
+                if (list.ContainerFromIndex(index) is ListViewItem container)
+                {
+                    yield return (index, container);
+                }
+            }
+
+            yield break;
+        }
+
+        if (list.ItemsPanelRoot is Panel panel)
+        {
+            foreach (var child in panel.Children)
+            {
+                if (child is ListViewItem container)
+                {
+                    var index = list.IndexFromContainer(container);
+                    if (index >= 0 && index < count)
+                    {
+                        yield return (index, container);
+                    }
+                }
+            }
+        }
+    }
 
     public FileRow? RowFromPoint(Point point)
     {
-        foreach (var row in _rows)
+        foreach (var (index, container) in RealizedContainers(_list))
         {
-            if (_list.ContainerFromItem(row) is not ListViewItem container)
-            {
-                continue;
-            }
-
             var bounds = container.TransformToVisual(this)
                 .TransformBounds(new Rect(0, 0, container.ActualWidth, container.ActualHeight));
             if (bounds.Contains(point))
             {
-                return row;
+                return index < _rows.Count ? _rows[index] : container.Content as FileRow;
             }
         }
 
@@ -517,22 +569,49 @@ public sealed class DetailsFileListView : UserControl
     }
 
     private HashSet<string> SelectedPathSet() =>
-        _selectedRows.Select(row => row.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        new(_selectedPathSet, StringComparer.OrdinalIgnoreCase);
 
     private void SetSelection(IEnumerable<FileRow> rows)
     {
-        var next = rows
-            .Where(row => _rows.Any(candidate => PathRules.PathsEqual(candidate.Path, row.Path)))
-            .DistinctBy(row => row.Path, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var wantedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (!string.IsNullOrEmpty(row.Path))
+            {
+                wantedPaths.Add(row.Path);
+            }
+        }
+
+        var next = new List<FileRow>(Math.Min(wantedPaths.Count, _rows.Count));
+        if (wantedPaths.Count > 0)
+        {
+            foreach (var candidate in _rows)
+            {
+                if (wantedPaths.Remove(candidate.Path))
+                {
+                    next.Add(candidate);
+                    if (wantedPaths.Count == 0)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
 
         _suppressSelectionChanged = true;
         try
         {
-            _list.SelectedItems.Clear();
-            foreach (var row in next)
+            if (next.Count == _rows.Count && _rows.Count > 0)
             {
-                _list.SelectedItems.Add(row);
+                _list.SelectAll();
+            }
+            else
+            {
+                _list.SelectedItems.Clear();
+                foreach (var row in next)
+                {
+                    _list.SelectedItems.Add(row);
+                }
             }
         }
         finally
@@ -561,8 +640,25 @@ public sealed class DetailsFileListView : UserControl
     private void SyncSelectedRowsFromList()
     {
         _selectedRows.Clear();
-        _selectedRows.AddRange(_list.SelectedItems.OfType<FileRow>());
-        _anchorIndex = _selectedRows.Count > 0 ? _rows.IndexOf(_selectedRows[^1]) : -1;
+        _selectedPathSet.Clear();
+        foreach (var row in _list.SelectedItems.OfType<FileRow>())
+        {
+            _selectedRows.Add(row);
+            _selectedPathSet.Add(row.Path);
+        }
+
+        if (_selectedRows.Count == 0)
+        {
+            _anchorIndex = -1;
+        }
+        else if (_selectedRows.Count == _rows.Count)
+        {
+            _anchorIndex = _rows.Count - 1;
+        }
+        else
+        {
+            _anchorIndex = _rows.IndexOf(_selectedRows[^1]);
+        }
     }
 
     private void OnListDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
@@ -673,17 +769,14 @@ public sealed class DetailsFileListView : UserControl
 
     private void UpdateRealizedContainers()
     {
-        foreach (var row in _rows)
+        foreach (var (_, item) in RealizedContainers(_list))
         {
-            if (_list.ContainerFromItem(row) is ListViewItem item)
+            item.Width = _viewportWidth;
+            item.MinWidth = 0;
+            if (FindDescendant<FileRowView>(item) is { } rowView)
             {
-                item.Width = _viewportWidth;
-                item.MinWidth = 0;
-                if (FindDescendant<FileRowView>(item) is { } rowView)
-                {
-                    rowView.Width = _viewportWidth;
-                    rowView.ApplyDetailsPresentation(_columns, _iconSize, _horizontalOffset);
-                }
+                rowView.Width = _viewportWidth;
+                rowView.ApplyDetailsPresentation(_columns, _iconSize, _horizontalOffset);
             }
         }
     }

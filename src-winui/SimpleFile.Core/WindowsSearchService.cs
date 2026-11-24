@@ -135,10 +135,13 @@ public sealed class WindowsSearchService
 
     private const string SelectColumns =
         "System.ItemName, System.ItemPathDisplay, System.Size, System.DateModified, " +
-        "System.FileExtension, System.ItemTypeText, System.Kind";
+        "System.FileExtension, System.ItemTypeText, System.Kind, System.FileAttributes";
 
     private const int DefaultMaxResults = 1000;
     private const int BatchSize = 32;
+    private const long CrawlScopeCacheTtlMs = 30_000;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long CachedAtMs, bool Indexed)> CrawlScopeCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     // ────────────────────────────────────────────────────────────────────
     //  Public API
@@ -156,21 +159,42 @@ public sealed class WindowsSearchService
             return false;
         }
 
+        if (folderPath.StartsWith(@"\\", StringComparison.Ordinal) || folderPath.StartsWith("//", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var url = ToFileUrl(folderPath);
+        var now = Environment.TickCount64;
+        if (CrawlScopeCache.TryGetValue(url, out var cached)
+            && now - cached.CachedAtMs < CrawlScopeCacheTtlMs)
+        {
+            return cached.Indexed;
+        }
+
+        bool indexed;
         try
         {
             var manager = (ISearchManager)new CSearchManager();
             var catalog = manager.GetCatalog(CatalogName);
             var scopeManager = catalog.GetCrawlScopeManager();
 
-            var url = ToFileUrl(folderPath);
             int hr = scopeManager.IncludedInCrawlScope(url, out int isIncluded);
-            return hr == 0 && isIncluded != 0;
+            indexed = hr == 0 && isIncluded != 0;
         }
         catch
         {
             // Windows Search service stopped, COM unavailable, etc.
-            return false;
+            indexed = false;
         }
+
+        if (CrawlScopeCache.Count > 256)
+        {
+            CrawlScopeCache.Clear();
+        }
+
+        CrawlScopeCache[url] = (now, indexed);
+        return indexed;
     }
 
     /// <summary>
@@ -184,75 +208,78 @@ public sealed class WindowsSearchService
     /// <param name="onBatch">Optional callback for streaming batch results to the UI.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Array of all matching search results.</returns>
-    public static async Task<SearchResult[]> SearchIndexAsync(
+    public static Task<SearchResult[]> SearchIndexAsync(
         string query,
         string folderScope,
         SearchOptions options,
         Action<SearchResult[]>? onBatch = null,
         CancellationToken ct = default)
     {
-        var results = new List<SearchResult>();
-
-        var (connectionString, sql) = BuildQuery(query, folderScope, options);
-        if (connectionString is null || sql is null)
+        return Task.Run(async () =>
         {
-            return [];
-        }
+            var results = new List<SearchResult>();
 
-        var maxResults = options.MaxResults ?? DefaultMaxResults;
-        var batch = new List<SearchResult>(BatchSize);
-
-        using var conn = new OleDbConnection(connectionString);
-        await conn.OpenAsync(ct).ConfigureAwait(false);
-
-        using var cmd = new OleDbCommand(sql, conn);
-        using var reader = (OleDbDataReader)await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-
-        while (await reader.ReadAsync(ct).ConfigureAwait(false))
-        {
-            if (results.Count >= maxResults)
+            var (connectionString, sql) = BuildQuery(query, folderScope, options);
+            if (connectionString is null || sql is null)
             {
-                break;
+                return [];
             }
 
-            ct.ThrowIfCancellationRequested();
+            var maxResults = options.MaxResults ?? DefaultMaxResults;
+            var batch = new List<SearchResult>(BatchSize);
 
-            var result = ReadRow(reader, options);
-            if (result is null)
+            using var conn = new OleDbConnection(connectionString);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+
+            using var cmd = new OleDbCommand(sql, conn);
+            using var reader = (OleDbDataReader)await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
-                continue;
+                if (results.Count >= maxResults)
+                {
+                    break;
+                }
+
+                ct.ThrowIfCancellationRequested();
+
+                var result = ReadRow(reader, options);
+                if (result is null)
+                {
+                    continue;
+                }
+
+                if (!PassesClientFilters(result, options))
+                {
+                    continue;
+                }
+
+                results.Add(result);
+                batch.Add(result);
+
+                if (batch.Count >= BatchSize)
+                {
+                    onBatch?.Invoke(batch.ToArray());
+                    batch.Clear();
+                }
             }
 
-            if (!PassesClientFilters(result, options))
-            {
-                continue;
-            }
-
-            results.Add(result);
-            batch.Add(result);
-
-            if (batch.Count >= BatchSize)
+            if (batch.Count > 0)
             {
                 onBatch?.Invoke(batch.ToArray());
-                batch.Clear();
             }
-        }
 
-        if (batch.Count > 0)
-        {
-            onBatch?.Invoke(batch.ToArray());
-        }
+            // Sort directories first, then by name, matching the Rust backend convention.
+            results.Sort((a, b) =>
+            {
+                int dirCompare = b.IsDir.CompareTo(a.IsDir);
+                return dirCompare != 0
+                    ? dirCompare
+                    : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+            });
 
-        // Sort directories first, then by name, matching the Rust backend convention.
-        results.Sort((a, b) =>
-        {
-            int dirCompare = b.IsDir.CompareTo(a.IsDir);
-            return dirCompare != 0
-                ? dirCompare
-                : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
-        });
-
-        return results.ToArray();
+            return results.ToArray();
+        }, ct);
     }
 
     // ────────────────────────────────────────────────────────────────────
@@ -369,10 +396,28 @@ public sealed class WindowsSearchService
                         (typeText.Contains("folder", StringComparison.OrdinalIgnoreCase) ||
                          string.IsNullOrEmpty(extension));
 
-            // Filter hidden files on the client side when not included.
-            if (!options.IncludeHidden && (name.StartsWith('.') || IsHiddenPath(path)))
+            // Filter hidden files from the indexed System.FileAttributes column (falling back
+            // to disk only when the indexer omitted the attribute column).
+            if (!options.IncludeHidden)
             {
-                return null;
+                if (name.StartsWith('.'))
+                {
+                    return null;
+                }
+
+                if (reader.FieldCount > 7 && !reader.IsDBNull(7))
+                {
+                    var rawAttrs = Convert.ToUInt64(reader.GetValue(7));
+                    const ulong hiddenOrSystem = (ulong)(FileAttributes.Hidden | FileAttributes.System);
+                    if ((rawAttrs & hiddenOrSystem) != 0)
+                    {
+                        return null;
+                    }
+                }
+                else if (IsHiddenPath(path))
+                {
+                    return null;
+                }
             }
 
             return new SearchResult

@@ -210,7 +210,10 @@ public sealed partial class MainWindow
         return _workspace.SortAscendingFor(pane) ? $"{label} ↑" : $"{label} ↓";
     }
 
-    private void SizeColumnToFit(string columnId, PaneId pane, bool save)
+    [ThreadStatic]
+    private static TextBlock? s_measureBlock;
+
+    private void SizeColumnToFit(string columnId, PaneId pane, bool save, bool applyLayout = true)
     {
         var columns = _workspace?.ColumnsFor(pane) ?? ColumnLayoutHost.For(pane);
         var column = columns.Find(columnId);
@@ -224,13 +227,18 @@ public sealed partial class MainWindow
         var headerText = column.Id == "date" ? "Date modified" : column.Label;
         var width = MeasureTextWidth(headerText, 11, semiBold: true) + extra;
         var fontSize = columnId == "name" ? 13d : 12d;
-        foreach (var row in rows.Take(EntryPresentation.DefaultProgressiveViewportCount))
+        var limit = Math.Min(rows.Count, EntryPresentation.DefaultProgressiveViewportCount);
+        for (var i = 0; i < limit; i++)
         {
-            width = Math.Max(width, MeasureTextWidth(row.ColumnText(columnId), fontSize, semiBold: false) + extra);
+            width = Math.Max(width, MeasureTextWidth(rows[i].ColumnText(columnId), fontSize, semiBold: false) + extra);
         }
 
         columns.Resize(columnId, width + 12);
-        ApplyColumnWidths();
+        if (applyLayout)
+        {
+            ApplyColumnWidths();
+        }
+
         if (save && _workspace is not null)
         {
             _ = RunUiActionAsync("Resize columns", () => _workspace.SaveUiSettingsAsync());
@@ -242,9 +250,10 @@ public sealed partial class MainWindow
         var columns = _workspace?.ColumnsFor(pane) ?? ColumnLayoutHost.For(pane);
         foreach (var column in columns.VisibleColumns)
         {
-            SizeColumnToFit(column.Id, pane, save: false);
+            SizeColumnToFit(column.Id, pane, save: false, applyLayout: false);
         }
 
+        ApplyColumnWidths();
         if (_workspace is not null)
         {
             _ = RunUiActionAsync("Resize columns", () => _workspace.SaveUiSettingsAsync());
@@ -253,13 +262,18 @@ public sealed partial class MainWindow
 
     private static double MeasureTextWidth(string text, double fontSize, bool semiBold)
     {
-        var block = new TextBlock
+        if (string.IsNullOrEmpty(text))
         {
-            Text = text,
-            FontSize = fontSize,
-            FontWeight = semiBold ? FontWeights.SemiBold : FontWeights.Normal,
+            return 0;
+        }
+
+        var block = s_measureBlock ??= new TextBlock
+        {
             TextWrapping = TextWrapping.NoWrap,
         };
+        block.Text = text;
+        block.FontSize = fontSize;
+        block.FontWeight = semiBold ? FontWeights.SemiBold : FontWeights.Normal;
         block.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
         return block.DesiredSize.Width;
     }

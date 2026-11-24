@@ -200,41 +200,45 @@ public sealed class DriveRow
 
 public sealed class QuickAccessRow
 {
+    private static readonly Lazy<(string Profile, string Desktop, string Documents, string Downloads, string Pictures)> CachedUserFolders =
+        new(LoadUserFolders);
+
     public string Name { get; set; } = "";
+    public string Path { get; set; } = "";
     public string Icon { get; set; } = "";
     public string Command { get; set; } = "";
-    public string Path { get; set; } = "";
 
     public static string ResolvePath(string command, string homePath)
+    {
+        var folders = CachedUserFolders.Value;
+        return command switch
+        {
+            "navigateHome" => string.IsNullOrWhiteSpace(homePath) ? folders.Profile : homePath,
+            "navigateDesktop" => folders.Desktop,
+            "navigateDocuments" => folders.Documents,
+            "navigateDownloads" => folders.Downloads,
+            "navigatePictures" => folders.Pictures,
+            "navigateRecycleBin" => PathRules.RecycleBinPath,
+            _ => homePath,
+        };
+    }
+
+    private static (string Profile, string Desktop, string Documents, string Downloads, string Pictures) LoadUserFolders()
     {
         try
         {
             var paths = Windows.Storage.UserDataPaths.GetDefault();
-            return command switch
-            {
-                "navigateHome" => string.IsNullOrWhiteSpace(homePath) ? paths.Profile : homePath,
-                "navigateDesktop" => paths.Desktop,
-                "navigateDocuments" => paths.Documents,
-                "navigateDownloads" => paths.Downloads,
-                "navigatePictures" => paths.Pictures,
-                "navigateRecycleBin" => PathRules.RecycleBinPath,
-                _ => homePath,
-            };
+            return (paths.Profile, paths.Desktop, paths.Documents, paths.Downloads, paths.Pictures);
         }
         catch
         {
-            return command switch
-            {
-                "navigateHome" => homePath,
-                "navigateDesktop" => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-                "navigateDocuments" => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                "navigateDownloads" => System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    "Downloads"),
-                "navigatePictures" => Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
-                "navigateRecycleBin" => PathRules.RecycleBinPath,
-                _ => homePath,
-            };
+            var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            return (
+                profile,
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                System.IO.Path.Combine(profile, "Downloads"),
+                Environment.GetFolderPath(Environment.SpecialFolder.MyPictures));
         }
     }
 }

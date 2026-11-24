@@ -272,6 +272,14 @@ fn is_remote_like_file_system(file_system: Option<&str>) -> bool {
     file_system.is_some_and(file_system_is_remote_like)
 }
 
+fn is_legacy_floppy_letter(letter: u8) -> bool {
+    matches!(letter.to_ascii_uppercase(), b'A' | b'B')
+}
+
+fn should_query_local_volume_details(drive_type: u32, letter: u8) -> bool {
+    drive_type == 3 || drive_type == 6 || (drive_type == 2 && !is_legacy_floppy_letter(letter))
+}
+
 fn should_query_disk_space(
     drive_type: u32,
     drive_status: &str,
@@ -284,7 +292,10 @@ fn should_query_disk_space(
         return false;
     }
 
-    drive_type == 3 || (drive_type == 4 && drive_status == "available")
+    drive_type == 3
+        || drive_type == 6
+        || (drive_type == 2 && file_system.is_some())
+        || (drive_type == 4 && drive_status == "available")
 }
 
 fn windows_drive_display_name(
@@ -294,7 +305,9 @@ fn windows_drive_display_name(
     fallback_name: &str,
 ) -> String {
     match drive_type {
-        3 => volume_label.map(str::to_string),
+        2 | 3 | 6 => volume_label
+            .filter(|label| !label.trim().is_empty())
+            .map(str::to_string),
         4 => remote_path.and_then(network_remote_display_name),
         _ => None,
     }
@@ -393,7 +406,7 @@ fn drive_info_from_pending(
     mode: DriveListMode,
     probe: Option<(String, Option<String>)>,
 ) -> DriveInfo {
-    let (volume_label, file_system) = if drive.dt == 3 {
+    let (volume_label, file_system) = if should_query_local_volume_details(drive.dt, drive.letter) {
         windows_volume_details(&drive.wide_path)
     } else {
         (None, None)

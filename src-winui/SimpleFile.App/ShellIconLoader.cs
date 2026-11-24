@@ -30,6 +30,8 @@ internal static class ShellIconLoader
     private const long MaxCachedIconBytes = 16L * 1024 * 1024;
     private static readonly BoundedLruCache<string, BitmapImage> Cache = new(
         MaxCachedIcons, MaxCachedIconBytes, StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, byte> InFlightLoads = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly SemaphoreSlim IconLoadGate = new(4, 4);
 
     public static BoundedLruCacheStats CacheStats => Cache.SnapshotStats();
 
@@ -46,11 +48,16 @@ internal static class ShellIconLoader
         return Cache.RemoveWhere(key => ThumbnailCacheKey.MatchesPathOrSubtree(key, path));
     }
 
-    public static BitmapImage? ForEntry(string path, bool isDirectory, int iconSize = 16)
+    public static BitmapImage? ForEntry(
+        string path,
+        bool isDirectory,
+        int iconSize = 16,
+        ulong knownSize = 0,
+        string? knownModified = null)
     {
         var requestedSize = NormalizeIconSize(iconSize);
         var fileSpecific = !isDirectory && ShouldUseActualFileIcon(path);
-        var cacheKey = ThumbnailCacheKey.CreateIconKey(path, isDirectory, fileSpecific, requestedSize);
+        var cacheKey = ThumbnailCacheKey.CreateIconKey(path, isDirectory, fileSpecific, requestedSize, knownSize, knownModified);
 
         try
         {
@@ -70,40 +77,56 @@ internal static class ShellIconLoader
 
             // File-specific icons (exe, lnk, ico...) need the real file: extract the pixels on the
             // thread pool, then build the XAML image on the UI thread and tell realized rows.
-            if (fileSpecific && DispatcherQueue.GetForCurrentThread() is { } dispatcher)
+            if (fileSpecific
+                && DispatcherQueue.GetForCurrentThread() is { } dispatcher
+                && InFlightLoads.TryAdd(cacheKey, 0))
             {
-                _ = Task.Run(() =>
+                _ = Task.Run(async () =>
                 {
                     byte[]? realPng;
                     try
                     {
-                        realPng = LoadFromSystemImageListPng(path, isDirectory, requestedSize, useAttributes: false)
-                            ?? LoadPng(path, isDirectory, requestedSize, useAttributes: false);
+                        await IconLoadGate.WaitAsync().ConfigureAwait(false);
+                        try
+                        {
+                            realPng = LoadFromSystemImageListPng(path, isDirectory, requestedSize, useAttributes: false)
+                                ?? LoadPng(path, isDirectory, requestedSize, useAttributes: false);
+                        }
+                        finally
+                        {
+                            IconLoadGate.Release();
+                        }
                     }
                     catch
                     {
+                        InFlightLoads.TryRemove(cacheKey, out _);
                         // Best-effort; keep the extension-based icon.
                         return;
                     }
 
                     if (realPng is null)
                     {
+                        InFlightLoads.TryRemove(cacheKey, out _);
                         return;
                     }
 
-                    dispatcher.TryEnqueue(() =>
+                    if (!dispatcher.TryEnqueue(() =>
                     {
+                        InFlightLoads.TryRemove(cacheKey, out _);
                         try
                         {
                             var realIcon = PngToBitmapImage(realPng, requestedSize);
                             Cache.Set(cacheKey, realIcon, ThumbnailCacheKey.EstimateDecodedBytes(requestedSize, cacheKey));
-                            Changed?.Invoke(null, EventArgs.Empty);
+                            Changed?.Invoke(path, EventArgs.Empty);
                         }
                         catch
                         {
                             // Keep the placeholder icon.
                         }
-                    });
+                    }))
+                    {
+                        InFlightLoads.TryRemove(cacheKey, out _);
+                    }
                 });
             }
 
@@ -472,25 +495,52 @@ internal static class ShellIconLoader
 
     private static Rectangle FindOpaqueBounds(Bitmap bitmap)
     {
-        var minX = bitmap.Width;
-        var minY = bitmap.Height;
+        var width = bitmap.Width;
+        var height = bitmap.Height;
+        if (width <= 0 || height <= 0)
+        {
+            return Rectangle.Empty;
+        }
+
+        var minX = width;
+        var minY = height;
         var maxX = -1;
         var maxY = -1;
 
-        for (var y = 0; y < bitmap.Height; y++)
+        var data = bitmap.LockBits(
+            new Rectangle(0, 0, width, height),
+            ImageLockMode.ReadOnly,
+            PixelFormat.Format32bppArgb);
+        try
         {
-            for (var x = 0; x < bitmap.Width; x++)
-            {
-                if (bitmap.GetPixel(x, y).A <= 8)
-                {
-                    continue;
-                }
+            var stride = Math.Abs(data.Stride);
+            var pixels = new byte[stride * height];
+            var scan0 = data.Stride >= 0
+                ? data.Scan0
+                : IntPtr.Add(data.Scan0, data.Stride * (height - 1));
+            Marshal.Copy(scan0, pixels, 0, pixels.Length);
 
-                minX = Math.Min(minX, x);
-                minY = Math.Min(minY, y);
-                maxX = Math.Max(maxX, x);
-                maxY = Math.Max(maxY, y);
+            for (var y = 0; y < height; y++)
+            {
+                var rowStart = y * stride;
+                for (var x = 0; x < width; x++)
+                {
+                    // Format32bppArgb is little-endian BGRA in memory; alpha is at +3.
+                    if (pixels[rowStart + (x * 4) + 3] <= 8)
+                    {
+                        continue;
+                    }
+
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
             }
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
         }
 
         return maxX < minX || maxY < minY

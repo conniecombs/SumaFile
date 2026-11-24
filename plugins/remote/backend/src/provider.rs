@@ -8,6 +8,14 @@ pub trait RemoteProvider: Send {
     fn transfer_buffer_bytes(&self) -> usize {
         super::transfer::TRANSFER_BUFFER_SIZE
     }
+
+    /// True when `list_directory` entries carry the same modification-time
+    /// precision and timezone as `stat`, so downloads can trust `source_entry`
+    /// without issuing an extra baseline `stat` round-trip.
+    fn list_matches_stat_precision(&self) -> bool {
+        true
+    }
+
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String>;
 
     /// Inspect one entry without following links. Providers with a stat command
@@ -27,6 +35,12 @@ pub trait RemoteProvider: Send {
     fn create_directory(&mut self, path: &str, name: &str) -> Result<FileEntry, String>;
 
     fn rename_entry(&mut self, path: &str, new_name: &str) -> Result<FileEntry, String>;
+
+    /// Rename without requiring a post-rename `stat` round-trip when the caller
+    /// does not need the resulting `FileEntry` (e.g. staging promotion).
+    fn rename_path(&mut self, path: &str, new_name: &str) -> Result<(), String> {
+        self.rename_entry(path, new_name).map(|_| ())
+    }
 
     fn delete_entries(&mut self, paths: &[String]) -> Result<Vec<String>, String>;
 
@@ -96,6 +110,9 @@ impl RemoteProvider for ReconnectingProvider {
     fn transfer_buffer_bytes(&self) -> usize {
         self.inner.transfer_buffer_bytes()
     }
+    fn list_matches_stat_precision(&self) -> bool {
+        self.inner.list_matches_stat_precision()
+    }
     fn stat(&mut self, path: &str) -> Result<Option<FileEntry>, String> {
         self.inner.stat(path)
     }
@@ -107,6 +124,9 @@ impl RemoteProvider for ReconnectingProvider {
     }
     fn rename_entry(&mut self, path: &str, name: &str) -> Result<FileEntry, String> {
         self.inner.rename_entry(path, name)
+    }
+    fn rename_path(&mut self, path: &str, name: &str) -> Result<(), String> {
+        self.inner.rename_path(path, name)
     }
     fn delete_entries(&mut self, paths: &[String]) -> Result<Vec<String>, String> {
         self.inner.delete_entries(paths)

@@ -211,18 +211,13 @@ public sealed partial class MainWindow
         var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
         var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
         var point = e.GetPosition(list);
-        foreach (var row in rows)
+        foreach (var (index, container) in DetailsFileListView.RealizedContainers(list))
         {
-            if (list.ContainerFromItem(row) is not ListViewItem container)
-            {
-                continue;
-            }
-
             var bounds = container.TransformToVisual(list)
                 .TransformBounds(new Windows.Foundation.Rect(0, 0, container.ActualWidth, container.ActualHeight));
             if (bounds.Contains(point))
             {
-                return row;
+                return index < rows.Count ? rows[index] : container.Content as FileRow;
             }
         }
 
@@ -1535,13 +1530,10 @@ public sealed partial class MainWindow
 
     private static void ClearDetailsItemWidths(ListView list)
     {
-        for (var index = 0; index < list.Items.Count; index++)
+        foreach (var (_, item) in DetailsFileListView.RealizedContainers(list))
         {
-            if (list.ContainerFromIndex(index) is ListViewItem item)
-            {
-                item.MinWidth = 0;
-                item.Width = double.NaN;
-            }
+            item.MinWidth = 0;
+            item.Width = double.NaN;
         }
     }
 

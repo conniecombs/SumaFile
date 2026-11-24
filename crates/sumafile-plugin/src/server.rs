@@ -24,6 +24,7 @@ use simplefile_ipc::frame::decode_length;
 use simplefile_ipc::rpc::JsonRpcResponse;
 use simplefile_ipc::{
     ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_PARSE, JSONRPC_VERSION,
+    MAX_FRAME_BYTES,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
@@ -34,6 +35,32 @@ use crate::host::BackendState;
 use crate::{Args, HostClient, PluginHandler, PluginInfo};
 
 const CANCEL_METHOD: &str = "cancel";
+/// Unhandshaken clients may only send a small `plugin.handshake` request; full
+/// payload frames are enabled only after handshake succeeds.
+const PRE_HANDSHAKE_MAX_FRAME_BYTES: usize = 64 * 1024;
+
+fn create_pipe_server(
+    path: &str,
+    first_instance: bool,
+    accepts_multiple_clients: bool,
+) -> Result<NamedPipeServer, String> {
+    let mut options = ServerOptions::new();
+    options.reject_remote_clients(true);
+    if first_instance {
+        options.first_pipe_instance(true);
+        options.write_dac(true);
+    }
+    if !accepts_multiple_clients {
+        options.max_instances(1);
+    }
+    let server = options
+        .create(path)
+        .map_err(|e| format!("Could not create pipe {path}: {e}"))?;
+    if first_instance {
+        apply_creator_only_dacl(&server)?;
+    }
+    Ok(server)
+}
 
 /// Serves `\\.\pipe\<args.pipe_name>` until the last client disconnects.
 ///
@@ -51,11 +78,7 @@ pub async fn serve(
     let state = Arc::new(BackendState::default());
 
     if !accepts_multiple_clients {
-        let server = ServerOptions::new()
-            .first_pipe_instance(true)
-            .max_instances(1)
-            .create(&path)
-            .map_err(|e| format!("Could not create pipe {path}: {e}"))?;
+        let server = create_pipe_server(&path, true, false)?;
         server
             .connect()
             .await
@@ -65,10 +88,7 @@ pub async fn serve(
     }
 
     // Unlimited instances is the default when `max_instances` is not set.
-    let mut listener = ServerOptions::new()
-        .first_pipe_instance(true)
-        .create(&path)
-        .map_err(|e| format!("Could not create pipe {path}: {e}"))?;
+    let mut listener = create_pipe_server(&path, true, true)?;
     let (done_sender, mut done_receiver) = mpsc::unbounded_channel::<()>();
     let mut active = 0usize;
     loop {
@@ -81,9 +101,7 @@ pub async fn serve(
                 }
             }
             connected = listener.connect() => {
-                let next = ServerOptions::new()
-                    .create(&path)
-                    .map_err(|e| format!("Could not create pipe {path}: {e}"))?;
+                let next = create_pipe_server(&path, false, true)?;
                 let server = std::mem::replace(&mut listener, next);
                 if connected.is_err() {
                     // That client vanished mid-accept; keep listening.
@@ -108,11 +126,15 @@ enum Incoming {
     Malformed,
 }
 
-/// Reads one frame; `None` at end of stream or on an unrecoverable error.
-async fn read_incoming(reader: &mut (impl AsyncRead + Unpin)) -> Option<Incoming> {
+/// Reads one frame up to `max_len` bytes; `None` at end of stream or on an
+/// unrecoverable or oversized-frame error.
+async fn read_incoming(reader: &mut (impl AsyncRead + Unpin), max_len: usize) -> Option<Incoming> {
     let mut header = [0u8; 4];
     reader.read_exact(&mut header).await.ok()?;
     let length = decode_length(header).ok()? as usize;
+    if length > max_len {
+        return None;
+    }
     let mut payload = vec![0u8; length];
     reader.read_exact(&mut payload).await.ok()?;
     Some(match serde_json::from_slice(&payload) {
@@ -180,7 +202,16 @@ async fn run_connection(
         state,
         handshaken: false,
     };
-    while let Some(incoming) = read_incoming(&mut reader).await {
+    while let Some(incoming) = read_incoming(
+        &mut reader,
+        if connection.handshaken {
+            MAX_FRAME_BYTES as usize
+        } else {
+            PRE_HANDSHAKE_MAX_FRAME_BYTES
+        },
+    )
+    .await
+    {
         match incoming {
             Incoming::Message(message) => connection.route(message),
             Incoming::Malformed => connection.reply_null_id(ERR_PARSE, "Parse error"),
@@ -246,11 +277,18 @@ impl Connection {
 
     fn request(&mut self, id: Value, method: &str, params: Value) {
         if method == HANDSHAKE_METHOD {
-            self.handshaken = true;
             if is_service_client(&params) {
+                self.handshaken = true;
                 self.host.set_service_mode();
+            } else if self.host.set_host_connection() {
+                self.handshaken = true;
             } else {
-                self.host.set_host_connection();
+                self.reply(JsonRpcResponse::error(
+                    Some(id),
+                    ERR_INVALID_REQUEST,
+                    "host connection is already established",
+                ));
+                return;
             }
             self.reply(JsonRpcResponse::result(
                 Some(id),
@@ -316,4 +354,131 @@ impl Connection {
 
 fn operation_id(params: &Value) -> Option<&str> {
     params.get("operationId").and_then(Value::as_str)
+}
+
+fn apply_creator_only_dacl(server: &NamedPipeServer) -> Result<(), String> {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    type Handle = *mut c_void;
+
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_USER_CLASS: i32 = 1;
+    const SDDL_REVISION_1: u32 = 1;
+    const DACL_SECURITY_INFORMATION: u32 = 0x0000_0004;
+
+    #[repr(C)]
+    struct SidAndAttributes {
+        sid: *mut c_void,
+        attributes: u32,
+    }
+
+    #[repr(C)]
+    struct TokenUser {
+        user: SidAndAttributes,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> Handle;
+        fn CloseHandle(handle: Handle) -> i32;
+        fn LocalFree(mem: *mut c_void) -> *mut c_void;
+    }
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(
+            process_handle: Handle,
+            desired_access: u32,
+            token_handle: *mut Handle,
+        ) -> i32;
+        fn GetTokenInformation(
+            token_handle: Handle,
+            token_information_class: i32,
+            token_information: *mut c_void,
+            token_information_length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+        fn ConvertSidToStringSidW(sid: *mut c_void, string_sid: *mut *mut u16) -> i32;
+        fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            string_sd: *const u16,
+            string_sd_revision: u32,
+            security_descriptor: *mut *mut c_void,
+            security_descriptor_size: *mut u32,
+        ) -> i32;
+        fn SetKernelObjectSecurity(
+            handle: Handle,
+            security_information: u32,
+            security_descriptor: *mut c_void,
+        ) -> i32;
+    }
+
+    // SAFETY: standard Win32 token query, SDDL conversion, and DACL update on
+    // our newly created `NamedPipeServer` handle before any client connects.
+    unsafe {
+        let mut token: Handle = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err("failed to open process token for plugin pipe DACL".to_string());
+        }
+
+        let mut needed = 0u32;
+        GetTokenInformation(
+            token,
+            TOKEN_USER_CLASS,
+            std::ptr::null_mut(),
+            0,
+            &mut needed,
+        );
+        let mut buffer = vec![0u8; needed.max(1) as usize];
+        if GetTokenInformation(
+            token,
+            TOKEN_USER_CLASS,
+            buffer.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        ) == 0
+        {
+            CloseHandle(token);
+            return Err("failed to query process user SID for plugin pipe DACL".to_string());
+        }
+        CloseHandle(token);
+
+        let user = &*(buffer.as_ptr() as *const TokenUser);
+        let mut sid_string: *mut u16 = std::ptr::null_mut();
+        if ConvertSidToStringSidW(user.user.sid, &mut sid_string) == 0 {
+            return Err("failed to convert user SID for plugin pipe DACL".to_string());
+        }
+        let sid = {
+            let mut len = 0usize;
+            while *sid_string.add(len) != 0 {
+                len += 1;
+            }
+            String::from_utf16_lossy(std::slice::from_raw_parts(sid_string, len))
+        };
+        LocalFree(sid_string.cast());
+
+        let sddl = format!("D:P(A;;GA;;;{sid})");
+        let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut sd: *mut c_void = std::ptr::null_mut();
+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl_wide.as_ptr(),
+            SDDL_REVISION_1,
+            &mut sd,
+            std::ptr::null_mut(),
+        ) == 0
+        {
+            return Err("failed to build creator-only security descriptor".to_string());
+        }
+
+        let ok = SetKernelObjectSecurity(
+            server.as_raw_handle() as Handle,
+            DACL_SECURITY_INFORMATION,
+            sd,
+        );
+        LocalFree(sd);
+        if ok == 0 {
+            return Err("failed to apply creator-only DACL to plugin named pipe".to_string());
+        }
+    }
+    Ok(())
 }

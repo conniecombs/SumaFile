@@ -343,11 +343,16 @@ pub(crate) fn copy_selection(
         manifests.push(manifest);
     }
 
+    let actual_checkers = if initial_dirs.is_empty() {
+        0
+    } else {
+        checker_count
+    };
     let dir_queue = (
         Mutex::new(DirQueue {
+            done: initial_dirs.is_empty(),
             dirs: initial_dirs,
             active_checkers: 0,
-            done: false,
         }),
         Condvar::new(),
     );
@@ -363,7 +368,7 @@ pub(crate) fn copy_selection(
         .map(|merged| merged.then(super::TransferChanges::default))
         .collect();
     let copy_res = std::thread::scope(|march_scope| {
-        for _ in 0..checker_count {
+        for _ in 0..actual_checkers {
             let dir_queue = &dir_queue;
             let march_state = &march_state;
             let march_stop = &march_stop;

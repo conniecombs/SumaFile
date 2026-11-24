@@ -71,6 +71,9 @@ pub(crate) fn volume_key(path: &Path) -> String {
 }
 
 /// Whether a move between these paths can be a rename (same volume prefix).
+/// Mixing a plain path with a verbatim `\\?\` prefix intentionally stays on
+/// the staged copy + verified-delete path (used by single-drive tests to
+/// exercise cross-volume streaming).
 pub(crate) fn same_volume(source: &Path, destination: &Path) -> bool {
     source.components().next() == destination.components().next()
 }

@@ -35,6 +35,12 @@ public sealed partial class MainWindow
             return;
         }
 
+        if (_workspace.ActiveTagFilter == tag.Id)
+        {
+            ClearTagFilter();
+            return;
+        }
+
         _workspace.SetTagFilter(tag.Id);
         SetStatusText($"Showing items labeled {tag.Name}");
     }
@@ -82,7 +88,10 @@ public sealed partial class MainWindow
         }
 
         _workspace.ToggleTreeExpanded(path);
-        await RunUiActionAsync("Folder tree", () => _workspace.LoadTreeChildrenAsync(path));
+        if (_workspace.IsTreeExpanded(path))
+        {
+            await RunUiActionAsync("Folder tree", () => _workspace.LoadTreeChildrenAsync(path));
+        }
     }
 
     private void OnAddBookmark(object sender, RoutedEventArgs e)

@@ -235,6 +235,7 @@
                                 <ListView.ItemTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" Padding="0,1" Spacing="4">
+                                            <Border Width="{Binding IndentWidth}" />
                                             <Button
                                                 Style="{StaticResource SfSidebarIconButtonStyle}"
                                                 Width="20"
@@ -244,10 +245,15 @@
                                                 HorizontalAlignment="Center"
                                                 Background="Transparent"
                                                 BorderThickness="0"
+                                                IsHitTestVisible="{Binding HasChildren}"
                                                 AutomationProperties.Name="Expand or collapse folder"
                                                 Click="OnFolderTreeToggle"
                                                 Tag="{Binding Path}">
-                                                <FontIcon FontFamily="{StaticResource SfIconFont}" FontSize="8" Glyph="&#xE76C;" />
+                                                <FontIcon
+                                                    FontFamily="{StaticResource SfIconFont}"
+                                                    FontSize="8"
+                                                    Glyph="{Binding ChevronGlyph}"
+                                                    Opacity="{Binding ChevronOpacity}" />
                                             </Button>
                                             <local:ShellIconImage
                                                 Width="16"

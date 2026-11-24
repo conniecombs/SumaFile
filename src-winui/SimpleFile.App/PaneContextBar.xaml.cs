@@ -14,12 +14,26 @@ public sealed partial class PaneContextBar : UserControl
     internal Button ReturnButton => ReturnFolderButton;
     internal Button SaveSmartFolderBannerButton => SaveSmartFolderButton;
 
-    public void Update(string filter, int visibleCount, int totalCount, bool searching, string query, string root, bool running)
+    public void Update(
+        string filter,
+        int visibleCount,
+        int totalCount,
+        bool searching,
+        string query,
+        string root,
+        bool running,
+        string? activeLabel = null)
     {
-        var filtered = !string.IsNullOrWhiteSpace(filter);
+        var hasTextFilter = !string.IsNullOrWhiteSpace(filter);
+        var hasLabelFilter = !string.IsNullOrWhiteSpace(activeLabel);
+        var filtered = hasTextFilter || hasLabelFilter;
         Visibility = filtered || searching ? Visibility.Visible : Visibility.Collapsed;
         FilterRow.Visibility = filtered ? Visibility.Visible : Visibility.Collapsed;
-        FilterText.Text = $"Filter: {filter}";
+        FilterText.Text = hasTextFilter && hasLabelFilter
+            ? $"Filter: {filter} · Label: {activeLabel}"
+            : hasLabelFilter
+                ? $"Label: {activeLabel}"
+                : $"Filter: {filter}";
         ToolTipService.SetToolTip(FilterText, FilterText.Text);
         FilterCount.Text = searching ? "Applies when you return to the folder" : $"{visibleCount:N0} of {totalCount:N0} items";
         SearchRow.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;

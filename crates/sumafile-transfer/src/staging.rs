@@ -1,29 +1,72 @@
 use crate::path_conflict::{is_already_exists_error, path_exists_no_follow, rename_exclusive};
 use crate::reliability::{Failure, Retry};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileIdentity(pub u64, pub u64);
+/// Legacy Win32 64-bit `FILE_INVALID_FILE_ID` (`0xFFFF_FFFF_FFFF_FFFF`), returned by
+/// `GetFileInformationByHandle` on ReFS / Dev Drive files whose ID exceeds 64 bits.
+pub const INVALID_LEGACY_FILE_ID_64: u64 = u64::MAX;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FileIdentity(pub u64, pub u128);
+
+impl Serialize for FileIdentity {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let low = self.1 as u64;
+        let high = (self.1 >> 64) as u64;
+        if high == 0 && low != INVALID_LEGACY_FILE_ID_64 {
+            (self.0, low).serialize(serializer)
+        } else {
+            (self.0, low, high).serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FileIdentity {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WireIdentity {
+            Legacy64((u64, u64)),
+            Full128((u64, u64, u64)),
+        }
+
+        match WireIdentity::deserialize(deserializer)? {
+            WireIdentity::Legacy64((volume, low)) => {
+                if low == 0 || low == INVALID_LEGACY_FILE_ID_64 {
+                    return Err(serde::de::Error::custom(
+                        "invalid legacy 64-bit file identity sentinel",
+                    ));
+                }
+                Ok(FileIdentity(volume, u128::from(low)))
+            }
+            WireIdentity::Full128((volume, low, high)) => {
+                let index = u128::from(low) | (u128::from(high) << 64);
+                if index == 0 {
+                    return Err(serde::de::Error::custom("zero 128-bit file identity"));
+                }
+                Ok(FileIdentity(volume, index))
+            }
+        }
+    }
+}
 
 pub fn file_identity(path: &Path) -> Result<FileIdentity, String> {
     #[cfg(windows)]
     {
         let file = open_for_identity(path)?;
-        let (volume, index) = file_id_from_handle(&file)
-            .ok_or_else(|| format!("Cannot establish file identity [{}]", path.display()))?;
-        Ok(FileIdentity(volume as u64, index))
+        file_id_from_handle(&file)
+            .ok_or_else(|| format!("Cannot establish file identity [{}]", path.display()))
     }
     #[cfg(not(windows))]
     {
         use std::os::unix::fs::MetadataExt;
         let meta = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-        Ok(FileIdentity(meta.dev(), meta.ino()))
+        Ok(FileIdentity(meta.dev(), u128::from(meta.ino())))
     }
 }
 
@@ -39,7 +82,7 @@ pub struct SourceVersion {
     #[cfg(windows)]
     pub last_write_time: u64,
     #[cfg(windows)]
-    pub file_id: Option<(u32, u64)>,
+    pub file_id: Option<FileIdentity>,
     pub content_hash: Option<[u8; 32]>,
 }
 
@@ -93,20 +136,41 @@ pub fn preallocate_file(file: &fs::File, size: u64) {
 pub fn preallocate_file(_file: &fs::File, _size: u64) {}
 
 #[cfg(windows)]
-pub fn file_id_from_handle(file: &fs::File) -> Option<(u32, u64)> {
+pub fn file_id_from_handle(file: &fs::File) -> Option<FileIdentity> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO,
     };
+
+    let mut extended: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    let ok_ex = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle() as _,
+            FileIdInfo,
+            (&mut extended as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if ok_ex != 0 {
+        let index = u128::from_le_bytes(extended.FileId.Identifier);
+        if index != 0 {
+            return Some(FileIdentity(extended.VolumeSerialNumber, index));
+        }
+    }
 
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
     let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) };
     if ok != 0 {
         let index = ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
-        Some((info.dwVolumeSerialNumber, index))
-    } else {
-        None
+        if index != 0 && index != INVALID_LEGACY_FILE_ID_64 {
+            return Some(FileIdentity(
+                u64::from(info.dwVolumeSerialNumber),
+                u128::from(index),
+            ));
+        }
     }
+    None
 }
 
 /// Read size for verification passes: large enough to keep a network share or
@@ -706,6 +770,17 @@ pub fn resumable_staging_path_for(
     staging_path_with_salt(final_path, Some(operation_id))
 }
 
+fn fnv1a_64(chunks: &[&[u8]]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for chunk in chunks {
+        for &byte in *chunk {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    hash
+}
+
 fn staging_path_with_salt(final_path: &Path, salt: Option<&str>) -> Result<PathBuf, String> {
     let parent = final_path
         .parent()
@@ -714,12 +789,11 @@ fn staging_path_with_salt(final_path: &Path, salt: Option<&str>) -> Result<PathB
         .file_name()
         .ok_or_else(|| "Cannot get destination file name".to_string())?
         .to_string_lossy();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    final_path.to_string_lossy().hash(&mut hasher);
-    if let Some(salt) = salt {
-        salt.hash(&mut hasher);
-    }
-    let key = hasher.finish();
+    let path_str = final_path.to_string_lossy();
+    let key = match salt {
+        Some(salt) => fnv1a_64(&[path_str.as_bytes(), &[0xff], salt.as_bytes()]),
+        None => fnv1a_64(&[path_str.as_bytes()]),
+    };
 
     Ok(parent.join(format!(".{file_name}.{key:016x}.sumafile-partial")))
 }

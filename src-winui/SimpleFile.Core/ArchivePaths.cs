@@ -86,6 +86,20 @@ public static class ArchivePaths
         return EndsWithAny(name, BrowsableBuiltInExtensions) || EngineFormatFor(name) is not null;
     }
 
+    /// <summary>True when <paramref name="path"/> points to or inside a browsable archive file rather than a real directory.</summary>
+    public static bool IsInsideArchivePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        var hasArchiveSegment = path
+            .Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries)
+            .Any(IsBrowsableArchive);
+        return hasArchiveSegment && !Directory.Exists(path);
+    }
+
     /// <summary>An archive served by a plugin engine rather than a built-in one.</summary>
     public static bool IsEngineArchive(string? path)
     {

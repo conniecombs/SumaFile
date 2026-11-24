@@ -53,6 +53,29 @@ public static class EntryPresentation
             return "";
         }
 
+        // Fast path for the Rust backend's standard "yyyy-MM-dd HH:mm" local timestamp format,
+        // avoiding two full DateTimeOffset.TryParse state-machine runs per row.
+        if (value.Length == 16
+            && value[4] == '-'
+            && value[7] == '-'
+            && value[10] == ' '
+            && value[13] == ':'
+            && int.TryParse(value.AsSpan(0, 4), NumberStyles.None, CultureInfo.InvariantCulture, out var year)
+            && int.TryParse(value.AsSpan(5, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var month)
+            && int.TryParse(value.AsSpan(8, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var day)
+            && int.TryParse(value.AsSpan(11, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var hour)
+            && int.TryParse(value.AsSpan(14, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var minute)
+            && year is >= 1 and <= 9999
+            && month is >= 1 and <= 12
+            && hour <= 23
+            && minute <= 59
+            && day >= 1
+            && day <= DateTime.DaysInMonth(year, month))
+        {
+            return new DateTime(year, month, day, hour, minute, 0, DateTimeKind.Local)
+                .ToString("g", CultureInfo.CurrentCulture);
+        }
+
         if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var date)
             && !DateTimeOffset.TryParse(value, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out date))
         {

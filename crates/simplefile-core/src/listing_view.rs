@@ -599,6 +599,9 @@ fn same_entry(left: &FileEntry, right: &FileEntry) -> bool {
         && left.extension == right.extension
         && left.permissions == right.permissions
         && left.symlink_target == right.symlink_target
+        && left.created == right.created
+        && left.accessed == right.accessed
+        && left.attributes == right.attributes
 }
 
 #[cfg(test)]

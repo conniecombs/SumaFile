@@ -215,28 +215,27 @@ public sealed partial class FileRowView : UserControl
     {
         var normalizedIconSize = UiSettings.NormalizeIconSize(iconSize);
         var normalizedOffset = Math.Max(0, horizontalOffset);
-        var nextColumns = columns
-            .Select(column => new FileListColumn(
-                column.Id,
-                column.Label,
-                column.Sort,
-                column.Width,
-                column.MinWidth,
-                column.MaxWidth))
-            .ToArray();
-        var nextKey = $"details:{normalizedIconSize}:{ColumnSignature(nextColumns)}";
+        var nextKey = $"details:{normalizedIconSize}:{ColumnSignature(columns)}";
         var structureChanged = !string.Equals(_explicitView, "details", StringComparison.Ordinal)
             || _explicitIconSize != normalizedIconSize
             || !string.Equals(_explicitPresentationKey, nextKey, StringComparison.Ordinal);
 
         _explicitView = "details";
         _explicitIconSize = normalizedIconSize;
-        _explicitColumns = nextColumns;
         _explicitHorizontalOffset = normalizedOffset;
         _explicitPresentationKey = nextKey;
 
-        if (structureChanged)
+        if (structureChanged || _explicitColumns is null)
         {
+            _explicitColumns = columns
+                .Select(column => new FileListColumn(
+                    column.Id,
+                    column.Label,
+                    column.Sort,
+                    column.Width,
+                    column.MinWidth,
+                    column.MaxWidth))
+                .ToArray();
             _renderedColumnKey = "";
             ApplyRow();
             return;
@@ -282,11 +281,12 @@ public sealed partial class FileRowView : UserControl
 
     private void OnIconsChanged(object? sender, EventArgs e)
     {
-        // A real file icon arrived; re-read it from the cache without restarting thumbnails.
+        // A real file icon arrived; re-read it from the cache only for the matching row.
         if (Row is { } row && _iconImage is not null
+            && (sender is not string changedPath || PathRules.PathsEqual(changedPath, row.Path))
             && !FileListThumbnailHost.ShouldUseThumbnails(row, IconSizeFor(row.Pane)))
         {
-            _iconImage.Source = ShellIconLoader.ForEntry(row.Path, row.IsDir, IconSizeFor(row.Pane));
+            _iconImage.Source = ShellIconLoader.ForEntry(row.Path, row.IsDir, IconSizeFor(row.Pane), row.Size, row.ModifiedText);
         }
     }
 
@@ -440,7 +440,7 @@ public sealed partial class FileRowView : UserControl
         _iconImage.Width = iconSize;
         _iconImage.Height = iconSize;
         CancelThumbnailLoad();
-        _iconImage.Source = ShellIconLoader.ForEntry(row.Path, row.IsDir, iconSize);
+        _iconImage.Source = ShellIconLoader.ForEntry(row.Path, row.IsDir, iconSize, row.Size, row.ModifiedText);
 
         if (!FileListThumbnailHost.ShouldUseThumbnails(row, iconSize))
         {
@@ -925,6 +925,9 @@ public sealed partial class FileRowView : UserControl
     private static string ColumnSignature(IReadOnlyList<FileListColumn> columns) =>
         string.Join('\u001f', columns.Select(column => $"{column.Id}:{column.Width:0.###}"));
 
+    [ThreadStatic]
+    private static Dictionary<string, SolidColorBrush>? s_tagBrushCache;
+
     private static Brush? TryBrush(string color)
     {
         if (string.IsNullOrWhiteSpace(color))
@@ -940,10 +943,23 @@ public sealed partial class FileRowView : UserControl
                 return null;
             }
 
+            var cache = s_tagBrushCache ??= new Dictionary<string, SolidColorBrush>(StringComparer.OrdinalIgnoreCase);
+            if (cache.TryGetValue(hex, out var cached))
+            {
+                return cached;
+            }
+
             var r = Convert.ToByte(hex[..2], 16);
             var g = Convert.ToByte(hex[2..4], 16);
             var b = Convert.ToByte(hex[4..6], 16);
-            return new SolidColorBrush(Color.FromArgb(255, r, g, b));
+            if (cache.Count >= 128)
+            {
+                cache.Clear();
+            }
+
+            var brush = new SolidColorBrush(Color.FromArgb(255, r, g, b));
+            cache[hex] = brush;
+            return brush;
         }
         catch
         {

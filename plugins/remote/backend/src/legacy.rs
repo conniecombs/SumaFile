@@ -99,46 +99,47 @@ pub fn import_legacy_profiles(
     };
 
     let marker = legacy_marker_key(LEGACY_PROFILES_IMPORTED, legacy_db);
-    let mut connection = store.connection()?;
-    // IMMEDIATE takes the write lock before the marker is read, so a second
-    // backend importing at the same time waits (busy_timeout), then sees the marker.
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| error.to_string())?;
-    let already = transaction
-        .query_row(
-            "SELECT 1 FROM plugin_meta WHERE key = ?1",
-            [&marker],
-            |_| Ok(()),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?
-        .is_some();
-    if already {
-        return Ok(LegacyImport::AlreadyImported);
-    }
-
-    let mut imported = 0;
-    {
-        let placeholders = (1..=LEGACY_COLUMNS.len())
-            .map(|index| format!("?{index}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let mut insert = transaction
-            .prepare(&format!(
-                "INSERT OR IGNORE INTO remote_profiles ({}) VALUES ({placeholders})",
-                LEGACY_COLUMNS.join(", ")
-            ))
+    store.with_connection(|connection| {
+        // IMMEDIATE takes the write lock before the marker is read, so a second
+        // backend importing at the same time waits (busy_timeout), then sees the marker.
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
-        for row in &rows {
-            imported += insert
-                .execute(rusqlite::params_from_iter(row.iter()))
-                .map_err(|error| error.to_string())?;
+        let already = transaction
+            .query_row(
+                "SELECT 1 FROM plugin_meta WHERE key = ?1",
+                [&marker],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .is_some();
+        if already {
+            return Ok(LegacyImport::AlreadyImported);
         }
-    }
-    set_meta_on(&transaction, &marker, &Utc::now().to_rfc3339())?;
-    transaction.commit().map_err(|error| error.to_string())?;
-    Ok(LegacyImport::Imported(imported))
+
+        let mut imported = 0;
+        {
+            let placeholders = (1..=LEGACY_COLUMNS.len())
+                .map(|index| format!("?{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut insert = transaction
+                .prepare(&format!(
+                    "INSERT OR IGNORE INTO remote_profiles ({}) VALUES ({placeholders})",
+                    LEGACY_COLUMNS.join(", ")
+                ))
+                .map_err(|error| error.to_string())?;
+            for row in &rows {
+                imported += insert
+                    .execute(rusqlite::params_from_iter(row.iter()))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        set_meta_on(&transaction, &marker, &Utc::now().to_rfc3339())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(LegacyImport::Imported(imported))
+    })
 }
 
 /// The `transfer.policy` JSON from the legacy settings table, if any.

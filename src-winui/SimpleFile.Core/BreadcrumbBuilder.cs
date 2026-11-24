@@ -32,6 +32,35 @@ public static class BreadcrumbBuilder
             ];
         }
 
+        if (PathRules.TrySplitUncRoot(path, out var uncRoot, out var remainder))
+        {
+            var uncParts = string.IsNullOrEmpty(remainder)
+                ? []
+                : remainder.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+            var uncSegments = new List<BreadcrumbSegment>(1 + uncParts.Length)
+            {
+                new BreadcrumbSegment
+                {
+                    Label = uncRoot,
+                    Path = uncRoot,
+                    Current = uncParts.Length == 0,
+                },
+            };
+            var accumulated = uncRoot;
+            for (var index = 0; index < uncParts.Length; index++)
+            {
+                accumulated = PathRules.JoinPath(accumulated, uncParts[index]);
+                uncSegments.Add(new BreadcrumbSegment
+                {
+                    Label = uncParts[index],
+                    Path = accumulated,
+                    Current = index == uncParts.Length - 1,
+                });
+            }
+
+            return uncSegments;
+        }
+
         var parts = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
         var currentAccumulated = "";
         var segments = new List<BreadcrumbSegment>(parts.Length);

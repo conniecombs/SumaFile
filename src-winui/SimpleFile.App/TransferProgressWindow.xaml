@@ -39,8 +39,10 @@
             x:Name="TransferList"
             Grid.Row="1"
             BorderThickness="0"
+            ContainerContentChanging="OnTransferContainerContentChanging"
             IsItemClickEnabled="False"
-            SelectionMode="None">
+            SelectionMode="None"
+            SizeChanged="OnTransferListSizeChanged">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -55,7 +57,8 @@
                         Background="{ThemeResource SfBgPrimaryBrush}"
                         BorderBrush="{ThemeResource SfBorderBrush}"
                         BorderThickness="1"
-                        CornerRadius="8">
+                        CornerRadius="8"
+                        SizeChanged="OnTransferCardSizeChanged">
                         <Grid RowSpacing="8">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -97,8 +100,17 @@
                                 Header="Details"
                                 IsExpanded="False"
                                 HorizontalAlignment="Stretch"
-                                HorizontalContentAlignment="Stretch">
-                            <StackPanel Spacing="8">
+                                HorizontalContentAlignment="Stretch"
+                                VerticalAlignment="Stretch"
+                                VerticalContentAlignment="Stretch"
+                                Collapsed="OnDetailsExpanderCollapsed"
+                                Expanding="OnDetailsExpanderExpanding"
+                                SizeChanged="OnDetailsExpanderSizeChanged">
+                            <Grid RowSpacing="8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
                                 <Grid ColumnSpacing="8">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding TuningText}" TextWrapping="Wrap" FontSize="12"
@@ -111,7 +123,12 @@
                                 <!-- The files being copied now, under the folder each comes from. Each line is one
                                      row high: a folder or a name too long for it is shortened by FittedText, and
                                      the progress column has a fixed width so the figures line up. -->
-                                <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                                <ScrollViewer
+                                    Grid.Row="1"
+                                    MinHeight="96"
+                                    VerticalAlignment="Stretch"
+                                    HorizontalScrollBarVisibility="Disabled"
+                                    VerticalScrollBarVisibility="Auto">
                                     <ItemsControl Margin="0,0,14,0" ItemsSource="{Binding ActiveFolders}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
@@ -153,7 +170,7 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </ScrollViewer>
-                            </StackPanel>
+                            </Grid>
                             </Expander>
 
                             <Grid Grid.Row="1">

@@ -43,12 +43,23 @@ internal static partial class OpenWithApplicationDiscovery
         ".odp", ".ppt", ".pptx"
     ];
 
+    private const long DiscoveryCacheTtlMs = 60_000;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long CachedAtMs, IReadOnlyList<OpenWithApplication> Apps)> DiscoveryCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public static IReadOnlyList<OpenWithApplication> ApplicationsForPath(string path)
     {
         var extension = OpenWithPreferences.NormalizeExtension(Path.GetExtension(path));
         if (extension == "*" || OpenWithPolicy.IsDeniedTargetExtension(extension))
         {
             return [];
+        }
+
+        var now = Environment.TickCount64;
+        if (DiscoveryCache.TryGetValue(extension, out var cached)
+            && now - cached.CachedAtMs < DiscoveryCacheTtlMs)
+        {
+            return cached.Apps;
         }
 
         var apps = new List<OpenWithApplication>();
@@ -64,6 +75,12 @@ internal static partial class OpenWithApplicationDiscovery
 
         AddSuggestedApplications(extension, apps, seen);
 
+        if (DiscoveryCache.Count > 256)
+        {
+            DiscoveryCache.Clear();
+        }
+
+        DiscoveryCache[extension] = (now, apps);
         return apps;
     }
 

@@ -63,7 +63,7 @@ fn extract_engine_archive(
         .iter()
         .map(|(_, relative)| relative.clone())
         .collect();
-    let root_remap = top_level_remap(&dest_canonical, &relative_paths);
+    let root_remap = top_level_remap(&dest_canonical, &relative_paths)?;
 
     let staging = ArchiveStaging::create(&dest_canonical)?.produced_by(engine.name());
     engine.extract(archive, staging.path(), ctx)?;
@@ -84,7 +84,7 @@ fn extract_engine_archive(
         if let Some(parent) = outpath.parent() {
             create_dir_all(parent)?;
         }
-        let final_outpath = unique_file_path_if_needed(&outpath);
+        let final_outpath = unique_file_path_if_needed(&outpath)?;
         ensure_extract_path_within_destination(&dest_canonical, &final_outpath)?;
         staging.move_entry(&relative, &final_outpath)?;
     }
@@ -126,7 +126,7 @@ pub(super) fn extract_zip(path: &str, dest: &Path) -> Result<(), String> {
         planned_paths.push(zip_entry_relative_path(&name)?);
     }
 
-    let root_remap = top_level_remap(&dest_canonical, &planned_paths);
+    let root_remap = top_level_remap(&dest_canonical, &planned_paths)?;
     for (i, relative_path) in planned_paths.iter().enumerate() {
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
         let outpath = output_path_for_entry(&dest_canonical, relative_path, root_remap.as_ref());
@@ -137,7 +137,7 @@ pub(super) fn extract_zip(path: &str, dest: &Path) -> Result<(), String> {
             if let Some(parent) = outpath.parent() {
                 create_dir_all(parent)?;
             }
-            let final_outpath = unique_file_path_if_needed(&outpath);
+            let final_outpath = unique_file_path_if_needed(&outpath)?;
             ensure_extract_path_within_destination(&dest_canonical, &final_outpath)?;
             let mut outfile = create_file(&final_outpath)?;
             copy_entry_data(&mut file, &mut outfile, &final_outpath)?;
@@ -209,7 +209,7 @@ pub(super) fn extract_tar(
                 if let Some(parent) = outpath.parent() {
                     create_dir_all(parent)?;
                 }
-                let final_outpath = unique_file_path_if_needed(&outpath);
+                let final_outpath = unique_file_path_if_needed(&outpath)?;
                 ensure_extract_path_within_destination(dest_canonical, &final_outpath)?;
                 entry.unpack(&final_outpath).map_err(|e| {
                     format!(
@@ -341,6 +341,43 @@ fn is_link(meta: &std::fs::Metadata) -> bool {
     meta.file_type().is_symlink()
 }
 
+fn ensure_no_link_ancestors(dest_canonical: &Path, target: &Path) -> Result<(), String> {
+    let Ok(relative) = target.strip_prefix(dest_canonical) else {
+        return Ok(());
+    };
+    let mut current = dest_canonical.to_path_buf();
+    let mut comps = relative.components().peekable();
+    while let Some(comp) = comps.next() {
+        if comps.peek().is_none() {
+            break;
+        }
+        current.push(comp.as_os_str());
+        if let Ok(meta) = std::fs::symlink_metadata(&current) {
+            if is_link(&meta) {
+                let rel = current.strip_prefix(dest_canonical).unwrap_or(&current);
+                return Err(format!("Archive entry is a link: {}", entry_display(rel)));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reject_extracted_link(dest_canonical: &Path, outpath: &Path) -> Result<(), String> {
+    if let Ok(meta) = std::fs::symlink_metadata(outpath) {
+        if is_link(&meta) {
+            if std::fs::remove_dir(outpath).is_err() {
+                let _ = std::fs::remove_file(outpath);
+            }
+            let relative = outpath.strip_prefix(dest_canonical).unwrap_or(outpath);
+            return Err(format!(
+                "Archive entry is a link: {}",
+                entry_display(relative)
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn extract_rar(path: &str, dest: &Path) -> Result<(), String> {
     let dest_canonical = dest
         .canonicalize()
@@ -355,6 +392,7 @@ fn extract_rar(path: &str, dest: &Path) -> Result<(), String> {
         let entry_path = header.entry().filename.clone();
         let outpath = dest_canonical.join(archive_entry_relative_path(&entry_path, "RAR")?);
         ensure_extract_path_within_destination(&dest_canonical, &outpath)?;
+        ensure_no_link_ancestors(&dest_canonical, &outpath)?;
         if header.entry().is_directory() {
             create_dir_all(&outpath)?;
             archive = header
@@ -364,11 +402,12 @@ fn extract_rar(path: &str, dest: &Path) -> Result<(), String> {
             if let Some(parent) = outpath.parent() {
                 create_dir_all(parent)?;
             }
-            let final_outpath = unique_file_path_if_needed(&outpath);
+            let final_outpath = unique_file_path_if_needed(&outpath)?;
             ensure_extract_path_within_destination(&dest_canonical, &final_outpath)?;
             archive = header
                 .extract_to(&final_outpath)
                 .map_err(|e| format!("Failed to extract RAR entry: {e}"))?;
+            reject_extracted_link(&dest_canonical, &final_outpath)?;
         }
     }
     Ok(())
@@ -723,6 +762,7 @@ fn extract_rar_entry(
 
         let outpath = dest_canonical.join(&relative_path);
         ensure_extract_path_within_destination(&dest_canonical, &outpath)?;
+        ensure_no_link_ancestors(&dest_canonical, &outpath)?;
         if header.entry().is_directory() {
             create_dir_all(&outpath)?;
             archive = header
@@ -746,6 +786,7 @@ fn extract_rar_entry(
             archive = header
                 .extract_to(&outpath)
                 .map_err(|e| format!("Failed to extract RAR entry: {e}"))?;
+            reject_extracted_link(&dest_canonical, &outpath)?;
             let written = std::fs::metadata(&outpath)
                 .map(|m| m.len())
                 .unwrap_or(declared);

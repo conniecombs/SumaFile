@@ -96,6 +96,28 @@ pub fn unstage(
     )
 }
 
+fn path_is_within(pathspec: &str, prefix: &str) -> bool {
+    if paths_equal(pathspec, prefix) {
+        return true;
+    }
+    let clean_prefix = prefix.replace('\\', "/");
+    let clean_prefix = clean_prefix.trim_end_matches('/');
+    if clean_prefix.is_empty() {
+        return false;
+    }
+    let clean_path = pathspec.replace('\\', "/");
+    clean_path
+        .get(..clean_prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(clean_prefix))
+        && clean_path[clean_prefix.len()..].starts_with('/')
+}
+
+fn push_unique_pathspec(list: &mut Vec<String>, pathspec: String) {
+    if !list.iter().any(|existing| paths_equal(existing, &pathspec)) {
+        list.push(pathspec);
+    }
+}
+
 /// Restores tracked paths from the index and HEAD, and deletes the selected
 /// untracked paths (and newly added ones) with `git clean -fd`. Nothing that
 /// was not selected changes.
@@ -115,54 +137,61 @@ pub fn discard(
             .iter()
             .find(|change| paths_equal(&change.path, pathspec))
     };
-    let mut tracked = Vec::new();
+    let is_untracked_path = |pathspec: &str| {
+        status
+            .changes
+            .iter()
+            .any(|change| change.untracked && path_is_within(pathspec, &change.path))
+    };
+    let mut staged_restore = Vec::new();
+    let mut worktree_restore = Vec::new();
     let mut cleanable = Vec::new();
 
     for pathspec in &pathspecs {
-        let change = change_of(pathspec);
-        if change.map(|change| change.untracked).unwrap_or(false) {
-            cleanable.push(pathspec.clone());
-        } else {
-            tracked.push(pathspec.clone());
-            if change
-                .map(|change| change.index_status == "A")
-                .unwrap_or(false)
-            {
-                cleanable.push(pathspec.clone());
+        if is_untracked_path(pathspec) {
+            push_unique_pathspec(&mut cleanable, pathspec.clone());
+            continue;
+        }
+
+        push_unique_pathspec(&mut staged_restore, pathspec.clone());
+        match change_of(pathspec) {
+            Some(change) if change.index_status == "A" || change.index_status == "C" => {
+                push_unique_pathspec(&mut cleanable, pathspec.clone());
+            }
+            Some(change) if change.index_status == "R" => {
+                push_unique_pathspec(&mut cleanable, pathspec.clone());
+                if let Some(orig) = &change.original_path {
+                    push_unique_pathspec(&mut staged_restore, orig.clone());
+                    push_unique_pathspec(&mut worktree_restore, orig.clone());
+                }
+            }
+            _ => {
+                push_unique_pathspec(&mut worktree_restore, pathspec.clone());
             }
         }
     }
 
     let mut results = Vec::new();
-    if !tracked.is_empty() {
+    if !staged_restore.is_empty() {
         results.push(run_path_command(
             git,
             &root,
             "discard",
             &["restore", "--staged", "--"],
-            &tracked,
+            &staged_restore,
             "Unstaged selected Git path(s).",
         )?);
+    }
 
-        let restorable: Vec<String> = tracked
-            .iter()
-            .filter(|pathspec| {
-                change_of(pathspec)
-                    .map(|change| change.index_status != "A")
-                    .unwrap_or(true)
-            })
-            .cloned()
-            .collect();
-        if !restorable.is_empty() {
-            results.push(run_path_command(
-                git,
-                &root,
-                "discard",
-                &["restore", "--worktree", "--"],
-                &restorable,
-                "Discarded selected Git working tree change(s).",
-            )?);
-        }
+    if !worktree_restore.is_empty() {
+        results.push(run_path_command(
+            git,
+            &root,
+            "discard",
+            &["restore", "--worktree", "--"],
+            &worktree_restore,
+            "Discarded selected Git working tree change(s).",
+        )?);
     }
 
     if !cleanable.is_empty() {
@@ -197,7 +226,7 @@ pub fn diff(git: &Git, cache: &StatusCache, path: &str, file_path: &str) -> Resu
     if status
         .changes
         .iter()
-        .any(|change| paths_equal(&change.path, &pathspec) && change.untracked)
+        .any(|change| change.untracked && path_is_within(&pathspec, &change.path))
     {
         return Ok(
             "No Git diff is available for untracked files until they are staged.".to_string(),

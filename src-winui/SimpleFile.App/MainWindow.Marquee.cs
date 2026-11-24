@@ -124,27 +124,51 @@ public sealed partial class MainWindow
     private void UpdateMarqueeSelection(ListView list, Canvas canvas, Windows.Foundation.Rect marqueeBounds, Windows.System.VirtualKeyModifiers modifiers)
     {
         bool ctrlPressed = (modifiers & Windows.System.VirtualKeyModifiers.Control) != 0;
+        var desired = ctrlPressed
+            ? new HashSet<object>(_marqueeInitialSelection)
+            : new HashSet<object>();
 
-        for (int i = 0; i < list.Items.Count; i++)
+        foreach (var (index, container) in DetailsFileListView.RealizedContainers(list))
         {
-            var rawItem = list.Items[i];
-            if (list.ContainerFromIndex(i) is not ListViewItem container) continue;
-
+            var rawItem = list.Items[index];
             var transform = container.TransformToVisual(canvas);
             var itemBounds = transform.TransformBounds(
                 new Windows.Foundation.Rect(0, 0, container.ActualWidth, container.ActualHeight));
 
-            bool intersects = RectIntersects(marqueeBounds, itemBounds);
-
-            if (ctrlPressed)
+            if (!RectIntersects(marqueeBounds, itemBounds))
             {
-                bool wasOriginallySelected = _marqueeInitialSelection.Contains(rawItem);
-                bool shouldBeSelected = intersects ? !wasOriginallySelected : wasOriginallySelected;
-                SetItemSelected(list, rawItem, shouldBeSelected);
+                continue;
+            }
+
+            if (ctrlPressed && _marqueeInitialSelection.Contains(rawItem))
+            {
+                desired.Remove(rawItem);
             }
             else
             {
-                SetItemSelected(list, rawItem, intersects);
+                desired.Add(rawItem);
+            }
+        }
+
+        var toRemove = new List<object>();
+        foreach (var current in list.SelectedItems)
+        {
+            if (!desired.Contains(current))
+            {
+                toRemove.Add(current);
+            }
+        }
+
+        foreach (var item in toRemove)
+        {
+            list.SelectedItems.Remove(item);
+        }
+
+        foreach (var item in desired)
+        {
+            if (!list.SelectedItems.Contains(item))
+            {
+                list.SelectedItems.Add(item);
             }
         }
     }
@@ -152,21 +176,6 @@ public sealed partial class MainWindow
     private static bool RectIntersects(Windows.Foundation.Rect a, Windows.Foundation.Rect b)
     {
         return !(a.Right < b.Left || a.Left > b.Right || a.Bottom < b.Top || a.Top > b.Bottom);
-    }
-
-    private static void SetItemSelected(ListView list, object item, bool selected)
-    {
-        if (selected)
-        {
-            if (!list.SelectedItems.Contains(item))
-            {
-                list.SelectedItems.Add(item);
-            }
-        }
-        else
-        {
-            list.SelectedItems.Remove(item);
-        }
     }
 
     private static bool IsInsideListViewItem(DependencyObject? source, ListView list)

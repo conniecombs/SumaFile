@@ -506,12 +506,12 @@ fn finalize_remote_upload(
             if !backed_up {
                 if let Some(backup_path) = backup {
                     let backup_name = backup_path.rsplit('/').next().unwrap_or("");
-                    provider.rename_entry(target, backup_name)?;
+                    provider.rename_path(target, backup_name)?;
                 }
                 backed_up = true;
             }
             if !promoted {
-                provider.rename_entry(staging, target_name)?;
+                provider.rename_path(staging, target_name)?;
                 promoted = true;
             }
             Ok(())
@@ -688,7 +688,12 @@ pub fn validate_request(request: &RemoteTransferRequest) -> Result<(), String> {
 // Remote names become Windows path components on download. Reject names that
 // could escape the chosen directory, alias another file, or address a device/ADS.
 fn validate_name(name: &str) -> Result<(), String> {
-    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
     let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || ((stem.starts_with("COM") || stem.starts_with("LPT"))
             && stem.len() == 4
@@ -843,11 +848,9 @@ fn transfer_file(
             sumafile_transfer::ids::generate_transfer_operation_id()
         );
         let parent = parent_remote_path(&target).ok_or("Remote destination has no parent")?;
-        let staging = unique_remote_sibling(
-            provider,
-            &join_remote_path(&parent, ".sumafile-partial"),
-            &nonce,
-        )?;
+        // `nonce` carries pid + nanosecond clock + 128-bit CSPRNG operation ID, so
+        // the staging path is already globally unique without a pre-upload stat RTT.
+        let staging = join_remote_path(&parent, &format!(".sumafile-partial.{nonce}"));
         // Allocate before uploading so a failed listing cannot strand a completed temporary file.
         let backup = if replace {
             Some(unique_remote_sibling(
@@ -935,8 +938,8 @@ fn transfer_file(
         Ok((target, count, false))
     } else {
         let expected_entry = match source_entry {
-            Some(entry) => entry.clone(),
-            None => remote_entry(provider, source)?
+            Some(entry) if provider.list_matches_stat_precision() => entry.clone(),
+            _ => remote_entry(provider, source)?
                 .ok_or_else(|| format!("Remote source does not exist: {source}"))?,
         };
         let expected_size = expected_entry.size;

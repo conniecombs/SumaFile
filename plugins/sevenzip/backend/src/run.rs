@@ -96,6 +96,30 @@ pub fn run_7za_as(
     cwd: Option<&Path>,
     observer: &mut dyn RunObserver,
 ) -> Result<Vec<u8>, String> {
+    run_7za_inner(action, binary, args, cwd, observer, 1)
+}
+
+/// Like [`run_7za_as`], except only exit code `0` succeeds: exit code `1`
+/// (7-Zip non-fatal warning, e.g. locked or skipped files during extract or
+/// update) is reported as an error instead of silent partial success.
+pub fn run_7za_strict(
+    action: &str,
+    binary: &Path,
+    args: &[OsString],
+    cwd: Option<&Path>,
+    observer: &mut dyn RunObserver,
+) -> Result<Vec<u8>, String> {
+    run_7za_inner(action, binary, args, cwd, observer, 0)
+}
+
+fn run_7za_inner(
+    action: &str,
+    binary: &Path,
+    args: &[OsString],
+    cwd: Option<&Path>,
+    observer: &mut dyn RunObserver,
+    max_ok_code: i32,
+) -> Result<Vec<u8>, String> {
     if is_cancelled(observer) {
         return Err(CANCELLED_MESSAGE.to_string());
     }
@@ -179,7 +203,7 @@ pub fn run_7za_as(
     let stdout = join(stdout_thread);
     let stderr = join(stderr_thread);
     let code = status.code().unwrap_or(2);
-    if code <= 1 {
+    if (0..=max_ok_code).contains(&code) {
         return Ok(stdout);
     }
     let shown_stdout: &[u8] = if progress_mode { b"" } else { &stdout };
@@ -192,7 +216,7 @@ fn is_cancelled(observer: &dyn RunObserver) -> bool {
 
 /// Reads `reader` to its end. With a `progress` sender, every segment
 /// between backspaces, carriage returns and newlines that is a progress
-/// line is sent on.
+/// line is sent on without buffering megabytes of `-bsp1` progress output.
 fn drain(
     reader: Option<impl Read>,
     progress: Option<mpsc::Sender<(u8, Option<String>)>>,
@@ -216,15 +240,16 @@ fn drain(
             Ok(0) | Err(_) => break,
             Ok(read) => read,
         };
-        all.extend_from_slice(&buffer[..read]);
         if progress.is_some() {
             for &byte in &buffer[..read] {
                 if matches!(byte, b'\x08' | b'\r' | b'\n') {
                     flush(&mut segment);
-                } else {
+                } else if segment.len() < 4096 {
                     segment.push(byte);
                 }
             }
+        } else {
+            all.extend_from_slice(&buffer[..read]);
         }
     }
     flush(&mut segment);

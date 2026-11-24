@@ -17,9 +17,38 @@ pub fn get_cached_fact(path: &str, kind: FactKind, size: u64, modified: &str) ->
     get_cached_fact_in(&db, path, kind, size, modified)
 }
 
+pub fn get_cached_facts_for_path(
+    path: &str,
+    kinds: &[FactKind],
+    size: u64,
+    modified: &str,
+) -> Vec<(FactKind, Option<EntryFact>)> {
+    let Ok(db) = crate::settings_store::open_metadata_db() else {
+        return kinds.iter().map(|kind| (*kind, None)).collect();
+    };
+    kinds
+        .iter()
+        .map(|kind| (*kind, get_cached_fact_in(&db, path, *kind, size, modified)))
+        .collect()
+}
+
 pub fn put_cached_fact(fact: &EntryFact, size: u64, modified: &str) -> Result<(), String> {
     let db = crate::settings_store::open_metadata_db()?;
     put_cached_fact_in(&db, fact, size, modified)
+}
+
+pub fn put_cached_facts_batch(items: &[(EntryFact, u64, String)]) -> Result<(), String> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let db = crate::settings_store::open_metadata_db()?;
+    let tx = db
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    for (fact, size, modified) in items {
+        put_cached_fact_in(&tx, fact, *size, modified)?;
+    }
+    tx.commit().map_err(|error| error.to_string())
 }
 
 /// The cached fact for `path`, when it was stored for a file of this `size` and `modified` time.
@@ -30,12 +59,27 @@ pub fn get_cached_fact_in(
     size: u64,
     modified: &str,
 ) -> Option<EntryFact> {
-    let (cached_size, cached_modified, state, text, sort): (i64, String, String, String, Option<f64>) = connection
-        .query_row(
+    let mut stmt = connection
+        .prepare_cached(
             "SELECT size, modified, state, text, sort FROM entry_facts WHERE path = ?1 AND kind = ?2",
-            params![key(path), kind.as_wire()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
+        .ok()?;
+    let (cached_size, cached_modified, state, text, sort): (
+        i64,
+        String,
+        String,
+        String,
+        Option<f64>,
+    ) = stmt
+        .query_row(params![key(path), kind.as_wire()], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
         .optional()
         .ok()
         .flatten()?;
@@ -57,22 +101,23 @@ pub fn put_cached_fact_in(
     size: u64,
     modified: &str,
 ) -> Result<(), String> {
-    connection
-        .execute(
+    let mut stmt = connection
+        .prepare_cached(
             "INSERT OR REPLACE INTO entry_facts (path, kind, size, modified, state, text, sort)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                key(&fact.path),
-                fact.kind,
-                i64::try_from(size).unwrap_or(i64::MAX),
-                modified,
-                fact.state,
-                fact.text,
-                fact.sort
-            ],
         )
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    stmt.execute(params![
+        key(&fact.path),
+        fact.kind,
+        i64::try_from(size).unwrap_or(i64::MAX),
+        modified,
+        fact.state,
+        fact.text,
+        fact.sort
+    ])
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

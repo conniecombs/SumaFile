@@ -18,7 +18,8 @@ public sealed class EmptyPaneState
         bool showHidden,
         string? path,
         string newFolderShortcut = "Ctrl+Shift+N",
-        string toggleHiddenShortcut = "Ctrl+H")
+        string toggleHiddenShortcut = "Ctrl+H",
+        string? activeLabelFilter = null)
     {
         if (visibleCount > 0)
         {
@@ -43,6 +44,13 @@ public sealed class EmptyPaneState
         if (!string.IsNullOrWhiteSpace(filterQuery))
         {
             return VisibleState("No items match this filter", "Clear the filter or try another name");
+        }
+
+        if (!string.IsNullOrWhiteSpace(activeLabelFilter))
+        {
+            return VisibleState(
+                $"No items labeled \"{activeLabelFilter}\"",
+                "Clear the label filter or choose another label in the sidebar");
         }
 
         if (string.IsNullOrEmpty(path))

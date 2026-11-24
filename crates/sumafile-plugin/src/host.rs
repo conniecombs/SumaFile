@@ -130,8 +130,15 @@ impl BackendState {
             .map(|inner| HostClient { inner })
     }
 
-    fn set_host(&self, client: &HostClient) {
-        lock(&self.inner).host = Some(Arc::downgrade(&client.inner));
+    /// Sets the live host connection when none is active yet. Returns `false`
+    /// if a different live host connection already holds the slot.
+    fn set_host(&self, client: &HostClient) -> bool {
+        let mut state = lock(&self.inner);
+        if let Some(existing) = state.host.as_ref().and_then(Weak::upgrade) {
+            return Arc::ptr_eq(&existing, &client.inner);
+        }
+        state.host = Some(Arc::downgrade(&client.inner));
+        true
     }
 
     fn clear_host(&self, client: &HostClient) {
@@ -319,11 +326,11 @@ impl HostClient {
     }
 
     /// Makes this connection, handshaken by the host, the one
-    /// [`HostClient::host_connection`] returns.
-    pub(crate) fn set_host_connection(&self) {
-        if let Some(pipe) = self.pipe_host() {
-            pipe.state.set_host(self);
-        }
+    /// [`HostClient::host_connection`] returns. Returns `false` when another
+    /// live host connection already occupies the slot.
+    pub(crate) fn set_host_connection(&self) -> bool {
+        self.pipe_host()
+            .is_none_or(|pipe| pipe.state.set_host(self))
     }
 
     fn is_service(&self) -> bool {

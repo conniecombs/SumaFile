@@ -90,7 +90,9 @@ public static class ThumbnailCacheKey
         string path,
         bool isDirectory,
         bool fileSpecific,
-        int displayPixelSize)
+        int displayPixelSize,
+        ulong knownSize = 0,
+        string? knownModified = null)
     {
         var normalizedSize = Math.Max(1, displayPixelSize);
         if (isDirectory)
@@ -101,7 +103,9 @@ public static class ThumbnailCacheKey
         if (fileSpecific)
         {
             var normalizedPath = NormalizePath(path);
-            var version = ProbeFileVersionToken(normalizedPath);
+            var version = knownSize > 0 || !string.IsNullOrWhiteSpace(knownModified)
+                ? BuildVersionToken(knownSize, knownModified)
+                : ProbeFileVersionToken(normalizedPath);
             return $"{normalizedPath}{Separator}{version}{Separator}{normalizedSize}{Separator}icon";
         }
 

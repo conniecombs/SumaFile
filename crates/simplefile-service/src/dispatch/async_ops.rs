@@ -1,8 +1,8 @@
 use super::params::{
-    parse_params, parse_path_params, CancelEntryFactsParams, DiskCleanupParams,
-    DuplicateCheckParams, EntryFactsParams, ListDirectoryParams, ListingViewIdParams,
-    ListingViewRangeParams, OpenListingViewParams, OperationIdParams, OptionalOperationIdParams,
-    PathParams, ProgressCopyMoveParams, PutEntryFactsParams, SearchFilesParams, SearchIdParams,
+    parse_params, CancelEntryFactsParams, DiskCleanupParams, DuplicateCheckParams,
+    EntryFactsParams, ListDirectoryParams, ListingViewIdParams, ListingViewRangeParams,
+    OpenListingViewParams, OperationIdParams, OptionalOperationIdParams, PathParams,
+    ProgressCopyMoveParams, PutEntryFactsParams, SearchFilesParams, SearchIdParams,
     ThumbnailBatchParams, ThumbnailParams,
 };
 use super::{Dispatch, SessionState};
@@ -286,10 +286,10 @@ pub(super) fn cancel_search(request: &JsonRpcRequest) -> Dispatch {
 }
 
 pub(super) fn watch_directory(request: &JsonRpcRequest) -> Dispatch {
-    match parse_path_params(request) {
-        Ok(path) => Dispatch::WatchDirectory {
+    match super::params::parse_watch_directory_params(request) {
+        Ok(paths) => Dispatch::WatchDirectory {
             id: request.id.clone(),
-            path,
+            paths,
         },
         Err(response) => Dispatch::Reply(response),
     }

@@ -816,18 +816,22 @@ public sealed partial class MainWindow
         details.SelectPath(path);
     }
 
+    private HashSet<string>? _activeSyncCutPaths;
+
     private FileRow ToFileRow(FileEntry entry) =>
         ToFileRow(entry, _workspace?.Normalize(_workspace.ActivePane) ?? PaneId.Primary);
 
     private FileRow ToFileRow(FileEntry entry, PaneId pane)
     {
-        var cut = _workspace?.Clipboard is { Operation: ClipboardOperation.Cut, HasItems: true } clipboard
-            && clipboard.SourcePaths.Any(path => PathRules.PathsEqual(path, entry.Path));
+        var cut = _activeSyncCutPaths is not null
+            ? _activeSyncCutPaths.Contains(entry.Path)
+            : (_workspace?.Clipboard is { Operation: ClipboardOperation.Cut, HasItems: true } clipboard
+                && clipboard.SourcePaths.Any(path => PathRules.PathsEqual(path, entry.Path)));
         // The row badge shows the first tag; every tag is kept in FileTags.
         Tag? tag = null;
-        if (_workspace?.FileTags.TryGetValue(entry.Path, out var tags) == true)
+        if (_workspace?.FileTags.TryGetValue(entry.Path, out var tags) == true && tags.Length > 0)
         {
-            tag = tags.FirstOrDefault();
+            tag = tags[0];
         }
 
         var row = FileRow.From(entry, cut, tag, pane);
@@ -896,7 +900,8 @@ public sealed partial class MainWindow
             _workspace?.ShowHiddenFiles ?? false,
             pane.Path,
             newFolderShortcut: ShortcutLabelFor("new-folder") ?? "",
-            toggleHiddenShortcut: ShortcutLabelFor("toggle-hidden") ?? "");
+            toggleHiddenShortcut: ShortcutLabelFor("toggle-hidden") ?? "",
+            activeLabelFilter: ActiveLabelName());
         host.Visibility = state.Visible ? Visibility.Visible : Visibility.Collapsed;
         if (!state.Visible)
         {

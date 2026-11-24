@@ -237,15 +237,15 @@ fn restore_one(path: &str) -> Result<String, String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Could not recreate original folder: {error}"))?;
     }
-    let destination = unique_destination(&original);
+    let destination = unique_destination(&original)?;
     rename_or_copy(&data, &destination)?;
     let _ = fs::remove_file(&info_path);
     Ok(destination.to_string_lossy().to_string())
 }
 
-fn unique_destination(path: &Path) -> PathBuf {
+fn unique_destination(path: &Path) -> Result<PathBuf, String> {
     if !path.exists() {
-        return path.to_path_buf();
+        return Ok(path.to_path_buf());
     }
     let parent = path.parent().unwrap_or(path);
     let stem = path
@@ -259,10 +259,13 @@ fn unique_destination(path: &Path) -> PathBuf {
     for index in 1..10_000 {
         let candidate = parent.join(format!("{stem} ({index}){extension}"));
         if !candidate.exists() {
-            return candidate;
+            return Ok(candidate);
         }
     }
-    path.to_path_buf()
+    Err(format!(
+        "Could not find a unique restore path after 9,999 attempts for {}",
+        path.display()
+    ))
 }
 
 fn rename_or_copy(source: &Path, destination: &Path) -> Result<(), String> {

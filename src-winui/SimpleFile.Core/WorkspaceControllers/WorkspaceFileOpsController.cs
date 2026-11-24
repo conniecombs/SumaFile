@@ -176,16 +176,59 @@ internal sealed class WorkspaceFileOpsController
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);
-        if (workspace.FileOps is null || sources.Length == 0 || string.IsNullOrWhiteSpace(folderName))
+        if (workspace.FileOps is not { } ops || sources.Length == 0 || string.IsNullOrWhiteSpace(folderName))
         {
             return;
         }
 
-        var created = await workspace.FileOps.CreateFolderAsync(workspace.Active.Path, folderName, cancellationToken).ConfigureAwait(false);
+        var parentDir = workspace.Active.Path;
+        var created = await ops.CreateFolderAsync(parentDir, folderName, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        await workspace.FileOps.MoveAsync(sources, created, "keep-both", ct: cancellationToken).ConfigureAwait(false);
+        var moved = await ops.MoveAsync(sources, created, "keep-both", ct: cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        await workspace.RefreshAffectedPanesAsync([workspace.Active.Path, created, .. sources], cancellationToken).ConfigureAwait(false);
+
+        var currentFolder = created;
+        var currentSources = sources.ToArray();
+        var currentMoved = moved.ToArray();
+        workspace.Undo.Push(new UndoEntry
+        {
+            Description = "Pack into folder",
+            Undo = async ct =>
+            {
+                for (var i = currentMoved.Length - 1; i >= 0; i--)
+                {
+                    var item = currentMoved[i];
+                    var sourceParent = PathRules.GetParentPath(item.Source);
+                    if (sourceParent is null) continue;
+                    var movedBack = await ops.MoveEntryResolvedAsync(item.Destination, sourceParent, "rename", ct).ConfigureAwait(false);
+                    var desiredName = PathRules.Basename(item.Source);
+                    if (!string.IsNullOrEmpty(movedBack)
+                        && !string.Equals(PathRules.Basename(movedBack), desiredName, StringComparison.Ordinal))
+                    {
+                        try
+                        {
+                            var renamed = await ops.RenameAsync(movedBack, desiredName, ct).ConfigureAwait(false);
+                            if (!string.IsNullOrEmpty(renamed)) movedBack = renamed;
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException) { }
+                    }
+
+                    if (!string.IsNullOrEmpty(movedBack) && i < currentSources.Length)
+                    {
+                        currentSources[i] = movedBack;
+                    }
+                }
+
+                await ops.DeleteAsync(currentFolder, ct).ConfigureAwait(false);
+            },
+            Redo = async ct =>
+            {
+                currentFolder = await ops.CreateFolderAsync(parentDir, folderName, ct).ConfigureAwait(false);
+                currentMoved = await ops.MoveAsync(currentSources, currentFolder, "keep-both", ct: ct).ConfigureAwait(false);
+            },
+        });
+
+        await workspace.RefreshAffectedPanesAsync([parentDir, created, .. sources], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task UnpackFolderAsync(
@@ -194,7 +237,7 @@ internal sealed class WorkspaceFileOpsController
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);
-        if (workspace.FileOps is null || string.IsNullOrWhiteSpace(folderPath))
+        if (workspace.FileOps is not { } ops || string.IsNullOrWhiteSpace(folderPath))
         {
             return;
         }
@@ -207,15 +250,53 @@ internal sealed class WorkspaceFileOpsController
             return;
         }
 
+        var folderName = PathRules.Basename(folderPath);
         var children = listing.Entries.Select(entry => entry.Path).ToArray();
+        var moved = Array.Empty<TransferResult>();
         if (children.Length > 0)
         {
-            await workspace.FileOps.MoveAsync(children, parent, "keep-both", ct: cancellationToken).ConfigureAwait(false);
+            moved = await ops.MoveAsync(children, parent, "keep-both", ct: cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        await workspace.FileOps.DeleteAsync(folderPath, cancellationToken).ConfigureAwait(false);
+        await ops.DeleteAsync(folderPath, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
+
+        var currentFolder = folderPath;
+        var currentMoved = moved.ToArray();
+        workspace.Undo.Push(new UndoEntry
+        {
+            Description = "Flatten folder",
+            Undo = async ct =>
+            {
+                currentFolder = await ops.CreateFolderAsync(parent, folderName, ct).ConfigureAwait(false);
+                for (var i = currentMoved.Length - 1; i >= 0; i--)
+                {
+                    var item = currentMoved[i];
+                    var movedBack = await ops.MoveEntryResolvedAsync(item.Destination, currentFolder, "rename", ct).ConfigureAwait(false);
+                    var desiredName = PathRules.Basename(item.Source);
+                    if (!string.IsNullOrEmpty(movedBack)
+                        && !string.Equals(PathRules.Basename(movedBack), desiredName, StringComparison.Ordinal))
+                    {
+                        try
+                        {
+                            await ops.RenameAsync(movedBack, desiredName, ct).ConfigureAwait(false);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException) { }
+                    }
+                }
+            },
+            Redo = async ct =>
+            {
+                var relisting = await workspace.Backend.ListDirectoryAsync(currentFolder, cancellationToken: ct).ConfigureAwait(false);
+                var nextChildren = relisting.Entries.Select(entry => entry.Path).ToArray();
+                currentMoved = nextChildren.Length > 0
+                    ? await ops.MoveAsync(nextChildren, parent, "keep-both", ct: ct).ConfigureAwait(false)
+                    : [];
+                await ops.DeleteAsync(currentFolder, ct).ConfigureAwait(false);
+            },
+        });
+
         await workspace.RefreshAffectedPanesAsync([folderPath, parent, .. children], cancellationToken).ConfigureAwait(false);
     }
 

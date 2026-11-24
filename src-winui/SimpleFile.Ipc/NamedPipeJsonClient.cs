@@ -90,6 +90,19 @@ public sealed partial class NamedPipeJsonClient : ISimpleFileIpc
             cancellationToken);
     }
 
+    public Task WatchDirectoriesAsync(string[] paths, CancellationToken ct = default)
+    {
+        if (paths.Length == 0)
+        {
+            return UnwatchDirectoryAsync(ct);
+        }
+
+        return InvokeAsync<object?>(
+            Protocol.WatchDirectoryMethod,
+            new { path = paths[0], paths },
+            ct);
+    }
+
     public async Task<SearchResult[]> SearchFilesAsync(
         SearchOptions options,
         Action<SearchResult[]>? onBatch = null,

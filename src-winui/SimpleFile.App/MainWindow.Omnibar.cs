@@ -155,11 +155,16 @@ public sealed partial class MainWindow
             return;
         }
 
+        var activePane = _workspace.Active;
         var intent = OmnibarIntentParser.Parse(
             OmnibarInput.Text,
             _omnibarMode,
-            _workspace.Active.Path,
-            System.IO.Directory.Exists);
+            activePane.Path,
+            candidate => activePane.Entries.Any(entry => entry.IsDir && PathRules.PathsEqual(entry.Path, candidate))
+                || (!activePane.PathIsNetwork
+                    && !candidate.StartsWith(@"\\", StringComparison.Ordinal)
+                    && !candidate.StartsWith("//", StringComparison.Ordinal)
+                    && System.IO.Directory.Exists(candidate)));
         switch (intent.Kind)
         {
             case OmnibarIntentKind.Navigate:

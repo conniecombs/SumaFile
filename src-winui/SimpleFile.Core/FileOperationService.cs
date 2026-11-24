@@ -470,6 +470,27 @@ public sealed class FileOperationService : ISettingsBackend
         await _ipc.WatchDirectoryAsync(path, ct).ConfigureAwait(false);
     }
 
+    public async Task WatchDirectoriesAsync(IReadOnlyList<string> paths, CancellationToken ct = default)
+    {
+        var filtered = paths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (filtered.Length == 0)
+        {
+            await _ipc.UnwatchDirectoryAsync(ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (_ipc is NamedPipeJsonClient pipeClient)
+        {
+            await pipeClient.WatchDirectoriesAsync(filtered, ct).ConfigureAwait(false);
+            return;
+        }
+
+        await _ipc.WatchDirectoryAsync(filtered[0], ct).ConfigureAwait(false);
+    }
+
     public Task<DirectoryListing> ListDirectoryAsync(string path, CancellationToken ct = default)
     {
         return _ipc.ListDirectoryAsync(path, cancellationToken: ct,

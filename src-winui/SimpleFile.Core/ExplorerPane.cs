@@ -38,7 +38,7 @@ public sealed class ExplorerPane
     public PaneDecorations Decorations { get; set; } = PaneDecorations.Empty;
 
     /// <summary>The name of this pane's view in the service: one view per pane, replaced on each navigation.</summary>
-    internal string ListingViewId { get; } = "pane-" + Guid.NewGuid().ToString("N");
+    internal string ListingViewId { get; private set; } = "pane-" + Guid.NewGuid().ToString("N");
 
     /// <summary>
     /// The service-held view <see cref="Entries"/> are the first rows of, or null when the folder was listed whole
@@ -420,9 +420,23 @@ public sealed class ExplorerPane
 
         (SelectedPath, other.SelectedPath) = (other.SelectedPath, SelectedPath);
         (PathIsNetwork, other.PathIsNetwork) = (other.PathIsNetwork, PathIsNetwork);
+        (ListingViewId, other.ListingViewId) = (other.ListingViewId, ListingViewId);
+        (Listing, other.Listing) = (other.Listing, Listing);
+        (ListingViewUnavailable, other.ListingViewUnavailable) = (other.ListingViewUnavailable, ListingViewUnavailable);
+        (ListingSortsFolderSizes, other.ListingSortsFolderSizes) = (other.ListingSortsFolderSizes, ListingSortsFolderSizes);
+        (ListingInProgress, other.ListingInProgress) = (other.ListingInProgress, ListingInProgress);
+
+        var pending = PendingListingDeltas.ToArray();
+        PendingListingDeltas.Clear();
+        PendingListingDeltas.AddRange(other.PendingListingDeltas);
+        other.PendingListingDeltas.Clear();
+        other.PendingListingDeltas.AddRange(pending);
+
+        ListingEpoch++;
+        other.ListingEpoch++;
+        BumpContentVersion();
+        other.BumpContentVersion();
         IsNavigating = false;
         other.IsNavigating = false;
-        ListingInProgress = false;
-        other.ListingInProgress = false;
     }
 }

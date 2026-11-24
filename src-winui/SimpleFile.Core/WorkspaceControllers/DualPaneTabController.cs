@@ -69,6 +69,11 @@ internal sealed class DualPaneTabController
         workspace.NotifyChanged();
         if (swapped)
         {
+            if (workspace.Primary.ListingInProgress && workspace.Primary.Listing is not null)
+            {
+                workspace.ListingViewsController.StartFill(workspace, PaneId.Primary);
+            }
+
             // Only the primary pane is shown now; see SwapFilePanes.
             workspace.StartDecorationRefresh(PaneId.Primary);
         }
@@ -85,9 +90,20 @@ internal sealed class DualPaneTabController
     {
         ArgumentNullException.ThrowIfNull(workspace);
         SwapPaneContents(workspace);
+        workspace.NotifyChanged();
+        if (workspace.Primary.ListingInProgress && workspace.Primary.Listing is not null)
+        {
+            workspace.ListingViewsController.StartFill(workspace, PaneId.Primary);
+        }
+
         workspace.StartDecorationRefresh(PaneId.Primary);
         if (workspace.DualPaneEnabled)
         {
+            if (workspace.Secondary.ListingInProgress && workspace.Secondary.Listing is not null)
+            {
+                workspace.ListingViewsController.StartFill(workspace, PaneId.Secondary);
+            }
+
             workspace.StartDecorationRefresh(PaneId.Secondary);
         }
     }

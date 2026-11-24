@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::entries::{is_within, parse_list_output, validate_entry_path, SevenZipEntry};
-use crate::run::{run_7za_as, RunObserver};
+use crate::run::{run_7za_as, run_7za_strict, RunObserver};
 
 /// Error text when a delete would leave a `.7z` with no entries, which
 /// 7-Zip writes as an empty, 32-byte archive.
@@ -231,7 +231,7 @@ impl SevenZip {
         }
         args.push("--".into());
         args.push(archive.into());
-        run_7za_as("7-Zip extraction", &self.binary, &args, None, observer).map(drop)
+        run_7za_strict("7-Zip extraction", &self.binary, &args, None, observer).map(drop)
     }
 
     /// A new `.7z` at `archive` holding each of `paths` (a file or a tree)
@@ -259,7 +259,7 @@ impl SevenZip {
         args.push(prefixed("-i@", listfile.path()));
         args.push("--".into());
         args.push(archive.into());
-        if let Err(error) = run_7za_as(
+        if let Err(error) = run_7za_strict(
             "7-Zip archive creation",
             &self.binary,
             &args,
@@ -311,7 +311,7 @@ impl SevenZip {
         args.push(archive.into());
         args.push(windows_path(&from).into());
         args.push(windows_path(&to).into());
-        run_7za_as("7-Zip rename", &self.binary, &args, None, observer)?;
+        run_7za_strict("7-Zip rename", &self.binary, &args, None, observer)?;
         drop(work);
         observer.progress(100, None);
         Ok(())
@@ -357,7 +357,7 @@ impl SevenZip {
         args.push(prefixed("-i@", listfile.path()));
         args.push("--".into());
         args.push(archive.into());
-        run_7za_as("7-Zip delete", &self.binary, &args, None, observer)?;
+        run_7za_strict("7-Zip delete", &self.binary, &args, None, observer)?;
         drop(work);
         observer.progress(100, None);
         Ok(())
@@ -396,7 +396,7 @@ impl SevenZip {
         args.push(prefixed("-i@", listfile.path()));
         args.push("--".into());
         args.push(archive.into());
-        run_7za_as("7-Zip add", &self.binary, &args, Some(base_dir), observer)?;
+        run_7za_strict("7-Zip add", &self.binary, &args, Some(base_dir), observer)?;
         drop(work);
         observer.progress(100, None);
         Ok(())
@@ -525,6 +525,31 @@ fn source_bytes<'a>(mut paths: impl Iterator<Item = &'a Path>) -> Result<u64, St
     paths.try_fold(0u64, |sum, path| Ok(sum.saturating_add(walk(path)?)))
 }
 
+/// Clears read-only attributes on `path` and its descendants (never following
+/// links) so Windows `remove_file` / `remove_dir_all` can clean up read-only
+/// archive entries.
+fn clear_readonly_recursive(path: &Path) {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    if is_link(&meta) {
+        return;
+    }
+    let mut perms = meta.permissions();
+    if perms.readonly() {
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        let _ = std::fs::set_permissions(path, perms);
+    }
+    if meta.is_dir() {
+        if let Ok(children) = std::fs::read_dir(path) {
+            for child in children.flatten() {
+                clear_readonly_recursive(&child.path());
+            }
+        }
+    }
+}
+
 /// Removes everything inside `root`, which stays. Links are removed, never
 /// followed.
 fn clear_dir(root: &Path) {
@@ -541,8 +566,11 @@ fn clear_dir(root: &Path) {
                 let _ = std::fs::remove_file(&path);
             }
         } else if meta.is_dir() {
+            clear_dir(&path);
+            clear_readonly_recursive(&path);
             let _ = std::fs::remove_dir_all(&path);
         } else {
+            clear_readonly_recursive(&path);
             let _ = std::fs::remove_file(&path);
         }
     }
@@ -627,11 +655,11 @@ impl WorkDir {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        let name = archive
+        let short_name: String = archive
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
+            .map(|name| name.to_string_lossy().chars().take(64).collect())
             .unwrap_or_default();
-        let path = parent.join(format!(".{name}.sumafile-{}", unique_suffix()));
+        let path = parent.join(format!(".{short_name}.sumafile-{}", unique_suffix()));
         std::fs::create_dir(&path)
             .map_err(|e| format!("Failed to create 7-Zip work folder {}: {e}", path.display()))?;
         Ok(WorkDir { path })
@@ -644,6 +672,8 @@ impl WorkDir {
 
 impl Drop for WorkDir {
     fn drop(&mut self) {
+        clear_dir(&self.path);
+        clear_readonly_recursive(&self.path);
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }

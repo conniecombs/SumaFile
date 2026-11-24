@@ -104,6 +104,11 @@ public sealed partial class MainWindow
                 paths,
                 ClipboardOperation.Copy,
                 _workspace?.Clipboard.Stamp ?? "");
+            if (!exported)
+            {
+                _workspace?.Clipboard.MarkLocalOnly();
+            }
+
             SetStatusText(exported
                 ? $"Copied {paths.Length} item(s)"
                 : $"Copied {paths.Length} item(s) in SumaFile");
@@ -122,6 +127,11 @@ public sealed partial class MainWindow
                 paths,
                 ClipboardOperation.Cut,
                 _workspace?.Clipboard.Stamp ?? "");
+            if (!exported)
+            {
+                _workspace?.Clipboard.MarkLocalOnly();
+            }
+
             SetStatusText(exported
                 ? $"Cut {paths.Length} item(s)"
                 : $"Cut {paths.Length} item(s) in SumaFile");

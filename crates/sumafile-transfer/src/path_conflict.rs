@@ -77,15 +77,37 @@ fn wide_path(path: &Path) -> Vec<u16> {
 
     /// Shortest limit among the Win32 path calls (directory creation).
     const LEGACY_LIMIT: usize = 248;
-    let plain = || -> Vec<u16> { path.as_os_str().encode_wide().chain(Some(0)).collect() };
-    if path.as_os_str().encode_wide().count() < LEGACY_LIMIT {
-        return plain();
+    const SLASH: u16 = b'/' as u16;
+    const BACKSLASH: u16 = b'\\' as u16;
+
+    let normalize_verbatim = |mut units: Vec<u16>| -> Vec<u16> {
+        for ch in &mut units {
+            if *ch == SLASH {
+                *ch = BACKSLASH;
+            }
+        }
+        units.push(0);
+        units
+    };
+
+    let raw_units: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if raw_units.starts_with(&[BACKSLASH, BACKSLASH, b'?' as u16, BACKSLASH]) {
+        return normalize_verbatim(raw_units);
+    }
+    if raw_units.len() < LEGACY_LIMIT {
+        let mut plain = raw_units;
+        plain.push(0);
+        return plain;
     }
     let Ok(absolute) = std::path::absolute(path) else {
-        return plain();
+        let mut plain = raw_units;
+        plain.push(0);
+        return plain;
     };
     let Some(Component::Prefix(prefix)) = absolute.components().next() else {
-        return plain();
+        let mut plain = raw_units;
+        plain.push(0);
+        return plain;
     };
     let units = absolute.as_os_str().encode_wide();
     let wide: Vec<u16> = match prefix.kind() {
@@ -93,9 +115,9 @@ fn wide_path(path: &Path) -> Vec<u16> {
         // `\\server\share\..` becomes `\\?\UNC\server\share\..`.
         Prefix::UNC(..) => r"\\?\UNC\".encode_utf16().chain(units.skip(2)).collect(),
         // Already verbatim, or a device path.
-        _ => return plain(),
+        _ => absolute.as_os_str().encode_wide().collect(),
     };
-    wide.into_iter().chain(Some(0)).collect()
+    normalize_verbatim(wide)
 }
 
 #[cfg(windows)]

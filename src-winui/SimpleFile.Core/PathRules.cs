@@ -10,6 +10,8 @@ public static class PathRules
 {
     public const string RecycleBinPath = "recycle-bin:";
 
+    public static StringComparer PathComparer { get; } = StringComparer.OrdinalIgnoreCase;
+
     public static bool IsRecycleBinPath(string? path)
     {
         return string.Equals((path ?? "").Trim(), RecycleBinPath, StringComparison.OrdinalIgnoreCase);
@@ -24,10 +26,49 @@ public static class PathRules
             && (trimmed.Length == 2 || trimmed[2] is '\\' or '/');
     }
 
+    public static bool IsUncRoot(string path)
+    {
+        return TrySplitUncRoot(path, out _, out var remainder) && remainder.Length == 0;
+    }
+
+    internal static bool TrySplitUncRoot(string path, out string uncRoot, out string remainder)
+    {
+        uncRoot = "";
+        remainder = "";
+        var trimmed = (path ?? "").Trim();
+        if (!(trimmed.StartsWith(@"\\", StringComparison.Ordinal) || trimmed.StartsWith("//", StringComparison.Ordinal))
+            || trimmed.StartsWith(@"\\?\", StringComparison.Ordinal)
+            || trimmed.StartsWith(@"\\.\", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var parts = trimmed[2..].Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            uncRoot = @"\\";
+            return true;
+        }
+
+        if (parts.Length == 1)
+        {
+            uncRoot = $@"\\{parts[0]}";
+            return true;
+        }
+
+        uncRoot = $@"\\{parts[0]}\{parts[1]}";
+        if (parts.Length > 2)
+        {
+            remainder = string.Join('\\', parts[2..]);
+        }
+
+        return true;
+    }
+
     public static bool IsRootPath(string path)
     {
         var trimmed = path.Trim();
-        return trimmed == "/" || IsWindowsRoot(trimmed) || IsRecycleBinPath(trimmed);
+        return trimmed == "/" || IsWindowsRoot(trimmed) || IsUncRoot(trimmed) || IsRecycleBinPath(trimmed);
     }
 
     public static char PathSeparator(string path)
@@ -38,9 +79,25 @@ public static class PathRules
     public static string TrimTrailingSeparators(string path)
     {
         var trimmed = path.Trim();
-        if (IsRootPath(trimmed))
+        if (IsRecycleBinPath(trimmed))
         {
-            return IsWindowsRoot(trimmed) ? $"{trimmed[..2]}\\" : "/";
+            return RecycleBinPath;
+        }
+
+        if (IsWindowsRoot(trimmed))
+        {
+            return $"{trimmed[..2]}\\";
+        }
+
+        if (IsUncRoot(trimmed))
+        {
+            TrySplitUncRoot(trimmed, out var uncRoot, out _);
+            return uncRoot;
+        }
+
+        if (trimmed == "/")
+        {
+            return "/";
         }
 
         return trimmed.TrimEnd('\\', '/');
@@ -93,6 +150,11 @@ public static class PathRules
 
     public static string Basename(string path)
     {
+        if (IsRecycleBinPath(path))
+        {
+            return "Recycle Bin";
+        }
+
         var cleanPath = TrimTrailingSeparators(path);
         if (IsWindowsRoot(cleanPath))
         {

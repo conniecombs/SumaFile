@@ -8,9 +8,9 @@ use super::extract::{
 };
 use super::mutate_engine::{self, EngineArchive, NewEntry};
 use super::path::{
-    build_virtual_archive_path, create_dir_all, replace_archive, same_archive_path,
-    split_archive_path, unique_temp_archive_path, unique_work_dir, ArchiveFormat, ArchiveKind,
-    ArchivePath,
+    build_virtual_archive_path, create_dir_all, path_is_within_prefix, replace_archive,
+    same_archive_path, split_archive_path, unique_temp_archive_path, unique_work_dir,
+    ArchiveFormat, ArchiveKind, ArchivePath,
 };
 
 pub fn should_handle_transfer(source: &str, destination: &str) -> Result<bool, String> {
@@ -198,24 +198,57 @@ pub fn delete_archive_entries(paths: &[String]) -> Vec<String> {
     }
 
     for (parsed, entries) in groups {
+        if let Err(error) = ensure_archive_can_modify(&parsed.kind) {
+            errors.push(error);
+            continue;
+        }
         if EngineArchive::of(&parsed).is_some() {
             if let Err(error) = mutate_engine::delete_entries(&parsed, &entries) {
                 errors.push(error);
             }
             continue;
         }
-        for (_, inner_path) in entries {
-            let entry = ArchivePath {
-                archive_path: parsed.archive_path.clone(),
-                inner_path,
-                kind: parsed.kind.clone(),
-            };
-            if let Err(error) = delete_archive_entry_parsed(&entry) {
-                errors.push(error);
-            }
+        if let Err(error) = delete_builtin_archive_entries_batch(&parsed, &entries, &mut errors) {
+            errors.push(error);
         }
     }
     errors
+}
+
+fn delete_builtin_archive_entries_batch(
+    parsed: &ArchivePath,
+    entries: &[(String, PathBuf)],
+    errors: &mut Vec<String>,
+) -> Result<(), String> {
+    mutate_archive(&parsed.archive_path, &parsed.kind, |root| {
+        let mut present: Vec<PathBuf> = Vec::with_capacity(entries.len());
+        for (display, inner_path) in entries {
+            let target = root.join(inner_path);
+            if fs::symlink_metadata(&target).is_err() {
+                errors.push(format!("Archive entry not found: {display}"));
+            } else if !present.iter().any(|existing| existing == inner_path) {
+                present.push(inner_path.clone());
+            }
+        }
+
+        // Remove only top-most selected roots so selecting both `folder` and
+        // `folder/file.txt` deletes cleanly in one unpack/repack pass.
+        let top_most: Vec<PathBuf> = present
+            .iter()
+            .filter(|candidate| {
+                !present
+                    .iter()
+                    .any(|other| other != *candidate && path_is_within_prefix(candidate, other))
+            })
+            .cloned()
+            .collect();
+
+        for inner_path in top_most {
+            remove_local_path(&root.join(&inner_path))?;
+        }
+        Ok(None)
+    })?;
+    Ok(())
 }
 
 pub fn create_archive_directory(path: String, name: String) -> Result<String, String> {
@@ -349,6 +382,7 @@ impl WorkRootGuard {
 impl Drop for WorkRootGuard {
     fn drop(&mut self) {
         if let Some(root) = self.root.take() {
+            clear_readonly_recursive(&root);
             let _ = fs::remove_dir_all(root);
         }
     }
@@ -395,6 +429,7 @@ impl MaterializedSource {
 
     pub fn cleanup(&mut self) {
         if let Some(root) = self.cleanup_root.take() {
+            clear_readonly_recursive(&root);
             let _ = fs::remove_dir_all(root);
         }
     }
@@ -652,7 +687,7 @@ fn resolve_transfer_destination(
             Ok(Some(final_dest))
         }
         "rename" | "keep-both" | "keep_both" => {
-            Ok(Some(unique_destination_path(dest_dir, file_name)))
+            Ok(Some(unique_destination_path(dest_dir, file_name)?))
         }
         _ => Err(format!(
             "CONFLICT: destination already exists: {}",
@@ -726,6 +761,28 @@ fn copy_dir_for_archive(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn clear_readonly_recursive(path: &Path) {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if meta.file_type().is_symlink() {
+        return;
+    }
+    let mut perms = meta.permissions();
+    if perms.readonly() {
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        let _ = fs::set_permissions(path, perms);
+    }
+    if meta.is_dir() {
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                clear_readonly_recursive(&entry.path());
+            }
+        }
+    }
+}
+
 fn remove_local_path(path: &Path) -> Result<(), String> {
     let meta = fs::symlink_metadata(path).map_err(|e| format!("Failed to stat path: {e}"))?;
     if meta.file_type().is_symlink() {
@@ -735,14 +792,16 @@ fn remove_local_path(path: &Path) -> Result<(), String> {
             fs::remove_file(path).map_err(|e| format!("Failed to delete symlink: {}", e))?;
         }
     } else if meta.is_dir() {
+        clear_readonly_recursive(path);
         fs::remove_dir_all(path).map_err(|e| format!("Failed to delete directory: {e}"))?;
     } else {
+        clear_readonly_recursive(path);
         fs::remove_file(path).map_err(|e| format!("Failed to delete file: {e}"))?;
     }
     Ok(())
 }
 
-fn unique_destination_path(dest_dir: &Path, file_name: &OsStr) -> PathBuf {
+fn unique_destination_path(dest_dir: &Path, file_name: &OsStr) -> Result<PathBuf, String> {
     let original = Path::new(file_name);
     let stem = original.file_stem().map_or_else(
         || original.to_string_lossy().to_string(),
@@ -759,11 +818,14 @@ fn unique_destination_path(dest_dir: &Path, file_name: &OsStr) -> PathBuf {
         };
         let candidate = dest_dir.join(candidate_name);
         if !candidate.exists() {
-            return candidate;
+            return Ok(candidate);
         }
     }
 
-    dest_dir.join(file_name)
+    Err(format!(
+        "Could not find a unique archive destination after 9,999 attempts for {}",
+        original.display()
+    ))
 }
 
 fn rebuild_archive_from_directory(

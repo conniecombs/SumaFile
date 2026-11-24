@@ -400,8 +400,39 @@ pub(super) struct SmartFolderIdParams {
     pub(super) id: String,
 }
 
-pub(super) fn parse_path_params(request: &JsonRpcRequest) -> Result<String, JsonRpcResponse> {
-    parse_params::<PathParams>(request).map(|params| params.path)
+#[derive(Debug, Deserialize)]
+pub(super) struct WatchDirectoryParams {
+    #[serde(default)]
+    pub(super) path: Option<String>,
+    #[serde(default)]
+    pub(super) paths: Option<Vec<String>>,
+}
+
+pub(super) fn parse_watch_directory_params(
+    request: &JsonRpcRequest,
+) -> Result<Vec<String>, JsonRpcResponse> {
+    let params = parse_params::<WatchDirectoryParams>(request)?;
+    let mut out = Vec::new();
+    if let Some(path) = params.path {
+        if !path.is_empty() {
+            out.push(path);
+        }
+    }
+    if let Some(paths) = params.paths {
+        for path in paths {
+            if !path.is_empty() && !out.contains(&path) {
+                out.push(path);
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err(JsonRpcResponse::error(
+            request.id.clone(),
+            ERR_INVALID_PARAMS,
+            "invalid params: missing field `path`",
+        ));
+    }
+    Ok(out)
 }
 
 pub(super) fn parse_params<T: for<'de> Deserialize<'de>>(

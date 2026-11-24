@@ -658,11 +658,11 @@ public sealed partial class MainWindow
 
         if (row.Entry.Operation == ClipboardOperation.Cut)
         {
-            _workspace.Clipboard.SetCut(row.Entry.Paths);
+            _workspace.Clipboard.SetCut(row.Entry.Paths, systemSynced: false);
         }
         else
         {
-            _workspace.Clipboard.SetCopy(row.Entry.Paths);
+            _workspace.Clipboard.SetCopy(row.Entry.Paths, systemSynced: false);
         }
 
         await PasteFromClipboard();

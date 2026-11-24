@@ -255,7 +255,6 @@ impl StagingLease {
 #[cfg(windows)]
 fn identity_from_handle(handle: &File, staged: &Path) -> Result<FileIdentity, String> {
     crate::staging::file_id_from_handle(handle)
-        .map(|(volume, index)| FileIdentity(u64::from(volume), index))
         .ok_or_else(|| format!("Cannot establish file identity [{}]", staged.display()))
 }
 
@@ -265,7 +264,7 @@ fn identity_from_handle(handle: &File, staged: &Path) -> Result<FileIdentity, St
     let meta = handle
         .metadata()
         .map_err(|e| format!("Cannot establish file identity [{}]: {e}", staged.display()))?;
-    Ok(FileIdentity(meta.dev(), meta.ino()))
+    Ok(FileIdentity(meta.dev(), u128::from(meta.ino())))
 }
 
 fn matches(path: &Path, id: &FileIdentity) -> bool {

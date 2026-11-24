@@ -190,12 +190,10 @@ impl ListingViews {
     ) -> ViewChanges {
         let mut changes = ViewChanges::default();
         let target = Path::new(path);
-        let (Some(folder), Some(name)) = (
-            target.parent().map(|parent| parent.to_string_lossy()),
-            target.file_name().map(|name| name.to_string_lossy()),
-        ) else {
-            return changes;
-        };
+        let parent_and_name = target
+            .parent()
+            .zip(target.file_name())
+            .map(|(parent, name)| (parent.to_string_lossy(), name.to_string_lossy()));
 
         let mut registry = self.lock();
         // Looked up once, and only when some view shows the folder.
@@ -203,17 +201,19 @@ impl ListingViews {
         for (view_id, view) in registry.views.iter_mut() {
             if same_folder(view.path(), path) {
                 changes.refresh.push(view_id.clone());
-            } else if same_folder(view.path(), &folder) {
-                if !view.follows_names() {
-                    // Names may repeat there: only a fresh enumeration can
-                    // say which entry changed.
-                    changes.refresh.push(view_id.clone());
-                    continue;
-                }
-                let entry = current.get_or_insert_with(|| lookup(path)).clone();
-                let delta = view.apply_entry(&name, entry);
-                if !delta.changes.is_empty() || delta.reset {
-                    changes.deltas.push(delta);
+            } else if let Some((ref folder, ref name)) = parent_and_name {
+                if same_folder(view.path(), folder) {
+                    if !view.follows_names() {
+                        // Names may repeat there: only a fresh enumeration can
+                        // say which entry changed.
+                        changes.refresh.push(view_id.clone());
+                        continue;
+                    }
+                    let entry = current.get_or_insert_with(|| lookup(path)).clone();
+                    let delta = view.apply_entry(name, entry);
+                    if !delta.changes.is_empty() || delta.reset {
+                        changes.deltas.push(delta);
+                    }
                 }
             }
         }

@@ -113,13 +113,15 @@ internal sealed class ListingViewController
 
     private async Task FillAsync(ExplorerWorkspace workspace, PaneId paneId, int epoch)
     {
-        var pane = workspace.Pane(paneId);
+        var pane = paneId == PaneId.Secondary ? workspace.Secondary : workspace.Primary;
         if (workspace.Backend.ListingViews is not { } views)
         {
             return;
         }
 
         var retries = 0;
+        List<FileEntry>? staged = null;
+        ulong stagedRevision = 0;
         try
         {
             while (true)
@@ -138,8 +140,19 @@ internal sealed class ListingViewController
                         break;
                     }
 
-                    if (pane.Entries.Count >= listing.Total)
+                    if (staged is null || stagedRevision != listing.Revision)
                     {
+                        var initialCapacity = Math.Max(
+                            pane.Entries.Count + (int)FillPageRows,
+                            Math.Min(listing.Total, 262_144));
+                        staged = new List<FileEntry>(initialCapacity);
+                        staged.AddRange(pane.Entries);
+                        stagedRevision = listing.Revision;
+                    }
+
+                    if (staged.Count >= listing.Total)
+                    {
+                        pane.Entries = staged;
                         listing.Total = pane.Entries.Count;
                         pane.ListingInProgress = false;
                         pane.BumpContentVersion();
@@ -149,7 +162,7 @@ internal sealed class ListingViewController
                     }
 
                     viewId = listing.ViewId;
-                    offset = (uint)pane.Entries.Count;
+                    offset = (uint)staged.Count;
                 }
 
                 var page = await views.GetListingViewRangeAsync(viewId, offset, FillPageRows).ConfigureAwait(false);
@@ -160,18 +173,21 @@ internal sealed class ListingViewController
                         return;
                     }
 
-                    if (page.Revision == listing.Revision && page.Offset == pane.Entries.Count)
+                    if (staged is not null
+                        && stagedRevision == listing.Revision
+                        && page.Revision == listing.Revision
+                        && page.Offset == staged.Count)
                     {
                         retries = 0;
                         if (page.Entries.Count == 0)
                         {
                             // The view ends here, whatever total was last reported.
-                            listing.Total = pane.Entries.Count;
+                            listing.Total = staged.Count;
                         }
                         else
                         {
-                            pane.Entries = [.. pane.Entries, .. page.Entries];
-                            listing.Total = Math.Max(ClampToInt(page.Total), pane.Entries.Count);
+                            staged.AddRange(page.Entries);
+                            listing.Total = Math.Max(ClampToInt(page.Total), staged.Count);
                         }
 
                         continue;
@@ -215,7 +231,10 @@ internal sealed class ListingViewController
         }
 
         ReconcilePane(workspace, PaneId.Primary);
-        ReconcilePane(workspace, PaneId.Secondary);
+        if (workspace.DualPaneEnabled)
+        {
+            ReconcilePane(workspace, PaneId.Secondary);
+        }
     }
 
     private void ReconcilePane(ExplorerWorkspace workspace, PaneId paneId)

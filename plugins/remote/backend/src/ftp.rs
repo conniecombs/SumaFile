@@ -51,7 +51,9 @@ pub fn connect_typed(
                 Failure::new(message, retryable)
             })?;
             stream = stream.passive_stream_builder(connect_data_socket);
-            if !profile.passive_mode {
+            if profile.passive_mode {
+                stream.set_passive_nat_workaround(true);
+            } else {
                 stream = stream.active_mode(REMOTE_CONNECT_TIMEOUT);
             }
             stream.login(&username, &password).map_err(|error| {
@@ -59,6 +61,13 @@ pub fn connect_typed(
                 let retryable = ftp_failure(error).retryable();
                 Failure::new(message, retryable)
             })?;
+            stream
+                .transfer_type(suppaftp::types::FileType::Binary)
+                .map_err(|error| {
+                    let message = format!("FTP binary mode setup failed: {error}");
+                    let retryable = ftp_failure(error).retryable();
+                    Failure::new(message, retryable)
+                })?;
             FtpClient::Plain(stream)
         }
         RemoteProtocol::Ftps => {
@@ -68,7 +77,9 @@ pub fn connect_typed(
                 Failure::new(message, retryable)
             })?;
             stream = stream.passive_stream_builder(connect_data_socket);
-            if !profile.passive_mode {
+            if profile.passive_mode {
+                stream.set_passive_nat_workaround(true);
+            } else {
                 stream = stream.active_mode(REMOTE_CONNECT_TIMEOUT);
             }
             let connector = suppaftp::native_tls::TlsConnector::new()
@@ -84,6 +95,13 @@ pub fn connect_typed(
                 let retryable = ftp_failure(error).retryable();
                 Failure::new(message, retryable)
             })?;
+            stream
+                .transfer_type(suppaftp::types::FileType::Binary)
+                .map_err(|error| {
+                    let message = format!("FTPS binary mode setup failed: {error}");
+                    let retryable = ftp_failure(error).retryable();
+                    Failure::new(message, retryable)
+                })?;
             FtpClient::Tls(stream)
         }
         RemoteProtocol::Sftp => {
@@ -97,12 +115,14 @@ pub fn connect_typed(
     Ok(Box::new(FtpRemoteProvider {
         client,
         mlst_supported: true,
+        mlsd_supported: true,
     }))
 }
 
 struct FtpRemoteProvider {
     client: FtpClient,
     mlst_supported: bool,
+    mlsd_supported: bool,
 }
 
 fn connect_data_socket(address: SocketAddr) -> suppaftp::FtpResult<TcpStream> {
@@ -118,6 +138,10 @@ fn connect_data_socket(address: SocketAddr) -> suppaftp::FtpResult<TcpStream> {
 }
 
 impl RemoteProvider for FtpRemoteProvider {
+    fn list_matches_stat_precision(&self) -> bool {
+        self.mlsd_supported || !self.mlst_supported
+    }
+
     fn stat(&mut self, path: &str) -> Result<Option<FileEntry>, String> {
         let path = normalize_remote_path(path);
         if self.mlst_supported {
@@ -153,10 +177,24 @@ impl RemoteProvider for FtpRemoteProvider {
 
     fn list_directory(&mut self, path: &str) -> Result<DirectoryListing, String> {
         let path = normalize_remote_path(path);
-        let lines = self
-            .client
-            .list(Some(&path))
-            .map_err(|error| format!("FTP list failed for {path}: {error}"))?;
+        let lines = if self.mlsd_supported {
+            match self.client.mlsd(Some(&path)) {
+                Ok(lines) => lines,
+                Err(suppaftp::FtpError::UnexpectedResponse(response))
+                    if matches!(response.status as u32, 500 | 501 | 502 | 504) =>
+                {
+                    self.mlsd_supported = false;
+                    self.client
+                        .list(Some(&path))
+                        .map_err(|error| format!("FTP list failed for {path}: {error}"))?
+                }
+                Err(error) => return Err(format!("FTP list failed for {path}: {error}")),
+            }
+        } else {
+            self.client
+                .list(Some(&path))
+                .map_err(|error| format!("FTP list failed for {path}: {error}"))?
+        };
         let entries = entries_from_list_lines(&path, &lines);
 
         Ok(DirectoryListing {
@@ -185,6 +223,14 @@ impl RemoteProvider for FtpRemoteProvider {
             Ok(entry) => Ok(entry),
             Err(_) => Ok(basic_remote_entry(&target, false, 0)),
         }
+    }
+
+    fn rename_path(&mut self, path: &str, new_name: &str) -> Result<(), String> {
+        let source = normalize_remote_path(path);
+        let target = sibling_remote_path(&source, new_name);
+        self.client
+            .rename(&source, &target)
+            .map_err(|error| format!("FTP rename failed for {source}: {error}"))
     }
 
     fn delete_entries(&mut self, paths: &[String]) -> Result<Vec<String>, String> {
@@ -247,6 +293,13 @@ impl FtpClient {
         }
     }
 
+    fn mlsd(&mut self, path: Option<&str>) -> suppaftp::FtpResult<Vec<String>> {
+        match self {
+            Self::Plain(stream) => stream.mlsd(path),
+            Self::Tls(stream) => stream.mlsd(path),
+        }
+    }
+
     fn list(&mut self, path: Option<&str>) -> suppaftp::FtpResult<Vec<String>> {
         match self {
             Self::Plain(stream) => stream.list(path),
@@ -295,9 +348,16 @@ impl FtpClient {
                     .get_ref()
                     .set_read_timeout(Some(REMOTE_CONNECT_TIMEOUT))
                     .map_err(|e| Failure::io("Configure remote data stream", path, e))?;
-                let result = super::transfer::copy_stream(&mut stream, destination);
-                let finished = stream.finish().map_err(ftp_failure);
-                result.and_then(|count| finished.map(|()| count))
+                match super::transfer::copy_stream(&mut stream, destination) {
+                    Ok(count) => {
+                        stream.finish().map_err(ftp_failure)?;
+                        Ok(count)
+                    }
+                    Err(error) => {
+                        let _ = $client.abort(stream);
+                        Err(error)
+                    }
+                }
             }};
         }
         match self {
@@ -319,9 +379,16 @@ impl FtpClient {
                     .get_ref()
                     .set_write_timeout(Some(REMOTE_CONNECT_TIMEOUT))
                     .map_err(|e| Failure::io("Configure remote data stream", path, e))?;
-                let result = super::transfer::copy_stream(source, &mut stream);
-                let finished = stream.finish().map_err(ftp_failure);
-                result.and_then(|count| finished.map(|()| count))
+                match super::transfer::copy_stream(source, &mut stream) {
+                    Ok(count) => {
+                        stream.finish().map_err(ftp_failure)?;
+                        Ok(count)
+                    }
+                    Err(error) => {
+                        let _ = $client.abort(stream);
+                        Err(error)
+                    }
+                }
             }};
         }
         match self {

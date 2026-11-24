@@ -4,7 +4,12 @@ namespace SimpleFile.Core;
 
 internal sealed class FolderTreeController
 {
+    private List<TreeNode> _roots = [];
+    private readonly HashSet<string> _expanded = new(StringComparer.OrdinalIgnoreCase);
+
     public List<FolderTreeItem> Rows { get; private set; } = [];
+
+    public bool IsExpanded(string path) => _expanded.Contains(path);
 
     public async Task<bool> LoadChildrenAsync(
         FileOperationService? fileOps,
@@ -19,16 +24,30 @@ internal sealed class FolderTreeController
         try
         {
             var children = await fileOps.ListSubdirectoriesAsync(path, cancellationToken).ConfigureAwait(false);
-            var expanded = new HashSet<string>(
-                Rows.Where(row => row.Expanded).Select(row => row.Path),
-                StringComparer.OrdinalIgnoreCase)
+            foreach (var row in Rows.Where(row => row.Expanded))
             {
-                path,
-            };
-            var roots = Rows.Count == 0
-                ? children.ToList()
-                : MergeTree(Rows, path, children);
-            Rows = FolderTree.Flatten(roots, expanded);
+                _expanded.Add(row.Path);
+            }
+
+            _expanded.Add(path);
+            if (_roots.Count == 0 && Rows.Count == 0)
+            {
+                _roots = children.ToList();
+            }
+            else
+            {
+                if (_roots.Count == 0)
+                {
+                    _roots = ReconstructRoots(Rows);
+                }
+
+                if (!AttachChildren(_roots, path, children))
+                {
+                    _roots = children.ToList();
+                }
+            }
+
+            Rows = FolderTree.Flatten(_roots, _expanded);
         }
         catch
         {
@@ -40,16 +59,22 @@ internal sealed class FolderTreeController
 
     public void ToggleExpanded(string path)
     {
-        var expanded = new HashSet<string>(
-            Rows.Where(row => row.Expanded).Select(row => row.Path),
-            StringComparer.OrdinalIgnoreCase);
-        if (!expanded.Add(path))
+        foreach (var row in Rows.Where(row => row.Expanded))
         {
-            expanded.Remove(path);
+            _expanded.Add(row.Path);
         }
 
-        var roots = ReconstructRoots(Rows);
-        Rows = FolderTree.Flatten(roots, expanded);
+        if (!_expanded.Add(path))
+        {
+            _expanded.Remove(path);
+        }
+
+        if (_roots.Count == 0 && Rows.Count > 0)
+        {
+            _roots = ReconstructRoots(Rows);
+        }
+
+        Rows = FolderTree.Flatten(_roots, _expanded);
     }
 
     public async Task LoadChildrenAsync(
@@ -78,15 +103,39 @@ internal sealed class FolderTreeController
 
     internal static List<TreeNode> ReconstructRoots(IReadOnlyList<FolderTreeItem> rows)
     {
-        return rows
-            .Where(row => row.Depth == 0)
-            .Select(row => new TreeNode
+        var roots = new List<TreeNode>();
+        var stack = new Stack<(int Depth, TreeNode Node)>();
+
+        foreach (var row in rows)
+        {
+            var node = new TreeNode
             {
                 Name = row.Name,
                 Path = row.Path,
                 HasChildren = row.HasChildren,
-            })
-            .ToList();
+                Children = [],
+            };
+
+            while (stack.Count > 0 && stack.Peek().Depth >= row.Depth)
+            {
+                stack.Pop();
+            }
+
+            if (stack.Count == 0)
+            {
+                roots.Add(node);
+            }
+            else
+            {
+                var parent = stack.Peek().Node;
+                parent.Children.Add(node);
+                parent.HasChildren = true;
+            }
+
+            stack.Push((row.Depth, node));
+        }
+
+        return roots;
     }
 
     private static bool AttachChildren(IEnumerable<TreeNode> nodes, string parent, TreeNode[] children)

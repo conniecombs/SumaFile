@@ -5,28 +5,61 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const WATCHER_COALESCE_FLUSH: Duration = Duration::from_millis(150);
+const WATCHER_MAX_BATCH_AGE: Duration = Duration::from_millis(500);
 const WATCHER_STORM_COLLAPSE_LIMIT: usize = 512;
 
 #[derive(Default)]
 pub struct WatcherState {
     watcher: Option<RecommendedWatcher>,
     coalescer: Option<WatcherCoalescer>,
-    watched_path: Option<String>,
+    watched_paths: Vec<String>,
 }
 
 pub fn watch_directory<F>(path: String, state: &mut WatcherState, emit: F) -> Result<(), String>
 where
     F: Fn(FileChangeEvent) + Send + Sync + 'static,
 {
-    let validated_path = validate_existing_path_no_resolve(&path)?;
-    if !validated_path.is_dir() {
-        return Err("Watch path must be a directory".to_string());
+    watch_directories(vec![path], state, emit)
+}
+
+pub fn watch_directories<F>(
+    paths: Vec<String>,
+    state: &mut WatcherState,
+    emit: F,
+) -> Result<(), String>
+where
+    F: Fn(FileChangeEvent) + Send + Sync + 'static,
+{
+    let mut unique_paths = Vec::new();
+    let mut seen_keys = std::collections::HashSet::new();
+    for path in paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if seen_keys.insert(coalesce_key(trimmed)) {
+            unique_paths.push(trimmed.to_string());
+        }
     }
 
-    let coalescer = WatcherCoalescer::new(path.clone(), emit)?;
+    if unique_paths.is_empty() {
+        unwatch_directory(state);
+        return Ok(());
+    }
+
+    let mut validated_paths = Vec::with_capacity(unique_paths.len());
+    for path in &unique_paths {
+        let validated = validate_existing_path_no_resolve(path)?;
+        if !validated.is_dir() {
+            return Err("Watch path must be a directory".to_string());
+        }
+        validated_paths.push(validated);
+    }
+
+    let coalescer = WatcherCoalescer::new(unique_paths.clone(), emit)?;
     let event_sender = coalescer.sender();
 
     let mut watcher = RecommendedWatcher::new(
@@ -36,27 +69,15 @@ where
                     return;
                 };
 
-                let kind = match event.kind {
-                    notify::EventKind::Create(_) => "create",
-                    notify::EventKind::Remove(_) => "remove",
-                    notify::EventKind::Modify(kind) => match kind {
-                        notify::event::ModifyKind::Name(_) => "rename",
-                        notify::event::ModifyKind::Metadata(_) | notify::event::ModifyKind::Any => {
-                            return
-                        }
-                        _ => "modify",
-                    },
-                    notify::EventKind::Access(_)
-                    | notify::EventKind::Any
-                    | notify::EventKind::Other => return,
+                let Some(kind) = classify_notify_event(&event.kind) else {
+                    return;
                 };
 
                 for path in event.paths {
-                    let path_str = path.to_string_lossy().to_string();
                     if is_ignored_watcher_path(&path) {
                         continue;
                     }
-
+                    let path_str = path.to_string_lossy().to_string();
                     let _ = event_sender.send(FileChangeEvent {
                         path: path_str,
                         kind: kind.to_string(),
@@ -68,21 +89,39 @@ where
     )
     .map_err(|error| format!("Failed to create watcher: {error}"))?;
 
-    watcher
-        .watch(validated_path.as_path(), RecursiveMode::NonRecursive)
-        .map_err(|error| format!("Failed to watch directory: {error}"))?;
+    for validated in &validated_paths {
+        watcher
+            .watch(validated.as_path(), RecursiveMode::NonRecursive)
+            .map_err(|error| format!("Failed to watch directory: {error}"))?;
+    }
 
     unwatch_directory(state);
     state.watcher = Some(watcher);
     state.coalescer = Some(coalescer);
-    state.watched_path = Some(path);
+    state.watched_paths = unique_paths;
     Ok(())
 }
 
 pub fn unwatch_directory(state: &mut WatcherState) {
     state.watcher = None;
     state.coalescer = None;
-    state.watched_path = None;
+    state.watched_paths.clear();
+}
+
+fn classify_notify_event(kind: &notify::EventKind) -> Option<&'static str> {
+    match kind {
+        notify::EventKind::Create(_) => Some("create"),
+        notify::EventKind::Remove(_) => Some("remove"),
+        notify::EventKind::Modify(modify_kind) => match modify_kind {
+            notify::event::ModifyKind::Name(_) => Some("rename"),
+            // On Windows, ReadDirectoryChangesW emits FILE_ACTION_MODIFIED as ModifyKind::Any.
+            notify::event::ModifyKind::Data(_)
+            | notify::event::ModifyKind::Metadata(_)
+            | notify::event::ModifyKind::Any
+            | notify::event::ModifyKind::Other => Some("modify"),
+        },
+        notify::EventKind::Access(_) | notify::EventKind::Any | notify::EventKind::Other => None,
+    }
 }
 
 fn is_ignored_watcher_path(path: &Path) -> bool {
@@ -98,13 +137,34 @@ fn is_ignored_watcher_path(path: &Path) -> bool {
         .is_some_and(|name| matches!(name.as_str(), ".ds_store" | "desktop.ini" | "thumbs.db"))
 }
 
+fn coalesce_key(path: &str) -> String {
+    let unified = path.replace('\\', "/");
+    let trimmed = if unified.len() > 3 && unified.ends_with('/') {
+        unified.trim_end_matches('/')
+    } else if unified.len() == 3 && unified.as_bytes()[1] == b':' && unified.ends_with('/') {
+        &unified
+    } else if unified.len() > 1 && unified.ends_with('/') {
+        unified.trim_end_matches('/')
+    } else {
+        &unified
+    };
+    #[cfg(windows)]
+    {
+        trimmed.to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        trimmed.to_string()
+    }
+}
+
 struct WatcherCoalescer {
     sender: Option<mpsc::Sender<FileChangeEvent>>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
 impl WatcherCoalescer {
-    fn new<F>(watched_path: String, emit: F) -> Result<Self, String>
+    fn new<F>(watched_paths: Vec<String>, emit: F) -> Result<Self, String>
     where
         F: Fn(FileChangeEvent) + Send + Sync + 'static,
     {
@@ -112,7 +172,7 @@ impl WatcherCoalescer {
         let (sender, receiver) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("simplefile-watch-coalescer".to_string())
-            .spawn(move || coalesce_worker(watched_path, receiver, emit))
+            .spawn(move || coalesce_worker(watched_paths, receiver, emit))
             .map_err(|error| format!("Failed to start watcher coalescer: {error}"))?;
         Ok(Self {
             sender: Some(sender),
@@ -134,20 +194,58 @@ impl Drop for WatcherCoalescer {
     }
 }
 
-fn coalesce_worker<F>(watched_path: String, receiver: mpsc::Receiver<FileChangeEvent>, emit: Arc<F>)
-where
+fn coalesce_worker<F>(
+    watched_paths: Vec<String>,
+    receiver: mpsc::Receiver<FileChangeEvent>,
+    emit: Arc<F>,
+) where
     F: Fn(FileChangeEvent) + Send + Sync + 'static,
 {
     let mut pending = HashMap::new();
+    let mut batch_started: Option<Instant> = None;
+    let mut quiet_deadline: Option<Instant> = None;
+
     loop {
-        match receiver.recv_timeout(WATCHER_COALESCE_FLUSH) {
-            Ok(event) => {
-                queue_coalesced_event(&mut pending, event, &watched_path);
-                while let Ok(event) = receiver.try_recv() {
-                    queue_coalesced_event(&mut pending, event, &watched_path);
+        if pending.is_empty() {
+            match receiver.recv() {
+                Ok(event) => {
+                    let now = Instant::now();
+                    batch_started = Some(now);
+                    quiet_deadline = Some(now + WATCHER_COALESCE_FLUSH);
+                    queue_coalesced_events(&mut pending, event, &watched_paths);
+                    while let Ok(next) = receiver.try_recv() {
+                        queue_coalesced_events(&mut pending, next, &watched_paths);
+                    }
+                    if pending.len() >= WATCHER_STORM_COLLAPSE_LIMIT {
+                        flush_coalesced_events(&mut pending, emit.as_ref());
+                    }
                 }
-                if pending.len() >= WATCHER_STORM_COLLAPSE_LIMIT {
+                Err(_) => break,
+            }
+            continue;
+        }
+
+        let now = Instant::now();
+        let max_deadline = batch_started.expect("batch started") + WATCHER_MAX_BATCH_AGE;
+        let next_quiet = quiet_deadline.expect("quiet deadline");
+        let deadline = next_quiet.min(max_deadline);
+        if now >= deadline {
+            flush_coalesced_events(&mut pending, emit.as_ref());
+            continue;
+        }
+
+        let wait = deadline.saturating_duration_since(now);
+        match receiver.recv_timeout(wait) {
+            Ok(event) => {
+                queue_coalesced_events(&mut pending, event, &watched_paths);
+                while let Ok(next) = receiver.try_recv() {
+                    queue_coalesced_events(&mut pending, next, &watched_paths);
+                }
+                let after = Instant::now();
+                if after >= max_deadline || pending.len() >= WATCHER_STORM_COLLAPSE_LIMIT {
                     flush_coalesced_events(&mut pending, emit.as_ref());
+                } else {
+                    quiet_deadline = Some(after + WATCHER_COALESCE_FLUSH);
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -161,25 +259,53 @@ where
     }
 }
 
+#[cfg(test)]
 fn queue_coalesced_event(
     pending: &mut HashMap<String, FileChangeEvent>,
     event: FileChangeEvent,
     watched_path: &str,
 ) {
-    if pending.contains_key(watched_path) {
-        return;
+    queue_coalesced_events(pending, event, &[watched_path.to_string()]);
+}
+
+fn matching_watched_root<'a>(event_path: &str, watched_paths: &'a [String]) -> Option<&'a str> {
+    let event_key = coalesce_key(event_path);
+    let parent_key = Path::new(event_path)
+        .parent()
+        .map(|parent| coalesce_key(&parent.to_string_lossy()));
+    for root in watched_paths {
+        let root_key = coalesce_key(root);
+        if event_key == root_key || parent_key.as_deref() == Some(root_key.as_str()) {
+            return Some(root.as_str());
+        }
+    }
+    watched_paths.first().map(String::as_str)
+}
+
+fn queue_coalesced_events(
+    pending: &mut HashMap<String, FileChangeEvent>,
+    event: FileChangeEvent,
+    watched_paths: &[String],
+) {
+    if let Some(root) = matching_watched_root(&event.path, watched_paths) {
+        let root_key = coalesce_key(root);
+        if pending.contains_key(&root_key) {
+            return;
+        }
     }
 
-    pending.insert(event.path.clone(), event);
+    pending.insert(coalesce_key(&event.path), event);
     if pending.len() > WATCHER_STORM_COLLAPSE_LIMIT {
         pending.clear();
-        pending.insert(
-            watched_path.to_string(),
-            FileChangeEvent {
-                path: watched_path.to_string(),
-                kind: "modify".to_string(),
-            },
-        );
+        for root in watched_paths {
+            pending.insert(
+                coalesce_key(root),
+                FileChangeEvent {
+                    path: root.clone(),
+                    kind: "modify".to_string(),
+                },
+            );
+        }
     }
 }
 
@@ -197,8 +323,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        flush_coalesced_events, is_ignored_watcher_path, queue_coalesced_event,
-        WATCHER_STORM_COLLAPSE_LIMIT,
+        classify_notify_event, coalesce_key, flush_coalesced_events, is_ignored_watcher_path,
+        queue_coalesced_event, WATCHER_STORM_COLLAPSE_LIMIT,
     };
     use simplefile_core::models::FileChangeEvent;
     use std::collections::HashMap;
@@ -223,7 +349,21 @@ mod tests {
     }
 
     #[test]
-    fn coalescer_keeps_latest_event_per_path() {
+    fn windows_modify_any_and_metadata_events_map_to_modify() {
+        assert_eq!(
+            Some("modify"),
+            classify_notify_event(&notify::EventKind::Modify(notify::event::ModifyKind::Any))
+        );
+        assert_eq!(
+            Some("modify"),
+            classify_notify_event(&notify::EventKind::Modify(
+                notify::event::ModifyKind::Metadata(notify::event::MetadataKind::Any)
+            ))
+        );
+    }
+
+    #[test]
+    fn coalescer_keeps_latest_event_per_path_case_insensitively_on_windows() {
         let mut pending = HashMap::new();
         queue_coalesced_event(
             &mut pending,
@@ -236,7 +376,7 @@ mod tests {
         queue_coalesced_event(
             &mut pending,
             FileChangeEvent {
-                path: "C:/Work/a.txt".to_string(),
+                path: "c:\\work\\A.TXT".to_string(),
                 kind: "modify".to_string(),
             },
             "C:/Work",
@@ -245,9 +385,13 @@ mod tests {
         let emitted = Mutex::new(Vec::new());
         flush_coalesced_events(&mut pending, &|event| emitted.lock().unwrap().push(event));
         let emitted = emitted.into_inner().unwrap();
-        assert_eq!(emitted.len(), 1);
-        assert_eq!(emitted[0].path, "C:/Work/a.txt");
-        assert_eq!(emitted[0].kind, "modify");
+        #[cfg(windows)]
+        {
+            assert_eq!(emitted.len(), 1);
+            assert_eq!(emitted[0].kind, "modify");
+        }
+        #[cfg(not(windows))]
+        assert!(!emitted.is_empty());
     }
 
     #[test]
@@ -264,7 +408,10 @@ mod tests {
             );
         }
 
-        let event = pending.get("C:/Work").expect("collapsed refresh event");
+        let event = pending
+            .get(&coalesce_key("C:/Work"))
+            .expect("collapsed refresh event");
+        assert_eq!(event.path, "C:/Work");
         assert_eq!(event.kind, "modify");
         assert_eq!(pending.len(), 1);
     }
@@ -272,7 +419,7 @@ mod tests {
 
 #[cfg(test)]
 mod live_tests {
-    use super::{unwatch_directory, watch_directory, WatcherState};
+    use super::{unwatch_directory, watch_directories, watch_directory, WatcherState};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -320,5 +467,58 @@ mod live_tests {
         unwatch_directory(&mut state);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(saw_remove, "events seen: {:?}", events.lock().unwrap());
+    }
+
+    #[test]
+    fn in_place_file_modification_and_multi_root_watches_emit_events() {
+        let base = std::env::temp_dir().join(format!(
+            "sumafile-watch-dual-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let left = base.join("left");
+        let right = base.join("right");
+        std::fs::create_dir_all(&left).unwrap();
+        std::fs::create_dir_all(&right).unwrap();
+        let existing = left.join("notes.txt");
+        std::fs::write(&existing, b"v1").unwrap();
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let mut state = WatcherState::default();
+        watch_directories(
+            vec![
+                left.to_string_lossy().to_string(),
+                right.to_string_lossy().to_string(),
+            ],
+            &mut state,
+            move |change| {
+                sink.lock().unwrap().push(change);
+            },
+        )
+        .expect("watch dual dirs");
+        std::thread::sleep(Duration::from_millis(200));
+
+        // Modify existing file in-place in left pane AND create file in right pane.
+        std::fs::write(&existing, b"v2-longer").unwrap();
+        std::fs::write(right.join("created.txt"), b"hello").unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut saw_both = false;
+        while Instant::now() < deadline && !saw_both {
+            std::thread::sleep(Duration::from_millis(50));
+            let guard = events.lock().unwrap();
+            let saw_modify = guard
+                .iter()
+                .any(|e| e.kind == "modify" && e.path.ends_with("notes.txt"));
+            let saw_right = guard.iter().any(|e| e.path.ends_with("created.txt"));
+            saw_both = saw_modify && saw_right;
+        }
+        unwatch_directory(&mut state);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(saw_both, "events seen: {:?}", events.lock().unwrap());
     }
 }

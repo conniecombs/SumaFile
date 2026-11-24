@@ -76,23 +76,46 @@ pub fn repo_relative_path(root: &Path, value: &str) -> Result<String, String> {
         return Ok(absolute_text[root_length + 1..].to_string());
     }
 
-    // Other case differences, as 1.0.4 compared them: the remainder comes
-    // back lowercased.
-    let root_lower = root_text.to_lowercase();
-    let absolute_lower = absolute_text.to_lowercase();
-    let prefix = if root_lower.ends_with('/') {
-        root_lower
-    } else {
-        format!("{root_lower}/")
-    };
-    if !absolute_lower.starts_with(&prefix) {
-        return Err(format!(
-            "Git path is outside the repository: {}",
-            absolute.to_string_lossy()
-        ));
+    // Case-insensitive Unicode prefix match that preserves the remainder's
+    // exact original spelling and never slices across mismatched UTF-8 lengths.
+    if let Some(rest) = strip_case_insensitive_root_prefix(&root_text, &absolute_text) {
+        return Ok(rest.to_string());
     }
 
-    Ok(absolute_lower[prefix.len()..].to_string())
+    Err(format!(
+        "Git path is outside the repository: {}",
+        absolute.to_string_lossy()
+    ))
+}
+
+fn strip_case_insensitive_root_prefix<'a>(
+    root_text: &str,
+    absolute_text: &'a str,
+) -> Option<&'a str> {
+    let mut abs_chars = absolute_text.char_indices().peekable();
+
+    for rc in root_text.chars() {
+        let (_, ac) = abs_chars.next()?;
+        if rc != ac && !rc.to_lowercase().eq(ac.to_lowercase()) {
+            return None;
+        }
+    }
+
+    if root_text.ends_with('/') {
+        let next_idx = abs_chars
+            .peek()
+            .map_or(absolute_text.len(), |&(idx, _)| idx);
+        return Some(&absolute_text[next_idx..]);
+    }
+
+    let (_, sep) = abs_chars.next()?;
+    if sep != '/' {
+        return None;
+    }
+    let next_idx = abs_chars
+        .peek()
+        .map_or(absolute_text.len(), |&(idx, _)| idx);
+    Some(&absolute_text[next_idx..])
 }
 
 /// `path` without `.` components, each `..` removing the name before it. A

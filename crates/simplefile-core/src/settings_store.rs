@@ -31,7 +31,7 @@ fn get_db_settings_at(
 ) -> Result<HashMap<String, Option<String>>, String> {
     let connection = open_metadata_db_at(path)?;
     let mut statement = connection
-        .prepare("SELECT value FROM settings WHERE key = ?1")
+        .prepare_cached("SELECT value FROM settings WHERE key = ?1")
         .map_err(|error| error.to_string())?;
     let mut values = HashMap::with_capacity(keys.len());
     for key in keys {
@@ -51,9 +51,74 @@ pub fn set_db_setting(key: String, value: String) -> Result<(), String> {
     set_db_setting_at(&path, &key, &value)
 }
 
+pub fn set_db_settings(entries: &[(String, String)]) -> Result<(), String> {
+    for (key, _) in entries {
+        validate_key(key)?;
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let path = metadata_db_path()?;
+    let connection = open_metadata_db_at(&path)?;
+    let tx = connection
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    {
+        let mut stmt = tx
+            .prepare_cached(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            )
+            .map_err(|error| error.to_string())?;
+        for (key, value) in entries {
+            stmt.execute([key.as_str(), value.as_str()])
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    tx.commit().map_err(|error| error.to_string())
+}
+
+#[derive(PartialEq, Eq)]
+struct MetadataEnvFingerprint {
+    explicit_db: Option<std::ffi::OsString>,
+    app_data_override: Option<std::ffi::OsString>,
+    appdata: Option<std::ffi::OsString>,
+    localappdata: Option<std::ffi::OsString>,
+    xdg: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+}
+
+impl MetadataEnvFingerprint {
+    fn current() -> Self {
+        Self {
+            explicit_db: std::env::var_os(METADATA_DB_ENV).filter(|v| !v.is_empty()),
+            app_data_override: std::env::var_os(APP_DATA_DIR_ENV).filter(|v| !v.is_empty()),
+            appdata: std::env::var_os("APPDATA").filter(|v| !v.is_empty()),
+            localappdata: std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()),
+            xdg: std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()),
+            home: std::env::var_os("HOME").filter(|v| !v.is_empty()),
+        }
+    }
+}
+
+static CACHED_METADATA_DB_PATH: OnceLock<Mutex<Option<(MetadataEnvFingerprint, PathBuf)>>> =
+    OnceLock::new();
+
 pub fn metadata_db_path() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os(METADATA_DB_ENV).filter(|value| !value.is_empty()) {
+    let fingerprint = MetadataEnvFingerprint::current();
+    if let Some(path) = &fingerprint.explicit_db {
         return Ok(PathBuf::from(path));
+    }
+
+    let slot = CACHED_METADATA_DB_PATH.get_or_init(|| Mutex::new(None));
+    if let Some((cached_fp, cached_path)) = slot
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+    {
+        if cached_fp == &fingerprint && cached_path.exists() {
+            return Ok(cached_path.clone());
+        }
     }
 
     let candidates = app_data_dir_candidates();
@@ -61,15 +126,18 @@ pub fn metadata_db_path() -> Result<PathBuf, String> {
         return Err("Could not resolve an app data directory for settings".to_string());
     }
 
-    if let Some(existing) = candidates
+    let resolved = candidates
         .iter()
         .map(|candidate| candidate.join(METADATA_DB_NAME))
         .find(|candidate| candidate.exists())
-    {
-        return Ok(existing);
+        .unwrap_or_else(|| candidates[0].join(METADATA_DB_NAME));
+
+    if resolved.exists() {
+        *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((fingerprint, resolved.clone()));
     }
 
-    Ok(candidates[0].join(METADATA_DB_NAME))
+    Ok(resolved)
 }
 
 pub fn app_data_dir() -> Result<PathBuf, String> {
@@ -195,6 +263,13 @@ fn open_fresh_connection(path: &Path) -> Result<Connection, String> {
     }
 
     let connection = Connection::open(path).map_err(|error| error.to_string())?;
+    let _ = connection.busy_timeout(std::time::Duration::from_secs(5));
+    let _ = connection.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA temp_store = MEMORY;
+         PRAGMA cache_size = -8000;",
+    );
     connection
         .execute("PRAGMA foreign_keys = ON", [])
         .map_err(|error| error.to_string())?;
@@ -281,22 +356,25 @@ fn seed_default_tags(connection: &Connection) -> rusqlite::Result<()> {
 
 fn get_db_setting_at(path: &Path, key: &str) -> Result<Option<String>, String> {
     let connection = open_metadata_db_at(path)?;
-    connection
-        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
-            row.get(0)
-        })
+    let mut statement = connection
+        .prepare_cached("SELECT value FROM settings WHERE key = ?1")
+        .map_err(|error| error.to_string())?;
+    statement
+        .query_row([key], |row| row.get(0))
         .optional()
         .map_err(|error| error.to_string())
 }
 
 fn set_db_setting_at(path: &Path, key: &str, value: &str) -> Result<(), String> {
     let connection = open_metadata_db_at(path)?;
-    connection
-        .execute(
+    let mut statement = connection
+        .prepare_cached(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [key, value],
         )
+        .map_err(|error| error.to_string())?;
+    statement
+        .execute([key, value])
         .map_err(|error| error.to_string())?;
 
     Ok(())

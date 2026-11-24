@@ -134,10 +134,16 @@ pub fn split_archive_path(path: &str) -> Result<Option<ArchivePath>, String> {
         }
 
         archive_path.push(component.as_os_str());
-        if archive_path.is_file() {
-            found_kind = archive_kind_for_path(&archive_path);
-            if found_kind.is_none() {
-                unavailable_note = super::placeholders::unavailable_note_for_path(&archive_path);
+        if matches!(component, Component::Normal(_)) {
+            let candidate_kind = archive_kind_for_path(&archive_path);
+            let candidate_note = if candidate_kind.is_none() {
+                super::placeholders::unavailable_note_for_path(&archive_path)
+            } else {
+                None
+            };
+            if (candidate_kind.is_some() || candidate_note.is_some()) && archive_path.is_file() {
+                found_kind = candidate_kind;
+                unavailable_note = candidate_note;
             }
         }
     }
@@ -283,29 +289,34 @@ fn is_windows_special_component(part: &str) -> bool {
 pub(super) fn top_level_remap(
     dest: &Path,
     relative_paths: &[PathBuf],
-) -> Option<(OsString, OsString)> {
+) -> Result<Option<(OsString, OsString)>, String> {
     let mut top_level: Option<OsString> = None;
     for relative_path in relative_paths {
-        let component = first_normal_component(relative_path)?;
+        let Some(component) = first_normal_component(relative_path) else {
+            return Ok(None);
+        };
         if let Some(current) = &top_level {
             if current != &component {
-                return None;
+                return Ok(None);
             }
         } else {
             top_level = Some(component);
         }
     }
 
-    let original = top_level?;
+    let Some(original) = top_level else {
+        return Ok(None);
+    };
     let existing_path = dest.join(&original);
     if !existing_path.exists() {
-        return None;
+        return Ok(None);
     }
 
-    let replacement = unique_sibling_path(&existing_path)
-        .file_name()?
-        .to_os_string();
-    Some((original, replacement))
+    let sibling = unique_sibling_path(&existing_path)?;
+    let Some(replacement) = sibling.file_name().map(OsStr::to_os_string) else {
+        return Ok(None);
+    };
+    Ok(Some((original, replacement)))
 }
 
 fn first_normal_component(path: &Path) -> Option<OsString> {
@@ -343,14 +354,14 @@ fn rewrite_first_component(path: &Path, original: &OsStr, replacement: &OsStr) -
     rewritten
 }
 
-pub(super) fn unique_file_path_if_needed(path: &Path) -> PathBuf {
+pub(super) fn unique_file_path_if_needed(path: &Path) -> Result<PathBuf, String> {
     if !path.exists() {
-        return path.to_path_buf();
+        return Ok(path.to_path_buf());
     }
     unique_sibling_path(path)
 }
 
-fn unique_sibling_path(path: &Path) -> PathBuf {
+fn unique_sibling_path(path: &Path) -> Result<PathBuf, String> {
     let parent = path.parent().unwrap_or_else(|| Path::new(""));
     let file_name = path.file_name().unwrap_or_else(|| OsStr::new("extracted"));
     let original = Path::new(file_name);
@@ -369,11 +380,14 @@ fn unique_sibling_path(path: &Path) -> PathBuf {
         };
         let candidate = parent.join(candidate_name);
         if !candidate.exists() {
-            return candidate;
+            return Ok(candidate);
         }
     }
 
-    path.to_path_buf()
+    Err(format!(
+        "Could not find a unique output path after 9,999 attempts for {}",
+        path.display()
+    ))
 }
 
 pub(super) fn create_dir_all(path: &Path) -> Result<(), String> {

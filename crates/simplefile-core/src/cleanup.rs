@@ -181,8 +181,24 @@ pub fn scan_duplicate_check(
             continue;
         }
 
+        // Deduplicate NTFS/ReFS/POSIX hardlinks sharing the exact same underlying
+        // file identity so linked files are never reported as wasted space.
+        let mut seen_identities = std::collections::HashSet::new();
+        let unique_files: Vec<DuplicateCandidate> = files
+            .into_iter()
+            .filter(
+                |candidate| match sumafile_transfer::staging::file_identity(&candidate.path) {
+                    Ok(id) => seen_identities.insert(id),
+                    Err(_) => true,
+                },
+            )
+            .collect();
+        if unique_files.len() < 2 {
+            continue;
+        }
+
         let mut partial_map: HashMap<String, Vec<DuplicateCandidate>> = HashMap::new();
-        for candidate in files {
+        for candidate in unique_files {
             check_cancelled(cancel)?;
             partial_checked += 1;
             if partial_checked == 1 || partial_checked.is_multiple_of(HASH_PROGRESS_INTERVAL) {
@@ -358,26 +374,66 @@ pub fn scan_disk_cleanup(
             continue;
         }
 
-        let mut hash_map: HashMap<String, Vec<String>> = HashMap::new();
-        for file_path in files {
-            check_cancelled(cancel)?;
-            hashed_files += 1;
-            if hashed_files == 1 || hashed_files.is_multiple_of(HASH_PROGRESS_INTERVAL) {
-                progress(
-                    hashed_files,
-                    duplicate_candidates,
-                    &file_path.to_string_lossy(),
-                );
-            }
+        let mut seen_identities = std::collections::HashSet::new();
+        let unique_files: Vec<PathBuf> = files
+            .into_iter()
+            .filter(
+                |file_path| match sumafile_transfer::staging::file_identity(file_path) {
+                    Ok(id) => seen_identities.insert(id),
+                    Err(_) => true,
+                },
+            )
+            .collect();
+        if unique_files.len() < 2 {
+            continue;
+        }
 
-            match compute_sha256(&file_path, LOCAL_HASH_BUFFER_BYTES, cancel) {
-                Ok(hash) => {
-                    hash_map
-                        .entry(hash)
-                        .or_default()
-                        .push(file_path.to_string_lossy().to_string());
+        let mut partial_buckets: Vec<Vec<PathBuf>> = Vec::new();
+        let mut partial_map: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        for file_path in unique_files {
+            check_cancelled(cancel)?;
+            match compute_partial_sha256(
+                &file_path,
+                DEFAULT_PARTIAL_HASH_BYTES,
+                LOCAL_HASH_BUFFER_BYTES,
+                cancel,
+            ) {
+                Ok(partial_hash) => {
+                    partial_map.entry(partial_hash).or_default().push(file_path);
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                    return Err("cancelled".to_string());
                 }
                 Err(_) => continue,
+            }
+        }
+        partial_buckets.extend(partial_map.into_values().filter(|group| group.len() > 1));
+
+        let mut hash_map: HashMap<String, Vec<String>> = HashMap::new();
+        for bucket in partial_buckets {
+            for file_path in bucket {
+                check_cancelled(cancel)?;
+                hashed_files += 1;
+                if hashed_files == 1 || hashed_files.is_multiple_of(HASH_PROGRESS_INTERVAL) {
+                    progress(
+                        hashed_files,
+                        duplicate_candidates,
+                        &file_path.to_string_lossy(),
+                    );
+                }
+
+                match compute_sha256(&file_path, LOCAL_HASH_BUFFER_BYTES, cancel) {
+                    Ok(hash) => {
+                        hash_map
+                            .entry(hash)
+                            .or_default()
+                            .push(file_path.to_string_lossy().to_string());
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                        return Err("cancelled".to_string());
+                    }
+                    Err(_) => continue,
+                }
             }
         }
 

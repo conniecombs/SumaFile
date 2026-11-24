@@ -74,12 +74,12 @@ pub(super) fn spawn_entry_facts(
                     tx.clone(),
                 )));
             }
-            for kind in &file_kinds {
-                workers.push(tokio::spawn(file_fact(
+            if !file_kinds.is_empty() {
+                workers.push(tokio::spawn(file_facts_for_path(
                     scheduler.clone(),
                     file_reads.clone(),
-                    path.clone(),
-                    *kind,
+                    path,
+                    file_kinds.clone(),
                     cancel.clone(),
                     tx.clone(),
                 )));
@@ -116,14 +116,16 @@ pub(super) fn spawn_put_entry_facts(
     tokio::spawn(async move {
         let _ = scheduler
             .run_general(move || {
-                for fact in &facts {
+                let mut staged = Vec::with_capacity(facts.len());
+                for fact in facts {
                     if FactKind::from_wire(&fact.kind).is_none_or(|kind| kind.is_folder_kind()) {
                         continue;
                     }
                     if let Some((size, modified)) = file_state(Path::new(&fact.path)) {
-                        let _ = fact_cache::put_cached_fact(fact, size, &modified);
+                        staged.push((fact, size, modified));
                     }
                 }
+                let _ = fact_cache::put_cached_facts_batch(&staged);
             })
             .await;
         let _ = write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await;
@@ -166,8 +168,7 @@ async fn folder_facts(
             .map(|kind| entry_facts::fact(Path::new(&path), *kind, state, String::new(), None))
             .collect()
     };
-    if !Path::new(&path).is_dir() {
-        send_all(&tx, &cancel, settle(STATE_NONE)).await;
+    if cancel.load(Ordering::Relaxed) {
         return;
     }
     let metrics = match cache.get_folder_metrics(&path) {
@@ -181,19 +182,32 @@ async fn folder_facts(
             }
             let (path_for_walk, cancel_for_walk) = (path.clone(), cancel.clone());
             match scheduler
-                .run_background(move || {
-                    simplefile_core::file_ops::get_folder_metrics(&path_for_walk, &cancel_for_walk)
-                })
+                .run_background(
+                    move || -> Option<Result<simplefile_core::models::FolderMetrics, bool>> {
+                        if !Path::new(&path_for_walk).is_dir() {
+                            return Some(Err(false));
+                        }
+                        simplefile_core::file_ops::get_folder_metrics(
+                            &path_for_walk,
+                            &cancel_for_walk,
+                        )
+                        .map(Ok)
+                    },
+                )
                 .await
             {
-                Ok(Some(metrics)) => {
+                Ok(Some(Ok(metrics))) => {
                     cache.put_subdirectories(&path, metrics.subdirectories.clone());
                     cache.put_folder_metrics(&path, metrics.clone());
                     Some(metrics)
                 }
+                Ok(Some(Err(false))) => {
+                    send_all(&tx, &cancel, settle(STATE_NONE)).await;
+                    return;
+                }
                 // Cancelled: nothing to say.
                 Ok(None) => return,
-                Err(_) => None,
+                _ => None,
             }
         }
     };
@@ -219,47 +233,15 @@ async fn folder_facts(
     send_all(&tx, &cancel, facts).await;
 }
 
-async fn file_fact(
+async fn file_facts_for_path(
     scheduler: BlockingScheduler,
     reads: Arc<Semaphore>,
     path: String,
-    kind: FactKind,
+    kinds: Vec<FactKind>,
     cancel: Arc<AtomicBool>,
     tx: mpsc::Sender<EntryFact>,
 ) {
-    let file = Path::new(&path);
-    if file.is_dir() {
-        send_all(
-            &tx,
-            &cancel,
-            vec![entry_facts::fact(
-                file,
-                kind,
-                STATE_NONE,
-                String::new(),
-                None,
-            )],
-        )
-        .await;
-        return;
-    }
-    let Some((size, modified)) = file_state(file) else {
-        send_all(
-            &tx,
-            &cancel,
-            vec![entry_facts::fact(
-                file,
-                kind,
-                STATE_FAILED,
-                String::new(),
-                None,
-            )],
-        )
-        .await;
-        return;
-    };
-    if let Some(cached) = fact_cache::get_cached_fact(&path, kind, size, &modified) {
-        send_all(&tx, &cancel, vec![cached]).await;
+    if cancel.load(Ordering::Relaxed) {
         return;
     }
     let Ok(_permit) = reads.acquire_owned().await else {
@@ -269,16 +251,64 @@ async fn file_fact(
         return;
     }
     let path_for_read = path.clone();
-    let read = scheduler
+    let kinds_for_read = kinds.clone();
+    let cancel_for_read = cancel.clone();
+    let outcome = scheduler
         .run_background(move || {
-            let fact = entry_facts::read_file_fact(Path::new(&path_for_read), kind);
-            let _ = fact_cache::put_cached_fact(&fact, size, &modified);
-            fact
+            let file = Path::new(&path_for_read);
+            let Ok(metadata) = std::fs::metadata(file) else {
+                return kinds_for_read
+                    .iter()
+                    .map(|kind| entry_facts::fact(file, *kind, STATE_FAILED, String::new(), None))
+                    .collect::<Vec<_>>();
+            };
+            if metadata.is_dir() {
+                return kinds_for_read
+                    .iter()
+                    .map(|kind| entry_facts::fact(file, *kind, STATE_NONE, String::new(), None))
+                    .collect::<Vec<_>>();
+            }
+            let size = metadata.len();
+            let modified = metadata
+                .modified()
+                .map(format_system_time)
+                .unwrap_or_default();
+
+            let cached = fact_cache::get_cached_facts_for_path(
+                &path_for_read,
+                &kinds_for_read,
+                size,
+                &modified,
+            );
+            let mut results = Vec::with_capacity(kinds_for_read.len());
+            let mut to_store = Vec::new();
+            for (kind, entry) in cached {
+                if let Some(hit) = entry {
+                    results.push(hit);
+                } else {
+                    if cancel_for_read.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let computed = entry_facts::read_file_fact(file, kind);
+                    to_store.push((computed.clone(), size, modified.clone()));
+                    results.push(computed);
+                }
+            }
+            if !to_store.is_empty() {
+                let _ = fact_cache::put_cached_facts_batch(&to_store);
+            }
+            results
         })
         .await;
-    let fact =
-        read.unwrap_or_else(|_| entry_facts::fact(file, kind, STATE_FAILED, String::new(), None));
-    send_all(&tx, &cancel, vec![fact]).await;
+
+    let facts = outcome.unwrap_or_else(|_| {
+        let file = Path::new(&path);
+        kinds
+            .iter()
+            .map(|kind| entry_facts::fact(file, *kind, STATE_FAILED, String::new(), None))
+            .collect()
+    });
+    send_all(&tx, &cancel, facts).await;
 }
 
 /// Sends the facts as `entry-facts` batches and returns how many went out.

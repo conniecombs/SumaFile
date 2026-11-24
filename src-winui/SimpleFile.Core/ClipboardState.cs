@@ -19,19 +19,29 @@ public sealed class ClipboardState
     /// </summary>
     public string Stamp { get; private set; } = "";
 
-    public void SetCopy(string[] paths)
+    /// <summary>
+    /// True when <see cref="Stamp"/> was written to the Windows clipboard; false when the
+    /// clipboard holds an in-app-only selection (such as Clipboard History or a failed OS export).
+    /// </summary>
+    public bool IsSystemSynced { get; private set; } = true;
+
+    public void SetCopy(string[] paths, bool systemSynced = true)
     {
         Operation = ClipboardOperation.Copy;
         SourcePaths = paths;
         Stamp = Guid.NewGuid().ToString("N");
+        IsSystemSynced = systemSynced;
     }
 
-    public void SetCut(string[] paths)
+    public void SetCut(string[] paths, bool systemSynced = true)
     {
         Operation = ClipboardOperation.Cut;
         SourcePaths = paths;
         Stamp = Guid.NewGuid().ToString("N");
+        IsSystemSynced = systemSynced;
     }
+
+    public void MarkLocalOnly() => IsSystemSynced = false;
 
     /// <summary>
     /// Drops the internal items when the system clipboard stamp is missing or belongs to a
@@ -39,7 +49,7 @@ public sealed class ClipboardState
     /// </summary>
     public void ReconcileWith(string? systemClipboardStamp)
     {
-        if (!HasItems)
+        if (!HasItems || !IsSystemSynced)
         {
             return;
         }
@@ -53,5 +63,6 @@ public sealed class ClipboardState
     public void Clear()
     {
         SourcePaths = [];
+        IsSystemSynced = true;
     }
 }

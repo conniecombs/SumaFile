@@ -15,6 +15,9 @@ public sealed class FolderTreeItem
     public bool HasChildren { get; set; }
     public bool Expanded { get; set; }
     public int Depth { get; set; }
+    public double IndentWidth => Depth * 14.0;
+    public string ChevronGlyph => !HasChildren ? "" : (Expanded ? "\uE70D" : "\uE76C");
+    public double ChevronOpacity => HasChildren ? 1.0 : 0.0;
 }
 
 public sealed class ClipboardHistoryEntry

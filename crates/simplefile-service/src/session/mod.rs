@@ -219,21 +219,28 @@ where
                     searches.cancel(&search_id).await;
                     write_json(&writer, &JsonRpcResponse::result(id, Value::Null)).await?;
                 }
-                Dispatch::WatchDirectory { id, path } => {
+                Dispatch::WatchDirectory { id, paths } => {
                     let events = events.clone();
                     let cache_for_watch = cache.clone();
                     let views_for_watch = views.clone();
-                    let result =
-                        crate::watcher::watch_directory(path, &mut watcher_state, move |change| {
+                    let runtime = tokio::runtime::Handle::current();
+                    let scheduler_for_watch = scheduler.clone();
+                    let result = crate::watcher::watch_directories(
+                        paths,
+                        &mut watcher_state,
+                        move |change| {
                             cache_for_watch.invalidate_path(&change.path);
                             events.emit_file_change(&change);
                             listing_jobs::apply_file_change(
                                 &views_for_watch,
                                 &cache_for_watch,
                                 &events,
+                                &runtime,
+                                &scheduler_for_watch,
                                 &change.path,
                             );
-                        });
+                        },
+                    );
                     let response = match result {
                         Ok(()) => JsonRpcResponse::result(id, Value::Null),
                         Err(message) => JsonRpcResponse::application_error(id, message),
@@ -412,6 +419,19 @@ where
     .await;
     // Detached blocking jobs must not outlive the client that owns them.
     writer.close();
+    state
+        .folder_size_cancel
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .folder_item_count_cancel
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .count_items_cancel
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    for flag in state.entry_facts_cancel.values() {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    state.entry_facts_cancel.clear();
     operations.cancel_all().await;
     searches.cancel_all().await;
     duplicate_scans.cancel_all().await;

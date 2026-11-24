@@ -14,8 +14,10 @@ internal sealed class WorkspaceTagController
         new() { Name = "Purple", Color = "#a855f7" },
     ];
 
+    private bool _seededDefaults;
+
     public List<Tag> AllTags { get; private set; } = [];
-    public Dictionary<string, Tag[]> FileTags { get; private set; } = new();
+    public Dictionary<string, Tag[]> FileTags { get; private set; } = new(StringComparer.OrdinalIgnoreCase);
     public long? ActiveTagFilter { get; private set; }
 
     public async Task LoadTagsAsync(
@@ -25,15 +27,16 @@ internal sealed class WorkspaceTagController
         if (fileOps is null)
         {
             AllTags = [];
-            FileTags = new();
+            FileTags = new(StringComparer.OrdinalIgnoreCase);
             return;
         }
 
         try
         {
             var tags = await fileOps.GetAllTagsAsync(cancellationToken).ConfigureAwait(false);
-            if (tags.Length == 0)
+            if (tags.Length == 0 && !_seededDefaults)
             {
+                _seededDefaults = true;
                 foreach (var dt in DefaultTags)
                 {
                     await fileOps.CreateTagAsync(dt.Name, dt.Color, cancellationToken).ConfigureAwait(false);
@@ -41,14 +44,18 @@ internal sealed class WorkspaceTagController
 
                 tags = await fileOps.GetAllTagsAsync(cancellationToken).ConfigureAwait(false);
             }
+            else
+            {
+                _seededDefaults = true;
+            }
 
             AllTags = [.. tags];
-            FileTags = await fileOps.GetAllFileTagsAsync(cancellationToken).ConfigureAwait(false);
+            FileTags = ToCaseInsensitiveMap(await fileOps.GetAllFileTagsAsync(cancellationToken).ConfigureAwait(false));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             AllTags = [];
-            FileTags = new();
+            FileTags = new(StringComparer.OrdinalIgnoreCase);
         }
     }
 
@@ -65,7 +72,7 @@ internal sealed class WorkspaceTagController
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        FileTags = await fileOps.GetAllFileTagsAsync(cancellationToken).ConfigureAwait(false);
+        FileTags = ToCaseInsensitiveMap(await fileOps.GetAllFileTagsAsync(cancellationToken).ConfigureAwait(false));
         cancellationToken.ThrowIfCancellationRequested();
     }
 
@@ -81,7 +88,7 @@ internal sealed class WorkspaceTagController
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        FileTags = await fileOps.GetAllFileTagsAsync(cancellationToken).ConfigureAwait(false);
+        FileTags = ToCaseInsensitiveMap(await fileOps.GetAllFileTagsAsync(cancellationToken).ConfigureAwait(false));
         cancellationToken.ThrowIfCancellationRequested();
     }
 
@@ -93,6 +100,7 @@ internal sealed class WorkspaceTagController
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(fileOps);
+        _seededDefaults = true;
         await fileOps.UpdateTagAsync(id, name, color, cancellationToken).ConfigureAwait(false);
         await LoadTagsAsync(fileOps, cancellationToken).ConfigureAwait(false);
     }
@@ -103,8 +111,46 @@ internal sealed class WorkspaceTagController
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(fileOps);
+        _seededDefaults = true;
         await fileOps.DeleteTagAsync(id, cancellationToken).ConfigureAwait(false);
+        if (ActiveTagFilter == id)
+        {
+            ActiveTagFilter = null;
+        }
+
         await LoadTagsAsync(fileOps, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static Dictionary<string, Tag[]> ToCaseInsensitiveMap(Dictionary<string, Tag[]>? source)
+    {
+        var result = new Dictionary<string, Tag[]>(StringComparer.OrdinalIgnoreCase);
+        if (source is null)
+        {
+            return result;
+        }
+
+        foreach (var (rawKey, tags) in source)
+        {
+            if (tags is null || tags.Length == 0)
+            {
+                continue;
+            }
+
+            if (result.TryGetValue(rawKey, out var existing))
+            {
+                result[rawKey] = existing
+                    .Concat(tags)
+                    .GroupBy(tag => tag.Id)
+                    .Select(group => group.First())
+                    .ToArray();
+            }
+            else
+            {
+                result[rawKey] = tags;
+            }
+        }
+
+        return result;
     }
 
     public void SetTagFilter(long? tagId)

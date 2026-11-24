@@ -7,6 +7,7 @@ use crate::models::{RemoteAuthKind, RemoteProfile, RemoteProfileInput, RemotePro
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub const PROFILE_DB_FILE: &str = "remote-profiles.db";
@@ -25,6 +26,7 @@ const SELECT_PROFILE_COLUMNS: &str =
 #[derive(Debug, Clone)]
 pub struct ProfileStore {
     path: PathBuf,
+    cached: Arc<Mutex<Option<Connection>>>,
 }
 
 impl ProfileStore {
@@ -33,6 +35,7 @@ impl ProfileStore {
     pub fn open(data_dir: &Path) -> ProfileStore {
         ProfileStore {
             path: data_dir.join(PROFILE_DB_FILE),
+            cached: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -42,69 +45,72 @@ impl ProfileStore {
     }
 
     pub fn list(&self) -> Result<Vec<RemoteProfile>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(&format!(
-                "{SELECT_PROFILE_COLUMNS}
-                 ORDER BY name COLLATE NOCASE, host COLLATE NOCASE, id"
-            ))
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([], read_raw_profile)
-            .map_err(|error| error.to_string())?;
+        self.with_connection(|connection| {
+            let mut statement = connection
+                .prepare_cached(&format!(
+                    "{SELECT_PROFILE_COLUMNS}
+                     ORDER BY name COLLATE NOCASE, host COLLATE NOCASE, id"
+                ))
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], read_raw_profile)
+                .map_err(|error| error.to_string())?;
 
-        let mut profiles = Vec::new();
-        for row in rows {
-            profiles.push(row.map_err(|error| error.to_string())?.into_profile()?);
-        }
+            let mut profiles = Vec::new();
+            for row in rows {
+                profiles.push(row.map_err(|error| error.to_string())?.into_profile()?);
+            }
 
-        Ok(profiles)
+            Ok(profiles)
+        })
     }
 
     pub fn save(&self, input: RemoteProfileInput) -> Result<RemoteProfile, String> {
         let profile = ProfileStore::prepare(input)?;
-        let connection = self.connection()?;
-        connection
-            .execute(
-                "INSERT INTO remote_profiles (
-                    id, name, protocol, host, port, username, root_path, auth_kind,
-                    insecure_plain_ftp, passive_mode, credential_target,
-                    private_key_path, trusted_host_fingerprint, updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-                ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name,
-                    protocol = excluded.protocol,
-                    host = excluded.host,
-                    port = excluded.port,
-                    username = excluded.username,
-                    root_path = excluded.root_path,
-                    auth_kind = excluded.auth_kind,
-                    insecure_plain_ftp = excluded.insecure_plain_ftp,
-                    passive_mode = excluded.passive_mode,
-                    credential_target = excluded.credential_target,
-                    private_key_path = excluded.private_key_path,
-                    trusted_host_fingerprint = excluded.trusted_host_fingerprint,
-                    updated_at = excluded.updated_at",
-                params![
-                    profile.id,
-                    profile.name,
-                    profile.protocol.as_str(),
-                    profile.host,
-                    i64::from(profile.port),
-                    profile.username,
-                    profile.root_path,
-                    profile.auth_kind.as_str(),
-                    bool_to_i64(profile.insecure_plain_ftp),
-                    bool_to_i64(profile.passive_mode),
-                    profile.credential_target,
-                    profile.private_key_path,
-                    profile.trusted_host_fingerprint,
-                    Utc::now().to_rfc3339(),
-                ],
-            )
+        self.with_connection(|connection| {
+            let mut stmt = connection
+                .prepare_cached(
+                    "INSERT INTO remote_profiles (
+                        id, name, protocol, host, port, username, root_path, auth_kind,
+                        insecure_plain_ftp, passive_mode, credential_target,
+                        private_key_path, trusted_host_fingerprint, updated_at
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        protocol = excluded.protocol,
+                        host = excluded.host,
+                        port = excluded.port,
+                        username = excluded.username,
+                        root_path = excluded.root_path,
+                        auth_kind = excluded.auth_kind,
+                        insecure_plain_ftp = excluded.insecure_plain_ftp,
+                        passive_mode = excluded.passive_mode,
+                        credential_target = excluded.credential_target,
+                        private_key_path = excluded.private_key_path,
+                        trusted_host_fingerprint = excluded.trusted_host_fingerprint,
+                        updated_at = excluded.updated_at",
+                )
+                .map_err(|error| error.to_string())?;
+            stmt.execute(params![
+                profile.id,
+                profile.name,
+                profile.protocol.as_str(),
+                profile.host,
+                i64::from(profile.port),
+                profile.username,
+                profile.root_path,
+                profile.auth_kind.as_str(),
+                bool_to_i64(profile.insecure_plain_ftp),
+                bool_to_i64(profile.passive_mode),
+                profile.credential_target,
+                profile.private_key_path,
+                profile.trusted_host_fingerprint,
+                Utc::now().to_rfc3339(),
+            ])
             .map_err(|error| error.to_string())?;
 
-        Ok(profile)
+            Ok(profile)
+        })
     }
 
     /// Deletes the profile and returns the deleted row, so the caller can
@@ -115,19 +121,20 @@ impl ProfileStore {
             return Err("remote profile id cannot be empty".to_string());
         }
 
-        let connection = self.connection()?;
-        let existing = connection
-            .query_row(
-                &format!("{SELECT_PROFILE_COLUMNS} WHERE id = ?1"),
-                [id],
-                read_raw_profile,
-            )
-            .optional()
-            .map_err(|error| error.to_string())?;
-        connection
-            .execute("DELETE FROM remote_profiles WHERE id = ?1", [id])
-            .map_err(|error| error.to_string())?;
-        existing.map(RawProfile::into_profile).transpose()
+        self.with_connection(|connection| {
+            let existing = connection
+                .prepare_cached(&format!("{SELECT_PROFILE_COLUMNS} WHERE id = ?1"))
+                .map_err(|error| error.to_string())?
+                .query_row([id], read_raw_profile)
+                .optional()
+                .map_err(|error| error.to_string())?;
+            connection
+                .prepare_cached("DELETE FROM remote_profiles WHERE id = ?1")
+                .map_err(|error| error.to_string())?
+                .execute([id])
+                .map_err(|error| error.to_string())?;
+            existing.map(RawProfile::into_profile).transpose()
+        })
     }
 
     /// Validates and normalizes a profile without saving it.
@@ -136,37 +143,50 @@ impl ProfileStore {
     }
 
     pub fn meta(&self, key: &str) -> Result<Option<String>, String> {
-        let connection = self.connection()?;
-        connection
-            .query_row(
-                "SELECT value FROM plugin_meta WHERE key = ?1",
-                [key],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|error| error.to_string())
+        self.with_connection(|connection| {
+            connection
+                .prepare_cached("SELECT value FROM plugin_meta WHERE key = ?1")
+                .map_err(|error| error.to_string())?
+                .query_row([key], |row| row.get::<_, String>(0))
+                .optional()
+                .map_err(|error| error.to_string())
+        })
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> Result<(), String> {
-        let connection = self.connection()?;
-        set_meta_on(&connection, key, value)
+        self.with_connection(|connection| set_meta_on(connection, key, value))
     }
 
-    /// A connection with the tables ensured and the busy timeout set.
-    pub(crate) fn connection(&self) -> Result<Connection, String> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    /// Runs `action` against a persistent connection with the tables ensured, WAL enabled,
+    /// and the busy timeout set. Re-initializes automatically if the database file was removed.
+    pub(crate) fn with_connection<T>(
+        &self,
+        action: impl FnOnce(&mut Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut guard = self.cached.lock().map_err(|error| error.to_string())?;
+        if guard.is_some() && !self.path.exists() {
+            *guard = None;
         }
+        if guard.is_none() {
+            if let Some(parent) = self.path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
 
-        let connection = Connection::open(&self.path).map_err(|error| error.to_string())?;
-        connection
-            .busy_timeout(BUSY_TIMEOUT)
-            .map_err(|error| error.to_string())?;
-        connection
-            .execute("PRAGMA foreign_keys = ON", [])
-            .map_err(|error| error.to_string())?;
-        init_schema(&connection).map_err(|error| error.to_string())?;
-        Ok(connection)
+            let connection = Connection::open(&self.path).map_err(|error| error.to_string())?;
+            connection
+                .busy_timeout(BUSY_TIMEOUT)
+                .map_err(|error| error.to_string())?;
+            connection
+                .execute_batch(
+                    "PRAGMA journal_mode = WAL;
+                     PRAGMA synchronous = NORMAL;
+                     PRAGMA foreign_keys = ON;",
+                )
+                .map_err(|error| error.to_string())?;
+            init_schema(&connection).map_err(|error| error.to_string())?;
+            *guard = Some(connection);
+        }
+        action(guard.as_mut().expect("initialized profile db connection"))
     }
 }
 

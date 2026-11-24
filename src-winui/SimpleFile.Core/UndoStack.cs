@@ -42,16 +42,22 @@ public sealed class UndoStack
         }
 
         var items = transferred.ToArray();
+        var currentDestinations = items.Select(item => item.Destination).ToArray();
         Push(new UndoEntry
         {
             Description = $"Copy {Items(items.Length)}",
-            Undo = ct => ops.TrashAsync(items.Select(item => item.Destination).ToArray(), ct),
+            Undo = ct => ops.TrashAsync(currentDestinations.ToArray(), ct),
             Redo = async ct =>
             {
-                foreach (var item in items)
+                for (var index = 0; index < items.Length; index++)
                 {
+                    var item = items[index];
                     var parent = PathRules.GetParentPath(item.Destination) ?? item.Destination;
-                    await ops.CopyEntryResolvedAsync(item.Source, parent, "rename", ct).ConfigureAwait(false);
+                    var recreated = await ops.CopyEntryResolvedAsync(item.Source, parent, "rename", ct).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(recreated))
+                    {
+                        currentDestinations[index] = recreated;
+                    }
                 }
             },
         });
@@ -143,6 +149,8 @@ public sealed class UndoStack
         }
 
         var items = transferred.ToArray();
+        var currentSources = items.Select(item => item.Source).ToArray();
+        var currentDestinations = items.Select(item => item.Destination).ToArray();
         // Per-item bookkeeping lets a failed undo be retried for the items still in place
         // instead of failing forever on the ones already restored.
         var restored = new bool[items.Length];
@@ -158,15 +166,39 @@ public sealed class UndoStack
                         continue;
                     }
 
-                    var item = items[index];
-                    var parent = PathRules.GetParentPath(item.Source);
+                    var originalSource = items[index].Source;
+                    var parent = PathRules.GetParentPath(originalSource);
                     if (parent is null)
                     {
                         restored[index] = true;
                         continue;
                     }
 
-                    await ops.MoveEntryResolvedAsync(item.Destination, parent, "rename", ct).ConfigureAwait(false);
+                    var movedBack = await ops.MoveEntryResolvedAsync(currentDestinations[index], parent, "rename", ct).ConfigureAwait(false);
+                    var desiredName = PathRules.Basename(originalSource);
+                    if (!string.IsNullOrEmpty(movedBack)
+                        && !string.Equals(PathRules.Basename(movedBack), desiredName, StringComparison.Ordinal))
+                    {
+                        try
+                        {
+                            var renamed = await ops.RenameAsync(movedBack, desiredName, ct).ConfigureAwait(false);
+                            if (!string.IsNullOrEmpty(renamed))
+                            {
+                                movedBack = renamed;
+                            }
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            // Keep the non-colliding name if originalSource is now occupied,
+                            // and record it so Redo moves the restored item.
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(movedBack))
+                    {
+                        currentSources[index] = movedBack;
+                    }
+
                     restored[index] = true;
                 }
             },
@@ -181,7 +213,12 @@ public sealed class UndoStack
 
                     var item = items[index];
                     var parent = PathRules.GetParentPath(item.Destination) ?? item.Destination;
-                    await ops.MoveEntryResolvedAsync(item.Source, parent, "rename", ct).ConfigureAwait(false);
+                    var movedAgain = await ops.MoveEntryResolvedAsync(currentSources[index], parent, "rename", ct).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(movedAgain))
+                    {
+                        currentDestinations[index] = movedAgain;
+                    }
+
                     restored[index] = false;
                 }
             },

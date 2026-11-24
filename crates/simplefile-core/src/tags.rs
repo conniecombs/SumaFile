@@ -6,7 +6,7 @@ use std::collections::HashMap;
 pub fn get_all_tags() -> Result<Vec<Tag>, String> {
     let connection = open_metadata_db()?;
     let mut statement = connection
-        .prepare("SELECT id, name, color FROM tags ORDER BY name")
+        .prepare_cached("SELECT id, name, color FROM tags ORDER BY name")
         .map_err(|error| error.to_string())?;
 
     let rows = statement
@@ -35,8 +35,8 @@ pub fn create_tag(name: String, color: String) -> Result<Tag, String> {
 }
 
 pub fn update_tag(id: i64, name: String, color: String) -> Result<Tag, String> {
-    validate_tag_id(id)?;
     validate_tag_input(&name, &color)?;
+    validate_tag_id(id)?;
     let connection = open_metadata_db()?;
 
     let changed = connection
@@ -63,19 +63,27 @@ pub fn delete_tag(id: i64) -> Result<(), String> {
 
 pub fn get_tags_for_path(path: String) -> Result<Vec<Tag>, String> {
     validate_path_key(&path)?;
+    let normalized = normalize_tag_path(&path);
     let connection = open_metadata_db()?;
-    let mut statement = connection
-        .prepare(
-            "SELECT t.id, t.name, t.color
+    #[cfg(windows)]
+    const SQL: &str = "SELECT DISTINCT t.id, t.name, t.color
+             FROM tags t
+             JOIN file_tags ft ON t.id = ft.tag_id
+             WHERE ft.file_path = ?1 COLLATE NOCASE
+             ORDER BY t.name";
+    #[cfg(not(windows))]
+    const SQL: &str = "SELECT t.id, t.name, t.color
              FROM tags t
              JOIN file_tags ft ON t.id = ft.tag_id
              WHERE ft.file_path = ?1
-             ORDER BY t.name",
-        )
+             ORDER BY t.name";
+
+    let mut statement = connection
+        .prepare_cached(SQL)
         .map_err(|error| error.to_string())?;
 
     let rows = statement
-        .query_map(params![path], read_tag)
+        .query_map(params![normalized], read_tag)
         .map_err(|error| error.to_string())?;
 
     collect_rows(rows)
@@ -86,16 +94,26 @@ pub fn set_tags_for_path(path: String, tag_ids: Vec<i64>) -> Result<(), String> 
     for tag_id in &tag_ids {
         validate_tag_id(*tag_id)?;
     }
+    let normalized = normalize_tag_path(&path);
 
     let mut connection = open_metadata_db()?;
     let transaction = connection
         .transaction()
         .map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    const DELETE_SQL: &str = "DELETE FROM file_tags WHERE file_path = ?1 COLLATE NOCASE";
+    #[cfg(not(windows))]
+    const DELETE_SQL: &str = "DELETE FROM file_tags WHERE file_path = ?1";
+
     transaction
-        .execute("DELETE FROM file_tags WHERE file_path = ?1", params![path])
+        .execute(DELETE_SQL, params![normalized])
         .map_err(|error| error.to_string())?;
 
+    let mut seen = std::collections::HashSet::with_capacity(tag_ids.len());
     for tag_id in tag_ids {
+        if !seen.insert(tag_id) {
+            continue;
+        }
         let exists: Option<i64> = transaction
             .query_row(
                 "SELECT id FROM tags WHERE id = ?1",
@@ -111,7 +129,7 @@ pub fn set_tags_for_path(path: String, tag_ids: Vec<i64>) -> Result<(), String> 
         transaction
             .execute(
                 "INSERT INTO file_tags (file_path, tag_id) VALUES (?1, ?2)",
-                params![path, tag_id],
+                params![normalized, tag_id],
             )
             .map_err(|error| error.to_string())?;
     }
@@ -124,7 +142,7 @@ pub fn get_files_with_tag(tag_id: i64) -> Result<Vec<String>, String> {
     validate_tag_id(tag_id)?;
     let connection = open_metadata_db()?;
     let mut statement = connection
-        .prepare("SELECT file_path FROM file_tags WHERE tag_id = ?1 ORDER BY file_path")
+        .prepare_cached("SELECT file_path FROM file_tags WHERE tag_id = ?1 ORDER BY file_path")
         .map_err(|error| error.to_string())?;
 
     let rows = statement
@@ -143,7 +161,7 @@ pub fn get_files_with_tag(tag_id: i64) -> Result<Vec<String>, String> {
 pub fn get_all_file_tags() -> Result<HashMap<String, Vec<Tag>>, String> {
     let connection = open_metadata_db()?;
     let mut statement = connection
-        .prepare(
+        .prepare_cached(
             "SELECT ft.file_path, t.id, t.name, t.color
              FROM file_tags ft
              JOIN tags t ON ft.tag_id = t.id
@@ -167,9 +185,39 @@ pub fn get_all_file_tags() -> Result<HashMap<String, Vec<Tag>>, String> {
     let mut map: HashMap<String, Vec<Tag>> = HashMap::new();
     for row in rows {
         let (path, tag) = row.map_err(|error| error.to_string())?;
-        map.entry(path).or_default().push(tag);
+        let key = normalize_tag_path(&path);
+        let entry = map.entry(key).or_default();
+        if !entry.iter().any(|existing| existing.id == tag.id) {
+            entry.push(tag);
+        }
     }
     Ok(map)
+}
+
+fn normalize_tag_path(path: &str) -> String {
+    let trimmed = path.trim();
+    #[cfg(windows)]
+    {
+        let mut normalized = trimmed.replace('/', "\\");
+        while normalized.len() > 3 && normalized.ends_with('\\') {
+            normalized.pop();
+        }
+        if normalized.len() == 2
+            && normalized.as_bytes()[0].is_ascii_alphabetic()
+            && normalized.as_bytes()[1] == b':'
+        {
+            normalized.push('\\');
+        }
+        normalized
+    }
+    #[cfg(not(windows))]
+    {
+        if trimmed.len() > 1 {
+            trimmed.trim_end_matches('/').to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
 }
 
 fn read_tag(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tag> {
