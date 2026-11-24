@@ -48,6 +48,26 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   interrupted transfer there. On Windows it now asks for those records by
   name instead of listing the folder, which on a network share was the full
   listing of a large folder before the first file.
+- The transfer options dialog shows the service's own defaults when nothing
+  has been saved: a 256 MiB copy buffer budget and no extra streams per large
+  file. It used to show 192 MiB and 4 streams, so the first change to any
+  setting also saved those two values.
+- A task's own transfer settings apply for as long as the task runs. They
+  used to lapse 24 hours after they were saved, also while the task was still
+  queued or running.
+- A file's finishing stage is reported even when the thread copying it
+  reported another file a moment before. Since 1.2.0 started worker threads
+  only as files needed them, a small file's finishing stage could be dropped
+  with the byte counts it was thinned among.
+
+### Keyboard shortcuts
+
+- A shortcut on Plus, Minus, Comma, Period, Slash or Backslash is registered
+  on that key of the main keyboard, and on the numeric keypad's key as well
+  where there is one. Plus, Minus, Comma, Period and Slash used to answer
+  only on the keypad, Backslash answered on the keypad's Divide, and a
+  PrintScreen shortcut on nothing. A shortcut recorded in Settings names the
+  key the same way, so what is recorded is what is registered.
 
 ### Other changes
 
@@ -62,6 +82,16 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - The cache of column values (dimensions, duration and the like) is kept to
   200,000 entries; the ones saved longest ago are removed first. It used to
   grow for as long as the profile existed.
+- Opening a folder whose path differs from the current one only in case or in
+  a trailing separator no longer adds a second Back entry.
+- Copying items into the folder they are already in makes duplicates whether
+  one item or several are pasted or dropped; the conflict prompt offers to
+  keep both. A move into that folder, which would change nothing, is refused
+  for any number of items. One item used to be refused where two or more
+  were duplicated.
+- In a development checkout the app starts whichever of the debug and
+  release builds of the file service was written last, instead of a debug
+  build whenever one exists.
 
 ---
 

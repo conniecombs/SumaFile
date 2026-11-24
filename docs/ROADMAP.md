@@ -81,9 +81,6 @@ on-demand column values have shipped. What remains:
 - "Always copy" does not always copy: in a second pass it compares content
   like Checksum, and in a first pass no check mode skips anything. Rename the
   choice or change what it does.
-- The dialog shows 192 MiB and 4 streams when nothing has been saved, while
-  the service's defaults are 256 MiB and no streams, so the first change to
-  any setting also saves those two values. Use one set of defaults.
 - While a file waits for a later retry round, its bytes leave the task's
   bytes done and return when the retry starts, so the readout still falls
   then. Keep them counted.
@@ -93,8 +90,6 @@ on-demand column values have shipped. What remains:
   clean-up that follows is discarded; report it.
 - A retry after a checksum mismatch continues the partial file at its current
   length, so it verifies the same bytes again instead of copying them again.
-- A task's own settings stop applying 24 hours after they were saved, also
-  while the task is still queued or running.
 - A destination that refuses the attribute update keeps the Hidden attribute
   on a file that is published all the same.
 - A request the service refuses while planning, such as copying a folder into
@@ -144,17 +139,14 @@ by its ids:
 
 | Id | Problem |
 | --- | --- |
-| S5 | Shortcut keys named Plus, Minus, Comma, Period, Slash, Backslash and PrintScreen in Settings do not map to the keys they name. |
 | S27 | The command palette has a fixed width that clips in a narrow window, and does not restore focus when it closes. |
 | F15 | The Details list handles both the right-tap and the context-request event, so one right-click may build its menu twice. Not confirmed at runtime. |
 | F16 | After a context menu closes in the Details list, arrow keys do nothing until a row is clicked. |
-| F25 | Pasting one item into its own folder is refused, while two or more are duplicated. |
 | F26 | Dragging over a pane makes it the active pane before anything is dropped. |
 | T21 | The keep-both preview may probe up to 10,000 names per conflict while the prompt is held. |
 | T23 | `MainWindow.Transfer.cs` holds the transfer retry and undo logic that belongs in Core. |
 | T24 | `FileOperationDialogService` takes dozens of delegates and builds dialogs three different ways. |
 | C11 | Profile export suggests a double extension, and there is no profile import. |
-| C24 | History compares paths by exact case, so a path that differs only in case adds a second Back entry. |
 | P13 | See Search: rename preview on the UI thread. |
 | P15 | See Search: result batches replace the list. |
 | P23 | See Search: unescaped values in the Windows Search query. |
@@ -245,6 +237,3 @@ Open findings from the
   by the app and never sent by the service.
 - The startup budget check has a rule for `MainWindow.StartupDriveRefresh`
   stages, which the app no longer writes, so the rule never applies.
-- In a development checkout the app looks for the file service in
-  `target\debug` before `target\release`, so a stale debug build is started
-  in preference to a fresh release build.
