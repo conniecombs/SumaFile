@@ -321,21 +321,105 @@ fn same_path(left: &Path, right: &Path) -> bool {
             == crate::path_conflict::path_collision_key(right)
 }
 
+/// The end of an ownership record's file name.
+const RECORD_SUFFIX: &str = ".sumafile-partial.state";
+
+fn is_record_name(name: &std::ffi::OsStr) -> bool {
+    name.to_string_lossy().ends_with(RECORD_SUFFIX)
+}
+
+/// The ownership records directly in `directory`.
+///
+/// On Windows the filesystem is asked for the records by name, so a folder of
+/// a hundred thousand files on a share is not listed over the network to find
+/// none. Where that is not possible the folder is listed and filtered here.
+fn record_files(directory: &Path) -> std::io::Result<Vec<PathBuf>> {
+    #[cfg(windows)]
+    if let Some(records) = record_files_by_pattern(directory) {
+        return Ok(records);
+    }
+    let mut records = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        if is_record_name(&entry.file_name()) {
+            records.push(entry.path());
+        }
+    }
+    Ok(records)
+}
+
+/// `None` when the filtered search could not be made or did not finish, which
+/// leaves the answer to the full listing: a folder that does not exist, a
+/// filesystem that refuses the pattern, or a search that broke off part-way.
+#[cfg(windows)]
+fn record_files_by_pattern(directory: &Path) -> Option<Vec<PathBuf>> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::Foundation::{
+        GetLastError, ERROR_FILE_NOT_FOUND, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
+        FIND_FIRST_EX_LARGE_FETCH, WIN32_FIND_DATAW,
+    };
+
+    let pattern = crate::path_conflict::wide_path(&directory.join(format!("*{RECORD_SUFFIX}")));
+    // SAFETY: an all-zero WIN32_FIND_DATAW is a valid value of that plain data struct.
+    let mut data: WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
+    // SAFETY: `pattern` is nul-terminated and outlives the call; `data` is a
+    // WIN32_FIND_DATAW, which is what FindExInfoBasic writes.
+    let handle = unsafe {
+        FindFirstFileExW(
+            pattern.as_ptr(),
+            FindExInfoBasic,
+            (&mut data as *mut WIN32_FIND_DATAW).cast(),
+            FindExSearchNameMatch,
+            std::ptr::null(),
+            FIND_FIRST_EX_LARGE_FETCH,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        // SAFETY: reads the calling thread's last error code.
+        let error = unsafe { GetLastError() };
+        // The folder is there and holds no record. A folder that is missing
+        // answers ERROR_PATH_NOT_FOUND and is left to the full listing.
+        return matches!(error, ERROR_FILE_NOT_FOUND | ERROR_NO_MORE_FILES).then(Vec::new);
+    }
+
+    let mut records = Vec::new();
+    let complete = loop {
+        let length = data
+            .cFileName
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(data.cFileName.len());
+        let name = std::ffi::OsString::from_wide(&data.cFileName[..length]);
+        // The filesystem matches without regard to case and may match a short
+        // name; the record name is checked here as the full listing checks it.
+        if is_record_name(&name) {
+            records.push(directory.join(name));
+        }
+        // SAFETY: `handle` is the open search handle and `data` a valid buffer.
+        if unsafe { FindNextFileW(handle, &mut data) } == 0 {
+            // SAFETY: reads the calling thread's last error code.
+            break unsafe { GetLastError() } == ERROR_NO_MORE_FILES;
+        }
+    };
+    // SAFETY: `handle` came from FindFirstFileExW and is closed once.
+    unsafe {
+        FindClose(handle);
+    }
+    complete.then_some(records)
+}
+
 /// One scan per destination directory, rather than one scan per copied file.
 /// A live lock, an invalid/torn record, or an unrelated partial is preserved.
 pub fn recover_directory(directory: &Path) -> Result<(), String> {
-    let entries = match fs::read_dir(directory) {
-        Ok(entries) => entries,
+    let records = match record_files(directory) {
+        Ok(records) => records,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(format!("Read transfer recovery directory: {e}")),
     };
-    for entry in entries {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name();
-        if !name.to_string_lossy().ends_with(".sumafile-partial.state") {
-            continue;
-        }
-        let path = entry.path();
+    for path in records {
         let Ok(mut file) = open_locked(&path, false) else {
             continue;
         };
@@ -448,6 +532,42 @@ mod tests {
         assert!(live.owns_staged());
         drop(live);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Recovery asks for the ownership records of a folder, not for the folder.
+    #[test]
+    fn record_files_are_the_ownership_records_of_a_folder_and_nothing_else() {
+        let root = root();
+        for index in 0..200 {
+            fs::write(root.join(format!("photo-{index}.jpg")), b"x").unwrap();
+        }
+        fs::write(root.join("notes.sumafile-partial"), b"partial").unwrap();
+        fs::write(root.join("notes.sumafile-partial.state.bak"), b"other").unwrap();
+        fs::create_dir(root.join("sub")).unwrap();
+        fs::write(
+            root.join("sub").join("deep.sumafile-partial.state"),
+            b"deeper",
+        )
+        .unwrap();
+        let first = root.join("a.sumafile-partial.state");
+        let second = root.join(".b.1234.sumafile-partial.state");
+        fs::write(&first, b"{}\n").unwrap();
+        fs::write(&second, b"{}\n").unwrap();
+
+        let mut found = record_files(&root).unwrap();
+        found.sort();
+        let mut expected = vec![first, second];
+        expected.sort();
+        assert_eq!(found, expected);
+
+        fs::remove_dir_all(&root).unwrap();
+        fs::create_dir(&root).unwrap();
+        assert!(record_files(&root).unwrap().is_empty());
+
+        fs::remove_dir_all(&root).unwrap();
+        let missing = record_files(&root).unwrap_err();
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+        recover_directory(&root).expect("a folder that is gone has nothing to recover");
     }
 
     #[test]

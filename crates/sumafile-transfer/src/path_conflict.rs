@@ -71,7 +71,7 @@ pub fn is_already_exists_error(error: &std::io::Error) -> bool {
 /// long-path aware; `std::fs` converts long paths the same way, so a file it
 /// wrote can otherwise not be renamed. Short paths are passed through as given.
 #[cfg(windows)]
-fn wide_path(path: &Path) -> Vec<u16> {
+pub(crate) fn wide_path(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
     use std::path::{Component, Prefix};
 
