@@ -116,10 +116,14 @@ public interface ISimpleFileIpc : IAsyncDisposable
     Task CancelSearchAsync(string searchId, CancellationToken ct = default);
     Task WatchDirectoryAsync(string path, CancellationToken ct = default);
     Task UnwatchDirectoryAsync(CancellationToken ct = default);
-    Task CancelFolderSizeAsync(CancellationToken ct = default);
-    Task CancelFolderItemCountAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Cancels the running size request for <paramref name="path"/>; without a path, every running
+    /// size request. The item count and metrics cancels below work the same way.
+    /// </summary>
+    Task CancelFolderSizeAsync(string? path = null, CancellationToken ct = default);
+    Task CancelFolderItemCountAsync(string? path = null, CancellationToken ct = default);
     Task CancelCountItemsAsync(CancellationToken ct = default);
-    Task CancelFolderMetricsAsync(CancellationToken ct = default);
+    Task CancelFolderMetricsAsync(string? path = null, CancellationToken ct = default);
     Task<CleanupResult> DiskCleanupAsync(string directory, ulong? sizeThreshold, string? operationId, CancellationToken ct = default);
     Task CancelDiskCleanupAsync(string? operationId = null, CancellationToken ct = default);
     Task<DuplicateCheckResult> DuplicateCheckAsync(string directory, DuplicateScanOptions? options, string? operationId, CancellationToken ct = default);

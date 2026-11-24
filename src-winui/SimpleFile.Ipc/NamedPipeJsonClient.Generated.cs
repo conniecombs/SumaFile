@@ -191,17 +191,17 @@ public sealed partial class NamedPipeJsonClient
     public Task UnwatchDirectoryAsync(CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.UnwatchDirectoryMethod, new { }, ct);
 
-    public Task CancelFolderSizeAsync(CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.CancelFolderSizeMethod, new { }, ct);
+    public Task CancelFolderSizeAsync(string? path = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CancelFolderSizeMethod, new { path }, ct);
 
-    public Task CancelFolderItemCountAsync(CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.CancelFolderItemCountMethod, new { }, ct);
+    public Task CancelFolderItemCountAsync(string? path = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CancelFolderItemCountMethod, new { path }, ct);
 
     public Task CancelCountItemsAsync(CancellationToken ct = default)
         => InvokeAsync<object?>(Protocol.CancelCountItemsMethod, new { }, ct);
 
-    public Task CancelFolderMetricsAsync(CancellationToken ct = default)
-        => InvokeAsync<object?>(Protocol.CancelFolderMetricsMethod, new { }, ct);
+    public Task CancelFolderMetricsAsync(string? path = null, CancellationToken ct = default)
+        => InvokeAsync<object?>(Protocol.CancelFolderMetricsMethod, new { path }, ct);
 
     public Task<CleanupResult> DiskCleanupAsync(string directory, ulong? sizeThreshold, string? operationId, CancellationToken ct = default)
         => InvokeAsync<CleanupResult>(Protocol.DiskCleanupMethod, new { directory, sizeThreshold, operationId }, ct);

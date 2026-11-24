@@ -368,6 +368,8 @@ public class FileOperationServiceTests
             service.CalculateFolderSizeAsync(@"S:\Movies", cts.Token));
 
         Assert.Equal(1, stub.CancelFolderSizeCalls);
+        // The cancel names its folder, so it cannot stop another folder's request.
+        Assert.Equal([@"S:\Movies"], stub.CancelFolderSizePaths);
     }
 
     [Fact]
@@ -388,6 +390,7 @@ public class FileOperationServiceTests
             service.CountFolderItemsAsync(@"S:\Movies", cts.Token));
 
         Assert.Equal(1, stub.CancelFolderItemCountCalls);
+        Assert.Equal([@"S:\Movies"], stub.CancelFolderItemCountPaths);
     }
 
     [Fact]
@@ -408,6 +411,7 @@ public class FileOperationServiceTests
             service.GetFolderMetricsAsync(@"S:\Movies", cts.Token));
 
         Assert.Equal(1, stub.CancelFolderMetricsCalls);
+        Assert.Equal([@"S:\Movies"], stub.CancelFolderMetricsPaths);
     }
 
     [Fact]

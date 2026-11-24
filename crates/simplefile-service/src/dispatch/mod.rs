@@ -1,4 +1,5 @@
 mod async_ops;
+mod folder_jobs;
 mod handlers;
 mod params;
 
@@ -22,9 +23,8 @@ pub struct SessionState {
     pub binary_hot_frames: Arc<AtomicBool>,
     pub expected_token: Option<String>,
     pub shutdown: bool,
-    pub folder_size_cancel: Arc<AtomicBool>,
-    pub folder_item_count_cancel: Arc<AtomicBool>,
-    pub count_items_cancel: Arc<AtomicBool>,
+    /// The folder size and item count requests in flight.
+    pub folder_jobs: folder_jobs::FolderJobs,
     /// The cancel flag of each `get_entry_facts` request in flight, by request id.
     pub entry_facts_cancel: HashMap<String, Arc<AtomicBool>>,
     pub cache: SessionCache,
@@ -38,9 +38,7 @@ impl Default for SessionState {
             binary_hot_frames: Arc::new(AtomicBool::new(false)),
             expected_token: None,
             shutdown: false,
-            folder_size_cancel: Arc::new(AtomicBool::new(false)),
-            folder_item_count_cancel: Arc::new(AtomicBool::new(false)),
-            count_items_cancel: Arc::new(AtomicBool::new(false)),
+            folder_jobs: folder_jobs::FolderJobs::default(),
             entry_facts_cancel: HashMap::new(),
             cache: SessionCache::new(),
         }

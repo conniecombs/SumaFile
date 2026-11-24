@@ -419,15 +419,7 @@ where
     .await;
     // Detached blocking jobs must not outlive the client that owns them.
     writer.close();
-    state
-        .folder_size_cancel
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    state
-        .folder_item_count_cancel
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    state
-        .count_items_cancel
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+    state.folder_jobs.cancel_all();
     for flag in state.entry_facts_cancel.values() {
         flag.store(true, std::sync::atomic::Ordering::Relaxed);
     }

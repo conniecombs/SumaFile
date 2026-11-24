@@ -155,8 +155,8 @@
       "params": { "path": "string" },
       "result": "FolderMetrics"
     },
-    "cancel_folder_size": { "params": null, "result": "null", "cancellation": true },
-    "cancel_folder_item_count": { "params": null, "result": "null", "cancellation": true },
+    "cancel_folder_size": { "params": { "path": "string?" }, "result": "null", "cancellation": true, "notes": "Cancels the running requests for that folder; without a path, every running request of the kind." },
+    "cancel_folder_item_count": { "params": { "path": "string?" }, "result": "null", "cancellation": true, "notes": "Cancels the running requests for that folder; without a path, every running request of the kind." },
     "cancel_count_items": {
       "params": null,
       "result": "null",
@@ -164,7 +164,7 @@
       "compatOnly": true,
       "replacement": "cancel_folder_item_count"
     },
-    "cancel_folder_metrics": { "params": null, "result": "null", "cancellation": true },
+    "cancel_folder_metrics": { "params": { "path": "string?" }, "result": "null", "cancellation": true, "notes": "Cancels the running requests for that folder; without a path, every running request of the kind." },
     "open_file": { "params": { "path": "string" }, "result": "null" },
     "reveal_in_folder": { "params": { "path": "string" }, "result": "null" },
     "open_external_url": { "params": { "url": "string" }, "result": "null" },

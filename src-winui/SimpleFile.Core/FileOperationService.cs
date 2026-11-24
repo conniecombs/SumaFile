@@ -539,7 +539,7 @@ public sealed class FileOperationService : ISettingsBackend
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderSizeAsync(cancelCt)).ConfigureAwait(false);
+            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderSizeAsync(path, cancelCt)).ConfigureAwait(false);
             throw;
         }
     }
@@ -553,7 +553,7 @@ public sealed class FileOperationService : ISettingsBackend
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderMetricsAsync(cancelCt)).ConfigureAwait(false);
+            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderMetricsAsync(path, cancelCt)).ConfigureAwait(false);
             throw;
         }
     }
@@ -567,7 +567,7 @@ public sealed class FileOperationService : ISettingsBackend
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderItemCountAsync(cancelCt)).ConfigureAwait(false);
+            await TryCancelBestEffortAsync(cancelCt => ipc.CancelFolderItemCountAsync(path, cancelCt)).ConfigureAwait(false);
             throw;
         }
     }
@@ -865,9 +865,9 @@ public sealed class FileOperationService : ISettingsBackend
 
     public Task CancelDiskCleanupAsync(CancellationToken ct = default) => _ipc.CancelDiskCleanupAsync(ct: ct);
     public Task CancelDuplicateCheckAsync(CancellationToken ct = default) => _ipc.CancelDuplicateCheckAsync(ct: ct);
-    public Task CancelFolderSizeAsync(CancellationToken ct = default) => _ipc.CancelFolderSizeAsync(ct);
-    public Task CancelFolderItemCountAsync(CancellationToken ct = default) => _ipc.CancelFolderItemCountAsync(ct);
-    public Task CancelFolderMetricsAsync(CancellationToken ct = default) => _ipc.CancelFolderMetricsAsync(ct);
+    public Task CancelFolderSizeAsync(CancellationToken ct = default) => _ipc.CancelFolderSizeAsync(null, ct);
+    public Task CancelFolderItemCountAsync(CancellationToken ct = default) => _ipc.CancelFolderItemCountAsync(null, ct);
+    public Task CancelFolderMetricsAsync(CancellationToken ct = default) => _ipc.CancelFolderMetricsAsync(null, ct);
 
     private static async Task TryCancelBestEffortAsync(Func<CancellationToken, Task> cancel)
     {

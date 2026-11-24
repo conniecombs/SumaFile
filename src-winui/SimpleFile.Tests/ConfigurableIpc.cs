@@ -375,23 +375,33 @@ internal sealed class ConfigurableIpc : NullIpc
                     ItemCount = FolderItemCounts.TryGetValue(path, out var count) ? count : 0UL,
                 });
 
-    public override Task CancelFolderSizeAsync(CancellationToken ct = default)
+    public override Task CancelFolderSizeAsync(string? path = null, CancellationToken ct = default)
     {
         CancelFolderSizeCalls += 1;
+        CancelFolderSizePaths.Add(path);
         return CancelFolderSizeHandler?.Invoke(ct) ?? Task.CompletedTask;
     }
 
-    public override Task CancelFolderItemCountAsync(CancellationToken ct = default)
+    public override Task CancelFolderItemCountAsync(string? path = null, CancellationToken ct = default)
     {
         CancelFolderItemCountCalls += 1;
+        CancelFolderItemCountPaths.Add(path);
         return CancelFolderItemCountHandler?.Invoke(ct) ?? Task.CompletedTask;
     }
 
-    public override Task CancelFolderMetricsAsync(CancellationToken ct = default)
+    public override Task CancelFolderMetricsAsync(string? path = null, CancellationToken ct = default)
     {
         CancelFolderMetricsCalls += 1;
+        CancelFolderMetricsPaths.Add(path);
         return CancelFolderMetricsHandler?.Invoke(ct) ?? Task.CompletedTask;
     }
+
+    /// <summary>The folder each cancel call named, in call order; null for a cancel of every request.</summary>
+    public List<string?> CancelFolderSizePaths { get; } = [];
+
+    public List<string?> CancelFolderItemCountPaths { get; } = [];
+
+    public List<string?> CancelFolderMetricsPaths { get; } = [];
 
     public List<Tag> Tags { get; } = [];
     public Dictionary<string, Tag[]> FileTags { get; } = new(StringComparer.OrdinalIgnoreCase);

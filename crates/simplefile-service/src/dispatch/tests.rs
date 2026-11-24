@@ -946,3 +946,60 @@ fn core_and_protocol_agree_on_the_app_identifier() {
         simplefile_ipc::APP_IDENTIFIER
     );
 }
+
+/// The flag of a dispatched folder metrics request.
+fn folder_metrics_flag(
+    state: &mut SessionState,
+    id: u64,
+    path: &str,
+) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    match dispatch(
+        state,
+        &request("get_folder_metrics", id, json!({ "path": path })),
+    ) {
+        Dispatch::GetFolderMetrics { cancel, .. } => cancel,
+        _ => panic!("get_folder_metrics dispatches a folder metrics job"),
+    }
+}
+
+fn authenticated_state() -> SessionState {
+    SessionState {
+        handshake_done: true,
+        ..SessionState::default()
+    }
+}
+
+#[test]
+fn cancelling_folder_metrics_for_one_folder_leaves_another_folders_request_running() {
+    use std::sync::atomic::Ordering;
+    let mut state = authenticated_state();
+    let photos = folder_metrics_flag(&mut state, 1, r"C:\Photos");
+    let music = folder_metrics_flag(&mut state, 2, r"C:\Music");
+
+    // The older request is the one the client gave up on.
+    let reply = dispatch(
+        &mut state,
+        &request("cancel_folder_metrics", 3, json!({ "path": r"C:\Photos" })),
+    );
+
+    assert!(matches!(reply, Dispatch::Reply(_)));
+    assert!(photos.load(Ordering::Relaxed));
+    assert!(!music.load(Ordering::Relaxed));
+}
+
+#[test]
+fn cancelling_folder_metrics_without_a_folder_stops_every_request() {
+    use std::sync::atomic::Ordering;
+    let mut state = authenticated_state();
+    let photos = folder_metrics_flag(&mut state, 1, r"C:\Photos");
+    let music = folder_metrics_flag(&mut state, 2, r"C:\Music");
+
+    // A client of an earlier version sends no parameters at all.
+    for (id, params) in [(3, Value::Null), (4, json!({}))] {
+        let reply = dispatch(&mut state, &request("cancel_folder_metrics", id, params));
+        assert!(matches!(reply, Dispatch::Reply(_)));
+    }
+
+    assert!(photos.load(Ordering::Relaxed));
+    assert!(music.load(Ordering::Relaxed));
+}

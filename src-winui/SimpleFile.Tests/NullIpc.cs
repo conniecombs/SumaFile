@@ -190,13 +190,13 @@ internal abstract class NullIpc : ISimpleFileIpc
 
     public virtual Task UnwatchDirectoryAsync(CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task CancelFolderSizeAsync(CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task CancelFolderSizeAsync(string? path = null, CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task CancelFolderItemCountAsync(CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task CancelFolderItemCountAsync(string? path = null, CancellationToken ct = default) => throw NotConfigured();
 
     public virtual Task CancelCountItemsAsync(CancellationToken ct = default) => throw NotConfigured();
 
-    public virtual Task CancelFolderMetricsAsync(CancellationToken ct = default) => throw NotConfigured();
+    public virtual Task CancelFolderMetricsAsync(string? path = null, CancellationToken ct = default) => throw NotConfigured();
     public virtual Task<EntryFactsResult> GetEntryFactsAsync(string requestId, string[] paths, string[] kinds, CancellationToken ct = default) => throw NotConfigured();
     public virtual Task CancelEntryFactsAsync(string requestId, CancellationToken ct = default) => throw NotConfigured();
     public virtual Task PutEntryFactsAsync(EntryFact[] facts, CancellationToken ct = default) => throw NotConfigured();

@@ -24,6 +24,14 @@ pub(super) struct PathParams {
     pub(super) path: String,
 }
 
+/// Which folder's size or count request to cancel. Without a path, every
+/// running request of that kind is cancelled.
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct CancelFolderParams {
+    #[serde(default)]
+    pub(super) path: Option<String>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct DriveListParams {
     #[serde(default)]

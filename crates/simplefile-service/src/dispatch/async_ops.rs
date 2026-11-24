@@ -1,9 +1,10 @@
+use super::folder_jobs::Metrics;
 use super::params::{
-    parse_params, CancelEntryFactsParams, DiskCleanupParams, DuplicateCheckParams,
-    EntryFactsParams, ListDirectoryParams, ListingViewIdParams, ListingViewRangeParams,
-    OpenListingViewParams, OperationIdParams, OptionalOperationIdParams, PathParams,
-    ProgressCopyMoveParams, PutEntryFactsParams, SearchFilesParams, SearchIdParams,
-    ThumbnailBatchParams, ThumbnailParams,
+    parse_nullable_params, parse_params, CancelEntryFactsParams, CancelFolderParams,
+    DiskCleanupParams, DuplicateCheckParams, EntryFactsParams, ListDirectoryParams,
+    ListingViewIdParams, ListingViewRangeParams, OpenListingViewParams, OperationIdParams,
+    OptionalOperationIdParams, PathParams, ProgressCopyMoveParams, PutEntryFactsParams,
+    SearchFilesParams, SearchIdParams, ThumbnailBatchParams, ThumbnailParams,
 };
 use super::{Dispatch, SessionState};
 use serde_json::Value;
@@ -102,8 +103,7 @@ pub(super) fn calculate_folder_size(
 ) -> Dispatch {
     match parse_params::<PathParams>(request) {
         Ok(p) => {
-            let cancel = Arc::new(AtomicBool::new(false));
-            state.folder_size_cancel = cancel.clone();
+            let cancel = state.folder_jobs.start(&p.path, Metrics::SIZE);
             Dispatch::CalculateFolderSize {
                 id: request.id.clone(),
                 path: p.path,
@@ -118,9 +118,7 @@ pub(super) fn calculate_folder_size(
 pub(super) fn count_folder_items(state: &mut SessionState, request: &JsonRpcRequest) -> Dispatch {
     match parse_params::<PathParams>(request) {
         Ok(p) => {
-            let cancel = Arc::new(AtomicBool::new(false));
-            state.folder_item_count_cancel = cancel.clone();
-            state.count_items_cancel = cancel.clone();
+            let cancel = state.folder_jobs.start(&p.path, Metrics::COUNT);
             Dispatch::CountFolderItems {
                 id: request.id.clone(),
                 path: p.path,
@@ -134,11 +132,8 @@ pub(super) fn count_folder_items(state: &mut SessionState, request: &JsonRpcRequ
 pub(super) fn get_folder_metrics(state: &mut SessionState, request: &JsonRpcRequest) -> Dispatch {
     match parse_params::<PathParams>(request) {
         Ok(p) => {
-            let cancel = Arc::new(AtomicBool::new(false));
-            // Share the cancel flag so any of the old cancel methods also work.
-            state.folder_size_cancel = cancel.clone();
-            state.folder_item_count_cancel = cancel.clone();
-            state.count_items_cancel = cancel.clone();
+            // One traversal works out both, so a cancel of either kind stops it.
+            let cancel = state.folder_jobs.start(&p.path, Metrics::BOTH);
             Dispatch::GetFolderMetrics {
                 id: request.id.clone(),
                 path: p.path,
@@ -149,39 +144,42 @@ pub(super) fn get_folder_metrics(state: &mut SessionState, request: &JsonRpcRequ
     }
 }
 
+/// Cancels the running requests for `metrics`: those of the folder named in
+/// the parameters, or all of them when no folder is named.
+fn cancel_folder_jobs(
+    state: &mut SessionState,
+    request: &JsonRpcRequest,
+    metrics: Metrics,
+) -> Dispatch {
+    match parse_nullable_params::<CancelFolderParams>(request) {
+        Ok(p) => {
+            state.folder_jobs.cancel(metrics, p.path.as_deref());
+            Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
+        }
+        Err(r) => Dispatch::Reply(r),
+    }
+}
+
 pub(super) fn cancel_folder_size(state: &mut SessionState, request: &JsonRpcRequest) -> Dispatch {
-    state.folder_size_cancel.store(true, Ordering::Relaxed);
-    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
+    cancel_folder_jobs(state, request, Metrics::SIZE)
 }
 
 pub(super) fn cancel_folder_item_count(
     state: &mut SessionState,
     request: &JsonRpcRequest,
 ) -> Dispatch {
-    state
-        .folder_item_count_cancel
-        .store(true, Ordering::Relaxed);
-    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
+    cancel_folder_jobs(state, request, Metrics::COUNT)
 }
 
 pub(super) fn cancel_count_items(state: &mut SessionState, request: &JsonRpcRequest) -> Dispatch {
-    state.count_items_cancel.store(true, Ordering::Relaxed);
-    state
-        .folder_item_count_cancel
-        .store(true, Ordering::Relaxed);
-    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
+    cancel_folder_jobs(state, request, Metrics::COUNT)
 }
 
 pub(super) fn cancel_folder_metrics(
     state: &mut SessionState,
     request: &JsonRpcRequest,
 ) -> Dispatch {
-    state.folder_size_cancel.store(true, Ordering::Relaxed);
-    state
-        .folder_item_count_cancel
-        .store(true, Ordering::Relaxed);
-    state.count_items_cancel.store(true, Ordering::Relaxed);
-    Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), Value::Null))
+    cancel_folder_jobs(state, request, Metrics::BOTH)
 }
 
 /// At most this many request ids keep a cancel flag; the app reuses one id per pane, so the map stays small.
