@@ -297,10 +297,15 @@ fn compare_binary_files(
     let right_size = binary_file_size(right_path)?;
     let scan = scan_binary_differences(left_path, right_path)?;
     let different_bytes = scan.changed_bytes + scan.added_bytes + scan.removed_bytes;
+    // Each file is opened once for all the rows shown, not once per row.
+    let mut left_file =
+        fs::File::open(left_path).map_err(|e| format!("Failed to read file: {e}"))?;
+    let mut right_file =
+        fs::File::open(right_path).map_err(|e| format!("Failed to read file: {e}"))?;
     let binary_rows = scan
         .row_offsets
         .iter()
-        .map(|offset| build_binary_diff_row(left_path, right_path, *offset))
+        .map(|offset| build_binary_diff_row(&mut left_file, &mut right_file, *offset))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(FileComparison {
@@ -416,12 +421,12 @@ fn record_binary_difference(scan: &mut BinaryScan, offset: u64) {
 }
 
 fn build_binary_diff_row(
-    left_path: &Path,
-    right_path: &Path,
+    left_file: &mut fs::File,
+    right_file: &mut fs::File,
     offset: u64,
 ) -> Result<BinaryDiffRow, String> {
-    let left = read_binary_row(left_path, offset)?;
-    let right = read_binary_row(right_path, offset)?;
+    let left = read_binary_row(left_file, offset)?;
+    let right = read_binary_row(right_file, offset)?;
     Ok(BinaryDiffRow {
         offset,
         left_hex: format_hex_row(&left),
@@ -432,13 +437,12 @@ fn build_binary_diff_row(
     })
 }
 
-fn read_binary_row(path: &Path, offset: u64) -> Result<Vec<u8>, String> {
-    let mut file = fs::File::open(path).map_err(|e| format!("Failed to read file: {e}"))?;
+fn read_binary_row(file: &mut fs::File, offset: u64) -> Result<Vec<u8>, String> {
     file.seek(SeekFrom::Start(offset))
         .map_err(|e| format!("Failed to seek file: {e}"))?;
     let mut buffer = vec![0u8; BINARY_ROW_BYTES];
     let read =
-        read_full_chunk(&mut file, &mut buffer).map_err(|e| format!("Failed to read file: {e}"))?;
+        read_full_chunk(file, &mut buffer).map_err(|e| format!("Failed to read file: {e}"))?;
     buffer.truncate(read);
     Ok(buffer)
 }

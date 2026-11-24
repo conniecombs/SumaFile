@@ -251,9 +251,10 @@ where
                 removed_count += 1;
             }
         }
-        if removed_count > 0 {
-            Self::rebuild_order(&mut guard);
-        }
+        // The order queue is not rebuilt here. An entry whose key is gone is
+        // skipped when eviction reaches it, and the queue is compacted when it
+        // grows; rebuilding it (clone and sort every key) on each removal made
+        // an invalidation cost more than the scan that found what to remove.
         removed_count
     }
 
@@ -708,51 +709,44 @@ impl SessionCache {
     /// - Evicts the parent directory from `directory_listings` and `subdirectories`.
     /// - Evicts all ancestor directories from `folder_metrics` since recursive size/count changed.
     pub fn invalidate_path(&self, path: &str) {
-        let target = Self::normalize_key(path);
-        if target.is_empty() {
-            return;
-        }
-        let parent = Self::parent_key(&target);
-
-        self.directory_listings.remove_where(|key, _| {
-            path_is_same_or_descendant(key, &target)
-                || parent
-                    .as_deref()
-                    .is_some_and(|parent_key| key == parent_key)
-        });
-
-        self.subdirectories.remove_where(|key, _| {
-            path_is_same_or_descendant(key, &target)
-                || parent
-                    .as_deref()
-                    .is_some_and(|parent_key| key == parent_key)
-        });
-
-        self.entry_info
-            .remove_where(|key, _| path_is_same_or_descendant(key, &target));
-        self.file_metadata
-            .remove_where(|key, _| path_is_same_or_descendant(key, &target));
-        self.image_metadata
-            .remove_where(|key, _| path_is_same_or_descendant(key, &target));
-        self.thumbnails.remove_where(|key, _| {
-            path_is_same_or_descendant(Self::extract_thumbnail_path(key), &target)
-        });
-
-        // Recursive folder metrics are affected if the cached folder is `target`,
-        // a descendant of `target`, OR an ancestor of `target`.
-        self.folder_metrics.remove_where(|key, _| {
-            path_is_same_or_descendant(key, &target) || path_is_same_or_descendant(&target, key)
-        });
+        self.invalidate_paths([path]);
     }
 
+    /// [`Self::invalidate_path`] for many paths in one pass over each cache.
+    /// Deleting ten thousand selected files used to scan every cache ten
+    /// thousand times; the scan now runs once, and a key is matched by
+    /// looking its own ancestors up in the set of invalidated paths.
     pub fn invalidate_paths<I, S>(&self, paths: I)
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        for path in paths {
-            self.invalidate_path(path.as_ref());
+        let targets = InvalidatedPaths::new(paths.into_iter().filter_map(|path| {
+            let target = Self::normalize_key(path.as_ref());
+            (!target.is_empty()).then(|| {
+                let parent = Self::parent_key(&target);
+                (target, parent)
+            })
+        }));
+        if targets.is_empty() {
+            return;
         }
+
+        self.directory_listings
+            .remove_where(|key, _| targets.covers(key) || targets.is_parent(key));
+        self.subdirectories
+            .remove_where(|key, _| targets.covers(key) || targets.is_parent(key));
+        self.entry_info.remove_where(|key, _| targets.covers(key));
+        self.file_metadata
+            .remove_where(|key, _| targets.covers(key));
+        self.image_metadata
+            .remove_where(|key, _| targets.covers(key));
+        self.thumbnails
+            .remove_where(|key, _| targets.covers(Self::extract_thumbnail_path(key)));
+        // Recursive folder metrics are affected if the cached folder is a target,
+        // a descendant of a target, OR an ancestor of a target.
+        self.folder_metrics
+            .remove_where(|key, _| targets.covers(key) || targets.is_ancestor(key));
     }
 
     pub fn clear_all(&self) {
@@ -786,6 +780,71 @@ impl SessionCache {
     }
 }
 
+/// The normalized paths of one invalidation, arranged so that a cache key is
+/// tested in time proportional to its own depth, however many paths there are.
+struct InvalidatedPaths {
+    targets: std::collections::HashSet<String>,
+    parents: std::collections::HashSet<String>,
+    /// Every prefix of a target that a cached folder key could be.
+    ancestors: std::collections::HashSet<String>,
+}
+
+impl InvalidatedPaths {
+    fn new(paths: impl Iterator<Item = (String, Option<String>)>) -> Self {
+        let mut invalidated = Self {
+            targets: Default::default(),
+            parents: Default::default(),
+            ancestors: Default::default(),
+        };
+        for (target, parent) in paths {
+            for prefix in path_prefixes(&target).skip(1) {
+                if !invalidated.ancestors.insert(prefix.to_string()) {
+                    // Its own prefixes went in with it.
+                    break;
+                }
+            }
+            if let Some(parent) = parent {
+                invalidated.parents.insert(parent);
+            }
+            invalidated.targets.insert(target);
+        }
+        invalidated
+    }
+
+    fn is_empty(&self) -> bool {
+        self.targets.is_empty()
+    }
+
+    /// `key` is a target or lies below one.
+    fn covers(&self, key: &str) -> bool {
+        path_prefixes(key).any(|prefix| self.targets.contains(prefix))
+    }
+
+    fn is_parent(&self, key: &str) -> bool {
+        self.parents.contains(key)
+    }
+
+    /// A target lies below `key`.
+    fn is_ancestor(&self, key: &str) -> bool {
+        self.ancestors.contains(key)
+    }
+}
+
+/// `path` itself, then each shorter path it lies below, longest first. A
+/// prefix is given both without and with its trailing separator, because a
+/// drive root is kept as `c:\` and every other folder without one.
+fn path_prefixes(path: &str) -> impl Iterator<Item = &str> {
+    let separators = path
+        .char_indices()
+        .rev()
+        .filter(|(_, ch)| *ch == '\\')
+        .flat_map(move |(index, _)| [&path[..=index], &path[..index]]);
+    std::iter::once(path)
+        .chain(separators)
+        .filter(|prefix| !prefix.is_empty())
+}
+
+#[cfg(test)]
 fn path_is_same_or_descendant(candidate: &str, root: &str) -> bool {
     if candidate == root {
         return true;
@@ -856,6 +915,67 @@ fn estimate_folder_metrics_bytes(metrics: &FolderMetrics) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The one-pass matcher must agree with the plain comparison it replaced,
+    /// for every pairing of a cache key with a set of invalidated paths.
+    #[test]
+    fn batched_invalidation_matches_the_per_path_comparison() {
+        let paths = [
+            r"c:\",
+            r"c:\users",
+            r"c:\users\test",
+            r"c:\users\test\notes.txt",
+            r"c:\users\tester",
+            r"c:\users\test\photos\2025\a.jpg",
+            r"d:\",
+            r"d:\media",
+            r"\\nas\share",
+            r"\\nas\share\films\a.mkv",
+            r"\\nas\shared",
+        ];
+        for mask in 1u32..(1 << paths.len()) {
+            // Sets of up to three paths cover every interaction that matters.
+            if mask.count_ones() > 3 {
+                continue;
+            }
+            let chosen: Vec<&str> = paths
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| mask & (1 << index) != 0)
+                .map(|(_, path)| *path)
+                .collect();
+            let targets = InvalidatedPaths::new(chosen.iter().map(|path| (path.to_string(), None)));
+            for key in paths {
+                let covered = chosen
+                    .iter()
+                    .any(|target| path_is_same_or_descendant(key, target));
+                // Folder metrics go when the folder is a target, below one or above one.
+                let metrics = chosen.iter().any(|target| {
+                    path_is_same_or_descendant(key, target)
+                        || path_is_same_or_descendant(target, key)
+                });
+                assert_eq!(targets.covers(key), covered, "covers {key} for {chosen:?}");
+                assert_eq!(
+                    targets.covers(key) || targets.is_ancestor(key),
+                    metrics,
+                    "metrics {key} for {chosen:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn removal_leaves_the_cache_bounded_and_usable_without_rebuilding_its_order() {
+        let cache = BoundedByteLru::<String, u32>::new(4, 1024);
+        for round in 0..200u32 {
+            cache.put(format!("key-{round}"), round, 8);
+            cache.remove_where(|key, _| key.ends_with('7'));
+        }
+        let stats = cache.stats();
+        assert!(stats.count <= 4, "{} entries", stats.count);
+        assert_eq!(cache.get(&"key-199".to_string()), Some(199));
+        assert_eq!(cache.get(&"key-197".to_string()), None);
+    }
     use std::time::SystemTime;
 
     fn unique_temp_dir(label: &str) -> std::path::PathBuf {
