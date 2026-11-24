@@ -142,15 +142,28 @@ public static class TypeAhead
         return false;
     }
 
-    public static int MatchIndex(IReadOnlyList<FileEntry> entries, string buffer)
+    public static int MatchIndex(IReadOnlyList<FileEntry> entries, string buffer) =>
+        MatchIndex(entries, entry => entry.Name, buffer);
+
+    /// <summary>Index of the first item whose name starts with what was typed, or -1.</summary>
+    public static int MatchIndex<T>(IReadOnlyList<T> items, Func<T, string> name, string buffer)
     {
-        if (string.IsNullOrEmpty(buffer) || entries.Count == 0)
+        ArgumentNullException.ThrowIfNull(items);
+        ArgumentNullException.ThrowIfNull(name);
+        if (string.IsNullOrEmpty(buffer))
         {
             return -1;
         }
 
-        return entries.ToList().FindIndex(entry =>
-            entry.Name.StartsWith(buffer, StringComparison.OrdinalIgnoreCase));
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (name(items[index]).StartsWith(buffer, StringComparison.OrdinalIgnoreCase))
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 }
 

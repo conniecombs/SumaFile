@@ -654,13 +654,52 @@ public class Sprint2ShellTests
     public void DetailsSelectPath_PreservesMultiSelectionAndOnlyScrollsOnChange()
     {
         var details = File.ReadAllText(Path.Combine(AppRoot(), "DetailsFileListView.cs"));
-        var selectPath = details[details.IndexOf("public void SelectPath(string? path)", StringComparison.Ordinal)..];
+        var selectPath = details[details.IndexOf("public void SelectPath(string? path", StringComparison.Ordinal)..];
         selectPath = selectPath[..selectPath.IndexOf("public bool ContainsSelection", StringComparison.Ordinal)];
 
+        // A sync keeps a multi-selection unless the caller asks to replace it, and that is opt-in.
+        Assert.Contains("bool replaceSelection = false", selectPath);
         Assert.Contains("_selectedRows.Count > 1", selectPath);
+        Assert.Contains("if (several && !replaceSelection)", selectPath);
         Assert.Contains("ContainsSelection(row)", selectPath);
         var chrome = File.ReadAllText(Path.Combine(AppRoot(), "MainWindow.Chrome.cs"));
         Assert.DoesNotContain("row.Path == path", chrome);
+    }
+
+    [Fact]
+    public void TypeAhead_MatchesTheRowsThePaneShowsAndReplacesAMultiSelection()
+    {
+        var events = File.ReadAllText(Path.Combine(AppRoot(), "MainWindow.FileListEvents.cs"));
+        var typeAhead = events[events.IndexOf("TypeAhead.TryMapKey(", StringComparison.Ordinal)..];
+        typeAhead = typeAhead[..typeAhead.IndexOf("private static bool IsKeyDown", StringComparison.Ordinal)];
+
+        Assert.Contains("_search?.IsActiveForPane(pane) == true ? _search.Results : null", typeAhead);
+        Assert.Contains("MatchTypeAheadPath(character, pane, searchResults)", typeAhead);
+        Assert.Contains("SelectRow(pane, matchPath, replaceSelection: true)", typeAhead);
+
+        // Every other caller keeps the default, so background syncs still leave a multi-selection alone.
+        var chrome = File.ReadAllText(Path.Combine(AppRoot(), "MainWindow.Chrome.cs"));
+        Assert.Contains("if (several && !replaceSelection)", chrome);
+        Assert.Contains("list.SelectedItems.Clear();", chrome);
+        Assert.Equal(1, CountOf(AllAppSource(), "replaceSelection: true"));
+    }
+
+    private static string AllAppSource() =>
+        string.Concat(Directory
+            .EnumerateFiles(AppRoot(), "*.cs", SearchOption.TopDirectoryOnly)
+            .Select(File.ReadAllText));
+
+    private static int CountOf(string text, string value)
+    {
+        var count = 0;
+        for (var at = text.IndexOf(value, StringComparison.Ordinal);
+             at >= 0;
+             at = text.IndexOf(value, at + value.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 
     internal static string ElementFor(string xaml, string name)

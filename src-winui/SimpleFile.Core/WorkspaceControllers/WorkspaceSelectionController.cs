@@ -206,13 +206,28 @@ internal sealed class WorkspaceSelectionController
         return workspace.TagsController.FilterEntries(entries);
     }
 
-    public FileEntry? MatchTypeAhead(ExplorerWorkspace workspace, char character)
+    /// <summary>
+    /// Adds a typed character and returns the path of the first item it now matches in the pane
+    /// that received the key. A pane showing search results passes them as
+    /// <paramref name="searchResults"/>, because those rows replace the folder's own.
+    /// </summary>
+    public string? MatchTypeAheadPath(
+        ExplorerWorkspace workspace,
+        char character,
+        PaneId pane,
+        IReadOnlyList<SearchResult>? searchResults)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         workspace.ForegroundScheduler.RecordActivity(ForegroundActivityKind.Typing);
         var buffer = workspace.TypeAheadBuffer.Append(character, TimeSpan.FromSeconds(1));
-        var visible = VisibleEntriesFor(workspace, workspace.ActivePane);
+        if (searchResults is not null)
+        {
+            var found = TypeAhead.MatchIndex(searchResults, result => result.Name, buffer);
+            return found >= 0 ? searchResults[found].Path : null;
+        }
+
+        var visible = VisibleEntriesFor(workspace, pane);
         var index = TypeAhead.MatchIndex(visible, buffer);
-        return index >= 0 ? visible[index] : null;
+        return index >= 0 ? visible[index].Path : null;
     }
 }

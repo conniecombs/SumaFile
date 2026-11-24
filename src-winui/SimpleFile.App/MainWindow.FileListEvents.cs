@@ -397,18 +397,21 @@ public sealed partial class MainWindow
             return;
         }
 
-        var match = _workspace.MatchTypeAhead(character);
-        if (match is null)
+        // Match what this pane shows: its search results when it shows any, else its folder.
+        var searchResults = _search?.IsActiveForPane(pane) == true ? _search.Results : null;
+        var matchPath = _workspace.MatchTypeAheadPath(character, pane, searchResults);
+        if (matchPath is null)
         {
             e.Handled = character == '\b';
             return;
         }
 
         e.Handled = true;
-        _workspace.SelectPath(match.Path, pane);
-        SelectRow(pane, match.Path);
+        _workspace.SelectPath(matchPath, pane);
+        // Typing a name moves to that one item, so it replaces a multi-selection.
+        SelectRow(pane, matchPath, replaceSelection: true);
         var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
-        var row = rows.FirstOrDefault(item => PathRules.PathsEqual(item.Path, match.Path));
+        var row = rows.FirstOrDefault(item => PathRules.PathsEqual(item.Path, matchPath));
         if (row is not null)
         {
             QueuePreview(row);

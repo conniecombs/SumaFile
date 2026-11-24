@@ -44,6 +44,9 @@ public sealed partial class ExplorerWorkspace
     public string FilterQueryFor(PaneId pane) =>
         _selection.FilterQueryFor(this, pane);
 
-    public FileEntry? MatchTypeAhead(char character) =>
-        _selection.MatchTypeAhead(this, character);
+    public string? MatchTypeAheadPath(
+        char character,
+        PaneId pane,
+        IReadOnlyList<SearchResult>? searchResults = null) =>
+        _selection.MatchTypeAheadPath(this, character, pane, searchResults);
 }

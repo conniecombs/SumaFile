@@ -797,23 +797,44 @@ public sealed partial class MainWindow
         return fileOps.GenerateThumbnailAsync(path, size, cancellationToken);
     }
 
-    private static void SelectRow(ListView list, ObservableCollection<FileRow> rows, string? path)
+    private static void SelectRow(
+        ListView list,
+        ObservableCollection<FileRow> rows,
+        string? path,
+        bool replaceSelection = false)
     {
-        if (list.SelectionMode != ListViewSelectionMode.Single && list.SelectedItems.Count > 1)
+        var several = list.SelectionMode != ListViewSelectionMode.Single && list.SelectedItems.Count > 1;
+        if (several && !replaceSelection)
         {
             return;
         }
 
-        list.SelectedItem = path is null ? null : rows.FirstOrDefault(row => PathRules.PathsEqual(row.Path, path));
+        var row = path is null ? null : rows.FirstOrDefault(row => PathRules.PathsEqual(row.Path, path));
+        if (several)
+        {
+            // Assigning SelectedItem alone leaves the other selected rows as they are.
+            list.SelectedItems.Clear();
+        }
+
+        list.SelectedItem = row;
+        if (replaceSelection && row is not null)
+        {
+            list.ScrollIntoView(row);
+        }
     }
 
-    private void SelectRow(PaneId pane, string? path)
+    /// <summary>
+    /// Shows <paramref name="path"/> as the selected row. A background sync leaves a
+    /// multi-selection alone; <paramref name="replaceSelection"/> is for a deliberate move to one
+    /// item, such as type-ahead.
+    /// </summary>
+    private void SelectRow(PaneId pane, string? path, bool replaceSelection = false)
     {
         var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
         var list = pane == PaneId.Secondary ? SecondaryFileList : PrimaryFileList;
         var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
-        SelectRow(list, rows, path);
-        details.SelectPath(path);
+        SelectRow(list, rows, path, replaceSelection);
+        details.SelectPath(path, replaceSelection);
     }
 
     private HashSet<string>? _activeSyncCutPaths;

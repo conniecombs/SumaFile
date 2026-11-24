@@ -239,11 +239,13 @@ public sealed class DetailsFileListView : UserControl
         _list.SelectAll();
     }
 
-    public void SelectPath(string? path)
+    public void SelectPath(string? path, bool replaceSelection = false)
     {
         // Workspace syncs run on every background change; they must not collapse a
         // multi-selection the user made in the view, nor jump the list to an unchanged selection.
-        if (_selectedRows.Count > 1)
+        // A deliberate move to one item (type-ahead) passes replaceSelection.
+        var several = _selectedRows.Count > 1;
+        if (several && !replaceSelection)
         {
             return;
         }
@@ -251,7 +253,7 @@ public sealed class DetailsFileListView : UserControl
         var row = path is null
             ? null
             : _rows.FirstOrDefault(candidate => PathRules.PathsEqual(candidate.Path, path));
-        if (row is not null && ContainsSelection(row))
+        if (row is not null && !several && ContainsSelection(row))
         {
             return;
         }
