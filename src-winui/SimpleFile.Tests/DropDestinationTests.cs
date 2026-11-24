@@ -34,10 +34,9 @@ public class DropDestinationTests
         var ontoPane = DropDestination.Resolve(@"C:\Users\test", @"C:\Users\test\notes.txt", hoveredIsDirectory: false);
         Assert.Equal(@"C:\Users\test", ontoPane.Destination);
 
-        Assert.False(DropDestination.IsValidDrop([@"C:\Users\test\Desktop"], @"C:\Users\test\Desktop"));
-        Assert.False(DropDestination.IsValidDrop([@"C:\Users\test\Desktop"], @"C:\Users\test\Desktop\nested"));
-        Assert.False(DropDestination.IsValidDrop([@"C:\Users\test\notes.txt"], @"C:\Users\test"));
-        Assert.True(DropDestination.IsValidDrop([@"C:\Users\test\notes.txt"], @"C:\Users\test\Desktop"));
+        Assert.False(DropDestination.IsValidDrop([@"C:\Users\test\Desktop"], @"C:\Users\test\Desktop", move: false));
+        Assert.False(DropDestination.IsValidDrop([@"C:\Users\test\Desktop"], @"C:\Users\test\Desktop\nested", move: true));
+        Assert.True(DropDestination.IsValidDrop([@"C:\Users\test\notes.txt"], @"C:\Users\test\Desktop", move: true));
 
         var transferConflicts = DropDestination.ConflictingTransferNames(
             [@"C:\one\notes.txt", @"C:\two\notes.txt", @"C:\src\readme.md"],
@@ -49,6 +48,26 @@ public class DropDestinationTests
             @"C:\target",
             path => string.Equals(path, @"C:\target\readme.md", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(["notes.txt", "readme.md"], probed);
+    }
+
+    /// <summary>
+    /// UI audit F25: one item pasted into its own folder was refused while two or more were
+    /// duplicated. A copy into the items' own folder now makes duplicates whatever the count,
+    /// and a move that would leave everything where it is is refused whatever the count.
+    /// </summary>
+    [Fact]
+    public void IntoTheirOwnFolder_ACopyDuplicatesAndAMoveIsRefused_WhateverTheCount()
+    {
+        string[] one = [@"C:\Users\test\notes.txt"];
+        string[] two = [@"C:\Users\test\notes.txt", @"C:\Users\test\todo.txt"];
+        Assert.True(DropDestination.IsValidDrop(one, @"C:\Users\test", move: false));
+        Assert.True(DropDestination.IsValidDrop(two, @"C:\Users\test", move: false));
+        Assert.False(DropDestination.IsValidDrop(one, @"c:\users\TEST\", move: true));
+        Assert.False(DropDestination.IsValidDrop(two, @"C:\Users\test", move: true));
+
+        // A move with at least one item from elsewhere has something to do.
+        string[] mixed = [@"C:\Users\test\notes.txt", @"D:\inbox\todo.txt"];
+        Assert.True(DropDestination.IsValidDrop(mixed, @"C:\Users\test", move: true));
     }
 
     [Fact]

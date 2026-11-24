@@ -158,9 +158,9 @@ public sealed partial class MainWindow
         var hovered = HoveredFileRow(e, pane);
         var target = DropDestination.Resolve(_workspace.Pane(pane).Path, hovered?.Path, hovered?.IsDir == true);
         var sources = _dragPaths.Length > 0 ? _dragPaths : [];
-        var valid = sources.Length == 0 || DropDestination.IsValidDrop(sources, target.Destination);
         var copy = (e.Modifiers & Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Control) != 0
             || sources.Length == 0;
+        var valid = sources.Length == 0 || DropDestination.IsValidDrop(sources, target.Destination, move: !copy);
         SetPaneDragHighlight(pane, valid);
         e.AcceptedOperation = valid
             ? (copy ? DataPackageOperation.Copy : DataPackageOperation.Move)
@@ -186,15 +186,15 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (!DropDestination.IsValidDrop(sources, target.Destination))
+        var internalDrag = _dragPaths.Length > 0;
+        var move = internalDrag
+            && (e.Modifiers & Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Control) == 0;
+        if (!DropDestination.IsValidDrop(sources, target.Destination, move))
         {
             SetStatusText("Cannot drop into that location");
             return;
         }
 
-        var internalDrag = _dragPaths.Length > 0;
-        var move = internalDrag
-            && (e.Modifiers & Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Control) == 0;
         var transfer = TransferWithConflictAsync(sources.ToArray(), target.Destination, move);
         _dragPaths = [];
         await transfer;

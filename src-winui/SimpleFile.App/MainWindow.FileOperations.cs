@@ -155,7 +155,7 @@ public sealed partial class MainWindow
         }
 
         var destination = destinationOverride ?? _workspace.Active.Path;
-        if (!DropDestination.IsValidDrop(payload.SourcePaths, destination))
+        if (!DropDestination.IsValidDrop(payload.SourcePaths, destination, move: payload.Operation == ClipboardOperation.Cut))
         {
             SetStatusText("Cannot paste into that location");
             return;

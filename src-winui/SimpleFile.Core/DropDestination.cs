@@ -29,13 +29,22 @@ public static class DropDestination
         return new DropTarget(panePath, ontoFolder: false);
     }
 
-    public static bool IsValidDrop(IReadOnlyList<string> sources, string destination)
+    /// <summary>
+    /// Whether <paramref name="sources"/> may be copied or moved to <paramref name="destination"/>.
+    /// Nothing is dropped onto itself or into itself. Into the folder the items are already in, a
+    /// copy is allowed and makes duplicates (the conflict prompt offers to keep both), while a
+    /// <paramref name="move"/> of items that are all already there would change nothing and is
+    /// refused. Neither depends on how many items are dropped: one item used to be refused where
+    /// two were duplicated.
+    /// </summary>
+    public static bool IsValidDrop(IReadOnlyList<string> sources, string destination, bool move)
     {
         if (string.IsNullOrWhiteSpace(destination) || sources.Count == 0)
         {
             return false;
         }
 
+        var allAlreadyThere = true;
         foreach (var source in sources)
         {
             if (string.IsNullOrWhiteSpace(source))
@@ -49,13 +58,10 @@ public static class DropDestination
             }
 
             var parent = PathRules.GetParentPath(source);
-            if (parent is not null && PathRules.PathsEqual(parent, destination) && sources.Count == 1)
-            {
-                return false;
-            }
+            allAlreadyThere &= parent is not null && PathRules.PathsEqual(parent, destination);
         }
 
-        return true;
+        return !(move && allAlreadyThere);
     }
 
     public static IReadOnlyList<string> ConflictingTransferNames(
