@@ -1083,8 +1083,14 @@ fn copy_files_streaming_with_sink(
                         {
                             return;
                         }
+                        // Byte counts are thinned to one in 50 ms. A change of
+                        // state (finalizing, an error) is reported whenever it
+                        // happens: a small file finishes within the 50 ms of
+                        // its own first report, and this thread may have
+                        // reported another file a moment ago.
                         let now = Instant::now();
-                        if update.error.is_none()
+                        if update.status == "running"
+                            && update.error.is_none()
                             && now.duration_since(last_worker_emit.get())
                                 < Duration::from_millis(50)
                         {
@@ -1705,6 +1711,99 @@ mod tests {
             );
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    /// A worker thins its byte counts to one in 50 ms, but a file's state
+    /// changes are reported as they happen. With one worker thread, a small
+    /// file finishes within 50 ms of the thread's last report, and its
+    /// finalizing used to be dropped with the byte counts; a move whose
+    /// source is deleted right after publication then showed no finalizing
+    /// for the file at all.
+    #[test]
+    fn a_files_finalizing_is_reported_whatever_the_thread_reported_just_before() {
+        let files = 3usize;
+        let root = std::env::temp_dir().join(crate::progress::generate_transfer_operation_id());
+        fs::create_dir(&root).unwrap();
+        let template = root.join("source");
+        fs::write(&template, b"source").unwrap();
+        let version = crate::transfer_staging::capture_source_version_for_path(&template).unwrap();
+        let policy = || Policy {
+            mode: Mode::Manual,
+            manual_concurrency: 1,
+            ..Policy::default()
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let total = Arc::new(AtomicU64::new(files as u64));
+        let file_count = Arc::new(AtomicU64::new(files as u64));
+        let completed = Arc::new(AtomicU64::new(0));
+        let seen = Mutex::new(Vec::<(String, String)>::new());
+        let ctx = ProgressContext {
+            emit: &|update| {
+                seen.lock()
+                    .unwrap()
+                    .push((update.status.clone(), update.current_item.clone()));
+            },
+            operation_id: "finalizing-report-test",
+            operation_type: "copy",
+            cancel: &cancel,
+            total_bytes: &total,
+            total_files: &file_count,
+            completed_files: &completed,
+            last_running_emit: Mutex::new(Instant::now()),
+            retry_count: None,
+            rate_limit: None,
+            write_latency: None,
+        };
+        let mut session = Session::new(
+            "finalizing-report-test",
+            "copy",
+            &[],
+            &root.to_string_lossy(),
+            &policy,
+            &|_| {},
+        );
+        let mut index = 0;
+        let mut next = || {
+            if index == files {
+                return Ok(None);
+            }
+            index += 1;
+            Ok(Some(FileTask {
+                source: root.join(index.to_string()),
+                destination: root.join(format!("dest-{index}")),
+                size: 1,
+                network: false,
+                conflict: ConflictAction::Error,
+                symlink: false,
+                top_level: false,
+                merge_root: None,
+                delete_source: false,
+                retry: false,
+            }))
+        };
+        let copy = |task: &FileTask, context: &CopyContext<'_>, _: &mut u64| {
+            let item = task.source.to_string_lossy().to_string();
+            context.progress.emit(0, item.clone(), "running", None);
+            context.progress.finalizing(1, item);
+            Ok(FileOutcome::Copied {
+                reused: false,
+                version: version.clone(),
+                destination: task.destination.clone(),
+            })
+        };
+
+        let result = copy_files_streaming_with_sink(&mut next, &ctx, &mut session, 0, &copy, None);
+
+        assert!(result.failed.is_empty(), "{:?}", result.failed);
+        assert_eq!(completed.load(Ordering::Relaxed), files as u64);
+        let last = root.join(files.to_string()).to_string_lossy().to_string();
+        let seen = seen.lock().unwrap();
+        assert!(
+            seen.iter()
+                .any(|(status, item)| status == "finalizing" && *item == last),
+            "no finalizing for the last file in {seen:?}"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
