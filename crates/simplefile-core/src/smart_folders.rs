@@ -2,6 +2,7 @@ use crate::models::SmartFolder;
 use crate::settings_store::app_data_dir;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
 const SMART_FOLDERS_FILE: &str = "smart_folders.json";
 
@@ -22,9 +23,22 @@ pub fn load_smart_folders() -> Result<Vec<SmartFolder>, String> {
     })
 }
 
+/// One change to the store at a time. A save reads the whole store, changes
+/// it and writes it back; two of them at once (the handlers run on a pool of
+/// threads) each started from the old store, and the second one written
+/// dropped what the first had added.
+static STORE_CHANGE: Mutex<()> = Mutex::new(());
+
+fn store_change() -> MutexGuard<'static, ()> {
+    STORE_CHANGE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 pub fn save_smart_folder(folder: SmartFolder) -> Result<Vec<SmartFolder>, String> {
     validate_folder(&folder)?;
 
+    let _change = store_change();
     let mut folders = load_smart_folders()?;
     if let Some(existing) = folders.iter_mut().find(|existing| existing.id == folder.id) {
         *existing = folder;
@@ -41,6 +55,7 @@ pub fn delete_smart_folder(id: String) -> Result<Vec<SmartFolder>, String> {
         return Err("smart folder id cannot be empty".to_string());
     }
 
+    let _change = store_change();
     let mut folders = load_smart_folders()?;
     folders.retain(|folder| folder.id != id);
     write_smart_folders(&folders)?;
@@ -130,6 +145,34 @@ mod tests {
             icon: None,
             search_options,
         }
+    }
+
+    #[test]
+    fn saves_made_at_the_same_moment_all_reach_the_store() {
+        let _lock = crate::test_support::env_lock().lock().unwrap();
+        let _guard = DataDirGuard::new("concurrent");
+        let writers = 16;
+        let start = std::sync::Barrier::new(writers);
+
+        std::thread::scope(|scope| {
+            for writer in 0..writers {
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    save_smart_folder(folder(&format!("folder-{writer}"))).unwrap();
+                });
+            }
+        });
+
+        let mut saved: Vec<String> = load_smart_folders()
+            .unwrap()
+            .into_iter()
+            .map(|folder| folder.id)
+            .collect();
+        saved.sort();
+        let mut expected: Vec<String> = (0..writers).map(|w| format!("folder-{w}")).collect();
+        expected.sort();
+        assert_eq!(saved, expected);
     }
 
     #[test]

@@ -42,6 +42,14 @@ fn target_extension_is_denied(path: &Path) -> bool {
         .is_some_and(|ext| DENIED_TARGET_EXTENSIONS.contains(&ext.as_str()))
 }
 
+/// Whether the program this path leads to is on the deny list under its own
+/// name. The name that was asked for is checked before links are followed, so
+/// a link called `viewer.exe` that points at a shell would otherwise pass.
+fn resolved_name_is_denied(path: &Path) -> bool {
+    path.canonicalize()
+        .is_ok_and(|resolved| executable_name_is_denied(&resolved))
+}
+
 fn contains_path_separator(value: &str) -> bool {
     value.contains('/') || value.contains('\\')
 }
@@ -153,7 +161,7 @@ fn resolve_allowed_application(application: &str) -> Result<PathBuf, String> {
         })?
     };
 
-    if executable_name_is_denied(&application_path) {
+    if executable_name_is_denied(&application_path) || resolved_name_is_denied(&application_path) {
         return Err("Shells and scripting runtimes are not allowed for Open With".to_string());
     }
 
@@ -196,7 +204,7 @@ pub fn open_file_with(path: String, application: String) -> Result<(), String> {
         // Best-effort orphan sweep for prior Open With temps left behind when the
         // service exited before a wait thread finished (or delete was locked).
         sweep_expired_archive_open_temps(ARCHIVE_OPEN_TEMP_MAX_AGE);
-        schedule_materialized_temp_cleanup(child, root);
+        schedule_materialized_temp_cleanup(child, root, HANDOFF_WINDOW);
     }
 
     Ok(())
@@ -208,13 +216,29 @@ const ARCHIVE_OPEN_TEMP_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const REMOVE_RETRY_ATTEMPTS: u32 = 8;
 const REMOVE_RETRY_BASE_DELAY_MS: u64 = 250;
 
+/// A process that ends this soon after it was started did not show the file
+/// and close again: it handed the file to an instance that was already
+/// running (most editors and office programs do) and left.
+const HANDOFF_WINDOW: Duration = Duration::from_secs(3);
+
 /// Wait for `child` to exit, then best-effort delete the archive materialization work root.
-fn schedule_materialized_temp_cleanup(mut child: Child, cleanup_root: PathBuf) {
+///
+/// When the child exits within `handoff_window`, the file is most likely open
+/// in another process that this one cannot wait for, so the work root is left
+/// in place; the age-based sweep removes it a day later.
+fn schedule_materialized_temp_cleanup(
+    mut child: Child,
+    cleanup_root: PathBuf,
+    handoff_window: Duration,
+) {
+    let started = std::time::Instant::now();
     let _ = std::thread::Builder::new()
         .name("sf-archive-open-cleanup".into())
         .spawn(move || {
             let _ = child.wait();
-            remove_path_with_retry(&cleanup_root);
+            if started.elapsed() >= handoff_window {
+                remove_path_with_retry(&cleanup_root);
+            }
         });
 }
 
@@ -289,8 +313,9 @@ pub(crate) fn sweep_expired_archive_open_temps(max_age: Duration) {
 mod tests {
     use super::{
         contains_path_separator, executable_name_is_denied, is_archive_open_work_dir,
-        path_is_under_root, remove_path_with_retry, schedule_materialized_temp_cleanup,
-        sweep_expired_archive_open_temps, target_extension_is_denied,
+        path_is_under_root, remove_path_with_retry, resolved_name_is_denied,
+        schedule_materialized_temp_cleanup, sweep_expired_archive_open_temps,
+        target_extension_is_denied,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -441,7 +466,7 @@ mod tests {
                 .expect("spawn true")
         };
 
-        schedule_materialized_temp_cleanup(child, root.clone());
+        schedule_materialized_temp_cleanup(child, root.clone(), Duration::ZERO);
 
         let deadline = SystemTime::now() + Duration::from_secs(5);
         while root.exists() && SystemTime::now() < deadline {
@@ -451,6 +476,73 @@ mod tests {
             !root.exists(),
             "archive-open work root must be removed after child exit"
         );
+    }
+
+    /// A launcher that hands the file to a running instance exits at once.
+    /// The file is still open over there, so its folder must stay.
+    #[test]
+    fn a_child_that_exits_inside_the_handoff_window_keeps_its_work_root() {
+        let root = unique_test_dir("handoff");
+        fs::write(root.join("payload.txt"), b"open-with").unwrap();
+        let mut child = if cfg!(windows) {
+            Command::new("cmd.exe")
+                .args(["/C", "exit", "0"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn cmd")
+        } else {
+            Command::new("true")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn true")
+        };
+        // The child has already ended when the cleanup thread starts waiting.
+        let _ = child.wait();
+
+        schedule_materialized_temp_cleanup(child, root.clone(), Duration::from_secs(600));
+
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(
+            root.join("payload.txt").exists(),
+            "the handed-off file was deleted"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// The deny list is applied to the program a link leads to, not only to
+    /// the link's own name.
+    #[test]
+    fn a_link_to_a_denied_program_is_denied() {
+        let root = unique_test_dir("denied-link");
+        let shell = root.join(if cfg!(windows) { "cmd.exe" } else { "cmd" });
+        let viewer = root.join(if cfg!(windows) {
+            "viewer.exe"
+        } else {
+            "viewer"
+        });
+        fs::write(&shell, b"not really a shell").unwrap();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&shell, &viewer);
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&shell, &viewer);
+        if linked.is_err() {
+            // Creating a link needs a privilege this account does not have.
+            let _ = fs::remove_dir_all(root);
+            return;
+        }
+
+        assert!(!executable_name_is_denied(&viewer));
+        assert!(resolved_name_is_denied(&viewer));
+        assert!(!resolved_name_is_denied(&root.join("missing.exe")));
+        let plain = root.join(if cfg!(windows) { "notes.exe" } else { "notes" });
+        fs::write(&plain, b"plain").unwrap();
+        assert!(!resolved_name_is_denied(&plain));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
