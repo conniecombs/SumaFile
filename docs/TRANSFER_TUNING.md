@@ -57,9 +57,9 @@ Advanced. Defaults are the file service's.
 | Maximum queued items | 10,000 | 128–100,000 | How many discovered files may be queued, in progress or waiting for another round before folder scanning pauses. |
 | Transfer order | As found | As found, Smallest first, Largest first, Alphabetical | Order in which queued files start. Any choice other than As found puts all files in one queue instead of two lanes. Sorting covers the files found so far, not the whole tree in advance. |
 | Stream buffer size (KiB) | 4096 | 64–65,536 | Size of one copy buffer. While it is 4096, a file with a network or cloud drive at either end uses 512 KiB. A buffer is never more than a third of the copy buffer budget. |
-| Copy buffer budget (MiB) | 256; the dialog shows 192 when nothing has been saved | 16–512 | Memory one task may reserve for copy buffers. |
+| Copy buffer budget (MiB) | 256 | 16–512 | Memory one task may reserve for copy buffers. |
 | Multi-thread cutoff (MiB) | 64 | 1–16,384 | Smallest file that may be copied in several streams. |
-| Streams per large file | 0; the dialog shows 4 when nothing has been saved | 0–16 | Byte ranges of one large file copied in parallel. 0 or 1 turns this off. See [Large files in several streams](#large-files-in-several-streams). |
+| Streams per large file | 0 | 0–16 | Byte ranges of one large file copied in parallel. 0 or 1 turns this off. See [Large files in several streams](#large-files-in-several-streams). |
 | Decide a file is already up to date by | Size and modification time | Size and modification time, Size only, Checksum, Always copy | See [Check modes](#check-modes). |
 | Write directly to the destination instead of a temporary file | Off | | See [Write directly to the destination](#write-directly-to-the-destination). |
 | Pre-allocate disk space | On | | Reserves a file's size at the destination before writing it. See [Pre-allocation](#pre-allocation). |
@@ -77,13 +77,11 @@ well.
 
 **What Apply writes.** In Transfer defaults, Apply with nothing changed writes
 nothing. After any change it writes the whole policy, every field, including
-values the dialog displayed that you did not touch. This matters the first
-time. With nothing saved the service uses a 256 MiB budget and 0 streams, but
-the dialog displays 192 MiB and 4 streams, and the first change to any setting
-saves those two values with it. From then on files of 64 MiB or more between
-local fixed disks are copied in 4 streams, and the large-file limit between
-local drives is 15 instead of 16. In Task transfer options, Apply always
-stores the displayed values as that task's settings, changed or not.
+values the dialog displayed that you did not touch. With nothing saved the
+dialog displays the service's own defaults, so what the first change saves
+with it is what the service was using already. In Task transfer options,
+Apply always stores the displayed values as that task's settings, changed or
+not.
 
 **When a change takes effect.** A running task reads its settings again every
 five seconds, and at once when a file is retried after an I/O error. Mode, the

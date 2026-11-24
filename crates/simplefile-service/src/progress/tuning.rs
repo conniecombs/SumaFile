@@ -29,25 +29,28 @@ pub(crate) fn load_policy() -> Policy {
 
 /// The per-operation override the Transfers window saved, or the stored policy.
 pub(crate) fn policy_for_operation(operation_id: &str) -> Policy {
-    // The UI keeps this document bounded and expires abandoned overrides.
+    let document = get_db_setting("transfer.overrides.v1".into())
+        .ok()
+        .flatten();
+    override_for(document.as_deref(), operation_id).unwrap_or_else(load_policy)
+}
+
+/// The override saved for `operation_id` in the overrides document, if any.
+///
+/// Its age is no reason to pass it over: an override is asked for only by the
+/// operation it was saved for, while that operation runs, so a task that has
+/// been queued or running for a day keeps its own settings. The app removes
+/// an override when its task ends, and prunes the ones of tasks that ended
+/// without that clean-up; the document is bounded there, not here.
+fn override_for(document: Option<&str>, operation_id: &str) -> Option<Policy> {
     #[derive(Deserialize)]
     struct Override {
         policy: Policy,
-        updated: u64,
     }
-    let overrides: BTreeMap<String, Override> = get_db_setting("transfer.overrides.v1".into())
-        .ok()
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
-    let now = now_seconds();
+    let mut overrides: BTreeMap<String, Override> = serde_json::from_str(document?).ok()?;
     overrides
-        .into_iter()
-        .find_map(|(id, value)| {
-            (id == operation_id && value.updated <= now && now - value.updated < 86400)
-                .then(|| value.policy.normalized())
-        })
-        .unwrap_or_else(load_policy)
+        .remove(operation_id)
+        .map(|value| value.policy.normalized())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -145,6 +148,26 @@ pub(crate) fn route_key(source: &str, destination: &str, bytes: u64, files: u64)
 mod tests {
     use super::*;
     use sumafile_transfer::tuning::Controller;
+
+    /// A task's own settings apply for as long as it runs. They used to lapse
+    /// 24 hours after they were saved, also for a task still queued or running.
+    #[test]
+    fn an_operations_override_applies_however_long_ago_it_was_saved() {
+        let document = concat!(
+            r#"{"old":{"policy":{"mode":"manual","manualConcurrency":2},"updated":1},"#,
+            r#""other":{"policy":{"mode":"manual","manualConcurrency":3},"updated":1}}"#
+        );
+        let policy = override_for(Some(document), "old").expect("the override applies");
+        assert_eq!(policy.mode, Mode::Manual);
+        assert_eq!(policy.manual_concurrency, 2);
+        assert_eq!(
+            override_for(Some(document), "other").map(|p| p.manual_concurrency),
+            Some(3)
+        );
+        assert!(override_for(Some(document), "unknown").is_none());
+        assert!(override_for(None, "old").is_none());
+        assert!(override_for(Some("not json"), "old").is_none());
+    }
 
     #[test]
     fn history_is_bounded_expires_and_rejects_future_records() {

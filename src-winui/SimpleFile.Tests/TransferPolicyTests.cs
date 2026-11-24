@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SimpleFile.Core;
 using SimpleFile.Ipc;
 using Xunit;
@@ -6,6 +7,51 @@ namespace SimpleFile.Tests;
 
 public sealed class TransferPolicyTests
 {
+    /// <summary>
+    /// What the dialog shows when nothing is saved is what the service uses when nothing is
+    /// saved. The dialog used to show 192 MiB and 4 streams against the service's 256 MiB and
+    /// no streams, so the first change to any setting also saved those two.
+    /// </summary>
+    [Fact]
+    public void TheDefaultsAreTheServicesDefaults()
+    {
+        var policy = new TransferPolicy();
+        Assert.Equal(256, policy.MemoryBudgetMb);
+        Assert.Equal(0, policy.MultiThreadStreams);
+
+        var source = File.ReadAllText(Path.Combine(RepoRoot(), "crates", "sumafile-transfer", "src", "policy.rs"))
+            .Replace("_", "", StringComparison.Ordinal);
+        foreach (var (field, value) in new (string, long)[]
+        {
+            ("maxconcurrency", policy.MaxConcurrency),
+            ("manualconcurrency", policy.ManualConcurrency),
+            ("checkers", policy.Checkers),
+            ("maxbacklog", policy.MaxBacklog),
+            ("buffersizekib", policy.BufferSizeKib),
+            ("memorybudgetmb", policy.MemoryBudgetMb),
+            ("multithreadcutoffmib", policy.MultiThreadCutoffMib),
+            ("multithreadstreams", policy.MultiThreadStreams),
+            ("bandwidthmib", policy.BandwidthMib),
+            ("lowlevelretries", policy.LowLevelRetries),
+            ("highlevelretries", policy.HighLevelRetries),
+            ("retrysleepms", policy.RetrySleepMs),
+        })
+        {
+            Assert.Contains($"{field}: {value},", source);
+        }
+    }
+
+    private static string RepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Cargo.toml")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName ?? throw new DirectoryNotFoundException("Could not locate the repository root.");
+    }
+
     [Fact]
     public void InvalidOrOldSettingsHaveBoundedDefaults()
     {
@@ -88,6 +134,40 @@ public sealed class TransferPolicyTests
         Assert.Contains("job-b", ipc.Settings["transfer.overrides.v1"]);
         await TransferPolicyStore.ClearLearningAsync(backend);
         Assert.Equal("{}", ipc.Settings["transfer.learning.v1"]);
+    }
+
+    /// <summary>
+    /// A task's own settings apply for as long as it runs. They used to be pruned, with the
+    /// overrides of tasks that ended without their clean-up, a day after they were saved.
+    /// </summary>
+    [Fact]
+    public async Task ARunningTasksOverrideSurvivesOtherSavesWhateverItsAge()
+    {
+        var ipc = new ConfigurableIpc();
+        var backend = new FileOperationService(ipc);
+        var policy = new TransferPolicy { Mode = "manual", ManualConcurrency = 2 };
+        var twoDaysAgo = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 2 * 86400;
+        ipc.Settings["transfer.overrides.v1"] = JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["running"] = new { policy, updated = twoDaysAgo },
+            ["abandoned"] = new { policy, updated = twoDaysAgo },
+        });
+
+        TransferPolicyStore.MarkRunning("running");
+        try
+        {
+            await TransferPolicyStore.SetOverrideAsync(backend, "job-b", policy);
+            Assert.Contains("\"running\"", ipc.Settings["transfer.overrides.v1"]);
+            Assert.DoesNotContain("\"abandoned\"", ipc.Settings["transfer.overrides.v1"]);
+            Assert.Contains("\"job-b\"", ipc.Settings["transfer.overrides.v1"]);
+        }
+        finally
+        {
+            TransferPolicyStore.MarkFinished("running");
+        }
+
+        await TransferPolicyStore.SetOverrideAsync(backend, "job-c", policy);
+        Assert.DoesNotContain("\"running\"", ipc.Settings["transfer.overrides.v1"]);
     }
 
     [Fact]

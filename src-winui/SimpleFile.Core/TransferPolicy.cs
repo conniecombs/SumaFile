@@ -19,12 +19,14 @@ public sealed record TransferPolicy
     public string OrderBy { get; init; } = "default";
     [JsonPropertyName("bufferSizeKib")]
     public int BufferSizeKib { get; init; } = 4096;
+    // The defaults are the service's (`Policy::default()` in `sumafile-transfer`): the dialog
+    // shows them when nothing is saved, and the first change saves them with it.
     [JsonPropertyName("memoryBudgetMb")]
-    public int MemoryBudgetMb { get; init; } = 192;
+    public int MemoryBudgetMb { get; init; } = 256;
     [JsonPropertyName("multiThreadCutoffMib")]
     public int MultiThreadCutoffMib { get; init; } = 64;
     [JsonPropertyName("multiThreadStreams")]
-    public int MultiThreadStreams { get; init; } = 4;
+    public int MultiThreadStreams { get; init; }
     [JsonPropertyName("checkMode")]
     public string CheckMode { get; init; } = "size_and_mod_time";
     [JsonPropertyName("inplace")]
@@ -76,6 +78,23 @@ public static class TransferPolicyStore
     private sealed record Override(
         [property: JsonPropertyName("policy")] TransferPolicy Policy,
         [property: JsonPropertyName("updated")] long Updated);
+    private static readonly HashSet<string> Running = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Marks a task's operation as running: its override is then kept, whatever its age, when
+    /// another override is saved. Overrides are otherwise pruned a day after they were saved,
+    /// which is for the tasks that ended without their clean-up; a task's own settings used to
+    /// lapse with them while the task was still queued or running.
+    /// </summary>
+    public static void MarkRunning(string operationId)
+    {
+        lock (Running) Running.Add(operationId);
+    }
+
+    public static void MarkFinished(string operationId)
+    {
+        lock (Running) Running.Remove(operationId);
+    }
 
     public static async Task<TransferPolicy> LoadAsync(ISettingsBackend backend, CancellationToken ct = default) =>
         TransferPolicy.Parse(await backend.GetSettingAsync(DefaultKey, ct).ConfigureAwait(false));
@@ -97,8 +116,12 @@ public static class TransferPolicyStore
                 await backend.GetSettingAsync(OverridesKey, ct).ConfigureAwait(false) ?? "{}") ?? []; }
             catch (JsonException) { values = []; }
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            values = values.Where(pair => pair.Value is not null && pair.Value.Updated <= now && now - pair.Value.Updated < 86400)
-                .OrderByDescending(pair => pair.Value.Updated).Take(31).ToDictionary(pair => pair.Key, pair => pair.Value);
+            HashSet<string> running;
+            lock (Running) running = [.. Running];
+            values = values.Where(pair => pair.Value is not null
+                    && (running.Contains(pair.Key) || (pair.Value.Updated <= now && now - pair.Value.Updated < 86400)))
+                .OrderByDescending(pair => running.Contains(pair.Key)).ThenByDescending(pair => pair.Value.Updated)
+                .Take(31).ToDictionary(pair => pair.Key, pair => pair.Value);
             if (policy is null) values.Remove(operationId);
             else values[operationId] = new Override(policy.Normalize(), now);
             await backend.SetSettingAsync(OverridesKey, JsonSerializer.Serialize(values), ct).ConfigureAwait(false);

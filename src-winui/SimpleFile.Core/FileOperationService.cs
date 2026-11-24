@@ -293,6 +293,9 @@ public sealed class FileOperationService : ISettingsBackend
 
         try
         {
+            // Running from here until the clean-up below, so the task's own settings, saved now
+            // or from the Transfers window later, are kept for as long as it runs.
+            TransferPolicyStore.MarkRunning(operationId);
             if (policy is not null) await TransferPolicyStore.SetOverrideAsync(this, operationId, policy, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             // Keep awaiting the backend result after cancellation so all workers
@@ -350,6 +353,7 @@ public sealed class FileOperationService : ISettingsBackend
         {
             cancelRegistration?.Dispose();
             subscription?.Dispose();
+            TransferPolicyStore.MarkFinished(operationId);
             try { await TransferPolicyStore.SetOverrideAsync(this, operationId, null).ConfigureAwait(false); }
             catch (Exception exception) { System.Diagnostics.Debug.WriteLine($"Transfer override cleanup: {exception.Message}"); }
         }
