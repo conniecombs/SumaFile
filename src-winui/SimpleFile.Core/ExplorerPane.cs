@@ -292,7 +292,9 @@ public sealed class ExplorerPane
             return;
         }
 
-        if (HistoryIndex >= 0 && HistoryIndex < History.Count && History[HistoryIndex] == path)
+        // Windows paths are compared without regard to case, so a path that differs from the
+        // current entry only in case or in a trailing separator adds no entry.
+        if (HistoryIndex >= 0 && HistoryIndex < History.Count && PathRules.PathsEqual(History[HistoryIndex], path))
         {
             return;
         }

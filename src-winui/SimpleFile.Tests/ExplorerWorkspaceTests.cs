@@ -7,6 +7,22 @@ namespace SimpleFile.Tests;
 
 public class ExplorerWorkspaceTests
 {
+    /// <summary>UI audit C24: a path that differs from the current entry only in case added a second Back entry.</summary>
+    [Fact]
+    public void RecordHistory_TreatsAPathThatDiffersOnlyInCaseAsTheCurrentEntry()
+    {
+        var pane = new ExplorerPane(PaneId.Primary);
+        pane.RecordHistory(@"C:\Users\test", HistoryMode.Push);
+        pane.RecordHistory(@"c:\users\TEST\", HistoryMode.Push);
+
+        Assert.Single(pane.History);
+        Assert.False(pane.CanGoBack);
+
+        pane.RecordHistory(@"C:\Users\test\Desktop", HistoryMode.Push);
+        Assert.Equal(2, pane.History.Count);
+        Assert.True(pane.CanGoBack);
+    }
+
     [Fact]
     public async Task Initialize_NavigatesHomeAndRecordsHistory()
     {
