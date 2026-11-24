@@ -619,13 +619,18 @@ mod tests {
     }
 
     /// Names ending in `/` are folders. Files alternate between stored and
-    /// deflated, and carry a comment, a fixed time and Unix permissions.
+    /// deflated, and carry a comment, a fixed time and Unix permissions. The
+    /// entries are written as made on Unix: the zip crate otherwise writes
+    /// DOS entries on Windows, and a DOS entry has no Unix mode to read back.
     fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
         let mut zip = zip::ZipWriter::new(File::create(path).unwrap());
         for (index, (name, contents)) in entries.iter().enumerate() {
             if let Some(folder) = name.strip_suffix('/') {
-                zip.add_directory(folder, SimpleFileOptions::default())
-                    .unwrap();
+                zip.add_directory(
+                    folder,
+                    SimpleFileOptions::default().system(zip::System::Unix),
+                )
+                .unwrap();
                 continue;
             }
             let method = if index % 2 == 1 {
@@ -636,6 +641,7 @@ mod tests {
             let options = zip::write::FullFileOptions::default()
                 .compression_method(method)
                 .last_modified_time(stamp())
+                .system(zip::System::Unix)
                 .unix_permissions(0o640)
                 .with_file_comment(format!("comment of {name}"));
             zip.start_file(*name, options).unwrap();
