@@ -126,4 +126,33 @@ public class PathRulesTests
         Assert.False(PathRules.AllLieDirectlyIn([], @"C:\Work"));
         Assert.False(PathRules.AllLieDirectlyIn([@"C:\Work\a.txt"], ""));
     }
+
+    [Theory]
+    [InlineData(@"C:/Work/a.txt", @"C:\Work\a.txt")]
+    [InlineData(@"C:\Work\Folder\", @"C:\Work\Folder")]
+    [InlineData(@"C:\Work\Folder//", @"C:\Work\Folder")]
+    [InlineData(@"C:", @"C:\")]
+    [InlineData(@"C:/", @"C:\")]
+    [InlineData(@"c:\", @"c:\")]
+    [InlineData(@"\server\share\", @"\server\share")]
+    [InlineData(@"/", @"\")]
+    [InlineData("", "")]
+    [InlineData(null, "")]
+    public void NormalizeSeparators_UsesBackslashesAndKeepsOnlyARootsTrailingSeparator(string? path, string expected)
+    {
+        Assert.Equal(expected, PathRules.NormalizeSeparators(path));
+    }
+
+    [Fact]
+    public void DecorationAndThumbnailKeys_ShareTheSeparatorRule()
+    {
+        foreach (var path in new[] { @"R:/repo/Dir/A.TXT", @"R:\repo\untracked\", @"C:", @"C:\Photos\Vacation\" })
+        {
+            Assert.Equal(PathRules.NormalizeSeparators(path), RowDecorationKeys.Normalize(path));
+            Assert.Equal(PathRules.NormalizeSeparators(path), ThumbnailCacheKey.NormalizePath(path));
+        }
+
+        Assert.Equal(@"C:\Work\a.txt", ThumbnailCacheKey.NormalizePath("  C:/Work/a.txt  "));
+        Assert.Equal("", ThumbnailCacheKey.NormalizePath("   "));
+    }
 }

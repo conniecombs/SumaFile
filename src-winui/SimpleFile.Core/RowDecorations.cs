@@ -45,18 +45,7 @@ public interface IRowDecorationSource
 public static class RowDecorationKeys
 {
     /// <summary>The path in the form keys are compared in.</summary>
-    public static string Normalize(string path)
-    {
-        var separated = (path ?? "").Replace('/', '\\');
-        if (PathRules.IsWindowsRoot(separated))
-        {
-            var root = separated.Trim();
-            return $"{root[..2]}\\";
-        }
-
-        var trimmed = separated.TrimEnd('\\');
-        return trimmed.Length == 0 && separated.Length > 0 ? "\\" : trimmed;
-    }
+    public static string Normalize(string path) => PathRules.NormalizeSeparators(path);
 
     /// <summary>Equality and ordering over <see cref="Normalize"/>, ignoring case.</summary>
     public static StringComparer Comparer { get; } = new NormalizedComparer();

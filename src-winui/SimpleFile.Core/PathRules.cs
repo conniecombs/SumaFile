@@ -170,6 +170,25 @@ public static class PathRules
         return parts.Length == 0 ? cleanPath : parts[^1];
     }
 
+    /// <summary>
+    /// The path with <c>\</c> as its only separator and no trailing separator, except that a
+    /// drive root keeps its one (<c>C:</c> and <c>C:/</c> both become <c>C:\</c>) and a path made
+    /// only of separators becomes <c>\</c>. Case is kept. Row decoration keys and thumbnail cache
+    /// keys are both written in this form; to compare two paths use <see cref="PathsEqual"/>.
+    /// </summary>
+    public static string NormalizeSeparators(string? path)
+    {
+        var separated = (path ?? "").Replace('/', '\\');
+        if (IsWindowsRoot(separated))
+        {
+            var root = separated.Trim();
+            return $"{root[..2]}\\";
+        }
+
+        var trimmed = separated.TrimEnd('\\');
+        return trimmed.Length == 0 && separated.Length > 0 ? "\\" : trimmed;
+    }
+
     public static string NormalizeComparablePath(string path)
     {
         return path.Replace('\\', '/').TrimEnd('/').ToLowerInvariant();

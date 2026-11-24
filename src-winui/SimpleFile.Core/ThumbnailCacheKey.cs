@@ -7,21 +7,8 @@ public static class ThumbnailCacheKey
 {
     private const char Separator = '\u001f';
 
-    public static string NormalizePath(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return "";
-        }
-
-        var trimmed = path.Trim().Replace('/', '\\');
-        while (trimmed.Length > 3 && trimmed.EndsWith('\\'))
-        {
-            trimmed = trimmed[..^1];
-        }
-
-        return trimmed;
-    }
+    public static string NormalizePath(string? path) =>
+        string.IsNullOrWhiteSpace(path) ? "" : PathRules.NormalizeSeparators(path.Trim());
 
     public static string BuildVersionToken(ulong size, string? modified, string? fallbackPath = null)
     {
