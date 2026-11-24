@@ -421,13 +421,19 @@ pub(crate) fn copy_selection(
                             .created_dirs
                             .push((depth, root_index, src_dir.clone(), dst_dir.clone()));
                     }
-                    let version =
-                        crate::transfer_staging::capture_source_version_for_path(&src_dir)?;
-                    march_state
-                        .lock()
-                        .expect("march state lock poisoned")
-                        .source_dirs
-                        .push((depth, root_index, src_dir.clone(), version));
+                    // Only a move looks at these again, to delete each source
+                    // directory it emptied. A copy would pay several requests
+                    // per directory, and keep one record per directory for the
+                    // whole transfer, for nothing.
+                    if delete_source {
+                        let version =
+                            crate::transfer_staging::capture_source_version_for_path(&src_dir)?;
+                        march_state
+                            .lock()
+                            .expect("march state lock poisoned")
+                            .source_dirs
+                            .push((depth, root_index, src_dir.clone(), version));
+                    }
 
                     let entries = fs::read_dir(&src_dir)
                         .map_err(|e| Failure::io("Read directory", &src_dir, e))?;
@@ -1465,7 +1471,11 @@ fn copy_files_streaming_with_sink(
                     "running",
                     None,
                 );
-                session.display(active.values().cloned().collect(), active.is_empty());
+                // Not forced. With one file at a time nothing is in flight
+                // between any two files, and a forced update for each of
+                // them sent the Transfers window one event per copied file.
+                // The update after the loop shows the final state.
+                session.display(active.values().cloned().collect(), false);
                 last_display = Instant::now();
             }
         }

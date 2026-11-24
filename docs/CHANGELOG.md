@@ -20,6 +20,37 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   instead of being cut at the end: a path keeps its root and its last
   folders, a name keeps its start and its end with the extension, and the
   count on a row's line is never cut. The whole text is in the tooltip.
+- With a bandwidth limit, large files no longer stand still until every small
+  file is done. A large file asks for a whole buffer at a time and never
+  collected that much while small files kept taking the allowance as it
+  appeared. The files being copied now take turns at the limit.
+- A same-drive move no longer reads a file back after renaming it. That cost
+  several requests per file, most of all on a network share, and a file that
+  could be renamed but not opened for reading was reported as failed although
+  it had been moved.
+- A same-drive move of a file that another program holds open no longer
+  copies the whole file and then fails to delete the source, leaving it in
+  both places. The file is reported as busy and is not copied.
+- The Transfers window is no longer sent one tuning update for every file
+  when files are copied one at a time (a hard disk, an optical disc, or a
+  custom limit of one). Updates are at most five a second.
+- After a move that leaves many files behind (skipped, conflicting or
+  failed), deciding which source folders stay no longer takes time in
+  proportion to folders times files. A tree of 8,000 folders with 80,000
+  skipped files took 43 seconds at this step in a test and now takes 0.1.
+- The copy buffer cache no longer fills up with buffers of sizes that are
+  never asked for again. A folder of files that each fit in one buffer left
+  thirty-two of them, after which every later large file allocated its
+  buffers anew for as long as SumaFile ran.
+- A copy no longer opens every source folder to record its identity, which
+  only a move uses, and a move no longer creates and syncs a temporary record
+  file for each selected folder.
+- A file copied in several streams whose partial file could not be emptied
+  after a failed try is not tried again in that pass. The next try would have
+  taken the partial file's length for bytes already written.
+- The ownership record of a file is written in one piece. Written in two, a
+  stop between them left a record that recovery ignores, and with it a
+  partial file that nothing cleaned up.
 
 ---
 

@@ -696,10 +696,7 @@ pub(crate) fn copy_file_multistream(
     });
     let copied = match stripe_res {
         Ok(copied) => copied,
-        Err(err) => {
-            let _ = dst_file.set_len(0);
-            return Err(err);
-        }
+        Err(err) => return Err(discard_stripes(dst_file, dst, err)),
     };
     if sparse {
         set_sparse(dst_file, false);
@@ -708,21 +705,48 @@ pub(crate) fn copy_file_multistream(
         completed_bytes.saturating_add(copied),
         src.to_string_lossy().into(),
     );
-    ctx.progress.check_cancelled().map_err(|err| {
-        let _ = dst_file.set_len(0);
-        Failure::new(err, false)
-    })?;
+    ctx.progress
+        .check_cancelled()
+        .map_err(|err| discard_stripes(dst_file, dst, Failure::new(err, false)))?;
     if copied != file_len {
-        let _ = dst_file.set_len(0);
-        return Err(Failure::new(
-            format!(
-                "Multistream copy wrote {copied} of {file_len} bytes [{}]",
-                dst.display()
+        return Err(discard_stripes(
+            dst_file,
+            dst,
+            Failure::new(
+                format!(
+                    "Multistream copy wrote {copied} of {file_len} bytes [{}]",
+                    dst.display()
+                ),
+                false,
             ),
-            false,
         ));
     }
     Ok(copied)
+}
+
+/// Empty a partial file whose stripes did not all arrive, and return the
+/// failure to report.
+///
+/// The next try continues a partial file at its current length without
+/// reading it again. A multistream partial has that length from its first
+/// write (the last stripe starts near the end) and holes below it, so a try
+/// that found it non-empty would write nothing and publish the holes. When
+/// the file cannot be emptied (the disk error that stopped the stripes
+/// usually stops this too) the failure is therefore not tried again: the
+/// partial is deleted, and a new pass starts from a new file.
+#[cfg(windows)]
+fn discard_stripes(dst_file: &fs::File, dst: &Path, failure: Failure) -> Failure {
+    match dst_file.set_len(0) {
+        Ok(()) => failure,
+        Err(_) if failure.is_cancelled() => failure,
+        Err(error) => Failure::with_kind(
+            format!(
+                "{failure}; the partial file could not be emptied [{}]: {error}",
+                dst.display()
+            ),
+            FailureKind::Permanent,
+        ),
+    }
 }
 
 /// Mark or unmark the file sparse. Best effort: a filesystem without sparse
@@ -814,7 +838,13 @@ fn copy_file_stream_with_hash(
     buffer_size: usize,
     mut hasher: Option<&mut ContentHasher>,
 ) -> Result<u64, Failure> {
-    let mut buffer = PooledBuffer::acquire(buffer_size);
+    // A buffer cut to this file's length is of no use to any other file;
+    // only the configured size is worth keeping for the next one.
+    let mut buffer = if buffer_size < ctx.buffer_size() {
+        PooledBuffer::exact(buffer_size)
+    } else {
+        PooledBuffer::acquire(buffer_size)
+    };
     let mut copied = resume_from;
     let mut next_emit_at = ((resume_from / PROGRESS_BYTE_STEP) + 1) * PROGRESS_BYTE_STEP;
     while copied < file_len {
@@ -1176,11 +1206,19 @@ pub(crate) fn copy_symlink_with_progress(
         ));
     }
     recreate_symlink(src_path, &staged_path)?;
-    let mut lease = crate::transfer_journal::StagingLease::record_created(
+    let mut lease = match crate::transfer_journal::StagingLease::record_created(
         &src_path.to_string_lossy(),
         dst_path,
         &staged_path,
-    )?;
+    ) {
+        Ok(lease) => lease,
+        Err(error) => {
+            // Without a record nothing would ever claim the link just
+            // created: recovery acts on recorded files only.
+            let _ = cleanup_owned_path(&staged_path);
+            return Err(Failure::from(error));
+        }
+    };
     if let Err(error) = verify_source_unchanged(src_path, &version) {
         let _ = lease.abort();
         return Err(Failure::from(error));
@@ -1227,7 +1265,8 @@ pub(crate) fn copy_symlink_with_progress(
 
 /// Same-volume moves rename instead of copying. `None` means "not applicable,
 /// copy instead" (different volume, an unpublished tree, or a rename error that
-/// a copy may still get around).
+/// a copy may still get around). A source held by another program is not such
+/// an error: it is reported as busy.
 pub(crate) fn move_by_rename(
     source: &Path,
     planned_dst: &Path,
@@ -1248,7 +1287,7 @@ pub(crate) fn move_by_rename(
         return Some(Err(Failure::cancelled()));
     }
     match rename_exclusive(source, &dst) {
-        Ok(()) => Some(renamed_outcome(&dst)),
+        Ok(()) => Some(Ok(renamed_outcome(&dst))),
         Err(error) if is_already_exists_error(&error) || path_exists_no_follow(&dst) => {
             if !replace_existing {
                 return Some(Err(Failure::conflict(conflict_for_existing_destination(
@@ -1273,7 +1312,7 @@ pub(crate) fn move_by_rename(
                     return Some(Err(Failure::cancelled()));
                 }
                 match swap_source_into_place(source, &dst) {
-                    Ok(()) => return Some(renamed_outcome(&dst)),
+                    Ok(()) => return Some(Ok(renamed_outcome(&dst))),
                     Err(error) => {
                         let reason = error.to_string();
                         match retry.failed_with(error) {
@@ -1293,7 +1332,16 @@ pub(crate) fn move_by_rename(
                 }
             }
         }
-        Err(_) => None,
+        Err(error) => {
+            // Another program holds the source and lets nobody rename or
+            // delete it. Copying instead cannot finish this move, because
+            // the source could not be deleted afterwards either: it would
+            // read and write the whole file and leave it in both places.
+            // The file is reported as busy and gets another round later,
+            // like any other busy file.
+            let failure = Failure::io("Move source", source, error);
+            (failure.kind == FailureKind::Busy).then_some(Err(failure))
+        }
     }
 }
 
@@ -1329,11 +1377,17 @@ fn swap_source_into_place(source: &Path, dst: &Path) -> Result<(), Failure> {
     })
 }
 
-fn renamed_outcome(dst: &Path) -> Result<FileOutcome, Failure> {
-    let version = capture_source_version_for_path(dst)?;
-    Ok(FileOutcome::Copied {
+/// The file is at `dst` and its source name is gone: the move is complete.
+///
+/// Nothing is read back from the renamed file. Its version has no reader (no
+/// source is left to verify or delete), opening it to capture one cost several
+/// requests for every file of a same-drive move, and a file that could be
+/// renamed but not opened for reading (held by another program, or not
+/// readable by this user) was reported as failed after it had been moved.
+fn renamed_outcome(dst: &Path) -> FileOutcome {
+    FileOutcome::Copied {
         reused: false,
-        version,
+        version: SourceVersion::renamed(),
         destination: dst.to_path_buf(),
-    })
+    }
 }

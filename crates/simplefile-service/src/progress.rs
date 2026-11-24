@@ -2023,6 +2023,157 @@ mod tests {
         let _ = fs::remove_dir_all(&dst_root);
     }
 
+    /// A program that holds a file and lets others rename or delete it, but
+    /// not read it, does not stop a same-drive move: the rename is the move.
+    /// Opening the renamed file afterwards reported it as failed.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_that_can_be_renamed_but_not_read_is_moved_by_rename() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+
+        let src_dir = unique_temp_path("rename_held_src");
+        let dst_dir = unique_temp_path("rename_held_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("held.bin");
+        fs::write(&source, b"held").unwrap();
+        let holder = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_DELETE)
+            .open(&source)
+            .unwrap();
+
+        let results = transfer_with_progress_blocking(
+            "move",
+            vec![source.to_string_lossy().to_string()],
+            dst_dir.to_string_lossy().to_string(),
+            "op_rename_held_file".to_string(),
+            "error".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|_| {},
+        )
+        .expect("the file was renamed, so it was moved");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].destination,
+            dst_dir.join("held.bin").to_string_lossy()
+        );
+        assert!(!source.exists());
+        drop(holder);
+        assert_eq!(fs::read(dst_dir.join("held.bin")).unwrap(), b"held");
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    /// A file that another program holds open cannot be renamed, and could
+    /// not be deleted after a copy either. A same-drive move of it used to
+    /// copy the whole file, fail to delete the source, and leave both.
+    #[cfg(windows)]
+    #[test]
+    fn a_same_drive_move_of_a_file_in_use_reports_it_busy_without_copying_it() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+        let src_dir = unique_temp_path("rename_busy_src");
+        let dst_dir = unique_temp_path("rename_busy_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("open-elsewhere.bin");
+        fs::write(&source, b"in use").unwrap();
+        // Others may read the file; nobody may rename or delete it.
+        let holder = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&source)
+            .unwrap();
+
+        let error = transfer_with_progress_blocking(
+            "move",
+            vec![source.to_string_lossy().to_string()],
+            dst_dir.to_string_lossy().to_string(),
+            "op_rename_busy_file".to_string(),
+            "error".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|_| {},
+        )
+        .expect_err("a file in use cannot be moved");
+
+        assert_eq!(error.outcome.failed.len(), 1);
+        assert_eq!(error.outcome.failed[0].source, source.to_string_lossy());
+        assert_eq!(error.outcome.failed[0].kind, "error");
+        assert!(
+            !error.message.contains("Copied but failed to delete source"),
+            "{}",
+            error.message
+        );
+        assert!(
+            !dst_dir.join("open-elsewhere.bin").exists(),
+            "the file was copied although its source could not be removed"
+        );
+        assert!(staging_artifacts_in(&dst_dir).is_empty());
+        drop(holder);
+        assert_eq!(fs::read(&source).unwrap(), b"in use");
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    /// With one file at a time nothing is in flight between two files. That
+    /// used to force a tuning update after every file: one event, serialized
+    /// and sent to the window, per copied file.
+    #[test]
+    fn one_file_at_a_time_does_not_send_a_tuning_update_for_every_file() {
+        let src_root = unique_temp_path("tuning_flood_src");
+        let dst_root = unique_temp_path("tuning_flood_dst");
+        let source = src_root.join("batch");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&dst_root).unwrap();
+        let files = 400;
+        for index in 0..files {
+            fs::write(source.join(format!("file-{index:03}.txt")), b"tiny").unwrap();
+        }
+        let tuning_updates = AtomicU64::new(0);
+
+        let results = super::transfer_with_policy_blocking(
+            "copy",
+            super::Request::Selection {
+                sources: vec![source.to_string_lossy().to_string()],
+                conflict_action: "error".to_string(),
+            },
+            dst_root.to_string_lossy().to_string(),
+            "op_tuning_flood".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|_| {},
+            &|_| {
+                tuning_updates.fetch_add(1, Ordering::Relaxed);
+            },
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 1,
+                flush_on_close: false,
+                ..super::tuning::Policy::default()
+            },
+        )
+        .expect("the folder copies");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(fs::read_dir(dst_root.join("batch")).unwrap().count(), files);
+        let sent = tuning_updates.load(Ordering::Relaxed);
+        assert!(sent >= 1, "the final state is always shown");
+        // Updates are spaced 200 ms apart; this copy would have to take
+        // forty seconds to send this many.
+        assert!(
+            sent <= (files / 2) as u64,
+            "{sent} tuning updates for {files} files"
+        );
+
+        let _ = fs::remove_dir_all(&src_root);
+        let _ = fs::remove_dir_all(&dst_root);
+    }
+
     #[test]
     fn cancelled_directory_copy_keeps_the_files_already_copied() {
         let src_root = unique_temp_path("cancel_keeps_src");

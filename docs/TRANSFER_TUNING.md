@@ -196,7 +196,10 @@ reuses the answer for subsequent conflicts in the same transfer.
 * On the same drive or share, a selected folder whose name is free at the
   destination is moved by one rename, and so is a selected file. Nothing is
   copied and no partial file is used. If the rename is refused, the item is
-  copied instead.
+  copied instead. One refusal is not answered by a copy: a file that another
+  program holds open (a sharing or lock violation) could not be deleted after
+  a copy either, so it is reported as busy, gets its further rounds like any
+  busy file, and is not copied.
 * In every other case (another drive, or a folder merged into an existing
   one) each file is copied, or on the same drive renamed, on its own, and its
   source is deleted right after that file has its final name. Before deleting,
@@ -667,12 +670,17 @@ that is running keeps what it has measured and can save again when it ends.
 * **Copy buffers.** One task reserves at most its copy buffer budget (16–512
   MiB). All tasks together hold at most 512 MiB, buffers in use and cached
   buffers counted together; the cache holds at most 64 MiB and 32 buffers, and
-  a buffer is reused only for a request of exactly its size.
+  a buffer is reused only for a request of exactly its size. A buffer cut to
+  the length of one small file is not cached, and a full cache drops its
+  oldest buffers to keep the newest.
 * **Per file.** A file reserves one buffer when it fits in one, three when it
   is larger, or one per stream, plus 128 KiB. A file that does not fit waits,
   and can appear in the Details list while it waits.
 * **Bandwidth.** The limit is per task and counts the bytes actually copied.
-  It is not a limit for the whole machine.
+  It is not a limit for the whole machine. The files being copied take turns
+  at it, and one turn is at most a sixteenth of a second of the limit (never
+  less than 64 KiB), so a large file and the small files beside it all keep
+  moving however low the limit is.
 * **Folder depth.** A folder 1,024 levels or more below a selected folder is
   not entered; it is reported and the rest continues.
 * **Memory outside the buffers.** The limits above cover copy buffers only.
