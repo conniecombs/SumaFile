@@ -935,3 +935,14 @@ fn archive_entry_shell_calls_and_mutations_run_on_the_general_lane() {
     );
     let _ = fs::remove_dir_all(root);
 }
+
+/// The core crate names the data folder and the protocol crate names the
+/// service to its clients. They are one identifier defined in two crates,
+/// because the published protocol crate cannot depend on the core.
+#[test]
+fn core_and_protocol_agree_on_the_app_identifier() {
+    assert_eq!(
+        simplefile_core::APP_IDENTIFIER,
+        simplefile_ipc::APP_IDENTIFIER
+    );
+}

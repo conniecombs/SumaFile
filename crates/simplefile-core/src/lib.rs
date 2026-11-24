@@ -7,6 +7,13 @@
 /// Cargo / MSBuild `<Version>` stay numeric for packaging APIs that require x.y.z.
 pub const APP_DISPLAY_VERSION: &str = "1.2.0";
 
+/// The application's identifier: the name of its data folder under
+/// `%APPDATA%`, and what the updater and the service's handshake report.
+/// Settings, labels and cached values live in that folder, so the value never
+/// changes. `simplefile-ipc` carries the same value for clients, which cannot
+/// depend on this crate; a test in the service holds the two together.
+pub const APP_IDENTIFIER: &str = "com.simplefile.desktop";
+
 pub mod archive;
 pub mod checksum;
 pub mod cleanup;

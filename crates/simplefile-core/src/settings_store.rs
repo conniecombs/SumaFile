@@ -1,9 +1,9 @@
+use crate::APP_IDENTIFIER;
 use rusqlite::{Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-const APP_IDENTIFIER: &str = "com.simplefile.desktop";
 const PRODUCT_NAME: &str = "SumaFile";
 const LEGACY_PRODUCT_NAME: &str = "SimpleFile";
 const METADATA_DB_NAME: &str = "metadata.db";
@@ -590,6 +590,14 @@ mod tests {
             "temp tables live on the connection, so a fresh connection would lose it"
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Users' data is found by this name. A different value would start every
+    /// installation with empty settings.
+    #[test]
+    fn the_app_identifier_is_the_name_existing_data_is_stored_under() {
+        assert_eq!(APP_IDENTIFIER, "com.simplefile.desktop");
+        assert_eq!(crate::APP_IDENTIFIER, APP_IDENTIFIER);
     }
 
     #[test]

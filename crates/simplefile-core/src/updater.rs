@@ -1,5 +1,6 @@
 use crate::models::{AppAboutInfo, UpdateInfo};
 use crate::utils::hex_encode;
+use crate::APP_IDENTIFIER;
 use base64::{engine::general_purpose, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Deserialize;
@@ -10,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const APP_NAME: &str = "SumaFile";
-const APP_IDENTIFIER: &str = "com.simplefile.desktop";
 const UPDATE_MANIFEST_URL: &str =
     "https://github.com/conniecombs/SumaFile/releases/latest/download/latest-winui.json";
 const TRUSTED_ASSET_PREFIX: &str = "https://github.com/conniecombs/SumaFile/releases/";
