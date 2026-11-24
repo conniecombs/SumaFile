@@ -124,18 +124,11 @@ on-demand column values have shipped. What remains:
   `cp -r` copied 2,900 to 6,700. One record per worker or per destination
   folder, instead of one per file, would remove most of it. It needs a
   change to the record format and to recovery.
-- Recovery lists a whole destination folder to find its ownership records,
-  once for every existing folder a transfer merges into. For a large folder
-  on a share that is the whole listing over the network before the first
-  file. A listing filtered by name (`*.sumafile-partial.state`) would be
-  answered by the server.
 
 ## Search
 
 - Every search hit is sent in a batch notification and again in the final
   reply. Dropping the duplicate needs a protocol change.
-- Each batch of results replaces the whole result list in the pane, which
-  resets scroll and selection during a long search. Append instead.
 - Windows Search integration is used when a folder is indexed. Say in the UI
   whether results are indexed or live, and how fresh they are.
 - Smart-folder values are interpolated into the Windows Search query; only the

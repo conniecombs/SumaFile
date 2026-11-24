@@ -3,6 +3,8 @@
 > **Status, updated 2026-11-23.** All **Critical** and **High** Bugs (`B1–B13`) and Performance Bottlenecks (`P1–P9`) identified in this audit have been repaired and verified against the full Debug/Release build, C# test suite, Rust workspace test suite, Clippy, crate packaging, and packaged release smoke tests. Medium bugs (`B14`), Medium bottlenecks (`P10`), dead-code cleanup (`R1–R3`), remaining UI polish (`U2–U7`), and architectural Rust upgrades (`A1–A9`) remain tracked as open follow-up work below.
 >
 > **Follow-up, 2026-11-24 (release 1.2.0).** The remaining `B14` items, most of `P10`, `R1`, and parts of `R2`/`R3` are done; each is marked below, and items that were looked at and left are marked with the reason. `U2–U7` and `A1–A9` are unchanged and stay open. This follow-up was developed on Linux: the transfer crate was tested natively and type-checked for Windows, the other Rust crates were tested through a local Linux port of their Windows-only modules, and the C# libraries and test suite were built and run on Linux. `SimpleFile.App` cannot be built there, so its changes are confirmed by the Windows CI run for the release, not by the table below, which records the 2026-11-23 run.
+>
+> **Second follow-up, 2026-11-24 (after 1.2.0).** `U5` and `A7` are done, and `A9` is done for deleting and renaming in a ZIP. They are marked below. The same limits on verification apply.
 
 **Scope:** All 11 Rust workspace crates (`simplefile-core`, `simplefile-ipc`, `simplefile-service`, `sumafile-transfer`, `sumafile-plugin`, bundled `git`, `sevenzip`, and `remote` backends, plus test/template fixtures), all WinUI 3 / .NET 10 projects (`SimpleFile.App`, `SimpleFile.Core`, `SimpleFile.Ipc`, `SimpleFile.PluginHost`, `SimpleFile.PluginSdk`, bundled `Git` & `Remote` UI plugins, `SimpleFile.Tests`), and packaging/CI scripts.
 
@@ -30,8 +32,8 @@ Every finding below was verified directly against live source code and cross-che
 | **1. Bugs** | **3 Critical (`B1–B3`), 10 High (`B4–B13`), 1 Consolidated Medium (`B14`)** | `B1–B14` **Complete** |
 | **2. Bottlenecks** | **1 Critical (`P1`), 8 High (`P2–P9`), 1 Consolidated Medium (`P10`)** | `P1–P9` **Complete**; `P10.2–P10.4` **Complete**; `P10.1` and `P10.5` open |
 | **3. Redundant Code** | **~1,200+ LOC dead (`R1`), duplicated C#/Rust subsystems (`R2–R3`)** | `R1` **Complete**; `R2` and `R3` partially complete (see the sub-checklists) |
-| **4. UI Improvements** | **7 workflow & polish groups (`U1–U7`)** | `U1` **Complete**; `TransferProgressWindow` Details vertical resize **Complete**; `U2–U7` open |
-| **5. Rust Backend** | **9 architectural upgrades (`A1–A9`)** | Open (`A7` SQLite WAL/NORMAL/`prepare_cached` foundation in place) |
+| **4. UI Improvements** | **7 workflow & polish groups (`U1–U7`)** | `U1` and `U5` **Complete**; `TransferProgressWindow` Details vertical resize **Complete**; `U2–U4`, `U6` and `U7` open |
+| **5. Rust Backend** | **9 architectural upgrades (`A1–A9`)** | `A7` **Complete**; `A9` partially complete; the others open |
 
 ---
 
@@ -234,7 +236,7 @@ Every finding below was verified directly against live source code and cross-che
 - [ ] **U2. Bring `RemoteManagerWindow` (`FTP/SFTP`) to File-Manager Parity:** Double-click/`Enter` to open folders, single-click multi-select, editable `RemotePathBox`, `Size` column, splitters, context menus, keyboard shortcuts, and drag-and-drop.
 - [ ] **U3. Enable Rubber-Band Marquee Selection in `Details` View & Highlight Hovered Drop Target Folders.**
 - [ ] **U4. Drop-Onto-Tabs/Breadcrumbs/Sidebar, Middle-Click Open-in-New-Tab, Tab Reordering, and Mouse `XButton1`/`XButton2` Back/Forward.**
-- [ ] **U5. Persist Window Size, Monitor & Maximized State Across Sessions.**
+- [x] **U5. Persist Window Size, Monitor & Maximized State Across Sessions.** The placement is kept in `%LOCALAPPDATA%\SumaFile\window.json` and applied before the window is shown ([WindowPlacement.cs](../src-winui/SimpleFile.Core/WindowPlacement.cs), [MainWindow.Placement.cs](../src-winui/SimpleFile.App/MainWindow.Placement.cs)). A placement on a screen that is gone is fitted to the nearest one.
 - [ ] **U6. Omnibar Path/Command Autocomplete, Inline Rename in Non-Details Views, and Column Drag-Reordering.**
 - [~] **U7. Workbench, Conflict Dialog, Transfers, Quick Look & Accessibility Polish:**
   - [x] `TransferProgressWindow` Details pane now resizes vertically with the window ([TransferWindowLayout.cs](../src-winui/SimpleFile.Core/TransferWindowLayout.cs), [TransferProgressWindow.xaml](../src-winui/SimpleFile.App/TransferProgressWindow.xaml), [TransferProgressWindow.xaml.cs](../src-winui/SimpleFile.App/TransferProgressWindow.xaml.cs)).
@@ -250,6 +252,6 @@ Every finding below was verified directly against live source code and cross-che
 - [ ] **A4.** Overlapped async Tokio named-pipe client pool for plugins.
 - [ ] **A5.** Batched COM `IFileOperation` + `IFileOperationProgressSink` for Recycle Bin operations.
 - [ ] **A6.** Hardware-accelerated Windows Shell / WIC thumbnail provider (`IShellItemImageFactory`).
-- [~] **A7.** SQLite `WAL` + `synchronous = NORMAL` + `prepare_cached` (**done**); read/write connection split and bounded `entry_facts` pruning remain open.
+- [x] **A7.** SQLite `WAL` + `synchronous = NORMAL` + `prepare_cached`; settings and cached facts are read on a second, read-only connection ([settings_store.rs](../crates/simplefile-core/src/settings_store.rs)), and `entry_facts` is held to 200,000 rows by removing the ones written longest ago ([fact_cache.rs](../crates/simplefile-core/src/fact_cache.rs)).
 - [ ] **A8.** Raw `u64` epoch/FILETIME timestamps on `FileEntry` + binary IPC wire format.
-- [ ] **A9.** In-place ZIP entry copy (`ZipWriter::raw_copy_file`) and bounded `service.log` ring buffer.
+- [~] **A9.** In-place ZIP entry copy: a delete or a rename in a ZIP copies the entries as stored instead of extracting and rebuilding the archive ([zip_inplace.rs](../crates/simplefile-core/src/archive/zip_inplace.rs)). Creating an entry and copying into a ZIP still rebuild it. `service.log` needed no change: `BackendSession` already rotates it at 1 MB and keeps one earlier file.

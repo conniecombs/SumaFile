@@ -402,7 +402,11 @@ rows named `plugin.<plugin id>.<key>`.
 | `operations.jsonl` | `%LOCALAPPDATA%\SumaFile` | `OperationJournal`: started, completed, cancelled and failed operations |
 | `plugins.log` | Beside the executable | The app: plugin load errors, plugin log lines, each backend's standard error |
 
-All of them except `operations.jsonl` rotate to `<name>.1` at 1 MB. The service installs no
+The same folder holds `window.json`: where the main window was when it was last closed. The app
+reads it before the window is shown, which is before the file service and its settings are
+there, and writes it when the window closes.
+
+All of the logs except `operations.jsonl` rotate to `<name>.1` at 1 MB. The service installs no
 backend for the `log` crate, so only `eprintln!` output reaches `service.log`.
 
 Environment overrides not named above: `SIMPLEFILE_SERVICE_PATH` (the service executable),

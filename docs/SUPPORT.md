@@ -36,6 +36,7 @@ All paths are per user. Remove personal paths before sharing a log.
 | `%LOCALAPPDATA%\SumaFile\service.log` | The app, from the file service's error output | What the Rust service printed to its error stream. Rotated at 1 MB to `service.log.1`. |
 | `%LOCALAPPDATA%\SumaFile\operations.jsonl` | The app | One line per started, completed, cancelled or failed file operation. A failed line carries the service's error text. |
 | `%LOCALAPPDATA%\SumaFile\startup-timing.log` | The app | How long each startup stage took. |
+| `%LOCALAPPDATA%\SumaFile\window.json` | The app | The main window's size, position and whether it was maximized. Delete it to open at the default size. |
 | `plugins.log` in the installation folder | The app | Plugin discovery and loading, what plugins log through the host, and plugin failures. Rotated at 1 MB. |
 
 The error text in `operations.jsonl` is the most useful single item for a

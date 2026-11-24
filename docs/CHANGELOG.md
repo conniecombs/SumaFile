@@ -8,6 +8,45 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ## [Unreleased]
 
+### Window
+
+- SumaFile opens where it was closed: on the same screen, at the same size,
+  maximized if it was. If that screen is no longer attached, or is smaller
+  now, the window is fitted to the nearest screen.
+
+### Search
+
+- The list of results keeps its scroll position and its selection while a
+  search is still finding files. Each batch of results used to empty the
+  list and fill it again.
+
+### Archives
+
+- Deleting or renaming a file or folder inside a ZIP no longer unpacks the
+  archive and compresses it again. The other entries are copied as they are
+  stored, so the change takes about as long as copying the archive, needs no
+  free space for its unpacked contents, and keeps each entry's compression,
+  comment and permissions. Creating an entry and copying into a ZIP work as
+  before, as do archives with unusual names or encrypted entries.
+- Deleting an entry that is no longer in a ZIP says "Archive entry not
+  found" instead of "Failed to stat path".
+
+### Transfers
+
+- Before copying into an existing folder, SumaFile looks for records of an
+  interrupted transfer there. On Windows it now asks for those records by
+  name instead of listing the folder, which on a network share was the full
+  listing of a large folder before the first file.
+
+### Other changes
+
+- Settings and cached column values are read on a second database
+  connection, so they no longer wait while a batch of column values is
+  being saved.
+- The cache of column values (dimensions, duration and the like) is kept to
+  200,000 entries; the ones saved longest ago are removed first. It used to
+  grow for as long as the profile existed.
+
 ---
 
 ## [1.2.0] - 2026-11-24
