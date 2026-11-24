@@ -113,6 +113,39 @@ on-demand column values have shipped. What remains:
 - The file service installs no logger, so warnings such as retried transfer
   attempts and unrecoverable ownership records are never written to
   `service.log`. Only text printed directly to the error stream reaches it.
+- Every copied file costs a fixed amount of work that a plain copy does not
+  have: its ownership record is created, written, synced and deleted beside
+  the partial file, and the partial file is renamed. That is four changes to
+  the destination folder where a plain copy makes one, about 26 system calls
+  where it makes about eight, and with "Flush to disk before finishing each
+  file" on, two flushes. Changes to one folder do not run in parallel, so
+  more files at once do not make up for it: in a test on Linux (8,000 files
+  of 4 KiB, ext4) the engine copied 1,000 to 2,700 files a second where
+  `cp -r` copied 2,900 to 6,700. One record per worker or per destination
+  folder, instead of one per file, would remove most of it. It needs a
+  change to the record format and to recovery.
+- The times and the read-only attribute of the folders a transfer created
+  are restored one folder after another when the last file is done, three
+  or four requests each. On a share, a tree of many folders spends that
+  time in "Finishing". The folders do not depend on one another and could
+  be done by several threads.
+- Recovery lists a whole destination folder to find its ownership records,
+  once for every existing folder a transfer merges into. For a large folder
+  on a share that is the whole listing over the network before the first
+  file. A listing filtered by name (`*.sumafile-partial.state`) would be
+  answered by the server.
+- `FileTask::owned_tree`, and with it `CopyContext::resume_existing`, is
+  never set since folders stopped being staged. The code behind it is
+  unreachable, including a branch that deletes an existing destination file
+  that does not match the source, and the move completion manifest that
+  nothing writes to. Remove it.
+- A large file reserves one copy buffer per configured stream whenever
+  "Streams per large file" is 2 or more, also on drives where several
+  streams are not used (removable drives, cloud mounts). With 2 streams it
+  reserves two buffers and uses three; with 4 or more it reserves more than
+  it uses, which lowers the number of large files that fit the budget.
+- A chosen transfer order sorts the whole queue again each time the scan
+  delivers files, up to "Maximum queued items" entries.
 
 ## Search
 
