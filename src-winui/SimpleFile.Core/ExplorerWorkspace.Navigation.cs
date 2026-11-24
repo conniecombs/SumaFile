@@ -94,6 +94,22 @@ public sealed partial class ExplorerWorkspace
     public Task RefreshAsync(PaneId pane, CancellationToken cancellationToken = default) =>
         _navigation.RefreshAsync(this, pane, cancellationToken);
 
+    /// <summary>
+    /// The file service was started again: its listing views can be opened again. A pane whose view could not be
+    /// read falls back to listing its folder whole and stays that way until it navigates, because a refresh must
+    /// not retry a view that just failed. When the failure was the service going away, nothing navigates: the
+    /// reconnect only refreshes, and the pane would list whole (no paging, no service-side sort) for as long as
+    /// it showed that folder. Call this before the refresh that follows a reconnect.
+    /// </summary>
+    public void RestoreListingViews()
+    {
+        lock (_gate)
+        {
+            Primary.ListingViewUnavailable = false;
+            Secondary.ListingViewUnavailable = false;
+        }
+    }
+
     public Task NavigateSpecialAsync(string command, PaneId pane, CancellationToken cancellationToken = default) =>
         _navigation.NavigateSpecialAsync(this, command, pane, cancellationToken);
 

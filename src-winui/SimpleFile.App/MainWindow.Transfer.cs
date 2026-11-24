@@ -1051,13 +1051,14 @@ public sealed partial class MainWindow
 
     private async Task CopyOrMoveToOtherPaneAsync(bool move)
     {
+        var workspace = _workspace;
         var paths = SelectedPaths;
-        if (_workspace is null || paths is null || paths.Length == 0)
+        if (workspace is null || paths is null || paths.Length == 0)
         {
             return;
         }
 
-        var destination = _workspace.OtherPanePath();
+        var destination = workspace.OtherPanePath();
         if (destination is null)
         {
             // The cross-pane buttons are disabled in single-pane mode; a stray command just says why.
@@ -1065,8 +1066,25 @@ public sealed partial class MainWindow
             return;
         }
 
+        if (PathRules.AllLieDirectlyIn(paths, destination))
+        {
+            // Both panes show the folder the selection is in: every item would land on itself.
+            SetStatusText("The other pane shows the same folder. Open another folder there first.");
+            return;
+        }
+
+        // The pane is named now. After the transfer the active pane can be a different one, and "the other
+        // pane" would then be the pane the files came from.
+        var destinationPane = workspace.OtherPane().Id;
         await TransferWithConflictAsync(paths, destination, move);
-        await _workspace.NavigatePaneAsync(_workspace.OtherPane().Id, destination, HistoryMode.None, activate: false);
+        if (!ReferenceEquals(_workspace, workspace)
+            || !PathRules.PathsEqual(workspace.Pane(destinationPane).Path, destination))
+        {
+            // The window moved on, or that pane was taken elsewhere meanwhile: leave it where the user put it.
+            return;
+        }
+
+        await workspace.NavigatePaneAsync(destinationPane, destination, HistoryMode.None, activate: false);
     }
 
     private async Task PromptPackIntoFolderAsync()

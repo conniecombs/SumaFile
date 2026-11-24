@@ -111,4 +111,19 @@ public class PathRulesTests
         Assert.Equal("Fixed", drive.DriveType);
         Assert.Equal("Local Disk (D:)", drive.Name);
     }
+
+    [Fact]
+    public void AllLieDirectlyIn_IsTrueOnlyWhenEverySourceIsAChildOfTheFolder()
+    {
+        Assert.True(PathRules.AllLieDirectlyIn([@"C:\Work\a.txt", @"c:\work\B"], @"C:\Work"));
+        Assert.True(PathRules.AllLieDirectlyIn([@"C:\Work\a.txt"], @"C:\Work\"));
+        Assert.True(PathRules.AllLieDirectlyIn([@"C:\a.txt"], @"C:\"));
+        // One item from elsewhere makes the transfer a real one.
+        Assert.False(PathRules.AllLieDirectlyIn([@"C:\Work\a.txt", @"C:\Other\b.txt"], @"C:\Work"));
+        // A folder dropped on its own parent is not "into itself", and a deeper item is not a direct child.
+        Assert.False(PathRules.AllLieDirectlyIn([@"C:\Work\Sub\a.txt"], @"C:\Work"));
+        Assert.False(PathRules.AllLieDirectlyIn([@"C:\Work"], @"C:\Work"));
+        Assert.False(PathRules.AllLieDirectlyIn([], @"C:\Work"));
+        Assert.False(PathRules.AllLieDirectlyIn([@"C:\Work\a.txt"], ""));
+    }
 }

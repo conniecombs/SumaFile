@@ -325,6 +325,29 @@ public class ListingViewWorkspaceTests
     }
 
     [Fact]
+    public async Task AfterTheServiceIsBack_ARefreshOpensTheViewAgain()
+    {
+        var (workspace, backend) = await OpenAsync(File("b.txt", 1), File("a.txt", 2));
+        await backend.CloseListingViewAsync(workspace.Primary.ListingViewId);
+        workspace.SetSort("size");
+        await UntilAsync(() => workspace.Primary.Listing is null && backend.ListDirectoryCalls > 0, "the fallback listing");
+        await SettledAsync(workspace);
+
+        // A refresh alone keeps listing the folder whole: the view just failed.
+        await workspace.RefreshAsync(PaneId.Primary);
+        await SettledAsync(workspace);
+        Assert.Null(workspace.Primary.Listing);
+
+        // The reconnect says the service is back; the refresh that follows it uses the view again.
+        workspace.RestoreListingViews();
+        await workspace.RefreshAsync(PaneId.Primary);
+        await SettledAsync(workspace);
+        Assert.NotNull(workspace.Primary.Listing);
+        Assert.False(workspace.Primary.ListingViewUnavailable);
+        Assert.Equal(["b.txt", "a.txt"], Names(workspace));
+    }
+
+    [Fact]
     public async Task NavigatingAway_StopsFollowingTheOldFoldersView()
     {
         var (workspace, backend) = await OpenAsync(File("a.txt"));

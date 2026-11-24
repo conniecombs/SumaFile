@@ -420,6 +420,8 @@ public sealed partial class MainWindow : Window
 
             QueueWatchActiveDirectory();
             await _workspace.RefreshDrivesAsync();
+            // The views the panes followed died with the old service; the new one can open them again.
+            _workspace.RestoreListingViews();
             await _workspace.RefreshAffectedPanesAsync(VisiblePanePaths(_workspace));
             ShowMessage("SumaFile's file service reconnected", "SumaFile's file service is running again.", InfoBarSeverity.Success);
         }

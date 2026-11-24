@@ -244,4 +244,20 @@ public class DialogsAndTransfersUxTests
         Assert.Contains("SetStatusText(", method);
         Assert.DoesNotContain("side menu", transfer, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void CrossPaneTransfer_NamesItsDestinationPaneBeforeTheTransferRuns()
+    {
+        var method = Slice(Read("MainWindow.Transfer.cs"), "private async Task CopyOrMoveToOtherPaneAsync(bool move)", "private async Task PromptPackIntoFolderAsync()");
+        var transfer = method.IndexOf("await TransferWithConflictAsync(", StringComparison.Ordinal);
+        var named = method.IndexOf("var destinationPane = workspace.OtherPane().Id;", StringComparison.Ordinal);
+        Assert.True(named >= 0 && named < transfer, "the destination pane must be captured before the transfer is awaited");
+        // After the await, neither the window's workspace field nor "the other pane" is asked again.
+        var after = method[transfer..];
+        Assert.DoesNotContain("OtherPane()", after);
+        Assert.DoesNotContain("_workspace.NavigatePaneAsync", after);
+        // A selection in the folder both panes show is refused before anything is transferred.
+        var refused = method.IndexOf("PathRules.AllLieDirectlyIn(paths, destination)", StringComparison.Ordinal);
+        Assert.True(refused >= 0 && refused < transfer);
+    }
 }

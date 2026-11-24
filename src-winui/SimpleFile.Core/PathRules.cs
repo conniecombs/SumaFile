@@ -180,6 +180,18 @@ public static class PathRules
         return NormalizeComparablePath(left) == NormalizeComparablePath(right);
     }
 
+    /// <summary>
+    /// True when every one of <paramref name="sources"/> already lies directly in <paramref name="folder"/>: a
+    /// copy or a move into that folder would land each item on itself.
+    /// </summary>
+    public static bool AllLieDirectlyIn(IReadOnlyCollection<string> sources, string folder)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        return sources.Count > 0
+            && !string.IsNullOrWhiteSpace(folder)
+            && sources.All(source => GetParentPath(source) is { } parent && PathsEqual(parent, folder));
+    }
+
     public static bool PathContains(string parent, string child)
     {
         var parentPath = NormalizeComparablePath(parent);
