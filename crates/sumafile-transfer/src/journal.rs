@@ -197,18 +197,22 @@ impl StagingLease {
     }
 
     fn persist(&mut self) -> Result<(), String> {
-        let data = serde_json::to_vec(&self.record).map_err(|e| e.to_string())?;
+        // The line and its terminator go out in one write. Recovery ignores a
+        // record without a complete line, so a stop between two writes would
+        // leave a record, and the partial file it names, that nothing ever
+        // cleans up. It is also one request fewer for every file copied.
+        let mut line = serde_json::to_vec(&self.record).map_err(|e| e.to_string())?;
+        line.push(b'\n');
         let end = self
             .file
             .seek(SeekFrom::End(0))
             .map_err(|e| e.to_string())?;
-        if end.saturating_add(data.len() as u64 + 1) > RECORD_LIMIT {
+        if end.saturating_add(line.len() as u64) > RECORD_LIMIT {
             return Err(
                 "Transfer ownership record is full; artifacts retained for recovery".into(),
             );
         }
-        self.file.write_all(&data).map_err(|e| e.to_string())?;
-        self.file.write_all(b"\n").map_err(|e| e.to_string())?;
+        self.file.write_all(&line).map_err(|e| e.to_string())?;
         self.file
             .sync_all()
             .map_err(|e| format!("Persist transfer ownership [{}]: {e}", self.path.display()))

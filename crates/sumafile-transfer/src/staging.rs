@@ -86,6 +86,28 @@ pub struct SourceVersion {
     pub content_hash: Option<[u8; 32]>,
 }
 
+impl SourceVersion {
+    /// For a file that was moved by renaming it. The rename is the whole
+    /// move: no source is left to compare or to delete, so nothing is read
+    /// from the disk for it. The value matches no existing file, and
+    /// [`delete_verified_source`] refuses it.
+    pub fn renamed() -> Self {
+        Self {
+            is_symlink: false,
+            is_dir: false,
+            len: 0,
+            modified: None,
+            #[cfg(windows)]
+            creation_time: 0,
+            #[cfg(windows)]
+            last_write_time: 0,
+            #[cfg(windows)]
+            file_id: None,
+            content_hash: None,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct TreeCopyManifest {
     pub files: crate::manifest::CopiedFiles,
@@ -625,12 +647,10 @@ pub fn delete_verified_source_tree_recording(
             "Move completion manifest is missing the source root; directory retained".into(),
         );
     }
+    let explained_dirs = ancestors_within(root, failed_sources);
     for (dir_path, version) in manifest.source_dirs.iter().rev() {
         if let Err(error) = delete_verified_source(dir_path, version) {
-            let explained = failed_sources
-                .iter()
-                .any(|failed| failed.starts_with(dir_path));
-            if explained {
+            if explained_dirs.contains(dir_path.as_path()) {
                 continue;
             }
             errors.push(format!(
@@ -647,6 +667,32 @@ pub fn delete_verified_source_tree_recording(
     } else {
         Err(errors.join("; "))
     }
+}
+
+/// Every path in `paths` that lies in `root`, and each directory between it
+/// and `root`, `root` included: the directories that cannot be empty while
+/// those paths stay behind.
+///
+/// Looked up once per source directory, this replaces a scan of all of
+/// `paths` for each directory. A move that leaves most of a large tree
+/// behind (every file skipped, or every file a conflict) otherwise spends
+/// minutes on comparisons after its last file: directories times files.
+fn ancestors_within<'a>(root: &Path, paths: &'a [PathBuf]) -> std::collections::HashSet<&'a Path> {
+    let mut ancestors = std::collections::HashSet::new();
+    for path in paths {
+        if !path.starts_with(root) {
+            continue;
+        }
+        let mut current = Some(path.as_path());
+        while let Some(ancestor) = current {
+            // Stop at the first one already recorded: everything above it is too.
+            if !ancestors.insert(ancestor) || ancestor == root {
+                break;
+            }
+            current = ancestor.parent();
+        }
+    }
+    ancestors
 }
 
 pub fn conflict_for_existing_destination(path: &Path) -> String {
@@ -1262,6 +1308,89 @@ mod tests {
         assert_eq!(fs::read(&new_file).unwrap(), b"must-not-be-lost");
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// A source directory that stays because a failed or skipped item is
+    /// somewhere below it is not reported; one that stays for any other
+    /// reason is.
+    #[test]
+    fn a_retained_directory_is_explained_by_any_failed_item_below_it() {
+        let root = unique_temp_dir("explained_dirs");
+        let src_dir = root.join("folder");
+        let explained = src_dir.join("explained");
+        let deep = explained.join("deep");
+        let unexplained = src_dir.join("unexplained");
+        fs::create_dir_all(&deep).unwrap();
+        fs::create_dir_all(&unexplained).unwrap();
+        let skipped = deep.join("skipped.txt");
+        let added = unexplained.join("added-during-the-move.txt");
+        fs::write(&skipped, b"left on purpose").unwrap();
+        fs::write(&added, b"nobody reported this one").unwrap();
+        let manifest = TreeCopyManifest {
+            files: Vec::new().into(),
+            source_dirs: [&src_dir, &explained, &unexplained, &deep]
+                .into_iter()
+                .map(|dir| (dir.clone(), capture_source_version_for_path(dir).unwrap()))
+                .collect(),
+        };
+        // A path outside the tree explains nothing, whatever it starts with.
+        let outside = root.join("folder-elsewhere").join("unexplained").join("x");
+
+        let error = delete_verified_source_tree(&src_dir, &manifest, &[skipped.clone(), outside])
+            .expect_err("the directory holding an unreported file is reported");
+
+        assert!(error.contains("unexplained"), "{error}");
+        assert!(!error.contains("deep"), "{error}");
+        assert_eq!(
+            error.matches("Source directory retained [").count(),
+            1,
+            "{error}"
+        );
+        assert!(skipped.exists() && added.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// The placeholder for a renamed file must never authorize a deletion.
+    #[test]
+    fn the_version_of_a_renamed_file_matches_no_file() {
+        let root = unique_temp_dir("renamed_version");
+        for body in [&b""[..], b"content"] {
+            let file = root.join("file");
+            fs::write(&file, body).unwrap();
+            let error = delete_verified_source(&file, &super::SourceVersion::renamed())
+                .expect_err("a renamed file's version deletes nothing");
+            assert!(error.contains("retained"), "{error}");
+            assert_eq!(fs::read(&file).unwrap(), body);
+            assert!(
+                super::verify_source_unchanged(&file, &super::SourceVersion::renamed()).is_err()
+            );
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ancestors_stop_at_the_root_and_ignore_paths_outside_it() {
+        let root = PathBuf::from("/data/src");
+        let paths = [
+            root.join("a").join("b").join("file"),
+            root.join("a").join("other"),
+            PathBuf::from("/data/src-backup/a/file"),
+            root.clone(),
+        ];
+        let ancestors = super::ancestors_within(&root, &paths);
+        let mut found: Vec<_> = ancestors.into_iter().collect();
+        found.sort();
+        assert_eq!(
+            found,
+            [
+                root.as_path(),
+                root.join("a").as_path(),
+                root.join("a").join("b").as_path(),
+                root.join("a").join("b").join("file").as_path(),
+                root.join("a").join("other").as_path(),
+            ]
+        );
     }
 
     #[test]
