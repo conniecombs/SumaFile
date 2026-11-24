@@ -934,15 +934,6 @@ public sealed partial class MainWindow
         hint.Visibility = string.IsNullOrEmpty(state.Hint) ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> source)
-    {
-        target.Clear();
-        foreach (var item in source)
-        {
-            target.Add(item);
-        }
-    }
-
     private static bool ReplaceIfChanged<T>(
         ObservableCollection<T> target,
         IReadOnlyList<T> source,

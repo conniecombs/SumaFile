@@ -713,6 +713,20 @@ public class Sprint2ShellTests
         Assert.Equal(1, CountOf(AllAppSource(), "replaceSelection: true"));
     }
 
+    [Fact]
+    public void SearchBatches_ExtendTheRowsInsteadOfReplacingThem()
+    {
+        var search = File.ReadAllText(Path.Combine(AppRoot(), "MainWindow.Search.cs"));
+        var apply = search[search.IndexOf("private void ApplySearchRows()", StringComparison.Ordinal)..];
+        apply = apply[..apply.IndexOf("private Task CancelActiveSearchAsync()", StringComparison.Ordinal)];
+
+        // Clearing and refilling the list for every batch reset scroll and selection during a search.
+        Assert.DoesNotContain("Replace(PrimaryFiles", apply);
+        Assert.DoesNotContain("Replace(SecondaryFiles", apply);
+        Assert.Contains("ReplaceIfChanged(", apply);
+        Assert.Contains("SameFileRow", apply);
+    }
+
     private static string AllAppSource() =>
         string.Concat(Directory
             .EnumerateFiles(AppRoot(), "*.cs", SearchOption.TopDirectoryOnly)

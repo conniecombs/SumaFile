@@ -78,13 +78,22 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (_search.Pane == PaneId.Secondary)
+        // A batch extends the list, so the rows already shown are left alone: the pane keeps its
+        // scroll position and its selection while a search is still finding files.
+        var pane = _search.Pane == PaneId.Secondary ? PaneId.Secondary : PaneId.Primary;
+        var rows = pane == PaneId.Secondary ? SecondaryFiles : PrimaryFiles;
+        var details = pane == PaneId.Secondary ? SecondaryDetailsFileList : PrimaryDetailsFileList;
+        details.BeginUpdate();
+        try
         {
-            Replace(SecondaryFiles, _search.Results.Select(result => SearchRowFrom(result, PaneId.Secondary)));
+            ReplaceIfChanged(
+                rows,
+                _search.Results.Select(result => SearchRowFrom(result, pane)).ToList(),
+                SameFileRow);
         }
-        else
+        finally
         {
-            Replace(PrimaryFiles, _search.Results.Select(result => SearchRowFrom(result, PaneId.Primary)));
+            details.EndUpdate();
         }
 
         var suffix = _search.UseIndex ? " (indexed)" : "";
