@@ -875,7 +875,7 @@ fn extract_archive_metadata(path: &Path, extension: &str) -> Result<FileMetadata
         "tgz" => {
             let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
             let decoder = flate2::read::GzDecoder::new(file);
-            extract_tar_archive_metadata(decoder, "Compressed tar archive")
+            extract_tar_archive_metadata(decoder, "Compressed tar archive", MAX_TAR_SCAN_BYTES)
         }
         "gz" if path
             .to_string_lossy()
@@ -884,7 +884,7 @@ fn extract_archive_metadata(path: &Path, extension: &str) -> Result<FileMetadata
         {
             let file = File::open(path).map_err(|e| format!("Failed to open archive: {e}"))?;
             let decoder = flate2::read::GzDecoder::new(file);
-            extract_tar_archive_metadata(decoder, "Compressed tar archive")
+            extract_tar_archive_metadata(decoder, "Compressed tar archive", MAX_TAR_SCAN_BYTES)
         }
         _ => Ok(format_only_metadata(
             "archive",
@@ -952,20 +952,67 @@ fn extract_seekable_tar_archive_metadata<R: Read + Seek>(
     summarize_tar_entries(entries, format_label)
 }
 
+/// How much of a compressed tar is decompressed to describe it. A compressed
+/// tar cannot be skipped through: reaching the next entry means inflating the
+/// one before it, so the first two thousand entries of an archive of large
+/// files used to cost gigabytes of decompression for a properties panel.
+const MAX_TAR_SCAN_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Reads at most `left` bytes, then reports the end of the stream and
+/// remembers that it cut the stream short.
+struct ScanBudget<R> {
+    inner: R,
+    left: u64,
+    spent: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl<R: Read> Read for ScanBudget<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if self.left == 0 {
+            if !buffer.is_empty() {
+                self.spent.set(true);
+            }
+            return Ok(0);
+        }
+        let allowed = buffer
+            .len()
+            .min(usize::try_from(self.left).unwrap_or(usize::MAX));
+        let read = self.inner.read(&mut buffer[..allowed])?;
+        self.left -= read as u64;
+        Ok(read)
+    }
+}
+
 fn extract_tar_archive_metadata<R: Read>(
     reader: R,
     format_label: &str,
+    scan_bytes: u64,
 ) -> Result<FileMetadata, String> {
-    let mut archive = tar::Archive::new(reader);
+    let spent = std::rc::Rc::new(std::cell::Cell::new(false));
+    let mut archive = tar::Archive::new(ScanBudget {
+        inner: reader,
+        left: scan_bytes,
+        spent: spent.clone(),
+    });
     let entries = archive
         .entries()
         .map_err(|e| format!("Failed to read archive: {e}"))?;
-    summarize_tar_entries(entries, format_label)
+    summarize_tar_entries_within(entries, format_label, &spent)
 }
 
 fn summarize_tar_entries<R: Read>(
     entries: tar::Entries<'_, R>,
     format_label: &str,
+) -> Result<FileMetadata, String> {
+    summarize_tar_entries_within(entries, format_label, &std::cell::Cell::new(false))
+}
+
+/// `budget_spent` is set by the reader when the scan was cut short; the
+/// entries counted until then are reported as the start of the archive.
+fn summarize_tar_entries_within<R: Read>(
+    entries: tar::Entries<'_, R>,
+    format_label: &str,
+    budget_spent: &std::cell::Cell<bool>,
 ) -> Result<FileMetadata, String> {
     const MAX_ARCHIVE_ENTRIES: usize = 2_000;
     let mut files = 0usize;
@@ -973,7 +1020,12 @@ fn summarize_tar_entries<R: Read>(
     let mut size = 0u64;
     let mut names = Vec::new();
     for entry in entries.take(MAX_ARCHIVE_ENTRIES) {
-        let entry = entry.map_err(|e| format!("Failed to read archive entry: {e}"))?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            // The stream ended where the budget cut it, not where it is damaged.
+            Err(_) if budget_spent.get() => break,
+            Err(e) => return Err(format!("Failed to read archive entry: {e}")),
+        };
         if entry.header().entry_type().is_dir() {
             directories += 1;
         } else {
@@ -991,19 +1043,30 @@ fn summarize_tar_entries<R: Read>(
         }
     }
 
+    let partial = budget_spent.get();
     let mut fields = vec![
         ("Format".to_string(), format_label.to_string()),
         ("Files".to_string(), files.to_string()),
         ("Folders".to_string(), directories.to_string()),
         ("Stored size".to_string(), format_bytes(size)),
     ];
+    if partial {
+        fields.push((
+            "Counted".to_string(),
+            "The start of the archive only".to_string(),
+        ));
+    }
     if let Some(entries) = join_limited(names, 8) {
         fields.push(("Sample entries".to_string(), entries));
     }
 
     Ok(FileMetadata {
         kind: "archive".to_string(),
-        summary: Some(format!("{files} files, {directories} folders")),
+        summary: Some(if partial {
+            format!("At least {files} files, {directories} folders")
+        } else {
+            format!("{files} files, {directories} folders")
+        }),
         fields,
     })
 }
@@ -2241,6 +2304,75 @@ mod tests {
         assert_eq!(field_value(&csv_meta, "Headers"), Some("Name, Role"));
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    fn tar_gz_of(entries: &[(&str, usize)]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+            Vec::new(),
+            flate2::Compression::fast(),
+        ));
+        for (name, len) in entries {
+            let body = vec![b'x'; *len];
+            let mut header = tar::Header::new_gnu();
+            header.set_size(body.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, name, body.as_slice())
+                .unwrap();
+        }
+        builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    fn a_compressed_tar_is_described_from_a_bounded_scan() {
+        let archive = tar_gz_of(&[
+            ("first.bin", 200 * 1024),
+            ("second.bin", 200 * 1024),
+            ("third.bin", 200 * 1024),
+        ]);
+
+        // Enough budget for the whole archive: everything is counted.
+        let whole = extract_tar_archive_metadata(
+            flate2::read::GzDecoder::new(archive.as_slice()),
+            "Compressed tar archive",
+            MAX_TAR_SCAN_BYTES,
+        )
+        .unwrap();
+        assert_eq!(field_value(&whole, "Files"), Some("3"));
+        assert_eq!(field_value(&whole, "Counted"), None);
+        assert_eq!(whole.summary.as_deref(), Some("3 files, 0 folders"));
+
+        // A budget that ends inside the second entry: the scan stops there
+        // and says that it saw only the start.
+        let start = extract_tar_archive_metadata(
+            flate2::read::GzDecoder::new(archive.as_slice()),
+            "Compressed tar archive",
+            300 * 1024,
+        )
+        .unwrap();
+        assert_eq!(field_value(&start, "Files"), Some("2"));
+        assert_eq!(
+            field_value(&start, "Counted"),
+            Some("The start of the archive only")
+        );
+        assert_eq!(
+            start.summary.as_deref(),
+            Some("At least 2 files, 0 folders")
+        );
+        assert!(field_value(&start, "Sample entries").is_some_and(|v| v.contains("first.bin")));
+    }
+
+    #[test]
+    fn a_damaged_compressed_tar_is_still_an_error() {
+        let mut archive = tar_gz_of(&[("first.bin", 64 * 1024), ("second.bin", 64 * 1024)]);
+        archive.truncate(archive.len() / 2);
+        let result = extract_tar_archive_metadata(
+            flate2::read::GzDecoder::new(archive.as_slice()),
+            "Compressed tar archive",
+            MAX_TAR_SCAN_BYTES,
+        );
+        assert!(result.is_err(), "{result:?}");
     }
 
     #[test]
