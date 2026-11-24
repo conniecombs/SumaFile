@@ -688,16 +688,7 @@ pub fn validate_request(request: &RemoteTransferRequest) -> Result<(), String> {
 // Remote names become Windows path components on download. Reject names that
 // could escape the chosen directory, alias another file, or address a device/ADS.
 fn validate_name(name: &str) -> Result<(), String> {
-    let stem = name
-        .split('.')
-        .next()
-        .unwrap_or("")
-        .trim_end_matches(' ')
-        .to_ascii_uppercase();
-    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.len() == 4
-            && matches!(stem.as_bytes()[3], b'1'..=b'9'));
+    let reserved = sumafile_transfer::paths::is_windows_reserved_device_name(name);
     if name.is_empty()
         || name == "."
         || name == ".."

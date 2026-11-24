@@ -801,31 +801,13 @@ fn remove_local_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The first free `name (n).ext` in `dest_dir`: the transfer engine's rule.
 fn unique_destination_path(dest_dir: &Path, file_name: &OsStr) -> Result<PathBuf, String> {
-    let original = Path::new(file_name);
-    let stem = original.file_stem().map_or_else(
-        || original.to_string_lossy().to_string(),
-        |s| s.to_string_lossy().to_string(),
-    );
-    let ext = original
-        .extension()
-        .map(|e| e.to_string_lossy().to_string());
-
-    for i in 1..10_000u32 {
-        let candidate_name = match &ext {
-            Some(ext) if !ext.is_empty() => format!("{stem} ({i}).{ext}"),
-            _ => format!("{stem} ({i})"),
-        };
-        let candidate = dest_dir.join(candidate_name);
-        if !candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    Err(format!(
-        "Could not find a unique archive destination after 9,999 attempts for {}",
-        original.display()
-    ))
+    sumafile_transfer::paths::unique_destination_path(
+        dest_dir,
+        file_name,
+        &std::collections::HashSet::new(),
+    )
 }
 
 fn rebuild_archive_from_directory(

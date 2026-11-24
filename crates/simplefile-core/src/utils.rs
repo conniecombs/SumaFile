@@ -418,37 +418,7 @@ fn is_windows_invalid_name_character(ch: char) -> bool {
     ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
 }
 
-fn is_windows_reserved_device_name(name: &str) -> bool {
-    let base_name = name
-        .split('.')
-        .next()
-        .unwrap_or(name)
-        .trim_end_matches(' ')
-        .to_ascii_uppercase();
-
-    matches!(base_name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || matches!(
-            base_name.as_str(),
-            "COM1"
-                | "COM2"
-                | "COM3"
-                | "COM4"
-                | "COM5"
-                | "COM6"
-                | "COM7"
-                | "COM8"
-                | "COM9"
-                | "LPT1"
-                | "LPT2"
-                | "LPT3"
-                | "LPT4"
-                | "LPT5"
-                | "LPT6"
-                | "LPT7"
-                | "LPT8"
-                | "LPT9"
-        )
-}
+use sumafile_transfer::paths::is_windows_reserved_device_name;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SymlinkTargetKind {

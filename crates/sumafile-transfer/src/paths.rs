@@ -37,3 +37,62 @@ pub fn unique_destination_path(
         original.to_string_lossy()
     ))
 }
+
+/// Whether Windows reads `name` as a device, not a file: `CON`, `PRN`, `AUX`,
+/// `NUL`, `COM1`-`COM9` and `LPT1`-`LPT9`, in any case, with any extension,
+/// and with spaces before the dot (`con .txt`).
+pub fn is_windows_reserved_device_name(name: &str) -> bool {
+    let base = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    if matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return true;
+    }
+    ["COM", "LPT"].iter().any(|prefix| {
+        base.strip_prefix(prefix)
+            .is_some_and(|digit| digit.len() == 1 && matches!(digit.as_bytes()[0], b'1'..=b'9'))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_windows_reserved_device_name;
+
+    #[test]
+    fn device_names_are_reserved_with_any_case_extension_or_padding() {
+        for name in [
+            "CON",
+            "con",
+            "CON.txt",
+            "con .txt",
+            "PRN",
+            "AUX",
+            "NUL",
+            "nul.tar.gz",
+            "COM1",
+            "com9.log",
+            "LPT1",
+            "LPT9.txt",
+        ] {
+            assert!(is_windows_reserved_device_name(name), "{name}");
+        }
+        for name in [
+            "CONSOLE",
+            "con1",
+            "COM0",
+            "COM10",
+            "LPT",
+            "LPT0",
+            "notes.con",
+            "a.NUL",
+            "",
+            ".con",
+            "COM\u{b9}",
+        ] {
+            assert!(!is_windows_reserved_device_name(name), "{name}");
+        }
+    }
+}
