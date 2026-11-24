@@ -1003,3 +1003,115 @@ fn cancelling_folder_metrics_without_a_folder_stops_every_request() {
     assert!(photos.load(Ordering::Relaxed));
     assert!(music.load(Ordering::Relaxed));
 }
+
+fn label_ids(path: &std::path::Path) -> Vec<i64> {
+    simplefile_core::tags::get_tags_for_path(path.to_string_lossy().into_owned())
+        .expect("labels of a path")
+        .into_iter()
+        .map(|tag| tag.id)
+        .collect()
+}
+
+/// Labels are stored by path. A renamed file used to lose its labels, which
+/// stayed behind under the old name.
+#[test]
+fn a_rename_carries_the_labels_and_a_permanent_delete_removes_them() {
+    let _lock = metadata_db_env_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let db_path = temp_file("labels-db", b"");
+    fs::remove_file(&db_path).expect("remove seed temp file");
+    let _env = EnvVarGuard::set("SIMPLEFILE_METADATA_DB", &db_path);
+    let mut state = authenticated_state();
+
+    let folder = db_path.with_extension("labels");
+    fs::create_dir_all(folder.join("album")).expect("create a folder");
+    let report = folder.join("report.txt");
+    let photo = folder.join("album").join("photo.jpg");
+    fs::write(&report, b"report").expect("write a file");
+    fs::write(&photo, b"photo").expect("write a file in the folder");
+    let label = simplefile_core::tags::create_tag("Red".into(), "#ff0000".into())
+        .expect("create a label")
+        .id;
+    for path in [&report, &photo] {
+        simplefile_core::tags::set_tags_for_path(path.to_string_lossy().into_owned(), vec![label])
+            .expect("label a file");
+    }
+
+    // A file, renamed.
+    let renamed = reply(dispatch(
+        &mut state,
+        &request(
+            "rename_entry",
+            1,
+            json!({ "path": report, "newName": "final.txt" }),
+        ),
+    ));
+    assert!(renamed.error.is_none(), "{:?}", renamed.error);
+    assert_eq!(label_ids(&folder.join("final.txt")), vec![label]);
+    assert!(label_ids(&report).is_empty());
+
+    // A folder, renamed: the labelled file inside it follows.
+    let renamed = reply(dispatch(
+        &mut state,
+        &request(
+            "rename_entry",
+            2,
+            json!({ "path": folder.join("album"), "newName": "pictures" }),
+        ),
+    ));
+    assert!(renamed.error.is_none(), "{:?}", renamed.error);
+    let moved_photo = folder.join("pictures").join("photo.jpg");
+    assert_eq!(label_ids(&moved_photo), vec![label]);
+    assert!(label_ids(&photo).is_empty());
+
+    // Deleted for good: nothing is left for a later file of that name.
+    let deleted = reply(dispatch(
+        &mut state,
+        &request(
+            "delete_entry",
+            3,
+            json!({ "path": folder.join("pictures") }),
+        ),
+    ));
+    assert!(deleted.error.is_none(), "{:?}", deleted.error);
+    assert!(label_ids(&moved_photo).is_empty());
+    assert_eq!(label_ids(&folder.join("final.txt")), vec![label]);
+
+    let _ = fs::remove_dir_all(folder);
+    let _ = fs::remove_file(db_path);
+}
+
+#[test]
+fn a_move_result_names_the_paths_it_moved() {
+    use crate::progress::{TransferChanges, TransferResult};
+    let whole = TransferResult {
+        source: "/from/album".into(),
+        destination: "/to/album".into(),
+        changes: None,
+    };
+    assert_eq!(
+        whole.moved_paths(),
+        vec![("/from/album".to_string(), "/to/album".to_string())]
+    );
+
+    // A merge moved the files it lists and nothing else.
+    let merged = TransferResult {
+        source: "/from/album".into(),
+        destination: "/to/album".into(),
+        changes: Some(TransferChanges {
+            files: vec!["a.jpg".into(), "2025/b.jpg".into()],
+            ..TransferChanges::default()
+        }),
+    };
+    let moved = merged.moved_paths();
+    assert_eq!(moved.len(), 2);
+    assert_eq!(
+        std::path::Path::new(&moved[1].0),
+        std::path::Path::new("/from/album").join("2025/b.jpg")
+    );
+    assert_eq!(
+        std::path::Path::new(&moved[1].1),
+        std::path::Path::new("/to/album").join("2025/b.jpg")
+    );
+}

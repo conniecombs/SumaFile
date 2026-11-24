@@ -194,6 +194,159 @@ pub fn get_all_file_tags() -> Result<HashMap<String, Vec<Tag>>, String> {
     Ok(map)
 }
 
+#[cfg(windows)]
+const SEPARATOR: char = '\\';
+#[cfg(not(windows))]
+const SEPARATOR: char = '/';
+
+/// What two label paths are compared by: Windows paths without regard to case.
+fn path_key(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        path.to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_string()
+    }
+}
+
+/// `path` itself and then each folder above it, nearest first.
+fn self_and_ancestors(path: &str) -> impl Iterator<Item = &str> {
+    let mut end = Some(path.len());
+    std::iter::from_fn(move || {
+        let current = end?;
+        end = path[..current].rfind(SEPARATOR).filter(|cut| *cut > 0);
+        Some(&path[..current])
+    })
+}
+
+fn labelled_paths(connection: &rusqlite::Connection) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare_cached("SELECT DISTINCT file_path FROM file_tags")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+const DELETE_PATH_SQL: &str = "DELETE FROM file_tags WHERE file_path = ?1 COLLATE NOCASE";
+#[cfg(not(windows))]
+const DELETE_PATH_SQL: &str = "DELETE FROM file_tags WHERE file_path = ?1";
+
+/// Labels follow what was renamed or moved. Each pair is a path before and
+/// after; the labels of that path and of everything below it are carried to
+/// the new place, where they replace any labels already there. Returns how
+/// many labelled paths moved.
+///
+/// Labels are stored by path, so without this a renamed file lost its labels
+/// and they stayed behind for whatever took the old name next.
+pub fn move_tags(moves: &[(String, String)]) -> Result<usize, String> {
+    let moves: HashMap<String, String> = moves
+        .iter()
+        .filter(|(from, to)| !from.trim().is_empty() && !to.trim().is_empty())
+        .map(|(from, to)| (normalize_tag_path(from), normalize_tag_path(to)))
+        .filter(|(from, to)| from != to)
+        .map(|(from, to)| (path_key(&from), to))
+        .collect();
+    if moves.is_empty() {
+        return Ok(0);
+    }
+
+    let mut connection = open_metadata_db()?;
+    let carried: Vec<(String, String)> = labelled_paths(&connection)?
+        .into_iter()
+        .filter_map(|path| {
+            let moved_part = self_and_ancestors(&path)
+                .find(|ancestor| moves.contains_key(&path_key(ancestor)))?;
+            let to = &moves[&path_key(moved_part)];
+            let new_path = format!("{to}{}", &path[moved_part.len()..]);
+            Some((path, new_path))
+        })
+        .collect();
+    if carried.is_empty() {
+        return Ok(0);
+    }
+
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    // Taken off every old path first, so that two files that swap names each
+    // get the other's labels.
+    let mut labels: Vec<(String, Vec<i64>)> = Vec::with_capacity(carried.len());
+    for (old_path, new_path) in &carried {
+        let tag_ids = {
+            let mut statement = transaction
+                .prepare_cached("SELECT tag_id FROM file_tags WHERE file_path = ?1")
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map(params![old_path], |row| row.get::<_, i64>(0))
+                .map_err(|error| error.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?
+        };
+        transaction
+            .execute(
+                "DELETE FROM file_tags WHERE file_path = ?1",
+                params![old_path],
+            )
+            .map_err(|error| error.to_string())?;
+        labels.push((new_path.clone(), tag_ids));
+    }
+    for (new_path, tag_ids) in labels {
+        transaction
+            .execute(DELETE_PATH_SQL, params![new_path])
+            .map_err(|error| error.to_string())?;
+        for tag_id in tag_ids {
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO file_tags (file_path, tag_id) VALUES (?1, ?2)",
+                    params![new_path, tag_id],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(carried.len())
+}
+
+/// Removes the labels of `paths` and of everything below them, for files that
+/// were deleted for good. Returns how many labelled paths lost their labels.
+pub fn remove_tags_under(paths: &[String]) -> Result<usize, String> {
+    let removed: std::collections::HashSet<String> = paths
+        .iter()
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| path_key(&normalize_tag_path(path)))
+        .collect();
+    if removed.is_empty() {
+        return Ok(0);
+    }
+
+    let mut connection = open_metadata_db()?;
+    let gone: Vec<String> = labelled_paths(&connection)?
+        .into_iter()
+        .filter(|path| {
+            self_and_ancestors(path).any(|ancestor| removed.contains(&path_key(ancestor)))
+        })
+        .collect();
+    if gone.is_empty() {
+        return Ok(0);
+    }
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    for path in &gone {
+        transaction
+            .execute("DELETE FROM file_tags WHERE file_path = ?1", params![path])
+            .map_err(|error| error.to_string())?;
+    }
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(gone.len())
+}
+
 fn normalize_tag_path(path: &str) -> String {
     let trimmed = path.trim();
     #[cfg(windows)]
@@ -333,6 +486,136 @@ mod tests {
             .expect("after delete")
             .is_empty());
 
+        let _ = fs::remove_file(db);
+    }
+
+    /// A label path for the tests: written with `/`, which the store turns
+    /// into the platform's separator where the two differ.
+    fn tagged(path: &str, ids: &[i64]) {
+        set_tags_for_path(path.to_string(), ids.to_vec()).expect("set tags");
+    }
+
+    fn ids_at(path: &str) -> Vec<i64> {
+        let mut ids: Vec<i64> = get_tags_for_path(path.to_string())
+            .expect("tags for path")
+            .into_iter()
+            .map(|tag| tag.id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    fn pair(from: &str, to: &str) -> (String, String) {
+        (from.to_string(), to.to_string())
+    }
+
+    #[test]
+    fn labels_follow_a_renamed_file_and_everything_below_a_moved_folder() {
+        let _lock = crate::test_support::env_lock().lock().expect("env lock");
+        let db = temp_db();
+        let _env = EnvVarGuard::set(&db);
+        let red = create_tag("Red".into(), "#ff0000".into()).unwrap().id;
+        let blue = create_tag("Blue".into(), "#0000ff".into()).unwrap().id;
+        tagged("C:/work/report.txt", &[red, blue]);
+        tagged("C:/work/photos", &[blue]);
+        tagged("C:/work/photos/2025/a.jpg", &[red]);
+        tagged("C:/work/photos-old/b.jpg", &[red]);
+        tagged("C:/other/keep.txt", &[blue]);
+
+        let moved = move_tags(&[
+            pair("C:/work/report.txt", "C:/work/final.txt"),
+            pair("C:/work/photos/", "D:/archive/pictures"),
+        ])
+        .expect("move tags");
+
+        assert_eq!(moved, 3);
+        assert_eq!(ids_at("C:/work/final.txt"), vec![red, blue]);
+        assert!(ids_at("C:/work/report.txt").is_empty());
+        assert_eq!(ids_at("D:/archive/pictures"), vec![blue]);
+        assert_eq!(ids_at("D:/archive/pictures/2025/a.jpg"), vec![red]);
+        assert!(ids_at("C:/work/photos/2025/a.jpg").is_empty());
+        // A folder whose name only starts the same is another folder.
+        assert_eq!(ids_at("C:/work/photos-old/b.jpg"), vec![red]);
+        assert_eq!(ids_at("C:/other/keep.txt"), vec![blue]);
+        let _ = fs::remove_file(db);
+    }
+
+    #[test]
+    fn carried_labels_replace_the_labels_at_the_new_path_and_a_swap_swaps_them() {
+        let _lock = crate::test_support::env_lock().lock().expect("env lock");
+        let db = temp_db();
+        let _env = EnvVarGuard::set(&db);
+        let red = create_tag("Red".into(), "#ff0000".into()).unwrap().id;
+        let blue = create_tag("Blue".into(), "#0000ff".into()).unwrap().id;
+        tagged("C:/a.txt", &[red]);
+        tagged("C:/b.txt", &[blue]);
+        tagged("C:/c.txt", &[red, blue]);
+
+        // A file moved over a labelled one brings its own labels.
+        assert_eq!(move_tags(&[pair("C:/a.txt", "C:/c.txt")]).unwrap(), 1);
+        assert_eq!(ids_at("C:/c.txt"), vec![red]);
+
+        // A file without labels leaves the labels at its new path alone.
+        assert_eq!(move_tags(&[pair("C:/plain.txt", "C:/b.txt")]).unwrap(), 0);
+        assert_eq!(ids_at("C:/b.txt"), vec![blue]);
+
+        // Two files that take each other's names in one batch.
+        let swapped = move_tags(&[pair("C:/b.txt", "C:/c.txt"), pair("C:/c.txt", "C:/b.txt")]);
+        assert_eq!(swapped.unwrap(), 2);
+        assert_eq!(ids_at("C:/c.txt"), vec![blue]);
+        assert_eq!(ids_at("C:/b.txt"), vec![red]);
+
+        // Nothing to do is not an error.
+        assert_eq!(move_tags(&[]).unwrap(), 0);
+        assert_eq!(
+            move_tags(&[pair("C:/b.txt", "C:/b.txt"), pair("", "C:/x")]).unwrap(),
+            0
+        );
+        assert_eq!(ids_at("C:/b.txt"), vec![red]);
+        let _ = fs::remove_file(db);
+    }
+
+    #[test]
+    fn labels_of_deleted_files_and_folders_are_removed() {
+        let _lock = crate::test_support::env_lock().lock().expect("env lock");
+        let db = temp_db();
+        let _env = EnvVarGuard::set(&db);
+        let red = create_tag("Red".into(), "#ff0000".into()).unwrap().id;
+        tagged("C:/work/gone.txt", &[red]);
+        tagged("C:/work/folder", &[red]);
+        tagged("C:/work/folder/deep/x.txt", &[red]);
+        tagged("C:/work/folder2/y.txt", &[red]);
+
+        let removed = remove_tags_under(&["C:/work/gone.txt".into(), "C:/work/folder".into()]);
+
+        assert_eq!(removed.unwrap(), 3);
+        assert!(ids_at("C:/work/gone.txt").is_empty());
+        assert!(ids_at("C:/work/folder/deep/x.txt").is_empty());
+        assert_eq!(ids_at("C:/work/folder2/y.txt"), vec![red]);
+        assert_eq!(remove_tags_under(&[]).unwrap(), 0);
+        assert_eq!(remove_tags_under(&["C:/nothing/here".into()]).unwrap(), 0);
+        let _ = fs::remove_file(db);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_rename_that_changes_only_the_case_keeps_the_labels() {
+        let _lock = crate::test_support::env_lock().lock().expect("env lock");
+        let db = temp_db();
+        let _env = EnvVarGuard::set(&db);
+        let red = create_tag("Red".into(), "#ff0000".into()).unwrap().id;
+        tagged("C:/Work/Report.txt", &[red]);
+
+        assert_eq!(
+            move_tags(&[pair("c:/work/report.TXT", "C:/Work/REPORT.txt")]).unwrap(),
+            1
+        );
+
+        assert_eq!(ids_at("C:/Work/REPORT.txt"), vec![red]);
+        assert_eq!(
+            get_files_with_tag(red).unwrap(),
+            vec!["C:\\Work\\REPORT.txt".to_string()]
+        );
         let _ = fs::remove_file(db);
     }
 }

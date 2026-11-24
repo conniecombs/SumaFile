@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 const APP_VERSION: &str = simplefile_core::APP_DISPLAY_VERSION;
 
+pub(crate) use handlers::carry_labels;
 pub(crate) use params::{OpenListingViewParams, ProgressCopyMoveParams};
 
 pub struct SessionState {

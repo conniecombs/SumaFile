@@ -1009,6 +1009,19 @@ pub(super) fn spawn_copy_move_with_progress(
             Err(_) => None,
         };
         if let Some(committed) = committed {
+            if !is_copy {
+                // Labels follow what was moved, also when the move stopped part-way.
+                let moved: Vec<(String, String)> = committed
+                    .iter()
+                    .flat_map(crate::progress::TransferResult::moved_paths)
+                    .collect();
+                if !moved.is_empty() {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        crate::dispatch::carry_labels(&moved);
+                    })
+                    .await;
+                }
+            }
             if let Err(error) = stream_transfer_changes(&writer, &op_id, committed).await {
                 result = Err(error);
             }

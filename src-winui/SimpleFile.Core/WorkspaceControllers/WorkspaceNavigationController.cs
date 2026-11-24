@@ -349,6 +349,8 @@ internal sealed class WorkspaceNavigationController
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(workspace);
+        // Before the panes are listed again, so the rows are drawn with the labels where they are now.
+        await workspace.TagsController.RefreshFileTagsAsync(workspace.FileOps, cancellationToken).ConfigureAwait(false);
         foreach (var pane in AffectedVisiblePanes(workspace, affectedPaths))
         {
             cancellationToken.ThrowIfCancellationRequested();

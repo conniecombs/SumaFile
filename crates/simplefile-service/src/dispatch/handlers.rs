@@ -213,6 +213,7 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                 reply_blocking(request, BlockingLane::General, move || {
                     simplefile_core::file_ops::delete_entry(&p.path)?;
                     cache.invalidate_path(&p.path);
+                    forget_labels(std::slice::from_ref(&p.path));
                     Ok::<_, String>(Value::Null)
                 })
             }
@@ -250,12 +251,14 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                 reply_blocking(request, BlockingLane::General, move || {
                     let renamed = simplefile_core::file_ops::rename_entry(&p.path, &p.new_name)?;
                     cache.invalidate_paths([p.path.as_str(), renamed.as_str()]);
+                    carry_labels(&[(p.path.clone(), renamed.clone())]);
                     Ok::<_, String>(renamed)
                 })
             }
             Ok(p) => match simplefile_core::file_ops::rename_entry(&p.path, &p.new_name) {
                 Ok(r) => {
                     state.cache.invalidate_paths([p.path.as_str(), r.as_str()]);
+                    carry_labels(&[(p.path.clone(), r.clone())]);
                     Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
                 }
                 Err(m) => {
@@ -272,6 +275,12 @@ pub(crate) fn dispatch(state: &mut SessionState, request: &JsonRpcRequest) -> Di
                     Ok(r) => {
                         state.cache.invalidate_paths(&old_paths);
                         state.cache.invalidate_paths(&r);
+                        // One new path per entry, in the order they were given.
+                        if r.len() == old_paths.len() {
+                            let renamed: Vec<(String, String)> =
+                                old_paths.iter().cloned().zip(r.iter().cloned()).collect();
+                            carry_labels(&renamed);
+                        }
                         Dispatch::Reply(JsonRpcResponse::result(request.id.clone(), json!(r)))
                     }
                     Err(m) => {
@@ -793,8 +802,31 @@ fn transfer_single_blocking(
             &conflict_action,
         )?;
         cache.invalidate_paths([source.as_str(), destination.as_str(), result.as_str()]);
+        if operation == "move" && !result.starts_with("SKIPPED:") {
+            carry_labels(&[(source.clone(), result.clone())]);
+        }
         Ok::<_, String>(result)
     })
+}
+
+/// Labels are stored by path: they follow what a rename or a move moved. A
+/// failure here leaves the labels behind and must not fail the operation,
+/// which is already done.
+pub(crate) fn carry_labels(moves: &[(String, String)]) {
+    if let Err(error) = simplefile_core::tags::move_tags(moves) {
+        log::warn!(
+            "labels did not follow {} moved item(s): {error}",
+            moves.len()
+        );
+    }
+}
+
+/// The labels of what was deleted for good go with it. Items sent to the
+/// Recycle Bin keep theirs, so a restored item has its labels again.
+fn forget_labels(paths: &[String]) {
+    if let Err(error) = simplefile_core::tags::remove_tags_under(paths) {
+        log::warn!("labels of {} deleted item(s) stayed: {error}", paths.len());
+    }
 }
 
 pub(super) fn auth_token_matches(expected: &str, provided: Option<&str>) -> bool {

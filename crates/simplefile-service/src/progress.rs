@@ -54,6 +54,30 @@ pub struct TransferResult {
     pub changes: Option<TransferChanges>,
 }
 
+impl TransferResult {
+    /// The paths this result moved, each before and after, for what is kept by
+    /// path (labels). A whole item is one pair that stands for everything
+    /// below it; a merge moved only the files it lists.
+    pub(crate) fn moved_paths(&self) -> Vec<(String, String)> {
+        match &self.changes {
+            None => vec![(self.source.clone(), self.destination.clone())],
+            Some(changes) => changes
+                .files
+                .iter()
+                .map(|relative| {
+                    let join = |root: &str| {
+                        std::path::Path::new(root)
+                            .join(relative)
+                            .to_string_lossy()
+                            .into_owned()
+                    };
+                    (join(&self.source), join(&self.destination))
+                })
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Clone)]
 pub struct TransferChanges {
     /// Paths relative to the selected source/destination roots.

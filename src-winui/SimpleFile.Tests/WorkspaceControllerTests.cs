@@ -55,6 +55,54 @@ public class WorkspaceControllerTests
         Assert.Equal(2, controller.FilterEntries(entries).Count);
     }
 
+    // The service moves a label with its file; the app's map is by path and has to be read again.
+    [Fact]
+    public async Task WorkspaceTagController_ReadsLabelsAgainAfterFilesMoved()
+    {
+        var ipc = new ConfigurableIpc();
+        var fileOps = new FileOperationService(ipc);
+        var controller = new WorkspaceTagController();
+        await controller.LoadTagsAsync(fileOps);
+        var label = controller.AllTags[0];
+        await controller.SetColorLabelAsync(fileOps, [@"C:\Users\test\notes.txt"], label.Id);
+
+        // What the service does on a rename: the label is now under the new name.
+        ipc.FileTags.Remove(@"C:\Users\test\notes.txt");
+        ipc.FileTags[@"C:\Users\test\final.txt"] = [label];
+        await controller.RefreshFileTagsAsync(fileOps);
+
+        Assert.Equal([@"C:\Users\test\final.txt"], controller.FilesWithTag(label.Id));
+
+        // The last label gone (its file was deleted): the map empties, and with no labels left
+        // a later refresh asks the service nothing.
+        ipc.FileTags.Clear();
+        await controller.RefreshFileTagsAsync(fileOps);
+        Assert.Empty(controller.FileTags);
+        ipc.FileTags[@"C:\Users\test\late.txt"] = [label];
+        await controller.RefreshFileTagsAsync(fileOps);
+        Assert.Empty(controller.FileTags);
+
+        await controller.RefreshFileTagsAsync(null);
+    }
+
+    [Fact]
+    public async Task RefreshAffectedPanes_ReadsTheLabelsAgain()
+    {
+        var ipc = new ConfigurableIpc();
+        var workspace = new ExplorerWorkspace(FakeExplorerBackend.Typical(), new FileOperationService(ipc));
+        await workspace.InitializeAsync();
+        var label = workspace.AllTags[0];
+        await workspace.SetColorLabelAsync([@"C:\Users\test\notes.txt"], label.Id);
+        Assert.True(workspace.FileTags.ContainsKey(@"C:\Users\test\notes.txt"));
+
+        ipc.FileTags.Remove(@"C:\Users\test\notes.txt");
+        ipc.FileTags[@"C:\Users\test\final.txt"] = [label];
+        await workspace.RefreshAffectedPanesAsync([@"C:\Users\test\notes.txt", @"C:\Users\test\final.txt"]);
+
+        Assert.False(workspace.FileTags.ContainsKey(@"C:\Users\test\notes.txt"));
+        Assert.True(workspace.FileTags.ContainsKey(@"C:\Users\test\final.txt"));
+    }
+
     [Fact]
     public void ClosedTabController_EnforcesMaxCapacityAndRestoresTab()
     {

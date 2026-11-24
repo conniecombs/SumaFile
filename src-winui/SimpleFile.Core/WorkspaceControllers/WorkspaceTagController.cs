@@ -59,6 +59,30 @@ internal sealed class WorkspaceTagController
         }
     }
 
+    /// <summary>
+    /// Reads the labels again after files were renamed, moved or deleted. The service carries a
+    /// label along with its file and drops it with a file deleted for good; the map held here is
+    /// by path and would go on showing the old places. Nothing is read when no path has a label.
+    /// </summary>
+    public async Task RefreshFileTagsAsync(
+        FileOperationService? fileOps,
+        CancellationToken cancellationToken = default)
+    {
+        if (fileOps is null || FileTags.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            FileTags = ToCaseInsensitiveMap(await fileOps.GetAllFileTagsAsync(cancellationToken).ConfigureAwait(false));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The labels shown stay as they were; the next load reads them again.
+        }
+    }
+
     public async Task SetColorLabelAsync(
         FileOperationService fileOps,
         string[] paths,
