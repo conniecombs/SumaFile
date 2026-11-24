@@ -42,7 +42,8 @@ internal sealed partial class PreviewPresenter
         try
         {
             ClearIcon();
-            _mediaPlayer.Source = null;
+            // Not just "Source = null": the media source holds the file open until it is disposed.
+            ReleaseMediaSource();
             _mediaPlayer.Visibility = Visibility.Collapsed;
             var source = new Uri(path);
             // The built-in PDF viewer needs script; navigation stays pinned to this file.
@@ -125,26 +126,21 @@ internal sealed partial class PreviewPresenter
             return false;
         }
 
+        MediaSource? mediaSource = null;
         try
         {
             if (string.Equals(preview.FileType, "pdf", StringComparison.OrdinalIgnoreCase))
             {
-                var view = new WebView2
-                {
-                    Source = new Uri(row.Path),
-                    Height = height,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                };
-                element = view;
-                cleanup = () => view.Source = null;
+                element = CreateQuickLookPdfView(new Uri(row.Path), height, out cleanup);
                 return true;
             }
 
             if (PreviewPathSupport.IsMediaPreviewType(preview.FileType))
             {
+                mediaSource = MediaSource.CreateFromUri(new Uri(row.Path));
                 var player = new MediaPlayerElement
                 {
-                    Source = MediaSource.CreateFromUri(new Uri(row.Path)),
+                    Source = mediaSource,
                     Height = string.Equals(preview.FileType, "audio", StringComparison.OrdinalIgnoreCase)
                         ? 112
                         : height,
@@ -153,16 +149,45 @@ internal sealed partial class PreviewPresenter
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                 };
                 element = player;
-                cleanup = () => player.Source = null;
+                var source = mediaSource;
+                cleanup = () => ReleaseQuickLookMedia(player, source);
                 return true;
             }
         }
         catch
         {
+            mediaSource?.Dispose();
             element = null;
             cleanup = null;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Stops a Quick Look player and disposes its source. Clearing the element's source alone
+    /// leaves the media source alive, and the file stays locked until it is collected.
+    /// </summary>
+    private static void ReleaseQuickLookMedia(MediaPlayerElement player, MediaSource source)
+    {
+        try
+        {
+            player.MediaPlayer?.Pause();
+        }
+        catch
+        {
+            // Pausing a player with no media throws on some stacks; releasing still proceeds.
+        }
+
+        try
+        {
+            player.Source = null;
+        }
+        catch
+        {
+            // The element may already be torn down with its dialog.
+        }
+
+        source.Dispose();
     }
 }

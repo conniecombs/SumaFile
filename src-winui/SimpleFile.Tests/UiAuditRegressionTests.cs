@@ -578,6 +578,35 @@ public class PreviewWebViewLockdownTests
         Assert.Equal(2, Regex.Matches(presenter, @"await EnsurePreviewWebViewAsync\(").Count);
     }
 
+    // B14.2: Quick Look built its own WebView2 with default settings, cleared it with a null
+    // source, and left its media source alive.
+    [Fact]
+    public void QuickLook_UsesTheSameLockdownAndReleasesTheFile()
+    {
+        var appRoot = Path.Combine(FindRepoRoot(), "SimpleFile.App");
+        var html = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.Html.cs"));
+        var media = File.ReadAllText(Path.Combine(appRoot, "PreviewPresenter.Media.cs"));
+
+        var quickLook = html[html.IndexOf("CreateQuickLookPdfView(Uri source", StringComparison.Ordinal)..];
+        quickLook = quickLook[..quickLook.IndexOf("private static bool IsAllowedPreviewNavigation(", StringComparison.Ordinal)];
+        var lockdown = quickLook.IndexOf("LockDownPreviewWebView(core);", StringComparison.Ordinal);
+        var navigate = quickLook.IndexOf("view.Source = source;", StringComparison.Ordinal);
+        Assert.True(lockdown >= 0 && lockdown < navigate, "the settings must be in place before the file loads");
+        Assert.Contains("IsAllowedPreviewNavigation(args.Uri, source)", quickLook);
+        Assert.Contains("NewWindowRequested += OnPreviewWebViewNewWindowRequested", quickLook);
+        Assert.Contains("view.Close();", quickLook);
+        Assert.DoesNotContain("view.Source = null", html + media);
+
+        var create = media[media.IndexOf("public static bool TryCreatePathBackedPreview(", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("new WebView2", create);
+        Assert.Contains("CreateQuickLookPdfView(", create);
+        Assert.Contains("cleanup = () => ReleaseQuickLookMedia(player, source);", create);
+        Assert.Contains("source.Dispose();", create);
+
+        // The pane drops a media source through the helper that disposes it.
+        Assert.DoesNotContain("_mediaPlayer.Source = null;\n            _mediaPlayer.Visibility", (html + media).Replace("\r\n", "\n"));
+    }
+
     private static string FindRepoRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

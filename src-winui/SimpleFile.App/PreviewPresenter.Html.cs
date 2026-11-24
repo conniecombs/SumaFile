@@ -21,12 +21,7 @@ internal sealed partial class PreviewPresenter
         var core = _pdfView.CoreWebView2;
         if (!_previewWebViewConfigured)
         {
-            core.Settings.AreDevToolsEnabled = false;
-            core.Settings.AreDefaultContextMenusEnabled = false;
-            core.Settings.AreHostObjectsAllowed = false;
-            core.Settings.IsWebMessageEnabled = false;
-            core.Settings.AreDefaultScriptDialogsEnabled = false;
-            core.Settings.IsStatusBarEnabled = false;
+            LockDownPreviewWebView(core);
             core.NavigationStarting += OnPreviewWebViewNavigationStarting;
             core.NewWindowRequested += OnPreviewWebViewNewWindowRequested;
             _previewWebViewConfigured = true;
@@ -36,37 +31,121 @@ internal sealed partial class PreviewPresenter
         _allowedPreviewNavigation = allowedNavigation;
     }
 
+    /// <summary>
+    /// The settings every preview WebView2 gets, in the pane and in Quick Look: no DevTools,
+    /// context menus, host objects, web messages, script dialogs or status bar.
+    /// </summary>
+    private static void LockDownPreviewWebView(CoreWebView2 core)
+    {
+        core.Settings.AreDevToolsEnabled = false;
+        core.Settings.AreDefaultContextMenusEnabled = false;
+        core.Settings.AreHostObjectsAllowed = false;
+        core.Settings.IsWebMessageEnabled = false;
+        core.Settings.AreDefaultScriptDialogsEnabled = false;
+        core.Settings.IsStatusBarEnabled = false;
+    }
+
     private void OnPreviewWebViewNavigationStarting(CoreWebView2 sender, CoreWebView2NavigationStartingEventArgs args)
     {
-        if (IsAllowedPreviewNavigation(args.Uri))
+        if (IsAllowedPreviewNavigation(args.Uri, _allowedPreviewNavigation))
         {
             return;
         }
 
         args.Cancel = true;
-        if (Uri.TryCreate(args.Uri, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
-        {
-            _ = Windows.System.Launcher.LaunchUriAsync(uri);
-        }
+        OpenExternalLink(args.Uri);
     }
 
     private static void OnPreviewWebViewNewWindowRequested(CoreWebView2 sender, CoreWebView2NewWindowRequestedEventArgs args)
     {
         args.Handled = true;
-        if (Uri.TryCreate(args.Uri, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+        OpenExternalLink(args.Uri);
+    }
+
+    /// <summary>Hands an http(s) link to the operating system; anything else is dropped.</summary>
+    private static void OpenExternalLink(string? target)
+    {
+        if (Uri.TryCreate(target, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
         {
             _ = Windows.System.Launcher.LaunchUriAsync(uri);
         }
     }
 
-    private bool IsAllowedPreviewNavigation(string? target)
+    /// <summary>
+    /// Builds the Quick Look PDF view with the same lockdown as the pane's. The file is loaded
+    /// only after the settings are in place, and <paramref name="cleanup"/> closes the view so
+    /// the browser process lets go of the file.
+    /// </summary>
+    private static Microsoft.UI.Xaml.Controls.WebView2 CreateQuickLookPdfView(Uri source, double height, out Action cleanup)
+    {
+        var view = new Microsoft.UI.Xaml.Controls.WebView2
+        {
+            Height = height,
+            HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch,
+        };
+        var started = false;
+        var closed = false;
+        view.Loaded += async (_, _) =>
+        {
+            if (started || closed)
+            {
+                return;
+            }
+
+            started = true;
+            try
+            {
+                await view.EnsureCoreWebView2Async();
+                if (closed)
+                {
+                    return;
+                }
+
+                var core = view.CoreWebView2;
+                LockDownPreviewWebView(core);
+                // The built-in PDF viewer needs script; navigation stays pinned to this file.
+                core.Settings.IsScriptEnabled = true;
+                core.NavigationStarting += (_, args) =>
+                {
+                    if (!IsAllowedPreviewNavigation(args.Uri, source))
+                    {
+                        args.Cancel = true;
+                        OpenExternalLink(args.Uri);
+                    }
+                };
+                core.NewWindowRequested += OnPreviewWebViewNewWindowRequested;
+                view.Source = source;
+            }
+            catch
+            {
+                // The viewer could not start, or Quick Look closed first; the dialog stays usable.
+            }
+        };
+        cleanup = () =>
+        {
+            closed = true;
+            try
+            {
+                // Close, not "Source = null": a WebView2 rejects a null source, and only closing
+                // ends the browser process that holds the file open.
+                view.Close();
+            }
+            catch
+            {
+                // A view that never started has nothing to close.
+            }
+        };
+        return view;
+    }
+
+    private static bool IsAllowedPreviewNavigation(string? target, Uri? allowedFile)
     {
         if (string.IsNullOrEmpty(target))
         {
             return false;
         }
 
-        if (_allowedPreviewNavigation is { } allowed)
+        if (allowedFile is { } allowed)
         {
             return Uri.TryCreate(target, UriKind.Absolute, out var uri)
                 && uri.IsFile
@@ -100,7 +179,7 @@ internal sealed partial class PreviewPresenter
             ClearIcon();
             _textBox.Text = "";
             _textBox.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-            _mediaPlayer.Source = null;
+            ReleaseMediaSource();
             _mediaPlayer.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
             HideVideoFrameControls();
             _pdfView.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
