@@ -558,8 +558,56 @@ pub fn count_directory_entries(
     Some(count)
 }
 
+/// The extension that says what kind of file this is, in lower case.
+///
+/// `Path::extension` gives none for a dotfile: `.gitignore` is all name. For
+/// deciding how to read a file, the text after that leading dot is the
+/// extension (`gitignore`, `env`, `npmrc`), so such a file is recognized as
+/// the text it is. A dotfile with a further dot keeps its last extension
+/// (`.env.local` gives `local`, `.eslintrc.json` gives `json`).
+pub fn effective_extension(path: &Path) -> String {
+    if let Some(extension) = path.extension() {
+        return extension.to_string_lossy().to_lowercase();
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix('.'))
+        .filter(|rest| !rest.is_empty() && !rest.contains('.'))
+        .map(str::to_lowercase)
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_dotfile_is_known_by_the_text_after_its_dot() {
+        use super::effective_extension;
+        use std::path::Path;
+        for (name, expected) in [
+            (".gitignore", "gitignore"),
+            (".env", "env"),
+            (".NPMRC", "npmrc"),
+            (".env.local", "local"),
+            (".eslintrc.json", "json"),
+            ("notes.TXT", "txt"),
+            ("archive.tar.gz", "gz"),
+            ("README", ""),
+            (".", ""),
+            ("..", ""),
+        ] {
+            assert_eq!(effective_extension(Path::new(name)), expected, "{name}");
+            let nested = Path::new("C:\\repo.d").join(name);
+            if name != "." && name != ".." {
+                assert_eq!(
+                    effective_extension(&nested),
+                    expected,
+                    "{}",
+                    nested.display()
+                );
+            }
+        }
+    }
+
     #[cfg(windows)]
     use super::is_remote_like_file_system;
     use super::{

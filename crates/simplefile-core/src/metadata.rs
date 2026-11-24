@@ -36,11 +36,7 @@ pub fn get_image_metadata(path: String) -> Result<ImageMetadata, String> {
 pub fn get_file_metadata(path: String) -> Result<FileMetadata, String> {
     let path_buf = resolve_readable_path(&path)?;
     ensure_regular_file(&path_buf)?;
-    let extension = path_buf
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let extension = crate::utils::effective_extension(&path_buf);
 
     match classify_extension(&extension) {
         MetadataKind::Image => {
@@ -334,10 +330,26 @@ fn extract_pdf_metadata(path: &Path) -> Result<FileMetadata, String> {
 
 fn pdf_object_text(object: &lopdf::Object) -> Option<String> {
     match object {
-        lopdf::Object::String(bytes, _) => Some(String::from_utf8_lossy(bytes).into_owned()),
+        lopdf::Object::String(bytes, _) => Some(decode_pdf_text_string(bytes)),
         lopdf::Object::Name(name) => Some(String::from_utf8_lossy(name).into_owned()),
         _ => None,
     }
+}
+
+/// A PDF text string says how it is encoded by how it starts: `FE FF` is
+/// UTF-16, high byte first, which is what most writers use for any title that
+/// is not plain ASCII; `EF BB BF` is UTF-8 (PDF 2.0). Read as UTF-8, a UTF-16
+/// title came out as its letters with a replacement mark and NULs between.
+fn decode_pdf_text_string(bytes: &[u8]) -> String {
+    if let Some(utf16) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        let units: Vec<u16> = utf16
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect();
+        return String::from_utf16_lossy(&units);
+    }
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn extract_audio_metadata(path: &Path) -> Result<FileMetadata, String> {
@@ -2164,6 +2176,39 @@ mod tests {
         assert_eq!(field_value(&meta, "Duration"), Some("0:02"));
         assert_eq!(field_value(&meta, "Dimensions"), Some("640 × 360"));
         assert_eq!(meta.summary.as_deref(), Some("640 × 360 · 0:02"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pdf_text_strings_are_decoded_by_their_byte_order_mark() {
+        let title = "R\u{e9}sum\u{e9} \u{2013} \u{65e5}\u{672c}\u{8a9e} \u{1f4c4}";
+        let mut utf16 = vec![0xFE, 0xFF];
+        utf16.extend(title.encode_utf16().flat_map(u16::to_be_bytes));
+        assert_eq!(decode_pdf_text_string(&utf16), title);
+
+        let mut utf8 = vec![0xEF, 0xBB, 0xBF];
+        utf8.extend_from_slice(title.as_bytes());
+        assert_eq!(decode_pdf_text_string(&utf8), title);
+
+        assert_eq!(decode_pdf_text_string(b"Plain title"), "Plain title");
+        assert_eq!(decode_pdf_text_string(b""), "");
+        // A truncated last unit is dropped, not read past.
+        assert_eq!(decode_pdf_text_string(&[0xFE, 0xFF, 0x00, b'A', 0x00]), "A");
+    }
+
+    #[test]
+    fn dotfiles_are_read_as_the_text_files_they_are() {
+        let dir = temp_dir("dotfiles");
+        let env = dir.join(".env");
+        let ignore = dir.join(".gitignore");
+        fs::write(&env, "API_URL=https://example.com\nDEBUG=true\n").unwrap();
+        fs::write(&ignore, "target/\nnode_modules/\n").unwrap();
+
+        for path in [&env, &ignore] {
+            let meta = get_file_metadata(path.to_string_lossy().into_owned()).unwrap();
+            assert_eq!(meta.kind, "data", "{}", path.display());
+        }
 
         let _ = fs::remove_dir_all(dir);
     }

@@ -14,10 +14,7 @@ pub fn read_file_preview(path: String, max_size: Option<u64>) -> Result<FilePrev
     // Cap at 10 MB to prevent memory exhaustion from a malicious/buggy frontend
     const MAX_ALLOWED: u64 = 10 * 1024 * 1024;
     let max_preview_size = max_size.unwrap_or(1024 * 1024).min(MAX_ALLOWED);
-    let extension = path_buf
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
+    let extension = crate::utils::effective_extension(&path_buf);
 
     let (file_type, mime_type) = if let Some(known) = classify_known_extension(&extension) {
         known
