@@ -285,6 +285,26 @@ public class UxShellTests
         Assert.Contains("public event EventHandler? SaveSmartFolder;", Read("PaneContextBar.xaml.cs"));
     }
 
+    [Fact]
+    public void PreviewShortcut_OpensThePaneLikeTheButtonDoes()
+    {
+        var shortcut = Slice(Read("MainWindow.Shortcuts.cs"), "private async Task TogglePreviewPaneAsync()", "private static VirtualKeyModifiers ToVirtualKeyModifiers(");
+
+        Assert.Contains("workspace.Settings.PreviewVisible = !workspace.Settings.PreviewVisible;", shortcut);
+        // Without this, Alt+P on a narrow two-pane window turned the setting on and showed only the rail.
+        Assert.Contains("_previewManuallyExpanded = workspace.Settings.PreviewVisible;", shortcut);
+    }
+
+    [Fact]
+    public void TabJumpShortcuts_YieldToAnOpenDialog()
+    {
+        var jumps = Slice(Read("MainWindow.Shortcuts.cs"), "private void AddFixedTabJumpAccelerators()", "private async Task RunKeyboardShortcutAsync(");
+
+        var guard = jumps.IndexOf("if (DialogHost.IsDialogOpen)", StringComparison.Ordinal);
+        var claim = jumps.IndexOf("args.Handled = true;", StringComparison.Ordinal);
+        Assert.True(guard >= 0 && guard < claim, "the dialog check must come before the key is claimed");
+    }
+
     // Change 12: the status-bar preview button is a strict toggle of PreviewVisible.
     [Fact]
     public void PreviewToggle_IsAStrictToggle()

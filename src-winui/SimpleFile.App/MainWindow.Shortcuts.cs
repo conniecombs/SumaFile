@@ -220,6 +220,12 @@ public sealed partial class MainWindow
             };
             accelerator.Invoked += async (_, args) =>
             {
+                // Tabs do not change behind an open dialog; the key stays with the dialog.
+                if (DialogHost.IsDialogOpen)
+                {
+                    return;
+                }
+
                 args.Handled = true;
                 if (_workspace is not null && !IsEditingPath)
                 {
@@ -470,7 +476,10 @@ public sealed partial class MainWindow
             return;
         }
 
+        // The same rule as the preview button: turning the pane on opens it, even where the
+        // responsive layout would otherwise fold it to its rail.
         workspace.Settings.PreviewVisible = !workspace.Settings.PreviewVisible;
+        _previewManuallyExpanded = workspace.Settings.PreviewVisible;
         ApplyPreviewVisibility();
         await workspace.SaveUiSettingsAsync();
     }
