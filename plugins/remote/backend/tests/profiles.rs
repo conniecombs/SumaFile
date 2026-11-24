@@ -158,3 +158,36 @@ fn credential_targets_outside_the_app_namespace_are_rejected() {
         .as_deref()
         .is_some_and(|target| target.starts_with("SumaFile.Remote.")));
 }
+
+/// Two backends can open the same new store at the same moment. The switch
+/// to WAL then finds the database held by the other connection, and SQLite
+/// reports that at once: its busy timeout does not cover a lock that is asked
+/// for while another is already held. The store has to wait it out itself.
+#[test]
+fn the_first_call_waits_for_a_connection_that_holds_the_new_database() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = store_in(temp.path());
+    std::fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+    // Another connection is in the middle of a write, and the database is
+    // still in the journal mode it was created with.
+    let holder = rusqlite::Connection::open(store.path()).unwrap();
+    holder
+        .execute_batch("CREATE TABLE held (id INTEGER); BEGIN IMMEDIATE;")
+        .unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        holder.execute_batch("COMMIT;").unwrap();
+    });
+
+    let profiles = store
+        .list()
+        .expect("the first call waits for the other connection");
+
+    release.join().unwrap();
+    assert!(profiles.is_empty());
+    let journal_mode: String = rusqlite::Connection::open(store.path())
+        .unwrap()
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(journal_mode, "wal");
+}

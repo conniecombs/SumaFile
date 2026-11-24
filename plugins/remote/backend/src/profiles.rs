@@ -8,7 +8,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const PROFILE_DB_FILE: &str = "remote-profiles.db";
 pub const CREDENTIAL_TARGET_PREFIX: &str = "SumaFile.Remote.";
@@ -16,6 +16,8 @@ pub const CREDENTIAL_TARGET_PREFIX: &str = "SumaFile.Remote.";
 /// How long a connection waits for another connection's write lock, so two
 /// backends sharing one data folder never fail on a busy database.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often the one statement SQLite does not wait for is tried again.
+const BUSY_RETRY: Duration = Duration::from_millis(10);
 
 const SELECT_PROFILE_COLUMNS: &str =
     "SELECT id, name, protocol, host, port, username, root_path, auth_kind,
@@ -176,18 +178,41 @@ impl ProfileStore {
             connection
                 .busy_timeout(BUSY_TIMEOUT)
                 .map_err(|error| error.to_string())?;
-            connection
-                .execute_batch(
+            // The busy timeout does not cover the switch to WAL. The switch
+            // asks for the write lock while it already holds a read lock, and
+            // SQLite never waits for that: while another connection writes (a
+            // second backend creating the same store at the same moment) it
+            // fails at once with "database is locked". Wait for it here.
+            let deadline = Instant::now() + BUSY_TIMEOUT;
+            loop {
+                match connection.execute_batch(
                     "PRAGMA journal_mode = WAL;
                      PRAGMA synchronous = NORMAL;
                      PRAGMA foreign_keys = ON;",
-                )
-                .map_err(|error| error.to_string())?;
+                ) {
+                    Err(error) if is_busy(&error) && Instant::now() < deadline => {
+                        std::thread::sleep(BUSY_RETRY);
+                    }
+                    result => break result.map_err(|error| error.to_string())?,
+                }
+            }
             init_schema(&connection).map_err(|error| error.to_string())?;
             *guard = Some(connection);
         }
         action(guard.as_mut().expect("initialized profile db connection"))
     }
+}
+
+/// Whether another connection held the database when a statement asked for it.
+fn is_busy(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(failure, _)
+            if matches!(
+                failure.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            )
+    )
 }
 
 pub(crate) fn set_meta_on(connection: &Connection, key: &str, value: &str) -> Result<(), String> {
