@@ -55,6 +55,78 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - The ownership record of a file is written in one piece. Written in two, a
   stop between them left a record that recovery ignores, and with it a
   partial file that nothing cleaned up.
+- A transfer starts a copy thread when a file needs one. It used to start
+  thirty-two before the first file, whatever it went on to use.
+- A large file reserves a copy buffer per stream only when it will be copied
+  in several streams. With "Streams per large file" at 2 or more it also did
+  so on drives where several streams are never used (removable drives, cloud
+  folders), which lowered the number of large files copied at once.
+- With a chosen transfer order, a file found by the scan is put at its place
+  in the queue. The whole queue used to be sorted again for every file.
+- The times and the read-only attribute of the folders a transfer created
+  are restored by several threads when there are many folders, which shortens
+  "Finishing" on a network share.
+- **Copy to other pane** and **Move to other pane** act on the pane that was
+  the other one when the command started. If the active pane changed during
+  the transfer, the pane the files came from was sent to the destination.
+  When both panes show the same folder the command is refused, because every
+  item would land on itself.
+
+### File list and keyboard
+
+- Typing a name in a file list selects the match in that list. The match was
+  looked up in the active pane's folder, so typing into the other pane, or
+  into a pane showing search results, selected nothing or a row that was not
+  shown. With several items selected, typing a name now selects the one
+  match; before, the selection on screen did not change.
+- Alt+P opens the preview pane on a narrow two-pane window, as the preview
+  button does. It used to show only the collapsed strip.
+- Ctrl+1 to Ctrl+9 no longer switch tabs behind an open dialog.
+- After the file service restarts, a pane goes back to reading a large
+  folder in pages. It used to list the whole folder until it navigated away.
+
+### Previews and properties
+
+- Quick Look shows a PDF with the same restrictions as the preview pane: no
+  developer tools, context menu or scripting interfaces, and no navigation
+  away from the file.
+- Closing Quick Look, or stepping to the next item, releases the file. A PDF
+  or a video shown there could stay locked for a while, as could a video in
+  the preview pane after a PDF or an HTML file replaced it.
+- Files named only by an extension, such as `.gitignore`, `.env` and
+  `.npmrc`, are previewed as text instead of being reported as unsupported.
+- A PDF title, author or subject stored as UTF-16 is shown correctly. It
+  appeared with a gap between every two letters.
+- Properties of a compressed tar archive (`.tar.gz` and the like) decompress
+  at most 64 MiB to count entries. When that is not the whole archive, the
+  panel says the count covers the start of the archive only. Before, an
+  archive of large files was decompressed almost whole.
+
+### Other fixes
+
+- **Open with**: a shortcut with a harmless name can no longer start a
+  program on the blocked list; the list is also applied to the program the
+  shortcut points to.
+- A file opened from inside an archive with **Open with** is no longer
+  deleted under a program that handed it to a window already open. The
+  temporary copy is removed a day later instead.
+- Saving two smart folders at nearly the same time no longer loses one of
+  them.
+- Deleting or moving many selected files no longer rescans the listing cache
+  once per file.
+- Comparing two files opens each of them once, not once per row shown.
+- Remote: saved connections no longer fail with "database is locked" when a
+  new connections database is opened twice at the same moment.
+
+### Maintenance
+
+- Removed code nothing reached: the staged-folder path of the transfer
+  engine with its completion manifest, an unused transfer view model, the
+  old folder-metrics controller, fourteen unwired event handlers and several
+  unused helpers.
+- The check for Windows device names (`CON`, `COM1`, ...) and the rule for a
+  free "name (n)" each exist once, in the transfer crate. Row decoration keys
+  and thumbnail cache keys share one path rule.
 
 ---
 

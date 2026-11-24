@@ -1,6 +1,8 @@
 # SumaFile Full-Codebase Audit — 2026-11-23
 
 > **Status, updated 2026-11-23.** All **Critical** and **High** Bugs (`B1–B13`) and Performance Bottlenecks (`P1–P9`) identified in this audit have been repaired and verified against the full Debug/Release build, C# test suite, Rust workspace test suite, Clippy, crate packaging, and packaged release smoke tests. Medium bugs (`B14`), Medium bottlenecks (`P10`), dead-code cleanup (`R1–R3`), remaining UI polish (`U2–U7`), and architectural Rust upgrades (`A1–A9`) remain tracked as open follow-up work below.
+>
+> **Follow-up, 2026-11-24 (release 1.2.0).** The remaining `B14` items, most of `P10`, `R1`, and parts of `R2`/`R3` are done; each is marked below, and items that were looked at and left are marked with the reason. `U2–U7` and `A1–A9` are unchanged and stay open. This follow-up was developed on Linux: the transfer crate was tested natively and type-checked for Windows, the other Rust crates were tested through a local Linux port of their Windows-only modules, and the C# libraries and test suite were built and run on Linux. `SimpleFile.App` cannot be built there, so its changes are confirmed by the Windows CI run for the release, not by the table below, which records the 2026-11-23 run.
 
 **Scope:** All 11 Rust workspace crates (`simplefile-core`, `simplefile-ipc`, `simplefile-service`, `sumafile-transfer`, `sumafile-plugin`, bundled `git`, `sevenzip`, and `remote` backends, plus test/template fixtures), all WinUI 3 / .NET 10 projects (`SimpleFile.App`, `SimpleFile.Core`, `SimpleFile.Ipc`, `SimpleFile.PluginHost`, `SimpleFile.PluginSdk`, bundled `Git` & `Remote` UI plugins, `SimpleFile.Tests`), and packaging/CI scripts.
 
@@ -25,9 +27,9 @@ Every finding below was verified directly against live source code and cross-che
 
 | Pillar | Scope | Status |
 | :--- | :--- | :--- |
-| **1. Bugs** | **3 Critical (`B1–B3`), 10 High (`B4–B13`), 1 Consolidated Medium (`B14`)** | `B1–B13` **Complete**; `B14` partially complete (`B14.1`, `B14.5`, part of `B14.8` done) |
-| **2. Bottlenecks** | **1 Critical (`P1`), 8 High (`P2–P9`), 1 Consolidated Medium (`P10`)** | `P1–P9` **Complete**; `P10` partially complete (`cleanup.rs` partial-hash pre-pass done) |
-| **3. Redundant Code** | **~1,200+ LOC dead (`R1`), duplicated C#/Rust subsystems (`R2–R3`)** | Open (`R3` collision-overwrite & reserved-name safety fixes done) |
+| **1. Bugs** | **3 Critical (`B1–B3`), 10 High (`B4–B13`), 1 Consolidated Medium (`B14`)** | `B1–B14` **Complete** |
+| **2. Bottlenecks** | **1 Critical (`P1`), 8 High (`P2–P9`), 1 Consolidated Medium (`P10`)** | `P1–P9` **Complete**; `P10.2–P10.4` **Complete**; `P10.1` and `P10.5` open |
+| **3. Redundant Code** | **~1,200+ LOC dead (`R1`), duplicated C#/Rust subsystems (`R2–R3`)** | `R1` **Complete**; `R2` and `R3` partially complete (see the sub-checklists) |
 | **4. UI Improvements** | **7 workflow & polish groups (`U1–U7`)** | `U1` **Complete**; `TransferProgressWindow` Details vertical resize **Complete**; `U2–U7` open |
 | **5. Rust Backend** | **9 architectural upgrades (`A1–A9`)** | Open (`A7` SQLite WAL/NORMAL/`prepare_cached` foundation in place) |
 
@@ -50,7 +52,7 @@ Every finding below was verified directly against live source code and cross-che
 - [x] **B11.** [High — Rust Path, Drive & Duplicate-Scan Bugs] `\\?\C:\` local vs `\\?\UNC\` network classification, removable/RAM-disk volume details, and hardlink deduplication
 - [x] **B12.** [High — Git Plugin] Unicode-safe case-preserving `repo_relative_path` and staged-rename / untracked-directory `discard` & `diff`
 - [x] **B13.** [High — Built-In & 7-Zip Archives] 7-Zip strict exit code `0`, RAR symlink blocking, read-only cleanup, work-dir stem truncation, and batched multi-delete
-- [~] **B14.** [Medium — Consolidated Edge-Case & State Bugs] Partially completed (see sub-checklist below)
+- [x] **B14.** [Medium — Consolidated Edge-Case & State Bugs] Completed (see sub-checklist below)
 
 ---
 
@@ -118,18 +120,21 @@ Every finding below was verified directly against live source code and cross-che
 - **Locations:** [sevenzip/run.rs](../plugins/sevenzip/backend/src/run.rs), [sevenzip/ops.rs](../plugins/sevenzip/backend/src/ops.rs), [extract.rs](../crates/simplefile-core/src/archive/extract.rs), [mutate.rs](../crates/simplefile-core/src/archive/mutate.rs), [path.rs](../crates/simplefile-core/src/archive/path.rs), [recycle_bin.rs](../crates/simplefile-core/src/recycle_bin.rs).
 - **Resolution:** Added `run_7za_strict` (requiring exit code `0` for `extract`, `create`, `rename`, `delete`, and `add`); blocked extracted RAR symlinks/junctions (`ensure_no_link_ancestors` + `reject_extracted_link`); cleared `readonly` attributes recursively during temp cleanup and built-in deletes; truncated `WorkDir::beside` archive stem to 64 chars; batched built-in `delete_archive_entries` into a single unpack/repack pass per archive; and returned `Err` instead of silently overwriting on 9,999-collision exhaustion across archive and Recycle Bin helpers.
 
-### [~] B14. [Medium — Consolidated Verified Edge-Case & State Bugs]
+### [x] B14. [Medium — Consolidated Verified Edge-Case & State Bugs]
 - [x] **B14.1 Watcher RPC spam inside archives & `recycle-bin:`:** Fixed in [MainWindow.xaml.cs](../src-winui/SimpleFile.App/MainWindow.xaml.cs) and [ArchivePaths.cs](../src-winui/SimpleFile.Core/ArchivePaths.cs) (`IsInsideArchivePath` + `IsRecycleBinPath` + `PathIsNetwork` unwatch).
-- [ ] **B14.2 Quick Look `WebView2` `ArgumentNullException`, leaked `MediaSource` file locks, and unhardened Quick Look `CoreWebView2.Settings`:** Open (`PreviewPresenter.Media.cs`, `MainWindow.InspectionDialogs.cs`).
-- [ ] **B14.3 F5 / F6 `CopyOrMoveToOtherPaneAsync` post-await pane race & missing self-drop check:** Open (`MainWindow.Transfer.cs`).
-- [ ] **B14.4 Backend reconnect permanently disabling paged `ListingView`s:** Open (`ListingViewController.cs`, `MainWindow.xaml.cs`).
+- [x] **B14.2 Quick Look `WebView2` `ArgumentNullException`, leaked `MediaSource` file locks, and unhardened Quick Look `CoreWebView2.Settings`:** Fixed in [PreviewPresenter.Html.cs](../src-winui/SimpleFile.App/PreviewPresenter.Html.cs) and [PreviewPresenter.Media.cs](../src-winui/SimpleFile.App/PreviewPresenter.Media.cs). The Quick Look PDF view gets the pane's lockdown before the file loads and is closed instead of being given a null source; Quick Look and pane media sources are disposed when released.
+- [x] **B14.3 F5 / F6 `CopyOrMoveToOtherPaneAsync` post-await pane race & missing self-drop check:** Fixed in [MainWindow.Transfer.cs](../src-winui/SimpleFile.App/MainWindow.Transfer.cs) with `PathRules.AllLieDirectlyIn`. The workspace and destination pane are captured before the transfer, a copy or move onto the sources' own folder is refused, and the pane is refreshed only if it still shows the destination.
+- [x] **B14.4 Backend reconnect permanently disabling paged `ListingView`s:** Fixed with `ExplorerWorkspace.RestoreListingViews`, called from `ReconnectBackendAsync` in [MainWindow.xaml.cs](../src-winui/SimpleFile.App/MainWindow.xaml.cs).
 - [x] **B14.5 Tokio async worker starvation & leaked cancel tokens in `fact_jobs.rs`:** Fixed in [fact_jobs.rs](../crates/simplefile-service/src/session/fact_jobs.rs) and [session/mod.rs](../crates/simplefile-service/src/session/mod.rs).
-- [ ] **B14.6 Type-ahead keyboard navigation ignoring search results & multi-selection:** Open (`MainWindow.FileListEvents.cs`, `MainWindow.Chrome.cs`, `DetailsFileListView.cs`).
-- [ ] **B14.7 Keyboard shortcut & preview toggle state bugs (`Alt+P` responsive collapse, `Ctrl+1..9` under open modal dialogs):** Open (`MainWindow.Shortcuts.cs`).
-- [~] **B14.8 Rust metadata/preview/listing/transfer edge cases:**
+- [x] **B14.6 Type-ahead keyboard navigation ignoring search results & multi-selection:** Fixed with `ExplorerWorkspace.MatchTypeAheadPath(character, pane, searchResults)`. The match runs over the pane that got the key and over its search results when it shows them, and it replaces a multi-selection.
+- [x] **B14.7 Keyboard shortcut & preview toggle state bugs (`Alt+P` responsive collapse, `Ctrl+1..9` under open modal dialogs):** Fixed in [MainWindow.Shortcuts.cs](../src-winui/SimpleFile.App/MainWindow.Shortcuts.cs). `Alt+P` records the request to open the pane as the toolbar button does, and the tab-jump keys leave the key to an open dialog.
+- [x] **B14.8 Rust metadata/preview/listing/transfer edge cases:**
   - [x] `ListingView::same_entry` now checks `created`, `accessed`, and `attributes` ([listing_view.rs](../crates/simplefile-core/src/listing_view.rs)).
   - [x] `Permit::drop` made poison-safe ([resources.rs](../crates/sumafile-transfer/src/resources.rs)) and `staging_path_for` switched to deterministic FNV-1a ([staging.rs](../crates/sumafile-transfer/src/staging.rs)).
-  - [ ] Remaining open: dotfile match arms (`preview.rs`, `metadata.rs`), UTF-16BE PDF metadata (`metadata.rs`), `open_with.rs` pre-canonicalize check & single-instance temp lifetime, and `smart_folders.rs` read-modify-write locking.
+  - [x] Dotfiles are classified by `utils::effective_extension`, so `.gitignore` and `.env` reach the text arms in `preview.rs` and `metadata.rs`.
+  - [x] PDF metadata strings with a UTF-16BE or UTF-8 byte-order mark are decoded (`metadata.rs`).
+  - [x] `open_with.rs` checks the deny list against the resolved program name as well as the requested one, and leaves a materialised temporary file in place when the program exits within three seconds, which means it handed the file to an instance already running; the day-old sweep removes it later.
+  - [x] `smart_folders.rs` serialises its read-modify-write on the store.
 
 ---
 
@@ -146,7 +151,7 @@ Every finding below was verified directly against live source code and cross-che
 - [x] **P7.** [High — Rust Search] Zero-alloc ASCII filtering, raw `SystemTime` bounds before formatting, and 8 KiB NUL sniffing + UTF-16 BOM content search
 - [x] **P8.** [High — Remote SFTP & Local Transfers] Raised SFTP window/packet concurrency, dropped redundant upload/rename `stat` RTTs, and skipped idle checker threads
 - [x] **P9.** [High — Git & 7-Zip Plugins] O(1) `NtResumeProcess`, bounded pipe capture, and `-bsp1` stdout buffer skip
-- [~] **P10.** [Medium — Enumeration, Cache, Metadata, Compare & Build Script Bottlenecks] Partially completed (see sub-checklist below)
+- [~] **P10.** [Medium — Enumeration, Cache, Metadata, Compare & Build Script Bottlenecks] `P10.2–P10.4` completed; `P10.1` and `P10.5` open (see sub-checklist below)
 
 ---
 
@@ -190,36 +195,36 @@ Every finding below was verified directly against live source code and cross-che
 - **Resolution:** Replaced `CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)` with O(1) `NtResumeProcess` and capped background pipe capture at `64 MiB` in `git/run.rs`; skipped buffering megabytes of `-bsp1` progress stdout in `sevenzip/run.rs`. *(Cached `find_root` and `binary_for` IPC lookups remain compatible with pinned `spawn_count` and `binary_for` test contracts.)*
 
 ### [~] P10. [Medium — Enumeration, Cache, Metadata, Compare & Build Script Bottlenecks]
-- [ ] **P10.1** Eager timestamp strings & sort-key reallocations (`dir_list.rs`, `collation.rs`).
-- [ ] **P10.2** `SessionCache` linear invalidation scans & `VecDeque` sort (`session_cache.rs`).
-- [ ] **P10.3** Full `.tar.gz` decompression & full-image decode for metadata/thumbnails (`metadata.rs`, `thumbnail.rs`).
-- [~] **P10.4** `compare.rs` repeated `File::open` calls (open) & `cleanup.rs` partial-hash pre-pass (**done** in [cleanup.rs](../crates/simplefile-core/src/cleanup.rs)).
-- [ ] **P10.5** Release & smoke script slowdowns (`build-winui-release.ps1`, `smoke-winui-ui.ps1`).
+- [ ] **P10.1** Eager timestamp strings & sort-key reallocations (`dir_list.rs`, `collation.rs`). Left open: the timestamps are strings in the wire format, so this belongs with the shared wire types in `A8`.
+- [x] **P10.2** `SessionCache` linear invalidation scans & `VecDeque` sort: a batch of paths is invalidated in one pass over the cache, and removal no longer rebuilds the eviction order ([session_cache.rs](../crates/simplefile-service/src/session_cache.rs)).
+- [x] **P10.3** Full `.tar.gz` decompression for metadata: the scan stops after 64 MiB of decompressed data and reports that it counted the start of the archive only ([metadata.rs](../crates/simplefile-core/src/metadata.rs)). Image decoding was already bounded by the decoder limits and is unchanged.
+- [x] **P10.4** `compare.rs` opens each file once ([compare.rs](../crates/simplefile-core/src/compare.rs)); `cleanup.rs` partial-hash pre-pass done in [cleanup.rs](../crates/simplefile-core/src/cleanup.rs).
+- [ ] **P10.5** Release & smoke script slowdowns (`build-winui-release.ps1`, `smoke-winui-ui.ps1`). Left open: the scripts run only on Windows, so a change could not be measured.
 
 ---
 
 ## 3. Redundant & Dead Code
 
-### [ ] R1. Verified Dead / Unreachable C# Production Code (~1,200+ LOC)
-- [ ] Remove unreachable `TransferViewModel.cs` + `AppServices.Transfers` (move `DescribeSource` to `TransferManagerViewModel`).
-- [ ] Remove unused `ExtractArchiveDialog` + `ShowExtractArchiveDialogAsync`.
-- [ ] Remove unused `PaneEnrichmentController` + `ExplorerWorkspace` wrappers.
-- [ ] Remove or consolidate unused `WorkspaceFileOpsController.CopyOrMoveToOtherPaneAsync`.
-- [ ] Remove 14 unwired legacy event handlers in `MainWindow.FileOperations.cs` / `MainWindow.xaml.cs`.
-- [ ] Remove unread `PhotoFolderActive` / `PhotoFolder.IsPhotoFolder` recomputations.
-- [ ] Clean up miscellaneous unused C# APIs (`VisibleEntriesPreSorted`, `ColumnLayoutHost.Shared`, `ConflictingNames`, legacy `AdvancedRename` overloads, `SharedMemoryReader`).
+### [x] R1. Verified Dead / Unreachable C# Production Code (~1,200+ LOC)
+- [x] Removed `TransferViewModel.cs` and its container registration; `DescribeSource` is on `TransferOperationViewModel`, which uses it.
+- [x] `ExtractArchiveDialog` kept: it is in use. `FileOperationDialogService.ShowExtractDialogAsync` opens it for Extract, so the finding was wrong.
+- [x] Removed `PaneEnrichmentController` and the `ExplorerWorkspace` wrappers.
+- [x] Removed `WorkspaceFileOpsController.CopyOrMoveToOtherPaneAsync` and its workspace wrapper.
+- [x] Removed the 14 unwired event handlers and three unused private helpers.
+- [x] Removed `PhotoFolderActive`, its five recomputations and `PhotoFolder.IsPhotoFolder`.
+- [x] Removed `VisibleEntriesPreSorted`, `ColumnLayoutHost.Shared`, `ConflictingNames`, the legacy `AdvancedRename.Apply`/`Build`, and `SharedMemoryReader`.
 
-### [ ] R2. Duplicated C# & Script Subsystems
+### [~] R2. Duplicated C# & Script Subsystems
 - [ ] Share `Views/Xaml.cs`, `Views/ListRows.cs`, and `Directory.Build.{props,targets}` between `SumaFile.Git` and `SumaFile.Remote`.
-- [ ] Consolidate the 4 C# path normalizers (`PathRules`, `RowDecorations`, `ThumbnailCacheKey`, `GitPaths`).
+- [x] Path normalizers: row decoration keys and thumbnail cache keys share `PathRules.NormalizeSeparators`. `PathRules.NormalizeComparablePath` is a comparison key in a different form and stays. `GitPaths` keeps its copy because the plugin cannot reference Core.
 - [ ] Deduplicate `FindAncestor<T>`/`FindDescendant<T>`, `InitializeWithWindow.Initialize`, and Trash-to-permanent-delete fallback blocks.
 - [ ] Deduplicate `dispatch/handlers.rs` parsing across `check-ipc-schema.mjs` and `check-winui-parity-gate.mjs` and shared PowerShell helpers across `scripts/smoke-*.ps1`.
 
 ### [~] R3. Duplicated & Dead Rust Subsystems
 - [x] Eliminated silent 9,999-collision overwrite fallbacks in [archive/path.rs](../crates/simplefile-core/src/archive/path.rs), [archive/mutate.rs](../crates/simplefile-core/src/archive/mutate.rs), and [recycle_bin.rs](../crates/simplefile-core/src/recycle_bin.rs), and fixed `"CON .txt"` trailing-space validation in [remote/transfer.rs](../plugins/remote/backend/src/transfer.rs).
-- [ ] Unify `unique_*_path`, recursive removal, and Windows reserved-name helpers into `sumafile-transfer` / `simplefile-core`.
-- [ ] Share `StderrLogger`, `parse_params<T>`, `metadata.db` resolution, and wire DTOs; delete unused `SessionState` fields.
-- [ ] Standardize C-ABI Win32 syscalls onto `windows-sys = "0.61"` (retiring duplicate `winapi` 0.3 / manual `extern "system"` declarations).
+- [~] `sumafile-transfer` owns the Windows reserved-name check (used by `simplefile-core` and the Remote backend) and the unique-name rule the archive code uses. The 7-Zip backend keeps its own reserved-name check, having no dependency on the transfer crate, and recursive removal is not unified.
+- [~] Deleted the unused `SessionState` fields (`duplicate_check_cancel`, `disk_cleanup_cancel`). `StderrLogger` is not shared: moving it would add to the published plugin SDK's API. `parse_params<T>`, `metadata.db` resolution and the wire DTOs are unchanged (the DTOs are `A8`).
+- [ ] Standardize C-ABI Win32 syscalls onto `windows-sys = "0.61"` (retiring duplicate `winapi` 0.3 / manual `extern "system"` declarations). Left open: it touches every Windows-only module and needs a Windows build to check.
 
 ---
 
