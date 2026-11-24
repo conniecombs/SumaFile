@@ -231,9 +231,12 @@ caller waiting; the service keeps working. Work is stopped with a named command.
 `cancel_operation` (transfers and archive jobs, by `operationId`), `cancel_search` (`searchId`) and
 `cancel_entry_facts` (`requestId`) name the work they stop. `cancel_disk_cleanup` and
 `cancel_duplicate_check` take an optional `operationId` and stop every such scan without one.
-`cancel_folder_size`, `cancel_folder_item_count` and `cancel_folder_metrics` take no id. The
+`cancel_folder_size`, `cancel_folder_item_count` and `cancel_folder_metrics` take an optional
+`path`: with it they stop the requests for that folder, without it every running request of the
+kind. The
 service registers an id before it starts the work, so a cancel sent straight after the request
-finds it. When the connection ends, it cancels the session's transfers, searches and scans.
+finds it. When the connection ends, it cancels the session's transfers, searches, scans and folder size
+and count requests.
 
 ### Adding a method
 

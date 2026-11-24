@@ -22,14 +22,25 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ### Archives
 
-- Deleting or renaming a file or folder inside a ZIP no longer unpacks the
-  archive and compresses it again. The other entries are copied as they are
-  stored, so the change takes about as long as copying the archive, needs no
-  free space for its unpacked contents, and keeps each entry's compression,
-  comment and permissions. Creating an entry and copying into a ZIP work as
-  before, as do archives with unusual names or encrypted entries.
+- Changing a ZIP no longer unpacks the archive and compresses it again. That
+  goes for deleting, renaming, creating a folder or a file, copying files in,
+  and copying or moving an entry to another folder of the same archive. The
+  entries that stay are copied as they are stored, so the change takes about
+  as long as copying the archive, needs no free space for its unpacked
+  contents, and keeps each entry's compression, comment and permissions.
+  Archives with unusual names, encrypted entries or links are handled as
+  before.
 - Deleting an entry that is no longer in a ZIP says "Archive entry not
   found" instead of "Failed to stat path".
+
+### Labels
+
+- A label stays with its file when the file is renamed or moved, and with
+  every labelled file in a folder that is renamed or moved. Labels are stored
+  by path, so a renamed file used to lose them, and the next file to get the
+  old name inherited them.
+- A file deleted for good loses its labels. One sent to the Recycle Bin
+  keeps them, so restoring it brings them back.
 
 ### Transfers
 
@@ -40,6 +51,11 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 
 ### Other changes
 
+- A smart folder with a quote in one of its file types or dates no longer
+  comes up empty in an indexed folder.
+- Closing a Properties window stops the size calculation of its own folder.
+  With two calculations running it used to stop the newer one and leave the
+  older running, and a calculation could go on after the app had closed.
 - Settings and cached column values are read on a second database
   connection, so they no longer wait while a batch of column values is
   being saved.

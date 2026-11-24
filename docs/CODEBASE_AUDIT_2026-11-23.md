@@ -4,7 +4,7 @@
 >
 > **Follow-up, 2026-11-24 (release 1.2.0).** The remaining `B14` items, most of `P10`, `R1`, and parts of `R2`/`R3` are done; each is marked below, and items that were looked at and left are marked with the reason. `U2–U7` and `A1–A9` are unchanged and stay open. This follow-up was developed on Linux: the transfer crate was tested natively and type-checked for Windows, the other Rust crates were tested through a local Linux port of their Windows-only modules, and the C# libraries and test suite were built and run on Linux. `SimpleFile.App` cannot be built there, so its changes are confirmed by the Windows CI run for the release, not by the table below, which records the 2026-11-23 run.
 >
-> **Second follow-up, 2026-11-24 (after 1.2.0).** `U5` and `A7` are done, and `A9` is done for deleting and renaming in a ZIP. They are marked below. The same limits on verification apply.
+> **Second follow-up, 2026-11-24 (after 1.2.0).** `U5`, `A7` and `A9` are done and marked below, as are these items of the [roadmap](ROADMAP.md): labels that did not follow a renamed or moved file, folder size requests that could not be cancelled one by one, quotes in smart-folder values, and the app identifier defined in several places. The same limits on verification apply.
 
 **Scope:** All 11 Rust workspace crates (`simplefile-core`, `simplefile-ipc`, `simplefile-service`, `sumafile-transfer`, `sumafile-plugin`, bundled `git`, `sevenzip`, and `remote` backends, plus test/template fixtures), all WinUI 3 / .NET 10 projects (`SimpleFile.App`, `SimpleFile.Core`, `SimpleFile.Ipc`, `SimpleFile.PluginHost`, `SimpleFile.PluginSdk`, bundled `Git` & `Remote` UI plugins, `SimpleFile.Tests`), and packaging/CI scripts.
 
@@ -33,7 +33,7 @@ Every finding below was verified directly against live source code and cross-che
 | **2. Bottlenecks** | **1 Critical (`P1`), 8 High (`P2–P9`), 1 Consolidated Medium (`P10`)** | `P1–P9` **Complete**; `P10.2–P10.4` **Complete**; `P10.1` and `P10.5` open |
 | **3. Redundant Code** | **~1,200+ LOC dead (`R1`), duplicated C#/Rust subsystems (`R2–R3`)** | `R1` **Complete**; `R2` and `R3` partially complete (see the sub-checklists) |
 | **4. UI Improvements** | **7 workflow & polish groups (`U1–U7`)** | `U1` and `U5` **Complete**; `TransferProgressWindow` Details vertical resize **Complete**; `U2–U4`, `U6` and `U7` open |
-| **5. Rust Backend** | **9 architectural upgrades (`A1–A9`)** | `A7` **Complete**; `A9` partially complete; the others open |
+| **5. Rust Backend** | **9 architectural upgrades (`A1–A9`)** | `A7` and `A9` **Complete**; the others open |
 
 ---
 
@@ -189,7 +189,7 @@ Every finding below was verified directly against live source code and cross-che
 - **Locations:** [sftp.rs](../plugins/remote/backend/src/sftp.rs), [transfer.rs](../plugins/remote/backend/src/transfer.rs), [parallel.rs](../crates/simplefile-service/src/progress/parallel.rs).
 - **Resolution:** Raised SFTP SSH window to `16 MiB`, channel packet to `256 KiB`, `max_write_packet_len = 131_072`, and `max_concurrent_reads/writes = 64`; used `symlink_metadata` (`LSTAT`) on SFTP rename and eliminated redundant upload staging and post-rename `stat` RTTs; and skipped spawning checker threads when `initial_dirs.is_empty()` in `parallel.rs`.
 - **Follow-up (optional):**
-  - [ ] Avoid redundant full-file re-reads in `CheckMode::Checksum` remote download (`verify_remote_checksum`) and local cross-volume move (`delete_verified_source`) when file identity + mtime + size are unchanged.
+  - [ ] Avoid redundant full-file re-reads in `CheckMode::Checksum` remote download (`verify_remote_checksum`) and local cross-volume move (`delete_verified_source`) when file identity + mtime + size are unchanged. Left as it is: both re-reads are what Checksum mode is documented to do ([TRANSFER_TUNING.md](TRANSFER_TUNING.md#check-modes)), and neither is redundant. The second read of a moved file's source is the only check that its content did not change after it was copied; the second download is the only check of what a plain FTP connection delivered. Skipping them is a change to what the mode promises, not a repair.
   - [x] Spawn transfer worker threads lazily up to `session.total_limit()`: a thread starts when a file is sent and every thread started so far has one ([parallel.rs](../crates/simplefile-service/src/progress/parallel.rs)).
 
 ### [x] P9. [High — Git & 7-Zip Plugins] System-Wide `TH32CS_SNAPTHREAD` Walk and `-bsp1` Stdout Buffering
@@ -220,7 +220,7 @@ Every finding below was verified directly against live source code and cross-che
 - [ ] Share `Views/Xaml.cs`, `Views/ListRows.cs`, and `Directory.Build.{props,targets}` between `SumaFile.Git` and `SumaFile.Remote`.
 - [x] Path normalizers: row decoration keys and thumbnail cache keys share `PathRules.NormalizeSeparators`. `PathRules.NormalizeComparablePath` is a comparison key in a different form and stays. `GitPaths` keeps its copy because the plugin cannot reference Core.
 - [ ] Deduplicate `FindAncestor<T>`/`FindDescendant<T>`, `InitializeWithWindow.Initialize`, and Trash-to-permanent-delete fallback blocks.
-- [ ] Deduplicate `dispatch/handlers.rs` parsing across `check-ipc-schema.mjs` and `check-winui-parity-gate.mjs` and shared PowerShell helpers across `scripts/smoke-*.ps1`.
+- [~] The two checks that read the service dispatcher share one module ([service-dispatch.mjs](../scripts/lib/service-dispatch.mjs)). The PowerShell helpers repeated across `scripts/smoke-*.ps1` are unchanged: PowerShell cannot be run where this was done.
 
 ### [~] R3. Duplicated & Dead Rust Subsystems
 - [x] Eliminated silent 9,999-collision overwrite fallbacks in [archive/path.rs](../crates/simplefile-core/src/archive/path.rs), [archive/mutate.rs](../crates/simplefile-core/src/archive/mutate.rs), and [recycle_bin.rs](../crates/simplefile-core/src/recycle_bin.rs), and fixed `"CON .txt"` trailing-space validation in [remote/transfer.rs](../plugins/remote/backend/src/transfer.rs).
@@ -254,4 +254,4 @@ Every finding below was verified directly against live source code and cross-che
 - [ ] **A6.** Hardware-accelerated Windows Shell / WIC thumbnail provider (`IShellItemImageFactory`).
 - [x] **A7.** SQLite `WAL` + `synchronous = NORMAL` + `prepare_cached`; settings and cached facts are read on a second, read-only connection ([settings_store.rs](../crates/simplefile-core/src/settings_store.rs)), and `entry_facts` is held to 200,000 rows by removing the ones written longest ago ([fact_cache.rs](../crates/simplefile-core/src/fact_cache.rs)).
 - [ ] **A8.** Raw `u64` epoch/FILETIME timestamps on `FileEntry` + binary IPC wire format.
-- [~] **A9.** In-place ZIP entry copy: a delete or a rename in a ZIP copies the entries as stored instead of extracting and rebuilding the archive ([zip_inplace.rs](../crates/simplefile-core/src/archive/zip_inplace.rs)). Creating an entry and copying into a ZIP still rebuild it. `service.log` needed no change: `BackendSession` already rotates it at 1 MB and keeps one earlier file.
+- [x] **A9.** In-place ZIP entry copy: deleting, renaming, creating, copying in and moving inside a ZIP copy the existing entries as stored instead of extracting and rebuilding the archive ([zip_inplace.rs](../crates/simplefile-core/src/archive/zip_inplace.rs)). Archives with names that are not plain, encrypted entries or links are still rebuilt. `service.log` needed no change: `BackendSession` already rotates it at 1 MB and keeps one earlier file.

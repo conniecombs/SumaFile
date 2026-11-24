@@ -128,11 +128,12 @@ on-demand column values have shipped. What remains:
 ## Search
 
 - Every search hit is sent in a batch notification and again in the final
-  reply. Dropping the duplicate needs a protocol change.
+  reply. The final reply is not a plain repeat: it is the list sorted, folders
+  first and then by name, where the batches come in the order files were
+  found. Dropping it means sorting in the app, and it is at most 1,000 hits
+  by default, so the gain is small.
 - Windows Search integration is used when a folder is indexed. Say in the UI
   whether results are indexed or live, and how fresh they are.
-- Smart-folder values are interpolated into the Windows Search query; only the
-  folder scope is escaped. A quote in a value gives an empty result.
 - The rename preview runs user regular expressions on the UI thread without a
   timeout.
 
@@ -180,21 +181,13 @@ Open findings from the
 
 | Id | Problem |
 | --- | --- |
-| H9 | Labels are keyed by path and are not updated when a file is renamed, moved or deleted. |
 | M9 | See Transfers: the unjournaled replace swap. |
-| M10 | Folder size and folder count requests share one "latest request" cancel flag each. |
-| M15 | See Search: results sent twice. |
+| M15 | See Search: the final reply repeats the hits, sorted. |
 | M19 | FTP transfers make more round trips than needed. This now belongs to the remote plugin. |
 | L2 | Blocking filesystem calls and the watcher's setup and teardown run on the async runtime. |
 | L3 | The pipe's access control list is applied after the pipe is created. |
 | L5 | See Transfers: same-volume detection and unsaved learning. |
 | L8 | A file opened from inside an archive is extracted to a temporary file that may be removed before the launched program has read it. |
-
-Also open:
-
-- The application data identifier `com.simplefile.desktop` is defined in
-  three places in Rust and one in C#. Centralise it only with migration
-  coverage; the value itself stays.
 
 ## Plugins
 
