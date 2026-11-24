@@ -29,7 +29,7 @@ fn get_db_settings_at(
     path: &Path,
     keys: &[String],
 ) -> Result<HashMap<String, Option<String>>, String> {
-    let connection = open_metadata_db_at(path)?;
+    let connection = open_metadata_db_reader_at(path)?;
     let mut statement = connection
         .prepare_cached("SELECT value FROM settings WHERE key = ?1")
         .map_err(|error| error.to_string())?;
@@ -228,14 +228,52 @@ pub fn open_metadata_db() -> Result<MetadataDb, String> {
 }
 
 pub(crate) fn open_metadata_db_at(path: &Path) -> Result<MetadataDb, String> {
+    Ok(writer_for(path)?
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()))
+}
+
+/// The writing connection for `path`, opened and given its tables on first use.
+fn writer_for(path: &Path) -> Result<&'static Mutex<Connection>, String> {
     let registry = CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut registry = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(shared) = registry.get(path) {
+        return Ok(*shared);
+    }
+    let connection = open_fresh_connection(path)?;
+    let shared: &'static Mutex<Connection> = Box::leak(Box::new(Mutex::new(connection)));
+    registry.insert(path.to_path_buf(), shared);
+    Ok(shared)
+}
+
+/// A second connection to the same database, for reads only.
+///
+/// The connection that writes is held for a whole batch of cached facts, and
+/// everything else that touched `metadata.db` waited behind it: a settings
+/// read for a thumbnail, the cached facts of the next rows. With the journal
+/// in WAL mode a reader on its own connection sees the last committed state
+/// without waiting for the writer.
+static READERS: OnceLock<Mutex<HashMap<PathBuf, &'static Mutex<Connection>>>> = OnceLock::new();
+
+pub fn open_metadata_db_reader() -> Result<MetadataDb, String> {
+    let path = metadata_db_path()?;
+    open_metadata_db_reader_at(&path)
+}
+
+pub(crate) fn open_metadata_db_reader_at(path: &Path) -> Result<MetadataDb, String> {
+    let registry = READERS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut registry = registry
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let shared = match registry.get(path) {
         Some(shared) => *shared,
         None => {
-            let connection = open_fresh_connection(path)?;
+            // The writer creates the file and its tables. It is only made to
+            // exist here, not locked: a caller may be holding it.
+            writer_for(path)?;
+            let connection = open_reader_connection(path)?;
             let shared: &'static Mutex<Connection> = Box::leak(Box::new(Mutex::new(connection)));
             registry.insert(path.to_path_buf(), shared);
             shared
@@ -245,6 +283,20 @@ pub(crate) fn open_metadata_db_at(path: &Path) -> Result<MetadataDb, String> {
     Ok(shared
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()))
+}
+
+fn open_reader_connection(path: &Path) -> Result<Connection, String> {
+    let connection = Connection::open(path).map_err(|error| error.to_string())?;
+    let _ = connection.busy_timeout(std::time::Duration::from_secs(5));
+    let _ = connection.execute_batch(
+        "PRAGMA temp_store = MEMORY;
+         PRAGMA cache_size = -8000;",
+    );
+    // A statement that would change the database fails on this connection.
+    connection
+        .execute_batch("PRAGMA query_only = ON;")
+        .map_err(|error| error.to_string())?;
+    Ok(connection)
 }
 
 #[cfg(test)]
@@ -355,7 +407,7 @@ fn seed_default_tags(connection: &Connection) -> rusqlite::Result<()> {
 }
 
 fn get_db_setting_at(path: &Path, key: &str) -> Result<Option<String>, String> {
-    let connection = open_metadata_db_at(path)?;
+    let connection = open_metadata_db_reader_at(path)?;
     let mut statement = connection
         .prepare_cached("SELECT value FROM settings WHERE key = ?1")
         .map_err(|error| error.to_string())?;
@@ -537,6 +589,68 @@ mod tests {
             probe, 1,
             "temp tables live on the connection, so a fresh connection would lose it"
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_reader_sees_what_the_writer_committed_and_cannot_write() {
+        let path = temp_db("reader");
+        set_db_setting_at(&path, "theme", "dark").expect("set");
+        assert_eq!(
+            get_db_setting_at(&path, "theme").expect("get").as_deref(),
+            Some("dark")
+        );
+        set_db_setting_at(&path, "theme", "light").expect("set again");
+        assert_eq!(
+            get_db_setting_at(&path, "theme").expect("get").as_deref(),
+            Some("light"),
+            "a read after a write returns the written value"
+        );
+
+        let reader = open_metadata_db_reader_at(&path).expect("reader");
+        let refused = reader.execute(
+            "INSERT INTO settings (key, value) VALUES ('from-reader', '1')",
+            [],
+        );
+        assert!(refused.is_err(), "the reader is read-only");
+        drop(reader);
+        assert_eq!(get_db_setting_at(&path, "from-reader").expect("get"), None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_read_does_not_wait_for_the_connection_that_writes() {
+        let path = temp_db("reader-not-blocked");
+        set_db_setting_at(&path, "theme", "dark").expect("set");
+
+        // Someone holds the writing connection, as a batch of cached facts does.
+        let writer = open_metadata_db_at(&path).expect("writer");
+        let read_path = path.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reading = std::thread::spawn(move || {
+            let _ = sender.send(get_db_setting_at(&read_path, "theme"));
+        });
+        let read = receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the read finished while the writer was held");
+        assert_eq!(read.expect("get").as_deref(), Some("dark"));
+        drop(writer);
+        reading.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_reader_can_be_opened_while_the_writer_is_held() {
+        let path = temp_db("reader-first-open");
+        let writer = open_metadata_db_at(&path).expect("writer");
+        // The first reader for a path must not need the writer's lock.
+        let reader = open_metadata_db_reader_at(&path).expect("reader");
+        let count: i64 = reader
+            .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
+            .expect("the tables exist");
+        assert_eq!(count, 0);
+        drop(reader);
+        drop(writer);
         let _ = std::fs::remove_file(&path);
     }
 
