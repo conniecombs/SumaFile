@@ -2,6 +2,12 @@ namespace SimpleFile.Core;
 
 public static class ServiceLocator
 {
+    private static readonly string[] BuiltRelativePaths =
+    [
+        Path.Combine("target", "debug", "simplefile-service.exe"),
+        Path.Combine("target", "release", "simplefile-service.exe"),
+    ];
+
     public static string? FindServiceExecutable()
     {
         var overridePath = Environment.GetEnvironmentVariable("SIMPLEFILE_SERVICE_PATH");
@@ -10,20 +16,33 @@ public static class ServiceLocator
             return Path.GetFullPath(overridePath);
         }
 
-        foreach (var start in CandidateRoots())
+        return FindServiceExecutable(CandidateRoots());
+    }
+
+    /// <summary>
+    /// The service executable under the first of <paramref name="roots"/> that has one. In a
+    /// development checkout both a debug and a release build may exist under <c>target</c>; the
+    /// one written last is started, so a fresh build of either kind is not passed over for a
+    /// stale build of the other. An installed service lies beside the app, with no builds.
+    /// </summary>
+    internal static string? FindServiceExecutable(IEnumerable<string> roots)
+    {
+        foreach (var start in roots)
         {
-            foreach (var relative in new[]
+            var built = BuiltRelativePaths
+                .Select(relative => Path.GetFullPath(Path.Combine(start, relative)))
+                .Where(File.Exists)
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault();
+            if (built is not null)
             {
-                Path.Combine("target", "debug", "simplefile-service.exe"),
-                Path.Combine("target", "release", "simplefile-service.exe"),
-                "simplefile-service.exe",
-            })
+                return built;
+            }
+
+            var beside = Path.GetFullPath(Path.Combine(start, "simplefile-service.exe"));
+            if (File.Exists(beside))
             {
-                var candidate = Path.GetFullPath(Path.Combine(start, relative));
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
+                return beside;
             }
         }
 
