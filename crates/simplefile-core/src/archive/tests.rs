@@ -4,12 +4,12 @@ use super::extract::{
 };
 use super::mutate::{
     copy_archive_entry_to_local_with_limits, create_archive_file, delete_archive_entry,
-    materialize_archive_entry_to_temp_with_limits, move_entry_resolved,
+    materialize_archive_entry_to_temp_with_limits, move_entry_resolved, mutate_archive,
 };
 use super::path::{
     archive_entry_relative_path, build_virtual_archive_path,
     ensure_extract_path_within_destination, path_is_within_prefix, split_archive_path,
-    unique_engine_temp_path, zip_entry_relative_path, ArchiveKind,
+    unique_engine_temp_path, zip_entry_relative_path, ArchiveFormat, ArchiveKind,
 };
 use super::*;
 use json_engine::{
@@ -2692,4 +2692,143 @@ fn seven_zip_file_without_an_engine_is_an_ordinary_file() {
 fn seven_z_is_registrable_now() {
     assert!(is_registrable_extension(".7z"));
     assert!(is_registrable_extension("7Z"));
+}
+
+/// The files of a ZIP as `(path, size)`, sorted: what a delete or a rename
+/// must leave the same whichever way it is done.
+fn zip_files(archive: &Path) -> Vec<(String, u64)> {
+    let mut files: Vec<(String, u64)> = list_archive(text(archive))
+        .expect("list the archive")
+        .entries
+        .into_iter()
+        .filter(|entry| !entry.is_dir)
+        .map(|entry| (entry.path, entry.size))
+        .collect();
+    files.sort();
+    files
+}
+
+fn zip_kind() -> ArchiveKind {
+    ArchiveKind::BuiltIn(ArchiveFormat::Zip)
+}
+
+const ZIP_SAMPLE: &[(&str, &[u8])] = &[
+    ("docs/a.txt", b"alpha"),
+    ("docs/b.txt", b"second file"),
+    ("docs/sub/c.txt", b"deeper"),
+    ("top.txt", b"top level"),
+];
+
+#[test]
+fn zip_delete_without_unpacking_leaves_what_the_rebuild_leaves() {
+    let root = unique_temp_dir("zip-inplace-delete");
+    let in_place = root.join("in-place.zip");
+    let rebuilt = root.join("rebuilt.zip");
+    write_test_zip(&in_place, ZIP_SAMPLE);
+    write_test_zip(&rebuilt, ZIP_SAMPLE);
+
+    delete_archive_entry(&text(&in_place.join("docs").join("a.txt"))).expect("delete a file");
+    mutate_archive(&rebuilt, &zip_kind(), |work| {
+        fs::remove_file(work.join("docs").join("a.txt")).map_err(|e| e.to_string())?;
+        Ok(None)
+    })
+    .expect("rebuild without the file");
+    assert_eq!(zip_files(&in_place), zip_files(&rebuilt));
+    assert_eq!(zip_files(&in_place).len(), 3);
+
+    delete_archive_entry(&text(&in_place.join("docs"))).expect("delete a folder");
+    mutate_archive(&rebuilt, &zip_kind(), |work| {
+        fs::remove_dir_all(work.join("docs")).map_err(|e| e.to_string())?;
+        Ok(None)
+    })
+    .expect("rebuild without the folder");
+    assert_eq!(zip_files(&in_place), zip_files(&rebuilt));
+    assert_eq!(zip_files(&in_place), vec![("top.txt".to_string(), 9)]);
+
+    let missing = in_place.join("nope.txt");
+    assert_eq!(
+        delete_archive_entry(&text(&missing)).unwrap_err(),
+        format!("Archive entry not found: {}", missing.display())
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn zip_multi_delete_names_the_entries_that_are_not_there() {
+    let root = unique_temp_dir("zip-inplace-multi-delete");
+    let archive = root.join("sample.zip");
+    write_test_zip(&archive, ZIP_SAMPLE);
+    let missing = text(&archive.join("nope.txt"));
+
+    let errors = delete_archive_entries(&[
+        text(&archive.join("docs").join("a.txt")),
+        missing.clone(),
+        text(&archive.join("top.txt")),
+    ]);
+
+    assert_eq!(errors, vec![format!("Archive entry not found: {missing}")]);
+    assert_eq!(
+        zip_files(&archive),
+        vec![
+            ("docs/b.txt".to_string(), 11),
+            ("docs/sub/c.txt".to_string(), 6)
+        ]
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn zip_rename_without_unpacking_leaves_what_the_rebuild_leaves() {
+    let root = unique_temp_dir("zip-inplace-rename");
+    let in_place = root.join("in-place.zip");
+    let rebuilt = root.join("rebuilt.zip");
+    write_test_zip(&in_place, ZIP_SAMPLE);
+    write_test_zip(&rebuilt, ZIP_SAMPLE);
+
+    let renamed = rename_archive_entry(text(&in_place.join("docs")), "papers".into())
+        .expect("rename a folder");
+    assert_eq!(renamed, text(&in_place.join("papers")));
+    mutate_archive(&rebuilt, &zip_kind(), |work| {
+        fs::rename(work.join("docs"), work.join("papers")).map_err(|e| e.to_string())?;
+        Ok(None)
+    })
+    .expect("rebuild with the folder renamed");
+    assert_eq!(zip_files(&in_place), zip_files(&rebuilt));
+
+    let renamed = rename_archive_entry(
+        text(&in_place.join("papers").join("a.txt")),
+        "first.txt".into(),
+    )
+    .expect("rename a file");
+    assert_eq!(renamed, text(&in_place.join("papers").join("first.txt")));
+    assert!(zip_files(&in_place).contains(&("papers/first.txt".to_string(), 5)));
+
+    assert_eq!(
+        rename_archive_entry(text(&in_place.join("papers")), "top.txt".into()).unwrap_err(),
+        "A file or directory with that name already exists: top.txt"
+    );
+    let gone = text(&in_place.join("gone.txt"));
+    assert_eq!(
+        rename_archive_entry(gone.clone(), "x.txt".into()).unwrap_err(),
+        format!("Archive entry not found: {gone}")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn zip_with_names_that_are_not_plain_is_still_rebuilt() {
+    let root = unique_temp_dir("zip-inplace-fallback");
+    let archive = root.join("odd.zip");
+    // Two names that differ only by case: left to the rebuild, as before.
+    write_test_zip(
+        &archive,
+        &[("keep.txt", b"keep"), ("a.txt", b"1"), ("A.TXT", b"2")],
+    );
+
+    delete_archive_entry(&text(&archive.join("keep.txt"))).expect("delete through the rebuild");
+
+    let left = zip_files(&archive);
+    assert!(!left.iter().any(|(path, _)| path == "keep.txt"), "{left:?}");
+    assert!(!left.is_empty(), "{left:?}");
+    let _ = fs::remove_dir_all(root);
 }

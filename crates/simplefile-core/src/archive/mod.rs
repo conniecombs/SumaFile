@@ -7,6 +7,7 @@ mod mutate;
 mod mutate_engine;
 mod path;
 mod placeholders;
+mod zip_inplace;
 
 #[cfg(test)]
 mod tests;

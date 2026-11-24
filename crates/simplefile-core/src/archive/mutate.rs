@@ -220,6 +220,17 @@ fn delete_builtin_archive_entries_batch(
     entries: &[(String, PathBuf)],
     errors: &mut Vec<String>,
 ) -> Result<(), String> {
+    if is_built_in_zip(&parsed.kind) {
+        let inner: Vec<PathBuf> = entries.iter().map(|(_, inner)| inner.clone()).collect();
+        if let Some(found) = super::zip_inplace::try_delete(&parsed.archive_path, &inner)? {
+            for ((display, _), found) in entries.iter().zip(found) {
+                if !found {
+                    errors.push(format!("Archive entry not found: {display}"));
+                }
+            }
+            return Ok(());
+        }
+    }
     mutate_archive(&parsed.archive_path, &parsed.kind, |root| {
         let mut present: Vec<PathBuf> = Vec::with_capacity(entries.len());
         for (display, inner_path) in entries {
@@ -308,6 +319,16 @@ pub fn rename_archive_entry(path: String, new_name: String) -> Result<String, St
     if EngineArchive::of(&parsed).is_some() {
         return mutate_engine::rename_entry(&parsed, &path, &new_name);
     }
+    if is_built_in_zip(&parsed.kind) {
+        if let Some(renamed) = super::zip_inplace::try_rename(
+            &parsed.archive_path,
+            &parsed.inner_path,
+            &new_name,
+            &path,
+        )? {
+            return Ok(build_virtual_archive_path(&parsed.archive_path, &renamed));
+        }
+    }
     let result = mutate_archive(&parsed.archive_path, &parsed.kind, |root| {
         let source_path = root.join(&parsed.inner_path);
         if !source_path.exists() {
@@ -394,12 +415,31 @@ fn delete_archive_entry_parsed(parsed: &ArchivePath) -> Result<(), String> {
         let path = build_virtual_archive_path(&parsed.archive_path, &parsed.inner_path);
         return mutate_engine::delete_entries(parsed, &[(path, parsed.inner_path.clone())]);
     }
+    if is_built_in_zip(&parsed.kind) {
+        let target = [parsed.inner_path.clone()];
+        if let Some(found) = super::zip_inplace::try_delete(&parsed.archive_path, &target)? {
+            return if found[0] {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Archive entry not found: {}",
+                    build_virtual_archive_path(&parsed.archive_path, &parsed.inner_path)
+                ))
+            };
+        }
+    }
     mutate_archive(&parsed.archive_path, &parsed.kind, |root| {
         let path = root.join(&parsed.inner_path);
         remove_local_path(&path)?;
         Ok(None)
     })?;
     Ok(())
+}
+
+/// A ZIP the built-in code handles: its entries can be copied as stored, so a
+/// delete or a rename need not unpack the archive (see `zip_inplace`).
+fn is_built_in_zip(kind: &ArchiveKind) -> bool {
+    matches!(kind, ArchiveKind::BuiltIn(ArchiveFormat::Zip))
 }
 
 /// Temp materialization of an archive entry (or a passthrough local path).
@@ -526,7 +566,7 @@ pub(super) fn copy_archive_entry_to_local_with_limits(
     }
 }
 
-fn mutate_archive<F>(
+pub(super) fn mutate_archive<F>(
     archive_path: &Path,
     kind: &ArchiveKind,
     mut mutate: F,
