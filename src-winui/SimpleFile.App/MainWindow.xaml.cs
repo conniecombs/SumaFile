@@ -169,6 +169,8 @@ public sealed partial class MainWindow : Window
             presenter.IsMaximizable = true;
         }
 
+        RestoreWindowPlacement();
+
         PrimaryFileList.ItemsSource = PrimaryFiles;
         SecondaryFileList.ItemsSource = SecondaryFiles;
         PrimaryDetailsFileList.ItemsSource = PrimaryFiles;
@@ -1397,6 +1399,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnClosed(object sender, WindowEventArgs args)
     {
+        SaveWindowPlacement();
         Interlocked.Increment(ref _watchRequestToken);
         Interlocked.Increment(ref _backendReconnectToken);
         Interlocked.Increment(ref _folderRefreshToken);
