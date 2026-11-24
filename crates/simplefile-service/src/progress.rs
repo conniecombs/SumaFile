@@ -1519,6 +1519,67 @@ mod tests {
         let _ = fs::remove_dir_all(&dst_dir);
     }
 
+    /// "Write directly" with Replace empties the existing file when the copy
+    /// starts and keeps no backup. A source that cannot even be opened used
+    /// to cost the existing file all the same: it was emptied, then deleted.
+    #[test]
+    fn inplace_replace_keeps_the_existing_file_when_the_source_cannot_be_opened() {
+        let src_dir = unique_temp_path("inplace_unopenable_src");
+        let dst_dir = unique_temp_path("inplace_unopenable_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let source = src_dir.join("report.txt");
+        let destination = dst_dir.join("report.txt");
+        fs::write(&destination, b"existing").unwrap();
+        // On Windows another program holds the source and shares nothing.
+        #[cfg(windows)]
+        let _unopenable = {
+            use std::os::windows::fs::OpenOptionsExt;
+            fs::write(&source, b"incoming").unwrap();
+            fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&source)
+                .unwrap()
+        };
+        // Elsewhere a socket stands in: it exists and cannot be opened.
+        #[cfg(unix)]
+        let _unopenable = std::os::unix::net::UnixListener::bind(&source).unwrap();
+
+        let error = super::transfer_with_policy_blocking(
+            "copy",
+            super::Request::Selection {
+                sources: vec![source.to_string_lossy().to_string()],
+                conflict_action: "replace".to_string(),
+            },
+            dst_dir.to_string_lossy().to_string(),
+            "op_inplace_unopenable_source".to_string(),
+            Arc::new(AtomicBool::new(false)),
+            &|_| {},
+            &|_| {},
+            &|| super::tuning::Policy {
+                mode: super::tuning::Mode::Manual,
+                manual_concurrency: 1,
+                inplace: true,
+                retry_sleep_ms: 10,
+                ..super::tuning::Policy::default()
+            },
+        )
+        .expect_err("a source that cannot be opened is not copied");
+
+        assert_eq!(error.outcome.failed.len(), 1);
+        assert!(error.message.contains("Open source"), "{}", error.message);
+        assert_eq!(fs::read(&destination).unwrap(), b"existing");
+        assert_eq!(
+            fs::read_dir(&dst_dir).unwrap().count(),
+            1,
+            "nothing else was left in the destination folder"
+        );
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
     #[test]
     fn transfer_emits_completed_progress() {
         let src_dir = unique_temp_path("complete_src");

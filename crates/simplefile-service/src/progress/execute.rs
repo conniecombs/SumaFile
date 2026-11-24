@@ -1038,6 +1038,14 @@ pub(crate) fn copy_file_with_progress_versioned(
     } else {
         staging_path_for(dst, ctx.operation_id)?
     };
+    if use_inplace && exists {
+        // Writing directly over an existing file empties it the moment the
+        // lease is taken, and there is no backup. A source that cannot even
+        // be opened (held by another program, unreadable) must fail before
+        // that, not after: the existing file was otherwise emptied and then
+        // deleted without one byte having been read.
+        drop(open_source_sequential(src).map_err(|e| Failure::io("Open source", src, e))?);
+    }
     let mut lease = Some(crate::transfer_journal::StagingLease::begin(
         &src.to_string_lossy(),
         dst,

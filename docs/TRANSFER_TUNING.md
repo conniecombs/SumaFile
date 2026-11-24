@@ -255,7 +255,9 @@ when the file is complete.
 
 * A new file is visible under its final name while it is being copied.
 * With Replace, the existing file is emptied and written over in place. There
-  is no backup: once the copy starts, the old content is gone.
+  is no backup: once the copy starts, the old content is gone. The source is
+  opened first; when it cannot be opened (another program holds it, or it is
+  not readable) the file fails before the existing one is touched.
 * An existing destination for which no answer was given is reported as a
   conflict before anything is written. Skip and Keep both work as they do
   without this option.

@@ -45,6 +45,10 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - A copy no longer opens every source folder to record its identity, which
   only a move uses, and a move no longer creates and syncs a temporary record
   file for each selected folder.
+- With "Write directly to the destination" on, Replace no longer destroys
+  the existing file when the source cannot even be opened (held by another
+  program, or not readable). The existing file was emptied and then deleted
+  without one byte having been read; the source is now opened first.
 - A file copied in several streams whose partial file could not be emptied
   after a failed try is not tried again in that pass. The next try would have
   taken the partial file's length for bytes already written.
