@@ -108,17 +108,18 @@ on-demand column values have shipped. What remains:
 - The file service installs no logger, so warnings such as retried transfer
   attempts and unrecoverable ownership records are never written to
   `service.log`. Only text printed directly to the error stream reaches it.
-- Every copied file costs a fixed amount of work that a plain copy does not
-  have: its ownership record is created, written, synced and deleted beside
-  the partial file, and the partial file is renamed. That is four changes to
-  the destination folder where a plain copy makes one, about 26 system calls
-  where it makes about eight, and with "Flush to disk before finishing each
-  file" on, two flushes. Changes to one folder do not run in parallel, so
-  more files at once do not make up for it: in a test on Linux (8,000 files
-  of 4 KiB, ext4) the engine copied 1,000 to 2,700 files a second where
-  `cp -r` copied 2,900 to 6,700. One record per worker or per destination
-  folder, instead of one per file, would remove most of it. It needs a
-  change to the record format and to recovery.
+- A pass keeps one ownership record per destination folder, so a folder that
+  receives a single file still costs a record of its own. One record per
+  worker at the transfer's destination root would cost a fixed number per
+  pass whatever the shape of the tree. A record would then name partial files
+  in subfolders, and recovery would have to look in parent folders as well.
+  Measure trees of small folders before deciding.
+- After a power loss, a partial file whose line had not reached the disk is
+  left with no record, and recovery does not remove it. The pass ID in the
+  partial file's name could prove which pass made it.
+- What a copied file still costs over a plain copy is the partial file and
+  its rename, and with "Flush to disk before finishing each file" on, one
+  flush.
 
 ## Search
 

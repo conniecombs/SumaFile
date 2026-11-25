@@ -816,7 +816,7 @@ pub fn resumable_staging_path_for(
     staging_path_with_salt(final_path, Some(operation_id))
 }
 
-fn fnv1a_64(chunks: &[&[u8]]) -> u64 {
+pub(crate) fn fnv1a_64(chunks: &[&[u8]]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for chunk in chunks {
         for &byte in *chunk {

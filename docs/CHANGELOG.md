@@ -59,6 +59,22 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
   reported another file a moment before. Since 1.2.0 started worker threads
   only as files needed them, a small file's finishing stage could be dropped
   with the byte counts it was thinned among.
+- Copying many small files is faster: about 1.8 times the files per second
+  in a test on an NVMe SSD with the default settings (3,000 files of 4 KiB
+  into one folder: 1,199 a second before, 2,139 now; into 300 folders of ten:
+  1,850 and 3,480). SumaFile keeps a record of every file it is copying,
+  which is what lets it clean up after an interruption. Each file used to
+  get a record of its own, created, written to disk and deleted beside it. A
+  transfer now keeps one record per destination folder and adds a line to it
+  for each file.
+- What that changes after an interruption: a crash or a kill of SumaFile is
+  cleaned up as before. After a power loss, a file that was being copied may
+  leave a hidden `.sumafile-partial` file that no record names, at most one
+  for each file being copied at that moment, and SumaFile does not delete
+  those by itself. No file under its final name is affected, and the original
+  of a file being replaced is protected as before. Records left by earlier
+  versions are still cleaned up, and an earlier version leaves the new
+  records alone. See [Recovery](TRANSFER_TUNING.md#recovery).
 
 ### Keyboard shortcuts
 

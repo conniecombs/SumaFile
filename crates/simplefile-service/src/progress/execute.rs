@@ -1027,12 +1027,20 @@ pub(crate) fn copy_file_with_progress_versioned(
         // deleted without one byte having been read.
         drop(open_source_sequential(src).map_err(|e| Failure::io("Open source", src, e))?);
     }
-    let mut lease = Some(crate::transfer_journal::StagingLease::begin(
-        &src.to_string_lossy(),
-        dst,
-        &staged_path,
-        use_inplace && exists,
-    )?);
+    // A file written under a temporary name is a line in its folder's
+    // record. One written straight to its final name keeps a record of its
+    // own, which carries the mark that says the file was completed.
+    let mut lease = Some(if use_inplace {
+        crate::transfer_journal::StagingLease::begin(
+            &src.to_string_lossy(),
+            dst,
+            &staged_path,
+            exists,
+        )?
+    } else {
+        ctx.records
+            .begin(&src.to_string_lossy(), dst, &staged_path)?
+    });
     let must_sync = ctx.policy.flush_on_close;
     let mut retry = Retry::from_policy(&ctx.policy);
     let copy_result = loop {

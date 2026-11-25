@@ -113,15 +113,16 @@ Unless [Write directly to the destination](#write-directly-to-the-destination)
 is on, every file is copied in these steps:
 
 1. In the destination folder the service creates a partial file named
-   `.<name>.<16 hex digits>.sumafile-partial` and beside it an ownership
-   record with the same name plus `.state`. The hex digits are a hash of the
-   destination path and the ID of the pass, which keeps the partial files of
-   different tasks apart.
-2. The record is a small text file. It names the source, the destination, the
-   partial file and the partial file's identity on its volume, and later the
-   backup of a file being replaced. The service keeps the record open and
-   locked for as long as it works on the file, and writes each change to disk
-   before the step that the change describes.
+   `.<name>.<16 hex digits>.sumafile-partial`. The hex digits are a hash of
+   the destination path and the ID of the pass, which keeps the partial files
+   of different tasks apart.
+2. It adds a line for the file to the folder's ownership record, a text file
+   named `.sumafile-transfer.<16 hex digits>.<number>.sumafile-partial.state`.
+   A pass has one record in each destination folder, shared by all the files
+   it copies into that folder. The line names the source, the destination, the
+   partial file and the partial file's identity on its volume. The service
+   keeps the record open and locked for as long as the pass may write into the
+   folder.
 3. The bytes are written to the partial file, which carries the Windows Hidden
    attribute while it is written.
 4. After the last byte the service checks that the source still has the size
@@ -134,11 +135,29 @@ is on, every file is copied in these steps:
 5. The partial file is renamed to the final name. This rename never
    overwrites: unless Replace was chosen, a file found under that name is a
    conflict.
-6. The record is deleted. In a move, the source is deleted next.
+6. In a move, the source is deleted next.
 
 A half-written file therefore never appears under its final name, and an
 existing file is not touched until its replacement is complete. A full disk is
 found by the write that hits it; free space is not checked beforehand.
+
+A file's line in the record needs no ending: once the file has its final name
+it is no longer under its partial name, which is all that
+[recovery](#recovery) looks for. A file's line is not forced to disk before
+the file's bytes are written. The line that says where a file being replaced
+is moved aside to is forced to disk before the file is moved.
+
+A record holds the lines of several hundred files (256 KiB). When it is full
+the pass starts a fresh one in the folder, with the next number, and the full
+one is deleted when the last file recorded in it is done. A pass keeps open
+the records of the 64 folders it wrote to last, closes and deletes the others
+as it goes, and deletes them all when it ends. A record is kept only when a
+file it names was left for recovery.
+
+Until this was changed, every file had a record of its own, which was created,
+written to disk and deleted for each file. A link, a file written
+[directly to the destination](#write-directly-to-the-destination) and a file
+downloaded over FTP or SFTP still have one.
 
 Nothing but the content, the three times and the read-only attribute is
 carried over: not the Hidden or System attribute, alternate data streams or
@@ -247,9 +266,10 @@ check: its result is ignored.
 
 With "Write directly to the destination instead of a temporary file" on, a
 file is created and written under its final name, and is not hidden. There is
-no partial file and no rename. The ownership record is still written beside
-the file, as `.<name>.<16 hex digits>.sumafile-partial.state`, and deleted
-when the file is complete.
+no partial file and no rename. Such a file has an ownership record of its
+own beside it, `.<name>.<16 hex digits>.sumafile-partial.state`, which is
+forced to disk before the file is written and deleted when the file is
+complete.
 
 * A new file is visible under its final name while it is being copied.
 * With Replace, the existing file is emptied and written over in place. There
@@ -276,7 +296,8 @@ Folders are created under their final names with or without this option.
 | Name | What it is | Normal lifetime |
 | --- | --- | --- |
 | `.<name>.<16 hex digits>.sumafile-partial` | A file being copied | From the start of the file's copy until it is renamed; deleted when the file fails or the task is cancelled |
-| `.<name>.<16 hex digits>.sumafile-partial.state` | The ownership record of that file | The same; with write-directly on, it sits beside the file itself |
+| `.sumafile-transfer.<16 hex digits>.<number>.sumafile-partial.state` | The ownership record of the files a pass copies into the folder | From the pass's first file in the folder until the pass is done with the folder |
+| `.<name>.<16 hex digits>.sumafile-partial.state` | The ownership record of one file: a link, a file written directly to the destination, or an FTP/SFTP download | While that file is written |
 | `.<name>.<process id>.<number>.sumafile-replace-backup` | The existing file, moved aside by Replace | Between the two renames of a Replace |
 
 All three names begin with a dot, so SumaFile lists them only when hidden
@@ -289,7 +310,11 @@ They outlive their transfer in three cases: the service stopped in the middle
 of a file (a crash, a power loss, a killed process); the clean-up after a
 failure or a cancel could not delete a partial file because another program
 held it open (the service tries five times in about 0.4 seconds); or a file
-was published but its record could not be deleted at that moment.
+was published but its own record could not be deleted at that moment.
+
+After a power loss, a partial file may be left that no record names: its line
+had not reached the disk. That can be one file for each file that was being
+copied at that moment. A crash of SumaFile alone does not cause it.
 
 ### Recovery
 
@@ -303,12 +328,16 @@ only opened.
 Recovery reads every `.sumafile-partial.state` record in the folder. It acts
 only on the files a record names, and only when the file it finds is the very
 file that was recorded (same volume and file ID), so a different file under
-the same name is never touched. It never deletes or changes a source. For each
-record it does the following.
+the same name is never touched. It never deletes or changes a source. A
+folder's record names a file on each line, and steps 2 and 3 are done for each
+of them; a file that has its final name by now needs nothing. For each record
+it does the following.
 
 1. It leaves the record and its files alone when the record is locked by a
    running transfer, is larger than 4 MiB, has no complete line, cannot be
-   read, or names files outside this folder.
+   read, or names files outside this folder. A folder's record is also left
+   alone when any of its lines is not a line of such a record, or names
+   anything but a partial file.
 2. If the record names a backup and the backup is still the recorded file: it
    renames the backup back to the original name when that name is free, which
    restores the original; it deletes the backup when that name holds the
@@ -317,16 +346,24 @@ record it does the following.
 3. It deletes the partial file when that is the recorded file. For a
    write-directly record this is the half-written file under its final name,
    unless the record says the file was completed.
-4. It deletes the record.
+4. It deletes the record, once every file it names has been dealt with.
 
-When a recorded file has been replaced by a different file, recovery keeps the
-record and the files and goes on to the next record; they stay until someone
-removes them. The file service writes nothing to a log when this happens.
+When a recorded file has been replaced by a different file, recovery keeps
+that file and the record, deals with the other files the record names, and
+goes on to the next record; what it kept stays until someone removes it. The
+file service writes nothing to a log when this happens.
 
-A partial file with no record beside it is never deleted automatically: its
-name alone does not prove which transfer owns it. Within a running pass, a
-later round of a file that finds the record of its own earlier round (left by
-a clean-up that failed) recovers it in the same way and reuses the record.
+A partial file that no record names is never deleted automatically: its name
+alone does not prove which transfer owns it. That includes a partial file left
+by a power loss before its line was on disk. A later try of a file that finds
+the partial file of its own earlier try (left by a clean-up that failed) takes
+it over: within a pass from what the pass remembers, and in a later pass of
+the same task by recovering the folder first.
+
+A build of SumaFile from before folder records skips them and leaves what they
+name in place; a current build cleans up the next time it writes into the
+folder. The records of single files that an earlier build left are recovered
+as before.
 
 ### Deleting leftovers by hand
 
@@ -338,9 +375,11 @@ running or queued (FTP/SFTP downloads included):
 * **`.sumafile-partial` files** are incomplete copies. Deleting one loses
   nothing: a copy never changes its source, and a move deletes a source only
   after the file has its final name.
-* **`.sumafile-partial.state` records.** Delete each one together with its
-  partial file. A record whose partial file is gone is harmless; recovery
-  deletes it the next time.
+* **`.sumafile-partial.state` records.** Delete a file's own record together
+  with its partial file, and a folder's record (its name starts with
+  `.sumafile-transfer.`) together with the partial files left in the folder.
+  A record whose partial files are gone is harmless; recovery deletes it the
+  next time.
 * **`.sumafile-replace-backup` files** are original files that a Replace was
   moving aside. Look before deleting. If the file's own name is missing from
   the folder, the backup is the only copy of the original: rename it back by
@@ -721,7 +760,8 @@ nearest limit.
   be created and written under a doubled path, but the rename that gives a
   file its final name can be refused there ("The parameter is incorrect").
 * **Long paths.** A partial file's name is 35 characters longer than the
-  file's own name, and its record's name 41 characters longer, so a
+  file's own name, and the name of a file's own record, where it has one, 41
+  characters longer, so a
   destination close to 260 characters passes that length during the copy. The
   rename converts any path of 248 characters or more to the extended form
   (`\\?\`, or `\\?\UNC\` for a share), as the service's other file calls do
@@ -744,8 +784,9 @@ downloads to disk before finishing each file", "Retry a failing file up to"
 remote session transfers one file at a time, with buffers sized by the
 protocol.
 
-A download writes its local file with the same partial file, ownership record,
-rename and recovery as a local copy. A retry reconnects and transfers the file
+A download writes its local file with the same partial file, rename and
+recovery as a local copy, and with an ownership record of its own for each
+file. A retry reconnects and transfers the file
 again from its first byte. In Checksum mode the plugin reads the remote file
 once more to verify it. On the upgrade from a version without the plugin, the
 values in `transfer.policy` that differed from the defaults were copied into

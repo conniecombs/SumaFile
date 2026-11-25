@@ -323,8 +323,10 @@ public class LazyColumnWorkspaceTests
 
         await UntilAsync(() => workspace.LazyColumnFill is { Done: true, Cancelled: true }, "the fill to stop");
         Assert.Equal(new LazyColumnFill(100, 64, 0), workspace.LazyColumnFill!.Fill);
-        Assert.Contains(backend.Requests[1].Id, backend.Cancelled);
-        Assert.Equal("2", EntryPresentation.ColumnText(Row(workspace, "doc000.pdf"), "pages"));
+        // The service is told from a pool thread, which may run after the fill has stopped: wait for it rather than race it.
+        var second = backend.Requests[1].Id;
+        await UntilAsync(() => backend.Cancelled.Contains(second), "the second chunk's request to be cancelled");
+        Assert.Equal("2",EntryPresentation.ColumnText(Row(workspace, "doc000.pdf"), "pages"));
         Assert.Null(Row(workspace, "doc099.pdf").FactFor(LazyColumns.Pages));
     }
 

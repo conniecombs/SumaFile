@@ -666,9 +666,11 @@ fn transfer_with_policy_blocking(
     let mut partial_roots = HashSet::new();
     let mut failed_bytes = 0u64;
     if !cancelled_early && (!files.is_empty() || !roots.is_empty()) {
+        let records = crate::transfer_journal::FolderRecords::new(&operation_id);
         let ctx = reporting::CopyContext {
             progress: &progress,
             operation_id: &operation_id,
+            records: &records,
             network: plans.iter().any(|plan| plan.network),
             policy: session.policy().clone(),
         };
@@ -1744,6 +1746,7 @@ mod tests {
         let ctx = CopyContext {
             progress: &progress,
             operation_id,
+            records: &crate::transfer_journal::FolderRecords::new(operation_id),
             network: false,
             policy: super::Policy::default(),
         };
@@ -1797,6 +1800,7 @@ mod tests {
         let ctx = CopyContext {
             progress: &progress,
             operation_id,
+            records: &crate::transfer_journal::FolderRecords::new(operation_id),
             network: true,
             policy: super::Policy::default(),
         };
@@ -2691,6 +2695,77 @@ mod tests {
             b"original-first"
         );
         assert!(!second.exists());
+
+        let _ = fs::remove_dir_all(&src_dir);
+        let _ = fs::remove_dir_all(&dst_dir);
+    }
+
+    /// A pass keeps one ownership record in a folder for all the files it
+    /// copies there, however many it copies at once, and leaves none behind.
+    #[test]
+    fn a_pass_keeps_one_ownership_record_in_a_destination_folder() {
+        let src_dir = unique_temp_path("folder_record_src");
+        let dst_dir = unique_temp_path("folder_record_dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        let files = 300;
+        let sources: Vec<String> = (0..files)
+            .map(|index| {
+                let path = src_dir.join(format!("file-{index:03}.bin"));
+                fs::write(&path, vec![b'x'; 8 * 1024]).unwrap();
+                path.to_string_lossy().to_string()
+            })
+            .collect();
+
+        let records_in = |folder: &std::path::Path| -> Vec<String> {
+            fs::read_dir(folder)
+                .map(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.file_name().to_string_lossy().to_string())
+                        .filter(|name| name.ends_with(".sumafile-partial.state"))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        // The folder is watched for as long as the pass runs. A record per
+        // file shows a new name with every file; the folder's record shows
+        // one name. However the watcher is scheduled, it never sees more.
+        let finished = AtomicBool::new(false);
+        let (results, seen) = std::thread::scope(|scope| {
+            let watcher = scope.spawn(|| {
+                let mut seen = std::collections::HashSet::new();
+                while !finished.load(Ordering::SeqCst) {
+                    seen.extend(records_in(&dst_dir));
+                    std::thread::yield_now();
+                }
+                seen
+            });
+            let results = super::transfer_with_policy_blocking(
+                "copy",
+                super::Request::Selection {
+                    sources,
+                    conflict_action: "error".to_string(),
+                },
+                dst_dir.to_string_lossy().to_string(),
+                "op_folder_record".to_string(),
+                Arc::new(AtomicBool::new(false)),
+                &|_| {},
+                &|_| {},
+                &|| super::tuning::Policy {
+                    mode: super::tuning::Mode::Manual,
+                    manual_concurrency: 8,
+                    ..super::tuning::Policy::default()
+                },
+            );
+            finished.store(true, Ordering::SeqCst);
+            (results, watcher.join().unwrap())
+        });
+
+        assert_eq!(results.expect("the files copy").len(), files);
+        assert!(seen.len() <= 1, "records seen: {seen:?}");
+        assert!(records_in(&dst_dir).is_empty());
+        assert_eq!(fs::read_dir(&dst_dir).unwrap().count(), files);
 
         let _ = fs::remove_dir_all(&src_dir);
         let _ = fs::remove_dir_all(&dst_dir);

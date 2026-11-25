@@ -144,6 +144,8 @@ impl ProgressContext<'_> {
 pub(crate) struct CopyContext<'a> {
     pub(crate) progress: &'a ProgressContext<'a>,
     pub(crate) operation_id: &'a str,
+    /// The ownership records of the folders this pass writes into.
+    pub(crate) records: &'a crate::transfer_journal::FolderRecords,
     pub(crate) network: bool,
     pub(crate) policy: super::tuning::Policy,
 }

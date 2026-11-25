@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using SimpleFile.Core;
 using Xunit;
 
@@ -150,6 +152,54 @@ public class WindowPlacementTests
         Assert.Contains("if (UiSmokeRoot() is not null)", saveBody);
         Assert.Contains("DisplayAreaFallback.Nearest", restoreBody);
         Assert.Contains("saved.FitTo(", restoreBody);
+    }
+
+    /// <summary>
+    /// The smoke harness is compiled into Debug builds only. Code that is in every build may
+    /// name it only inside <c>#if DEBUG</c>, or the Release build, which CI does not make, fails.
+    /// </summary>
+    [Fact]
+    public void TheSmokeHarnessIsNamedOnlyInDebugCode()
+    {
+        string[] debugOnly = ["UiSmokeRoot(", "RunUiSmokeIfRequestedAsync("];
+        var offenders = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(Sprint2ShellTests.AppRoot(), "*.cs", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(Sprint2ShellTests.AppRoot(), file);
+            if (relative.StartsWith("bin" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || relative.StartsWith("obj" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // One entry per open #if: whether its current branch is compiled only in Debug.
+            var conditions = new Stack<bool>();
+            var number = 0;
+            foreach (var line in File.ReadLines(file))
+            {
+                number++;
+                var text = line.Trim();
+                if (text.StartsWith("#if ", StringComparison.Ordinal))
+                {
+                    conditions.Push(text == "#if DEBUG");
+                }
+                else if (text.StartsWith("#else", StringComparison.Ordinal) || text.StartsWith("#elif", StringComparison.Ordinal))
+                {
+                    conditions.Pop();
+                    conditions.Push(false);
+                }
+                else if (text.StartsWith("#endif", StringComparison.Ordinal))
+                {
+                    conditions.Pop();
+                }
+                else if (!conditions.Contains(true) && debugOnly.Any(name => text.Contains(name, StringComparison.Ordinal)))
+                {
+                    offenders.Add($"{relative}:{number}");
+                }
+            }
+        }
+
+        Assert.Empty(offenders);
     }
 
     private static string TempFile() =>

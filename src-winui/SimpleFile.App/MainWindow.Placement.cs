@@ -17,10 +17,13 @@ public sealed partial class MainWindow
     /// </summary>
     private void RestoreWindowPlacement()
     {
+        // The smoke harness is in Debug builds only.
+#if DEBUG
         if (UiSmokeRoot() is not null)
         {
             return;
         }
+#endif
 
         try
         {
@@ -82,10 +85,12 @@ public sealed partial class MainWindow
     /// <summary>Remembers the placement for the next start. Called once, when the window closes.</summary>
     private void SaveWindowPlacement()
     {
+#if DEBUG
         if (UiSmokeRoot() is not null)
         {
             return;
         }
+#endif
 
         try
         {

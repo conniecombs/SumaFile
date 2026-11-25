@@ -924,6 +924,10 @@ fn copy_files_streaming_with_sink(
     let (work_tx, work_rx) =
         mpsc::sync_channel::<(usize, usize, FileTask, super::tuning::Policy)>(32);
     let work_rx = Mutex::new(work_rx);
+    // One ownership record per destination folder, shared by the workers and
+    // closed when the pass ends.
+    let records = crate::transfer_journal::FolderRecords::new(operation_id);
+    let records = &records;
 
     std::thread::scope(|scope| {
         {
@@ -1117,6 +1121,7 @@ fn copy_files_streaming_with_sink(
                     let context = CopyContext {
                         progress: &progress,
                         operation_id,
+                        records,
                         network: task.network,
                         policy: policy.clone(),
                     };
@@ -2404,6 +2409,7 @@ mod tests {
         let copy_ctx = CopyContext {
             progress: &progress,
             operation_id: "small-tree-test",
+            records: &crate::transfer_journal::FolderRecords::new("small-tree-test"),
             network: false,
             policy: active_policy.clone(),
         };
@@ -2684,6 +2690,7 @@ mod tests {
         let ctx = CopyContext {
             progress: &progress,
             operation_id: "overlapped-multistream-test",
+            records: &crate::transfer_journal::FolderRecords::new("overlapped-multistream-test"),
             network: true, // 512 KiB buffer -> triggers 3-slot overlapped ring buffer on 2 MiB file
             policy: Policy::default(),
         };
